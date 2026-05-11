@@ -29,20 +29,20 @@ Layout is a `Surface` over `Column(SpaceBetween)` with three children: hero bloc
 
 The screen is consumed in two follow-up tickets that can land in either order:
 
-- **#8** adds a `NavHost` and mounts this screen at the `welcome` route.
-- **#14** supplies the real `onPaired` / `onSetup` destinations (QR scanner route + external browser `Intent`).
+- **#8** added a `NavHost` (merged) and mounts this screen at the `welcome` route.
+- **#14** will supply the real `onPaired` / `onSetup` destinations (QR scanner route + external browser `Intent`).
 
 Keeping `WelcomeScreen.kt` free of `NavController` and `Intent` references is what makes that parallelism work. The signature is **fixed**: don't add a `modifier` parameter, don't broaden the callbacks.
 
 ## Configuration / usage
 
-Once #8 lands, mount at the `welcome` route:
+Mounted at the `welcome` route in `PyryNavHost` (see `MainActivity.kt`):
 
 ```kotlin
-composable("welcome") {
+composable(Routes.Welcome) {
     WelcomeScreen(
-        onPaired = { /* nav to scanner — #14 */ },
-        onSetup  = { /* launch browser — #14 */ },
+        onPaired = { navController.navigate(Routes.ChannelList) }, // #14 will swap to Scanner route
+        onSetup  = { /* TODO(#14): external browser intent */ },
     )
 }
 ```
