@@ -11,6 +11,7 @@ One-line pointers to evergreen docs. Per-ticket implementation notes live under 
 - [Conversation repository](features/conversation-repository.md) — `ConversationRepository` interface + `ConversationFilter`, `ThreadItem` (`MessageItem` / `SessionBoundary`), `BoundaryReason`; data-layer seam every UI tier binds to. Phase 1 binding is the in-memory `FakeConversationRepository`.
 - [Dependency injection](features/dependency-injection.md) — Koin scaffold; single `appModule` at `di/AppModule.kt`, `startKoin` owned by `PyryApp.onCreate`. Downstream tickets append `single`/`viewModel` lines.
 - [App preferences](features/app-preferences.md) — `AppPreferences` wrapper over a shared `DataStore<Preferences>` (file `app_prefs`); typed `Flow<T>` reads + `suspend` setters for non-secret app state. First key: `pairedServerExists`.
+- [ConversationRow](features/conversation-row.md) — stateless M3 `ListItem`-based row consuming `Conversation` + `Message?`; auto-name fallback branched on `isPromoted`, whitespace-normalized 2-line preview, kotlinx-datetime relative-time bucketing (`just now` / `Nm ago` / `Nh ago` / `Yesterday` / `Nd ago` / abbreviated date). Shared primitive for #18 channel list and the discussions drilldown.
 
 ## Decisions
 
