@@ -185,6 +185,20 @@ class FakeConversationRepository : ConversationRepository {
                     claudeSessionUuid = "seed-claude-joi-pilates",
                     lastUsedAt = Instant.parse("2026-05-08T15:30:00Z"),
                 ),
+                seedDiscussion(
+                    id = "seed-discussion-b",
+                    cwd = "~/.pyrycode/scratch",
+                    sessionId = "seed-session-discussion-b",
+                    claudeSessionUuid = "seed-claude-discussion-b",
+                    lastUsedAt = Instant.parse("2026-05-09T08:00:00Z"),
+                ),
+                seedDiscussion(
+                    id = "seed-discussion-a",
+                    cwd = "~/.pyrycode/scratch",
+                    sessionId = "seed-session-discussion-a",
+                    claudeSessionUuid = "seed-claude-discussion-a",
+                    lastUsedAt = Instant.parse("2026-05-11T14:00:00Z"),
+                ),
             )
             return seeds.associateBy { it.conversation.id }
         }
@@ -211,6 +225,32 @@ class FakeConversationRepository : ConversationRepository {
                 currentSessionId = sessionId,
                 sessionHistory = listOf(sessionId),
                 isPromoted = true,
+                lastUsedAt = lastUsedAt,
+            )
+            return ConversationRecord(conversation, mapOf(sessionId to session))
+        }
+
+        private fun seedDiscussion(
+            id: String,
+            cwd: String,
+            sessionId: String,
+            claudeSessionUuid: String,
+            lastUsedAt: Instant,
+        ): ConversationRecord {
+            val session = Session(
+                id = sessionId,
+                conversationId = id,
+                claudeSessionUuid = claudeSessionUuid,
+                startedAt = lastUsedAt,
+                endedAt = null,
+            )
+            val conversation = Conversation(
+                id = id,
+                name = null,
+                cwd = cwd,
+                currentSessionId = sessionId,
+                sessionHistory = listOf(sessionId),
+                isPromoted = false,
                 lastUsedAt = lastUsedAt,
             )
             return ConversationRecord(conversation, mapOf(sessionId to session))
