@@ -1,5 +1,7 @@
 package de.pyryco.mobile
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -16,6 +18,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -72,12 +75,15 @@ private fun PyryNavHost(
         modifier = modifier,
     ) {
         composable(Routes.Welcome) {
+            val context = LocalContext.current
             WelcomeScreen(
                 onPaired = {
                     navController.navigate(Routes.Scanner)
                 },
                 onSetup = {
-                    // TODO(#14): launch external browser intent to pyrycode install docs.
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, Uri.parse(SetupUrl)),
+                    )
                 },
             )
         }
@@ -121,6 +127,8 @@ private fun SettingsPlaceholder(onBack: () -> Unit) {
         }
     }
 }
+
+private const val SetupUrl = "https://pyryco.de/setup"
 
 private object Routes {
     const val Welcome = "welcome"
