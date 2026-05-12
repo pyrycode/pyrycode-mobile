@@ -4,7 +4,7 @@ Koin is the project's DI framework. One `appModule`, declared at `de/pyryco/mobi
 
 ## What it does
 
-Every singleton, repository, and ViewModel that needs construction wiring is declared as a Koin definition in `appModule`. Composables resolve dependencies with `koinViewModel()` / `koinInject()` from `koin-androidx-compose`; non-Compose code uses `by inject()` / `get()`. The scaffold itself ships zero bindings — downstream tickets fill it.
+Every singleton, repository, and ViewModel that needs construction wiring is declared as a Koin definition in `appModule`. Composables resolve dependencies with `koinViewModel()` / `koinInject()` from `koin-androidx-compose`; non-Compose code uses `by inject()` / `get()`. Bindings land here as tickets need them — see `AppModule.kt` for the current set.
 
 ## How it works
 
@@ -24,7 +24,9 @@ class PyryApp : Application() {
 
 // de/pyryco/mobile/di/AppModule.kt
 val appModule = module {
-    // bindings go here
+    single<DataStore<Preferences>> { /* … */ }   // #11
+    single { AppPreferences(get()) }             // #11
+    // further bindings appended here by downstream tickets
 }
 ```
 
@@ -37,7 +39,7 @@ val appModule = module {
    - **ViewModel**: `viewModel { ChannelListViewModel(get()) }` — uses `koin-androidx-compose`, resolved in composables with `koinViewModel<ChannelListViewModel>()`.
 3. No registration step elsewhere. `appModule` is wired into `startKoin` once; the new definition flows through automatically.
 
-The transient comment in `AppModule.kt` points at the first three pending consumers (#11, #4, ViewModel tickets). Whichever ticket lands second is responsible for deleting it — it has done its job once bindings exist.
+The transient pending-consumers comment from #32 is being consumed line-by-line as tickets land (#11 already removed its line). When #4 and the first ViewModel ticket ship, the whole block goes.
 
 ## Configuration
 
@@ -55,6 +57,6 @@ The transient comment in `AppModule.kt` points at the first three pending consum
 
 ## Related
 
-- Ticket notes: `../codebase/32.md`
+- Ticket notes: `../codebase/32.md` (scaffold), `../codebase/11.md` (first real binding — `AppPreferences`)
 - Spec: `docs/specs/architecture/32-koin-di-scaffold.md`
-- First binding consumers: #11 (`AppPreferences`), #4 (`FakeConversationRepository` ↔ `ConversationRepository`), upcoming ViewModel tickets.
+- First binding consumers: #11 (`AppPreferences` — landed), #4 (`FakeConversationRepository` ↔ `ConversationRepository`), upcoming ViewModel tickets.

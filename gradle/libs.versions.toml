@@ -10,11 +10,13 @@ kotlin = "2.2.10"
 kotlinxCoroutines = "1.10.2"
 kotlinxDatetime = "0.6.2"
 composeBom = "2026.02.01"
+datastore = "1.1.7"
 navigationCompose = "2.9.5"
 koinBom = "4.0.4"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
