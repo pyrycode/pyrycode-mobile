@@ -68,7 +68,7 @@ CLAUDE.md's "Don't" section names Compose Multiplatform as a walk-back trigger. 
 
 - **No serialization annotations.** `@Serializable` / `@JsonClass` belong to Phase 4 when the wire protocol ships. Adding them speculatively pulls in a Gradle plugin (`kotlin("plugin.serialization")`) the project doesn't otherwise need.
 - **No `require(...)` / `init { }` validation.** Schema-shape only; constructors cannot fail. The repository layer will enforce invariants (e.g. `currentSessionId ∈ sessionHistory ∪ {new}`) when it lands.
-- **No `SessionBoundary` marker yet.** CLAUDE.md describes a synthetic marker the repository interleaves into the message stream to drive thread-screen delimiters; that type lands with `ConversationRepository.observeMessages(...)`.
+- **No `SessionBoundary` marker here.** CLAUDE.md describes a synthetic marker the repository interleaves into the message stream to drive thread-screen delimiters; that type lives with the repository contract as `ThreadItem.SessionBoundary` in `data/repository/ConversationRepository.kt` (landed in #3). See `conversation-repository.md`.
 - **No persistence.** DataStore / Room are out of scope; the fake repository will hold these in memory.
 
 ## Related
@@ -76,4 +76,4 @@ CLAUDE.md's "Don't" section names Compose Multiplatform as a walk-back trigger. 
 - Ticket notes: `../codebase/2.md`
 - Spec: `docs/specs/architecture/2-conversation-session-message-data-classes.md`
 - Decision: `../decisions/0001-kotlinx-datetime-for-data-layer.md`
-- Downstream consumers: `ConversationRepository` (next ticket), conversation list + thread UI.
+- Downstream: `conversation-repository.md` (#3 contract), conversation list + thread UI.
