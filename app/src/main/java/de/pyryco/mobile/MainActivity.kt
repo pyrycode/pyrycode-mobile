@@ -10,9 +10,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import de.pyryco.mobile.ui.onboarding.WelcomeScreen
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
@@ -51,10 +53,18 @@ private fun PyryNavHost(modifier: Modifier = Modifier) {
         composable(Routes.ChannelList) {
             Text("Channel list placeholder")
         }
+        composable(
+            route = Routes.ConversationThread,
+            arguments = listOf(navArgument("conversationId") { type = NavType.StringType }),
+        ) { backStackEntry ->
+            val conversationId = backStackEntry.arguments?.getString("conversationId").orEmpty()
+            Text("Conversation thread placeholder: $conversationId")
+        }
     }
 }
 
 private object Routes {
     const val Welcome = "welcome"
     const val ChannelList = "channel_list"
+    const val ConversationThread = "conversation_thread/{conversationId}"
 }
