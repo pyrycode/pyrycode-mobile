@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
 import java.util.UUID
 
 /**
@@ -18,7 +19,7 @@ import java.util.UUID
  */
 class FakeConversationRepository : ConversationRepository {
 
-    private val state = MutableStateFlow<Map<String, ConversationRecord>>(emptyMap())
+    private val state = MutableStateFlow<Map<String, ConversationRecord>>(SEED_RECORDS)
 
     override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> =
         state.map { records ->
@@ -31,6 +32,7 @@ class FakeConversationRepository : ConversationRepository {
                         ConversationFilter.Discussions -> !conv.isPromoted
                     }
                 }
+                .sortedByDescending { it.lastUsedAt }
         }
 
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
@@ -152,4 +154,66 @@ class FakeConversationRepository : ConversationRepository {
         val conversation: Conversation,
         val sessions: Map<String, Session>,
     )
+
+    companion object {
+        private val SEED_RECORDS: Map<String, ConversationRecord> = buildSeedRecords()
+
+        private fun buildSeedRecords(): Map<String, ConversationRecord> {
+            // Intentionally not in lastUsedAt order — exercises the sort projection.
+            val seeds = listOf(
+                seedChannel(
+                    id = "seed-channel-personal",
+                    name = "Personal",
+                    cwd = "~/Workspace/personal",
+                    sessionId = "seed-session-personal",
+                    claudeSessionUuid = "seed-claude-personal",
+                    lastUsedAt = Instant.parse("2026-05-05T20:15:00Z"),
+                ),
+                seedChannel(
+                    id = "seed-channel-pyrycode-mobile",
+                    name = "Pyrycode Mobile",
+                    cwd = "~/Workspace/pyrycode-mobile",
+                    sessionId = "seed-session-pyrycode-mobile",
+                    claudeSessionUuid = "seed-claude-pyrycode-mobile",
+                    lastUsedAt = Instant.parse("2026-05-10T09:00:00Z"),
+                ),
+                seedChannel(
+                    id = "seed-channel-joi-pilates",
+                    name = "Joi Pilates",
+                    cwd = "~/Workspace/joi-pilates",
+                    sessionId = "seed-session-joi-pilates",
+                    claudeSessionUuid = "seed-claude-joi-pilates",
+                    lastUsedAt = Instant.parse("2026-05-08T15:30:00Z"),
+                ),
+            )
+            return seeds.associateBy { it.conversation.id }
+        }
+
+        private fun seedChannel(
+            id: String,
+            name: String,
+            cwd: String,
+            sessionId: String,
+            claudeSessionUuid: String,
+            lastUsedAt: Instant,
+        ): ConversationRecord {
+            val session = Session(
+                id = sessionId,
+                conversationId = id,
+                claudeSessionUuid = claudeSessionUuid,
+                startedAt = lastUsedAt,
+                endedAt = null,
+            )
+            val conversation = Conversation(
+                id = id,
+                name = name,
+                cwd = cwd,
+                currentSessionId = sessionId,
+                sessionHistory = listOf(sessionId),
+                isPromoted = true,
+                lastUsedAt = lastUsedAt,
+            )
+            return ConversationRecord(conversation, mapOf(sessionId to session))
+        }
+    }
 }
