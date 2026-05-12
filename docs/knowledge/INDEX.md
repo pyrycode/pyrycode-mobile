@@ -7,7 +7,7 @@ One-line pointers to evergreen docs. Per-ticket implementation notes live under 
 - [Navigation](features/navigation.md) — single-activity Compose NavHost in `MainActivity`; `welcome` start destination + `channel_list` placeholder, route constants in colocated `Routes` object.
 - [Welcome screen](features/welcome-screen.md) — first onboarding screen; stateless Composable with two navigation callbacks, mounted at the `welcome` route.
 - [Data model](features/data-model.md) — `Conversation` / `Session` / `Message` schema in `data/model/`; shared shape across mobile, Discord, and pyrycode CLI consumers.
-- [Conversation repository](features/conversation-repository.md) — `ConversationRepository` interface + `ConversationFilter`, `ThreadItem` (`MessageItem` / `SessionBoundary`), `BoundaryReason`; data-layer seam every UI tier binds to.
+- [Conversation repository](features/conversation-repository.md) — `ConversationRepository` interface + `ConversationFilter`, `ThreadItem` (`MessageItem` / `SessionBoundary`), `BoundaryReason`; data-layer seam every UI tier binds to. Phase 1 binding is the in-memory `FakeConversationRepository`.
 
 ## Decisions
 
