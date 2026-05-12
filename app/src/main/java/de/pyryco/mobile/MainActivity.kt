@@ -11,14 +11,19 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.ui.onboarding.ScannerScreen
 import de.pyryco.mobile.ui.onboarding.WelcomeScreen
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.coroutines.launch
+import org.koin.compose.koinInject
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,10 +50,25 @@ private fun PyryNavHost(modifier: Modifier = Modifier) {
         composable(Routes.Welcome) {
             WelcomeScreen(
                 onPaired = {
-                    navController.navigate(Routes.ChannelList)
+                    navController.navigate(Routes.Scanner)
                 },
                 onSetup = {
                     // TODO(#14): launch external browser intent to pyrycode install docs.
+                },
+            )
+        }
+        composable(Routes.Scanner) {
+            val appPreferences = koinInject<AppPreferences>()
+            val scope = rememberCoroutineScope()
+            ScannerScreen(
+                onTap = {
+                    scope.launch {
+                        appPreferences.setPairedServerExists(true)
+                        navController.navigate(Routes.ChannelList) {
+                            popUpTo(Routes.Scanner) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    }
                 },
             )
         }
@@ -80,6 +100,7 @@ private fun SettingsPlaceholder(onBack: () -> Unit) {
 
 private object Routes {
     const val Welcome = "welcome"
+    const val Scanner = "scanner"
     const val ChannelList = "channel_list"
     const val ConversationThread = "conversation_thread/{conversationId}"
     const val Settings = "settings"
