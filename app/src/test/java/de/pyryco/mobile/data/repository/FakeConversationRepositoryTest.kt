@@ -13,9 +13,9 @@ class FakeConversationRepositoryTest {
     @Test
     fun observeConversations_emitsExpectedSeeds_initially_for_all_filters() = runBlocking {
         val repo = FakeConversationRepository()
-        assertEquals(3, repo.observeConversations(ConversationFilter.All).first().size)
+        assertEquals(5, repo.observeConversations(ConversationFilter.All).first().size)
         assertEquals(3, repo.observeConversations(ConversationFilter.Channels).first().size)
-        assertEquals(emptyList<Any>(), repo.observeConversations(ConversationFilter.Discussions).first())
+        assertEquals(2, repo.observeConversations(ConversationFilter.Discussions).first().size)
     }
 
     @Test
@@ -29,7 +29,7 @@ class FakeConversationRepositoryTest {
         val repo = FakeConversationRepository()
         val created = repo.createDiscussion()
         val all = repo.observeConversations(ConversationFilter.All).first()
-        assertEquals(4, all.size)
+        assertEquals(6, all.size)
         assertTrue(all.any { it.id == created.id })
     }
 
@@ -45,7 +45,7 @@ class FakeConversationRepositoryTest {
     fun createDiscussion_appearsIn_Discussions_filter_butNotIn_Channels() = runBlocking {
         val repo = FakeConversationRepository()
         val created = repo.createDiscussion()
-        assertEquals(1, repo.observeConversations(ConversationFilter.Discussions).first().size)
+        assertEquals(3, repo.observeConversations(ConversationFilter.Discussions).first().size)
         val channels = repo.observeConversations(ConversationFilter.Channels).first()
         assertEquals(3, channels.size)
         assertTrue(channels.none { it.id == created.id })
@@ -66,7 +66,7 @@ class FakeConversationRepositoryTest {
         val repo = FakeConversationRepository()
         val created = repo.createDiscussion()
         repo.promote(created.id, name = "my-channel")
-        assertEquals(0, repo.observeConversations(ConversationFilter.Discussions).first().size)
+        assertEquals(2, repo.observeConversations(ConversationFilter.Discussions).first().size)
         val channels = repo.observeConversations(ConversationFilter.Channels).first()
         assertEquals(4, channels.size)
         assertTrue(channels.any { it.id == created.id })
@@ -127,6 +127,22 @@ class FakeConversationRepositoryTest {
         assertEquals(3, timestamps.toSet().size)
         assertTrue(channels.all { it.currentSessionId.isNotBlank() })
         assertTrue(channels.all { it.isPromoted })
+    }
+
+    @Test
+    fun observeConversations_Discussions_emitsTwoSeededDiscussions_orderedByLastUsedAtDescending() = runBlocking {
+        val repo = FakeConversationRepository()
+        val discussions = repo.observeConversations(ConversationFilter.Discussions).first()
+
+        assertEquals(2, discussions.size)
+        assertTrue(discussions.all { it.name == null })
+        assertTrue(discussions.all { !it.isPromoted })
+        assertEquals(setOf("~/.pyrycode/scratch"), discussions.map { it.cwd }.toSet())
+        assertTrue(discussions.all { it.currentSessionId.isNotBlank() })
+        assertEquals(2, discussions.map { it.currentSessionId }.toSet().size)
+        val timestamps = discussions.map { it.lastUsedAt }
+        assertEquals(timestamps.sortedDescending(), timestamps)
+        assertEquals(2, timestamps.toSet().size)
     }
 
     @Test
