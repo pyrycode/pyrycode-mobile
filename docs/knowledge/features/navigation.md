@@ -46,9 +46,14 @@ PyrycodeMobileTheme {
 ```kotlin
 NavHost(navController, startDestination = startDestination) {
     composable(Routes.Welcome) {
+        val context = LocalContext.current
         WelcomeScreen(
             onPaired = { navController.navigate(Routes.Scanner) },
-            onSetup  = { /* TODO(#14): external browser intent */ },
+            onSetup  = {
+                context.startActivity(
+                    Intent(Intent.ACTION_VIEW, Uri.parse(SetupUrl)),
+                )
+            },
         )
     }
     composable(Routes.Scanner) {
@@ -112,7 +117,7 @@ Screens take navigation as `() -> Unit` callbacks, not a `NavController`. This i
 
 ## Related
 
-- Ticket notes: `../codebase/8.md` (NavHost setup), `../codebase/12.md` (Scanner stub + first destination-block Koin/coroutine wiring), `../codebase/13.md` (conditional start destination + `produceState` gating), `../codebase/15.md` (first parameterized route), `../codebase/16.md` (Settings placeholder + interactive-placeholder factoring rule)
+- Ticket notes: `../codebase/8.md` (NavHost setup), `../codebase/12.md` (Scanner stub + first destination-block Koin/coroutine wiring), `../codebase/13.md` (conditional start destination + `produceState` gating), `../codebase/14.md` (Welcome `onSetup` → `Intent.ACTION_VIEW` + `LocalContext.current` capture in a `composable` block), `../codebase/15.md` (first parameterized route), `../codebase/16.md` (Settings placeholder + interactive-placeholder factoring rule)
 - Specs: `docs/specs/architecture/8-navigation-compose-setup.md`, `docs/specs/architecture/12-stub-scanner-screen.md`, `docs/specs/architecture/13-conditional-navhost-start-destination.md`, `docs/specs/architecture/15-conversation-thread-placeholder-route.md`, `docs/specs/architecture/16-settings-placeholder-route.md`
 - Consumers: [Welcome screen](welcome-screen.md), [Scanner screen](scanner-screen.md), [App preferences](app-preferences.md) (read by the start-destination gate)
-- Follow-ups: #14 (real `onSetup` browser intent), data-layer chain (replaces `channel_list` body), Phase 2 thread UI (replaces `conversation_thread/{conversationId}` body), channel-list row → thread navigation wiring, Channel List TopAppBar (wires gear icon to `Routes.Settings` and adds `material-icons-core`), Phase 3 Settings sections (replaces `SettingsPlaceholder`), Phase 4 (replaces `scanner` body with real CameraX + ML Kit)
+- Follow-ups: data-layer chain (replaces `channel_list` body), Phase 2 thread UI (replaces `conversation_thread/{conversationId}` body), channel-list row → thread navigation wiring, Channel List TopAppBar (wires gear icon to `Routes.Settings` and adds `material-icons-core`), Phase 3 Settings sections (replaces `SettingsPlaceholder`), Phase 4 (replaces `scanner` body with real CameraX + ML Kit)
