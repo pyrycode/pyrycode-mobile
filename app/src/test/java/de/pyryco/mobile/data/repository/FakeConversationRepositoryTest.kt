@@ -32,8 +32,75 @@ class FakeConversationRepositoryTest {
         val repo = FakeConversationRepository()
         assertEquals(
             emptyList<ThreadItem>(),
-            repo.observeMessages("seed-channel-personal").first(),
+            repo.observeMessages("seed-discussion-a").first(),
         )
+    }
+
+    @Test
+    fun seededChannels_emitExactlyOneBoundary_betweenTwoSessions() = runBlocking {
+        val repo = FakeConversationRepository()
+        val channelIds = listOf(
+            "seed-channel-personal",
+            "seed-channel-pyrycode-mobile",
+            "seed-channel-joi-pilates",
+        )
+        for (id in channelIds) {
+            val items = repo.observeMessages(id).first()
+            val boundaries = items.filterIsInstance<ThreadItem.SessionBoundary>()
+            assertEquals("expected 1 boundary in $id", 1, boundaries.size)
+        }
+    }
+
+    @Test
+    fun seededChannels_messagesAreChronologicallyOrdered() = runBlocking {
+        val repo = FakeConversationRepository()
+        val channelIds = listOf(
+            "seed-channel-personal",
+            "seed-channel-pyrycode-mobile",
+            "seed-channel-joi-pilates",
+        )
+        for (id in channelIds) {
+            val items = repo.observeMessages(id).first()
+            val timestamps = items.filterIsInstance<ThreadItem.MessageItem>()
+                .map { it.message.timestamp }
+            assertEquals("messages in $id must be chronological", timestamps.sorted(), timestamps)
+            assertTrue("expected messages in $id", timestamps.isNotEmpty())
+        }
+    }
+
+    @Test
+    fun seededChannels_haveTwoSessionsInHistory_endingWithCurrentSessionId() = runBlocking {
+        val repo = FakeConversationRepository()
+        val channels = repo.observeConversations(ConversationFilter.Channels).first()
+        for (channel in channels) {
+            assertEquals(
+                "sessionHistory size for ${channel.id}",
+                2,
+                channel.sessionHistory.size,
+            )
+            assertEquals(
+                "sessionHistory has duplicates in ${channel.id}",
+                2,
+                channel.sessionHistory.toSet().size,
+            )
+            assertEquals(
+                "currentSessionId must be last in sessionHistory for ${channel.id}",
+                channel.currentSessionId,
+                channel.sessionHistory.last(),
+            )
+        }
+    }
+
+    @Test
+    fun seededDiscussions_remainEmpty() = runBlocking {
+        val repo = FakeConversationRepository()
+        for (id in listOf("seed-discussion-a", "seed-discussion-b")) {
+            assertEquals(
+                "discussion $id must be empty",
+                emptyList<ThreadItem>(),
+                repo.observeMessages(id).first(),
+            )
+        }
     }
 
     @Test
