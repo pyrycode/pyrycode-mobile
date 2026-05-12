@@ -1,7 +1,10 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.Role
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
@@ -19,9 +22,52 @@ class FakeConversationRepositoryTest {
     }
 
     @Test
-    fun observeMessages_emitsEmpty() = runBlocking {
+    fun observeMessages_unknownConversation_emitsEmpty() = runBlocking {
         val repo = FakeConversationRepository()
-        assertEquals(emptyList<Any>(), repo.observeMessages("any-id").first())
+        assertEquals(emptyList<ThreadItem>(), repo.observeMessages("any-id").first())
+    }
+
+    @Test
+    fun observeMessages_knownConversationWithNoMessages_emitsEmpty() = runBlocking {
+        val repo = FakeConversationRepository()
+        assertEquals(
+            emptyList<ThreadItem>(),
+            repo.observeMessages("seed-channel-personal").first(),
+        )
+    }
+
+    @Test
+    fun observeMessages_messagesAcrossTwoSessions_emitsExactlyOneBoundary() = runBlocking {
+        val sessionA = "session-a"
+        val sessionB = "session-b"
+        val messages = listOf(
+            Message("m1", sessionA, Role.User, "hi", Instant.parse("2026-05-10T10:00:00Z"), false),
+            Message("m2", sessionA, Role.Assistant, "hello", Instant.parse("2026-05-10T10:01:00Z"), false),
+            Message("m3", sessionB, Role.User, "again", Instant.parse("2026-05-10T11:00:00Z"), false),
+            Message("m4", sessionB, Role.Assistant, "back", Instant.parse("2026-05-10T11:01:00Z"), false),
+        )
+        val repo = FakeConversationRepository(
+            initialMessages = mapOf("seed-channel-personal" to messages),
+        )
+
+        val items = repo.observeMessages("seed-channel-personal").first()
+
+        assertEquals(5, items.size)
+
+        val boundaries = items.filterIsInstance<ThreadItem.SessionBoundary>()
+        assertEquals(1, boundaries.size)
+        val b = boundaries.single()
+        assertEquals(sessionA, b.previousSessionId)
+        assertEquals(sessionB, b.newSessionId)
+        assertEquals(Instant.parse("2026-05-10T11:00:00Z"), b.occurredAt)
+        assertEquals(BoundaryReason.Clear, b.reason)
+
+        val boundaryIndex = items.indexOfFirst { it is ThreadItem.SessionBoundary }
+        assertEquals(ThreadItem.MessageItem(messages[1]), items[boundaryIndex - 1])
+        assertEquals(ThreadItem.MessageItem(messages[2]), items[boundaryIndex + 1])
+
+        val messageItems = items.filterIsInstance<ThreadItem.MessageItem>()
+        assertEquals(messages, messageItems.map { it.message })
     }
 
     @Test

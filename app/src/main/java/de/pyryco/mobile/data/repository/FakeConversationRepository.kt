@@ -1,10 +1,10 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Session
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.datetime.Clock
@@ -17,9 +17,15 @@ import java.util.UUID
  * and observers re-emit on every change. Phase 4 replaces this with a
  * Ktor-backed remote implementation behind the same interface.
  */
-class FakeConversationRepository : ConversationRepository {
+class FakeConversationRepository(
+    initialMessages: Map<String, List<Message>> = emptyMap(),
+) : ConversationRepository {
 
-    private val state = MutableStateFlow<Map<String, ConversationRecord>>(SEED_RECORDS)
+    private val state = MutableStateFlow<Map<String, ConversationRecord>>(
+        SEED_RECORDS.mapValues { (id, record) ->
+            initialMessages[id]?.let { record.copy(messages = it) } ?: record
+        },
+    )
 
     override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> =
         state.map { records ->
@@ -36,7 +42,31 @@ class FakeConversationRepository : ConversationRepository {
         }
 
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
-        flowOf(emptyList())
+        state.map { records ->
+            val messages = records[conversationId]?.messages ?: return@map emptyList()
+            buildThreadItems(messages)
+        }
+
+    private fun buildThreadItems(messages: List<Message>): List<ThreadItem> {
+        if (messages.isEmpty()) return emptyList()
+        val sorted = messages.sortedBy { it.timestamp }
+        val result = ArrayList<ThreadItem>(sorted.size + sorted.size / 4)
+        var previousSessionId: String? = null
+        for (message in sorted) {
+            val prior = previousSessionId
+            if (prior != null && prior != message.sessionId) {
+                result += ThreadItem.SessionBoundary(
+                    previousSessionId = prior,
+                    newSessionId = message.sessionId,
+                    reason = BoundaryReason.Clear,
+                    occurredAt = message.timestamp,
+                )
+            }
+            result += ThreadItem.MessageItem(message)
+            previousSessionId = message.sessionId
+        }
+        return result
+    }
 
     override suspend fun createDiscussion(workspace: String?): Conversation {
         val now = Clock.System.now()
@@ -153,6 +183,7 @@ class FakeConversationRepository : ConversationRepository {
     private data class ConversationRecord(
         val conversation: Conversation,
         val sessions: Map<String, Session>,
+        val messages: List<Message> = emptyList(),
     )
 
     companion object {
