@@ -8,9 +8,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavType
@@ -22,6 +25,7 @@ import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.ui.onboarding.ScannerScreen
 import de.pyryco.mobile.ui.onboarding.WelcomeScreen
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 
@@ -32,7 +36,24 @@ class MainActivity : ComponentActivity() {
         setContent {
             PyrycodeMobileTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    PyryNavHost(modifier = Modifier.padding(innerPadding))
+                    val appPreferences = koinInject<AppPreferences>()
+                    val paired: Boolean? by produceState<Boolean?>(
+                        initialValue = null,
+                        appPreferences,
+                    ) {
+                        value = appPreferences.pairedServerExists.first()
+                    }
+                    when (val v = paired) {
+                        null -> Surface(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(innerPadding),
+                        ) {}
+                        else -> PyryNavHost(
+                            startDestination = if (v) Routes.ChannelList else Routes.Welcome,
+                            modifier = Modifier.padding(innerPadding),
+                        )
+                    }
                 }
             }
         }
@@ -40,11 +61,14 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun PyryNavHost(modifier: Modifier = Modifier) {
+private fun PyryNavHost(
+    startDestination: String,
+    modifier: Modifier = Modifier,
+) {
     val navController = rememberNavController()
     NavHost(
         navController = navController,
-        startDestination = Routes.Welcome,
+        startDestination = startDestination,
         modifier = modifier,
     ) {
         composable(Routes.Welcome) {
