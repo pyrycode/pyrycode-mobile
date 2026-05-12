@@ -4,10 +4,11 @@ Single-activity Compose Navigation host. `MainActivity` is the only Activity; al
 
 ## What it does
 
-Boots the app into the `welcome` route and provides the route graph that subsequent screens plug into. Currently two routes:
+Boots the app into the `welcome` route and provides the route graph that subsequent screens plug into. Currently three routes:
 
 - **`welcome`** (start destination) — renders `WelcomeScreen` (#7).
 - **`channel_list`** — placeholder `Text("Channel list placeholder")`; the data-layer chain replaces this body with the real Channel List Composable.
+- **`conversation_thread/{conversationId}`** — placeholder `Text("Conversation thread placeholder: $conversationId")` proving the path argument round-trips (#15). Phase 2 replaces the body with the real thread UI (streaming markdown, code blocks, tool calls, session-boundary delimiters).
 
 ## How it works
 
@@ -32,16 +33,24 @@ NavHost(navController, startDestination = Routes.Welcome) {
         )
     }
     composable(Routes.ChannelList) { Text("Channel list placeholder") }
+    composable(
+        route = Routes.ConversationThread,
+        arguments = listOf(navArgument("conversationId") { type = NavType.StringType }),
+    ) { backStackEntry ->
+        val conversationId = backStackEntry.arguments?.getString("conversationId").orEmpty()
+        Text("Conversation thread placeholder: $conversationId")
+    }
 }
 ```
 
-Route strings are pinned in a colocated `private object Routes` (see `MainActivity.kt:57-60`). Call sites use `Routes.Welcome` / `Routes.ChannelList`, never inline strings.
+Route strings are pinned in a colocated `private object Routes` (see `MainActivity.kt:66-70`). Call sites use `Routes.Welcome` / `Routes.ChannelList` / `Routes.ConversationThread`, never inline strings. Concrete navigation targets for parameterized routes are built inline at the call site (e.g. `navController.navigate("conversation_thread/$id")`); lift to a helper when a second caller appears.
 
 ## Adding a route
 
-1. Add a `const val MyRoute = "my_route"` to `Routes`.
-2. Add a `composable(Routes.MyRoute) { MyScreen(...) }` block inside `PyryNavHost`.
-3. Wire the screen's navigation callbacks via `navController.navigate(...)` in the lambda passed from `PyryNavHost` — keep the screen Composable itself stateless and `NavController`-free.
+1. Add a `const val MyRoute = "my_route"` (or `"my_route/{argName}"` for a parameterized route) to `Routes`. Keep the `{name}` placeholder inside the constant — the graph DSL consumes the literal pattern.
+2. Add a `composable(Routes.MyRoute) { MyScreen(...) }` block inside `PyryNavHost`. For parameterized routes, declare arguments explicitly: `arguments = listOf(navArgument("argName") { type = NavType.StringType })`. `StringType` is the default, but the explicit form documents the type at the call site and isolates the swap point.
+3. Extract path arguments via `backStackEntry.arguments?.getString("argName").orEmpty()` — the `?.` is for the type system; Compose Navigation guarantees presence before composition.
+4. Wire the screen's navigation callbacks via `navController.navigate(...)` in the lambda passed from `PyryNavHost` — keep the screen Composable itself stateless and `NavController`-free.
 
 Screens take navigation as `() -> Unit` callbacks, not a `NavController`. This is what lets routing and destination wiring land in parallel tickets (the #7 / #8 / #14 pattern).
 
@@ -53,14 +62,14 @@ Screens take navigation as `() -> Unit` callbacks, not a `NavController`. This i
 
 ## Edge cases / limitations
 
-- **No type-safe routes yet.** When the first parameterized route lands (e.g. `thread/{conversationId}`), reconsider whether to migrate `Routes` to `@Serializable` data classes. The current string-constant form is deliberate for argument-less destinations.
+- **No type-safe routes yet.** The first parameterized route (`conversation_thread/{conversationId}`, #15) landed on string constants by design — partially migrating one route while siblings stay as `String` is worse than either end-state. A full migration of `Routes` to `@Serializable` data classes remains a separate, larger future ticket; do not bundle it with a feature ticket.
 - **No deep links, no animations.** `composable(Routes.X) { ... }` only — no `deepLinks = listOf(...)`, no custom `enterTransition` / `exitTransition`.
 - **No navigation instrumentation tests.** `TestNavHostController` setup was deferred per #8. The unused `androidx-compose-ui-test-junit4` catalog entry waits for the ticket that needs it.
 - **Pairing-state-conditional start destination is unticketed downstream work (#13).** Today the app always boots into `welcome`.
 
 ## Related
 
-- Ticket notes: `../codebase/8.md`
-- Spec: `docs/specs/architecture/8-navigation-compose-setup.md`
+- Ticket notes: `../codebase/8.md` (NavHost setup), `../codebase/15.md` (first parameterized route)
+- Specs: `docs/specs/architecture/8-navigation-compose-setup.md`, `docs/specs/architecture/15-conversation-thread-placeholder-route.md`
 - Consumers: [Welcome screen](welcome-screen.md)
-- Follow-ups: #13 (conditional start), #14 (real CTA destinations), data-layer chain (replaces `channel_list` body)
+- Follow-ups: #13 (conditional start), #14 (real CTA destinations), data-layer chain (replaces `channel_list` body), Phase 2 thread UI (replaces `conversation_thread/{conversationId}` body), channel-list row → thread navigation wiring
