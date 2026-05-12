@@ -6,7 +6,7 @@ Typed wrapper around a single shared `DataStore<Preferences>` for app-level key-
 
 Exposes app-level preferences as typed `Flow<T>` reads + `suspend fun` writes. Today there is one preference:
 
-- `pairedServerExists: Flow<Boolean>` — `false` by default; flips to `true` once the Scanner screen records a successful server pairing. Used by the conditional `NavHost` start destination (#13) to decide between the Welcome flow and the channel list, and by `Settings` (Phase 3) to surface pairing state.
+- `pairedServerExists: Flow<Boolean>` — `false` by default; flips to `true` once the Scanner screen records a successful server pairing (#12). Read by `MainActivity`'s composition root to decide the `NavHost` start destination between `welcome` and `channel_list` (#13), and reserved for `Settings` (Phase 3) to surface pairing state.
 
 Secrets (the pairing token itself) are explicitly **not** stored here — that's a separate security-sensitive ticket using EncryptedSharedPreferences / the Keystore. `AppPreferences` is only for non-secret booleans/strings/ints.
 
@@ -78,11 +78,14 @@ Once `AppPreferences` accumulates ~5 keys, consider splitting by domain (`AppPre
 ## Usage
 
 ```kotlin
-// In a ViewModel (#13's NavHost decision)
-private val prefs: AppPreferences by inject()
-viewModelScope.launch {
-    val paired = prefs.pairedServerExists.first()
-    startDestination = if (paired) Routes.ChannelList else Routes.Welcome
+// In MainActivity's composition root (#13's NavHost-start-destination gate — one-shot read)
+val appPreferences = koinInject<AppPreferences>()
+val paired: Boolean? by produceState<Boolean?>(initialValue = null, appPreferences) {
+    value = appPreferences.pairedServerExists.first()
+}
+when (val v = paired) {
+    null -> Surface(Modifier.fillMaxSize()) {}                  // neutral placeholder during first emit
+    else -> PyryNavHost(if (v) Routes.ChannelList else Routes.Welcome)
 }
 
 // In #12's Scanner destination on tap (no ViewModel — see Scanner screen feature doc)
@@ -98,7 +101,7 @@ scope.launch {
 }
 ```
 
-Collecting reactively is also fine when a screen needs live updates:
+Collecting reactively is also fine when a screen needs live updates — but note that `collectAsStateWithLifecycle` requires `androidx.lifecycle:lifecycle-runtime-compose`, which is **not** in the version catalog today (only `lifecycle-runtime-ktx` is wired). Don't add it for a one-shot read; reach for it only when a screen genuinely needs live re-composition on flag flips:
 
 ```kotlin
 val paired by appPrefs.pairedServerExists.collectAsStateWithLifecycle(initialValue = false)
@@ -121,8 +124,8 @@ val paired by appPrefs.pairedServerExists.collectAsStateWithLifecycle(initialVal
 
 ## Related
 
-- Ticket notes: `../codebase/11.md`, `../codebase/12.md` (first write site)
+- Ticket notes: `../codebase/11.md`, `../codebase/12.md` (first write site), `../codebase/13.md` (first read site — `NavHost` start-destination gate)
 - Spec: `docs/specs/architecture/11-datastore-app-preferences.md`
 - DI feature: `dependency-injection.md`
-- First consumers: #12 (Scanner pairing-write — merged), #13 (conditional `NavHost` start destination — pending).
+- First consumers: #12 (Scanner pairing-write — merged), #13 (conditional `NavHost` start destination — merged).
 - Phase 3: theme + notification preferences will land as sibling classes in `data/preferences/`.

@@ -4,7 +4,7 @@ One-line pointers to evergreen docs. Per-ticket implementation notes live under 
 
 ## Features
 
-- [Navigation](features/navigation.md) — single-activity Compose NavHost in `MainActivity`; `welcome` start + `scanner`, `channel_list`, `conversation_thread/{conversationId}`, and `settings` destinations, route constants in colocated `Routes` object.
+- [Navigation](features/navigation.md) — single-activity Compose NavHost in `MainActivity`; start destination gated on `AppPreferences.pairedServerExists` via `produceState` (`welcome` fresh, `channel_list` once paired); destinations `welcome`, `scanner`, `channel_list`, `conversation_thread/{conversationId}`, `settings`; route constants in colocated `Routes` object.
 - [Welcome screen](features/welcome-screen.md) — first onboarding screen; stateless Composable with two navigation callbacks, mounted at the `welcome` route.
 - [Scanner screen](features/scanner-screen.md) — stub QR-pairing screen at the `scanner` route; tap anywhere flips `AppPreferences.setPairedServerExists(true)` + navigates to `channel_list` with the scanner popped. Phase 4 replaces with real CameraX + ML Kit.
 - [Data model](features/data-model.md) — `Conversation` / `Session` / `Message` schema in `data/model/`; shared shape across mobile, Discord, and pyrycode CLI consumers.
