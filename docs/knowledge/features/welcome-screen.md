@@ -7,7 +7,7 @@ First screen of the onboarding flow. Shown to new users before any pairing state
 Greets the user, names the app, and offers two next steps:
 
 - **"I already have pyrycode"** — primary CTA, invokes `onPaired`. Currently navigates to the `scanner` route (#12); Phase 4 replaces the stub scanner with real CameraX + ML Kit pairing.
-- **"Set up pyrycode first"** — secondary CTA, invokes `onSetup`. Eventually opens the pyrycode setup docs in an external browser (#14).
+- **"Set up pyrycode first"** — secondary CTA, invokes `onSetup`. Launches the device's default browser at `https://pyryco.de/setup` via `Intent.ACTION_VIEW` (#14).
 
 A footer line ("Pyrycode is open source.") sits at the bottom.
 
@@ -31,9 +31,9 @@ The screen is consumed in follow-up tickets that can land in any order:
 
 - **#8** added a `NavHost` (merged) and mounts this screen at the `welcome` route.
 - **#12** wired `onPaired` to the `scanner` stub route (merged); Phase 4 replaces the scanner body itself.
-- **#14** will supply the real `onSetup` destination (external browser `Intent` to pyrycode setup docs).
+- **#14** wired `onSetup` to an `Intent.ACTION_VIEW` launch at `https://pyryco.de/setup` (merged).
 
-Keeping `WelcomeScreen.kt` free of `NavController` and `Intent` references is what makes that parallelism work. The signature is **fixed**: don't add a `modifier` parameter, don't broaden the callbacks.
+Keeping `WelcomeScreen.kt` free of `NavController` and `Intent` references is what made that parallelism work, and it keeps preview / future ComposeTestRule callers able to pass `onSetup = {}` no-ops without a real `Context`. The signature is **fixed**: don't add a `modifier` parameter, don't broaden the callbacks.
 
 ## Configuration / usage
 
@@ -41,12 +41,19 @@ Mounted at the `welcome` route in `PyryNavHost` (see `MainActivity.kt`):
 
 ```kotlin
 composable(Routes.Welcome) {
+    val context = LocalContext.current
     WelcomeScreen(
         onPaired = { navController.navigate(Routes.Scanner) },
-        onSetup  = { /* TODO(#14): external browser intent */ },
+        onSetup  = {
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW, Uri.parse(SetupUrl)),
+            )
+        },
     )
 }
 ```
+
+`SetupUrl` is a file-scope `private const val` in `MainActivity.kt` set to `https://pyryco.de/setup`. The URL currently redirects to the pyrycode repo README; a real landing page is a future, unticketed change.
 
 No DI wiring needed for this screen.
 
@@ -62,5 +69,6 @@ No DI wiring needed for this screen.
 - Spec: `docs/specs/architecture/7-welcome-screen-scaffold.md`
 - Ticket notes: `docs/knowledge/codebase/7.md`
 - Figma node: `6:32` (412×892 baseline)
-- Follow-ups: #8 (routing — merged), #12 (`onPaired` → Scanner — merged), #13 (conditional start), #14 (real `onSetup` browser intent)
+- Ticket notes: `docs/knowledge/codebase/14.md` (`onSetup` external-browser wiring)
+- Follow-ups: #8 (routing — merged), #12 (`onPaired` → Scanner — merged), #13 (conditional start), #14 (`onSetup` → external browser — merged)
 - Sibling: [Scanner screen](scanner-screen.md)
