@@ -11,10 +11,10 @@ import org.junit.Test
 class FakeConversationRepositoryTest {
 
     @Test
-    fun observeConversations_emitsEmpty_initially_for_all_filters() = runBlocking {
+    fun observeConversations_emitsExpectedSeeds_initially_for_all_filters() = runBlocking {
         val repo = FakeConversationRepository()
-        assertEquals(emptyList<Any>(), repo.observeConversations(ConversationFilter.All).first())
-        assertEquals(emptyList<Any>(), repo.observeConversations(ConversationFilter.Channels).first())
+        assertEquals(3, repo.observeConversations(ConversationFilter.All).first().size)
+        assertEquals(3, repo.observeConversations(ConversationFilter.Channels).first().size)
         assertEquals(emptyList<Any>(), repo.observeConversations(ConversationFilter.Discussions).first())
     }
 
@@ -29,7 +29,8 @@ class FakeConversationRepositoryTest {
         val repo = FakeConversationRepository()
         val created = repo.createDiscussion()
         val all = repo.observeConversations(ConversationFilter.All).first()
-        assertEquals(listOf(created), all)
+        assertEquals(4, all.size)
+        assertTrue(all.any { it.id == created.id })
     }
 
     @Test
@@ -43,9 +44,11 @@ class FakeConversationRepositoryTest {
     @Test
     fun createDiscussion_appearsIn_Discussions_filter_butNotIn_Channels() = runBlocking {
         val repo = FakeConversationRepository()
-        repo.createDiscussion()
+        val created = repo.createDiscussion()
         assertEquals(1, repo.observeConversations(ConversationFilter.Discussions).first().size)
-        assertEquals(0, repo.observeConversations(ConversationFilter.Channels).first().size)
+        val channels = repo.observeConversations(ConversationFilter.Channels).first()
+        assertEquals(3, channels.size)
+        assertTrue(channels.none { it.id == created.id })
     }
 
     @Test
@@ -64,7 +67,9 @@ class FakeConversationRepositoryTest {
         val created = repo.createDiscussion()
         repo.promote(created.id, name = "my-channel")
         assertEquals(0, repo.observeConversations(ConversationFilter.Discussions).first().size)
-        assertEquals(1, repo.observeConversations(ConversationFilter.Channels).first().size)
+        val channels = repo.observeConversations(ConversationFilter.Channels).first()
+        assertEquals(4, channels.size)
+        assertTrue(channels.any { it.id == created.id })
     }
 
     @Test
@@ -72,7 +77,7 @@ class FakeConversationRepositoryTest {
         val repo = FakeConversationRepository()
         val created = repo.createDiscussion()
         repo.archive(created.id)
-        assertEquals(emptyList<Any>(), repo.observeConversations(ConversationFilter.All).first())
+        assertTrue(repo.observeConversations(ConversationFilter.All).first().none { it.id == created.id })
     }
 
     @Test
@@ -81,7 +86,8 @@ class FakeConversationRepositoryTest {
         val created = repo.createDiscussion()
         val renamed = repo.rename(created.id, "renamed")
         assertEquals("renamed", renamed.name)
-        assertEquals(listOf(renamed), repo.observeConversations(ConversationFilter.All).first())
+        val found = repo.observeConversations(ConversationFilter.All).first().first { it.id == created.id }
+        assertEquals("renamed", found.name)
     }
 
     @Test
@@ -101,8 +107,26 @@ class FakeConversationRepositoryTest {
         val newSession = repo.changeWorkspace(created.id, "/new")
         assertEquals(created.id, newSession.conversationId)
         assertNotEquals(created.currentSessionId, newSession.id)
-        val current = repo.observeConversations(ConversationFilter.All).first().single()
+        val current = repo.observeConversations(ConversationFilter.All).first().first { it.id == created.id }
         assertEquals("/new", current.cwd)
+    }
+
+    @Test
+    fun observeConversations_Channels_emitsThreeSeededChannels_orderedByLastUsedAtDescending() = runBlocking {
+        val repo = FakeConversationRepository()
+        val channels = repo.observeConversations(ConversationFilter.Channels).first()
+
+        assertEquals(3, channels.size)
+        assertEquals(
+            listOf("Pyrycode Mobile", "Joi Pilates", "Personal"),
+            channels.map { it.name },
+        )
+        assertEquals(3, channels.map { it.cwd }.toSet().size)
+        val timestamps = channels.map { it.lastUsedAt }
+        assertEquals(timestamps.sortedDescending(), timestamps)
+        assertEquals(3, timestamps.toSet().size)
+        assertTrue(channels.all { it.currentSessionId.isNotBlank() })
+        assertTrue(channels.all { it.isPromoted })
     }
 
     @Test
