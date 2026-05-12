@@ -70,13 +70,14 @@ The stream interleaves both kinds of row in order, so the consumer never paginat
 Same package; file `FakeConversationRepository.kt`. In-memory, no persistence, no network. Restart erases everything.
 
 - **Storage:** `MutableStateFlow<Map<String, ConversationRecord>>` — a single state-holder keyed by `conversationId`. `ConversationRecord` is a private file-scoped wrapper that pairs the `Conversation` with the full `Session` values (the `Conversation` itself only stores session **ids**).
-- **`observeConversations(filter)`** is derived from the state-holder via `Flow.map`, then `filter`ed on the `isPromoted` flag per `ConversationFilter`. Initial emission is `emptyList()` for every filter.
+- **`observeConversations(filter)`** is derived from the state-holder via `Flow.map`, `filter`ed on the `isPromoted` flag per `ConversationFilter`, and `sortedByDescending { it.lastUsedAt }`. The sort is filter-agnostic — channel list and discussions drilldown both want most-recently-used first. Initial emission carries the seed records (see "Seed data" below).
 - **`observeMessages(conversationId)`** is currently `flowOf(emptyList())` — a cold one-shot. Real message storage and `SessionBoundary` interleaving land in #9; consumers binding ahead of #9 should treat this as single-shot empty. Deliberately not wired to the same state-holder so the swap in #9 doesn't carry misleading "messages live with conversations" intuition forward.
 - **Mutators** use `state.update { ... }` (atomic CAS, no `Mutex`). `lateinit var` escapes the affected entity out of the lambda so the suspend function can return it. `archive` does an explicit membership check before `state.update { it - id }` because `Map.minus` is a no-op for missing keys — without the check, archiving an unknown id would silently succeed.
 - **Session boundaries:** workspace change is a session-boundary reason per CLAUDE.md. `changeWorkspace` and `startNewSession` share a private `mintNewSession(...)` helper that mints a new `Session`, closes out the previously-active one (`endedAt = now`), and appends the new id to `Conversation.sessionHistory`.
+- **Seed data:** initial state is three channels — `Pyrycode Mobile`, `Joi Pilates`, `Personal` — with stable `seed-channel-*` / `seed-session-*` ids, distinct `cwd`s, and fixed `Instant.parse(...)` `lastUsedAt`s. Built via a private `companion object` (`SEED_RECORDS` / `buildSeedRecords` / `seedChannel`) so the data is evaluated once at class load. Seeds are inserted in source order that is deliberately *not* the sorted order — exercises the sort projection. Discussions tier seeds land in #6 alongside this list. See `../codebase/5.md`.
 - **No DI wiring yet.** No Koin module exists; the binding lands with the first ViewModel that consumes the fake.
 
-Out of scope for the Phase 1 fake: persistence, sort order on emissions (the ViewModel sorts by `lastUsedAt` once seed data exists), `Dispatchers.IO` (everything is CPU-cheap map manipulation).
+Out of scope for the Phase 1 fake: persistence, `Dispatchers.IO` (everything is CPU-cheap map manipulation). Sort order moved into the repo with #5; ViewModels can rely on the emission being `lastUsedAt`-descending.
 
 ## What's deliberately absent
 
