@@ -85,9 +85,16 @@ viewModelScope.launch {
     startDestination = if (paired) Routes.ChannelList else Routes.Welcome
 }
 
-// In #12's Scanner ViewModel on successful pairing
-viewModelScope.launch {
-    prefs.setPairedServerExists(true)
+// In #12's Scanner destination on tap (no ViewModel — see Scanner screen feature doc)
+val appPreferences = koinInject<AppPreferences>()
+val scope = rememberCoroutineScope()
+// ...inside onTap:
+scope.launch {
+    appPreferences.setPairedServerExists(true)
+    navController.navigate(Routes.ChannelList) {
+        popUpTo(Routes.Scanner) { inclusive = true }
+        launchSingleTop = true
+    }
 }
 ```
 
@@ -114,8 +121,8 @@ val paired by appPrefs.pairedServerExists.collectAsStateWithLifecycle(initialVal
 
 ## Related
 
-- Ticket notes: `../codebase/11.md`
+- Ticket notes: `../codebase/11.md`, `../codebase/12.md` (first write site)
 - Spec: `docs/specs/architecture/11-datastore-app-preferences.md`
 - DI feature: `dependency-injection.md`
-- First consumers: #13 (conditional `NavHost` start destination), #12 (Scanner pairing-write).
+- First consumers: #12 (Scanner pairing-write — merged), #13 (conditional `NavHost` start destination — pending).
 - Phase 3: theme + notification preferences will land as sibling classes in `data/preferences/`.

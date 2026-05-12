@@ -6,7 +6,7 @@ First screen of the onboarding flow. Shown to new users before any pairing state
 
 Greets the user, names the app, and offers two next steps:
 
-- **"I already have pyrycode"** — primary CTA, invokes `onPaired`. Eventually opens the QR scanner (#14).
+- **"I already have pyrycode"** — primary CTA, invokes `onPaired`. Currently navigates to the `scanner` route (#12); Phase 4 replaces the stub scanner with real CameraX + ML Kit pairing.
 - **"Set up pyrycode first"** — secondary CTA, invokes `onSetup`. Eventually opens the pyrycode setup docs in an external browser (#14).
 
 A footer line ("Pyrycode is open source.") sits at the bottom.
@@ -27,10 +27,11 @@ Layout is a `Surface` over `Column(SpaceBetween)` with three children: hero bloc
 
 ## Why callbacks instead of a NavController
 
-The screen is consumed in two follow-up tickets that can land in either order:
+The screen is consumed in follow-up tickets that can land in any order:
 
 - **#8** added a `NavHost` (merged) and mounts this screen at the `welcome` route.
-- **#14** will supply the real `onPaired` / `onSetup` destinations (QR scanner route + external browser `Intent`).
+- **#12** wired `onPaired` to the `scanner` stub route (merged); Phase 4 replaces the scanner body itself.
+- **#14** will supply the real `onSetup` destination (external browser `Intent` to pyrycode setup docs).
 
 Keeping `WelcomeScreen.kt` free of `NavController` and `Intent` references is what makes that parallelism work. The signature is **fixed**: don't add a `modifier` parameter, don't broaden the callbacks.
 
@@ -41,7 +42,7 @@ Mounted at the `welcome` route in `PyryNavHost` (see `MainActivity.kt`):
 ```kotlin
 composable(Routes.Welcome) {
     WelcomeScreen(
-        onPaired = { navController.navigate(Routes.ChannelList) }, // #14 will swap to Scanner route
+        onPaired = { navController.navigate(Routes.Scanner) },
         onSetup  = { /* TODO(#14): external browser intent */ },
     )
 }
@@ -61,4 +62,5 @@ No DI wiring needed for this screen.
 - Spec: `docs/specs/architecture/7-welcome-screen-scaffold.md`
 - Ticket notes: `docs/knowledge/codebase/7.md`
 - Figma node: `6:32` (412×892 baseline)
-- Follow-ups: #8 (routing), #13 (conditional start), #14 (CTA destinations)
+- Follow-ups: #8 (routing — merged), #12 (`onPaired` → Scanner — merged), #13 (conditional start), #14 (real `onSetup` browser intent)
+- Sibling: [Scanner screen](scanner-screen.md)
