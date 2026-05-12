@@ -9,6 +9,7 @@ One-line pointers to evergreen docs. Per-ticket implementation notes live under 
 - [Data model](features/data-model.md) — `Conversation` / `Session` / `Message` schema in `data/model/`; shared shape across mobile, Discord, and pyrycode CLI consumers.
 - [Conversation repository](features/conversation-repository.md) — `ConversationRepository` interface + `ConversationFilter`, `ThreadItem` (`MessageItem` / `SessionBoundary`), `BoundaryReason`; data-layer seam every UI tier binds to. Phase 1 binding is the in-memory `FakeConversationRepository`.
 - [Dependency injection](features/dependency-injection.md) — Koin scaffold; single `appModule` at `di/AppModule.kt`, `startKoin` owned by `PyryApp.onCreate`. Downstream tickets append `single`/`viewModel` lines.
+- [App preferences](features/app-preferences.md) — `AppPreferences` wrapper over a shared `DataStore<Preferences>` (file `app_prefs`); typed `Flow<T>` reads + `suspend` setters for non-secret app state. First key: `pairedServerExists`.
 
 ## Decisions
 
