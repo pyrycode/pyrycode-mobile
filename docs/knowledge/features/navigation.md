@@ -4,11 +4,12 @@ Single-activity Compose Navigation host. `MainActivity` is the only Activity; al
 
 ## What it does
 
-Boots the app into the `welcome` route and provides the route graph that subsequent screens plug into. Currently three routes:
+Boots the app into the `welcome` route and provides the route graph that subsequent screens plug into. Currently four routes:
 
 - **`welcome`** (start destination) — renders `WelcomeScreen` (#7).
 - **`channel_list`** — placeholder `Text("Channel list placeholder")`; the data-layer chain replaces this body with the real Channel List Composable.
 - **`conversation_thread/{conversationId}`** — placeholder `Text("Conversation thread placeholder: $conversationId")` proving the path argument round-trips (#15). Phase 2 replaces the body with the real thread UI (streaming markdown, code blocks, tool calls, session-boundary delimiters).
+- **`settings`** — placeholder `SettingsPlaceholder(onBack = { navController.popBackStack() })` rendering `Text("Settings placeholder")` plus a `TextButton("Back")` (#16). Exists so the future Channel List TopAppBar gear icon has a real `navigate(...)` target before Phase 3 builds the actual Settings sections.
 
 ## How it works
 
@@ -40,10 +41,15 @@ NavHost(navController, startDestination = Routes.Welcome) {
         val conversationId = backStackEntry.arguments?.getString("conversationId").orEmpty()
         Text("Conversation thread placeholder: $conversationId")
     }
+    composable(Routes.Settings) {
+        SettingsPlaceholder(onBack = { navController.popBackStack() })
+    }
 }
 ```
 
-Route strings are pinned in a colocated `private object Routes` (see `MainActivity.kt:66-70`). Call sites use `Routes.Welcome` / `Routes.ChannelList` / `Routes.ConversationThread`, never inline strings. Concrete navigation targets for parameterized routes are built inline at the call site (e.g. `navController.navigate("conversation_thread/$id")`); lift to a helper when a second caller appears.
+Route strings are pinned in a colocated `private object Routes` (see `MainActivity.kt:81-86`). Call sites use `Routes.Welcome` / `Routes.ChannelList` / `Routes.ConversationThread` / `Routes.Settings`, never inline strings. Concrete navigation targets for parameterized routes are built inline at the call site (e.g. `navController.navigate("conversation_thread/$id")`); lift to a helper when a second caller appears.
+
+Placeholder bodies follow a split rule: bare `Text(...)` stays inline inside the `composable { ... }` block; anything with a callback or more than one child (e.g. Settings, which needs an `onBack` button) factors out into a small `private @Composable` taking `() -> Unit` callbacks. Those placeholder Composables stay `NavController`-free — the registration site supplies `{ navController.popBackStack() }` or `{ navController.navigate(...) }`.
 
 ## Adding a route
 
@@ -66,10 +72,12 @@ Screens take navigation as `() -> Unit` callbacks, not a `NavController`. This i
 - **No deep links, no animations.** `composable(Routes.X) { ... }` only — no `deepLinks = listOf(...)`, no custom `enterTransition` / `exitTransition`.
 - **No navigation instrumentation tests.** `TestNavHostController` setup was deferred per #8. The unused `androidx-compose-ui-test-junit4` catalog entry waits for the ticket that needs it.
 - **Pairing-state-conditional start destination is unticketed downstream work (#13).** Today the app always boots into `welcome`.
+- **No icon-based back affordance yet.** The `settings` placeholder uses `TextButton("Back")` because `androidx.compose.material:material-icons-core` is not on the classpath, and adding it for throwaway placeholder UI is wasted scope. The first ticket that ships durable UI needing icons (Channel List TopAppBar — gear, etc.) should add the dependency and sweep any surviving `TextButton("Back")` placeholders.
+- **`Routes.Settings` has no caller yet.** The destination is intentionally orphaned — the gear-icon wiring lives with the future Channel List TopAppBar ticket. Tapping Back from Settings while it's the start destination would no-op (`popBackStack()` returns `false`); under the current graph this is impossible since `welcome` is the start. The fallback is intentionally not wired.
 
 ## Related
 
-- Ticket notes: `../codebase/8.md` (NavHost setup), `../codebase/15.md` (first parameterized route)
-- Specs: `docs/specs/architecture/8-navigation-compose-setup.md`, `docs/specs/architecture/15-conversation-thread-placeholder-route.md`
+- Ticket notes: `../codebase/8.md` (NavHost setup), `../codebase/15.md` (first parameterized route), `../codebase/16.md` (Settings placeholder + interactive-placeholder factoring rule)
+- Specs: `docs/specs/architecture/8-navigation-compose-setup.md`, `docs/specs/architecture/15-conversation-thread-placeholder-route.md`, `docs/specs/architecture/16-settings-placeholder-route.md`
 - Consumers: [Welcome screen](welcome-screen.md)
-- Follow-ups: #13 (conditional start), #14 (real CTA destinations), data-layer chain (replaces `channel_list` body), Phase 2 thread UI (replaces `conversation_thread/{conversationId}` body), channel-list row → thread navigation wiring
+- Follow-ups: #13 (conditional start), #14 (real CTA destinations), data-layer chain (replaces `channel_list` body), Phase 2 thread UI (replaces `conversation_thread/{conversationId}` body), channel-list row → thread navigation wiring, Channel List TopAppBar (wires gear icon to `Routes.Settings` and adds `material-icons-core`), Phase 3 Settings sections (replaces `SettingsPlaceholder`)

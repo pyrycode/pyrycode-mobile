@@ -4,10 +4,12 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavType
@@ -60,6 +62,19 @@ private fun PyryNavHost(modifier: Modifier = Modifier) {
             val conversationId = backStackEntry.arguments?.getString("conversationId").orEmpty()
             Text("Conversation thread placeholder: $conversationId")
         }
+        composable(Routes.Settings) {
+            SettingsPlaceholder(onBack = { navController.popBackStack() })
+        }
+    }
+}
+
+@Composable
+private fun SettingsPlaceholder(onBack: () -> Unit) {
+    Column {
+        Text("Settings placeholder")
+        TextButton(onClick = onBack) {
+            Text("Back")
+        }
     }
 }
 
@@ -67,4 +82,5 @@ private object Routes {
     const val Welcome = "welcome"
     const val ChannelList = "channel_list"
     const val ConversationThread = "conversation_thread/{conversationId}"
+    const val Settings = "settings"
 }
