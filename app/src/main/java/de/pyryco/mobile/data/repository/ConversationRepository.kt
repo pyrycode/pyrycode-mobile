@@ -16,7 +16,6 @@ import kotlinx.datetime.Instant
  * not need to re-fetch; the affected stream(s) will also re-emit.
  */
 interface ConversationRepository {
-
     fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>>
 
     fun observeMessages(conversationId: String): Flow<List<ThreadItem>>
@@ -31,14 +30,20 @@ interface ConversationRepository {
 
     suspend fun archive(conversationId: String)
 
-    suspend fun rename(conversationId: String, name: String): Conversation
+    suspend fun rename(
+        conversationId: String,
+        name: String,
+    ): Conversation
 
     suspend fun startNewSession(
         conversationId: String,
         workspace: String? = null,
     ): Session
 
-    suspend fun changeWorkspace(conversationId: String, workspace: String): Session
+    suspend fun changeWorkspace(
+        conversationId: String,
+        workspace: String,
+    ): Session
 }
 
 enum class ConversationFilter { All, Channels, Discussions }
@@ -50,8 +55,9 @@ enum class ConversationFilter { All, Channels, Discussions }
  * de-emphasizes messages above the latest delimiter.
  */
 sealed interface ThreadItem {
-
-    data class MessageItem(val message: Message) : ThreadItem
+    data class MessageItem(
+        val message: Message,
+    ) : ThreadItem
 
     data class SessionBoundary(
         val previousSessionId: String,

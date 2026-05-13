@@ -14,14 +14,15 @@ import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.bind
 import org.koin.dsl.module
 
-val appModule = module {
-    single<DataStore<Preferences>> {
-        PreferenceDataStoreFactory.create(
-            produceFile = { androidContext().preferencesDataStoreFile("app_prefs") },
-        )
+val appModule =
+    module {
+        single<DataStore<Preferences>> {
+            PreferenceDataStoreFactory.create(
+                produceFile = { androidContext().preferencesDataStoreFile("app_prefs") },
+            )
+        }
+        single { AppPreferences(get()) }
+        single { FakeConversationRepository() } bind ConversationRepository::class
+        viewModel { ChannelListViewModel(get()) }
+        viewModel { DiscussionListViewModel(get()) }
     }
-    single { AppPreferences(get()) }
-    single { FakeConversationRepository() } bind ConversationRepository::class
-    viewModel { ChannelListViewModel(get()) }
-    viewModel { DiscussionListViewModel(get()) }
-}

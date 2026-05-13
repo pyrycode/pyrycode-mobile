@@ -7,15 +7,15 @@ import org.junit.Assert.assertNotSame
 import org.junit.Test
 
 class MessageTest {
-
-    private fun sample() = Message(
-        id = "msg-1",
-        sessionId = "sess-1",
-        role = Role.User,
-        content = "hello",
-        timestamp = Instant.fromEpochSeconds(0),
-        isStreaming = false,
-    )
+    private fun sample() =
+        Message(
+            id = "msg-1",
+            sessionId = "sess-1",
+            role = Role.User,
+            content = "hello",
+            timestamp = Instant.fromEpochSeconds(0),
+            isStreaming = false,
+        )
 
     @Test
     fun equals_and_hashCode_match_for_identical_instances() {

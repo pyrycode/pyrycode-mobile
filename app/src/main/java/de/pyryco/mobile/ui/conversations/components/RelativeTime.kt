@@ -11,19 +11,21 @@ import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 
-private val sameYearFormat = LocalDate.Format {
-    monthName(MonthNames.ENGLISH_ABBREVIATED)
-    char(' ')
-    dayOfMonth()
-}
+private val sameYearFormat =
+    LocalDate.Format {
+        monthName(MonthNames.ENGLISH_ABBREVIATED)
+        char(' ')
+        dayOfMonth()
+    }
 
-private val crossYearFormat = LocalDate.Format {
-    monthName(MonthNames.ENGLISH_ABBREVIATED)
-    char(' ')
-    dayOfMonth()
-    chars(", ")
-    year()
-}
+private val crossYearFormat =
+    LocalDate.Format {
+        monthName(MonthNames.ENGLISH_ABBREVIATED)
+        char(' ')
+        dayOfMonth()
+        chars(", ")
+        year()
+    }
 
 internal fun formatRelativeTime(
     instant: Instant,

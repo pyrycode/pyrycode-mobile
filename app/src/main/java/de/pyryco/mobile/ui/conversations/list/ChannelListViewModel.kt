@@ -17,26 +17,32 @@ import kotlinx.coroutines.launch
 
 sealed interface ChannelListUiState {
     data object Loading : ChannelListUiState
+
     data class Empty(
         val recentDiscussions: List<Conversation>,
         val recentDiscussionsCount: Int,
     ) : ChannelListUiState
+
     data class Loaded(
         val channels: List<Conversation>,
         val recentDiscussions: List<Conversation>,
         val recentDiscussionsCount: Int,
     ) : ChannelListUiState
-    data class Error(val message: String) : ChannelListUiState
+
+    data class Error(
+        val message: String,
+    ) : ChannelListUiState
 }
 
 sealed interface ChannelListNavigation {
-    data class ToThread(val conversationId: String) : ChannelListNavigation
+    data class ToThread(
+        val conversationId: String,
+    ) : ChannelListNavigation
 }
 
 class ChannelListViewModel(
     private val repository: ConversationRepository,
 ) : ViewModel() {
-
     val state: StateFlow<ChannelListUiState> =
         combine(
             repository.observeConversations(ConversationFilter.Channels),
@@ -56,30 +62,29 @@ class ChannelListViewModel(
                     recentDiscussionsCount = count,
                 )
             }
-        }
-            .catch { e ->
-                val raw = e.message
-                emit(
-                    ChannelListUiState.Error(
-                        if (raw.isNullOrBlank()) "Failed to load channels." else raw,
-                    ),
-                )
-            }
-            .stateIn(
-                scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
-                initialValue = ChannelListUiState.Loading,
+        }.catch { e ->
+            val raw = e.message
+            emit(
+                ChannelListUiState.Error(
+                    if (raw.isNullOrBlank()) "Failed to load channels." else raw,
+                ),
             )
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = ChannelListUiState.Loading,
+        )
 
     private val navigationChannel = Channel<ChannelListNavigation>(capacity = Channel.BUFFERED)
     val navigationEvents: Flow<ChannelListNavigation> = navigationChannel.receiveAsFlow()
 
     fun onEvent(event: ChannelListEvent) {
         when (event) {
-            ChannelListEvent.CreateDiscussionTapped -> viewModelScope.launch {
-                val conversation = repository.createDiscussion()
-                navigationChannel.send(ChannelListNavigation.ToThread(conversation.id))
-            }
+            ChannelListEvent.CreateDiscussionTapped ->
+                viewModelScope.launch {
+                    val conversation = repository.createDiscussion()
+                    navigationChannel.send(ChannelListNavigation.ToThread(conversation.id))
+                }
             is ChannelListEvent.RowTapped,
             ChannelListEvent.SettingsTapped,
             ChannelListEvent.RecentDiscussionsTapped,
