@@ -6,8 +6,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
@@ -32,6 +34,7 @@ import kotlin.time.Duration.Companion.minutes
 sealed interface ChannelListEvent {
     data class RowTapped(val conversationId: String) : ChannelListEvent
     data object SettingsTapped : ChannelListEvent
+    data object CreateDiscussionTapped : ChannelListEvent
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -55,6 +58,18 @@ fun ChannelListScreen(
                     }
                 },
             )
+        },
+        floatingActionButton = {
+            if (state is ChannelListUiState.Loaded || state is ChannelListUiState.Empty) {
+                FloatingActionButton(
+                    onClick = { onEvent(ChannelListEvent.CreateDiscussionTapped) },
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = stringResource(R.string.cd_new_discussion),
+                    )
+                }
+            }
         },
     ) { inner ->
         val bodyModifier = Modifier.padding(inner)

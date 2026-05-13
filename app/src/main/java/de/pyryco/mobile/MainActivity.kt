@@ -14,6 +14,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberCoroutineScope
@@ -27,6 +28,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.ui.conversations.list.ChannelListEvent
+import de.pyryco.mobile.ui.conversations.list.ChannelListNavigation
 import de.pyryco.mobile.ui.conversations.list.ChannelListScreen
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerScreen
@@ -110,6 +112,14 @@ private fun PyryNavHost(
         composable(Routes.ChannelList) {
             val vm = koinViewModel<ChannelListViewModel>()
             val state by vm.state.collectAsStateWithLifecycle()
+            LaunchedEffect(vm) {
+                vm.navigationEvents.collect { event ->
+                    when (event) {
+                        is ChannelListNavigation.ToThread ->
+                            navController.navigate("conversation_thread/${event.conversationId}")
+                    }
+                }
+            }
             ChannelListScreen(
                 state = state,
                 onEvent = { event ->
@@ -118,6 +128,8 @@ private fun PyryNavHost(
                             navController.navigate("conversation_thread/${event.conversationId}")
                         ChannelListEvent.SettingsTapped ->
                             navController.navigate(Routes.Settings)
+                        ChannelListEvent.CreateDiscussionTapped ->
+                            vm.onEvent(event)
                     }
                 },
             )

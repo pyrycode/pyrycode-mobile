@@ -1,19 +1,19 @@
 # ChannelListScreen
 
-Stateless `(state, onEvent)` composable that renders a Material 3 `Scaffold` with a `TopAppBar` (app-name title + trailing settings gear) above a `LazyColumn` of `ConversationRow`s for the persistent-channel slice. Dispatches `ChannelListEvent.RowTapped` on row clicks and `ChannelListEvent.SettingsTapped` on gear taps. First stateless UI consumer of a ViewModel in the project; introduces the sealed `Event` shape every screen will follow.
+Stateless `(state, onEvent)` composable that renders a Material 3 `Scaffold` with a `TopAppBar` (app-name title + trailing settings gear) above a `LazyColumn` of `ConversationRow`s for the persistent-channel slice, plus a trailing `FloatingActionButton` (#22) that creates a new discussion. Dispatches `ChannelListEvent.RowTapped` on row clicks, `SettingsTapped` on gear taps, and `CreateDiscussionTapped` on FAB taps. First stateless UI consumer of a ViewModel in the project; introduces the sealed `Event` shape every screen will follow.
 
 Package: `de.pyryco.mobile.ui.conversations.list` (`app/src/main/java/de/pyryco/mobile/ui/conversations/list/`). File: `ChannelListScreen.kt`.
 
 ## What it does
 
-Wraps its body in a `Scaffold` whose `topBar` is a Material 3 `TopAppBar` (rendered in **every** state). Renders the four `ChannelListUiState` variants from the VM (#45) inside the Scaffold body:
+Wraps its body in a `Scaffold` whose `topBar` is a Material 3 `TopAppBar` (rendered in **every** state) and whose `floatingActionButton` slot hosts a `FloatingActionButton` (rendered only when `state is Loaded || state is Empty`, #22). Renders the four `ChannelListUiState` variants from the VM (#45) inside the Scaffold body:
 
-- **`Loading`** — centred `Text("Loading…")` placeholder.
-- **`Empty`** — centred `Text("No channels yet")` placeholder.
-- **`Error(message)`** — centred `Text("Couldn't load channels: $message")` placeholder.
-- **`Loaded(channels)`** — `LazyColumn` of `ConversationRow`s, one per channel, keyed by `Conversation.id`.
+- **`Loading`** — centred `Text("Loading…")` placeholder. No FAB.
+- **`Empty`** — centred `Text("No channels yet")` placeholder. FAB rendered.
+- **`Error(message)`** — centred `Text("Couldn't load channels: $message")` placeholder. No FAB.
+- **`Loaded(channels)`** — `LazyColumn` of `ConversationRow`s, one per channel, keyed by `Conversation.id`. FAB rendered.
 
-The `TopAppBar`'s title is `stringResource(R.string.app_name)` ("Pyrycode Mobile"); its single trailing `actions` slot is an `IconButton` wrapping `Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.cd_open_settings))`. Each row's `onClick` emits `ChannelListEvent.RowTapped(channel.id)` and the gear `onClick` emits `ChannelListEvent.SettingsTapped` through the screen's `onEvent` lambda. The NavHost destination is the only place that lambda resolves to concrete actions (`navController.navigate("conversation_thread/$id")` and `navController.navigate(Routes.Settings)`); the screen itself is `NavController`-free.
+The `TopAppBar`'s title is `stringResource(R.string.app_name)` ("Pyrycode Mobile"); its single trailing `actions` slot is an `IconButton` wrapping `Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.cd_open_settings))`. The FAB wraps `Icon(Icons.Default.Add, contentDescription = stringResource(R.string.cd_new_discussion))` at default `FabPosition.End`. Each row's `onClick` emits `ChannelListEvent.RowTapped(channel.id)`, the gear's `onClick` emits `SettingsTapped`, and the FAB's `onClick` emits `CreateDiscussionTapped` through the screen's `onEvent` lambda. The NavHost destination is the only place that lambda resolves to concrete actions (row/gear dispatched directly to `navController.navigate(...)`; `CreateDiscussionTapped` forwarded into `vm.onEvent(event)` so the suspend-shaped create can run and emit a `ChannelListNavigation.ToThread` event); the screen itself is `NavController`-free.
 
 ## Shape
 
@@ -21,6 +21,7 @@ The `TopAppBar`'s title is `stringResource(R.string.app_name)` ("Pyrycode Mobile
 sealed interface ChannelListEvent {
     data class RowTapped(val conversationId: String) : ChannelListEvent
     data object SettingsTapped : ChannelListEvent
+    data object CreateDiscussionTapped : ChannelListEvent
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -45,6 +46,18 @@ fun ChannelListScreen(
                 },
             )
         },
+        floatingActionButton = {
+            if (state is ChannelListUiState.Loaded || state is ChannelListUiState.Empty) {
+                FloatingActionButton(
+                    onClick = { onEvent(ChannelListEvent.CreateDiscussionTapped) },
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = stringResource(R.string.cd_new_discussion),
+                    )
+                }
+            }
+        },
     ) { inner ->
         val bodyModifier = Modifier.padding(inner)
         when (state) {
@@ -68,7 +81,7 @@ fun ChannelListScreen(
 }
 ```
 
-`ChannelListEvent` lives in `ChannelListScreen.kt`, not `ChannelListViewModel.kt`, because the screen — specifically `ConversationRow.onClick` and the gear `IconButton.onClick` — is the only producer for these variants. When a future ticket adds a VM-side reducer (`fun onEvent(event: ChannelListEvent)`), the type moves into the VM file to join its consumer.
+`ChannelListEvent` lives in `ChannelListScreen.kt`, not `ChannelListViewModel.kt`. The screen — `ConversationRow.onClick`, the gear `IconButton.onClick`, and the FAB's `onClick` — is the producer for all three variants. A VM-side reducer now exists for `CreateDiscussionTapped` (#22), but the sealed type stayed in the screen file: most variants still have no VM-side consumer, and routing decisions live at the destination's `when (event)`. Reconsider moving the type when *most* variants land in `vm.onEvent`.
 
 ## How it works
 
@@ -80,9 +93,11 @@ The screen takes a value-typed `state` and an `onEvent` lambda. No `viewModel()`
 
 Kotlin's sealed-interface exhaustiveness check enforces full variant coverage at compile time. No `else ->` branch — when Phase 4 adds a fifth `ChannelListUiState` variant (e.g. `Stale`), the compiler points at this `when`. That's the feature. The same shape governs the destination-level `when (event)` in `MainActivity`: appending `SettingsTapped` made the navigation `when` exhaustive on the sealed interface without requiring a defensive `else`.
 
-### `Scaffold` + `TopAppBar` chrome (#21)
+### `Scaffold` + `TopAppBar` chrome (#21) + `FloatingActionButton` (#22)
 
-The screen owns its own chrome rather than relying on a shared `TopAppBar` slot threaded through the NavHost. The outer `Scaffold` in `MainActivity` carries system-bar insets only; this inner `Scaffold` carries the screen's `TopAppBar`. The `Scaffold` body lambda's `PaddingValues` (named `inner`) is captured into a local `bodyModifier = Modifier.padding(inner)` and applied to each `when` branch — inline form, no `ChannelListBody` extraction; the body is short enough to stay readable. The `TopAppBar` is the small/leading-aligned Material 3 default (not `CenterAlignedTopAppBar`), with no scroll behaviour or navigation icon — this is a start destination with no back target. `@OptIn(ExperimentalMaterial3Api::class)` annotates the composable boundary; `TopAppBar` is perma-experimental in Compose Material 3.
+The screen owns its own chrome rather than relying on a shared `TopAppBar` slot threaded through the NavHost. The outer `Scaffold` in `MainActivity` carries system-bar insets only; this inner `Scaffold` carries the screen's `TopAppBar` and FAB. The `Scaffold` body lambda's `PaddingValues` (named `inner`) is captured into a local `bodyModifier = Modifier.padding(inner)` and applied to each `when` branch — inline form, no `ChannelListBody` extraction; the body is short enough to stay readable. The `TopAppBar` is the small/leading-aligned Material 3 default (not `CenterAlignedTopAppBar`), with no scroll behaviour or navigation icon — this is a start destination with no back target. `@OptIn(ExperimentalMaterial3Api::class)` annotates the composable boundary; `TopAppBar` is perma-experimental in Compose Material 3.
+
+The FAB sits at default `FabPosition.End`. The conditional `if (state is Loaded || state is Empty)` lives *inside* the slot's composable lambda — `Scaffold.floatingActionButton` is a non-nullable `@Composable () -> Unit`, so an `if/else` at the slot's assignment site does not type-check. Loading and Error states render no FAB (the slot's lambda body returns `Unit`). Snapshot reads of `state` inside the slot cause the slot to recompose on the Loading→Loaded transition without a `derivedStateOf`.
 
 ### `LazyColumn` with stable keys
 
@@ -104,6 +119,14 @@ At the `composable(Routes.ChannelList) { ... }` block in `MainActivity.PyryNavHo
 composable(Routes.ChannelList) {
     val vm = koinViewModel<ChannelListViewModel>()
     val state by vm.state.collectAsStateWithLifecycle()
+    LaunchedEffect(vm) {
+        vm.navigationEvents.collect { event ->
+            when (event) {
+                is ChannelListNavigation.ToThread ->
+                    navController.navigate("conversation_thread/${event.conversationId}")
+            }
+        }
+    }
     ChannelListScreen(
         state = state,
         onEvent = { event ->
@@ -112,6 +135,8 @@ composable(Routes.ChannelList) {
                     navController.navigate("conversation_thread/${event.conversationId}")
                 ChannelListEvent.SettingsTapped ->
                     navController.navigate(Routes.Settings)
+                ChannelListEvent.CreateDiscussionTapped ->
+                    vm.onEvent(event)
             }
         },
     )
@@ -122,7 +147,8 @@ Key points:
 
 - **`koinViewModel<ChannelListViewModel>()` resolves against the existing Koin binding** (`viewModel { ChannelListViewModel(get()) }` from #45's `AppModule.kt`). Every `composable { ... }` block is a `NavBackStackEntry`-keyed scope; Compose Navigation 2.9+ auto-wires `LocalViewModelStoreOwner` to the current entry, so the bare call resolves to the entry-scoped store — the VM is created on first entry, retained across configuration changes, cleared on pop. No `viewModelStoreOwner = backStackEntry` argument needed.
 - **`collectAsStateWithLifecycle()`, not `collectAsState()`.** The lifecycle-aware variant pauses upstream collection when the lifecycle drops below `STARTED`, which is what makes the VM's `WhileSubscribed(5_000)` actually save work when the screen is backgrounded.
-- **Inline `when (event)` dispatch.** Single-variant today; the inline form keeps the navigation target visible at the destination. No `private fun onChannelListEvent(...)` extraction until event-translation grows non-trivial.
+- **Inline `when (event)` dispatch with mixed routing.** Three variants today: `RowTapped` and `SettingsTapped` resolve to `navController.navigate(...)` directly; `CreateDiscussionTapped` forwards into `vm.onEvent(event)` because its target route depends on the id returned by the suspend-shaped `createDiscussion()` call. The rule: events with no VM-side side effect stay routed at the destination; events that need a suspend or VM state mutation forward into `onEvent`.
+- **`LaunchedEffect(vm) { vm.navigationEvents.collect { … } }` for one-shot nav events.** Sits alongside the `state` read inside `composable(Routes.ChannelList)`. The `vm` key restarts the collector exactly when the VM identity changes (per `NavBackStackEntry` scope), which is the correct boundary for a one-shot channel. See [`channel-list-viewmodel.md`](./channel-list-viewmodel.md) for the `Channel<ChannelListNavigation>` + `receiveAsFlow()` shape on the emitter side.
 - **Concrete navigation target built inline:** `"conversation_thread/${event.conversationId}"`. No `Routes.conversationThread(id)` helper — matches the navigation feature doc's "build inline until a second caller appears" rule.
 - **No `popUpTo` / `launchSingleTop`.** Default `navigate(route)` semantics are correct: tapping a channel pushes the thread onto the back stack; back-press returns to the channel list. The only exceptional case in the graph is the `scanner` → `channel_list` transition.
 
@@ -131,7 +157,7 @@ Key points:
 - **Dependencies:** `androidx.lifecycle:lifecycle-runtime-compose` (catalog: `androidx-lifecycle-runtime-compose`, reuses the `lifecycleRuntimeKtx = "2.6.1"` version-ref). Required for `collectAsStateWithLifecycle` — not pulled transitively by `lifecycle-runtime-ktx`, `lifecycle-viewmodel-ktx`, or the `koin-androidx-compose` chain. Three lifecycle artifacts now on the classpath (`-ktx`, `-viewmodel-ktx`, `-runtime-compose`) — they share `LifecycleOwner` ABIs and must stay on the same version-ref.
 - **Koin compose:** `org.koin.androidx.compose.koinViewModel` (already on the classpath since #32 via `koin-androidx-compose`). Distinct from `org.koin.compose.koinInject` (the `scanner` destination's `AppPreferences` resolver) — `koinViewModel` is the right call for `ViewModel`-typed bindings because it routes through `LocalViewModelStoreOwner`.
 - **Icons:** `androidx.compose.material:material-icons-core` (catalog: `androidx-compose-material-icons-core`, BOM-managed — no `version.ref`). The always-on icon set; supplies `Icons.Default.Settings` for the TopAppBar gear (#21). Don't reach for `material-icons-extended` (multi-MB megapack) for single-glyph needs — try `-core` first.
-- **Strings:** `R.string.app_name` for the TopAppBar title (reused, defined since project init); `R.string.cd_open_settings` ("Open settings") for the gear's TalkBack `contentDescription`. New a-11y strings use the `cd_` prefix.
+- **Strings:** `R.string.app_name` for the TopAppBar title (reused, defined since project init); `R.string.cd_open_settings` ("Open settings") for the gear's TalkBack `contentDescription`; `R.string.cd_new_discussion` ("New discussion") for the FAB's TalkBack description (#22). New a-11y strings use the `cd_` prefix.
 
 ## Preview
 
@@ -139,7 +165,9 @@ Single `@Preview(name = "Loaded — Light", showBackground = true, widthDp = 412
 
 ## Edge cases / limitations
 
-- **No FAB yet.** The screen now has chrome (`Scaffold` + `TopAppBar` since #21) but no floating action button; FAB lands in #22 — wired into the same inner `Scaffold`'s `floatingActionButton` slot.
+- **FAB has no long-press affordance.** Long-press → workspace picker is deferred to Phase 2 (part of the `ConversationThread` design).
+- **FAB hidden in Loading and Error.** Conditional `state is Loaded || state is Empty`. AC specifically required Loaded and Empty; rendering in Loading risks a "tap before initial repository emission" race, and Error has no useful create target until recovery. Revisit if the design adds a "create from error" affordance.
+- **No error/loading affordance on the create call itself.** `repository.createDiscussion()` is `suspend` but the fake never throws and resolves synchronously enough that no spinner is needed. Phase 4's `RemoteConversationRepository` adds both the error UI and the loading indicator together.
 - **No `rememberLazyListState` / scroll-position persistence.** `LazyColumn` auto-saves scroll position within a single composition; `rememberSaveable(saver = LazyListState.Saver)` is the next step when a real bug surfaces (e.g. scroll resets after returning from thread). Defer until observed.
 - **No retry affordance on `Error`.** `ChannelListEvent` has no `RetryClicked` variant. Per #45's spec, recovery requires a fresh subscription (leave the screen, wait 5s for `WhileSubscribed` to expire, re-enter). A retry button lands with the ticket that commits to designed error UI.
 - **No instrumented test.** AC requires only `./gradlew assembleDebug`. The natural unit test ("tap a row → `onEvent(RowTapped(channelId))` fires") needs `androidx-compose-ui-test-junit4` wired to `androidTestImplementation` and an `androidTest/` source set entry; deferred until the first ticket with multi-event logic to verify.
@@ -148,7 +176,7 @@ Single `@Preview(name = "Loaded — Light", showBackground = true, widthDp = 412
 
 ## Related
 
-- Ticket notes: [`../codebase/46.md`](../codebase/46.md) (LazyColumn + tap nav), [`../codebase/21.md`](../codebase/21.md) (TopAppBar + settings-gear wiring)
-- Specs: `docs/specs/architecture/46-channellistscreen-lazycolumn-tap-nav.md`, `docs/specs/architecture/21-channel-list-top-app-bar.md`
-- Upstream: [ChannelListViewModel](./channel-list-viewmodel.md) (state producer), [ConversationRow](./conversation-row.md) (per-row primitive), [Navigation](./navigation.md) (host graph, route constants, destination wiring), [Dependency injection](./dependency-injection.md) (Koin VM binding)
-- Downstream: #22 (FAB), #23 (real Loading / Empty / Error visuals replace the centred `Text` placeholders), #19 / #20 (per-row decorations on the `ConversationRow` instances rendered here — workspace label, sleeping indicator), #26 (recent-discussions pill above the `LazyColumn`), follow-up Retry ticket (adds `ChannelListEvent.RetryClicked` + VM-side reducer), Phase 3 Settings (replaces `SettingsPlaceholder` body — gear wiring already in place since #21), Phase 4 (real backend behind the same `ConversationRepository` bind — zero screen change)
+- Ticket notes: [`../codebase/46.md`](../codebase/46.md) (LazyColumn + tap nav), [`../codebase/21.md`](../codebase/21.md) (TopAppBar + settings-gear wiring), [`../codebase/22.md`](../codebase/22.md) (FAB + one-shot nav channel)
+- Specs: `docs/specs/architecture/46-channellistscreen-lazycolumn-tap-nav.md`, `docs/specs/architecture/21-channel-list-top-app-bar.md`, `docs/specs/architecture/22-channel-list-fab-new-discussion.md`
+- Upstream: [ChannelListViewModel](./channel-list-viewmodel.md) (state producer + `onEvent` reducer + `navigationEvents`), [ConversationRow](./conversation-row.md) (per-row primitive), [Navigation](./navigation.md) (host graph, route constants, destination wiring), [Dependency injection](./dependency-injection.md) (Koin VM binding)
+- Downstream: #23 (real Loading / Empty / Error visuals replace the centred `Text` placeholders), #19 / #20 (per-row decorations on the `ConversationRow` instances rendered here — workspace label, sleeping indicator), #26 (recent-discussions pill above the `LazyColumn`), follow-up Retry ticket (adds `ChannelListEvent.RetryClicked` + VM-side reducer), Phase 2 long-press → workspace picker on the FAB, Phase 3 Settings (replaces `SettingsPlaceholder` body — gear wiring already in place since #21), Phase 4 (real backend behind the same `ConversationRepository` bind — zero screen change; adds error + loading UI for the create call)
