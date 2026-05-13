@@ -106,7 +106,7 @@ composable(Routes.DiscussionList) {
 }
 ```
 
-`Routes.DiscussionList = "discussions"` (in the private `Routes` object alongside `ChannelList`, `ConversationThread`, etc.). The route is **not yet linked from anywhere in the live app graph** — #26 adds the channel-list "Recent discussions (N) →" pill that calls `navController.navigate(Routes.DiscussionList)`. Until then, the route is reachable only via the previews or a hand-edited trigger.
+`Routes.DiscussionList = "discussions"` (in the private `Routes` object alongside `ChannelList`, `ConversationThread`, etc.). The entry point is the channel-list inline Recent-discussions section's "See all discussions (N) →" link (#69; previously the #26 pill), which calls `navController.navigate(Routes.DiscussionList)` from `ChannelListEvent.RecentDiscussionsTapped`.
 
 `RowTapped` is dispatched on both wires (destination-side `navigate` *and* VM-side `navigationChannel`); see the VM doc for the rationale. `BackTapped` routes only at the destination — the VM treats it as a no-op `Unit` arm. `SaveAsChannelRequested` (#25) routes only at the VM as a `Unit` stub — the composable-side branch (`vm.onEvent(event)`) exists for `when` exhaustiveness but the actual work is the VM `TODO(phase 2)` no-op. Phase 2 replaces the VM stub with a real handler; the destination wiring does not change.
 
@@ -122,7 +122,7 @@ composable(Routes.DiscussionList) {
 - **"Save as channel…" is gesture-only and Phase 0-stubbed.** Long-press menu + right-to-left swipe land in #25; both feed `DiscussionListEvent.SaveAsChannelRequested`, which the VM swallows as `Unit`. The Phase 2 promotion dialog replaces the stub. No leading-edge swipe, no undo affordance, no toast — explicit non-goals.
 - **No instrumented UI tests.** Visual regression is covered by the two `@Preview` composables. The VM-level unit tests cover state-derivation and navigation-emit behavior.
 - **`Loading` / `Error` / `Empty` are placeholder visuals.** Centered `Text` with no illustration, no retry button, no copy variation. Designed visuals land with their own tickets.
-- **Route is currently unreachable from the live graph.** Intentional — #26 owns the entry-point pill. Don't add a temporary launcher tile or debug button "to be useful in the meantime".
+- **Single entry point is the channel-list "See all discussions (N) →" link** (#69; #26 before it). No launcher tile, no debug button, no settings deep-link. If a follow-up wants a second entry point (e.g. a notification), wire it through the same `navController.navigate(Routes.DiscussionList)` call — don't replicate the destination wiring.
 
 ## Related
 

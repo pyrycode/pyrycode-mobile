@@ -59,7 +59,11 @@ class ChannelListViewModelTest {
         discussions.emit(emptyList())
         advanceUntilIdle()
         assertEquals(
-            ChannelListUiState.Loaded(listOf(sampleChannel), recentDiscussionsCount = 0),
+            ChannelListUiState.Loaded(
+                channels = listOf(sampleChannel),
+                recentDiscussions = emptyList(),
+                recentDiscussionsCount = 0,
+            ),
             vm.state.value,
         )
         collector.cancel()
@@ -75,7 +79,13 @@ class ChannelListViewModelTest {
         channels.emit(emptyList())
         discussions.emit(emptyList())
         advanceUntilIdle()
-        assertEquals(ChannelListUiState.Empty(recentDiscussionsCount = 0), vm.state.value)
+        assertEquals(
+            ChannelListUiState.Empty(
+                recentDiscussions = emptyList(),
+                recentDiscussionsCount = 0,
+            ),
+            vm.state.value,
+        )
         collector.cancel()
     }
 
@@ -86,11 +96,18 @@ class ChannelListViewModelTest {
         val vm = ChannelListViewModel(stubRepo(channels, discussions))
         val collector = launch { vm.state.collect { } }
         advanceUntilIdle()
+        val d1 = sampleDiscussion("d1", Instant.parse("2026-05-12T03:00:00Z"))
+        val d2 = sampleDiscussion("d2", Instant.parse("2026-05-12T02:00:00Z"))
+        val d3 = sampleDiscussion("d3", Instant.parse("2026-05-12T01:00:00Z"))
         channels.emit(listOf(sampleChannel))
-        discussions.emit(listOf(sampleDiscussion("d1"), sampleDiscussion("d2"), sampleDiscussion("d3")))
+        discussions.emit(listOf(d1, d2, d3))
         advanceUntilIdle()
         assertEquals(
-            ChannelListUiState.Loaded(listOf(sampleChannel), recentDiscussionsCount = 3),
+            ChannelListUiState.Loaded(
+                channels = listOf(sampleChannel),
+                recentDiscussions = listOf(d1, d2, d3),
+                recentDiscussionsCount = 3,
+            ),
             vm.state.value,
         )
         collector.cancel()
@@ -103,10 +120,18 @@ class ChannelListViewModelTest {
         val vm = ChannelListViewModel(stubRepo(channels, discussions))
         val collector = launch { vm.state.collect { } }
         advanceUntilIdle()
+        val d1 = sampleDiscussion("d1", Instant.parse("2026-05-12T02:00:00Z"))
+        val d2 = sampleDiscussion("d2", Instant.parse("2026-05-12T01:00:00Z"))
         channels.emit(emptyList())
-        discussions.emit(listOf(sampleDiscussion("d1"), sampleDiscussion("d2")))
+        discussions.emit(listOf(d1, d2))
         advanceUntilIdle()
-        assertEquals(ChannelListUiState.Empty(recentDiscussionsCount = 2), vm.state.value)
+        assertEquals(
+            ChannelListUiState.Empty(
+                recentDiscussions = listOf(d1, d2),
+                recentDiscussionsCount = 2,
+            ),
+            vm.state.value,
+        )
         collector.cancel()
     }
 
@@ -120,18 +145,19 @@ class ChannelListViewModelTest {
         channels.emit(listOf(sampleChannel))
         discussions.emit(listOf(sampleDiscussion("d1")))
         advanceUntilIdle()
-        discussions.emit(
-            listOf(
-                sampleDiscussion("d1"),
-                sampleDiscussion("d2"),
-                sampleDiscussion("d3"),
-                sampleDiscussion("d4"),
-                sampleDiscussion("d5"),
-            ),
-        )
+        val d1 = sampleDiscussion("d1", Instant.parse("2026-05-12T05:00:00Z"))
+        val d2 = sampleDiscussion("d2", Instant.parse("2026-05-12T04:00:00Z"))
+        val d3 = sampleDiscussion("d3", Instant.parse("2026-05-12T03:00:00Z"))
+        val d4 = sampleDiscussion("d4", Instant.parse("2026-05-12T02:00:00Z"))
+        val d5 = sampleDiscussion("d5", Instant.parse("2026-05-12T01:00:00Z"))
+        discussions.emit(listOf(d1, d2, d3, d4, d5))
         advanceUntilIdle()
         assertEquals(
-            ChannelListUiState.Loaded(listOf(sampleChannel), recentDiscussionsCount = 5),
+            ChannelListUiState.Loaded(
+                channels = listOf(sampleChannel),
+                recentDiscussions = listOf(d1, d2, d3),
+                recentDiscussionsCount = 5,
+            ),
             vm.state.value,
         )
         collector.cancel()
@@ -151,9 +177,56 @@ class ChannelListViewModelTest {
         discussions.emit(emptyList())
         advanceUntilIdle()
         assertEquals(
-            ChannelListUiState.Loaded(listOf(sampleChannel), recentDiscussionsCount = 0),
+            ChannelListUiState.Loaded(
+                channels = listOf(sampleChannel),
+                recentDiscussions = emptyList(),
+                recentDiscussionsCount = 0,
+            ),
             vm.state.value,
         )
+        collector.cancel()
+    }
+
+    @Test
+    fun recentDiscussions_isCappedAtThree() = runTest {
+        val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
+        val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
+        val vm = ChannelListViewModel(stubRepo(channels, discussions))
+        val collector = launch { vm.state.collect { } }
+        advanceUntilIdle()
+        val d1 = sampleDiscussion("d1", Instant.parse("2026-05-12T04:00:00Z"))
+        val d2 = sampleDiscussion("d2", Instant.parse("2026-05-12T03:00:00Z"))
+        val d3 = sampleDiscussion("d3", Instant.parse("2026-05-12T02:00:00Z"))
+        val d4 = sampleDiscussion("d4", Instant.parse("2026-05-12T01:00:00Z"))
+        channels.emit(listOf(sampleChannel))
+        discussions.emit(listOf(d1, d2, d3, d4))
+        advanceUntilIdle()
+        val state = vm.state.value
+        assertTrue("expected Loaded, was $state", state is ChannelListUiState.Loaded)
+        val loaded = state as ChannelListUiState.Loaded
+        assertEquals(3, loaded.recentDiscussions.size)
+        assertEquals(listOf("d1", "d2", "d3"), loaded.recentDiscussions.map(Conversation::id))
+        assertEquals(4, loaded.recentDiscussionsCount)
+        collector.cancel()
+    }
+
+    @Test
+    fun recentDiscussions_orderingFollowsUpstream() = runTest {
+        val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
+        val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
+        val vm = ChannelListViewModel(stubRepo(channels, discussions))
+        val collector = launch { vm.state.collect { } }
+        advanceUntilIdle()
+        // Upstream emits in a deliberately non-time-sorted order; the VM must not re-sort.
+        val a = sampleDiscussion("a", Instant.parse("2026-05-12T01:00:00Z"))
+        val b = sampleDiscussion("b", Instant.parse("2026-05-12T03:00:00Z"))
+        val c = sampleDiscussion("c", Instant.parse("2026-05-12T02:00:00Z"))
+        channels.emit(listOf(sampleChannel))
+        discussions.emit(listOf(a, b, c))
+        advanceUntilIdle()
+        val state = vm.state.value
+        assertTrue("expected Loaded, was $state", state is ChannelListUiState.Loaded)
+        assertEquals(listOf(a, b, c), (state as ChannelListUiState.Loaded).recentDiscussions)
         collector.cancel()
     }
 
@@ -297,13 +370,16 @@ class ChannelListViewModelTest {
         lastUsedAt = Instant.parse("2026-05-12T00:00:00Z"),
     )
 
-    private fun sampleDiscussion(id: String) = Conversation(
+    private fun sampleDiscussion(
+        id: String,
+        lastUsedAt: Instant = Instant.parse("2026-05-12T00:00:00Z"),
+    ) = Conversation(
         id = id,
         name = null,
         cwd = "~/scratch",
         currentSessionId = "$id-s1",
         sessionHistory = listOf("$id-s1"),
         isPromoted = false,
-        lastUsedAt = Instant.parse("2026-05-12T00:00:00Z"),
+        lastUsedAt = lastUsedAt,
     )
 }

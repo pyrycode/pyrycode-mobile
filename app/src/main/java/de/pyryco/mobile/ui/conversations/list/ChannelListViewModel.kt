@@ -11,16 +11,19 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 sealed interface ChannelListUiState {
     data object Loading : ChannelListUiState
-    data class Empty(val recentDiscussionsCount: Int) : ChannelListUiState
+    data class Empty(
+        val recentDiscussions: List<Conversation>,
+        val recentDiscussionsCount: Int,
+    ) : ChannelListUiState
     data class Loaded(
         val channels: List<Conversation>,
+        val recentDiscussions: List<Conversation>,
         val recentDiscussionsCount: Int,
     ) : ChannelListUiState
     data class Error(val message: String) : ChannelListUiState
@@ -37,14 +40,20 @@ class ChannelListViewModel(
     val state: StateFlow<ChannelListUiState> =
         combine(
             repository.observeConversations(ConversationFilter.Channels),
-            repository.observeConversations(ConversationFilter.Discussions).map { it.size },
-        ) { channels, discussionsCount ->
+            repository.observeConversations(ConversationFilter.Discussions),
+        ) { channels, discussions ->
+            val recent = discussions.take(RECENT_DISCUSSIONS_LIMIT)
+            val count = discussions.size
             if (channels.isEmpty()) {
-                ChannelListUiState.Empty(recentDiscussionsCount = discussionsCount)
+                ChannelListUiState.Empty(
+                    recentDiscussions = recent,
+                    recentDiscussionsCount = count,
+                )
             } else {
                 ChannelListUiState.Loaded(
                     channels = channels,
-                    recentDiscussionsCount = discussionsCount,
+                    recentDiscussions = recent,
+                    recentDiscussionsCount = count,
                 )
             }
         }
@@ -80,5 +89,6 @@ class ChannelListViewModel(
 
     private companion object {
         const val STOP_TIMEOUT_MILLIS = 5_000L
+        const val RECENT_DISCUSSIONS_LIMIT = 3
     }
 }
