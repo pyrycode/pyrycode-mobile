@@ -67,7 +67,7 @@ N/A. The screen *is* the waiting surface for the connecting state; there is no I
 
 - **No `serverAddress` validation.** Whatever the caller passes is rendered verbatim — `""`, very long strings, IPv6 with brackets, anything. The single `Text` line will ellipsize at viewport width without a special case, which is fine for the connecting window (the caller knows what it tried to pair with).
 - **Phase 4 walk-back.** The screen survives Phase 4 wholesale — its sole role is the visual surface for the connecting state, which CameraX + relay integration consumes as-is. The only future additions are the host's state machine and (likely) the `TopAppBar` at the NavHost level.
-- **Two `@Preview` composables only.** No `androidTest`, no unit test, no snapshot test — matches the Welcome / Scanner / Scanner Denied bar. Previews are the visual-fidelity check.
+- **Two `@Preview` composables plus a two-method instrumented test class since #101.** `app/src/androidTest/.../onboarding/ScannerConnectingScreenTest.kt` covers `connectingMessage_renders` (substring match `"Connecting to your pyrycode server"` — substring avoids the U+2026 ellipsis) and `serverAddress_rendersVerbatim` (exact match on the `"home.lan:7117"` literal passed as the `serverAddress` arg). Structure-only: no callback wiring to assert (the screen has none).
 
 ## Related
 

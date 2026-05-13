@@ -73,7 +73,7 @@ N/A. The screen *is* the camera-permission-denied error state; there is no I/O, 
 
 - **Phase 4 walk-back.** The screen survives Phase 4 wholesale — its sole role is the visual surface for the denied state, which CameraX integration consumes as-is. The only future addition is the `TopAppBar` / `onBack` lambda once the screen is hosted inside the pairing nav graph.
 - **Pixel-perfect not required.** Canvas coordinates are tuned by visual side-by-side against the Figma screenshot, not measured. The silhouette must read as "camera with a strike through it"; sub-pixel fidelity is explicitly out of scope.
-- **Two `@Preview` composables only.** No `androidTest`, no unit test, no snapshot test — matches the Welcome / Scanner bar. Previews are the visual-fidelity check.
+- **Two `@Preview` composables plus a three-method instrumented test class since #101.** `app/src/androidTest/.../onboarding/ScannerDeniedScreenTest.kt` covers `heading_rendersCameraPermissionRequired` (exact match), `openSettingsButton_hasClickAction` (`"Open settings"` carries a click action), and `pasteCodeButton_hasClickAction` (`"Paste code instead"` carries a click action). Structure only — callback wiring intentionally unasserted; the screen's two lambdas are passed as `{}` no-ops at the test site.
 
 ## Related
 
