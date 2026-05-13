@@ -1,10 +1,12 @@
 package de.pyryco.mobile.ui.conversations.list
 
+import android.content.res.Configuration
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -14,14 +16,17 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DefaultScratchCwd
@@ -52,6 +57,19 @@ fun ChannelListScreen(
         modifier = modifier,
         topBar = {
             TopAppBar(
+                navigationIcon = {
+                    Box(
+                        modifier = Modifier.size(40.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_pyry_logo),
+                            contentDescription = stringResource(R.string.cd_pyrycode_logo),
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(28.dp),
+                        )
+                    }
+                },
                 title = { Text(stringResource(R.string.app_name)) },
                 actions = {
                     IconButton(onClick = { onEvent(ChannelListEvent.SettingsTapped) }) {
@@ -98,6 +116,7 @@ fun ChannelListScreen(
                 bodyModifier,
             )
             is ChannelListUiState.Loaded -> Column(bodyModifier.fillMaxSize()) {
+                ChannelsSectionHeader()
                 LazyColumn(modifier = Modifier.weight(1f)) {
                     items(items = state.channels, key = { it.id }) { channel ->
                         ConversationRow(
@@ -121,6 +140,16 @@ private fun CenteredText(text: String, modifier: Modifier) {
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(text)
     }
+}
+
+@Composable
+private fun ChannelsSectionHeader() {
+    Text(
+        text = stringResource(R.string.channels_section_header),
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
+    )
 }
 
 private fun previewChannels(now: Instant): List<Conversation> = listOf(
@@ -200,6 +229,41 @@ private fun ChannelListScreenEmptyWithPillPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
         ChannelListScreen(
             state = ChannelListUiState.Empty(recentDiscussionsCount = 5),
+            onEvent = {},
+        )
+    }
+}
+
+@Preview(
+    name = "Loaded — Dark",
+    showBackground = true,
+    widthDp = 412,
+    uiMode = Configuration.UI_MODE_NIGHT_YES,
+)
+@Composable
+private fun ChannelListScreenLoadedDarkPreview() {
+    PyrycodeMobileTheme(darkTheme = true) {
+        ChannelListScreen(
+            state = ChannelListUiState.Loaded(
+                channels = previewChannels(Clock.System.now()),
+                recentDiscussionsCount = 0,
+            ),
+            onEvent = {},
+        )
+    }
+}
+
+@Preview(
+    name = "Empty — Dark",
+    showBackground = true,
+    widthDp = 412,
+    uiMode = Configuration.UI_MODE_NIGHT_YES,
+)
+@Composable
+private fun ChannelListScreenEmptyDarkPreview() {
+    PyrycodeMobileTheme(darkTheme = true) {
+        ChannelListScreen(
+            state = ChannelListUiState.Empty(recentDiscussionsCount = 0),
             onEvent = {},
         )
     }
