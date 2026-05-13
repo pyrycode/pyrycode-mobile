@@ -12,7 +12,7 @@ Replaces the prior `SettingsPlaceholder` stub with a scrollable list of seven la
 4. **Notifications** — `Push notifications when claude responds`, `Notification sound`.
 5. **Memory** — `Installed memory plugins`, `Manage per-channel memory`.
 6. **Storage** — `Archived conversations`, `Clear cache`.
-7. **About** — Version (live `BuildConfig.VERSION_NAME` / `VERSION_CODE` since #90), `Open source · github.com/pyrycode/pyrycode-mobile` (taps launch the platform browser via `Intent.ACTION_VIEW` since #90), `Privacy policy`, `License: MIT`.
+7. **About** — Version (live `BuildConfig.VERSION_NAME` / `VERSION_CODE` since #90), `Open source · github.com/pyrycode/pyrycode-mobile` (taps launch the platform browser via `Intent.ACTION_VIEW` since #90), `Privacy policy`, `License: MIT` (taps open the in-app [License screen](license-screen.md) since #91).
 
 Each row has one of five trailing-affordance shapes: chevron, M3 `Switch`, outlined "Add" pill, `OpenInNew` icon, or none. The full row inventory (headlines, subtitle literals, trailing per row) is enumerated in [`../codebase/64.md`](../codebase/64.md).
 
@@ -24,9 +24,12 @@ Pure stateless Composable with three local-only switch states and one `LocalCont
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
+    onOpenLicense: () -> Unit,
     modifier: Modifier = Modifier,
 )
 ```
+
+`onOpenLicense` (added #91) carries no default — every call site (production, previews, tests) is required to pass it explicitly so the License row's wiring stays honest. Production routes it to `navController.navigate(Routes.License)`; previews and tests pass `{}`.
 
 Skeleton:
 
@@ -54,7 +57,10 @@ Mounted at the `settings` route in `PyryNavHost` (`MainActivity.kt`):
 
 ```kotlin
 composable(Routes.Settings) {
-    SettingsScreen(onBack = { navController.popBackStack() })
+    SettingsScreen(
+        onBack = { navController.popBackStack() },
+        onOpenLicense = { navController.navigate(Routes.License) },
+    )
 }
 ```
 
@@ -64,8 +70,7 @@ Entry point is the trailing settings-gear `IconButton` in `ChannelListScreen`'s 
 
 - **No persistence.** Toggle a switch, leave the screen, come back — the switch resets to its AC-specified default. This is intentional; the screen is a visual stub. Don't add `rememberSaveable` "just in case" — Phase 3 replaces these with `StateFlow`-backed values from a `SettingsViewModel`.
 - **Material You toggle is cosmetic.** Flipping it doesn't actually call back into `PyrycodeMobileTheme(dynamicColor = ...)`. `Theme.kt` defaults `dynamicColor = false`; that wiring is Phase 3.
-- **Most non-switch row taps are still no-ops** including the "Add" pill, the `Privacy policy` link, and every Connection / Appearance / Defaults / Notifications / Memory / Storage row. No nav, no toast. The Open-source row (since #90) is the lone exception — it launches `https://github.com/pyrycode/pyrycode-mobile` in the platform browser. Sub-screens and the remaining external-link handlers are Phase 3+ tickets.
-- **License row is intentionally still dead.** #90 wired the Version and Open-source rows but explicitly left License alone; an in-app license viewer lands in its own sibling ticket. Do not add an `onClick` here without that ticket on the board.
+- **Most non-switch row taps are still no-ops** including the "Add" pill, the `Privacy policy` link, and every Connection / Appearance / Defaults / Notifications / Memory / Storage row. No nav, no toast. The About-section Open-source row (since #90) and License row (since #91) are the exceptions — the former launches `https://github.com/pyrycode/pyrycode-mobile` in the platform browser, the latter navigates to the in-app [License screen](license-screen.md). Sub-screens and the remaining external-link handlers are Phase 3+ tickets.
 
 ## Previews
 
@@ -78,8 +83,9 @@ No unit tests — no ViewModel, no state machine, no business logic to assert. O
 
 ## Related
 
-- Spec: `docs/specs/architecture/64-settings-screen.md`; About-row wiring spec `docs/specs/architecture/90-settings-about-version-row-and-open-source-row.md`
-- Ticket notes: [`../codebase/64.md`](../codebase/64.md) (visual skeleton), [`../codebase/90.md`](../codebase/90.md) (About Version + Open-source wiring)
+- Spec: `docs/specs/architecture/64-settings-screen.md`; About-row wiring specs `docs/specs/architecture/90-settings-about-version-row-and-open-source-row.md`, `docs/specs/architecture/91-settings-in-app-license-viewer.md`
+- Ticket notes: [`../codebase/64.md`](../codebase/64.md) (visual skeleton), [`../codebase/90.md`](../codebase/90.md) (About Version + Open-source wiring), [`../codebase/91.md`](../codebase/91.md) (License row → in-app viewer)
+- License sub-screen: [License screen](license-screen.md)
 - Figma node: `17:2` — https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=17-2
 - Phase 1 stub it replaces: ticket #16 (`SettingsPlaceholder` in `MainActivity`)
 - Entry point: [Channel list screen](channel-list-screen.md) — settings-gear `IconButton` in the `TopAppBar`
