@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">Pyrycode Mobile</string>
     <string name="cd_open_settings">Open settings</string>
+    <string name="cd_new_discussion">New discussion</string>
 </resources>

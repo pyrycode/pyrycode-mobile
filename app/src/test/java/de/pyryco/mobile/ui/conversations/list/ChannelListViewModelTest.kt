@@ -4,11 +4,14 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -19,6 +22,7 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -92,6 +96,41 @@ class ChannelListViewModelTest {
             (state as ChannelListUiState.Error).message.isNotBlank(),
         )
         collector.cancel()
+    }
+
+    @Test
+    fun createDiscussionTapped_createsOneUnpromotedConversation() = runTest {
+        val repository = FakeConversationRepository()
+        val before = repository.observeConversations(ConversationFilter.Discussions).first()
+        val vm = ChannelListViewModel(repository)
+
+        vm.onEvent(ChannelListEvent.CreateDiscussionTapped)
+        advanceUntilIdle()
+
+        val after = repository.observeConversations(ConversationFilter.Discussions).first()
+        assertEquals(before.size + 1, after.size)
+        val created = after.single { it.id !in before.map(Conversation::id).toSet() }
+        assertEquals(false, created.isPromoted)
+    }
+
+    @Test
+    fun createDiscussionTapped_emitsToThreadNavigationWithCreatedId() = runTest {
+        val repository = FakeConversationRepository()
+        val before = repository.observeConversations(ConversationFilter.Discussions).first()
+        val vm = ChannelListViewModel(repository)
+
+        val deferredEvent = async { vm.navigationEvents.first() }
+        vm.onEvent(ChannelListEvent.CreateDiscussionTapped)
+        advanceUntilIdle()
+
+        val event = deferredEvent.await()
+        assertTrue("expected ToThread, was $event", event is ChannelListNavigation.ToThread)
+        val after = repository.observeConversations(ConversationFilter.Discussions).first()
+        val createdId = after.map(Conversation::id).toSet().minus(
+            before.map(Conversation::id).toSet(),
+        ).single()
+        assertEquals(createdId, (event as ChannelListNavigation.ToThread).conversationId)
+        assertNotNull(createdId)
     }
 
     // --- helpers ---
