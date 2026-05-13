@@ -85,7 +85,7 @@ The `Conversation.isSleeping` field is derived at projection in `FakeConversatio
 
 ### Relative time bucketing
 
-Inline `private` helper `formatRelativeTime(instant, now, timeZone)` — default `now = Clock.System.now()` and `timeZone = TimeZone.currentSystemDefault()` so previews and any future test can inject deterministic values without exposing the parameter publicly. First-match wins:
+Since #69 `formatRelativeTime(instant, now, timeZone)` lives at `internal` visibility in a peer file `ui/conversations/components/RelativeTime.kt` (same package) — extracted from `ConversationRow.kt` so the new [`DiscussionPreviewRow`](./discussion-preview-row.md) can call it without duplication. Default `now = Clock.System.now()` and `timeZone = TimeZone.currentSystemDefault()` so previews and any future test can inject deterministic values without exposing the parameter publicly. The two `LocalDate.Format` builders (`sameYearFormat`, `crossYearFormat`) moved with it; `ConversationRow.kt` no longer owns either. First-match wins:
 
 | Condition | Output |
 |---|---|
@@ -143,7 +143,7 @@ LazyColumn { items(channels, key = { it.id }) { channel ->
 - Surfacing the eviction `BoundaryReason` (Clear / IdleEvict / WorkspaceChange) in the row — explicit non-goal in #20's "Technical Notes".
 - Tooltip / long-press to explain "sleeping" — accessibility-affordances polish, follow-up ticket if filed.
 - Role-based preview decoration (e.g. `"You: …"` for `Role.User`) — not in AC; future ticket if needed.
-- Extracting `formatRelativeTime` / `previewText` / `condenseWorkspace` to a shared module — all three are `private` to this file. If a later ticket (e.g. thread message timestamps, a workspace picker) needs one, that ticket extracts.
+- Extracting `previewText` / `condenseWorkspace` to a shared module — both remain `private` to this file. `formatRelativeTime` was extracted in #69 (peer file `RelativeTime.kt`, `internal`); the same move applies to either of the others when a second caller appears. `condenseWorkspace` was *not* shared with `DiscussionPreviewRow` in #69 — the two have intentionally different fallback rules, and the spec forbids a shared helper.
 - Tooltip / long-press to surface the full `cwd` path — explicit non-goal in #19's "Technical Notes".
 - Aligning `FakeConversationRepository.createDiscussion(workspace = null)` to write `DefaultScratchCwd` instead of `""` — works correctly today via the blank-fallback at the UI; deferred to a follow-up if filed.
 - `ComposeTestRule` tests — `androidx-compose-ui-test-junit4` is in the catalog but has zero consumers; introducing it here would expand scope beyond the AC.

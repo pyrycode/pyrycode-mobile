@@ -1,6 +1,6 @@
 # ChannelListScreen
 
-Stateless `(state, onEvent)` composable that renders a Material 3 `Scaffold` with a `TopAppBar` (leading Pyrycode logo + app-name title + trailing settings gear, #68) above a `LazyColumn` of `ConversationRow`s — each carrying a 40dp leading [`ConversationAvatar`](./conversation-avatar.md) (#68) — for the persistent-channel slice, preceded by a "Channels" section header (#68, `Loaded` branch only) and trailed by a `FloatingActionButton` (#22) that creates a new discussion. A "Recent discussions (N) →" pill (#26) sits below the list (or above the empty-state copy) and routes to the discussions drilldown. Dispatches `ChannelListEvent.RowTapped` on row clicks, `SettingsTapped` on gear taps, `CreateDiscussionTapped` on FAB taps, and `RecentDiscussionsTapped` on pill taps. First stateless UI consumer of a ViewModel in the project; introduces the sealed `Event` shape every screen will follow.
+Stateless `(state, onEvent)` composable that renders a Material 3 `Scaffold` with a `TopAppBar` (leading Pyrycode logo + app-name title + trailing settings gear, #68) above a `LazyColumn` of `ConversationRow`s — each carrying a 40dp leading [`ConversationAvatar`](./conversation-avatar.md) (#68) — for the persistent-channel slice, preceded by a "Channels" section header (#68, `Loaded` branch only) and trailed by a `FloatingActionButton` (#22) that creates a new discussion. Since #69 an inline "Recent discussions" section ([`DiscussionPreviewRow`](./discussion-preview-row.md) × up-to-3 + "See all discussions (N) →" link) renders as a trailing `LazyColumn` item in `Loaded` (above the centred empty-state copy in `Empty`); the previous `RecentDiscussionsPill` is gone. Dispatches `ChannelListEvent.RowTapped` on row clicks (including discussion preview rows), `SettingsTapped` on gear taps, `CreateDiscussionTapped` on FAB taps, and `RecentDiscussionsTapped` on the See-all row. First stateless UI consumer of a ViewModel in the project; introduces the sealed `Event` shape every screen will follow.
 
 Package: `de.pyryco.mobile.ui.conversations.list` (`app/src/main/java/de/pyryco/mobile/ui/conversations/list/`). File: `ChannelListScreen.kt`.
 
@@ -8,14 +8,14 @@ Package: `de.pyryco.mobile.ui.conversations.list` (`app/src/main/java/de/pyryco/
 
 Wraps its body in a `Scaffold` whose `topBar` is a Material 3 `TopAppBar` (rendered in **every** state) and whose `floatingActionButton` slot hosts a `FloatingActionButton` (rendered only when `state is Loaded || state is Empty`, #22). Renders the four `ChannelListUiState` variants from the VM (#45) inside the Scaffold body:
 
-- **`Loading`** — centred `Text("Loading…")` placeholder. No FAB, no pill.
-- **`Empty(recentDiscussionsCount)`** — `Column(bodyModifier.fillMaxSize())` containing the pill first (renders only when `recentDiscussionsCount > 0`) and a centred `Text("Tap + to start a conversation")` (resource `R.string.channel_list_empty`, #23) inside `Box(Modifier.fillMaxWidth().weight(1f), Alignment.Center)`. FAB rendered — the "+" in the copy refers to it.
-- **`Error(message)`** — centred `Text("Couldn't load channels: $message")` placeholder. No FAB, no pill.
-- **`Loaded(channels, recentDiscussionsCount)`** — `Column(bodyModifier.fillMaxSize())` containing a private `ChannelsSectionHeader()` (#68 — `labelLarge` "Channels" on `onSurfaceVariant @ 0.85f`, padding `(start=16, end=16, top=12, bottom=4)`), then `LazyColumn(Modifier.weight(1f))` of `ConversationRow`s (one per channel, keyed by `Conversation.id`) followed by the pill (renders only when `recentDiscussionsCount > 0`). FAB rendered.
+- **`Loading`** — centred `Text("Loading…")` placeholder. No FAB, no recent-discussions section.
+- **`Empty(recentDiscussions, recentDiscussionsCount)`** — `Column(bodyModifier.fillMaxSize())` containing `RecentDiscussionsSection(...)` (renders nothing when `recentDiscussions.isEmpty()`, otherwise emits divider + header + up-to-3 `DiscussionPreviewRow`s + See-all link, #69) above a centred `Text("Tap + to start a conversation")` (resource `R.string.channel_list_empty`, #23) inside `Box(Modifier.fillMaxWidth().weight(1f), Alignment.Center)`. FAB rendered — the "+" in the copy refers to it.
+- **`Error(message)`** — centred `Text("Couldn't load channels: $message")` placeholder. No FAB, no section.
+- **`Loaded(channels, recentDiscussions, recentDiscussionsCount)`** — `Column(bodyModifier.fillMaxSize())` containing a private `ChannelsSectionHeader()` (#68 — `labelLarge` "Channels" on `onSurfaceVariant @ 0.85f`, padding `(start=16, end=16, top=12, bottom=4)`), then `LazyColumn(Modifier.weight(1f))` of `ConversationRow`s (one per channel, keyed by `Conversation.id`) followed by a trailing `item(key = "recent-discussions-section")` hosting `RecentDiscussionsSection` (#69 — placement moved *inside* the `LazyColumn` so the section scrolls with the channels, matching the Figma `15:8` single-scroll layout). FAB rendered.
 
-The `TopAppBar`'s `navigationIcon` slot (#68) is a 28dp `Icon(painter = painterResource(R.drawable.ic_pyry_logo), tint = MaterialTheme.colorScheme.primary)` centred inside a 40dp `Box`; the drawable's own `#FFFFFF` fills are overridden by Compose's `SrcIn` `ColorFilter` (`Icon(painter, tint = …)` applies it across the painter, so the logo always renders in `primary` regardless of the asset's internal fills). Its title is `stringResource(R.string.app_name)` ("Pyrycode Mobile"); its single trailing `actions` slot is an `IconButton` wrapping `Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.cd_open_settings))`. The FAB wraps `Icon(Icons.Default.Add, contentDescription = stringResource(R.string.cd_new_discussion))` at default `FabPosition.End`. Each row's `onClick` emits `ChannelListEvent.RowTapped(channel.id)`, the gear's `onClick` emits `SettingsTapped`, the FAB's `onClick` emits `CreateDiscussionTapped`, and the pill's `onClick` emits `RecentDiscussionsTapped` through the screen's `onEvent` lambda. The NavHost destination is the only place that lambda resolves to concrete actions (row/gear/pill dispatched directly to `navController.navigate(...)`; `CreateDiscussionTapped` forwarded into `vm.onEvent(event)` so the suspend-shaped create can run and emit a `ChannelListNavigation.ToThread` event); the screen itself is `NavController`-free.
+The `TopAppBar`'s `navigationIcon` slot (#68) is a 28dp `Icon(painter = painterResource(R.drawable.ic_pyry_logo), tint = MaterialTheme.colorScheme.primary)` centred inside a 40dp `Box`; the drawable's own `#FFFFFF` fills are overridden by Compose's `SrcIn` `ColorFilter` (`Icon(painter, tint = …)` applies it across the painter, so the logo always renders in `primary` regardless of the asset's internal fills). Its title is `stringResource(R.string.app_name)` ("Pyrycode Mobile"); its single trailing `actions` slot is an `IconButton` wrapping `Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.cd_open_settings))`. The FAB wraps `Icon(Icons.Default.Add, contentDescription = stringResource(R.string.cd_new_discussion))` at default `FabPosition.End`. Each row's `onClick` emits `ChannelListEvent.RowTapped(channel.id)` (channels) or `ChannelListEvent.RowTapped(discussion.id)` (preview rows inside the section), the gear's `onClick` emits `SettingsTapped`, the FAB's `onClick` emits `CreateDiscussionTapped`, and the See-all row's `onClick` emits `RecentDiscussionsTapped` through the screen's `onEvent` lambda. The NavHost destination is the only place that lambda resolves to concrete actions (row/gear/See-all dispatched directly to `navController.navigate(...)`; `CreateDiscussionTapped` forwarded into `vm.onEvent(event)` so the suspend-shaped create can run and emit a `ChannelListNavigation.ToThread` event); the screen itself is `NavController`-free.
 
-The pill itself is the stateless [`RecentDiscussionsPill`](#recent-discussions-pill-26) composable in `ui/conversations/components/`; it owns the `if (count <= 0) return` zero-state guard internally so the screen's `Empty` and `Loaded` branches always call it unconditionally.
+The section's "render only when non-empty" guard lives inside `RecentDiscussionsSection` itself (`if (discussions.isEmpty()) return`) — call sites in both `Empty` and `Loaded` branches invoke it unconditionally. This is the "no orphan header" AC: when there are no recent discussions, the entire block (divider + header + rows + See-all link) collapses to nothing.
 
 ## Shape
 
@@ -49,9 +49,11 @@ fun ChannelListScreen(
         when (state) {
             ChannelListUiState.Loading -> CenteredText("Loading…", bodyModifier)
             is ChannelListUiState.Empty -> Column(bodyModifier.fillMaxSize()) {
-                RecentDiscussionsPill(
-                    count = state.recentDiscussionsCount,
-                    onClick = { onEvent(ChannelListEvent.RecentDiscussionsTapped) },
+                RecentDiscussionsSection(
+                    discussions = state.recentDiscussions,
+                    totalCount = state.recentDiscussionsCount,
+                    onSeeAllClick = { onEvent(ChannelListEvent.RecentDiscussionsTapped) },
+                    onRowClick = { onEvent(ChannelListEvent.RowTapped(it)) },
                 )
                 Box(
                     Modifier.fillMaxWidth().weight(1f),
@@ -63,6 +65,7 @@ fun ChannelListScreen(
                 bodyModifier,
             )
             is ChannelListUiState.Loaded -> Column(bodyModifier.fillMaxSize()) {
+                ChannelsSectionHeader()
                 LazyColumn(Modifier.weight(1f)) {
                     items(items = state.channels, key = { it.id }) { channel ->
                         ConversationRow(
@@ -71,40 +74,100 @@ fun ChannelListScreen(
                             onClick = { onEvent(ChannelListEvent.RowTapped(channel.id)) },
                         )
                     }
+                    item(key = "recent-discussions-section") {
+                        RecentDiscussionsSection(
+                            discussions = state.recentDiscussions,
+                            totalCount = state.recentDiscussionsCount,
+                            onSeeAllClick = { onEvent(ChannelListEvent.RecentDiscussionsTapped) },
+                            onRowClick = { onEvent(ChannelListEvent.RowTapped(it)) },
+                        )
+                    }
                 }
-                RecentDiscussionsPill(
-                    count = state.recentDiscussionsCount,
-                    onClick = { onEvent(ChannelListEvent.RecentDiscussionsTapped) },
-                )
             }
         }
     }
 }
 ```
 
-`ChannelListEvent` lives in `ChannelListScreen.kt`, not `ChannelListViewModel.kt`. The screen — `ConversationRow.onClick`, the gear `IconButton.onClick`, the FAB's `onClick`, and the pill's `onClick` — is the producer for all four variants. A VM-side reducer now exists for `CreateDiscussionTapped` (#22), but the sealed type stayed in the screen file: three of four variants still have no VM-side consumer, and routing decisions live at the destination's `when (event)`. Reconsider moving the type when *most* variants land in `vm.onEvent`.
+`ChannelListEvent` lives in `ChannelListScreen.kt`, not `ChannelListViewModel.kt`. The screen — `ConversationRow.onClick`, `DiscussionPreviewRow.onClick` (inside the section), the gear `IconButton.onClick`, the FAB's `onClick`, and the See-all row's `onClick` — is the producer for all four variants. A VM-side reducer now exists for `CreateDiscussionTapped` (#22), but the sealed type stayed in the screen file: three of four variants still have no VM-side consumer, and routing decisions live at the destination's `when (event)`. Reconsider moving the type when *most* variants land in `vm.onEvent`.
 
-## Recent-discussions pill (#26)
+## Recent-discussions section (#69)
 
-Sibling composable in `ui/conversations/components/RecentDiscussionsPill.kt`. Stateless: `(count: Int, onClick: () -> Unit, modifier: Modifier = Modifier)`. Internal guard `if (count <= 0) return` — call sites in `ChannelListScreen` always call the composable unconditionally; the screen body does not branch on the count.
+Two file-local private composables inside `ChannelListScreen.kt`: `RecentDiscussionsSection` (the whole block) and `SeeAllDiscussionsRow` (the trailing affordance).
 
-Chrome: M3 `Surface(tonalElevation = 2.dp, shape = MaterialTheme.shapes.medium, color = colorScheme.surfaceVariant)` wrapping a `Text(label, style = labelLarge, color = onSurfaceVariant)`. The spec deferred the chrome choice between `Surface` and `AssistChip`; `AssistChip`'s built-in chrome read as "another list row" on the Loaded preview, so `Surface` won. Trailing affordance glyph `→` is part of the label string (no `Icons.AutoMirrored.Filled.ArrowForward`) so it auto-mirrors with locale and reads as one atom to TalkBack.
-
-A11y modifier order (set in the follow-up commit `09468ae`):
+`RecentDiscussionsSection(discussions, totalCount, onSeeAllClick, onRowClick)`:
 
 ```kotlin
-modifier = modifier
-    .padding(horizontal = 16.dp, vertical = 8.dp)
-    .minimumInteractiveComponentSize()                          // 48dp touch-target floor
-    .clickable(role = Role.Button, onClick = onClick)           // role announces "button"
-    .semantics(mergeDescendants = true) {                       // TalkBack reads one node
-        contentDescription = description
+@Composable
+private fun RecentDiscussionsSection(
+    discussions: List<Conversation>,
+    totalCount: Int,
+    onSeeAllClick: () -> Unit,
+    onRowClick: (String) -> Unit,
+) {
+    if (discussions.isEmpty()) return
+    Column(modifier = Modifier.fillMaxWidth()) {
+        HorizontalDivider(
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.60f),
+        )
+        Text(
+            text = stringResource(R.string.recent_discussions_section_header),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
+        )
+        discussions.forEach { conversation ->
+            DiscussionPreviewRow(
+                conversation = conversation,
+                onClick = { onRowClick(conversation.id) },
+            )
+        }
+        SeeAllDiscussionsRow(totalCount = totalCount, onClick = onSeeAllClick)
     }
+}
 ```
 
-`Surface` itself does *not* enforce the 48dp Material a-11y minimum touch target — that's a `Button` / `Chip` / `IconButton` property — so `minimumInteractiveComponentSize()` is required for any `Surface`-as-button affordance.
+Block emission order matches Figma `15:8`: 1dp `HorizontalDivider` (`outlineVariant @ 0.60f`, Figma `15:85`) → label-large header on `onSurfaceVariant @ 0.85f` (Figma `15:87`, padding mirrors `ChannelsSectionHeader`) → up-to-3 `DiscussionPreviewRow`s in a plain `forEach` (no `LazyColumn` — the section is itself inside the outer `LazyColumn` as a single `item`, and 3 rows isn't worth a nested lazy region) → `SeeAllDiscussionsRow`.
 
-Strings: `R.string.recent_discussions_pill_label` (`"Recent discussions (%d) →"`, %d-formatted with `stringResource(id, count)`) and `R.string.cd_recent_discussions_pill` (`"Open recent discussions, %d available"`). No `<plurals>` resource yet; the swap is mechanical if product files it.
+`SeeAllDiscussionsRow(totalCount, onClick)`:
+
+```kotlin
+@Composable
+private fun SeeAllDiscussionsRow(totalCount: Int, onClick: () -> Unit) {
+    val description = stringResource(R.string.cd_see_all_discussions, totalCount)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                contentDescription = description
+                role = Role.Button
+            }
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.see_all_discussions_label, totalCount),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+```
+
+Modifier order is load-bearing: `.clickable` *then* `.semantics(mergeDescendants = true) { contentDescription = … ; role = Role.Button }`. The merged-descendants semantics carry the row's `contentDescription` and `role`; the inner `Text` and `Icon` (the icon's `contentDescription = null` is correct) collapse into the merged node so TalkBack reads "See all N recent discussions, button" once, not twice. The arrow uses `Icons.AutoMirrored.Filled.ArrowForward` from `material-icons-core` — `AutoMirrored` is a sub-package, not a separate artifact (do not reach for `material-icons-extended`).
+
+Strings (#69): `R.string.recent_discussions_section_header` ("Recent discussions"), `R.string.see_all_discussions_label` ("See all discussions (%d)", parametrised), `R.string.cd_see_all_discussions` ("See all %d recent discussions", parametrised). The previously-shipped `R.string.recent_discussions_pill_label` and `R.string.cd_recent_discussions_pill` were deleted alongside the pill file.
+
+Per-row primitive: [`DiscussionPreviewRow`](./discussion-preview-row.md) — distinct from `ConversationRow` (no `ListItem` chrome, no avatar slot, no trailing time; instead title / body / `<workspace> · <time>` meta with a monospace span on the workspace fragment).
 
 ## How it works
 
@@ -182,19 +245,19 @@ Key points:
 - **Dependencies:** `androidx.lifecycle:lifecycle-runtime-compose` (catalog: `androidx-lifecycle-runtime-compose`, reuses the `lifecycleRuntimeKtx = "2.6.1"` version-ref). Required for `collectAsStateWithLifecycle` — not pulled transitively by `lifecycle-runtime-ktx`, `lifecycle-viewmodel-ktx`, or the `koin-androidx-compose` chain. Three lifecycle artifacts now on the classpath (`-ktx`, `-viewmodel-ktx`, `-runtime-compose`) — they share `LifecycleOwner` ABIs and must stay on the same version-ref.
 - **Koin compose:** `org.koin.androidx.compose.koinViewModel` (already on the classpath since #32 via `koin-androidx-compose`). Distinct from `org.koin.compose.koinInject` (the `scanner` destination's `AppPreferences` resolver) — `koinViewModel` is the right call for `ViewModel`-typed bindings because it routes through `LocalViewModelStoreOwner`.
 - **Icons:** `androidx.compose.material:material-icons-core` (catalog: `androidx-compose-material-icons-core`, BOM-managed — no `version.ref`). The always-on icon set; supplies `Icons.Default.Settings` for the TopAppBar gear (#21). Don't reach for `material-icons-extended` (multi-MB megapack) for single-glyph needs — try `-core` first.
-- **Strings:** `R.string.app_name` for the TopAppBar title (reused, defined since project init); `R.string.cd_open_settings` ("Open settings") for the gear's TalkBack `contentDescription`; `R.string.cd_new_discussion` ("New discussion") for the FAB's TalkBack description (#22); `R.string.channel_list_empty` ("Tap + to start a conversation") for the Empty body (#23); `R.string.recent_discussions_pill_label` ("Recent discussions (%d) →") and `R.string.cd_recent_discussions_pill` ("Open recent discussions, %d available") for the pill (#26); `R.string.cd_pyrycode_logo` ("Pyrycode logo") for the TopAppBar `navigationIcon` (#68); `R.string.channels_section_header` ("Channels") for the section header (#68). A-11y content-description strings keep the `cd_` prefix; user-facing copy uses a `<screen>_<role>` shape.
+- **Strings:** `R.string.app_name` for the TopAppBar title (reused, defined since project init); `R.string.cd_open_settings` ("Open settings") for the gear's TalkBack `contentDescription`; `R.string.cd_new_discussion` ("New discussion") for the FAB's TalkBack description (#22); `R.string.channel_list_empty` ("Tap + to start a conversation") for the Empty body (#23); `R.string.recent_discussions_section_header` ("Recent discussions"), `R.string.see_all_discussions_label` ("See all discussions (%d)") and `R.string.cd_see_all_discussions` ("See all %d recent discussions") for the section (#69 — replaced the pill's two strings); `R.string.cd_pyrycode_logo` ("Pyrycode logo") for the TopAppBar `navigationIcon` (#68); `R.string.channels_section_header` ("Channels") for the section header (#68). A-11y content-description strings keep the `cd_` prefix; user-facing copy uses a `<screen>_<role>` shape.
 - **Drawables:** `R.drawable.ic_pyry_logo` (since #68 — already in tree; the same vector asset Welcome's hero uses).
 
 ## Preview
 
-Six `@Preview` composables, all `widthDp = 412` (matches the `ConversationRow.kt` previews from #17 for consistent device shape):
+Six `@Preview` composables, all `widthDp = 412` (matches the `ConversationRow.kt` previews from #17 for consistent device shape). All six reshaped in #69 — the `+ pill` naming and seed shape are gone; `Loaded/Empty + discussions` cover the populated-section case:
 
-- `ChannelListScreenLoadedPreview` (`@Preview(name = "Loaded — Light", …)`) — three inline `Conversation` instances varying `name`, `cwd` (one `DefaultScratchCwd` to verify the workspace-label-omission path through `ConversationRow`, two real workspaces), and `lastUsedAt` (12 minutes, 4 hours, 3 days ago). `recentDiscussionsCount = 0` — pill not rendered; baseline channel-list look.
-- `ChannelListScreenLoadedWithPillPreview` (`@Preview(name = "Loaded + pill — Light", …)`, #26) — one channel + `recentDiscussionsCount = 1` (the AC's `N = 1` case). Pill renders below the `LazyColumn`.
-- `ChannelListScreenEmptyPreview` (`@Preview(name = "Empty — Light", …)`, #23) — `state = ChannelListUiState.Empty(recentDiscussionsCount = 0), onEvent = {}`. No sample data needed. Renders the TopAppBar above the centred empty-state copy and the FAB at `FabPosition.End`; pill not rendered.
-- `ChannelListScreenEmptyWithPillPreview` (`@Preview(name = "Empty + pill — Light", …)`, #26) — `Empty(recentDiscussionsCount = 5)` (the AC's `N = 5` case). Pill renders at the top of the body, above the centred empty-state copy.
-- `ChannelListScreenLoadedDarkPreview` (`@Preview(name = "Loaded — Dark", uiMode = Configuration.UI_MODE_NIGHT_YES, …)`, #68) — same three channels rendered against `PyrycodeMobileTheme(darkTheme = true)`. Exercises the dark-scheme logo tint (`primary`), section header colour, and the three avatar `*-container` palettes side by side.
-- `ChannelListScreenEmptyDarkPreview` (`@Preview(name = "Empty — Dark", uiMode = Configuration.UI_MODE_NIGHT_YES, …)`, #68) — dark counterpart of the bare-empty preview. The pill-specific previews (#26) stay light-only because they exercise an affordance #69 will replace; no dark counterparts.
+- `ChannelListScreenLoadedPreview` (`@Preview(name = "Loaded — Light", …)`) — three inline channels via the file-private `previewChannels(now)` helper varying `name`, `cwd` (one `DefaultScratchCwd`, two real workspaces, one with `isSleeping = true`), and `lastUsedAt` (12m / 4h / 3d ago). `recentDiscussions = emptyList()`, `recentDiscussionsCount = 0` — section absent; baseline channel-list look (no orphan header).
+- `ChannelListScreenLoadedWithDiscussionsPreview` (`@Preview(name = "Loaded + discussions — Light", …)`, #69) — same three channels + three sample discussions via `previewDiscussions(now)` (12m / 2h / 26h ago, varied names to exercise titleMedium truncation), `recentDiscussionsCount = 8`. Renders the full section as a trailing `LazyColumn` item: divider → header → 3 preview rows → See-all link `(8) →`. Canonical "matches Figma 15:8" preview for the populated-loaded case.
+- `ChannelListScreenEmptyPreview` (`@Preview(name = "Empty — Light", …)`, #23) — `state = ChannelListUiState.Empty(recentDiscussions = emptyList(), recentDiscussionsCount = 0), onEvent = {}`. No sample data needed. Renders the TopAppBar above the centred empty-state copy and the FAB at `FabPosition.End`; section absent.
+- `ChannelListScreenEmptyWithDiscussionsPreview` (`@Preview(name = "Empty + discussions — Light", …)`, #69) — `Empty(recentDiscussions = previewDiscussions(now), recentDiscussionsCount = 5)`. Section renders at the top of the body (above the centred empty-state copy); proves the section's "no orphan header" guard inverts correctly when discussions exist but channels don't.
+- `ChannelListScreenLoadedDarkPreview` (`@Preview(name = "Loaded — Dark", uiMode = Configuration.UI_MODE_NIGHT_YES, …)`, #68; reshaped #69) — same data as the light loaded-with-discussions preview but in dark theme. Exercises the dark-scheme logo tint (`primary`), section header colour, the three avatar `*-container` palettes, and the discussion-preview-row meta line's `onSurfaceVariant @ 0.70f` contrast.
+- `ChannelListScreenEmptyDarkPreview` (`@Preview(name = "Empty — Dark", uiMode = Configuration.UI_MODE_NIGHT_YES, …)`, #68) — dark counterpart of the bare-empty preview; `recentDiscussions = emptyList()`.
 
 `Loading` and `Error` are still not previewed — their copy is a transient placeholder until designed visuals land.
 
@@ -208,11 +271,12 @@ Six `@Preview` composables, all `widthDp = 412` (matches the `ConversationRow.kt
 - **No instrumented test.** AC requires only `./gradlew assembleDebug`. The natural unit test ("tap a row → `onEvent(RowTapped(channelId))` fires") needs `androidx-compose-ui-test-junit4` wired to `androidTestImplementation` and an `androidTest/` source set entry; deferred until the first ticket with multi-event logic to verify.
 - **No `flowOn(Dispatchers.IO)` anywhere in the chain.** `collectAsStateWithLifecycle` collects on Main (via the destination's `LifecycleOwner`); the VM is Main-dispatched; the fake repo's projection is pure CPU map manipulation. Phase 4's remote impl decides its own dispatcher internally.
 - **No empty-state distinction between "never had a channel" and "had channels, all deleted".** Both render `Empty` → `"Tap + to start a conversation"`. The first ticket that needs the distinction extends `ChannelListUiState` (e.g. `Empty(reason: EmptyReason)`) or splits into a new variant.
-- **Empty-state trigger is "no channels", not Plan.md's "no channels AND no discussions".** `ChannelListViewModel` observes both filters now (#26), but the `Empty` variant still gates on `channels.isEmpty()` alone. A user with zero channels but non-zero discussions sees the empty copy *plus* the pill at the top — the pill is the secondary affordance, not a discussion-aware CTA. The product-level "promote one of your N discussions to a channel?" widening (deferred from #23) is partially obviated by the pill but still possible: would need a new `ChannelListUiState` variant.
+- **Empty-state trigger is "no channels", not Plan.md's "no channels AND no discussions".** `ChannelListViewModel` observes both filters now (#26, widened in #69 to also carry the top-3 discussions), but the `Empty` variant still gates on `channels.isEmpty()` alone. A user with zero channels but non-zero discussions sees the empty copy *and* the inline recent-discussions section above it — the section is the secondary affordance, not a discussion-aware CTA. The product-level "promote one of your N discussions to a channel?" widening (deferred from #23) would still need a new `ChannelListUiState` variant.
+- **Section placement inside vs. outside `LazyColumn` is intentional.** In `Loaded`, the section is a trailing `item(key = "recent-discussions-section")` so it scrolls with the channels (Figma `15:8` is a single scroll region). In `Empty`, no `LazyColumn` exists, so the section is a direct child of the outer `Column` above the centred empty-state `Box(weight=1f)`. The two placements share the same `RecentDiscussionsSection` composable; the divergence is purely about which parent owns it.
 
 ## Related
 
-- Ticket notes: [`../codebase/46.md`](../codebase/46.md) (LazyColumn + tap nav), [`../codebase/21.md`](../codebase/21.md) (TopAppBar + settings-gear wiring), [`../codebase/22.md`](../codebase/22.md) (FAB + one-shot nav channel), [`../codebase/23.md`](../codebase/23.md) (Empty-state copy + preview), [`../codebase/26.md`](../codebase/26.md) (Recent-discussions pill + Loaded/Empty body restructure + `RecentDiscussionsTapped` event), [`../codebase/68.md`](../codebase/68.md) (Figma polish — TopAppBar logo, leading avatars, "Channels" section header, dark previews)
-- Specs: `docs/specs/architecture/46-channellistscreen-lazycolumn-tap-nav.md`, `docs/specs/architecture/21-channel-list-top-app-bar.md`, `docs/specs/architecture/22-channel-list-fab-new-discussion.md`, `docs/specs/architecture/23-channel-list-empty-state.md`, `docs/specs/architecture/26-recent-discussions-pill.md`, `docs/specs/architecture/68-channel-list-figma-polish.md`
-- Upstream: [ChannelListViewModel](./channel-list-viewmodel.md) (state producer + `onEvent` reducer + `navigationEvents`; #26 widened `Loaded` / `Empty` to carry `recentDiscussionsCount`), [ConversationRow](./conversation-row.md) (per-row primitive), [ConversationAvatar](./conversation-avatar.md) (leading bubble, #68), [Navigation](./navigation.md) (host graph, route constants, destination wiring), [Dependency injection](./dependency-injection.md) (Koin VM binding)
-- Downstream: #19 / #20 (per-row decorations on the `ConversationRow` instances rendered here — workspace label, sleeping indicator), follow-up Retry ticket (adds `ChannelListEvent.RetryClicked` + VM-side reducer), Phase 2 long-press → workspace picker on the FAB, Phase 3 Settings (replaces `SettingsPlaceholder` body — gear wiring already in place since #21), Phase 4 (real backend behind the same `ConversationRepository` bind — zero screen change; adds error + loading UI for the create call), follow-up plurals on the pill label (`<plurals>` swap if product files it), follow-up discussion-aware empty CTA (deferred from #23 — partially obviated by the #26 pill)
+- Ticket notes: [`../codebase/46.md`](../codebase/46.md) (LazyColumn + tap nav), [`../codebase/21.md`](../codebase/21.md) (TopAppBar + settings-gear wiring), [`../codebase/22.md`](../codebase/22.md) (FAB + one-shot nav channel), [`../codebase/23.md`](../codebase/23.md) (Empty-state copy + preview), [`../codebase/26.md`](../codebase/26.md) (Recent-discussions pill + Loaded/Empty body restructure + `RecentDiscussionsTapped` event), [`../codebase/68.md`](../codebase/68.md) (Figma polish — TopAppBar logo, leading avatars, "Channels" section header, dark previews), [`../codebase/69.md`](../codebase/69.md) (inline Recent-discussions section replaces the pill; widens `Loaded` / `Empty` with `recentDiscussions: List<Conversation>`; previews reshaped)
+- Specs: `docs/specs/architecture/46-channellistscreen-lazycolumn-tap-nav.md`, `docs/specs/architecture/21-channel-list-top-app-bar.md`, `docs/specs/architecture/22-channel-list-fab-new-discussion.md`, `docs/specs/architecture/23-channel-list-empty-state.md`, `docs/specs/architecture/26-recent-discussions-pill.md`, `docs/specs/architecture/68-channel-list-figma-polish.md`, `docs/specs/architecture/69-channel-list-recent-discussions-section.md`
+- Upstream: [ChannelListViewModel](./channel-list-viewmodel.md) (state producer + `onEvent` reducer + `navigationEvents`; #26 widened `Loaded` / `Empty` to carry `recentDiscussionsCount`; #69 added `recentDiscussions: List<Conversation>` alongside), [ConversationRow](./conversation-row.md) (per-channel-row primitive), [DiscussionPreviewRow](./discussion-preview-row.md) (per-preview-row primitive, #69), [ConversationAvatar](./conversation-avatar.md) (leading bubble, #68), [Navigation](./navigation.md) (host graph, route constants, destination wiring), [Dependency injection](./dependency-injection.md) (Koin VM binding)
+- Downstream: #19 / #20 (per-row decorations on the `ConversationRow` instances rendered here — workspace label, sleeping indicator), follow-up Retry ticket (adds `ChannelListEvent.RetryClicked` + VM-side reducer), Phase 2 long-press → workspace picker on the FAB, Phase 3 Settings (replaces `SettingsPlaceholder` body — gear wiring already in place since #21), Phase 4 (real backend behind the same `ConversationRepository` bind — zero screen change; adds error + loading UI for the create call), follow-up real message-content previews inside `DiscussionPreviewRow` (deferred from #69 — needs a per-`Conversation` last-message projection from the data layer), follow-up discussion-aware empty CTA (deferred from #23)
