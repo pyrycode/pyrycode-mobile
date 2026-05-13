@@ -1,7 +1,9 @@
 package de.pyryco.mobile.ui.conversations.list
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -24,6 +26,7 @@ import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DefaultScratchCwd
 import de.pyryco.mobile.ui.conversations.components.ConversationRow
+import de.pyryco.mobile.ui.conversations.components.RecentDiscussionsPill
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
@@ -35,6 +38,7 @@ sealed interface ChannelListEvent {
     data class RowTapped(val conversationId: String) : ChannelListEvent
     data object SettingsTapped : ChannelListEvent
     data object CreateDiscussionTapped : ChannelListEvent
+    data object RecentDiscussionsTapped : ChannelListEvent
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -75,22 +79,38 @@ fun ChannelListScreen(
         val bodyModifier = Modifier.padding(inner)
         when (state) {
             ChannelListUiState.Loading -> CenteredText("Loading…", bodyModifier)
-            ChannelListUiState.Empty -> CenteredText(
-                stringResource(R.string.channel_list_empty),
-                bodyModifier,
-            )
+            is ChannelListUiState.Empty -> Column(bodyModifier.fillMaxSize()) {
+                RecentDiscussionsPill(
+                    count = state.recentDiscussionsCount,
+                    onClick = { onEvent(ChannelListEvent.RecentDiscussionsTapped) },
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(stringResource(R.string.channel_list_empty))
+                }
+            }
             is ChannelListUiState.Error -> CenteredText(
                 "Couldn't load channels: ${state.message}",
                 bodyModifier,
             )
-            is ChannelListUiState.Loaded -> LazyColumn(modifier = bodyModifier.fillMaxSize()) {
-                items(items = state.channels, key = { it.id }) { channel ->
-                    ConversationRow(
-                        conversation = channel,
-                        lastMessage = null,
-                        onClick = { onEvent(ChannelListEvent.RowTapped(channel.id)) },
-                    )
+            is ChannelListUiState.Loaded -> Column(bodyModifier.fillMaxSize()) {
+                LazyColumn(modifier = Modifier.weight(1f)) {
+                    items(items = state.channels, key = { it.id }) { channel ->
+                        ConversationRow(
+                            conversation = channel,
+                            lastMessage = null,
+                            onClick = { onEvent(ChannelListEvent.RowTapped(channel.id)) },
+                        )
+                    }
                 }
+                RecentDiscussionsPill(
+                    count = state.recentDiscussionsCount,
+                    onClick = { onEvent(ChannelListEvent.RecentDiscussionsTapped) },
+                )
             }
         }
     }
@@ -103,43 +123,61 @@ private fun CenteredText(text: String, modifier: Modifier) {
     }
 }
 
+private fun previewChannels(now: Instant): List<Conversation> = listOf(
+    Conversation(
+        id = "channel-1",
+        name = "pyrycode-mobile",
+        cwd = "~/Workspace/Projects/pyrycode-mobile",
+        currentSessionId = "session-1",
+        sessionHistory = emptyList(),
+        isPromoted = true,
+        lastUsedAt = now - 12.minutes,
+    ),
+    Conversation(
+        id = "channel-2",
+        name = "pyrycode",
+        cwd = "~/Workspace/Projects/pyrycode",
+        currentSessionId = "session-2",
+        sessionHistory = emptyList(),
+        isPromoted = true,
+        lastUsedAt = now - 4.hours,
+    ),
+    Conversation(
+        id = "channel-3",
+        name = "scratch ideas",
+        cwd = DefaultScratchCwd,
+        currentSessionId = "session-3",
+        sessionHistory = emptyList(),
+        isPromoted = true,
+        lastUsedAt = now - 3.days,
+        isSleeping = true,
+    ),
+)
+
 @Preview(name = "Loaded — Light", showBackground = true, widthDp = 412)
 @Composable
 private fun ChannelListScreenLoadedPreview() {
-    val now: Instant = Clock.System.now()
-    val previewChannels = listOf(
-        Conversation(
-            id = "channel-1",
-            name = "pyrycode-mobile",
-            cwd = "~/Workspace/Projects/pyrycode-mobile",
-            currentSessionId = "session-1",
-            sessionHistory = emptyList(),
-            isPromoted = true,
-            lastUsedAt = now - 12.minutes,
-        ),
-        Conversation(
-            id = "channel-2",
-            name = "pyrycode",
-            cwd = "~/Workspace/Projects/pyrycode",
-            currentSessionId = "session-2",
-            sessionHistory = emptyList(),
-            isPromoted = true,
-            lastUsedAt = now - 4.hours,
-        ),
-        Conversation(
-            id = "channel-3",
-            name = "scratch ideas",
-            cwd = DefaultScratchCwd,
-            currentSessionId = "session-3",
-            sessionHistory = emptyList(),
-            isPromoted = true,
-            lastUsedAt = now - 3.days,
-            isSleeping = true,
-        ),
-    )
     PyrycodeMobileTheme(darkTheme = false) {
         ChannelListScreen(
-            state = ChannelListUiState.Loaded(previewChannels),
+            state = ChannelListUiState.Loaded(
+                channels = previewChannels(Clock.System.now()),
+                recentDiscussionsCount = 0,
+            ),
+            onEvent = {},
+        )
+    }
+}
+
+@Preview(name = "Loaded + pill — Light", showBackground = true, widthDp = 412)
+@Composable
+private fun ChannelListScreenLoadedWithPillPreview() {
+    val now: Instant = Clock.System.now()
+    PyrycodeMobileTheme(darkTheme = false) {
+        ChannelListScreen(
+            state = ChannelListUiState.Loaded(
+                channels = listOf(previewChannels(now).first()),
+                recentDiscussionsCount = 1,
+            ),
             onEvent = {},
         )
     }
@@ -150,7 +188,18 @@ private fun ChannelListScreenLoadedPreview() {
 private fun ChannelListScreenEmptyPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
         ChannelListScreen(
-            state = ChannelListUiState.Empty,
+            state = ChannelListUiState.Empty(recentDiscussionsCount = 0),
+            onEvent = {},
+        )
+    }
+}
+
+@Preview(name = "Empty + pill — Light", showBackground = true, widthDp = 412)
+@Composable
+private fun ChannelListScreenEmptyWithPillPreview() {
+    PyrycodeMobileTheme(darkTheme = false) {
+        ChannelListScreen(
+            state = ChannelListUiState.Empty(recentDiscussionsCount = 5),
             onEvent = {},
         )
     }

@@ -1,6 +1,6 @@
 # ChannelListScreen
 
-Stateless `(state, onEvent)` composable that renders a Material 3 `Scaffold` with a `TopAppBar` (app-name title + trailing settings gear) above a `LazyColumn` of `ConversationRow`s for the persistent-channel slice, plus a trailing `FloatingActionButton` (#22) that creates a new discussion. Dispatches `ChannelListEvent.RowTapped` on row clicks, `SettingsTapped` on gear taps, and `CreateDiscussionTapped` on FAB taps. First stateless UI consumer of a ViewModel in the project; introduces the sealed `Event` shape every screen will follow.
+Stateless `(state, onEvent)` composable that renders a Material 3 `Scaffold` with a `TopAppBar` (app-name title + trailing settings gear) above a `LazyColumn` of `ConversationRow`s for the persistent-channel slice, plus a trailing `FloatingActionButton` (#22) that creates a new discussion and a "Recent discussions (N) →" pill (#26) below the list (or above the empty-state copy) that routes to the discussions drilldown. Dispatches `ChannelListEvent.RowTapped` on row clicks, `SettingsTapped` on gear taps, `CreateDiscussionTapped` on FAB taps, and `RecentDiscussionsTapped` on pill taps. First stateless UI consumer of a ViewModel in the project; introduces the sealed `Event` shape every screen will follow.
 
 Package: `de.pyryco.mobile.ui.conversations.list` (`app/src/main/java/de/pyryco/mobile/ui/conversations/list/`). File: `ChannelListScreen.kt`.
 
@@ -8,12 +8,14 @@ Package: `de.pyryco.mobile.ui.conversations.list` (`app/src/main/java/de/pyryco/
 
 Wraps its body in a `Scaffold` whose `topBar` is a Material 3 `TopAppBar` (rendered in **every** state) and whose `floatingActionButton` slot hosts a `FloatingActionButton` (rendered only when `state is Loaded || state is Empty`, #22). Renders the four `ChannelListUiState` variants from the VM (#45) inside the Scaffold body:
 
-- **`Loading`** — centred `Text("Loading…")` placeholder. No FAB.
-- **`Empty`** — centred `Text("Tap + to start a conversation")` (string resource `R.string.channel_list_empty`, #23). FAB rendered — the "+" in the copy refers to it.
-- **`Error(message)`** — centred `Text("Couldn't load channels: $message")` placeholder. No FAB.
-- **`Loaded(channels)`** — `LazyColumn` of `ConversationRow`s, one per channel, keyed by `Conversation.id`. FAB rendered.
+- **`Loading`** — centred `Text("Loading…")` placeholder. No FAB, no pill.
+- **`Empty(recentDiscussionsCount)`** — `Column(bodyModifier.fillMaxSize())` containing the pill first (renders only when `recentDiscussionsCount > 0`) and a centred `Text("Tap + to start a conversation")` (resource `R.string.channel_list_empty`, #23) inside `Box(Modifier.fillMaxWidth().weight(1f), Alignment.Center)`. FAB rendered — the "+" in the copy refers to it.
+- **`Error(message)`** — centred `Text("Couldn't load channels: $message")` placeholder. No FAB, no pill.
+- **`Loaded(channels, recentDiscussionsCount)`** — `Column(bodyModifier.fillMaxSize())` containing `LazyColumn(Modifier.weight(1f))` of `ConversationRow`s (one per channel, keyed by `Conversation.id`) followed by the pill (renders only when `recentDiscussionsCount > 0`). FAB rendered.
 
-The `TopAppBar`'s title is `stringResource(R.string.app_name)` ("Pyrycode Mobile"); its single trailing `actions` slot is an `IconButton` wrapping `Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.cd_open_settings))`. The FAB wraps `Icon(Icons.Default.Add, contentDescription = stringResource(R.string.cd_new_discussion))` at default `FabPosition.End`. Each row's `onClick` emits `ChannelListEvent.RowTapped(channel.id)`, the gear's `onClick` emits `SettingsTapped`, and the FAB's `onClick` emits `CreateDiscussionTapped` through the screen's `onEvent` lambda. The NavHost destination is the only place that lambda resolves to concrete actions (row/gear dispatched directly to `navController.navigate(...)`; `CreateDiscussionTapped` forwarded into `vm.onEvent(event)` so the suspend-shaped create can run and emit a `ChannelListNavigation.ToThread` event); the screen itself is `NavController`-free.
+The `TopAppBar`'s title is `stringResource(R.string.app_name)` ("Pyrycode Mobile"); its single trailing `actions` slot is an `IconButton` wrapping `Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.cd_open_settings))`. The FAB wraps `Icon(Icons.Default.Add, contentDescription = stringResource(R.string.cd_new_discussion))` at default `FabPosition.End`. Each row's `onClick` emits `ChannelListEvent.RowTapped(channel.id)`, the gear's `onClick` emits `SettingsTapped`, the FAB's `onClick` emits `CreateDiscussionTapped`, and the pill's `onClick` emits `RecentDiscussionsTapped` through the screen's `onEvent` lambda. The NavHost destination is the only place that lambda resolves to concrete actions (row/gear/pill dispatched directly to `navController.navigate(...)`; `CreateDiscussionTapped` forwarded into `vm.onEvent(event)` so the suspend-shaped create can run and emit a `ChannelListNavigation.ToThread` event); the screen itself is `NavController`-free.
+
+The pill itself is the stateless [`RecentDiscussionsPill`](#recent-discussions-pill-26) composable in `ui/conversations/components/`; it owns the `if (count <= 0) return` zero-state guard internally so the screen's `Empty` and `Loaded` branches always call it unconditionally.
 
 ## Shape
 
@@ -22,6 +24,7 @@ sealed interface ChannelListEvent {
     data class RowTapped(val conversationId: String) : ChannelListEvent
     data object SettingsTapped : ChannelListEvent
     data object CreateDiscussionTapped : ChannelListEvent
+    data object RecentDiscussionsTapped : ChannelListEvent
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -33,28 +36,11 @@ fun ChannelListScreen(
 ) {
     Scaffold(
         modifier = modifier,
-        topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.app_name)) },
-                actions = {
-                    IconButton(onClick = { onEvent(ChannelListEvent.SettingsTapped) }) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = stringResource(R.string.cd_open_settings),
-                        )
-                    }
-                },
-            )
-        },
+        topBar = { /* … TopAppBar with settings gear … */ },
         floatingActionButton = {
             if (state is ChannelListUiState.Loaded || state is ChannelListUiState.Empty) {
-                FloatingActionButton(
-                    onClick = { onEvent(ChannelListEvent.CreateDiscussionTapped) },
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = stringResource(R.string.cd_new_discussion),
-                    )
+                FloatingActionButton(onClick = { onEvent(ChannelListEvent.CreateDiscussionTapped) }) {
+                    Icon(Icons.Default.Add, stringResource(R.string.cd_new_discussion))
                 }
             }
         },
@@ -62,29 +48,63 @@ fun ChannelListScreen(
         val bodyModifier = Modifier.padding(inner)
         when (state) {
             ChannelListUiState.Loading -> CenteredText("Loading…", bodyModifier)
-            ChannelListUiState.Empty -> CenteredText(
-                stringResource(R.string.channel_list_empty),
-                bodyModifier,
-            )
+            is ChannelListUiState.Empty -> Column(bodyModifier.fillMaxSize()) {
+                RecentDiscussionsPill(
+                    count = state.recentDiscussionsCount,
+                    onClick = { onEvent(ChannelListEvent.RecentDiscussionsTapped) },
+                )
+                Box(
+                    Modifier.fillMaxWidth().weight(1f),
+                    contentAlignment = Alignment.Center,
+                ) { Text(stringResource(R.string.channel_list_empty)) }
+            }
             is ChannelListUiState.Error -> CenteredText(
                 "Couldn't load channels: ${state.message}",
                 bodyModifier,
             )
-            is ChannelListUiState.Loaded -> LazyColumn(modifier = bodyModifier.fillMaxSize()) {
-                items(items = state.channels, key = { it.id }) { channel ->
-                    ConversationRow(
-                        conversation = channel,
-                        lastMessage = null,
-                        onClick = { onEvent(ChannelListEvent.RowTapped(channel.id)) },
-                    )
+            is ChannelListUiState.Loaded -> Column(bodyModifier.fillMaxSize()) {
+                LazyColumn(Modifier.weight(1f)) {
+                    items(items = state.channels, key = { it.id }) { channel ->
+                        ConversationRow(
+                            conversation = channel,
+                            lastMessage = null,
+                            onClick = { onEvent(ChannelListEvent.RowTapped(channel.id)) },
+                        )
+                    }
                 }
+                RecentDiscussionsPill(
+                    count = state.recentDiscussionsCount,
+                    onClick = { onEvent(ChannelListEvent.RecentDiscussionsTapped) },
+                )
             }
         }
     }
 }
 ```
 
-`ChannelListEvent` lives in `ChannelListScreen.kt`, not `ChannelListViewModel.kt`. The screen — `ConversationRow.onClick`, the gear `IconButton.onClick`, and the FAB's `onClick` — is the producer for all three variants. A VM-side reducer now exists for `CreateDiscussionTapped` (#22), but the sealed type stayed in the screen file: most variants still have no VM-side consumer, and routing decisions live at the destination's `when (event)`. Reconsider moving the type when *most* variants land in `vm.onEvent`.
+`ChannelListEvent` lives in `ChannelListScreen.kt`, not `ChannelListViewModel.kt`. The screen — `ConversationRow.onClick`, the gear `IconButton.onClick`, the FAB's `onClick`, and the pill's `onClick` — is the producer for all four variants. A VM-side reducer now exists for `CreateDiscussionTapped` (#22), but the sealed type stayed in the screen file: three of four variants still have no VM-side consumer, and routing decisions live at the destination's `when (event)`. Reconsider moving the type when *most* variants land in `vm.onEvent`.
+
+## Recent-discussions pill (#26)
+
+Sibling composable in `ui/conversations/components/RecentDiscussionsPill.kt`. Stateless: `(count: Int, onClick: () -> Unit, modifier: Modifier = Modifier)`. Internal guard `if (count <= 0) return` — call sites in `ChannelListScreen` always call the composable unconditionally; the screen body does not branch on the count.
+
+Chrome: M3 `Surface(tonalElevation = 2.dp, shape = MaterialTheme.shapes.medium, color = colorScheme.surfaceVariant)` wrapping a `Text(label, style = labelLarge, color = onSurfaceVariant)`. The spec deferred the chrome choice between `Surface` and `AssistChip`; `AssistChip`'s built-in chrome read as "another list row" on the Loaded preview, so `Surface` won. Trailing affordance glyph `→` is part of the label string (no `Icons.AutoMirrored.Filled.ArrowForward`) so it auto-mirrors with locale and reads as one atom to TalkBack.
+
+A11y modifier order (set in the follow-up commit `09468ae`):
+
+```kotlin
+modifier = modifier
+    .padding(horizontal = 16.dp, vertical = 8.dp)
+    .minimumInteractiveComponentSize()                          // 48dp touch-target floor
+    .clickable(role = Role.Button, onClick = onClick)           // role announces "button"
+    .semantics(mergeDescendants = true) {                       // TalkBack reads one node
+        contentDescription = description
+    }
+```
+
+`Surface` itself does *not* enforce the 48dp Material a-11y minimum touch target — that's a `Button` / `Chip` / `IconButton` property — so `minimumInteractiveComponentSize()` is required for any `Surface`-as-button affordance.
+
+Strings: `R.string.recent_discussions_pill_label` (`"Recent discussions (%d) →"`, %d-formatted with `stringResource(id, count)`) and `R.string.cd_recent_discussions_pill` (`"Open recent discussions, %d available"`). No `<plurals>` resource yet; the swap is mechanical if product files it.
 
 ## How it works
 
@@ -138,6 +158,8 @@ composable(Routes.ChannelList) {
                     navController.navigate("conversation_thread/${event.conversationId}")
                 ChannelListEvent.SettingsTapped ->
                     navController.navigate(Routes.Settings)
+                ChannelListEvent.RecentDiscussionsTapped ->
+                    navController.navigate(Routes.DiscussionList)
                 ChannelListEvent.CreateDiscussionTapped ->
                     vm.onEvent(event)
             }
@@ -150,7 +172,7 @@ Key points:
 
 - **`koinViewModel<ChannelListViewModel>()` resolves against the existing Koin binding** (`viewModel { ChannelListViewModel(get()) }` from #45's `AppModule.kt`). Every `composable { ... }` block is a `NavBackStackEntry`-keyed scope; Compose Navigation 2.9+ auto-wires `LocalViewModelStoreOwner` to the current entry, so the bare call resolves to the entry-scoped store — the VM is created on first entry, retained across configuration changes, cleared on pop. No `viewModelStoreOwner = backStackEntry` argument needed.
 - **`collectAsStateWithLifecycle()`, not `collectAsState()`.** The lifecycle-aware variant pauses upstream collection when the lifecycle drops below `STARTED`, which is what makes the VM's `WhileSubscribed(5_000)` actually save work when the screen is backgrounded.
-- **Inline `when (event)` dispatch with mixed routing.** Three variants today: `RowTapped` and `SettingsTapped` resolve to `navController.navigate(...)` directly; `CreateDiscussionTapped` forwards into `vm.onEvent(event)` because its target route depends on the id returned by the suspend-shaped `createDiscussion()` call. The rule: events with no VM-side side effect stay routed at the destination; events that need a suspend or VM state mutation forward into `onEvent`.
+- **Inline `when (event)` dispatch with mixed routing.** Four variants today: `RowTapped`, `SettingsTapped`, and `RecentDiscussionsTapped` (#26) resolve to `navController.navigate(...)` directly; `CreateDiscussionTapped` forwards into `vm.onEvent(event)` because its target route depends on the id returned by the suspend-shaped `createDiscussion()` call. The rule: events with no VM-side side effect stay routed at the destination; events that need a suspend or VM state mutation forward into `onEvent`.
 - **`LaunchedEffect(vm) { vm.navigationEvents.collect { … } }` for one-shot nav events.** Sits alongside the `state` read inside `composable(Routes.ChannelList)`. The `vm` key restarts the collector exactly when the VM identity changes (per `NavBackStackEntry` scope), which is the correct boundary for a one-shot channel. See [`channel-list-viewmodel.md`](./channel-list-viewmodel.md) for the `Channel<ChannelListNavigation>` + `receiveAsFlow()` shape on the emitter side.
 - **Concrete navigation target built inline:** `"conversation_thread/${event.conversationId}"`. No `Routes.conversationThread(id)` helper — matches the navigation feature doc's "build inline until a second caller appears" rule.
 - **No `popUpTo` / `launchSingleTop`.** Default `navigate(route)` semantics are correct: tapping a channel pushes the thread onto the back stack; back-press returns to the channel list. The only exceptional case in the graph is the `scanner` → `channel_list` transition.
@@ -160,14 +182,16 @@ Key points:
 - **Dependencies:** `androidx.lifecycle:lifecycle-runtime-compose` (catalog: `androidx-lifecycle-runtime-compose`, reuses the `lifecycleRuntimeKtx = "2.6.1"` version-ref). Required for `collectAsStateWithLifecycle` — not pulled transitively by `lifecycle-runtime-ktx`, `lifecycle-viewmodel-ktx`, or the `koin-androidx-compose` chain. Three lifecycle artifacts now on the classpath (`-ktx`, `-viewmodel-ktx`, `-runtime-compose`) — they share `LifecycleOwner` ABIs and must stay on the same version-ref.
 - **Koin compose:** `org.koin.androidx.compose.koinViewModel` (already on the classpath since #32 via `koin-androidx-compose`). Distinct from `org.koin.compose.koinInject` (the `scanner` destination's `AppPreferences` resolver) — `koinViewModel` is the right call for `ViewModel`-typed bindings because it routes through `LocalViewModelStoreOwner`.
 - **Icons:** `androidx.compose.material:material-icons-core` (catalog: `androidx-compose-material-icons-core`, BOM-managed — no `version.ref`). The always-on icon set; supplies `Icons.Default.Settings` for the TopAppBar gear (#21). Don't reach for `material-icons-extended` (multi-MB megapack) for single-glyph needs — try `-core` first.
-- **Strings:** `R.string.app_name` for the TopAppBar title (reused, defined since project init); `R.string.cd_open_settings` ("Open settings") for the gear's TalkBack `contentDescription`; `R.string.cd_new_discussion` ("New discussion") for the FAB's TalkBack description (#22); `R.string.channel_list_empty` ("Tap + to start a conversation") for the Empty body (#23). A-11y content-description strings keep the `cd_` prefix; user-facing copy uses a `<screen>_<role>` shape.
+- **Strings:** `R.string.app_name` for the TopAppBar title (reused, defined since project init); `R.string.cd_open_settings` ("Open settings") for the gear's TalkBack `contentDescription`; `R.string.cd_new_discussion` ("New discussion") for the FAB's TalkBack description (#22); `R.string.channel_list_empty` ("Tap + to start a conversation") for the Empty body (#23); `R.string.recent_discussions_pill_label` ("Recent discussions (%d) →") and `R.string.cd_recent_discussions_pill` ("Open recent discussions, %d available") for the pill (#26). A-11y content-description strings keep the `cd_` prefix; user-facing copy uses a `<screen>_<role>` shape.
 
 ## Preview
 
-Two `@Preview` composables, both light-theme via `PyrycodeMobileTheme(darkTheme = false)`, both `widthDp = 412` (matches the `ConversationRow.kt` previews from #17 for consistent device shape):
+Four `@Preview` composables, all light-theme via `PyrycodeMobileTheme(darkTheme = false)`, all `widthDp = 412` (matches the `ConversationRow.kt` previews from #17 for consistent device shape):
 
-- `ChannelListScreenLoadedPreview` (`@Preview(name = "Loaded — Light", showBackground = true, widthDp = 412)`) — three inline `Conversation` instances varying `name`, `cwd` (one `DefaultScratchCwd` to verify the workspace-label-omission path through `ConversationRow`, two real workspaces), and `lastUsedAt` (12 minutes, 4 hours, 3 days ago).
-- `ChannelListScreenEmptyPreview` (`@Preview(name = "Empty — Light", showBackground = true, widthDp = 412)`, #23) — passes `state = ChannelListUiState.Empty, onEvent = {}`. No sample data needed (`Empty` is a `data object`). Renders the TopAppBar above the centred empty-state copy and the FAB at `FabPosition.End`.
+- `ChannelListScreenLoadedPreview` (`@Preview(name = "Loaded — Light", …)`) — three inline `Conversation` instances varying `name`, `cwd` (one `DefaultScratchCwd` to verify the workspace-label-omission path through `ConversationRow`, two real workspaces), and `lastUsedAt` (12 minutes, 4 hours, 3 days ago). `recentDiscussionsCount = 0` — pill not rendered; baseline channel-list look.
+- `ChannelListScreenLoadedWithPillPreview` (`@Preview(name = "Loaded + pill — Light", …)`, #26) — one channel + `recentDiscussionsCount = 1` (the AC's `N = 1` case). Pill renders below the `LazyColumn`.
+- `ChannelListScreenEmptyPreview` (`@Preview(name = "Empty — Light", …)`, #23) — `state = ChannelListUiState.Empty(recentDiscussionsCount = 0), onEvent = {}`. No sample data needed. Renders the TopAppBar above the centred empty-state copy and the FAB at `FabPosition.End`; pill not rendered.
+- `ChannelListScreenEmptyWithPillPreview` (`@Preview(name = "Empty + pill — Light", …)`, #26) — `Empty(recentDiscussionsCount = 5)` (the AC's `N = 5` case). Pill renders at the top of the body, above the centred empty-state copy.
 
 `Loading` and `Error` are still not previewed — their copy is a transient placeholder until designed visuals land.
 
@@ -181,11 +205,11 @@ Two `@Preview` composables, both light-theme via `PyrycodeMobileTheme(darkTheme 
 - **No instrumented test.** AC requires only `./gradlew assembleDebug`. The natural unit test ("tap a row → `onEvent(RowTapped(channelId))` fires") needs `androidx-compose-ui-test-junit4` wired to `androidTestImplementation` and an `androidTest/` source set entry; deferred until the first ticket with multi-event logic to verify.
 - **No `flowOn(Dispatchers.IO)` anywhere in the chain.** `collectAsStateWithLifecycle` collects on Main (via the destination's `LifecycleOwner`); the VM is Main-dispatched; the fake repo's projection is pure CPU map manipulation. Phase 4's remote impl decides its own dispatcher internally.
 - **No empty-state distinction between "never had a channel" and "had channels, all deleted".** Both render `Empty` → `"Tap + to start a conversation"`. The first ticket that needs the distinction extends `ChannelListUiState` (e.g. `Empty(reason: EmptyReason)`) or splits into a new variant.
-- **Empty-state trigger is "no channels", not Plan.md's "no channels AND no discussions".** `ChannelListViewModel` observes only `ConversationFilter.Channels`, so a user with zero channels but non-zero discussions still sees the empty copy. Widening was considered and deferred in #23 — it would require a new `ChannelListUiState` variant (a discussion-aware CTA like "You have N discussions — promote one to a channel?"), which is a product call, not Phase 1 plumbing. The current copy reads correctly in either case because the FAB does create a conversation.
+- **Empty-state trigger is "no channels", not Plan.md's "no channels AND no discussions".** `ChannelListViewModel` observes both filters now (#26), but the `Empty` variant still gates on `channels.isEmpty()` alone. A user with zero channels but non-zero discussions sees the empty copy *plus* the pill at the top — the pill is the secondary affordance, not a discussion-aware CTA. The product-level "promote one of your N discussions to a channel?" widening (deferred from #23) is partially obviated by the pill but still possible: would need a new `ChannelListUiState` variant.
 
 ## Related
 
-- Ticket notes: [`../codebase/46.md`](../codebase/46.md) (LazyColumn + tap nav), [`../codebase/21.md`](../codebase/21.md) (TopAppBar + settings-gear wiring), [`../codebase/22.md`](../codebase/22.md) (FAB + one-shot nav channel), [`../codebase/23.md`](../codebase/23.md) (Empty-state copy + preview)
-- Specs: `docs/specs/architecture/46-channellistscreen-lazycolumn-tap-nav.md`, `docs/specs/architecture/21-channel-list-top-app-bar.md`, `docs/specs/architecture/22-channel-list-fab-new-discussion.md`, `docs/specs/architecture/23-channel-list-empty-state.md`
-- Upstream: [ChannelListViewModel](./channel-list-viewmodel.md) (state producer + `onEvent` reducer + `navigationEvents`), [ConversationRow](./conversation-row.md) (per-row primitive), [Navigation](./navigation.md) (host graph, route constants, destination wiring), [Dependency injection](./dependency-injection.md) (Koin VM binding)
-- Downstream: #19 / #20 (per-row decorations on the `ConversationRow` instances rendered here — workspace label, sleeping indicator), #26 (recent-discussions pill above the `LazyColumn`), follow-up Retry ticket (adds `ChannelListEvent.RetryClicked` + VM-side reducer), Phase 2 long-press → workspace picker on the FAB, Phase 3 Settings (replaces `SettingsPlaceholder` body — gear wiring already in place since #21), Phase 4 (real backend behind the same `ConversationRepository` bind — zero screen change; adds error + loading UI for the create call), follow-up empty-state widening (`combine` channels + discussions flows, introduce a discussion-aware CTA variant — deferred from #23)
+- Ticket notes: [`../codebase/46.md`](../codebase/46.md) (LazyColumn + tap nav), [`../codebase/21.md`](../codebase/21.md) (TopAppBar + settings-gear wiring), [`../codebase/22.md`](../codebase/22.md) (FAB + one-shot nav channel), [`../codebase/23.md`](../codebase/23.md) (Empty-state copy + preview), [`../codebase/26.md`](../codebase/26.md) (Recent-discussions pill + Loaded/Empty body restructure + `RecentDiscussionsTapped` event)
+- Specs: `docs/specs/architecture/46-channellistscreen-lazycolumn-tap-nav.md`, `docs/specs/architecture/21-channel-list-top-app-bar.md`, `docs/specs/architecture/22-channel-list-fab-new-discussion.md`, `docs/specs/architecture/23-channel-list-empty-state.md`, `docs/specs/architecture/26-recent-discussions-pill.md`
+- Upstream: [ChannelListViewModel](./channel-list-viewmodel.md) (state producer + `onEvent` reducer + `navigationEvents`; #26 widened `Loaded` / `Empty` to carry `recentDiscussionsCount`), [ConversationRow](./conversation-row.md) (per-row primitive), [Navigation](./navigation.md) (host graph, route constants, destination wiring), [Dependency injection](./dependency-injection.md) (Koin VM binding)
+- Downstream: #19 / #20 (per-row decorations on the `ConversationRow` instances rendered here — workspace label, sleeping indicator), follow-up Retry ticket (adds `ChannelListEvent.RetryClicked` + VM-side reducer), Phase 2 long-press → workspace picker on the FAB, Phase 3 Settings (replaces `SettingsPlaceholder` body — gear wiring already in place since #21), Phase 4 (real backend behind the same `ConversationRepository` bind — zero screen change; adds error + loading UI for the create call), follow-up plurals on the pill label (`<plurals>` swap if product files it), follow-up discussion-aware empty CTA (deferred from #23 — partially obviated by the #26 pill)

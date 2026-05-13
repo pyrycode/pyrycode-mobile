@@ -7,4 +7,6 @@
     <string name="discussion_list_empty">No discussions yet</string>
     <string name="cd_back">Back</string>
     <string name="save_as_channel_action">Save as channel…</string>
+    <string name="recent_discussions_pill_label">Recent discussions (%d) →</string>
+    <string name="cd_recent_discussions_pill">Open recent discussions, %d available</string>
 </resources>

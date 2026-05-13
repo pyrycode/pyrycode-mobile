@@ -1,22 +1,25 @@
 # ChannelListViewModel
 
-First `ViewModel` in the codebase. Exposes `observeConversations(ConversationFilter.Channels)` as a hot `StateFlow<ChannelListUiState>` consumed by [`ChannelListScreen`](channel-list-screen.md) (#46), a stateless `(state, onEvent)` composable.
+First `ViewModel` in the codebase. Combines two `observeConversations` flows (`Channels` for the list, `Discussions` for the count) into one hot `StateFlow<ChannelListUiState>` consumed by [`ChannelListScreen`](channel-list-screen.md) (#46), a stateless `(state, onEvent)` composable.
 
 Package: `de.pyryco.mobile.ui.conversations.list` (`app/src/main/java/de/pyryco/mobile/ui/conversations/list/`). File: `ChannelListViewModel.kt`.
 
 ## What it does
 
-Observes the persistent-channel slice of the conversation repository, projects each emission into a `ChannelListUiState` variant, and exposes the result as a `StateFlow`. Emits `Loading` initially (before the upstream produces a value), then `Empty` or `Loaded(channels)` depending on the emitted list, and `Error(message)` if the upstream flow throws.
+Observes the persistent-channel slice + the unpromoted-discussions count from the conversation repository, folds them together via `combine`, and exposes the result as a `StateFlow<ChannelListUiState>`. Emits `Loading` initially (before *either* upstream produces a value — `combine` gates first emit on both), then `Empty(recentDiscussionsCount)` or `Loaded(channels, recentDiscussionsCount)` depending on the channels list, and `Error(message)` if either upstream flow throws. The Discussions count surface lands the data the "Recent discussions (N) →" pill (#26) renders.
 
-Also exposes a `fun onEvent(event: ChannelListEvent)` reducer (#22) for events whose side effect requires the VM (currently only `CreateDiscussionTapped` — calls `repository.createDiscussion()` and emits a one-shot `ChannelListNavigation.ToThread` event via a `Channel<ChannelListNavigation>(BUFFERED)` surfaced as `val navigationEvents: Flow<ChannelListNavigation>`). The other `ChannelListEvent` variants (`RowTapped`, `SettingsTapped`) are routed to `navController.navigate(...)` directly at the destination block and never enter `onEvent`; the VM's `when` includes a `Unit` arm for them purely for compiler exhaustiveness.
+Also exposes a `fun onEvent(event: ChannelListEvent)` reducer (#22) for events whose side effect requires the VM (currently only `CreateDiscussionTapped` — calls `repository.createDiscussion()` and emits a one-shot `ChannelListNavigation.ToThread` event via a `Channel<ChannelListNavigation>(BUFFERED)` surfaced as `val navigationEvents: Flow<ChannelListNavigation>`). The other `ChannelListEvent` variants (`RowTapped`, `SettingsTapped`, `RecentDiscussionsTapped`) are routed to `navController.navigate(...)` directly at the destination block and never enter `onEvent`; the VM's `when` includes a `Unit` arm for them purely for compiler exhaustiveness.
 
 ## Shape
 
 ```kotlin
 sealed interface ChannelListUiState {
     data object Loading : ChannelListUiState
-    data object Empty : ChannelListUiState
-    data class Loaded(val channels: List<Conversation>) : ChannelListUiState
+    data class Empty(val recentDiscussionsCount: Int) : ChannelListUiState
+    data class Loaded(
+        val channels: List<Conversation>,
+        val recentDiscussionsCount: Int,
+    ) : ChannelListUiState
     data class Error(val message: String) : ChannelListUiState
 }
 
@@ -28,11 +31,13 @@ class ChannelListViewModel(
     private val repository: ConversationRepository,
 ) : ViewModel() {
     val state: StateFlow<ChannelListUiState> =
-        repository.observeConversations(ConversationFilter.Channels)
-            .map<List<Conversation>, ChannelListUiState> { channels ->
-                if (channels.isEmpty()) ChannelListUiState.Empty
-                else ChannelListUiState.Loaded(channels)
-            }
+        combine(
+            repository.observeConversations(ConversationFilter.Channels),
+            repository.observeConversations(ConversationFilter.Discussions).map { it.size },
+        ) { channels, discussionsCount ->
+            if (channels.isEmpty()) ChannelListUiState.Empty(discussionsCount)
+            else ChannelListUiState.Loaded(channels, discussionsCount)
+        }
             .catch { e ->
                 val raw = e.message
                 emit(ChannelListUiState.Error(
@@ -54,7 +59,10 @@ class ChannelListViewModel(
                 val conversation = repository.createDiscussion()
                 navigationChannel.send(ChannelListNavigation.ToThread(conversation.id))
             }
-            is ChannelListEvent.RowTapped, ChannelListEvent.SettingsTapped -> Unit
+            is ChannelListEvent.RowTapped,
+            ChannelListEvent.SettingsTapped,
+            ChannelListEvent.RecentDiscussionsTapped,
+            -> Unit
         }
     }
 
@@ -77,13 +85,14 @@ class ChannelListViewModel(
 ### State projection
 
 ```
-List<Conversation> ─── map ──► Empty (when list is empty)
-                            └► Loaded(channels)  (otherwise)
-                ─── catch ─► Error(message)
-                ─── stateIn ─► initial = Loading
+channelsFlow ──┐
+               ├─ combine ──► Empty(count)         (when channels list is empty)
+discCountFlow ─┘            └► Loaded(ch, count)   (otherwise)
+                 ─── catch ─► Error(message)
+                 ─── stateIn ─► initial = Loading
 ```
 
-`.catch { }` sits between `.map { }` and `.stateIn(...)` because `stateIn` is a terminal operator (returns `StateFlow`, not `Flow`) — `.catch` after it doesn't compile. One `catch` block covers both upstream throwables and (hypothetical) map exceptions.
+`combine` (#26) replaced the single-flow `map` shape. The two upstreams are independent subscriptions on the same `ConversationRepository`; both are cold flows, both inherit the `WhileSubscribed(5_000)` shared lifetime. `combine` waits for *both* sides to emit before the first downstream emission — this is what keeps the `Loading` initial frame observable until the data layer has fully answered (see "Edge cases / limitations"). `.catch { }` sits between `combine { }` and `.stateIn(...)` because `stateIn` is a terminal operator (returns `StateFlow`, not `Flow`) — `.catch` after it doesn't compile. One `catch` block covers both upstream throwables; a throw on *either* the channels flow or the discussions flow collapses the whole pipeline to `Error`.
 
 ### Error semantics
 
@@ -101,7 +110,7 @@ Consumer is `MainActivity`'s `composable(Routes.ChannelList)` block, which runs 
 
 Single dispatched arm: `CreateDiscussionTapped -> viewModelScope.launch { … }`. Calls `repository.createDiscussion()` with no argument (workspace defaults to `null`), then `navigationChannel.send(ToThread(conversation.id))`. No `try/catch` — the fake never throws; speculative defense forbidden by project principles. Phase 4's `RemoteConversationRepository` adds the catch and the error UI together.
 
-The `is RowTapped, SettingsTapped -> Unit` arm exists for compiler exhaustiveness; `MainActivity` never forwards those into `onEvent`, but if the dispatch convention shifts later the VM tolerates them defensively (no-op).
+The `is RowTapped, SettingsTapped, RecentDiscussionsTapped -> Unit` arm exists for compiler exhaustiveness; `MainActivity` never forwards those into `onEvent`, but if the dispatch convention shifts later the VM tolerates them defensively (no-op). `RecentDiscussionsTapped` joined the arm in #26 — same rationale (pure navigation, no VM-side side effect).
 
 ## Wiring
 
@@ -129,20 +138,26 @@ val state by vm.state.collectAsStateWithLifecycle()
 
 ## Testing
 
-`app/src/test/java/de/pyryco/mobile/ui/conversations/list/ChannelListViewModelTest.kt`. JUnit 4, matching the existing test-class style. Seven tests:
+`app/src/test/java/de/pyryco/mobile/ui/conversations/list/ChannelListViewModelTest.kt`. JUnit 4, matching the existing test-class style. Fourteen tests (seven new in #26 for the `combine` + count surface):
 
 1. `initialState_isLoading` — reads `vm.state.value` before any subscriber attaches; relies on `stateIn`'s `initialValue` being immediately visible without a hot collector.
-2. `loaded_whenSourceEmitsNonEmpty` — launched collector, `source.emit(listOf(sampleChannel))`, asserts `Loaded(listOf(sampleChannel))`.
-3. `empty_whenSourceEmitsEmptyList` — launched collector, `source.emit(emptyList())`, asserts `Empty`.
-4. `error_whenSourceFlowThrows` — flow that throws `RuntimeException("network down")`; asserts `Error("network down")`.
-5. `error_messageIsNonBlank_whenExceptionMessageIsNull` — flow that throws `RuntimeException(null)`; asserts the fallback string path is non-blank.
-6. `createDiscussionTapped_createsOneUnpromotedConversation` (#22) — uses `FakeConversationRepository()` directly; snapshots `observeConversations(Discussions).first()` before and after `vm.onEvent(CreateDiscussionTapped)`; asserts the new list size increased by one and the new element has `isPromoted == false`.
-7. `createDiscussionTapped_emitsToThreadNavigationWithCreatedId` (#22) — launches an `async { vm.navigationEvents.first() }` *before* the triggering `onEvent` call so the collector is attached when the channel sends; `advanceUntilIdle()`; asserts the captured event is `ChannelListNavigation.ToThread` whose `conversationId` equals the id of the newly-created discussion (looked up via the diff between pre- and post-snapshots).
+2. `loaded_whenSourceEmitsNonEmpty` — launched collector, channels source emits `listOf(sampleChannel)`, asserts `Loaded(listOf(sampleChannel), recentDiscussionsCount = 0)`.
+3. `empty_whenSourceEmitsEmptyList` — launched collector, channels emits `emptyList()`, asserts `Empty(0)`.
+4. `loaded_carriesDiscussionsCount` (#26) — channels emits one channel; discussions emits 3 items. Asserts `Loaded(channels = [one], recentDiscussionsCount = 3)`.
+5. `empty_carriesDiscussionsCount` (#26) — channels emits empty; discussions emits 2. Asserts `Empty(2)`.
+6. `discussionsCount_updatesReactively` (#26) — channels emits one channel; discussions emits 1, then 5. Latest `state` is `Loaded(..., recentDiscussionsCount = 5)`.
+7. `loadingPersists_untilBothFlowsEmit` (#26) — pin `combine`'s wait-for-both semantics: with neither source having emitted, `state.value == Loading`; after only the channels flow emits, still `Loading`; only after discussions emits does `state` transition.
+8. `error_whenChannelsFlowThrows` (renamed from `error_whenSourceFlowThrows` in #26) — channels flow throws `RuntimeException("network down")`; asserts `Error("network down")`.
+9. `error_whenDiscussionsFlowThrows` (#26) — discussions flow throws; same `Error` collapse. Pins "throw on either side ⇒ Error".
+10. `error_messageIsNonBlank_whenExceptionMessageIsNull` — flow that throws `RuntimeException(null)`; asserts the fallback string path is non-blank.
+11. `recentDiscussionsTapped_isNoOp` (#26) — `vm.onEvent(RecentDiscussionsTapped)` does not crash, does not emit on `navigationEvents`, does not mutate `state`. Mirrors the existing implicit coverage for `SettingsTapped`.
+12. `createDiscussionTapped_createsOneUnpromotedConversation` (#22) — uses `FakeConversationRepository()` directly; snapshots `observeConversations(Discussions).first()` before and after `vm.onEvent(CreateDiscussionTapped)`; asserts the new list size increased by one and the new element has `isPromoted == false`.
+13. `createDiscussionTapped_emitsToThreadNavigationWithCreatedId` (#22) — launches an `async { vm.navigationEvents.first() }` *before* the triggering `onEvent` call so the collector is attached when the channel sends; `advanceUntilIdle()`; asserts the captured event is `ChannelListNavigation.ToThread` whose `conversationId` equals the id of the newly-created discussion (looked up via the diff between pre- and post-snapshots).
 
 Test infrastructure conventions established here (carry forward to future ViewModel tests):
 
 - `Dispatchers.setMain(UnconfinedTestDispatcher())` in `@Before`, `resetMain()` in `@After`. Class-level `@OptIn(ExperimentalCoroutinesApi::class)`.
-- **State-derivation tests** use hand-rolled `object : ConversationRepository { ... TODO("not used") }` stubs (the `stubRepo` helper inline at the bottom of the test file). `MutableSharedFlow<List<Conversation>>(replay = 0)` for the source — gives the test control over emission timing. `MutableStateFlow` would force an initial value at construction and defeat the Loading-observation window.
+- **State-derivation tests** use hand-rolled `object : ConversationRepository { ... TODO("not used") }` stubs. The `stubRepo` helper now takes two `Flow<List<Conversation>>` parameters keyed by filter (`stubRepo(channels, discussions)`) — the VM subscribes twice with different filters; one shared flow no longer reflects the production behaviour. Old single-source call sites become `stubRepo(source, emptyFlow())` (or vice-versa) so the test explicitly states which filter it's exercising. `MutableSharedFlow<List<Conversation>>(replay = 0)` for each source — gives the test control over emission timing. `MutableStateFlow` would force an initial value at construction and defeat the Loading-observation window.
 - **Side-effect tests** (suspend-shaped `onEvent` arms) use `FakeConversationRepository()` directly — the production fake gives a faithful integration of `observeConversations` + `createDiscussion`. Don't extend the `stubRepo` helper for these; its `createDiscussion` returns `TODO("not used")`.
 - Every non-initial-state test launches `launch { vm.state.collect { } }` to keep `WhileSubscribed` hot before emitting; `advanceUntilIdle()` between launching the collector + emitting, and between emitting + asserting, to drain the in-flight queue.
 - One-shot-channel tests: `async { vm.navigationEvents.first() }` launched *before* the trigger, `advanceUntilIdle()` between trigger and `.await()`. `runTest`-friendly capture pattern.
@@ -159,7 +174,7 @@ Test infrastructure conventions established here (carry forward to future ViewMo
 
 ## Related
 
-- Ticket notes: [`../codebase/45.md`](../codebase/45.md), [`../codebase/22.md`](../codebase/22.md) (FAB → `onEvent` reducer + one-shot nav channel)
-- Specs: `docs/specs/architecture/45-channel-list-viewmodel-uistate-data-path.md`, `docs/specs/architecture/22-channel-list-fab-new-discussion.md`
-- Upstream: [Conversation repository](./conversation-repository.md) (data-layer seam — `createDiscussion(workspace = null)` is the call the `onEvent` reducer makes), [data model](./data-model.md) (`Conversation` payload), [dependency injection](./dependency-injection.md) (Koin wiring)
-- Downstream: [ChannelListScreen](channel-list-screen.md) (#46 — first UI consumer; introduced `ChannelListEvent`, `collectAsStateWithLifecycle()`, and the screen-level loading/empty/error/loaded composables; #22 added the FAB and `LaunchedEffect(vm) { vm.navigationEvents.collect { … } }` at the destination), follow-up Retry ticket (adds `ChannelListEvent.RetryClicked` + reducer arm), Phase 4 (`ConversationRepositoryImpl` replaces `FakeConversationRepository` behind the same `bind ConversationRepository::class`; adds error handling around `createDiscussion()` and the loading affordance deferred in #22).
+- Ticket notes: [`../codebase/45.md`](../codebase/45.md), [`../codebase/22.md`](../codebase/22.md) (FAB → `onEvent` reducer + one-shot nav channel), [`../codebase/26.md`](../codebase/26.md) (`combine` of Channels + Discussions flows, widened `Loaded` / `Empty` to carry `recentDiscussionsCount`, `RecentDiscussionsTapped` event, `stubRepo` helper reshape)
+- Specs: `docs/specs/architecture/45-channel-list-viewmodel-uistate-data-path.md`, `docs/specs/architecture/22-channel-list-fab-new-discussion.md`, `docs/specs/architecture/26-recent-discussions-pill.md`
+- Upstream: [Conversation repository](./conversation-repository.md) (data-layer seam — `createDiscussion(workspace = null)` is the call the `onEvent` reducer makes; `observeConversations(Discussions)` is the second subscription added in #26), [data model](./data-model.md) (`Conversation` payload), [dependency injection](./dependency-injection.md) (Koin wiring)
+- Downstream: [ChannelListScreen](channel-list-screen.md) (#46 — first UI consumer; introduced `ChannelListEvent`, `collectAsStateWithLifecycle()`, and the screen-level loading/empty/error/loaded composables; #22 added the FAB and `LaunchedEffect(vm) { vm.navigationEvents.collect { … } }` at the destination; #26 added the pill below/above the screen body and consumes `recentDiscussionsCount` off `UiState`), follow-up Retry ticket (adds `ChannelListEvent.RetryClicked` + reducer arm), Phase 4 (`ConversationRepositoryImpl` replaces `FakeConversationRepository` behind the same `bind ConversationRepository::class`; adds error handling around `createDiscussion()` and the loading affordance deferred in #22).

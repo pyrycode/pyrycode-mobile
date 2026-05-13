@@ -42,39 +42,124 @@ class ChannelListViewModelTest {
 
     @Test
     fun initialState_isLoading() = runTest {
-        val source = MutableSharedFlow<List<Conversation>>(replay = 0)
-        val vm = ChannelListViewModel(stubRepo(source))
+        val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
+        val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
+        val vm = ChannelListViewModel(stubRepo(channels, discussions))
         assertEquals(ChannelListUiState.Loading, vm.state.value)
     }
 
     @Test
     fun loaded_whenSourceEmitsNonEmpty() = runTest {
-        val source = MutableSharedFlow<List<Conversation>>(replay = 0)
-        val vm = ChannelListViewModel(stubRepo(source))
+        val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
+        val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
+        val vm = ChannelListViewModel(stubRepo(channels, discussions))
         val collector = launch { vm.state.collect { } }
         advanceUntilIdle()
-        source.emit(listOf(sampleChannel))
+        channels.emit(listOf(sampleChannel))
+        discussions.emit(emptyList())
         advanceUntilIdle()
-        assertEquals(ChannelListUiState.Loaded(listOf(sampleChannel)), vm.state.value)
+        assertEquals(
+            ChannelListUiState.Loaded(listOf(sampleChannel), recentDiscussionsCount = 0),
+            vm.state.value,
+        )
         collector.cancel()
     }
 
     @Test
     fun empty_whenSourceEmitsEmptyList() = runTest {
-        val source = MutableSharedFlow<List<Conversation>>(replay = 0)
-        val vm = ChannelListViewModel(stubRepo(source))
+        val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
+        val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
+        val vm = ChannelListViewModel(stubRepo(channels, discussions))
         val collector = launch { vm.state.collect { } }
         advanceUntilIdle()
-        source.emit(emptyList())
+        channels.emit(emptyList())
+        discussions.emit(emptyList())
         advanceUntilIdle()
-        assertEquals(ChannelListUiState.Empty, vm.state.value)
+        assertEquals(ChannelListUiState.Empty(recentDiscussionsCount = 0), vm.state.value)
         collector.cancel()
     }
 
     @Test
-    fun error_whenSourceFlowThrows() = runTest {
-        val erroring = erroringRepo("network down")
-        val vm = ChannelListViewModel(erroring)
+    fun loaded_carriesDiscussionsCount() = runTest {
+        val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
+        val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
+        val vm = ChannelListViewModel(stubRepo(channels, discussions))
+        val collector = launch { vm.state.collect { } }
+        advanceUntilIdle()
+        channels.emit(listOf(sampleChannel))
+        discussions.emit(listOf(sampleDiscussion("d1"), sampleDiscussion("d2"), sampleDiscussion("d3")))
+        advanceUntilIdle()
+        assertEquals(
+            ChannelListUiState.Loaded(listOf(sampleChannel), recentDiscussionsCount = 3),
+            vm.state.value,
+        )
+        collector.cancel()
+    }
+
+    @Test
+    fun empty_carriesDiscussionsCount() = runTest {
+        val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
+        val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
+        val vm = ChannelListViewModel(stubRepo(channels, discussions))
+        val collector = launch { vm.state.collect { } }
+        advanceUntilIdle()
+        channels.emit(emptyList())
+        discussions.emit(listOf(sampleDiscussion("d1"), sampleDiscussion("d2")))
+        advanceUntilIdle()
+        assertEquals(ChannelListUiState.Empty(recentDiscussionsCount = 2), vm.state.value)
+        collector.cancel()
+    }
+
+    @Test
+    fun discussionsCount_updatesReactively() = runTest {
+        val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
+        val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
+        val vm = ChannelListViewModel(stubRepo(channels, discussions))
+        val collector = launch { vm.state.collect { } }
+        advanceUntilIdle()
+        channels.emit(listOf(sampleChannel))
+        discussions.emit(listOf(sampleDiscussion("d1")))
+        advanceUntilIdle()
+        discussions.emit(
+            listOf(
+                sampleDiscussion("d1"),
+                sampleDiscussion("d2"),
+                sampleDiscussion("d3"),
+                sampleDiscussion("d4"),
+                sampleDiscussion("d5"),
+            ),
+        )
+        advanceUntilIdle()
+        assertEquals(
+            ChannelListUiState.Loaded(listOf(sampleChannel), recentDiscussionsCount = 5),
+            vm.state.value,
+        )
+        collector.cancel()
+    }
+
+    @Test
+    fun loadingPersists_untilBothFlowsEmit() = runTest {
+        val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
+        val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
+        val vm = ChannelListViewModel(stubRepo(channels, discussions))
+        val collector = launch { vm.state.collect { } }
+        advanceUntilIdle()
+        assertEquals(ChannelListUiState.Loading, vm.state.value)
+        channels.emit(listOf(sampleChannel))
+        advanceUntilIdle()
+        assertEquals(ChannelListUiState.Loading, vm.state.value)
+        discussions.emit(emptyList())
+        advanceUntilIdle()
+        assertEquals(
+            ChannelListUiState.Loaded(listOf(sampleChannel), recentDiscussionsCount = 0),
+            vm.state.value,
+        )
+        collector.cancel()
+    }
+
+    @Test
+    fun error_whenChannelsFlowThrows() = runTest {
+        val vm = ChannelListViewModel(erroringRepo("network down", throwOn = ConversationFilter.Channels))
         val collector = launch { vm.state.collect { } }
         advanceUntilIdle()
         val state = vm.state.value
@@ -84,9 +169,19 @@ class ChannelListViewModelTest {
     }
 
     @Test
+    fun error_whenDiscussionsFlowThrows() = runTest {
+        val vm = ChannelListViewModel(erroringRepo("discussions broke", throwOn = ConversationFilter.Discussions))
+        val collector = launch { vm.state.collect { } }
+        advanceUntilIdle()
+        val state = vm.state.value
+        assertTrue("expected Error, was $state", state is ChannelListUiState.Error)
+        assertEquals("discussions broke", (state as ChannelListUiState.Error).message)
+        collector.cancel()
+    }
+
+    @Test
     fun error_messageIsNonBlank_whenExceptionMessageIsNull() = runTest {
-        val erroring = erroringRepo(null)
-        val vm = ChannelListViewModel(erroring)
+        val vm = ChannelListViewModel(erroringRepo(null, throwOn = ConversationFilter.Channels))
         val collector = launch { vm.state.collect { } }
         advanceUntilIdle()
         val state = vm.state.value
@@ -95,6 +190,23 @@ class ChannelListViewModelTest {
             "message must be non-blank",
             (state as ChannelListUiState.Error).message.isNotBlank(),
         )
+        collector.cancel()
+    }
+
+    @Test
+    fun recentDiscussionsTapped_isNoOp() = runTest {
+        val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
+        val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
+        val vm = ChannelListViewModel(stubRepo(channels, discussions))
+        val collector = launch { vm.state.collect { } }
+        advanceUntilIdle()
+        channels.emit(listOf(sampleChannel))
+        discussions.emit(listOf(sampleDiscussion("d1")))
+        advanceUntilIdle()
+        val before = vm.state.value
+        vm.onEvent(ChannelListEvent.RecentDiscussionsTapped)
+        advanceUntilIdle()
+        assertEquals(before, vm.state.value)
         collector.cancel()
     }
 
@@ -135,9 +247,17 @@ class ChannelListViewModelTest {
 
     // --- helpers ---
 
-    private fun stubRepo(source: MutableSharedFlow<List<Conversation>>): ConversationRepository =
+    private fun stubRepo(
+        channels: Flow<List<Conversation>>,
+        discussions: Flow<List<Conversation>>,
+    ): ConversationRepository =
         object : ConversationRepository {
-            override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = source
+            override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> =
+                when (filter) {
+                    ConversationFilter.Channels -> channels
+                    ConversationFilter.Discussions -> discussions
+                    ConversationFilter.All -> TODO("not used")
+                }
             override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = TODO("not used")
             override suspend fun createDiscussion(workspace: String?): Conversation = TODO("not used")
             override suspend fun promote(conversationId: String, name: String, workspace: String?): Conversation = TODO("not used")
@@ -147,10 +267,17 @@ class ChannelListViewModelTest {
             override suspend fun changeWorkspace(conversationId: String, workspace: String): Session = TODO("not used")
         }
 
-    private fun erroringRepo(message: String?): ConversationRepository =
+    private fun erroringRepo(
+        message: String?,
+        throwOn: ConversationFilter,
+    ): ConversationRepository =
         object : ConversationRepository {
             override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> =
-                flow { throw RuntimeException(message) }
+                if (filter == throwOn) {
+                    flow { throw RuntimeException(message) }
+                } else {
+                    flow { emit(emptyList()) }
+                }
             override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = TODO("not used")
             override suspend fun createDiscussion(workspace: String?): Conversation = TODO("not used")
             override suspend fun promote(conversationId: String, name: String, workspace: String?): Conversation = TODO("not used")
@@ -167,6 +294,16 @@ class ChannelListViewModelTest {
         currentSessionId = "s1",
         sessionHistory = listOf("s1"),
         isPromoted = true,
+        lastUsedAt = Instant.parse("2026-05-12T00:00:00Z"),
+    )
+
+    private fun sampleDiscussion(id: String) = Conversation(
+        id = id,
+        name = null,
+        cwd = "~/scratch",
+        currentSessionId = "$id-s1",
+        sessionHistory = listOf("$id-s1"),
+        isPromoted = false,
         lastUsedAt = Instant.parse("2026-05-12T00:00:00Z"),
     )
 }

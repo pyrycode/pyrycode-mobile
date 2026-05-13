@@ -132,6 +132,8 @@ private fun PyryNavHost(
                             navController.navigate("conversation_thread/${event.conversationId}")
                         ChannelListEvent.SettingsTapped ->
                             navController.navigate(Routes.Settings)
+                        ChannelListEvent.RecentDiscussionsTapped ->
+                            navController.navigate(Routes.DiscussionList)
                         ChannelListEvent.CreateDiscussionTapped ->
                             vm.onEvent(event)
                     }
