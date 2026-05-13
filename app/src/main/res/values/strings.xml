@@ -11,4 +11,6 @@
     <string name="cd_recent_discussions_pill">Open recent discussions, %d available</string>
     <string name="cd_pyrycode_logo">Pyrycode logo</string>
     <string name="channels_section_header">Channels</string>
+    <string name="settings_title">Settings</string>
+    <string name="cd_add_memory_plugin">Add memory plugin</string>
 </resources>
