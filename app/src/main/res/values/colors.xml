@@ -7,4 +7,12 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <!--
+      Launcher icon background. Mirrors the M3 seed primary (primaryLight in
+      ui/theme/Color.kt) so the icon feels consistent with the in-app theme.
+      Cannot reference theme attributes here — launchers render outside the
+      app process, so ?attr/colorPrimary does not resolve. Update both
+      locations together when the branding ticket lands.
+    -->
+    <color name="ic_launcher_background">#FF32628D</color>
 </resources>
