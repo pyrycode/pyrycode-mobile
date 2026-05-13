@@ -8,7 +8,7 @@ Package: `de.pyryco.mobile.ui.conversations.list` (`app/src/main/java/de/pyryco/
 
 Observes the discussion slice of the conversation repository, projects each emission into a `DiscussionListUiState` variant (`Loading` initially, then `Empty` or `Loaded(discussions)` depending on the emitted list, `Error(message)` if the upstream throws), and exposes the result as a `StateFlow` via the same `WhileSubscribed(5_000)` cold-to-hot pattern as the channel VM.
 
-`fun onEvent(event: DiscussionListEvent)` handles two arms: `RowTapped(id) → viewModelScope.launch { navigationChannel.send(ToThread(id)) }` (so the unit test can assert the nav target — see "Dual nav wiring" below), and `BackTapped → Unit` (the destination handles back at the composable side via `navController.popBackStack()`; the no-op arm keeps the `when` exhaustive and documents intent).
+`fun onEvent(event: DiscussionListEvent)` handles three arms: `RowTapped(id) → viewModelScope.launch { navigationChannel.send(ToThread(id)) }` (so the unit test can assert the nav target — see "Dual nav wiring" below), `SaveAsChannelRequested(id) → Unit` (#25 — the gesture surface ships in Phase 0; the promotion dialog and `repository.promote(...)` call land in Phase 2, marked by an inline `TODO(phase 2)` comment naming the eventual repository signature), and `BackTapped → Unit` (the destination handles back at the composable side via `navController.popBackStack()`; the no-op arm keeps the `when` exhaustive and documents intent).
 
 ## Shape
 
@@ -53,6 +53,8 @@ class DiscussionListViewModel(
             is DiscussionListEvent.RowTapped -> viewModelScope.launch {
                 navigationChannel.send(DiscussionListNavigation.ToThread(event.conversationId))
             }
+            is DiscussionListEvent.SaveAsChannelRequested -> Unit
+            // TODO(phase 2): show promotion dialog and call repository.promote(event.conversationId, name, cwd)
             DiscussionListEvent.BackTapped -> Unit
         }
     }
@@ -85,6 +87,10 @@ A single-wire shape (composable-only) would require either a `TestNavHostControl
 
 `navController.popBackStack()` runs at the destination block. The `BackTapped -> Unit` arm exists for `when` exhaustiveness and to document that the event is intentionally surfaced as part of the sealed `DiscussionListEvent` (future analytics or VM-side back-press logic plugs in here). Don't delete the arm.
 
+### `SaveAsChannelRequested` is a Phase 0 stub (#25)
+
+Both gesture surfaces on the discussion row (long-press menu, right-to-left swipe) emit `SaveAsChannelRequested(conversationId)`. The VM arm is the literal token `Unit`, paired with a `// TODO(phase 2): show promotion dialog and call repository.promote(event.conversationId, name, cwd)` comment naming the eventual handler shape. No `viewModelScope.launch`, no logging, no toast — the spec explicitly chose `Unit` over `Log.d(...)` because the codebase has no logging convention yet and introducing one for a no-op would be cargo cult. The composable-side branch in `MainActivity`'s destination block (`is DiscussionListEvent.SaveAsChannelRequested -> vm.onEvent(event)`) is already in place; Phase 2 only edits this VM arm. Don't pre-build any plumbing — no `promote(...)` method on the repository interface yet, no name picker, no workspace picker.
+
 ## Wiring
 
 Koin binding (registered in [`AppModule`](dependency-injection.md)):
@@ -114,7 +120,7 @@ LaunchedEffect(vm) {
 
 ## Testing
 
-`app/src/test/java/de/pyryco/mobile/ui/conversations/list/DiscussionListViewModelTest.kt`. JUnit 4, six tests, mirroring the channel-list test conventions verbatim:
+`app/src/test/java/de/pyryco/mobile/ui/conversations/list/DiscussionListViewModelTest.kt`. JUnit 4, seven tests, mirroring the channel-list test conventions verbatim:
 
 1. **`initialState_isLoading`** — reads `vm.state.value` before any subscriber attaches.
 2. **`loaded_passesThroughRepositoryOrder`** — `source.emit(listOf(d1, d2, d3))`; asserts `Loaded(listOf(d1, d2, d3))` in source order. The VM trusts what the repo emits; the `ConversationFilter.Discussions` filter contract is the repository's responsibility.
@@ -122,6 +128,7 @@ LaunchedEffect(vm) {
 4. **`rowTapped_emitsToThreadNavigation`** — `async { vm.navigationEvents.first() }` launched *before* `vm.onEvent(RowTapped("disc-7"))`; asserts the captured event is `ToThread("disc-7")`.
 5. **`error_whenSourceFlowThrows`** — flow throws `RuntimeException("network down")`; asserts `Error("network down")`.
 6. **`error_messageIsNonBlank_whenExceptionMessageIsNull`** — `RuntimeException(null)`; asserts the fallback path is non-blank.
+7. **`saveAsChannelRequested_isNoOp_inPhase0`** (#25) — `vm.onEvent(SaveAsChannelRequested("disc-1"))`; asserts `withTimeoutOrNull(50) { vm.navigationEvents.first() } == null`. The only observable contract of the Phase 0 stub is "nothing happens"; the test verifies precisely that. Phase 2 rewrites this test to assert on the promotion-dialog navigation/state emission once the handler is real.
 
 Test infrastructure conventions are unchanged from the channel VM tests — `Dispatchers.setMain(UnconfinedTestDispatcher())`, hand-rolled `stubRepo` with `MutableSharedFlow<List<Conversation>>(replay = 0)` and `TODO("not used")` on the other repository methods, `launch { vm.state.collect { } }` kept alive across emissions to hold `WhileSubscribed` hot, `advanceUntilIdle()` between trigger and assertion.
 
@@ -129,7 +136,8 @@ No `androidTest` coverage — the AC's visual contract lives in the `@Preview` c
 
 ## Edge cases / limitations
 
-- **No `CreateDiscussionTapped` arm.** Discussions are created from the channel-list FAB (#22) and surfaced into this screen via the repository's filtered flow on the next emission. The discussion list is read-only in Phase 0; the long-press "Save as channel…" action (#1) and the promotion dialog (Phase 2) add the first write paths.
+- **No `CreateDiscussionTapped` arm.** Discussions are created from the channel-list FAB (#22) and surfaced into this screen via the repository's filtered flow on the next emission.
+- **`SaveAsChannelRequested` is a stub.** The gesture surface (#25) is live but the handler is `Unit`. Phase 2 fills in the promotion dialog and `repository.promote(...)` call. Don't pre-build at the VM, repository, or screen layers.
 - **`BackTapped` is a VM no-op.** Routed at the composable side; the VM arm is purely for compiler exhaustiveness. Don't add VM state mutation here speculatively.
 - **No `flowOn(Dispatchers.IO)`.** Same dispatcher policy as the channel VM — upstream inherits `Dispatchers.Main.immediate` from `viewModelScope`; the fake's projection is CPU map manipulation.
 - **No retry / refresh method.** Cold-flow re-collection on resubscription is the existing retry surface. Phase 4 adds a designed `Error` screen with explicit retry; the current centered-text error is a placeholder.
@@ -137,8 +145,8 @@ No `androidTest` coverage — the AC's visual contract lives in the `@Preview` c
 
 ## Related
 
-- Ticket notes: [`../codebase/24.md`](../codebase/24.md)
-- Spec: `docs/specs/architecture/24-discussion-list-drilldown-screen.md`
+- Ticket notes: [`../codebase/24.md`](../codebase/24.md), [`../codebase/25.md`](../codebase/25.md)
+- Specs: `docs/specs/architecture/24-discussion-list-drilldown-screen.md`, `docs/specs/architecture/25-save-as-channel-affordances.md`
 - Sibling: [ChannelListViewModel](channel-list-viewmodel.md) — structural clone source; see it for the `.map / .catch / .stateIn` pattern, the `Channel<…>(BUFFERED) → receiveAsFlow()` one-shot navigation seam, and the test-infrastructure conventions
 - Upstream: [Conversation repository](conversation-repository.md) (the `observeConversations(ConversationFilter.Discussions)` projection — `FakeConversationRepository` projection stamps `isSleeping` on every emission, so the discussion list inherits the sleeping-dot affordance without VM work), [data model](data-model.md) (`Conversation`), [dependency injection](dependency-injection.md) (Koin wiring)
-- Downstream: [DiscussionListScreen](discussion-list-screen.md), Phase 2 promotion dialog (adds `PromoteRequested(id)` event arm — converts a discussion into a channel via the repository), Phase 4 (`RemoteConversationRepository` replaces the fake behind the same bind line)
+- Downstream: [DiscussionListScreen](discussion-list-screen.md), Phase 2 promotion dialog (replaces the `SaveAsChannelRequested` `Unit` stub with a real handler — opens a name/workspace picker and calls `repository.promote(conversationId, name, cwd)`), Phase 4 (`RemoteConversationRepository` replaces the fake behind the same bind line)

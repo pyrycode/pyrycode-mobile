@@ -6,4 +6,5 @@
     <string name="discussion_list_title">Recent discussions</string>
     <string name="discussion_list_empty">No discussions yet</string>
     <string name="cd_back">Back</string>
+    <string name="save_as_channel_action">Save as channel…</string>
 </resources>

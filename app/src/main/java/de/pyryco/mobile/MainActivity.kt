@@ -155,6 +155,8 @@ private fun PyryNavHost(
                     when (event) {
                         is DiscussionListEvent.RowTapped ->
                             navController.navigate("conversation_thread/${event.conversationId}")
+                        is DiscussionListEvent.SaveAsChannelRequested ->
+                            vm.onEvent(event)
                         DiscussionListEvent.BackTapped ->
                             navController.popBackStack()
                     }

@@ -10,7 +10,7 @@ Renders one conversation as a single Material 3 `ListItem` with three slots:
 - **Supporting** — the `Message.content` preview, whitespace-normalized, capped at 2 lines with ellipsis. Slot is `null` (not an empty lambda) when `lastMessage == null`, which collapses `ListItem` to its 1-line height — no manual layout branching needed.
 - **Trailing** — relative timestamp derived from `Conversation.lastUsedAt`.
 
-Tapping anywhere on the row invokes `onClick` exactly once via `Modifier.clickable`.
+Tapping anywhere on the row invokes `onClick` exactly once. If the optional `onLongClick` is supplied, the modifier chain switches from `Modifier.clickable(onClick)` to `Modifier.combinedClickable(onClick, onLongClick)` (under `@OptIn(ExperimentalFoundationApi::class)`) so long-press is also detected.
 
 ## Public surface
 
@@ -21,10 +21,13 @@ fun ConversationRow(
     lastMessage: Message?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null,
 )
 ```
 
 Stateless and pure: no `remember`, no `ViewModel`, no I/O. All parameters are Compose-stable; lambda stability is the caller's responsibility (#18 will `remember`-wrap per-id).
+
+The `onLongClick` parameter (added in #25) is the project-wide convention for adding a gesture surface to a shared row primitive without fanning a screen-specific concept into the component. The lambda is generic — `ConversationRow` is told only "here is something to call on long press"; the meaning (promote / rename / archive / etc.) is supplied by the caller. A screen-level pointer-input wrapper does **not** work as an alternative: `ConversationRow`'s inner `ListItem` applies its own `Modifier.clickable`, which consumes pointer events before any outer wrapper sees them. See [`../codebase/25.md`](../codebase/25.md) for the full rationale. Defaults to `null` — every pre-#25 call site continues to compile unchanged.
 
 ## How it works
 
@@ -149,4 +152,4 @@ LazyColumn { items(channels, key = { it.id }) { channel ->
 - Specs: `docs/specs/architecture/17-conversation-row-composable.md`, `docs/specs/architecture/19-conversation-row-workspace-label.md`, `docs/specs/architecture/20-conversation-row-sleeping-indicator.md`
 - Ticket notes: `docs/knowledge/codebase/17.md`, `docs/knowledge/codebase/19.md`, `docs/knowledge/codebase/20.md`
 - Upstream: #2 ([`Conversation` + `Message`](data-model.md)), [ADR 0001](../decisions/0001-kotlinx-datetime-for-data-layer.md) (`kotlinx-datetime`)
-- Downstream: #46 ([Channel list](channel-list-screen.md) — first consumer), Discussions drilldown (later)
+- Downstream: #46 ([Channel list](channel-list-screen.md) — first consumer), [Discussions drilldown](discussion-list-screen.md) (#24 — calls with `Modifier.alpha(0.65f)`; #25 — passes `onLongClick` to open the "Save as channel…" menu)
