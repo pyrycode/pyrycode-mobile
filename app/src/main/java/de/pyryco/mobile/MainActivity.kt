@@ -6,13 +6,11 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -37,6 +35,7 @@ import de.pyryco.mobile.ui.conversations.list.DiscussionListScreen
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerScreen
 import de.pyryco.mobile.ui.onboarding.WelcomeScreen
+import de.pyryco.mobile.ui.settings.SettingsScreen
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -173,17 +172,7 @@ private fun PyryNavHost(
             Text("Conversation thread placeholder: $conversationId")
         }
         composable(Routes.Settings) {
-            SettingsPlaceholder(onBack = { navController.popBackStack() })
-        }
-    }
-}
-
-@Composable
-private fun SettingsPlaceholder(onBack: () -> Unit) {
-    Column {
-        Text("Settings placeholder")
-        TextButton(onClick = onBack) {
-            Text("Back")
+            SettingsScreen(onBack = { navController.popBackStack() })
         }
     }
 }
