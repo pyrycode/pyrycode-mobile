@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
@@ -17,8 +18,11 @@ import kotlinx.coroutines.launch
 
 sealed interface ChannelListUiState {
     data object Loading : ChannelListUiState
-    data object Empty : ChannelListUiState
-    data class Loaded(val channels: List<Conversation>) : ChannelListUiState
+    data class Empty(val recentDiscussionsCount: Int) : ChannelListUiState
+    data class Loaded(
+        val channels: List<Conversation>,
+        val recentDiscussionsCount: Int,
+    ) : ChannelListUiState
     data class Error(val message: String) : ChannelListUiState
 }
 
@@ -31,11 +35,19 @@ class ChannelListViewModel(
 ) : ViewModel() {
 
     val state: StateFlow<ChannelListUiState> =
-        repository.observeConversations(ConversationFilter.Channels)
-            .map<List<Conversation>, ChannelListUiState> { channels ->
-                if (channels.isEmpty()) ChannelListUiState.Empty
-                else ChannelListUiState.Loaded(channels)
+        combine(
+            repository.observeConversations(ConversationFilter.Channels),
+            repository.observeConversations(ConversationFilter.Discussions).map { it.size },
+        ) { channels, discussionsCount ->
+            if (channels.isEmpty()) {
+                ChannelListUiState.Empty(recentDiscussionsCount = discussionsCount)
+            } else {
+                ChannelListUiState.Loaded(
+                    channels = channels,
+                    recentDiscussionsCount = discussionsCount,
+                )
             }
+        }
             .catch { e ->
                 val raw = e.message
                 emit(
@@ -59,7 +71,10 @@ class ChannelListViewModel(
                 val conversation = repository.createDiscussion()
                 navigationChannel.send(ChannelListNavigation.ToThread(conversation.id))
             }
-            is ChannelListEvent.RowTapped, ChannelListEvent.SettingsTapped -> Unit
+            is ChannelListEvent.RowTapped,
+            ChannelListEvent.SettingsTapped,
+            ChannelListEvent.RecentDiscussionsTapped,
+            -> Unit
         }
     }
 
