@@ -10,6 +10,7 @@ data class Conversation(
     val sessionHistory: List<String>,
     val isPromoted: Boolean,
     val lastUsedAt: Instant,
+    val isSleeping: Boolean = false,
 )
 
 /**
