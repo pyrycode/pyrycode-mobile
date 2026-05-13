@@ -1,15 +1,15 @@
 # Welcome screen
 
-First screen of the onboarding flow. Shown to new users before any pairing state exists.
+First screen of the onboarding flow. Shown to new users before any pairing state exists. Visual treatment is locked to Figma node `6:32` (since #57).
 
 ## What it does
 
 Greets the user, names the app, and offers two next steps:
 
-- **"I already have pyrycode"** — primary CTA, invokes `onPaired`. Currently navigates to the `scanner` route (#12); Phase 4 replaces the stub scanner with real CameraX + ML Kit pairing.
-- **"Set up pyrycode first"** — secondary CTA, invokes `onSetup`. Launches the device's default browser at `https://pyryco.de/setup` via `Intent.ACTION_VIEW` (#14).
+- **"I already have pyrycode"** — primary CTA (filled M3 `Button` with a QR-frame leading icon), invokes `onPaired`. Currently navigates to the `scanner` route (#12); Phase 4 replaces the stub scanner with real CameraX + ML Kit pairing.
+- **"Set up pyrycode first"** — secondary CTA (M3 `TextButton`), invokes `onSetup`. Launches the device's default browser at `https://pyryco.de/setup` via `Intent.ACTION_VIEW` (#14).
 
-A footer line ("Pyrycode is open source.") sits at the bottom.
+A centred footer line — `"Open source · github.com/pyrycode/pyrycode-mobile"` — sits below the CTA stack at reduced alpha.
 
 ## How it works
 
@@ -23,15 +23,23 @@ fun WelcomeScreen(
 )
 ```
 
-Layout is a `Surface` over `Column(SpaceBetween)` with three children: hero block (centered via inner `Spacer(weight(1f))` pair), CTA stack (filled `Button` over `OutlinedButton`), footer `Text`. All colors come from `MaterialTheme.colorScheme.*` and all type from `MaterialTheme.typography.*` — no hardcoded `Color(0x...)` literals, font sizes, weights, or families. Edge-to-edge insets honored via `Modifier.systemBarsPadding()`.
+Layout is a top-level `Box(fillMaxSize)` with three layers stacked back-to-front:
+
+1. **Base** — `Modifier.background(colorScheme.surface)`.
+2. **Atmospheric glow** (since #57) — `Modifier.drawBehind` paints a `Brush.radialGradient` centered at roughly (48% width, 30% height), radius ~53% of height, fading from `colorScheme.primaryContainer.copy(alpha = 0.6f)` to `Color.Transparent`. Sits behind content without consuming layout space.
+3. **Content** — `Column(fillMaxSize, systemBarsPadding, horizontalPadding = 32.dp, SpaceBetween)`:
+   - Top-anchored **hero** (`padding(top = 136.dp)`, `spacedBy(28.dp)`): `Icon(R.drawable.ic_pyry_logo, tint = colorScheme.primary, size = 104.dp)`, then `"Pyrycode Mobile"` (`headlineLarge` / `onSurface`) stacked over `"Control Claude sessions on your phone."` (`titleMedium` / `onSurfaceVariant`), then a `bodyLarge` / `onSurfaceVariant` body paragraph explaining the local-first model.
+   - Bottom-anchored **CTA stack** (`padding(bottom = 16.dp)`, `spacedBy(12.dp)`): full-width 56dp-tall filled `Button` (`ic_qr_scan_frame` leading icon + label), full-width 56dp-tall `TextButton`, centred `labelSmall` footer at `onSurfaceVariant.copy(alpha = 0.55f)`.
+
+All colors come from `MaterialTheme.colorScheme.*` and all typography from `MaterialTheme.typography.*` — no hardcoded `Color(0x…)` literals, no custom `TextStyle(...)`. `Color.Transparent` (the terminal radial-gradient stop) is the only non-token `Color` and is permitted because it's a constant, not a hex literal. Edge-to-edge insets honored via `Modifier.systemBarsPadding()`.
 
 ## Why callbacks instead of a NavController
 
-The screen is consumed in follow-up tickets that can land in any order:
+The screen is consumed in follow-up tickets that landed in any order:
 
-- **#8** added a `NavHost` (merged) and mounts this screen at the `welcome` route.
-- **#12** wired `onPaired` to the `scanner` stub route (merged); Phase 4 replaces the scanner body itself.
-- **#14** wired `onSetup` to an `Intent.ACTION_VIEW` launch at `https://pyryco.de/setup` (merged).
+- **#8** added a `NavHost` and mounts this screen at the `welcome` route.
+- **#12** wired `onPaired` to the `scanner` stub route; Phase 4 replaces the scanner body itself.
+- **#14** wired `onSetup` to an `Intent.ACTION_VIEW` launch at `https://pyryco.de/setup`.
 
 Keeping `WelcomeScreen.kt` free of `NavController` and `Intent` references is what made that parallelism work, and it keeps preview / future ComposeTestRule callers able to pass `onSetup = {}` no-ops without a real `Context`. The signature is **fixed**: don't add a `modifier` parameter, don't broaden the callbacks.
 
@@ -57,18 +65,25 @@ composable(Routes.Welcome) {
 
 No DI wiring needed for this screen.
 
+## Assets
+
+Two vector drawables under `app/src/main/res/drawable/`, both rendered via `Icon(painter = painterResource(R.drawable.<id>), tint = colorScheme.primary)`:
+
+- **`ic_pyry_logo.xml`** — snowflake + center cursor (Figma node `9:2`, 104dp viewport). Decorative, `contentDescription = null` — the title text below carries the screen identity.
+- **`ic_qr_scan_frame.xml`** — four-corner QR scanner frame (Figma node `9:41`, 20dp viewport). Used as the primary CTA leading icon.
+
+Both have a single uniform fill / stroke color in the raw XML so the Compose `Icon(tint = …)` recolors them across light and dark themes without per-theme variants. Don't add `material-icons-extended` for the QR frame — the ticket explicitly bans new icon packages; assets come from the Figma payload only.
+
 ## Edge cases / limitations
 
-- Logo is a plain colored `Box` placeholder; real branding asset is unticketed.
-- Subtitle and footer copy are unconstrained by the AC — currently "Your pyrycode CLI, in your pocket." and "Pyrycode is open source." Substitute equivalent short phrasings if better copy is found.
-- Previews render at the Figma 412×892 baseline. The screen itself adapts via `fillMaxSize` + `systemBarsPadding`, so other form factors work — but visual review on tablets / foldables hasn't happened.
-- Pairing-state-conditional start destination is **not** implemented here; that's #13. Right now the screen always shows on app launch (once #8 mounts it).
+- Previews render at the Figma 412×892 baseline. The screen itself adapts via `fillMaxSize` + `systemBarsPadding` and the radial-gradient center/radius are fractions of canvas size, so other form factors work — but visual review on tablets / foldables hasn't happened.
+- Glow alpha is `0.6f` (within the spec-suggested 0.4–0.8 range). Tune against the dark preview if a future ticket changes the brand palette.
+- Pairing-state-conditional start destination is **not** implemented here; that's #13. Once the user is paired, the start destination is `channel_list` and this screen no longer renders.
 
 ## Related
 
-- Spec: `docs/specs/architecture/7-welcome-screen-scaffold.md`
-- Ticket notes: `docs/knowledge/codebase/7.md`
-- Figma node: `6:32` (412×892 baseline)
-- Ticket notes: `docs/knowledge/codebase/14.md` (`onSetup` external-browser wiring)
-- Follow-ups: #8 (routing — merged), #12 (`onPaired` → Scanner — merged), #13 (conditional start), #14 (`onSetup` → external browser — merged)
+- Spec (current): `docs/specs/architecture/57-welcome-screen-figma-polish.md`
+- Spec (original scaffold): `docs/specs/architecture/7-welcome-screen-scaffold.md`
+- Ticket notes: `../codebase/7.md` (scaffold), `../codebase/14.md` (`onSetup` external-browser wiring), `../codebase/57.md` (Figma polish)
+- Figma node: `6:32` (412×892 baseline) — https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=6-32
 - Sibling: [Scanner screen](scanner-screen.md)
