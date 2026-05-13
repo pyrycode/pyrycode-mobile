@@ -1,6 +1,6 @@
 # ChannelListViewModel
 
-First `ViewModel` in the codebase. Exposes `observeConversations(ConversationFilter.Channels)` as a hot `StateFlow<ChannelListUiState>` so the channel list screen (#46) can be a stateless `(state, onEvent)` composable.
+First `ViewModel` in the codebase. Exposes `observeConversations(ConversationFilter.Channels)` as a hot `StateFlow<ChannelListUiState>` consumed by [`ChannelListScreen`](channel-list-screen.md) (#46), a stateless `(state, onEvent)` composable.
 
 Package: `de.pyryco.mobile.ui.conversations.list` (`app/src/main/java/de/pyryco/mobile/ui/conversations/list/`). File: `ChannelListViewModel.kt`.
 
@@ -8,7 +8,7 @@ Package: `de.pyryco.mobile.ui.conversations.list` (`app/src/main/java/de/pyryco/
 
 Observes the persistent-channel slice of the conversation repository, projects each emission into a `ChannelListUiState` variant, and exposes the result as a `StateFlow`. Emits `Loading` initially (before the upstream produces a value), then `Empty` or `Loaded(channels)` depending on the emitted list, and `Error(message)` if the upstream flow throws.
 
-Read-only for this slice — no events, no mutators. Event handling (`onEvent(ChannelListEvent)` + tap navigation, retry) lands with the screen ticket.
+Read-only at this layer — no VM-side reducer. `ChannelListEvent` (with the single `RowTapped(conversationId)` variant) lives next to the screen and is translated directly into `navController.navigate(...)` at the destination block (#46). A VM-side `fun onEvent(event: ChannelListEvent)` reducer will land with the first non-navigation event (retry, archive, etc.); when it does, the sealed type moves from `ChannelListScreen.kt` into this file to colocate with its consumer.
 
 ## Shape
 
@@ -84,12 +84,14 @@ viewModel { ChannelListViewModel(get()) }
 
 The constructor parameter type is `ConversationRepository` (the interface, not the `FakeConversationRepository` impl). Koin's `single { FakeConversationRepository() } bind ConversationRepository::class` makes `get()` resolve to the bound implementation; Phase 4's remote impl drops in behind the same bind line with no VM change.
 
-Composable resolution (will land with #46):
+Composable resolution at the `composable(Routes.ChannelList) { ... }` destination (landed in #46):
 
 ```kotlin
 val vm = koinViewModel<ChannelListViewModel>()
 val state by vm.state.collectAsStateWithLifecycle()
 ```
+
+`koinViewModel<…>()` (from `org.koin.androidx.compose`) routes through `LocalViewModelStoreOwner`, which Compose Navigation 2.9+ auto-wires to the current `NavBackStackEntry` — so the VM is scoped to the back-stack entry, surviving configuration changes and tearing down on pop. `collectAsStateWithLifecycle()` requires `androidx.lifecycle:lifecycle-runtime-compose` (added to the catalog in #46), distinct from the `-ktx` artifacts already on the classpath.
 
 ## Configuration
 
@@ -117,7 +119,7 @@ Test infrastructure conventions established here (carry forward to future ViewMo
 
 - **`Loading` is observable only because the test uses `replay = 0`.** The actual `FakeConversationRepository` projects synchronously from a populated `MutableStateFlow`, so production runtime never observes a real `Loading` frame — the seed records arrive in the same dispatch turn that `stateIn` emits the `initialValue`. The screen will still see `Loading` initially because `collectAsStateWithLifecycle()` snapshots `state.value` at composition time before the next emission lands; the architectural commitment to a `Loading` variant remains correct for the Phase 4 remote impl, where the round-trip is observably non-zero.
 - **No `init { }` block, no `refresh()`, no `retry()` method.** Cold-flow re-collection on resubscription is the existing retry surface. Explicit retry lands with the UI control that needs it.
-- **No `Event` / `onEvent` surface.** Read-only ticket. The follow-up (#46) introduces `ChannelListEvent` sealed type + tap-navigation.
+- **No VM-side `Event` / `onEvent` surface.** `ChannelListEvent` (sealed, single `RowTapped` variant) was introduced in #46 next to the screen, since tap-navigation translates directly into `navController.navigate(...)` at the destination block. A VM-side reducer lands when the first non-navigation event (retry, archive, etc.) arrives.
 - **No `flowOn(Dispatchers.IO)`.** Upstream `observeConversations` inherits the collector's dispatcher (`Dispatchers.Main.immediate` from `viewModelScope`). The fake's projection is pure CPU map manipulation; Phase 4's remote impl decides its own dispatcher internally. The VM stays dispatcher-agnostic.
 - **No logging.** No `Log.e(...)` in `catch`. Phase 4 introduces a logging strategy alongside the network layer; until then, the `Error` state is the diagnostic surface.
 
@@ -126,4 +128,4 @@ Test infrastructure conventions established here (carry forward to future ViewMo
 - Ticket notes: [`../codebase/45.md`](../codebase/45.md)
 - Spec: `docs/specs/architecture/45-channel-list-viewmodel-uistate-data-path.md`
 - Upstream: [Conversation repository](./conversation-repository.md) (data-layer seam), [data model](./data-model.md) (`Conversation` payload), [dependency injection](./dependency-injection.md) (Koin wiring)
-- Downstream: #46 (channel list screen — first UI consumer; introduces `ChannelListEvent`, `collectAsStateWithLifecycle()`, screen-level loading/empty/error/loaded composables), Phase 4 (`ConversationRepositoryImpl` replaces `FakeConversationRepository` behind the same `bind ConversationRepository::class` — VM unchanged).
+- Downstream: [ChannelListScreen](channel-list-screen.md) (#46 — first UI consumer; introduced `ChannelListEvent`, `collectAsStateWithLifecycle()`, and the screen-level loading/empty/error/loaded composables), follow-up Retry ticket (adds `ChannelListEvent.RetryClicked` and moves the sealed type into this file alongside a VM-side reducer), Phase 4 (`ConversationRepositoryImpl` replaces `FakeConversationRepository` behind the same `bind ConversationRepository::class` — VM unchanged).
