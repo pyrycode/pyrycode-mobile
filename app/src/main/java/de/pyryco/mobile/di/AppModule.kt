@@ -8,6 +8,7 @@ import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
+import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.bind
@@ -22,4 +23,5 @@ val appModule = module {
     single { AppPreferences(get()) }
     single { FakeConversationRepository() } bind ConversationRepository::class
     viewModel { ChannelListViewModel(get()) }
+    viewModel { DiscussionListViewModel(get()) }
 }

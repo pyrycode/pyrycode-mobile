@@ -31,6 +31,10 @@ import de.pyryco.mobile.ui.conversations.list.ChannelListEvent
 import de.pyryco.mobile.ui.conversations.list.ChannelListNavigation
 import de.pyryco.mobile.ui.conversations.list.ChannelListScreen
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
+import de.pyryco.mobile.ui.conversations.list.DiscussionListEvent
+import de.pyryco.mobile.ui.conversations.list.DiscussionListNavigation
+import de.pyryco.mobile.ui.conversations.list.DiscussionListScreen
+import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerScreen
 import de.pyryco.mobile.ui.onboarding.WelcomeScreen
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -134,6 +138,29 @@ private fun PyryNavHost(
                 },
             )
         }
+        composable(Routes.DiscussionList) {
+            val vm = koinViewModel<DiscussionListViewModel>()
+            val state by vm.state.collectAsStateWithLifecycle()
+            LaunchedEffect(vm) {
+                vm.navigationEvents.collect { event ->
+                    when (event) {
+                        is DiscussionListNavigation.ToThread ->
+                            navController.navigate("conversation_thread/${event.conversationId}")
+                    }
+                }
+            }
+            DiscussionListScreen(
+                state = state,
+                onEvent = { event ->
+                    when (event) {
+                        is DiscussionListEvent.RowTapped ->
+                            navController.navigate("conversation_thread/${event.conversationId}")
+                        DiscussionListEvent.BackTapped ->
+                            navController.popBackStack()
+                    }
+                },
+            )
+        }
         composable(
             route = Routes.ConversationThread,
             arguments = listOf(navArgument("conversationId") { type = NavType.StringType }),
@@ -163,6 +190,7 @@ private object Routes {
     const val Welcome = "welcome"
     const val Scanner = "scanner"
     const val ChannelList = "channel_list"
+    const val DiscussionList = "discussions"
     const val ConversationThread = "conversation_thread/{conversationId}"
     const val Settings = "settings"
 }

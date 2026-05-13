@@ -3,4 +3,7 @@
     <string name="cd_open_settings">Open settings</string>
     <string name="cd_new_discussion">New discussion</string>
     <string name="channel_list_empty">Tap + to start a conversation</string>
+    <string name="discussion_list_title">Recent discussions</string>
+    <string name="discussion_list_empty">No discussions yet</string>
+    <string name="cd_back">Back</string>
 </resources>
