@@ -1,8 +1,11 @@
 package de.pyryco.mobile.ui.conversations.list
 
 import android.content.res.Configuration
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -10,10 +13,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -25,13 +30,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DefaultScratchCwd
 import de.pyryco.mobile.ui.conversations.components.ConversationRow
-import de.pyryco.mobile.ui.conversations.components.RecentDiscussionsPill
+import de.pyryco.mobile.ui.conversations.components.DiscussionPreviewRow
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
@@ -98,9 +107,11 @@ fun ChannelListScreen(
         when (state) {
             ChannelListUiState.Loading -> CenteredText("Loading…", bodyModifier)
             is ChannelListUiState.Empty -> Column(bodyModifier.fillMaxSize()) {
-                RecentDiscussionsPill(
-                    count = state.recentDiscussionsCount,
-                    onClick = { onEvent(ChannelListEvent.RecentDiscussionsTapped) },
+                RecentDiscussionsSection(
+                    discussions = state.recentDiscussions,
+                    totalCount = state.recentDiscussionsCount,
+                    onSeeAllClick = { onEvent(ChannelListEvent.RecentDiscussionsTapped) },
+                    onRowClick = { onEvent(ChannelListEvent.RowTapped(it)) },
                 )
                 Box(
                     modifier = Modifier
@@ -125,11 +136,15 @@ fun ChannelListScreen(
                             onClick = { onEvent(ChannelListEvent.RowTapped(channel.id)) },
                         )
                     }
+                    item(key = "recent-discussions-section") {
+                        RecentDiscussionsSection(
+                            discussions = state.recentDiscussions,
+                            totalCount = state.recentDiscussionsCount,
+                            onSeeAllClick = { onEvent(ChannelListEvent.RecentDiscussionsTapped) },
+                            onRowClick = { onEvent(ChannelListEvent.RowTapped(it)) },
+                        )
+                    }
                 }
-                RecentDiscussionsPill(
-                    count = state.recentDiscussionsCount,
-                    onClick = { onEvent(ChannelListEvent.RecentDiscussionsTapped) },
-                )
             }
         }
     }
@@ -150,6 +165,64 @@ private fun ChannelsSectionHeader() {
         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
         modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
     )
+}
+
+@Composable
+private fun RecentDiscussionsSection(
+    discussions: List<Conversation>,
+    totalCount: Int,
+    onSeeAllClick: () -> Unit,
+    onRowClick: (String) -> Unit,
+) {
+    if (discussions.isEmpty()) return
+    Column(modifier = Modifier.fillMaxWidth()) {
+        HorizontalDivider(
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.60f),
+        )
+        Text(
+            text = stringResource(R.string.recent_discussions_section_header),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
+        )
+        discussions.forEach { conversation ->
+            DiscussionPreviewRow(
+                conversation = conversation,
+                onClick = { onRowClick(conversation.id) },
+            )
+        }
+        SeeAllDiscussionsRow(totalCount = totalCount, onClick = onSeeAllClick)
+    }
+}
+
+@Composable
+private fun SeeAllDiscussionsRow(totalCount: Int, onClick: () -> Unit) {
+    val description = stringResource(R.string.cd_see_all_discussions, totalCount)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                contentDescription = description
+                role = Role.Button
+            }
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.see_all_discussions_label, totalCount),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(18.dp),
+        )
+    }
 }
 
 private fun previewChannels(now: Instant): List<Conversation> = listOf(
@@ -183,6 +256,36 @@ private fun previewChannels(now: Instant): List<Conversation> = listOf(
     ),
 )
 
+private fun previewDiscussions(now: Instant): List<Conversation> = listOf(
+    Conversation(
+        id = "discussion-1",
+        name = "What's the safest way…",
+        cwd = DefaultScratchCwd,
+        currentSessionId = "session-d1",
+        sessionHistory = emptyList(),
+        isPromoted = false,
+        lastUsedAt = now - 12.minutes,
+    ),
+    Conversation(
+        id = "discussion-2",
+        name = "Help me debug auth flow",
+        cwd = DefaultScratchCwd,
+        currentSessionId = "session-d2",
+        sessionHistory = emptyList(),
+        isPromoted = false,
+        lastUsedAt = now - 2.hours,
+    ),
+    Conversation(
+        id = "discussion-3",
+        name = "Quick regex for log parsing",
+        cwd = DefaultScratchCwd,
+        currentSessionId = "session-d3",
+        sessionHistory = emptyList(),
+        isPromoted = false,
+        lastUsedAt = now - 26.hours,
+    ),
+)
+
 @Preview(name = "Loaded — Light", showBackground = true, widthDp = 412)
 @Composable
 private fun ChannelListScreenLoadedPreview() {
@@ -190,6 +293,7 @@ private fun ChannelListScreenLoadedPreview() {
         ChannelListScreen(
             state = ChannelListUiState.Loaded(
                 channels = previewChannels(Clock.System.now()),
+                recentDiscussions = emptyList(),
                 recentDiscussionsCount = 0,
             ),
             onEvent = {},
@@ -197,15 +301,16 @@ private fun ChannelListScreenLoadedPreview() {
     }
 }
 
-@Preview(name = "Loaded + pill — Light", showBackground = true, widthDp = 412)
+@Preview(name = "Loaded + discussions — Light", showBackground = true, widthDp = 412)
 @Composable
-private fun ChannelListScreenLoadedWithPillPreview() {
+private fun ChannelListScreenLoadedWithDiscussionsPreview() {
     val now: Instant = Clock.System.now()
     PyrycodeMobileTheme(darkTheme = false) {
         ChannelListScreen(
             state = ChannelListUiState.Loaded(
-                channels = listOf(previewChannels(now).first()),
-                recentDiscussionsCount = 1,
+                channels = previewChannels(now),
+                recentDiscussions = previewDiscussions(now),
+                recentDiscussionsCount = 8,
             ),
             onEvent = {},
         )
@@ -217,18 +322,25 @@ private fun ChannelListScreenLoadedWithPillPreview() {
 private fun ChannelListScreenEmptyPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
         ChannelListScreen(
-            state = ChannelListUiState.Empty(recentDiscussionsCount = 0),
+            state = ChannelListUiState.Empty(
+                recentDiscussions = emptyList(),
+                recentDiscussionsCount = 0,
+            ),
             onEvent = {},
         )
     }
 }
 
-@Preview(name = "Empty + pill — Light", showBackground = true, widthDp = 412)
+@Preview(name = "Empty + discussions — Light", showBackground = true, widthDp = 412)
 @Composable
-private fun ChannelListScreenEmptyWithPillPreview() {
+private fun ChannelListScreenEmptyWithDiscussionsPreview() {
+    val now: Instant = Clock.System.now()
     PyrycodeMobileTheme(darkTheme = false) {
         ChannelListScreen(
-            state = ChannelListUiState.Empty(recentDiscussionsCount = 5),
+            state = ChannelListUiState.Empty(
+                recentDiscussions = previewDiscussions(now),
+                recentDiscussionsCount = 5,
+            ),
             onEvent = {},
         )
     }
@@ -242,11 +354,13 @@ private fun ChannelListScreenEmptyWithPillPreview() {
 )
 @Composable
 private fun ChannelListScreenLoadedDarkPreview() {
+    val now: Instant = Clock.System.now()
     PyrycodeMobileTheme(darkTheme = true) {
         ChannelListScreen(
             state = ChannelListUiState.Loaded(
-                channels = previewChannels(Clock.System.now()),
-                recentDiscussionsCount = 0,
+                channels = previewChannels(now),
+                recentDiscussions = previewDiscussions(now),
+                recentDiscussionsCount = 8,
             ),
             onEvent = {},
         )
@@ -263,7 +377,10 @@ private fun ChannelListScreenLoadedDarkPreview() {
 private fun ChannelListScreenEmptyDarkPreview() {
     PyrycodeMobileTheme(darkTheme = true) {
         ChannelListScreen(
-            state = ChannelListUiState.Empty(recentDiscussionsCount = 0),
+            state = ChannelListUiState.Empty(
+                recentDiscussions = emptyList(),
+                recentDiscussionsCount = 0,
+            ),
             onEvent = {},
         )
     }

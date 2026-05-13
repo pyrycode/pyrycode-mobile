@@ -25,15 +25,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Clock
-import kotlinx.datetime.Instant
-import kotlinx.datetime.LocalDate
-import kotlinx.datetime.TimeZone
-import kotlinx.datetime.format.MonthNames
-import kotlinx.datetime.format.char
-import kotlinx.datetime.toLocalDateTime
-import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
-import kotlin.time.Duration.Companion.minutes
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -112,41 +104,6 @@ private fun condenseWorkspace(cwd: String): String? {
     val trimmed = cwd.trimEnd('/')
     val segment = trimmed.substringAfterLast('/')
     return segment.ifBlank { trimmed.ifBlank { null } }
-}
-
-private val sameYearFormat = LocalDate.Format {
-    monthName(MonthNames.ENGLISH_ABBREVIATED)
-    char(' ')
-    dayOfMonth()
-}
-
-private val crossYearFormat = LocalDate.Format {
-    monthName(MonthNames.ENGLISH_ABBREVIATED)
-    char(' ')
-    dayOfMonth()
-    chars(", ")
-    year()
-}
-
-private fun formatRelativeTime(
-    instant: Instant,
-    now: Instant = Clock.System.now(),
-    timeZone: TimeZone = TimeZone.currentSystemDefault(),
-): String {
-    val delta = now - instant
-    if (delta.isNegative() || delta < 1.minutes) return "just now"
-    if (delta < 1.hours) return "${delta.inWholeMinutes}m ago"
-    if (delta < 24.hours) return "${delta.inWholeHours}h ago"
-    if (delta < 48.hours) return "Yesterday"
-    if (delta < 7.days) return "${delta.inWholeDays}d ago"
-
-    val instantDate = instant.toLocalDateTime(timeZone).date
-    val nowDate = now.toLocalDateTime(timeZone).date
-    return if (instantDate.year == nowDate.year) {
-        sameYearFormat.format(instantDate)
-    } else {
-        crossYearFormat.format(instantDate)
-    }
 }
 
 @Preview(name = "With message — Light", showBackground = true, widthDp = 412)
