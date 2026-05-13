@@ -17,6 +17,7 @@ data class Conversation(
     val sessionHistory: List<String>,
     val isPromoted: Boolean,       // false = discussion, true = channel
     val lastUsedAt: Instant,
+    val isSleeping: Boolean = false,
 )
 ```
 
@@ -26,6 +27,8 @@ data class Conversation(
 - **Channels** (`isPromoted = true`) — user-named (`name != null`), persistent, dedicated cwd by default, eligible for memory plugins.
 
 `sessionHistory` is an ordered list of past `Session.id`s; `currentSessionId` is the live one. Together they let the thread screen paginate messages chronologically across session boundaries.
+
+`isSleeping` is `true` when the conversation's current Claude session is closed (i.e. the next user message will start a fresh session). Defaulted to `false` so the existing constructor sites needn't pass it. **Phase 1**: derived in `FakeConversationRepository.observeConversations` from `currentSession.endedAt != null` — see [`conversation-repository.md`](conversation-repository.md). **Phase 4**: parsed directly from the conversations endpoint response (the server reports the bool); the contract on this field is what survives the migration. Surfaced visually as a leading status dot on `ConversationRow` (#20) — see [`conversation-row.md`](conversation-row.md).
 
 Co-located in the same file: a top-level `const val DefaultScratchCwd: String = "~/.pyrycode/scratch"` — the sentinel `cwd` for conversations with no bound workspace. Single source of truth for the value: imported by `FakeConversationRepository` seeds and `ConversationRow` (which suppresses its workspace label when `cwd == DefaultScratchCwd`). Introduced in #19; lives at `data/model/Conversation.kt` because both the UI and data layers already depend on this package, and a separate `WorkspacePaths.kt` for one constant would be premature.
 

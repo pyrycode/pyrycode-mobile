@@ -6,7 +6,7 @@ Shared list row for both Phase 0 conversation surfaces — the Channel list (#18
 
 Renders one conversation as a single Material 3 `ListItem` with three slots:
 
-- **Headline** — a `Row` containing the conversation name + zero or more decorations. The name is `Conversation.name` with a deterministic placeholder fallback. The first decoration is the workspace label (#19) — a condensed form of `Conversation.cwd` for non-default-scratch conversations; #20 will layer a sleeping-session indicator onto the same `Row`.
+- **Headline** — a `Row` containing the conversation name + zero or more decorations. The name is `Conversation.name` with a deterministic placeholder fallback. Two decorations layer onto the `Row`: the workspace label (#19, trailing edge) — a condensed form of `Conversation.cwd` for non-default-scratch conversations — and the sleeping-session indicator (#20, leading edge) — an 8.dp dot when `Conversation.isSleeping` is true.
 - **Supporting** — the `Message.content` preview, whitespace-normalized, capped at 2 lines with ellipsis. Slot is `null` (not an empty lambda) when `lastMessage == null`, which collapses `ListItem` to its 1-line height — no manual layout branching needed.
 - **Trailing** — relative timestamp derived from `Conversation.lastUsedAt`.
 
@@ -65,6 +65,16 @@ Name layout in the `Row`:
 
 The sentinel constant `DefaultScratchCwd` lives at the top level of `data/model/Conversation.kt` — single source of truth, imported by `ConversationRow`, `FakeConversationRepository` seeds, and the repository test that asserts on the scratch literal.
 
+### Sleeping-session indicator (#20)
+
+When `conversation.isSleeping == true`, an 8.dp `Box` filled with `MaterialTheme.colorScheme.outline` and `CircleShape` renders as the **first** child of the headline `Row`, opposite the trailing workspace label. When `isSleeping == false`, the `Box` is absent and `Arrangement.spacedBy(8.dp)` contributes no leading gap — the active row's headline reads exactly as it did pre-#20.
+
+- The decoration is a `Box`-and-`background(shape)` primitive, **not** an `Icon`. `material-icons-core` (the always-on set) has no "sleeping" glyph; the closest is `Icons.Outlined.Schedule`, which reads as "duration" rather than "asleep". The sleeping-themed glyphs (`Bedtime`, `NightsStay`) live in `material-icons-extended`, which is **not** on the classpath and is deliberately not added — the dependency would bloat the APK by several MB of icon bytecode for one glyph.
+- `colorScheme.outline` is the M3 role for inactive borders/dividers — colour-scheme-aware, automatically adjusts for dark mode. Not `error` (alarming), not `surfaceVariant` (invisible), not `primary` (call-to-action).
+- The row stays fully tappable when sleeping; **no `Modifier.alpha`** is applied to the `ListItem`. The dot alone is the entire signal. Pairing it with row-wide opacity would push the supporting-content preview into a "looks disabled" register and is rejected.
+
+The `Conversation.isSleeping` field is derived at projection in `FakeConversationRepository.observeConversations` (`current?.endedAt != null` on the conversation's current session). Phase 4's real backend will parse the field directly from the conversations endpoint response — the UI contract (`conversation.isSleeping: Boolean`) survives the migration; the Phase 1 derivation is throwaway. See [`data-model.md`](data-model.md) for the field shape and [`conversation-repository.md`](conversation-repository.md) for the projection.
+
 ### Preview normalization
 
 `previewText(content)` collapses any whitespace run (including embedded newlines) to a single space and trims. Without this, a message starting with blank lines or a markdown heading burns its 2-line budget on whitespace before any text renders. `maxLines = 2` + `TextOverflow.Ellipsis` are the M3 idiom for "1–2 lines with ellipsis".
@@ -91,7 +101,7 @@ Uses `kotlinx.datetime` end-to-end (per [ADR 0001](../decisions/0001-kotlinx-dat
 
 ### Typography & color
 
-`ListItem` resolves slot styling to M3 defaults: `headlineContent` → `titleMedium`-equivalent on `onSurface`, `supportingContent` → `bodyMedium` on `onSurfaceVariant`, `trailingContent` → `labelSmall` on `onSurfaceVariant`. The conversation name itself passes no overrides — the M3 defaults are the contract. The only explicit `style` / `color` overrides in the row are on decorations whose hierarchy is *intentionally* below the headline (the workspace label uses `labelMedium` / `onSurfaceVariant`); without overriding, decorations would inherit the headline's `titleMedium` and read as a second name rather than annotation.
+`ListItem` resolves slot styling to M3 defaults: `headlineContent` → `titleMedium`-equivalent on `onSurface`, `supportingContent` → `bodyMedium` on `onSurfaceVariant`, `trailingContent` → `labelSmall` on `onSurfaceVariant`. The conversation name itself passes no overrides — the M3 defaults are the contract. The only explicit `style` / `color` overrides in the row are on decorations whose hierarchy is *intentionally* below the headline (the workspace label uses `labelMedium` / `onSurfaceVariant`, the sleeping dot is filled with `colorScheme.outline`); without overriding, decorations would inherit the headline's `titleMedium` and read as a second name rather than annotation.
 
 ## Configuration / usage
 
@@ -120,11 +130,14 @@ LazyColumn { items(channels, key = { it.id }) { channel ->
 - `lastUsedAt` in the future (clock skew, bad seed data) → `"just now"`.
 - Very long `displayName` → ellipsizes at 1 line via the explicit `maxLines = 1` on the name `Text` inside the headline `Row` (decoration-aware: `Modifier.weight(1f, fill = false)` yields to a fitting label first).
 - `cwd = ""` (current `createDiscussion(workspace = null)` output) → no label, via `condenseWorkspace`'s blank-fallback chain. Behaves identically to `cwd == DefaultScratchCwd` at the UI; aligning the writer with the sentinel is a deferred follow-up.
+- `isSleeping = true` → leading 8.dp dot in the headline; row stays tappable, supporting-content preview stays at full opacity. `isSleeping = false` (default) → no dot, headline reads exactly as the #17/#19 baseline.
 - Strings are English literals. Localization is **out of scope** for Phase 0 — no `stringResource(...)`.
 
 ## Out of scope (deliberate)
 
-- Sleeping-session indicator — #20 (will layer onto the same headline `Row` seam as the workspace label).
+- Real session-eviction loop / wake-up affordance — #20 surfaces a sleeping flag; flipping it on idle and the re-attach UX are Phase 4 backend territory.
+- Surfacing the eviction `BoundaryReason` (Clear / IdleEvict / WorkspaceChange) in the row — explicit non-goal in #20's "Technical Notes".
+- Tooltip / long-press to explain "sleeping" — accessibility-affordances polish, follow-up ticket if filed.
 - Role-based preview decoration (e.g. `"You: …"` for `Role.User`) — not in AC; future ticket if needed.
 - Extracting `formatRelativeTime` / `previewText` / `condenseWorkspace` to a shared module — all three are `private` to this file. If a later ticket (e.g. thread message timestamps, a workspace picker) needs one, that ticket extracts.
 - Tooltip / long-press to surface the full `cwd` path — explicit non-goal in #19's "Technical Notes".
@@ -133,7 +146,7 @@ LazyColumn { items(channels, key = { it.id }) { channel ->
 
 ## Related
 
-- Specs: `docs/specs/architecture/17-conversation-row-composable.md`, `docs/specs/architecture/19-conversation-row-workspace-label.md`
-- Ticket notes: `docs/knowledge/codebase/17.md`, `docs/knowledge/codebase/19.md`
+- Specs: `docs/specs/architecture/17-conversation-row-composable.md`, `docs/specs/architecture/19-conversation-row-workspace-label.md`, `docs/specs/architecture/20-conversation-row-sleeping-indicator.md`
+- Ticket notes: `docs/knowledge/codebase/17.md`, `docs/knowledge/codebase/19.md`, `docs/knowledge/codebase/20.md`
 - Upstream: #2 ([`Conversation` + `Message`](data-model.md)), [ADR 0001](../decisions/0001-kotlinx-datetime-for-data-layer.md) (`kotlinx-datetime`)
-- Downstream: #18 (Channel list — first consumer), Discussions drilldown (later), #20 (sleeping-session indicator — layers onto the headline `Row` seam established here)
+- Downstream: #46 ([Channel list](channel-list-screen.md) — first consumer), Discussions drilldown (later)
