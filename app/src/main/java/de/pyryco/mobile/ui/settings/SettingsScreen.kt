@@ -1,5 +1,7 @@
 package de.pyryco.mobile.ui.settings
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -31,10 +33,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
@@ -60,6 +64,7 @@ fun SettingsScreen(
             )
         },
     ) { inner ->
+        val context = LocalContext.current
         var materialYou by remember { mutableStateOf(true) }
         var defaultYolo by remember { mutableStateOf(false) }
         var pushNotifications by remember { mutableStateOf(true) }
@@ -169,13 +174,15 @@ fun SettingsScreen(
 
             SettingsSectionHeader("About")
             SettingsRow(
-                headline = "Version 0.1.0",
-                supporting = "build a8f3c2d",
+                headline = "Version ${BuildConfig.VERSION_NAME}",
+                supporting = "build ${BuildConfig.VERSION_CODE}",
             )
             SettingsRow(
                 headline = "Open source · github.com/pyrycode/pyrycode-mobile",
                 trailing = { ExternalLinkIcon() },
-                onClick = {},
+                onClick = {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(SOURCE_REPO_URL)))
+                },
             )
             SettingsRow(
                 headline = "Privacy policy",
@@ -247,6 +254,8 @@ private fun AddPill(onClick: () -> Unit) {
         Text(text = "Add", style = MaterialTheme.typography.labelLarge)
     }
 }
+
+private const val SOURCE_REPO_URL = "https://github.com/pyrycode/pyrycode-mobile"
 
 @Preview(name = "Settings — Light", showBackground = true, widthDp = 412)
 @Composable
