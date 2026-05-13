@@ -75,7 +75,10 @@ fun ChannelListScreen(
         val bodyModifier = Modifier.padding(inner)
         when (state) {
             ChannelListUiState.Loading -> CenteredText("Loading…", bodyModifier)
-            ChannelListUiState.Empty -> CenteredText("No channels yet", bodyModifier)
+            ChannelListUiState.Empty -> CenteredText(
+                stringResource(R.string.channel_list_empty),
+                bodyModifier,
+            )
             is ChannelListUiState.Error -> CenteredText(
                 "Couldn't load channels: ${state.message}",
                 bodyModifier,
@@ -137,6 +140,17 @@ private fun ChannelListScreenLoadedPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
         ChannelListScreen(
             state = ChannelListUiState.Loaded(previewChannels),
+            onEvent = {},
+        )
+    }
+}
+
+@Preview(name = "Empty — Light", showBackground = true, widthDp = 412)
+@Composable
+private fun ChannelListScreenEmptyPreview() {
+    PyrycodeMobileTheme(darkTheme = false) {
+        ChannelListScreen(
+            state = ChannelListUiState.Empty,
             onEvent = {},
         )
     }
