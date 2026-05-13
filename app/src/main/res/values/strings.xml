@@ -9,4 +9,6 @@
     <string name="save_as_channel_action">Save as channel…</string>
     <string name="recent_discussions_pill_label">Recent discussions (%d) →</string>
     <string name="cd_recent_discussions_pill">Open recent discussions, %d available</string>
+    <string name="cd_pyrycode_logo">Pyrycode logo</string>
+    <string name="channels_section_header">Channels</string>
 </resources>

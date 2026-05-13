@@ -4,8 +4,9 @@ Shared list row for both Phase 0 conversation surfaces — the Channel list (#18
 
 ## What it does
 
-Renders one conversation as a single Material 3 `ListItem` with three slots:
+Renders one conversation as a single Material 3 `ListItem` with four slots:
 
+- **Leading** — a 40dp [`ConversationAvatar`](./conversation-avatar.md) bubble (#68) with deterministic hash-selected `*-container` fill and 2-letter lowercase initials derived from the conversation name (falling back to the id). The avatar reads the `Conversation` directly; the row passes nothing else.
 - **Headline** — a `Row` containing the conversation name + zero or more decorations. The name is `Conversation.name` with a deterministic placeholder fallback. Two decorations layer onto the `Row`: the workspace label (#19, trailing edge) — a condensed form of `Conversation.cwd` for non-default-scratch conversations — and the sleeping-session indicator (#20, leading edge) — an 8.dp dot when `Conversation.isSleeping` is true.
 - **Supporting** — the `Message.content` preview, whitespace-normalized, capped at 2 lines with ellipsis. Slot is `null` (not an empty lambda) when `lastMessage == null`, which collapses `ListItem` to its 1-line height — no manual layout branching needed.
 - **Trailing** — relative timestamp derived from `Conversation.lastUsedAt`.
@@ -149,7 +150,8 @@ LazyColumn { items(channels, key = { it.id }) { channel ->
 
 ## Related
 
-- Specs: `docs/specs/architecture/17-conversation-row-composable.md`, `docs/specs/architecture/19-conversation-row-workspace-label.md`, `docs/specs/architecture/20-conversation-row-sleeping-indicator.md`
-- Ticket notes: `docs/knowledge/codebase/17.md`, `docs/knowledge/codebase/19.md`, `docs/knowledge/codebase/20.md`
+- Specs: `docs/specs/architecture/17-conversation-row-composable.md`, `docs/specs/architecture/19-conversation-row-workspace-label.md`, `docs/specs/architecture/20-conversation-row-sleeping-indicator.md`, `docs/specs/architecture/68-channel-list-figma-polish.md` (adds the leading avatar slot)
+- Ticket notes: `docs/knowledge/codebase/17.md`, `docs/knowledge/codebase/19.md`, `docs/knowledge/codebase/20.md`, `docs/knowledge/codebase/68.md`
+- Leading avatar primitive: [`ConversationAvatar`](./conversation-avatar.md) (#68)
 - Upstream: #2 ([`Conversation` + `Message`](data-model.md)), [ADR 0001](../decisions/0001-kotlinx-datetime-for-data-layer.md) (`kotlinx-datetime`)
 - Downstream: #46 ([Channel list](channel-list-screen.md) — first consumer), [Discussions drilldown](discussion-list-screen.md) (#24 — calls with `Modifier.alpha(0.65f)`; #25 — passes `onLongClick` to open the "Save as channel…" menu)

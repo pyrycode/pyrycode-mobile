@@ -55,6 +55,7 @@ fun ConversationRow(
 
     ListItem(
         modifier = gestureModifier,
+        leadingContent = { ConversationAvatar(conversation) },
         headlineContent = {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
