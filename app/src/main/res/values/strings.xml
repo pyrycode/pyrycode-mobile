@@ -17,4 +17,5 @@
     <string name="channels_section_header">Channels</string>
     <string name="settings_title">Settings</string>
     <string name="cd_add_memory_plugin">Add memory plugin</string>
+    <string name="license_title">License</string>
 </resources>

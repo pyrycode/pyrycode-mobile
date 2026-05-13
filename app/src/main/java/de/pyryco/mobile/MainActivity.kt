@@ -35,6 +35,7 @@ import de.pyryco.mobile.ui.conversations.list.DiscussionListScreen
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerScreen
 import de.pyryco.mobile.ui.onboarding.WelcomeScreen
+import de.pyryco.mobile.ui.settings.LicenseScreen
 import de.pyryco.mobile.ui.settings.SettingsScreen
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.flow.first
@@ -172,7 +173,13 @@ private fun PyryNavHost(
             Text("Conversation thread placeholder: $conversationId")
         }
         composable(Routes.Settings) {
-            SettingsScreen(onBack = { navController.popBackStack() })
+            SettingsScreen(
+                onBack = { navController.popBackStack() },
+                onOpenLicense = { navController.navigate(Routes.License) },
+            )
+        }
+        composable(Routes.License) {
+            LicenseScreen(onBack = { navController.popBackStack() })
         }
     }
 }
@@ -186,4 +193,5 @@ private object Routes {
     const val DiscussionList = "discussions"
     const val ConversationThread = "conversation_thread/{conversationId}"
     const val Settings = "settings"
+    const val License = "license"
 }
