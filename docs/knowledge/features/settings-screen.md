@@ -12,13 +12,13 @@ Replaces the prior `SettingsPlaceholder` stub with a scrollable list of seven la
 4. **Notifications** — `Push notifications when claude responds`, `Notification sound`.
 5. **Memory** — `Installed memory plugins`, `Manage per-channel memory`.
 6. **Storage** — `Archived conversations`, `Clear cache`.
-7. **About** — `Version 0.1.0`, `Open source · github.com/pyrycode/pyrycode-mobile`, `Privacy policy`, `License: MIT`.
+7. **About** — Version (live `BuildConfig.VERSION_NAME` / `VERSION_CODE` since #90), `Open source · github.com/pyrycode/pyrycode-mobile` (taps launch the platform browser via `Intent.ACTION_VIEW` since #90), `Privacy policy`, `License: MIT`.
 
 Each row has one of five trailing-affordance shapes: chevron, M3 `Switch`, outlined "Add" pill, `OpenInNew` icon, or none. The full row inventory (headlines, subtitle literals, trailing per row) is enumerated in [`../codebase/64.md`](../codebase/64.md).
 
 ## How it works
 
-Pure stateless Composable with three local-only switch states. No `ViewModel`, no DI wiring, no repository touched, no I/O.
+Pure stateless Composable with three local-only switch states and one `LocalContext` capture for external-URL dispatch. No `ViewModel`, no DI wiring, no repository touched, no I/O beyond the About-section browser launch.
 
 ```kotlin
 @Composable
@@ -33,6 +33,8 @@ Skeleton:
 - `Scaffold` with an M3 `TopAppBar` — `title = stringResource(R.string.settings_title)` ("Settings"), `navigationIcon` is the canonical back-arrow `IconButton` (`Icons.AutoMirrored.Filled.ArrowBack` + `R.string.cd_back`) wired to the `onBack` callback. Same shape as `DiscussionListScreen`.
 - Body is a `Column(Modifier.padding(inner).fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 32.dp))` — `Column` + `verticalScroll`, not `LazyColumn`, because the row count is fixed at ~18 items and the heterogeneous row shapes make item-keying noisy with no recycling benefit.
 - Three `remember { mutableStateOf(...) }` switch states, declared inside the `Scaffold` content lambda: `materialYou = true`, `defaultYolo = false`, `pushNotifications = true`. Intentionally **not** `rememberSaveable` — config-change persistence is Phase 3's job via a `SettingsViewModel` + `DataStore`.
+- One `val context = LocalContext.current` captured at the top of the `Scaffold` content lambda alongside the switch states (#90). Closed over by the About-section Open-source row's `onClick` to dispatch `Intent(Intent.ACTION_VIEW, Uri.parse(SOURCE_REPO_URL))` via `context.startActivity(...)`. `SOURCE_REPO_URL` is a file-private top-level `const val` declared at the bottom of the file. Unguarded — no `try`/`catch` for `ActivityNotFoundException`; the failure mode is irrelevant on min SDK 33+ where a default browser is universal.
+- About-section Version row reads `BuildConfig.VERSION_NAME` / `BuildConfig.VERSION_CODE` inline at composition time (#90), substituted into the same `headline` / `supporting` slots the locked Figma row treatment requires. `BuildConfig` is generated via `buildFeatures.buildConfig = true` in `app/build.gradle.kts` (AGP 8.x defaults the toggle to `false`, so the flag must stay on). No `remember`; `BuildConfig.*` are compile-time `const val`s.
 
 ### Private composables in the same file
 
@@ -62,7 +64,8 @@ Entry point is the trailing settings-gear `IconButton` in `ChannelListScreen`'s 
 
 - **No persistence.** Toggle a switch, leave the screen, come back — the switch resets to its AC-specified default. This is intentional; the screen is a visual stub. Don't add `rememberSaveable` "just in case" — Phase 3 replaces these with `StateFlow`-backed values from a `SettingsViewModel`.
 - **Material You toggle is cosmetic.** Flipping it doesn't actually call back into `PyrycodeMobileTheme(dynamicColor = ...)`. `Theme.kt` defaults `dynamicColor = false`; that wiring is Phase 3.
-- **All non-switch row taps are no-ops** including the "Add" pill, the `Open source` link, and the `Privacy policy` link. No `Intent.ACTION_VIEW`, no nav, no toast. Sub-screens and external-link handling are Phase 3+ tickets.
+- **Most non-switch row taps are still no-ops** including the "Add" pill, the `Privacy policy` link, and every Connection / Appearance / Defaults / Notifications / Memory / Storage row. No nav, no toast. The Open-source row (since #90) is the lone exception — it launches `https://github.com/pyrycode/pyrycode-mobile` in the platform browser. Sub-screens and the remaining external-link handlers are Phase 3+ tickets.
+- **License row is intentionally still dead.** #90 wired the Version and Open-source rows but explicitly left License alone; an in-app license viewer lands in its own sibling ticket. Do not add an `onClick` here without that ticket on the board.
 
 ## Previews
 
@@ -71,12 +74,12 @@ Two `@Preview`s, both `private`, both at `widthDp = 412` to match Figma's frame 
 - `SettingsScreenLightPreview` — `PyrycodeMobileTheme(darkTheme = false) { SettingsScreen(onBack = {}) }`.
 - `SettingsScreenDarkPreview` — same with `darkTheme = true`.
 
-No unit tests, no instrumented tests — no ViewModel, no state machine, no business logic to assert.
+No unit tests — no ViewModel, no state machine, no business logic to assert. One instrumented test file lands with #90: `app/src/androidTest/java/de/pyryco/mobile/ui/settings/SettingsScreenTest.kt` (the project's first `createComposeRule()` test), with two `@Test`s pinning the About-section wiring — `versionRow_rendersBuildConfigVersionName` (substring match against the live `BuildConfig.VERSION_NAME`, so the test stays correct when `versionName` bumps) and `openSourceRow_hasClickAction`. Both `performScrollTo()` before asserting because the About section sits below the default viewport.
 
 ## Related
 
-- Spec: `docs/specs/architecture/64-settings-screen.md`
-- Ticket notes: [`../codebase/64.md`](../codebase/64.md)
+- Spec: `docs/specs/architecture/64-settings-screen.md`; About-row wiring spec `docs/specs/architecture/90-settings-about-version-row-and-open-source-row.md`
+- Ticket notes: [`../codebase/64.md`](../codebase/64.md) (visual skeleton), [`../codebase/90.md`](../codebase/90.md) (About Version + Open-source wiring)
 - Figma node: `17:2` — https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=17-2
 - Phase 1 stub it replaces: ticket #16 (`SettingsPlaceholder` in `MainActivity`)
 - Entry point: [Channel list screen](channel-list-screen.md) — settings-gear `IconButton` in the `TopAppBar`
