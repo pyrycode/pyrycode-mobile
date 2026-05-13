@@ -9,7 +9,7 @@ Package: `de.pyryco.mobile.ui.conversations.list` (`app/src/main/java/de/pyryco/
 Wraps its body in a `Scaffold` whose `topBar` is a Material 3 `TopAppBar` (rendered in **every** state) and whose `floatingActionButton` slot hosts a `FloatingActionButton` (rendered only when `state is Loaded || state is Empty`, #22). Renders the four `ChannelListUiState` variants from the VM (#45) inside the Scaffold body:
 
 - **`Loading`** — centred `Text("Loading…")` placeholder. No FAB.
-- **`Empty`** — centred `Text("No channels yet")` placeholder. FAB rendered.
+- **`Empty`** — centred `Text("Tap + to start a conversation")` (string resource `R.string.channel_list_empty`, #23). FAB rendered — the "+" in the copy refers to it.
 - **`Error(message)`** — centred `Text("Couldn't load channels: $message")` placeholder. No FAB.
 - **`Loaded(channels)`** — `LazyColumn` of `ConversationRow`s, one per channel, keyed by `Conversation.id`. FAB rendered.
 
@@ -62,7 +62,10 @@ fun ChannelListScreen(
         val bodyModifier = Modifier.padding(inner)
         when (state) {
             ChannelListUiState.Loading -> CenteredText("Loading…", bodyModifier)
-            ChannelListUiState.Empty -> CenteredText("No channels yet", bodyModifier)
+            ChannelListUiState.Empty -> CenteredText(
+                stringResource(R.string.channel_list_empty),
+                bodyModifier,
+            )
             is ChannelListUiState.Error -> CenteredText(
                 "Couldn't load channels: ${state.message}",
                 bodyModifier,
@@ -105,7 +108,7 @@ The FAB sits at default `FabPosition.End`. The conditional `if (state is Loaded 
 
 ### `Loading` / `Empty` / `Error` placeholders
 
-Each is a single `Text` centred inside `Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center)`. The private `CenteredText(text, modifier)` helper is the shared shape. AC permits a single `Text(...)`; centring is a basic layout decision, not a spinner or illustration. Real visuals land in #23.
+Each is a single `Text` centred inside `Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center)`. The private `CenteredText(text, modifier)` helper is the shared shape. AC permits a single `Text(...)`; centring is a basic layout decision, not a spinner or illustration. The `Empty` copy was upgraded in #23 from the placeholder `"No channels yet"` to the call-to-action `"Tap + to start a conversation"` (resource `R.string.channel_list_empty`) — the "+" refers to the FAB rendered in the same Scaffold. Plan.md's optional illustration above the copy is unrealised; text-only is correct for Phase 1.
 
 ### `ConversationRow.lastMessage = null`
 
@@ -157,11 +160,16 @@ Key points:
 - **Dependencies:** `androidx.lifecycle:lifecycle-runtime-compose` (catalog: `androidx-lifecycle-runtime-compose`, reuses the `lifecycleRuntimeKtx = "2.6.1"` version-ref). Required for `collectAsStateWithLifecycle` — not pulled transitively by `lifecycle-runtime-ktx`, `lifecycle-viewmodel-ktx`, or the `koin-androidx-compose` chain. Three lifecycle artifacts now on the classpath (`-ktx`, `-viewmodel-ktx`, `-runtime-compose`) — they share `LifecycleOwner` ABIs and must stay on the same version-ref.
 - **Koin compose:** `org.koin.androidx.compose.koinViewModel` (already on the classpath since #32 via `koin-androidx-compose`). Distinct from `org.koin.compose.koinInject` (the `scanner` destination's `AppPreferences` resolver) — `koinViewModel` is the right call for `ViewModel`-typed bindings because it routes through `LocalViewModelStoreOwner`.
 - **Icons:** `androidx.compose.material:material-icons-core` (catalog: `androidx-compose-material-icons-core`, BOM-managed — no `version.ref`). The always-on icon set; supplies `Icons.Default.Settings` for the TopAppBar gear (#21). Don't reach for `material-icons-extended` (multi-MB megapack) for single-glyph needs — try `-core` first.
-- **Strings:** `R.string.app_name` for the TopAppBar title (reused, defined since project init); `R.string.cd_open_settings` ("Open settings") for the gear's TalkBack `contentDescription`; `R.string.cd_new_discussion` ("New discussion") for the FAB's TalkBack description (#22). New a-11y strings use the `cd_` prefix.
+- **Strings:** `R.string.app_name` for the TopAppBar title (reused, defined since project init); `R.string.cd_open_settings` ("Open settings") for the gear's TalkBack `contentDescription`; `R.string.cd_new_discussion` ("New discussion") for the FAB's TalkBack description (#22); `R.string.channel_list_empty` ("Tap + to start a conversation") for the Empty body (#23). A-11y content-description strings keep the `cd_` prefix; user-facing copy uses a `<screen>_<role>` shape.
 
 ## Preview
 
-Single `@Preview(name = "Loaded — Light", showBackground = true, widthDp = 412)` named `ChannelListScreenLoadedPreview`. Light theme, three inline `Conversation` instances varying `name`, `cwd` (one `DefaultScratchCwd` to verify the workspace-label-omission path through `ConversationRow`, two real workspaces), and `lastUsedAt` (12 minutes, 4 hours, 3 days ago). `widthDp = 412` matches the `ConversationRow.kt` previews from #17 for consistent device shape. `Loading` / `Empty` / `Error` are not previewed — throwaway placeholders being replaced in #23.
+Two `@Preview` composables, both light-theme via `PyrycodeMobileTheme(darkTheme = false)`, both `widthDp = 412` (matches the `ConversationRow.kt` previews from #17 for consistent device shape):
+
+- `ChannelListScreenLoadedPreview` (`@Preview(name = "Loaded — Light", showBackground = true, widthDp = 412)`) — three inline `Conversation` instances varying `name`, `cwd` (one `DefaultScratchCwd` to verify the workspace-label-omission path through `ConversationRow`, two real workspaces), and `lastUsedAt` (12 minutes, 4 hours, 3 days ago).
+- `ChannelListScreenEmptyPreview` (`@Preview(name = "Empty — Light", showBackground = true, widthDp = 412)`, #23) — passes `state = ChannelListUiState.Empty, onEvent = {}`. No sample data needed (`Empty` is a `data object`). Renders the TopAppBar above the centred empty-state copy and the FAB at `FabPosition.End`.
+
+`Loading` and `Error` are still not previewed — their copy is a transient placeholder until designed visuals land.
 
 ## Edge cases / limitations
 
@@ -172,11 +180,12 @@ Single `@Preview(name = "Loaded — Light", showBackground = true, widthDp = 412
 - **No retry affordance on `Error`.** `ChannelListEvent` has no `RetryClicked` variant. Per #45's spec, recovery requires a fresh subscription (leave the screen, wait 5s for `WhileSubscribed` to expire, re-enter). A retry button lands with the ticket that commits to designed error UI.
 - **No instrumented test.** AC requires only `./gradlew assembleDebug`. The natural unit test ("tap a row → `onEvent(RowTapped(channelId))` fires") needs `androidx-compose-ui-test-junit4` wired to `androidTestImplementation` and an `androidTest/` source set entry; deferred until the first ticket with multi-event logic to verify.
 - **No `flowOn(Dispatchers.IO)` anywhere in the chain.** `collectAsStateWithLifecycle` collects on Main (via the destination's `LifecycleOwner`); the VM is Main-dispatched; the fake repo's projection is pure CPU map manipulation. Phase 4's remote impl decides its own dispatcher internally.
-- **No empty-state distinction between "never had a channel" and "had channels, all deleted".** Both render `Empty` → `"No channels yet"`. The first ticket that needs the distinction extends `ChannelListUiState` (e.g. `Empty(reason: EmptyReason)`) or splits into a new variant.
+- **No empty-state distinction between "never had a channel" and "had channels, all deleted".** Both render `Empty` → `"Tap + to start a conversation"`. The first ticket that needs the distinction extends `ChannelListUiState` (e.g. `Empty(reason: EmptyReason)`) or splits into a new variant.
+- **Empty-state trigger is "no channels", not Plan.md's "no channels AND no discussions".** `ChannelListViewModel` observes only `ConversationFilter.Channels`, so a user with zero channels but non-zero discussions still sees the empty copy. Widening was considered and deferred in #23 — it would require a new `ChannelListUiState` variant (a discussion-aware CTA like "You have N discussions — promote one to a channel?"), which is a product call, not Phase 1 plumbing. The current copy reads correctly in either case because the FAB does create a conversation.
 
 ## Related
 
-- Ticket notes: [`../codebase/46.md`](../codebase/46.md) (LazyColumn + tap nav), [`../codebase/21.md`](../codebase/21.md) (TopAppBar + settings-gear wiring), [`../codebase/22.md`](../codebase/22.md) (FAB + one-shot nav channel)
-- Specs: `docs/specs/architecture/46-channellistscreen-lazycolumn-tap-nav.md`, `docs/specs/architecture/21-channel-list-top-app-bar.md`, `docs/specs/architecture/22-channel-list-fab-new-discussion.md`
+- Ticket notes: [`../codebase/46.md`](../codebase/46.md) (LazyColumn + tap nav), [`../codebase/21.md`](../codebase/21.md) (TopAppBar + settings-gear wiring), [`../codebase/22.md`](../codebase/22.md) (FAB + one-shot nav channel), [`../codebase/23.md`](../codebase/23.md) (Empty-state copy + preview)
+- Specs: `docs/specs/architecture/46-channellistscreen-lazycolumn-tap-nav.md`, `docs/specs/architecture/21-channel-list-top-app-bar.md`, `docs/specs/architecture/22-channel-list-fab-new-discussion.md`, `docs/specs/architecture/23-channel-list-empty-state.md`
 - Upstream: [ChannelListViewModel](./channel-list-viewmodel.md) (state producer + `onEvent` reducer + `navigationEvents`), [ConversationRow](./conversation-row.md) (per-row primitive), [Navigation](./navigation.md) (host graph, route constants, destination wiring), [Dependency injection](./dependency-injection.md) (Koin VM binding)
-- Downstream: #23 (real Loading / Empty / Error visuals replace the centred `Text` placeholders), #19 / #20 (per-row decorations on the `ConversationRow` instances rendered here — workspace label, sleeping indicator), #26 (recent-discussions pill above the `LazyColumn`), follow-up Retry ticket (adds `ChannelListEvent.RetryClicked` + VM-side reducer), Phase 2 long-press → workspace picker on the FAB, Phase 3 Settings (replaces `SettingsPlaceholder` body — gear wiring already in place since #21), Phase 4 (real backend behind the same `ConversationRepository` bind — zero screen change; adds error + loading UI for the create call)
+- Downstream: #19 / #20 (per-row decorations on the `ConversationRow` instances rendered here — workspace label, sleeping indicator), #26 (recent-discussions pill above the `LazyColumn`), follow-up Retry ticket (adds `ChannelListEvent.RetryClicked` + VM-side reducer), Phase 2 long-press → workspace picker on the FAB, Phase 3 Settings (replaces `SettingsPlaceholder` body — gear wiring already in place since #21), Phase 4 (real backend behind the same `ConversationRepository` bind — zero screen change; adds error + loading UI for the create call), follow-up empty-state widening (`combine` channels + discussions flows, introduce a discussion-aware CTA variant — deferred from #23)
