@@ -22,7 +22,7 @@ class SettingsScreenTest {
     fun versionRow_rendersBuildConfigVersionName() {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
-                SettingsScreen(onBack = {})
+                SettingsScreen(onBack = {}, onOpenLicense = {})
             }
         }
 
@@ -36,7 +36,7 @@ class SettingsScreenTest {
     fun openSourceRow_hasClickAction() {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
-                SettingsScreen(onBack = {})
+                SettingsScreen(onBack = {}, onOpenLicense = {})
             }
         }
 

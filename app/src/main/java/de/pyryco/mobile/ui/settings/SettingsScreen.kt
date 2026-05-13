@@ -46,6 +46,7 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit,
+    onOpenLicense: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Scaffold(
@@ -189,7 +190,11 @@ fun SettingsScreen(
                 trailing = { ExternalLinkIcon() },
                 onClick = {},
             )
-            SettingsRow(headline = "License: MIT")
+            SettingsRow(
+                headline = "License: MIT",
+                trailing = { ChevronIcon() },
+                onClick = onOpenLicense,
+            )
         }
     }
 }
@@ -261,7 +266,7 @@ private const val SOURCE_REPO_URL = "https://github.com/pyrycode/pyrycode-mobile
 @Composable
 private fun SettingsScreenLightPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
-        SettingsScreen(onBack = {})
+        SettingsScreen(onBack = {}, onOpenLicense = {})
     }
 }
 
@@ -269,6 +274,6 @@ private fun SettingsScreenLightPreview() {
 @Composable
 private fun SettingsScreenDarkPreview() {
     PyrycodeMobileTheme(darkTheme = true) {
-        SettingsScreen(onBack = {})
+        SettingsScreen(onBack = {}, onOpenLicense = {})
     }
 }
