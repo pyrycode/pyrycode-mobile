@@ -11,3 +11,9 @@ data class Conversation(
     val isPromoted: Boolean,
     val lastUsedAt: Instant,
 )
+
+/**
+ * Sentinel `cwd` for conversations with no bound workspace.
+ * Conversations whose `cwd` equals this value render without a workspace label.
+ */
+const val DefaultScratchCwd: String = "~/.pyrycode/scratch"

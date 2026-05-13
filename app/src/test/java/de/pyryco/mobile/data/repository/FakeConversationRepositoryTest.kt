@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.model.DefaultScratchCwd
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import kotlinx.coroutines.flow.first
@@ -250,7 +251,7 @@ class FakeConversationRepositoryTest {
         assertEquals(2, discussions.size)
         assertTrue(discussions.all { it.name == null })
         assertTrue(discussions.all { !it.isPromoted })
-        assertEquals(setOf("~/.pyrycode/scratch"), discussions.map { it.cwd }.toSet())
+        assertEquals(setOf(DefaultScratchCwd), discussions.map { it.cwd }.toSet())
         assertTrue(discussions.all { it.currentSessionId.isNotBlank() })
         assertEquals(2, discussions.map { it.currentSessionId }.toSet().size)
         val timestamps = discussions.map { it.lastUsedAt }

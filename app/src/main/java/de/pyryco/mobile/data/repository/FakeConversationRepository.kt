@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.DefaultScratchCwd
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
@@ -279,14 +280,14 @@ class FakeConversationRepository(
                 ),
                 seedDiscussion(
                     id = "seed-discussion-b",
-                    cwd = "~/.pyrycode/scratch",
+                    cwd = DefaultScratchCwd,
                     sessionId = "seed-session-discussion-b",
                     claudeSessionUuid = "seed-claude-discussion-b",
                     lastUsedAt = Instant.parse("2026-05-09T08:00:00Z"),
                 ),
                 seedDiscussion(
                     id = "seed-discussion-a",
-                    cwd = "~/.pyrycode/scratch",
+                    cwd = DefaultScratchCwd,
                     sessionId = "seed-session-discussion-a",
                     claudeSessionUuid = "seed-claude-discussion-a",
                     lastUsedAt = Instant.parse("2026-05-11T14:00:00Z"),
