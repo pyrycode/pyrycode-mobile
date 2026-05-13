@@ -8,7 +8,7 @@ Boots the app into the route that matches the persisted pairing state (`welcome`
 
 - **`welcome`** (start destination when `pairedServerExists == false`) — renders `WelcomeScreen` (#7).
 - **`scanner`** — renders `ScannerScreen` (#12); a tap-anywhere stub that flips `AppPreferences.setPairedServerExists(true)` and navigates to `channel_list` with the scanner popped from the back stack. Phase 4 replaces the body with real CameraX + ML Kit QR pairing. See [Scanner screen](scanner-screen.md).
-- **`channel_list`** (start destination when `pairedServerExists == true`) — placeholder `Text("Channel list placeholder")`; the data-layer chain replaces this body with the real Channel List Composable.
+- **`channel_list`** (start destination when `pairedServerExists == true`) — renders `ChannelListScreen` (#46) backed by `ChannelListViewModel` (#45); destination block resolves the VM via `koinViewModel<…>()`, collects state via `collectAsStateWithLifecycle()`, and translates `ChannelListEvent.RowTapped` inline into `navController.navigate("conversation_thread/$id")`. See [ChannelListScreen](channel-list-screen.md).
 - **`conversation_thread/{conversationId}`** — placeholder `Text("Conversation thread placeholder: $conversationId")` proving the path argument round-trips (#15). Phase 2 replaces the body with the real thread UI (streaming markdown, code blocks, tool calls, session-boundary delimiters).
 - **`settings`** — placeholder `SettingsPlaceholder(onBack = { navController.popBackStack() })` rendering `Text("Settings placeholder")` plus a `TextButton("Back")` (#16). Exists so the future Channel List TopAppBar gear icon has a real `navigate(...)` target before Phase 3 builds the actual Settings sections.
 
@@ -71,7 +71,19 @@ NavHost(navController, startDestination = startDestination) {
             },
         )
     }
-    composable(Routes.ChannelList) { Text("Channel list placeholder") }
+    composable(Routes.ChannelList) {
+        val vm = koinViewModel<ChannelListViewModel>()
+        val state by vm.state.collectAsStateWithLifecycle()
+        ChannelListScreen(
+            state = state,
+            onEvent = { event ->
+                when (event) {
+                    is ChannelListEvent.RowTapped ->
+                        navController.navigate("conversation_thread/${event.conversationId}")
+                }
+            },
+        )
+    }
     composable(
         route = Routes.ConversationThread,
         arguments = listOf(navArgument("conversationId") { type = NavType.StringType }),
@@ -117,7 +129,7 @@ Screens take navigation as `() -> Unit` callbacks, not a `NavController`. This i
 
 ## Related
 
-- Ticket notes: `../codebase/8.md` (NavHost setup), `../codebase/12.md` (Scanner stub + first destination-block Koin/coroutine wiring), `../codebase/13.md` (conditional start destination + `produceState` gating), `../codebase/14.md` (Welcome `onSetup` → `Intent.ACTION_VIEW` + `LocalContext.current` capture in a `composable` block), `../codebase/15.md` (first parameterized route), `../codebase/16.md` (Settings placeholder + interactive-placeholder factoring rule)
+- Ticket notes: `../codebase/8.md` (NavHost setup), `../codebase/12.md` (Scanner stub + first destination-block Koin/coroutine wiring), `../codebase/13.md` (conditional start destination + `produceState` gating), `../codebase/14.md` (Welcome `onSetup` → `Intent.ACTION_VIEW` + `LocalContext.current` capture in a `composable` block), `../codebase/15.md` (first parameterized route), `../codebase/16.md` (Settings placeholder + interactive-placeholder factoring rule), `../codebase/46.md` (first VM-backed destination — `koinViewModel<…>()` + `collectAsStateWithLifecycle()` shape, inline `when (event)` → `navigate` translation)
 - Specs: `docs/specs/architecture/8-navigation-compose-setup.md`, `docs/specs/architecture/12-stub-scanner-screen.md`, `docs/specs/architecture/13-conditional-navhost-start-destination.md`, `docs/specs/architecture/15-conversation-thread-placeholder-route.md`, `docs/specs/architecture/16-settings-placeholder-route.md`
 - Consumers: [Welcome screen](welcome-screen.md), [Scanner screen](scanner-screen.md), [App preferences](app-preferences.md) (read by the start-destination gate)
-- Follow-ups: data-layer chain (replaces `channel_list` body), Phase 2 thread UI (replaces `conversation_thread/{conversationId}` body), channel-list row → thread navigation wiring, Channel List TopAppBar (wires gear icon to `Routes.Settings` and adds `material-icons-core`), Phase 3 Settings sections (replaces `SettingsPlaceholder`), Phase 4 (replaces `scanner` body with real CameraX + ML Kit)
+- Follow-ups: Phase 2 thread UI (replaces `conversation_thread/{conversationId}` body — `channel_list` → thread navigation is already wired through `ChannelListEvent.RowTapped` per #46), Channel List TopAppBar (wires gear icon to `Routes.Settings` and adds `material-icons-core`; #21), Phase 3 Settings sections (replaces `SettingsPlaceholder`), Phase 4 (replaces `scanner` body with real CameraX + ML Kit)

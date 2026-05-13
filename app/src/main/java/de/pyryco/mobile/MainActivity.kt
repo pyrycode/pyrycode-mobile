@@ -19,17 +19,22 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.ui.conversations.list.ChannelListEvent
+import de.pyryco.mobile.ui.conversations.list.ChannelListScreen
+import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerScreen
 import de.pyryco.mobile.ui.onboarding.WelcomeScreen
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
 
 class MainActivity : ComponentActivity() {
@@ -103,7 +108,17 @@ private fun PyryNavHost(
             )
         }
         composable(Routes.ChannelList) {
-            Text("Channel list placeholder")
+            val vm = koinViewModel<ChannelListViewModel>()
+            val state by vm.state.collectAsStateWithLifecycle()
+            ChannelListScreen(
+                state = state,
+                onEvent = { event ->
+                    when (event) {
+                        is ChannelListEvent.RowTapped ->
+                            navController.navigate("conversation_thread/${event.conversationId}")
+                    }
+                },
+            )
         }
         composable(
             route = Routes.ConversationThread,
