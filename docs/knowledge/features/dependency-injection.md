@@ -24,9 +24,10 @@ class PyryApp : Application() {
 
 // de/pyryco/mobile/di/AppModule.kt
 val appModule = module {
-    single<DataStore<Preferences>> { /* … */ }   // #11
-    single { AppPreferences(get()) }             // #11
-    // further bindings appended here by downstream tickets
+    single<DataStore<Preferences>> { /* … */ }                                  // #11
+    single { AppPreferences(get()) }                                            // #11
+    single { FakeConversationRepository() } bind ConversationRepository::class  // #45
+    viewModel { ChannelListViewModel(get()) }                                   // #45
 }
 ```
 
@@ -36,10 +37,10 @@ val appModule = module {
 2. Add a definition inside the `module { ... }` block:
    - **Singleton** (e.g. a DataStore wrapper, repository): `single { AppPreferences(androidContext()) }`.
    - **Interface binding**: `single { FakeConversationRepository() } bind ConversationRepository::class`.
-   - **ViewModel**: `viewModel { ChannelListViewModel(get()) }` — uses `koin-androidx-compose`, resolved in composables with `koinViewModel<ChannelListViewModel>()`.
+   - **ViewModel**: `viewModel { ChannelListViewModel(get()) }` — DSL import `org.koin.core.module.dsl.viewModel` (the multiplatform-safe path; the older `org.koin.androidx.viewmodel.dsl.viewModel` is being phased out). Resolved in composables with `koinViewModel<ChannelListViewModel>()` from `koin-androidx-compose`.
 3. No registration step elsewhere. `appModule` is wired into `startKoin` once; the new definition flows through automatically.
 
-The transient pending-consumers comment from #32 is being consumed line-by-line as tickets land (#11 already removed its line). When #4 and the first ViewModel ticket ship, the whole block goes.
+The transient pending-consumers comment from #32 has been fully consumed (#11 + #45 together) — there's no longer a placeholder block in `AppModule.kt`. New bindings append directly inside `module { ... }`, singletons before `viewModel { }` lines for readability.
 
 ## Configuration
 
@@ -57,6 +58,6 @@ The transient pending-consumers comment from #32 is being consumed line-by-line 
 
 ## Related
 
-- Ticket notes: `../codebase/32.md` (scaffold), `../codebase/11.md` (first real binding — `AppPreferences`)
+- Ticket notes: `../codebase/32.md` (scaffold), `../codebase/11.md` (first real binding — `AppPreferences`), `../codebase/45.md` (first interface-bound singleton + first `viewModel { }` line)
 - Spec: `docs/specs/architecture/32-koin-di-scaffold.md`
-- First binding consumers: #11 (`AppPreferences` — landed), #4 (`FakeConversationRepository` ↔ `ConversationRepository`), upcoming ViewModel tickets.
+- Bindings landed so far: #11 (`AppPreferences`), #45 (`FakeConversationRepository` ↔ `ConversationRepository`, `ChannelListViewModel`).
