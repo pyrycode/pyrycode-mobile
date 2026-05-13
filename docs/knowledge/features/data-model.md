@@ -27,6 +27,8 @@ data class Conversation(
 
 `sessionHistory` is an ordered list of past `Session.id`s; `currentSessionId` is the live one. Together they let the thread screen paginate messages chronologically across session boundaries.
 
+Co-located in the same file: a top-level `const val DefaultScratchCwd: String = "~/.pyrycode/scratch"` — the sentinel `cwd` for conversations with no bound workspace. Single source of truth for the value: imported by `FakeConversationRepository` seeds and `ConversationRow` (which suppresses its workspace label when `cwd == DefaultScratchCwd`). Introduced in #19; lives at `data/model/Conversation.kt` because both the UI and data layers already depend on this package, and a separate `WorkspacePaths.kt` for one constant would be premature.
+
 ### `Session`
 
 ```kotlin
