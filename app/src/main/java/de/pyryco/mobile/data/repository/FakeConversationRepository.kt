@@ -32,7 +32,10 @@ class FakeConversationRepository(
     override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> =
         state.map { records ->
             records.values
-                .map { it.conversation }
+                .map { record ->
+                    val current = record.sessions[record.conversation.currentSessionId]
+                    record.conversation.copy(isSleeping = current?.endedAt != null)
+                }
                 .filter { conv ->
                     when (filter) {
                         ConversationFilter.All -> true
@@ -277,6 +280,7 @@ class FakeConversationRepository(
                         seedMsg(Role.User, "Great — push the new schedule to the studio Slack tomorrow morning.", "2026-05-08T15:25:00Z"),
                         seedMsg(Role.Assistant, "Queued for 08:00. I'll include the reformer maintenance reminder too.", "2026-05-08T15:30:00Z"),
                     ),
+                    currentSessionEndedAt = Instant.parse("2026-05-09T03:00:00Z"),
                 ),
                 seedDiscussion(
                     id = "seed-discussion-b",
@@ -324,13 +328,14 @@ class FakeConversationRepository(
             lastUsedAt: Instant,
             history: List<SeedSession> = emptyList(),
             currentMessages: List<SeedMessage> = emptyList(),
+            currentSessionEndedAt: Instant? = null,
         ): ConversationRecord {
             val currentSession = Session(
                 id = sessionId,
                 conversationId = id,
                 claudeSessionUuid = claudeSessionUuid,
                 startedAt = lastUsedAt,
-                endedAt = null,
+                endedAt = currentSessionEndedAt,
             )
             val historicalSessions = history.map { seed ->
                 Session(

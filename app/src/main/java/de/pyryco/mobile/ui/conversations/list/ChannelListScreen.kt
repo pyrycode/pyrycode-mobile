@@ -86,6 +86,7 @@ private fun ChannelListScreenLoadedPreview() {
             sessionHistory = emptyList(),
             isPromoted = true,
             lastUsedAt = now - 3.days,
+            isSleeping = true,
         ),
     )
     PyrycodeMobileTheme(darkTheme = false) {

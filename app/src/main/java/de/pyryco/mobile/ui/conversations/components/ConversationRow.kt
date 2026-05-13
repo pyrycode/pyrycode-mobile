@@ -1,9 +1,13 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -46,6 +50,16 @@ fun ConversationRow(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (conversation.isSleeping) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .background(
+                                color = MaterialTheme.colorScheme.outline,
+                                shape = CircleShape,
+                            ),
+                    )
+                }
                 Text(
                     text = displayName,
                     modifier = Modifier.weight(1f, fill = false),
@@ -146,14 +160,18 @@ private fun ConversationRowWithMessagePreview() {
 private fun ConversationRowWithoutMessagePreview() {
     PyrycodeMobileTheme(darkTheme = true) {
         ConversationRow(
-            conversation = previewConversation(name = null, isPromoted = false),
+            conversation = previewConversation(name = null, isPromoted = false, isSleeping = true),
             lastMessage = null,
             onClick = {},
         )
     }
 }
 
-private fun previewConversation(name: String?, isPromoted: Boolean): Conversation =
+private fun previewConversation(
+    name: String?,
+    isPromoted: Boolean,
+    isSleeping: Boolean = false,
+): Conversation =
     Conversation(
         id = "preview-1",
         name = name,
@@ -162,6 +180,7 @@ private fun previewConversation(name: String?, isPromoted: Boolean): Conversatio
         sessionHistory = emptyList(),
         isPromoted = isPromoted,
         lastUsedAt = Clock.System.now() - 2.hours,
+        isSleeping = isSleeping,
     )
 
 private fun previewMessage(content: String): Message =
