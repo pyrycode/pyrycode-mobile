@@ -116,6 +116,8 @@ private fun PyryNavHost(
                     when (event) {
                         is ChannelListEvent.RowTapped ->
                             navController.navigate("conversation_thread/${event.conversationId}")
+                        ChannelListEvent.SettingsTapped ->
+                            navController.navigate(Routes.Settings)
                     }
                 },
             )

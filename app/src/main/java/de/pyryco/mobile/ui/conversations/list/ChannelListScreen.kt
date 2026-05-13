@@ -2,13 +2,23 @@ package de.pyryco.mobile.ui.conversations.list
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
+import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DefaultScratchCwd
 import de.pyryco.mobile.ui.conversations.components.ConversationRow
@@ -21,28 +31,48 @@ import kotlin.time.Duration.Companion.minutes
 
 sealed interface ChannelListEvent {
     data class RowTapped(val conversationId: String) : ChannelListEvent
+    data object SettingsTapped : ChannelListEvent
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChannelListScreen(
     state: ChannelListUiState,
     onEvent: (ChannelListEvent) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    when (state) {
-        ChannelListUiState.Loading -> CenteredText("Loading…", modifier)
-        ChannelListUiState.Empty -> CenteredText("No channels yet", modifier)
-        is ChannelListUiState.Error -> CenteredText(
-            "Couldn't load channels: ${state.message}",
-            modifier,
-        )
-        is ChannelListUiState.Loaded -> LazyColumn(modifier = modifier.fillMaxSize()) {
-            items(items = state.channels, key = { it.id }) { channel ->
-                ConversationRow(
-                    conversation = channel,
-                    lastMessage = null,
-                    onClick = { onEvent(ChannelListEvent.RowTapped(channel.id)) },
-                )
+    Scaffold(
+        modifier = modifier,
+        topBar = {
+            TopAppBar(
+                title = { Text(stringResource(R.string.app_name)) },
+                actions = {
+                    IconButton(onClick = { onEvent(ChannelListEvent.SettingsTapped) }) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = stringResource(R.string.cd_open_settings),
+                        )
+                    }
+                },
+            )
+        },
+    ) { inner ->
+        val bodyModifier = Modifier.padding(inner)
+        when (state) {
+            ChannelListUiState.Loading -> CenteredText("Loading…", bodyModifier)
+            ChannelListUiState.Empty -> CenteredText("No channels yet", bodyModifier)
+            is ChannelListUiState.Error -> CenteredText(
+                "Couldn't load channels: ${state.message}",
+                bodyModifier,
+            )
+            is ChannelListUiState.Loaded -> LazyColumn(modifier = bodyModifier.fillMaxSize()) {
+                items(items = state.channels, key = { it.id }) { channel ->
+                    ConversationRow(
+                        conversation = channel,
+                        lastMessage = null,
+                        onClick = { onEvent(ChannelListEvent.RowTapped(channel.id)) },
+                    )
+                }
             }
         }
     }

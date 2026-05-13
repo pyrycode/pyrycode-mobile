@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Pyrycode Mobile</string>
+    <string name="cd_open_settings">Open settings</string>
 </resources>
