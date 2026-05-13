@@ -58,6 +58,8 @@ class DiscussionListViewModel(
             is DiscussionListEvent.RowTapped -> viewModelScope.launch {
                 navigationChannel.send(DiscussionListNavigation.ToThread(event.conversationId))
             }
+            is DiscussionListEvent.SaveAsChannelRequested -> Unit
+            // TODO(phase 2): show promotion dialog and call repository.promote(event.conversationId, name, cwd)
             DiscussionListEvent.BackTapped -> Unit
         }
     }

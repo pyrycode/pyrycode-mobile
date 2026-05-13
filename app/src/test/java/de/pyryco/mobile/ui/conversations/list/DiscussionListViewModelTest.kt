@@ -19,6 +19,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -104,6 +105,18 @@ class DiscussionListViewModelTest {
 
         val event = deferredEvent.await()
         assertEquals(DiscussionListNavigation.ToThread("disc-7"), event)
+    }
+
+    @Test
+    fun saveAsChannelRequested_isNoOp_inPhase0() = runTest {
+        val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+        val vm = DiscussionListViewModel(stubRepo(source))
+
+        vm.onEvent(DiscussionListEvent.SaveAsChannelRequested("disc-1"))
+        advanceUntilIdle()
+
+        val event = withTimeoutOrNull(50) { vm.navigationEvents.first() }
+        assertEquals(null, event)
     }
 
     @Test

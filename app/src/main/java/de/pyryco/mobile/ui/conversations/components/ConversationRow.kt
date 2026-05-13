@@ -1,8 +1,10 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -33,18 +35,26 @@ import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ConversationRow(
     conversation: Conversation,
     lastMessage: Message?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val displayName = conversation.name?.takeIf { it.isNotBlank() }
         ?: if (conversation.isPromoted) "Untitled channel" else "Untitled discussion"
 
+    val gestureModifier = if (onLongClick == null) {
+        modifier.clickable(onClick = onClick)
+    } else {
+        modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+    }
+
     ListItem(
-        modifier = modifier.clickable(onClick = onClick),
+        modifier = gestureModifier,
         headlineContent = {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
