@@ -1,14 +1,15 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
@@ -28,15 +29,16 @@ fun RecentDiscussionsPill(
     Surface(
         modifier = modifier
             .padding(horizontal = 16.dp, vertical = 8.dp)
-            .clickable(onClick = onClick)
-            .semantics { contentDescription = description },
+            .minimumInteractiveComponentSize()
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics(mergeDescendants = true) { contentDescription = description },
         shape = MaterialTheme.shapes.medium,
         tonalElevation = 2.dp,
         color = MaterialTheme.colorScheme.surfaceVariant,
     ) {
         Text(
             text = label,
-            modifier = Modifier.padding(PaddingValues(horizontal = 16.dp, vertical = 10.dp)),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
             style = MaterialTheme.typography.labelLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
