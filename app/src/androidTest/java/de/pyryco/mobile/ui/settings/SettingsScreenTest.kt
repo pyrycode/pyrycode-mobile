@@ -27,6 +27,7 @@ class SettingsScreenTest {
                     onSelectTheme = {},
                     onBack = {},
                     onOpenLicense = {},
+                    onOpenArchivedDiscussions = {},
                 )
             }
         }
@@ -46,6 +47,7 @@ class SettingsScreenTest {
                     onSelectTheme = {},
                     onBack = {},
                     onOpenLicense = {},
+                    onOpenArchivedDiscussions = {},
                 )
             }
         }
