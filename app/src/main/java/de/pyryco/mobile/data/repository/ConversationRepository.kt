@@ -30,6 +30,8 @@ interface ConversationRepository {
 
     suspend fun archive(conversationId: String)
 
+    suspend fun unarchive(conversationId: String)
+
     suspend fun rename(
         conversationId: String,
         name: String,
