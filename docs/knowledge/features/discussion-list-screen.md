@@ -13,7 +13,9 @@ Stateless `(state: DiscussionListUiState, onEvent: (DiscussionListEvent) -> Unit
 - `Error(message)` → centered `"Couldn't load discussions: $message"`.
 - `Loaded(discussions)` → `LazyColumn` of `DiscussionRow`s keyed by `Conversation.id`. Each `DiscussionRow` is a private composable in the same file that wraps the shared [`ConversationRow`](conversation-row.md) with the two gesture surfaces from #25 (long-press → `DropdownMenu`, right-to-left swipe → `SwipeToDismissBox`), and applies the `Modifier.alpha(0.65f)` de-emphasis on the inner row.
 
-Emits `DiscussionListEvent.RowTapped(id)` on row tap, `DiscussionListEvent.SaveAsChannelRequested(id)` from both long-press menu selection and swipe completion (#25), and `DiscussionListEvent.BackTapped` on the back-arrow tap. The destination block in `MainActivity` routes `RowTapped` directly (`navController.navigate(...)`), forwards `SaveAsChannelRequested` to `vm.onEvent(event)` (the VM stub swallows it), and translates `BackTapped` into `navController.popBackStack()`. The VM additionally emits `RowTapped` onto its one-shot `navigationEvents` channel so the unit test can observe it (see [VM doc](discussion-list-viewmodel.md#dual-nav-wiring-24)).
+Emits `DiscussionListEvent.RowTapped(id)` on row tap, `DiscussionListEvent.SaveAsChannelRequested(id)` from both long-press menu selection and swipe completion (#25), `DiscussionListEvent.PromoteConfirmed` / `PromoteCancelled` from the promotion confirmation dialog (#78), and `DiscussionListEvent.BackTapped` on the back-arrow tap. The destination block in `MainActivity` routes `RowTapped` directly (`navController.navigate(...)`), forwards `SaveAsChannelRequested` / `PromoteConfirmed` / `PromoteCancelled` to `vm.onEvent(event)`, and translates `BackTapped` into `navController.popBackStack()`. The VM additionally emits `RowTapped` onto its one-shot `navigationEvents` channel so the unit test can observe it (see [VM doc](discussion-list-viewmodel.md#dual-nav-wiring-24)).
+
+Since #78 the screen also renders a private `PromotionConfirmationDialog` as an overlay (outside the `Scaffold` body) when `(state as? Loaded)?.pendingPromotion != null`. The dialog is wired through the existing `(state, onEvent)` shape — no `MutableState` is hoisted into the screen.
 
 ## Event surface
 
@@ -21,11 +23,13 @@ Emits `DiscussionListEvent.RowTapped(id)` on row tap, `DiscussionListEvent.SaveA
 sealed interface DiscussionListEvent {
     data class RowTapped(val conversationId: String) : DiscussionListEvent
     data class SaveAsChannelRequested(val conversationId: String) : DiscussionListEvent
+    data object PromoteConfirmed : DiscussionListEvent       // #78
+    data object PromoteCancelled : DiscussionListEvent       // #78 — also fired by scrim/back via onDismissRequest
     data object BackTapped : DiscussionListEvent
 }
 ```
 
-Defined at the top of `DiscussionListScreen.kt` (paralleling `ChannelListEvent` in `ChannelListScreen.kt`). No `SettingsTapped`, no `CreateDiscussionTapped` — the drilldown is read-only in Phase 0. `SaveAsChannelRequested` is the only write-shaped event; the VM handles it as a `Unit` no-op stub with a `TODO(phase 2)` marker — the gesture surface ships independently of the promotion dialog (Phase 2).
+Defined at the top of `DiscussionListScreen.kt` (paralleling `ChannelListEvent` in `ChannelListScreen.kt`). No `SettingsTapped`, no `CreateDiscussionTapped` — the drilldown is read-only in Phase 0. `SaveAsChannelRequested` opens the confirmation dialog; `PromoteConfirmed` calls `repository.promote(...)`; `PromoteCancelled` dismisses without mutation. The confirm/cancel pair are `data object` (no payload) because the VM owns `pendingPromotion.value` and already knows which discussion is in flight — routing the id back through the event would let the screen and VM disagree about which discussion is being promoted.
 
 ## "Save as channel…" affordances (#25)
 
@@ -41,6 +45,33 @@ Direction rationale: Android UI convention puts destructive/trailing actions on 
 The `EndToStart` enum reads backward — in LTR locales, the user's finger swipes from the right edge toward the left ("end" → "start"). See [`../codebase/25.md`](../codebase/25.md) for the lessons learned around `SwipeToDismissBox` (background-content is in-progress-only; `enableDismissFromStartToEnd = false` is required *in addition to* a rejecting `confirmValueChange`).
 
 Long-press menu is reached only by the keyboard-and-pointer combination Material 3 provides on `combinedClickable`; no manual `semantics { onLongClick(...) }` block is needed. The optional `onLongClick` parameter on `ConversationRow` is **only** passed at this call site — `ChannelListScreen` omits it (channel-row long-press is undecided territory).
+
+## Promotion confirmation dialog (#78)
+
+When `(state as? DiscussionListUiState.Loaded)?.pendingPromotion` is non-null, the screen renders a private `PromotionConfirmationDialog(pending, onConfirm, onDismiss)` composable as an overlay **after** the `Scaffold { … }` block:
+
+```kotlin
+val pending = (state as? DiscussionListUiState.Loaded)?.pendingPromotion
+if (pending != null) {
+    PromotionConfirmationDialog(
+        pending = pending,
+        onConfirm = { onEvent(DiscussionListEvent.PromoteConfirmed) },
+        onDismiss = { onEvent(DiscussionListEvent.PromoteCancelled) },
+    )
+}
+```
+
+The dialog itself is a standard M3 `AlertDialog`:
+
+- **`title`** — `stringResource(R.string.promote_dialog_title)` ("Save as channel?")
+- **`text`** — `stringResource(R.string.promote_dialog_body, displayLabel(pending.sourceName))` ("Save \"<label>\" as a channel?"), where `displayLabel(...)` is the file-scope helper defined in [`DiscussionListViewModel.kt`](discussion-list-viewmodel.md#name-derivation--two-helpers-two-consumers-78) — returns the source name verbatim or `"Untitled discussion"` for null/blank, matching `ConversationRow.displayName`.
+- **`confirmButton`** — `TextButton(onClick = onConfirm) { Text(stringResource(R.string.promote_dialog_confirm)) }` ("Save as channel")
+- **`dismissButton`** — `TextButton(onClick = onDismiss) { Text(stringResource(R.string.promote_dialog_cancel)) }` ("Cancel")
+- **`onDismissRequest = onDismiss`** — M3's default routing for scrim taps *and* back-press. This is how AC #6(d) ("scrim/back dismiss without calling promote") is satisfied by construction; no dedicated scrim test is required.
+
+Rendering the dialog **outside** the `Scaffold` body is intentional — `AlertDialog` manages its own window/scrim, and placing it inside the `LazyColumn`'s `items { }` would scope it to that item's composition and reposition it incorrectly during recomposition. The `(state as? Loaded)?.pendingPromotion` safe-cast is the right read shape for "render an overlay only in one variant" — a full `when (state)` block would force an `else -> Unit` arm.
+
+The screen does not own any dialog state — it is purely a function of `state.pendingPromotion`. Rotation preserves the dialog because the VM's `pendingPromotion: MutableStateFlow` survives the `WhileSubscribed(5_000)` grace window, and `state` is collected via `collectAsStateWithLifecycle()` which re-attaches within milliseconds.
 
 ## Visual de-emphasis — alpha at the call site
 
@@ -98,6 +129,10 @@ composable(Routes.DISCUSSION_LIST) {
                     navController.navigate("conversation_thread/${event.conversationId}")
                 is DiscussionListEvent.SaveAsChannelRequested ->
                     vm.onEvent(event)
+                DiscussionListEvent.PromoteConfirmed ->          // #78
+                    vm.onEvent(event)
+                DiscussionListEvent.PromoteCancelled ->          // #78
+                    vm.onEvent(event)
                 DiscussionListEvent.BackTapped ->
                     navController.popBackStack()
             }
@@ -108,26 +143,26 @@ composable(Routes.DISCUSSION_LIST) {
 
 `Routes.DISCUSSION_LIST = "discussions"` (in the private `Routes` object alongside `CHANNEL_LIST`, `CONVERSATION_THREAD`, etc.). The entry point is the channel-list inline Recent-discussions section's "See all discussions (N) →" link (#69; previously the #26 pill), which calls `navController.navigate(Routes.DISCUSSION_LIST)` from `ChannelListEvent.RecentDiscussionsTapped`.
 
-`RowTapped` is dispatched on both wires (destination-side `navigate` *and* VM-side `navigationChannel`); see the VM doc for the rationale. `BackTapped` routes only at the destination — the VM treats it as a no-op `Unit` arm. `SaveAsChannelRequested` (#25) routes only at the VM as a `Unit` stub — the composable-side branch (`vm.onEvent(event)`) exists for `when` exhaustiveness but the actual work is the VM `TODO(phase 2)` no-op. Phase 2 replaces the VM stub with a real handler; the destination wiring does not change.
+`RowTapped` is dispatched on both wires (destination-side `navigate` *and* VM-side `navigationChannel`); see the VM doc for the rationale. `BackTapped` routes only at the destination — the VM treats it as a no-op `Unit` arm. `SaveAsChannelRequested`, `PromoteConfirmed`, and `PromoteCancelled` all route through `vm.onEvent(event)` — the VM owns the `pendingPromotion` state and the `repository.promote(...)` call. The destination wiring stayed structurally identical between #25 and #78; #78 only added the two new arms.
 
 ## Configuration
 
-- **Strings:** `discussion_list_title` ("Recent discussions"), `discussion_list_empty` ("No discussions yet"), `cd_back` ("Back"), `save_as_channel_action` ("Save as channel…", #25). The first two follow the `<screen>_<role>` convention for user-facing copy (#23); `cd_back` is the project-wide back-button content description and is intentionally screen-agnostic — future screens with an `Icons.AutoMirrored.Filled.ArrowBack` reuse it rather than introducing per-screen variants. `save_as_channel_action` carries an ellipsis per Material guidance for "opens further UI" (anticipates the Phase 2 promotion dialog).
-- **Imports:** `androidx.compose.material.icons.automirrored.filled.ArrowBack` (auto-mirrored RTL-aware), `androidx.compose.ui.draw.alpha` (the de-emphasis modifier), `androidx.compose.material3.{SwipeToDismissBox, SwipeToDismissBoxValue, rememberSwipeToDismissBoxState, DropdownMenu, DropdownMenuItem}` (#25 gesture surfaces). `material-icons-core` was already on the classpath via #21 (which pulled it in for the settings gear). No new dependency was added for #25 — the M3 swipe-and-menu APIs are already in the Compose BOM (`composeBom = "2026.02.01"`).
+- **Strings:** `discussion_list_title` ("Recent discussions"), `discussion_list_empty` ("No discussions yet"), `cd_back` ("Back"), `save_as_channel_action` ("Save as channel…", #25). Promotion dialog (#78): `promote_dialog_title` ("Save as channel?"), `promote_dialog_body` (`"Save \"%1$s\" as a channel?"` — Android-escaped quotes around a positional placeholder fed `displayLabel(pending.sourceName)`), `promote_dialog_confirm` ("Save as channel"), `promote_dialog_cancel` ("Cancel"). The first two follow the `<screen>_<role>` convention for user-facing copy (#23); `cd_back` is the project-wide back-button content description and is intentionally screen-agnostic. `save_as_channel_action` carries an ellipsis per Material guidance for "opens further UI" (the dialog is that further UI). The promotion-dialog strings follow the `promote_dialog_<role>` shape.
+- **Imports:** `androidx.compose.material.icons.automirrored.filled.ArrowBack` (auto-mirrored RTL-aware), `androidx.compose.ui.draw.alpha` (the de-emphasis modifier), `androidx.compose.material3.{SwipeToDismissBox, SwipeToDismissBoxValue, rememberSwipeToDismissBoxState, DropdownMenu, DropdownMenuItem}` (#25 gesture surfaces), `androidx.compose.material3.{AlertDialog, TextButton}` (#78 dialog). `material-icons-core` was already on the classpath via #21 (which pulled it in for the settings gear). No new dependency was added for #25 or #78 — the M3 dialog and swipe-and-menu APIs are all already in the Compose BOM (`composeBom = "2026.02.01"`).
 - **`AppModule`:** new line `viewModel { DiscussionListViewModel(get()) }` below the existing `ChannelListViewModel` registration. No new singletons.
 
 ## Edge cases / limitations
 
 - **No FAB.** Discussions are created from the channel list (#22). Creating a new discussion *from* this screen is not in scope for Phase 0.
-- **"Save as channel…" is gesture-only and Phase 0-stubbed.** Long-press menu + right-to-left swipe land in #25; both feed `DiscussionListEvent.SaveAsChannelRequested`, which the VM swallows as `Unit`. The Phase 2 promotion dialog replaces the stub. No leading-edge swipe, no undo affordance, no toast — explicit non-goals.
-- **No instrumented UI tests.** Visual regression is covered by the two `@Preview` composables. The VM-level unit tests cover state-derivation and navigation-emit behavior.
+- **"Save as channel…" gestures open a minimal confirmation dialog** (#78). Long-press menu + right-to-left swipe (#25) feed `SaveAsChannelRequested`, which the VM converts into `pendingPromotion = PendingPromotion(id, name)`; the screen then renders the dialog. No leading-edge swipe, no undo affordance, no toast — explicit non-goals. Richer promotion UI (user-entered name + workspace radios) is a follow-up ticket pinned to a future Figma node.
+- **Instrumented tests cover the dialog only.** `app/src/androidTest/java/de/pyryco/mobile/ui/conversations/list/DiscussionListScreenTest.kt` (added in #78) is the project's first instrumented test for this screen. Six cases: dialog appears when `pendingPromotion` is non-null, does not appear when null, Confirm/Cancel buttons emit `PromoteConfirmed`/`PromoteCancelled`, and the body string renders `sourceName` verbatim when present and `"Untitled discussion"` when null. Drives the screen directly via `state` + `events::add` (no VM, no Koin) — mirrors `ChannelListScreenTest`'s conventions verbatim. The long-press menu / swipe gestures themselves remain covered by the `@Preview` composables only — Compose's `SwipeToDismissBox` is awkward to drive from `createComposeRule()` without an Activity-hosted Espresso layer.
 - **`Loading` / `Error` / `Empty` are placeholder visuals.** Centered `Text` with no illustration, no retry button, no copy variation. Designed visuals land with their own tickets.
 - **Single entry point is the channel-list "See all discussions (N) →" link** (#69; #26 before it). No launcher tile, no debug button, no settings deep-link. If a follow-up wants a second entry point (e.g. a notification), wire it through the same `navController.navigate(Routes.DISCUSSION_LIST)` call — don't replicate the destination wiring.
 
 ## Related
 
-- Ticket notes: [`../codebase/24.md`](../codebase/24.md), [`../codebase/25.md`](../codebase/25.md)
-- Specs: `docs/specs/architecture/24-discussion-list-drilldown-screen.md`, `docs/specs/architecture/25-save-as-channel-affordances.md`
+- Ticket notes: [`../codebase/24.md`](../codebase/24.md), [`../codebase/25.md`](../codebase/25.md), [`../codebase/78.md`](../codebase/78.md)
+- Specs: `docs/specs/architecture/24-discussion-list-drilldown-screen.md`, `docs/specs/architecture/25-save-as-channel-affordances.md`, `docs/specs/architecture/78-promote-discussion-confirmation-dialog.md`
 - Sibling: [ChannelListScreen](channel-list-screen.md) — structural clone source; the `Scaffold + LazyColumn + when (state)` skeleton, the `koinViewModel<…>()` + `collectAsStateWithLifecycle()` destination shape, and the inline `onEvent` → `navigate` translation pattern all originated there
 - Upstream: [DiscussionListViewModel](discussion-list-viewmodel.md), [ConversationRow](conversation-row.md) (shared between tiers; gained the optional `onLongClick` parameter in #25), [Navigation](navigation.md) (the `discussions` route landed in `PyryNavHost`), [Data model](data-model.md) (`DEFAULT_SCRATCH_CWD` → no workspace chip is the foundation of the AC)
-- Downstream: #26 (channel-list "Recent discussions" pill — adds `navController.navigate(Routes.DISCUSSION_LIST)` at the call site), Phase 2 promotion dialog (replaces the `SaveAsChannelRequested` VM stub with a real handler — name/workspace picker + `repository.promote(...)`), Phase 4 (`RemoteConversationRepository` swaps in; this screen is unchanged), designed `Loading` / `Empty` / `Error` visuals
+- Downstream: #26 (channel-list "Recent discussions" pill — adds `navController.navigate(Routes.DISCUSSION_LIST)` at the call site), richer promotion flow (name entry + workspace radios; pins to Figma when design lands and replaces the body of `PromotionConfirmationDialog`), Phase 4 (`RemoteConversationRepository` swaps in; this screen is unchanged), designed `Loading` / `Empty` / `Error` visuals

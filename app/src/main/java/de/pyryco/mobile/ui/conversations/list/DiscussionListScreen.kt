@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -20,6 +21,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
@@ -51,6 +53,10 @@ sealed interface DiscussionListEvent {
     data class SaveAsChannelRequested(
         val conversationId: String,
     ) : DiscussionListEvent
+
+    data object PromoteConfirmed : DiscussionListEvent
+
+    data object PromoteCancelled : DiscussionListEvent
 
     data object BackTapped : DiscussionListEvent
 }
@@ -105,6 +111,45 @@ fun DiscussionListScreen(
                 }
         }
     }
+
+    val pending = (state as? DiscussionListUiState.Loaded)?.pendingPromotion
+    if (pending != null) {
+        PromotionConfirmationDialog(
+            pending = pending,
+            onConfirm = { onEvent(DiscussionListEvent.PromoteConfirmed) },
+            onDismiss = { onEvent(DiscussionListEvent.PromoteCancelled) },
+        )
+    }
+}
+
+@Composable
+private fun PromotionConfirmationDialog(
+    pending: PendingPromotion,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.promote_dialog_title)) },
+        text = {
+            Text(
+                stringResource(
+                    R.string.promote_dialog_body,
+                    displayLabel(pending.sourceName),
+                ),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(stringResource(R.string.promote_dialog_confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.promote_dialog_cancel))
+            }
+        },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
