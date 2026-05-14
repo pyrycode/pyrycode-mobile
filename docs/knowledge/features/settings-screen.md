@@ -11,7 +11,7 @@ Replaces the prior `SettingsPlaceholder` stub with a scrollable list of seven la
 3. **Defaults for new conversations** — `Default model`, `Default effort`, `Default YOLO`, `Default workspace`.
 4. **Notifications** — `Push notifications when claude responds`, `Notification sound`.
 5. **Memory** — `Installed memory plugins`, `Manage per-channel memory`.
-6. **Storage** — `Archived conversations`, `Clear cache`.
+6. **Storage** — `Archived discussions` (headline updated #94 — taps navigate to the in-app [Archived Discussions screen](archived-discussions-screen.md) via the `onOpenArchivedDiscussions` callback; the prior `"11 archived"` subtitle placeholder was dropped), `Clear cache`.
 7. **About** — Version (live `BuildConfig.VERSION_NAME` / `VERSION_CODE` since #90), `Open source · github.com/pyrycode/pyrycode-mobile` (taps launch the platform browser via `Intent.ACTION_VIEW` since #90), `Privacy policy`, `License: MIT` (taps open the in-app [License screen](license-screen.md) since #91).
 
 Each row has one of five trailing-affordance shapes: chevron, M3 `Switch`, outlined "Add" pill, `OpenInNew` icon, or none. The full row inventory (headlines, subtitle literals, trailing per row) is enumerated in [`../codebase/64.md`](../codebase/64.md).
@@ -27,11 +27,12 @@ fun SettingsScreen(
     onSelectTheme: (ThemeMode) -> Unit,
     onBack: () -> Unit,
     onOpenLicense: () -> Unit,
+    onOpenArchivedDiscussions: () -> Unit,
     modifier: Modifier = Modifier,
 )
 ```
 
-All four leading parameters are required, in that order. `themeMode` lost its `ThemeMode.SYSTEM` default in #87 once the row became interactive — when the value drives a writable affordance, every call site must wire it explicitly so a forgotten preview can't render a stale literal. `onOpenLicense` (added #91) and `onSelectTheme` (added #87) likewise carry no defaults — the rule is: navigation/event callbacks → no default; static display state with a neutral safe value → default OK, but the moment that display state gains a writable counterpart, drop the default. Production wires `themeMode = vm.themeMode.collectAsStateWithLifecycle()` and `onSelectTheme = vm::onSelectTheme` inside `composable(Routes.SETTINGS)` (see [Settings ViewModel](settings-viewmodel.md)).
+All five leading parameters are required, in that order. `themeMode` lost its `ThemeMode.SYSTEM` default in #87 once the row became interactive — when the value drives a writable affordance, every call site must wire it explicitly so a forgotten preview can't render a stale literal. `onOpenLicense` (added #91), `onSelectTheme` (added #87), and `onOpenArchivedDiscussions` (added #94) likewise carry no defaults — the rule is: navigation/event callbacks → no default; static display state with a neutral safe value → default OK, but the moment that display state gains a writable counterpart, drop the default. Production wires `themeMode = vm.themeMode.collectAsStateWithLifecycle()` and `onSelectTheme = vm::onSelectTheme` inside `composable(Routes.SETTINGS)` (see [Settings ViewModel](settings-viewmodel.md)).
 
 Skeleton:
 
@@ -72,6 +73,7 @@ composable(Routes.SETTINGS) {
         onSelectTheme = vm::onSelectTheme,
         onBack = { navController.popBackStack() },
         onOpenLicense = { navController.navigate(Routes.LICENSE) },
+        onOpenArchivedDiscussions = { navController.navigate(Routes.ARCHIVED_DISCUSSIONS) },
     )
 }
 ```
@@ -84,16 +86,16 @@ Entry point is the trailing settings-gear `IconButton` in `ChannelListScreen`'s 
 
 - **No persistence on the three placeholder switches.** Toggle a switch, leave the screen, come back — the switch resets to its AC-specified default. This is intentional; the switches are visual stubs. Don't add `rememberSaveable` "just in case" — Phase 3 will route them through additional fields on [`SettingsViewModel`](settings-viewmodel.md) (which already exists for the Theme row as of #87). The Theme row, by contrast, persists end-to-end since #87 — its subtitle reflects `AppPreferences.themeMode` and the picker dialog writes through `setThemeMode`.
 - **Material You toggle is cosmetic.** Flipping it doesn't actually call back into `PyrycodeMobileTheme(dynamicColor = ...)`. `Theme.kt` defaults `dynamicColor = false`; that wiring is Phase 3.
-- **Most non-switch row taps are still no-ops** including the "Add" pill, the `Privacy policy` link, and every Connection / Appearance / Defaults / Notifications / Memory / Storage row. No nav, no toast. The About-section Open-source row (since #90) and License row (since #91) are the exceptions — the former launches `https://github.com/pyrycode/pyrycode-mobile` in the platform browser, the latter navigates to the in-app [License screen](license-screen.md). Sub-screens and the remaining external-link handlers are Phase 3+ tickets.
+- **Most non-switch row taps are still no-ops** including the "Add" pill, the `Privacy policy` link, and every Connection / Appearance / Defaults / Notifications / Memory row. No nav, no toast. The Storage section's "Archived discussions" row (since #94 — navigates to the in-app [Archived Discussions screen](archived-discussions-screen.md)), the About-section Open-source row (since #90 — launches `https://github.com/pyrycode/pyrycode-mobile` in the platform browser), and the About-section License row (since #91 — navigates to the in-app [License screen](license-screen.md)) are the exceptions. Sub-screens and the remaining external-link handlers are Phase 3+ tickets.
 
 ## Previews
 
 Two `@Preview`s, both `private`, both at `widthDp = 412` to match Figma's frame width and the rest of the codebase:
 
-- `SettingsScreenLightPreview` — `PyrycodeMobileTheme(darkTheme = false) { SettingsScreen(themeMode = ThemeMode.SYSTEM, onSelectTheme = {}, onBack = {}, onOpenLicense = {}) }`.
+- `SettingsScreenLightPreview` — `PyrycodeMobileTheme(darkTheme = false) { SettingsScreen(themeMode = ThemeMode.SYSTEM, onSelectTheme = {}, onBack = {}, onOpenLicense = {}, onOpenArchivedDiscussions = {}) }`.
 - `SettingsScreenDarkPreview` — same with `darkTheme = true`.
 
-Both previews must pass `themeMode` and `onSelectTheme` explicitly since #87 dropped the `themeMode` default.
+Both previews must pass `themeMode` and `onSelectTheme` explicitly since #87 dropped the `themeMode` default; both must pass `onOpenArchivedDiscussions` explicitly since #94.
 
 `SettingsViewModel` is unit-tested at `app/src/test/java/de/pyryco/mobile/ui/settings/SettingsViewModelTest.kt` — see [Settings ViewModel § Testing](settings-viewmodel.md). The screen itself has one instrumented test file (`app/src/androidTest/java/de/pyryco/mobile/ui/settings/SettingsScreenTest.kt`, the project's first `createComposeRule()` test, landed with #90), pinning the About-section wiring — `versionRow_rendersBuildConfigVersionName` (substring match against the live `BuildConfig.VERSION_NAME`, so the test stays correct when `versionName` bumps) and `openSourceRow_hasClickAction`. Both `performScrollTo()` before asserting because the About section sits below the default viewport. #87 updated the two `setContent` blocks to pass the new required `themeMode` + `onSelectTheme` parameters explicitly; no new test methods were added — the picker-dialog UI is intentionally uncovered by Compose tests at this slice (the VM tests cover the contract that matters; visual fidelity goes through previews + manual run).
 
@@ -103,6 +105,7 @@ Both previews must pass `themeMode` and `onSelectTheme` explicitly since #87 dro
 - Ticket notes: [`../codebase/64.md`](../codebase/64.md) (visual skeleton), [`../codebase/90.md`](../codebase/90.md) (About Version + Open-source wiring), [`../codebase/91.md`](../codebase/91.md) (License row → in-app viewer), [`../codebase/86.md`](../codebase/86.md) (Theme row subtitle → `AppPreferences.themeMode`), [`../codebase/87.md`](../codebase/87.md) (Theme picker dialog + `SettingsViewModel`)
 - Hosted ViewModel: [Settings ViewModel](settings-viewmodel.md)
 - License sub-screen: [License screen](license-screen.md)
+- Archived discussions sub-screen (since #94): [Archived Discussions screen](archived-discussions-screen.md)
 - Figma node: `17:2` — https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=17-2
 - Phase 1 stub it replaces: ticket #16 (`SettingsPlaceholder` in `MainActivity`)
 - Entry point: [Channel list screen](channel-list-screen.md) — settings-gear `IconButton` in the `TopAppBar`

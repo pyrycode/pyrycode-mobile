@@ -38,6 +38,9 @@ import de.pyryco.mobile.ui.conversations.list.DiscussionListScreen
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerScreen
 import de.pyryco.mobile.ui.onboarding.WelcomeScreen
+import de.pyryco.mobile.ui.settings.ArchivedDiscussionsEvent
+import de.pyryco.mobile.ui.settings.ArchivedDiscussionsScreen
+import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
 import de.pyryco.mobile.ui.settings.LicenseScreen
 import de.pyryco.mobile.ui.settings.SettingsScreen
 import de.pyryco.mobile.ui.settings.SettingsViewModel
@@ -200,10 +203,26 @@ private fun PyryNavHost(
                 onSelectTheme = vm::onSelectTheme,
                 onBack = { navController.popBackStack() },
                 onOpenLicense = { navController.navigate(Routes.LICENSE) },
+                onOpenArchivedDiscussions = { navController.navigate(Routes.ARCHIVED_DISCUSSIONS) },
             )
         }
         composable(Routes.LICENSE) {
             LicenseScreen(onBack = { navController.popBackStack() })
+        }
+        composable(Routes.ARCHIVED_DISCUSSIONS) {
+            val vm = koinViewModel<ArchivedDiscussionsViewModel>()
+            val state by vm.state.collectAsStateWithLifecycle()
+            ArchivedDiscussionsScreen(
+                state = state,
+                onEvent = { event ->
+                    when (event) {
+                        ArchivedDiscussionsEvent.BackTapped ->
+                            navController.popBackStack()
+                        is ArchivedDiscussionsEvent.RestoreRequested ->
+                            vm.onEvent(event)
+                    }
+                },
+            )
         }
     }
 }
@@ -218,4 +237,5 @@ private object Routes {
     const val CONVERSATION_THREAD = "conversation_thread/{conversationId}"
     const val SETTINGS = "settings"
     const val LICENSE = "license"
+    const val ARCHIVED_DISCUSSIONS = "archived_discussions"
 }
