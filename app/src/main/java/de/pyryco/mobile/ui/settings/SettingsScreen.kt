@@ -46,10 +46,11 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
+    themeMode: ThemeMode,
+    onSelectTheme: (ThemeMode) -> Unit,
     onBack: () -> Unit,
     onOpenLicense: () -> Unit,
     modifier: Modifier = Modifier,
-    themeMode: ThemeMode = ThemeMode.SYSTEM,
 ) {
     Scaffold(
         modifier = modifier,
@@ -71,6 +72,18 @@ fun SettingsScreen(
         var materialYou by remember { mutableStateOf(true) }
         var defaultYolo by remember { mutableStateOf(false) }
         var pushNotifications by remember { mutableStateOf(true) }
+        var showThemeDialog by remember { mutableStateOf(false) }
+
+        if (showThemeDialog) {
+            ThemePickerDialog(
+                selected = themeMode,
+                onConfirm = { mode ->
+                    onSelectTheme(mode)
+                    showThemeDialog = false
+                },
+                onDismiss = { showThemeDialog = false },
+            )
+        }
 
         Column(
             modifier =
@@ -98,7 +111,7 @@ fun SettingsScreen(
                 headline = "Theme",
                 supporting = themeMode.label(),
                 trailing = { ChevronIcon() },
-                onClick = {},
+                onClick = { showThemeDialog = true },
             )
             SettingsRow(
                 headline = "Use Material You dynamic color",
@@ -263,7 +276,7 @@ private fun AddPill(onClick: () -> Unit) {
     }
 }
 
-private fun ThemeMode.label(): String =
+internal fun ThemeMode.label(): String =
     when (this) {
         ThemeMode.SYSTEM -> "System default"
         ThemeMode.LIGHT -> "Light"
@@ -276,7 +289,12 @@ private const val SOURCE_REPO_URL = "https://github.com/pyrycode/pyrycode-mobile
 @Composable
 private fun SettingsScreenLightPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
-        SettingsScreen(onBack = {}, onOpenLicense = {})
+        SettingsScreen(
+            themeMode = ThemeMode.SYSTEM,
+            onSelectTheme = {},
+            onBack = {},
+            onOpenLicense = {},
+        )
     }
 }
 
@@ -284,6 +302,11 @@ private fun SettingsScreenLightPreview() {
 @Composable
 private fun SettingsScreenDarkPreview() {
     PyrycodeMobileTheme(darkTheme = true) {
-        SettingsScreen(onBack = {}, onOpenLicense = {})
+        SettingsScreen(
+            themeMode = ThemeMode.SYSTEM,
+            onSelectTheme = {},
+            onBack = {},
+            onOpenLicense = {},
+        )
     }
 }

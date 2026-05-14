@@ -39,6 +39,7 @@ import de.pyryco.mobile.ui.onboarding.ScannerScreen
 import de.pyryco.mobile.ui.onboarding.WelcomeScreen
 import de.pyryco.mobile.ui.settings.LicenseScreen
 import de.pyryco.mobile.ui.settings.SettingsScreen
+import de.pyryco.mobile.ui.settings.SettingsViewModel
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -190,13 +191,13 @@ private fun PyryNavHost(
             Text("Conversation thread placeholder: $conversationId")
         }
         composable(Routes.SETTINGS) {
-            val appPreferences = koinInject<AppPreferences>()
-            val themeMode by appPreferences.themeMode
-                .collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
+            val vm = koinViewModel<SettingsViewModel>()
+            val themeMode by vm.themeMode.collectAsStateWithLifecycle()
             SettingsScreen(
+                themeMode = themeMode,
+                onSelectTheme = vm::onSelectTheme,
                 onBack = { navController.popBackStack() },
                 onOpenLicense = { navController.navigate(Routes.LICENSE) },
-                themeMode = themeMode,
             )
         }
         composable(Routes.LICENSE) {

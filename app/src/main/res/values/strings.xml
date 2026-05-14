@@ -22,4 +22,5 @@
     <string name="promote_dialog_body">Save \"%1$s\" as a channel?</string>
     <string name="promote_dialog_confirm">Save as channel</string>
     <string name="promote_dialog_cancel">Cancel</string>
+    <string name="settings_theme_dialog_title">Theme</string>
 </resources>
