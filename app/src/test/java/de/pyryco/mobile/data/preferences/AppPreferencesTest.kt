@@ -76,4 +76,21 @@ class AppPreferencesTest {
             dataStore.edit { it[stringPreferencesKey("theme_mode")] = "PURPLE" }
             assertEquals(ThemeMode.SYSTEM, prefs.themeMode.first())
         }
+
+    @Test
+    fun useWallpaperColors_defaultsToFalse() =
+        runBlocking {
+            assertEquals(false, prefs.useWallpaperColors.first())
+        }
+
+    @Test
+    fun setUseWallpaperColors_roundTripsBothValues() =
+        runBlocking {
+            prefs.setUseWallpaperColors(false)
+            assertEquals(false, prefs.useWallpaperColors.first())
+            prefs.setUseWallpaperColors(true)
+            assertEquals(true, prefs.useWallpaperColors.first())
+            prefs.setUseWallpaperColors(false)
+            assertEquals(false, prefs.useWallpaperColors.first())
+        }
 }

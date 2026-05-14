@@ -4,10 +4,11 @@ Typed wrapper around a single shared `DataStore<Preferences>` for app-level key-
 
 ## What it does
 
-Exposes app-level preferences as typed `Flow<T>` reads + `suspend fun` writes. Two preferences today:
+Exposes app-level preferences as typed `Flow<T>` reads + `suspend fun` writes. Three preferences today:
 
 - `pairedServerExists: Flow<Boolean>` — `false` by default; flips to `true` once the Scanner screen records a successful server pairing (#12). Read by `MainActivity`'s composition root to decide the `NavHost` start destination between `welcome` and `channel_list` (#13), and reserved for `Settings` (Phase 3) to surface pairing state.
 - `themeMode: Flow<ThemeMode>` — `ThemeMode.SYSTEM` by default (#86); persisted as the enum's `name` under `stringPreferencesKey("theme_mode")`. Both "key absent" and "stored string not in `ThemeMode.entries`" fall through to `SYSTEM` via `ThemeMode.entries.firstOrNull { it.name == stored } ?: ThemeMode.SYSTEM` — no throw, no `runCatching`. Read at two surfaces: at `MainActivity.setContent`'s root, an `appPreferences.themeMode.collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)` resolves `darkTheme: Boolean` for `PyrycodeMobileTheme(...)` (preserving `isSystemInDarkTheme()` on `SYSTEM`); since #87 the Settings route reads it via `koinViewModel<SettingsViewModel>().themeMode.collectAsStateWithLifecycle()` (a `StateFlow` projection over the same upstream — see [Settings ViewModel](settings-viewmodel.md)). The matching `suspend fun setThemeMode(mode: ThemeMode)` is wired in #87 by `SettingsViewModel.onSelectTheme(...)`, called from the Settings → Theme picker dialog's confirm button; one write fans out to both collectors above.
+- `useWallpaperColors: Flow<Boolean>` — `false` by default (#88); `booleanPreferencesKey("use_wallpaper_colors")`. Read once at `MainActivity.setContent`'s root as a sibling to the `themeMode` collector, then forwarded into `PyrycodeMobileTheme(darkTheme = …, dynamicColor = useWallpaperColors)`. The theme's pre-existing SDK gate (`dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S` at `Theme.kt:275`) handles the "Android < 12 OR preference false → brand palette" branch internally, so no composition-root version check is needed. Matching `suspend fun setUseWallpaperColors(enabled: Boolean)` exists but is unconsumed by the main path in this slice — sibling ticket #89 wires the visible Settings → Appearance switch row.
 
 Secrets (the pairing token itself) are explicitly **not** stored here — that's a separate security-sensitive ticket using EncryptedSharedPreferences / the Keystore. `AppPreferences` is only for non-secret booleans/strings/ints.
 
@@ -39,9 +40,17 @@ class AppPreferences(private val dataStore: DataStore<Preferences>) {
         dataStore.edit { prefs -> prefs[THEME_MODE] = mode.name }
     }
 
+    val useWallpaperColors: Flow<Boolean> =
+        dataStore.data.map { prefs -> prefs[USE_WALLPAPER_COLORS] ?: false }
+
+    suspend fun setUseWallpaperColors(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[USE_WALLPAPER_COLORS] = enabled }
+    }
+
     private companion object {
         val PAIRED_SERVER_EXISTS = booleanPreferencesKey("paired_server_exists")
         val THEME_MODE = stringPreferencesKey("theme_mode")
+        val USE_WALLPAPER_COLORS = booleanPreferencesKey("use_wallpaper_colors")
     }
 }
 ```
@@ -147,8 +156,8 @@ Pass the enum's neutral default (the same value the cold flow would emit first o
 
 ## Related
 
-- Ticket notes: `../codebase/11.md`, `../codebase/12.md` (first write site), `../codebase/13.md` (first read site — `NavHost` start-destination gate), `../codebase/86.md` (second key — `themeMode`; first reactive-collect consumer), `../codebase/87.md` (first `setThemeMode` write site — Settings Theme picker dialog via `SettingsViewModel`)
-- Spec: `docs/specs/architecture/11-datastore-app-preferences.md`; `docs/specs/architecture/86-theme-mode-preference.md`; `docs/specs/architecture/87-settings-theme-picker-dialog.md`
+- Ticket notes: `../codebase/11.md`, `../codebase/12.md` (first write site), `../codebase/13.md` (first read site — `NavHost` start-destination gate), `../codebase/86.md` (second key — `themeMode`; first reactive-collect consumer), `../codebase/87.md` (first `setThemeMode` write site — Settings Theme picker dialog via `SettingsViewModel`), `../codebase/88.md` (third key — `useWallpaperColors`; second sibling collector at `setContent` root → `PyrycodeMobileTheme(dynamicColor = …)`)
+- Spec: `docs/specs/architecture/11-datastore-app-preferences.md`; `docs/specs/architecture/86-theme-mode-preference.md`; `docs/specs/architecture/87-settings-theme-picker-dialog.md`; `docs/specs/architecture/88-use-wallpaper-colors-preference.md`
 - DI feature: `dependency-injection.md`
-- First consumers: #12 (Scanner pairing-write — merged), #13 (conditional `NavHost` start destination — merged), #86 (`themeMode` flow → `PyrycodeMobileTheme(darkTheme = …)` + Settings Theme row subtitle — merged), #87 (`setThemeMode` write site — merged).
+- First consumers: #12 (Scanner pairing-write — merged), #13 (conditional `NavHost` start destination — merged), #86 (`themeMode` flow → `PyrycodeMobileTheme(darkTheme = …)` + Settings Theme row subtitle — merged), #87 (`setThemeMode` write site — merged), #88 (`useWallpaperColors` flow → `PyrycodeMobileTheme(dynamicColor = …)` — merged; `setUseWallpaperColors` write site deferred to #89).
 - Phase 3: notification + remaining `Settings` preferences will land as additional keys here (or as sibling classes once this file passes ~5 keys per the splitting rule above).

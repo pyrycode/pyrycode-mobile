@@ -59,13 +59,15 @@ class MainActivity : ComponentActivity() {
             val appPreferences = koinInject<AppPreferences>()
             val themeMode by appPreferences.themeMode
                 .collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
+            val useWallpaperColors by appPreferences.useWallpaperColors
+                .collectAsStateWithLifecycle(initialValue = false)
             val darkTheme =
                 when (themeMode) {
                     ThemeMode.SYSTEM -> isSystemInDarkTheme()
                     ThemeMode.LIGHT -> false
                     ThemeMode.DARK -> true
                 }
-            PyrycodeMobileTheme(darkTheme = darkTheme) {
+            PyrycodeMobileTheme(darkTheme = darkTheme, dynamicColor = useWallpaperColors) {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     val paired: Boolean? by produceState<Boolean?>(
                         initialValue = null,
