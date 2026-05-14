@@ -123,7 +123,7 @@ Message extraction: `e.message` verbatim when non-null and non-blank, else the l
 
 `navigationChannel` is a `Channel<ChannelListNavigation>(capacity = Channel.BUFFERED)` exposed via `receiveAsFlow()`. `Channel` (not `SharedFlow`) because a nav event must fire exactly once even if the collector momentarily isn't attached — `MutableSharedFlow` would either replay (re-navigating on rotation) or drop (losing in-flight taps). `BUFFERED` because the burst is one event at a time; no back-pressure semantics are wanted.
 
-Consumer is `MainActivity`'s `composable(Routes.ChannelList)` block, which runs `LaunchedEffect(vm) { vm.navigationEvents.collect { … } }` to translate `ChannelListNavigation.ToThread` into `navController.navigate("conversation_thread/${event.conversationId}")`. The `vm` key restarts the collector exactly when the VM identity changes (per `NavBackStackEntry` scope). Cancellation is atomic with the launching coroutine: if the user navigates away mid-`createDiscussion`, `viewModelScope` cancels both the suspend and the pending `send`.
+Consumer is `MainActivity`'s `composable(Routes.CHANNEL_LIST)` block, which runs `LaunchedEffect(vm) { vm.navigationEvents.collect { … } }` to translate `ChannelListNavigation.ToThread` into `navController.navigate("conversation_thread/${event.conversationId}")`. The `vm` key restarts the collector exactly when the VM identity changes (per `NavBackStackEntry` scope). Cancellation is atomic with the launching coroutine: if the user navigates away mid-`createDiscussion`, `viewModelScope` cancels both the suspend and the pending `send`.
 
 ### `onEvent` reducer (#22)
 
@@ -141,7 +141,7 @@ viewModel { ChannelListViewModel(get()) }
 
 The constructor parameter type is `ConversationRepository` (the interface, not the `FakeConversationRepository` impl). Koin's `single { FakeConversationRepository() } bind ConversationRepository::class` makes `get()` resolve to the bound implementation; Phase 4's remote impl drops in behind the same bind line with no VM change.
 
-Composable resolution at the `composable(Routes.ChannelList) { ... }` destination (landed in #46):
+Composable resolution at the `composable(Routes.CHANNEL_LIST) { ... }` destination (landed in #46):
 
 ```kotlin
 val vm = koinViewModel<ChannelListViewModel>()

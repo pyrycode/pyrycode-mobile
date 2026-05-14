@@ -71,11 +71,12 @@ fun SettingsScreen(
         var pushNotifications by remember { mutableStateOf(true) }
 
         Column(
-            modifier = Modifier
-                .padding(inner)
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(bottom = 32.dp),
+            modifier =
+                Modifier
+                    .padding(inner)
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(bottom = 32.dp),
         ) {
             SettingsSectionHeader("Connection")
             SettingsRow(

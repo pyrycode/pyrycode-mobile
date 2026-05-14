@@ -29,7 +29,7 @@ fun SettingsScreen(
 )
 ```
 
-`onOpenLicense` (added #91) carries no default — every call site (production, previews, tests) is required to pass it explicitly so the License row's wiring stays honest. Production routes it to `navController.navigate(Routes.License)`; previews and tests pass `{}`.
+`onOpenLicense` (added #91) carries no default — every call site (production, previews, tests) is required to pass it explicitly so the License row's wiring stays honest. Production routes it to `navController.navigate(Routes.LICENSE)`; previews and tests pass `{}`.
 
 Skeleton:
 
@@ -59,7 +59,7 @@ Mounted at the `settings` route in `PyryNavHost` (`MainActivity.kt`):
 composable(Routes.Settings) {
     SettingsScreen(
         onBack = { navController.popBackStack() },
-        onOpenLicense = { navController.navigate(Routes.License) },
+        onOpenLicense = { navController.navigate(Routes.LICENSE) },
     )
 }
 ```

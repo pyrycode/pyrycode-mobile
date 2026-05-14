@@ -35,7 +35,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Conversation
-import de.pyryco.mobile.data.model.DefaultScratchCwd
+import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.ui.conversations.components.ConversationRow
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Clock
@@ -44,8 +44,14 @@ import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 
 sealed interface DiscussionListEvent {
-    data class RowTapped(val conversationId: String) : DiscussionListEvent
-    data class SaveAsChannelRequested(val conversationId: String) : DiscussionListEvent
+    data class RowTapped(
+        val conversationId: String,
+    ) : DiscussionListEvent
+
+    data class SaveAsChannelRequested(
+        val conversationId: String,
+    ) : DiscussionListEvent
+
     data object BackTapped : DiscussionListEvent
 }
 
@@ -75,25 +81,28 @@ fun DiscussionListScreen(
         val bodyModifier = Modifier.padding(inner)
         when (state) {
             DiscussionListUiState.Loading -> CenteredText("Loading…", bodyModifier)
-            DiscussionListUiState.Empty -> CenteredText(
-                stringResource(R.string.discussion_list_empty),
-                bodyModifier,
-            )
-            is DiscussionListUiState.Error -> CenteredText(
-                "Couldn't load discussions: ${state.message}",
-                bodyModifier,
-            )
-            is DiscussionListUiState.Loaded -> LazyColumn(modifier = bodyModifier.fillMaxSize()) {
-                items(items = state.discussions, key = { it.id }) { discussion ->
-                    DiscussionRow(
-                        discussion = discussion,
-                        onTap = { onEvent(DiscussionListEvent.RowTapped(discussion.id)) },
-                        onSaveAsChannel = {
-                            onEvent(DiscussionListEvent.SaveAsChannelRequested(discussion.id))
-                        },
-                    )
+            DiscussionListUiState.Empty ->
+                CenteredText(
+                    stringResource(R.string.discussion_list_empty),
+                    bodyModifier,
+                )
+            is DiscussionListUiState.Error ->
+                CenteredText(
+                    "Couldn't load discussions: ${state.message}",
+                    bodyModifier,
+                )
+            is DiscussionListUiState.Loaded ->
+                LazyColumn(modifier = bodyModifier.fillMaxSize()) {
+                    items(items = state.discussions, key = { it.id }) { discussion ->
+                        DiscussionRow(
+                            discussion = discussion,
+                            onTap = { onEvent(DiscussionListEvent.RowTapped(discussion.id)) },
+                            onSaveAsChannel = {
+                                onEvent(DiscussionListEvent.SaveAsChannelRequested(discussion.id))
+                            },
+                        )
+                    }
                 }
-            }
         }
     }
 }
@@ -107,16 +116,17 @@ private fun DiscussionRow(
     menuInitiallyExpanded: Boolean = false,
 ) {
     var menuExpanded by remember(discussion.id) { mutableStateOf(menuInitiallyExpanded) }
-    val dismissState = rememberSwipeToDismissBoxState(
-        confirmValueChange = { target ->
-            if (target == SwipeToDismissBoxValue.EndToStart) {
-                onSaveAsChannel()
-                false
-            } else {
-                true
-            }
-        },
-    )
+    val dismissState =
+        rememberSwipeToDismissBoxState(
+            confirmValueChange = { target ->
+                if (target == SwipeToDismissBoxValue.EndToStart) {
+                    onSaveAsChannel()
+                    false
+                } else {
+                    true
+                }
+            },
+        )
 
     SwipeToDismissBox(
         state = dismissState,
@@ -124,10 +134,11 @@ private fun DiscussionRow(
         enableDismissFromEndToStart = true,
         backgroundContent = {
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.secondaryContainer)
-                    .padding(horizontal = 16.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.secondaryContainer)
+                        .padding(horizontal = 16.dp),
                 contentAlignment = Alignment.CenterEnd,
             ) {
                 Text(
@@ -162,7 +173,10 @@ private fun DiscussionRow(
 }
 
 @Composable
-private fun CenteredText(text: String, modifier: Modifier) {
+private fun CenteredText(
+    text: String,
+    modifier: Modifier,
+) {
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(text)
     }
@@ -172,27 +186,28 @@ private fun CenteredText(text: String, modifier: Modifier) {
 @Composable
 private fun DiscussionListScreenLoadedPreview() {
     val now: Instant = Clock.System.now()
-    val previewDiscussions = listOf(
-        Conversation(
-            id = "disc-1",
-            name = null,
-            cwd = DefaultScratchCwd,
-            currentSessionId = "session-1",
-            sessionHistory = emptyList(),
-            isPromoted = false,
-            lastUsedAt = now - 7.minutes,
-        ),
-        Conversation(
-            id = "disc-2",
-            name = "ad-hoc kotlin question",
-            cwd = DefaultScratchCwd,
-            currentSessionId = "session-2",
-            sessionHistory = emptyList(),
-            isPromoted = false,
-            lastUsedAt = now - 2.hours,
-            isSleeping = true,
-        ),
-    )
+    val previewDiscussions =
+        listOf(
+            Conversation(
+                id = "disc-1",
+                name = null,
+                cwd = DEFAULT_SCRATCH_CWD,
+                currentSessionId = "session-1",
+                sessionHistory = emptyList(),
+                isPromoted = false,
+                lastUsedAt = now - 7.minutes,
+            ),
+            Conversation(
+                id = "disc-2",
+                name = "ad-hoc kotlin question",
+                cwd = DEFAULT_SCRATCH_CWD,
+                currentSessionId = "session-2",
+                sessionHistory = emptyList(),
+                isPromoted = false,
+                lastUsedAt = now - 2.hours,
+                isSleeping = true,
+            ),
+        )
     PyrycodeMobileTheme(darkTheme = false) {
         DiscussionListScreen(
             state = DiscussionListUiState.Loaded(previewDiscussions),
@@ -205,15 +220,16 @@ private fun DiscussionListScreenLoadedPreview() {
 @Composable
 private fun DiscussionListScreenWithMenuOpenPreview() {
     val now: Instant = Clock.System.now()
-    val discussion = Conversation(
-        id = "disc-1",
-        name = "ad-hoc kotlin question",
-        cwd = DefaultScratchCwd,
-        currentSessionId = "session-1",
-        sessionHistory = emptyList(),
-        isPromoted = false,
-        lastUsedAt = now - 7.minutes,
-    )
+    val discussion =
+        Conversation(
+            id = "disc-1",
+            name = "ad-hoc kotlin question",
+            cwd = DEFAULT_SCRATCH_CWD,
+            currentSessionId = "session-1",
+            sessionHistory = emptyList(),
+            isPromoted = false,
+            lastUsedAt = now - 7.minutes,
+        )
     PyrycodeMobileTheme(darkTheme = false) {
         DiscussionRow(
             discussion = discussion,
@@ -228,24 +244,26 @@ private fun DiscussionListScreenWithMenuOpenPreview() {
 @Composable
 private fun DiscussionRowVsChannelRowPreview() {
     val now: Instant = Clock.System.now()
-    val channel = Conversation(
-        id = "channel-1",
-        name = "pyrycode-mobile",
-        cwd = "~/Workspace/Projects/pyrycode-mobile",
-        currentSessionId = "session-c",
-        sessionHistory = emptyList(),
-        isPromoted = true,
-        lastUsedAt = now - 12.minutes,
-    )
-    val discussion = Conversation(
-        id = "disc-1",
-        name = null,
-        cwd = DefaultScratchCwd,
-        currentSessionId = "session-d",
-        sessionHistory = emptyList(),
-        isPromoted = false,
-        lastUsedAt = now - 12.minutes,
-    )
+    val channel =
+        Conversation(
+            id = "channel-1",
+            name = "pyrycode-mobile",
+            cwd = "~/Workspace/Projects/pyrycode-mobile",
+            currentSessionId = "session-c",
+            sessionHistory = emptyList(),
+            isPromoted = true,
+            lastUsedAt = now - 12.minutes,
+        )
+    val discussion =
+        Conversation(
+            id = "disc-1",
+            name = null,
+            cwd = DEFAULT_SCRATCH_CWD,
+            currentSessionId = "session-d",
+            sessionHistory = emptyList(),
+            isPromoted = false,
+            lastUsedAt = now - 12.minutes,
+        )
     PyrycodeMobileTheme(darkTheme = false) {
         Column {
             ConversationRow(

@@ -17,34 +17,44 @@ import kotlinx.coroutines.launch
 
 sealed interface DiscussionListUiState {
     data object Loading : DiscussionListUiState
+
     data object Empty : DiscussionListUiState
-    data class Loaded(val discussions: List<Conversation>) : DiscussionListUiState
-    data class Error(val message: String) : DiscussionListUiState
+
+    data class Loaded(
+        val discussions: List<Conversation>,
+    ) : DiscussionListUiState
+
+    data class Error(
+        val message: String,
+    ) : DiscussionListUiState
 }
 
 sealed interface DiscussionListNavigation {
-    data class ToThread(val conversationId: String) : DiscussionListNavigation
+    data class ToThread(
+        val conversationId: String,
+    ) : DiscussionListNavigation
 }
 
 class DiscussionListViewModel(
     private val repository: ConversationRepository,
 ) : ViewModel() {
-
     val state: StateFlow<DiscussionListUiState> =
-        repository.observeConversations(ConversationFilter.Discussions)
+        repository
+            .observeConversations(ConversationFilter.Discussions)
             .map<List<Conversation>, DiscussionListUiState> { discussions ->
-                if (discussions.isEmpty()) DiscussionListUiState.Empty
-                else DiscussionListUiState.Loaded(discussions)
-            }
-            .catch { e ->
+                if (discussions.isEmpty()) {
+                    DiscussionListUiState.Empty
+                } else {
+                    DiscussionListUiState.Loaded(discussions)
+                }
+            }.catch { e ->
                 val raw = e.message
                 emit(
                     DiscussionListUiState.Error(
                         if (raw.isNullOrBlank()) "Failed to load discussions." else raw,
                     ),
                 )
-            }
-            .stateIn(
+            }.stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
                 initialValue = DiscussionListUiState.Loading,
@@ -55,9 +65,10 @@ class DiscussionListViewModel(
 
     fun onEvent(event: DiscussionListEvent) {
         when (event) {
-            is DiscussionListEvent.RowTapped -> viewModelScope.launch {
-                navigationChannel.send(DiscussionListNavigation.ToThread(event.conversationId))
-            }
+            is DiscussionListEvent.RowTapped ->
+                viewModelScope.launch {
+                    navigationChannel.send(DiscussionListNavigation.ToThread(event.conversationId))
+                }
             is DiscussionListEvent.SaveAsChannelRequested -> Unit
             // TODO(phase 2): show promotion dialog and call repository.promote(event.conversationId, name, cwd)
             DiscussionListEvent.BackTapped -> Unit

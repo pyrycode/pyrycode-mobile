@@ -20,7 +20,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.data.model.Conversation
-import de.pyryco.mobile.data.model.DefaultScratchCwd
+import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -36,14 +36,16 @@ fun ConversationRow(
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
 ) {
-    val displayName = conversation.name?.takeIf { it.isNotBlank() }
-        ?: if (conversation.isPromoted) "Untitled channel" else "Untitled discussion"
+    val displayName =
+        conversation.name?.takeIf { it.isNotBlank() }
+            ?: if (conversation.isPromoted) "Untitled channel" else "Untitled discussion"
 
-    val gestureModifier = if (onLongClick == null) {
-        modifier.clickable(onClick = onClick)
-    } else {
-        modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
-    }
+    val gestureModifier =
+        if (onLongClick == null) {
+            modifier.clickable(onClick = onClick)
+        } else {
+            modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+        }
 
     ListItem(
         modifier = gestureModifier,
@@ -55,12 +57,13 @@ fun ConversationRow(
             ) {
                 if (conversation.isSleeping) {
                     Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .background(
-                                color = MaterialTheme.colorScheme.outline,
-                                shape = CircleShape,
-                            ),
+                        modifier =
+                            Modifier
+                                .size(8.dp)
+                                .background(
+                                    color = MaterialTheme.colorScheme.outline,
+                                    shape = CircleShape,
+                                ),
                     )
                 }
                 Text(
@@ -81,26 +84,26 @@ fun ConversationRow(
                 }
             }
         },
-        supportingContent = lastMessage?.let { msg ->
-            {
-                Text(
-                    text = previewText(msg.content),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        },
+        supportingContent =
+            lastMessage?.let { msg ->
+                {
+                    Text(
+                        text = previewText(msg.content),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            },
         trailingContent = {
             Text(text = formatRelativeTime(conversation.lastUsedAt))
         },
     )
 }
 
-private fun previewText(content: String): String =
-    content.replace(Regex("\\s+"), " ").trim()
+private fun previewText(content: String): String = content.replace(Regex("\\s+"), " ").trim()
 
 private fun condenseWorkspace(cwd: String): String? {
-    if (cwd == DefaultScratchCwd) return null
+    if (cwd == DEFAULT_SCRATCH_CWD) return null
     val trimmed = cwd.trimEnd('/')
     val segment = trimmed.substringAfterLast('/')
     return segment.ifBlank { trimmed.ifBlank { null } }
@@ -143,7 +146,7 @@ private fun previewConversation(
     Conversation(
         id = "preview-1",
         name = name,
-        cwd = if (isPromoted) "~/Workspace/Projects/pyrycode-mobile" else DefaultScratchCwd,
+        cwd = if (isPromoted) "~/Workspace/Projects/pyrycode-mobile" else DEFAULT_SCRATCH_CWD,
         currentSessionId = "session-1",
         sessionHistory = emptyList(),
         isPromoted = isPromoted,

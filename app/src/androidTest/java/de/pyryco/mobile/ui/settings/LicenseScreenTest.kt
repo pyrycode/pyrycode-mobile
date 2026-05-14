@@ -14,14 +14,16 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class LicenseScreenTest {
-
     @get:Rule
     val composeTestRule = createComposeRule()
 
     @Test
     fun backArrow_isPresent() {
-        val cdBack = InstrumentationRegistry.getInstrumentation()
-            .targetContext.getString(R.string.cd_back)
+        val cdBack =
+            InstrumentationRegistry
+                .getInstrumentation()
+                .targetContext
+                .getString(R.string.cd_back)
 
         composeTestRule.setContent {
             PyrycodeMobileTheme {

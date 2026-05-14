@@ -18,19 +18,22 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ChannelListScreenTest {
-
     @get:Rule
     val composeTestRule = createComposeRule()
 
-    private fun channel(id: String, name: String): Conversation = Conversation(
-        id = id,
-        name = name,
-        cwd = "/tmp",
-        currentSessionId = "$id-s",
-        sessionHistory = emptyList(),
-        isPromoted = true,
-        lastUsedAt = Instant.fromEpochSeconds(0),
-    )
+    private fun channel(
+        id: String,
+        name: String,
+    ): Conversation =
+        Conversation(
+            id = id,
+            name = name,
+            cwd = "/tmp",
+            currentSessionId = "$id-s",
+            sessionHistory = emptyList(),
+            isPromoted = true,
+            lastUsedAt = Instant.fromEpochSeconds(0),
+        )
 
     private fun loaded(vararg channels: Conversation): ChannelListUiState.Loaded =
         ChannelListUiState.Loaded(
@@ -39,8 +42,7 @@ class ChannelListScreenTest {
             recentDiscussionsCount = 0,
         )
 
-    private fun string(resId: Int): String =
-        InstrumentationRegistry.getInstrumentation().targetContext.getString(resId)
+    private fun string(resId: Int): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(resId)
 
     @Test
     fun topAppBar_rendersTitleAndSettingsAction_whenLoaded() {
@@ -134,10 +136,11 @@ class ChannelListScreenTest {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
                 ChannelListScreen(
-                    state = ChannelListUiState.Empty(
-                        recentDiscussions = emptyList(),
-                        recentDiscussionsCount = 0,
-                    ),
+                    state =
+                        ChannelListUiState.Empty(
+                            recentDiscussions = emptyList(),
+                            recentDiscussionsCount = 0,
+                        ),
                     onEvent = {},
                 )
             }

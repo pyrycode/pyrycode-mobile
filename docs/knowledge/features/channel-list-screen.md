@@ -199,10 +199,10 @@ Each is a single `Text` centred inside `Box(Modifier.fillMaxSize(), contentAlign
 
 ## Wiring
 
-At the `composable(Routes.ChannelList) { ... }` block in `MainActivity.PyryNavHost`:
+At the `composable(Routes.CHANNEL_LIST) { ... }` block in `MainActivity.PyryNavHost`:
 
 ```kotlin
-composable(Routes.ChannelList) {
+composable(Routes.CHANNEL_LIST) {
     val vm = koinViewModel<ChannelListViewModel>()
     val state by vm.state.collectAsStateWithLifecycle()
     LaunchedEffect(vm) {
@@ -220,9 +220,9 @@ composable(Routes.ChannelList) {
                 is ChannelListEvent.RowTapped ->
                     navController.navigate("conversation_thread/${event.conversationId}")
                 ChannelListEvent.SettingsTapped ->
-                    navController.navigate(Routes.Settings)
+                    navController.navigate(Routes.SETTINGS)
                 ChannelListEvent.RecentDiscussionsTapped ->
-                    navController.navigate(Routes.DiscussionList)
+                    navController.navigate(Routes.DISCUSSION_LIST)
                 ChannelListEvent.CreateDiscussionTapped ->
                     vm.onEvent(event)
             }
@@ -236,7 +236,7 @@ Key points:
 - **`koinViewModel<ChannelListViewModel>()` resolves against the existing Koin binding** (`viewModel { ChannelListViewModel(get()) }` from #45's `AppModule.kt`). Every `composable { ... }` block is a `NavBackStackEntry`-keyed scope; Compose Navigation 2.9+ auto-wires `LocalViewModelStoreOwner` to the current entry, so the bare call resolves to the entry-scoped store — the VM is created on first entry, retained across configuration changes, cleared on pop. No `viewModelStoreOwner = backStackEntry` argument needed.
 - **`collectAsStateWithLifecycle()`, not `collectAsState()`.** The lifecycle-aware variant pauses upstream collection when the lifecycle drops below `STARTED`, which is what makes the VM's `WhileSubscribed(5_000)` actually save work when the screen is backgrounded.
 - **Inline `when (event)` dispatch with mixed routing.** Four variants today: `RowTapped`, `SettingsTapped`, and `RecentDiscussionsTapped` (#26) resolve to `navController.navigate(...)` directly; `CreateDiscussionTapped` forwards into `vm.onEvent(event)` because its target route depends on the id returned by the suspend-shaped `createDiscussion()` call. The rule: events with no VM-side side effect stay routed at the destination; events that need a suspend or VM state mutation forward into `onEvent`.
-- **`LaunchedEffect(vm) { vm.navigationEvents.collect { … } }` for one-shot nav events.** Sits alongside the `state` read inside `composable(Routes.ChannelList)`. The `vm` key restarts the collector exactly when the VM identity changes (per `NavBackStackEntry` scope), which is the correct boundary for a one-shot channel. See [`channel-list-viewmodel.md`](./channel-list-viewmodel.md) for the `Channel<ChannelListNavigation>` + `receiveAsFlow()` shape on the emitter side.
+- **`LaunchedEffect(vm) { vm.navigationEvents.collect { … } }` for one-shot nav events.** Sits alongside the `state` read inside `composable(Routes.CHANNEL_LIST)`. The `vm` key restarts the collector exactly when the VM identity changes (per `NavBackStackEntry` scope), which is the correct boundary for a one-shot channel. See [`channel-list-viewmodel.md`](./channel-list-viewmodel.md) for the `Channel<ChannelListNavigation>` + `receiveAsFlow()` shape on the emitter side.
 - **Concrete navigation target built inline:** `"conversation_thread/${event.conversationId}"`. No `Routes.conversationThread(id)` helper — matches the navigation feature doc's "build inline until a second caller appears" rule.
 - **No `popUpTo` / `launchSingleTop`.** Default `navigate(route)` semantics are correct: tapping a channel pushes the thread onto the back stack; back-press returns to the channel list. The only exceptional case in the graph is the `scanner` → `channel_list` transition.
 
@@ -252,7 +252,7 @@ Key points:
 
 Six `@Preview` composables, all `widthDp = 412` (matches the `ConversationRow.kt` previews from #17 for consistent device shape). All six reshaped in #69 — the `+ pill` naming and seed shape are gone; `Loaded/Empty + discussions` cover the populated-section case:
 
-- `ChannelListScreenLoadedPreview` (`@Preview(name = "Loaded — Light", …)`) — three inline channels via the file-private `previewChannels(now)` helper varying `name`, `cwd` (one `DefaultScratchCwd`, two real workspaces, one with `isSleeping = true`), and `lastUsedAt` (12m / 4h / 3d ago). `recentDiscussions = emptyList()`, `recentDiscussionsCount = 0` — section absent; baseline channel-list look (no orphan header).
+- `ChannelListScreenLoadedPreview` (`@Preview(name = "Loaded — Light", …)`) — three inline channels via the file-private `previewChannels(now)` helper varying `name`, `cwd` (one `DEFAULT_SCRATCH_CWD`, two real workspaces, one with `isSleeping = true`), and `lastUsedAt` (12m / 4h / 3d ago). `recentDiscussions = emptyList()`, `recentDiscussionsCount = 0` — section absent; baseline channel-list look (no orphan header).
 - `ChannelListScreenLoadedWithDiscussionsPreview` (`@Preview(name = "Loaded + discussions — Light", …)`, #69) — same three channels + three sample discussions via `previewDiscussions(now)` (12m / 2h / 26h ago, varied names to exercise titleMedium truncation), `recentDiscussionsCount = 8`. Renders the full section as a trailing `LazyColumn` item: divider → header → 3 preview rows → See-all link `(8) →`. Canonical "matches Figma 15:8" preview for the populated-loaded case.
 - `ChannelListScreenEmptyPreview` (`@Preview(name = "Empty — Light", …)`, #23) — `state = ChannelListUiState.Empty(recentDiscussions = emptyList(), recentDiscussionsCount = 0), onEvent = {}`. No sample data needed. Renders the TopAppBar above the centred empty-state copy and the FAB at `FabPosition.End`; section absent.
 - `ChannelListScreenEmptyWithDiscussionsPreview` (`@Preview(name = "Empty + discussions — Light", …)`, #69) — `Empty(recentDiscussions = previewDiscussions(now), recentDiscussionsCount = 5)`. Section renders at the top of the body (above the centred empty-state copy); proves the section's "no orphan header" guard inverts correctly when discussions exist but channels don't.

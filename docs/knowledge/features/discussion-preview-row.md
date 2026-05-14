@@ -14,7 +14,7 @@ Renders a single `Conversation` as a three-line `Column` with a top-level click 
 
 Workspace label is computed by the file-private `discussionPreviewWorkspaceLabel(cwd, scratchLabel)`:
 
-- `cwd == DefaultScratchCwd` → `R.string.discussion_preview_workspace_scratch` (`"scratch"`).
+- `cwd == DEFAULT_SCRATCH_CWD` → `R.string.discussion_preview_workspace_scratch` (`"scratch"`).
 - Else → `cwd.trimEnd('/').substringAfterLast('/').ifBlank { scratchLabel }`.
 
 The whole `Column` is `.fillMaxWidth().clickable(role = Role.Button, onClick = onClick).padding(horizontal = 16.dp, vertical = 10.dp)`, with `verticalArrangement = Arrangement.spacedBy(2.dp)`. No leading avatar, no trailing affordance, no `ListItem` chrome — this is a tighter, content-only row.
@@ -38,7 +38,7 @@ The component is intentionally `Conversation`-shaped (not `String title + String
 
 ### Workspace-label rule diverges from `ConversationRow`
 
-`ConversationRow.condenseWorkspace(cwd)` returns `String?` — `null` for `DefaultScratchCwd`, so the caller omits the workspace chip entirely. `DiscussionPreviewRow` *always* renders a meta line and always shows a workspace label; collapsing to `"scratch"` is the contract. The rules are similar enough to look extractable and different enough that the spec explicitly forbids sharing — two near-twin helpers each one screen away from their caller beats one helper with a behaviour flag. See [`./conversation-row.md`](./conversation-row.md) for `condenseWorkspace`.
+`ConversationRow.condenseWorkspace(cwd)` returns `String?` — `null` for `DEFAULT_SCRATCH_CWD`, so the caller omits the workspace chip entirely. `DiscussionPreviewRow` *always* renders a meta line and always shows a workspace label; collapsing to `"scratch"` is the contract. The rules are similar enough to look extractable and different enough that the spec explicitly forbids sharing — two near-twin helpers each one screen away from their caller beats one helper with a behaviour flag. See [`./conversation-row.md`](./conversation-row.md) for `condenseWorkspace`.
 
 ### Single `AnnotatedString` for the mixed-font meta line
 
@@ -85,14 +85,14 @@ The two `LocalDate.Format` builders are file-`private` vals at the top of `Relat
 
 Three `@Preview`s in `DiscussionPreviewRow.kt`, all `widthDp = 412`:
 
-- `DiscussionPreviewRowScratchLightPreview` — `cwd = DefaultScratchCwd`, `name = "What's the safest way…"`, `lastUsedAt = now - 12.minutes`. Light theme. Exercises the `"scratch"` workspace fallback and the `"12m ago"` minute-bucket time format.
+- `DiscussionPreviewRowScratchLightPreview` — `cwd = DEFAULT_SCRATCH_CWD`, `name = "What's the safest way…"`, `lastUsedAt = now - 12.minutes`. Light theme. Exercises the `"scratch"` workspace fallback and the `"12m ago"` minute-bucket time format.
 - `DiscussionPreviewRowScratchDarkPreview` — same shape, `name = "Help me debug auth flow"`, `lastUsedAt = now - 2.hours`. Dark theme (`Configuration.UI_MODE_NIGHT_YES`). Exercises the `"2h ago"` hour-bucket and dark-scheme `onSurface` / `onSurfaceVariant` contrast on the body and meta lines.
 - `DiscussionPreviewRowNamedCwdPreview` — `cwd = "~/Workspace/Projects/some-repo"`, `name = "Quick regex for log parsing"`, `lastUsedAt = now - 5.hours`. Light theme. Exercises the non-default-cwd `substringAfterLast('/')` branch — meta line reads `some-repo · 5h ago`.
 
 ## Edge cases / limitations
 
 - **Body is a single non-parameterised placeholder.** `R.string.discussion_preview_placeholder_body` ships with the literal "Tap to resume — message preview coming soon." for every row, regardless of conversation content. The follow-up that wires real previews replaces the `stringResource(...)` body source with whatever the data layer surfaces (likely a per-`Conversation` last-message projection on the VM emission); the row's other lines are untouched.
-- **Workspace label is computed inline, not via `condenseWorkspace`.** Intentional — `ConversationRow.condenseWorkspace` returns `null` for `DefaultScratchCwd` (the row omits the workspace chip), whereas `DiscussionPreviewRow` always renders a meta line and falls back to `"scratch"`. Two helpers, two contracts; do not consolidate.
+- **Workspace label is computed inline, not via `condenseWorkspace`.** Intentional — `ConversationRow.condenseWorkspace` returns `null` for `DEFAULT_SCRATCH_CWD` (the row omits the workspace chip), whereas `DiscussionPreviewRow` always renders a meta line and falls back to `"scratch"`. Two helpers, two contracts; do not consolidate.
 - **No avatar, no leading slot, no trailing slot.** The Figma `15:8` treatment for discussions is content-only — title / body / meta on a tighter vertical rhythm than `ConversationRow`'s `ListItem`. Don't reach for `ListItem` here even if a future affordance lands (long-press → "Save as channel…", swipe action); add the gesture decorations to this `Column` directly, the way [`DiscussionListScreen`](./discussion-list-screen.md)'s row does.
 - **Relative-time strings are not localised.** `just now` / `Yesterday` / `Nm ago` etc. are Kotlin literals inside `formatRelativeTime`. Out of scope for #69; a localisation pass becomes ~6 `<plurals>` entries and a `Resources`-typed parameter.
 
@@ -100,6 +100,6 @@ Three `@Preview`s in `DiscussionPreviewRow.kt`, all `widthDp = 412`:
 
 - Ticket notes: [`../codebase/69.md`](../codebase/69.md)
 - Spec: `docs/specs/architecture/69-channel-list-recent-discussions-section.md`
-- Upstream: [data model](./data-model.md) (`Conversation`, `DefaultScratchCwd`), [ConversationRow](./conversation-row.md) (`formatRelativeTime` originated here; `condenseWorkspace` rule is the contrast point)
+- Upstream: [data model](./data-model.md) (`Conversation`, `DEFAULT_SCRATCH_CWD`), [ConversationRow](./conversation-row.md) (`formatRelativeTime` originated here; `condenseWorkspace` rule is the contrast point)
 - Consumer: [ChannelListScreen](./channel-list-screen.md) — `RecentDiscussionsSection` private composable iterates the VM's top-3 `recentDiscussions` and calls `DiscussionPreviewRow` for each
 - Downstream / follow-ups: real message-content previews (one-line body-source swap once the data layer surfaces a per-`Conversation` last-message projection), relative-time localisation, accessibility audit on the row hit area

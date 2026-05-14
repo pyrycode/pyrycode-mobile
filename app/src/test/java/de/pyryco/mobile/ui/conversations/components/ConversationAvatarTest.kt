@@ -4,7 +4,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class ConversationAvatarTest {
-
     @Test
     fun `multi-word name returns lowercase first letters of first two words`() {
         assertEquals("kr", deriveInitials("kitchenclaw refactor", fallback = "id-1"))

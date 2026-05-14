@@ -58,15 +58,18 @@ class MainActivity : ComponentActivity() {
                         value = appPreferences.pairedServerExists.first()
                     }
                     when (val v = paired) {
-                        null -> Surface(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(innerPadding),
-                        ) {}
-                        else -> PyryNavHost(
-                            startDestination = if (v) Routes.ChannelList else Routes.Welcome,
-                            modifier = Modifier.padding(innerPadding),
-                        )
+                        null ->
+                            Surface(
+                                modifier =
+                                    Modifier
+                                        .fillMaxSize()
+                                        .padding(innerPadding),
+                            ) {}
+                        else ->
+                            PyryNavHost(
+                                startDestination = if (v) Routes.CHANNEL_LIST else Routes.WELCOME,
+                                modifier = Modifier.padding(innerPadding),
+                            )
                     }
                 }
             }
@@ -85,35 +88,35 @@ private fun PyryNavHost(
         startDestination = startDestination,
         modifier = modifier,
     ) {
-        composable(Routes.Welcome) {
+        composable(Routes.WELCOME) {
             val context = LocalContext.current
             WelcomeScreen(
                 onPaired = {
-                    navController.navigate(Routes.Scanner)
+                    navController.navigate(Routes.SCANNER)
                 },
                 onSetup = {
                     context.startActivity(
-                        Intent(Intent.ACTION_VIEW, Uri.parse(SetupUrl)),
+                        Intent(Intent.ACTION_VIEW, Uri.parse(SETUP_URL)),
                     )
                 },
             )
         }
-        composable(Routes.Scanner) {
+        composable(Routes.SCANNER) {
             val appPreferences = koinInject<AppPreferences>()
             val scope = rememberCoroutineScope()
             ScannerScreen(
                 onTap = {
                     scope.launch {
                         appPreferences.setPairedServerExists(true)
-                        navController.navigate(Routes.ChannelList) {
-                            popUpTo(Routes.Scanner) { inclusive = true }
+                        navController.navigate(Routes.CHANNEL_LIST) {
+                            popUpTo(Routes.SCANNER) { inclusive = true }
                             launchSingleTop = true
                         }
                     }
                 },
             )
         }
-        composable(Routes.ChannelList) {
+        composable(Routes.CHANNEL_LIST) {
             val vm = koinViewModel<ChannelListViewModel>()
             val state by vm.state.collectAsStateWithLifecycle()
             LaunchedEffect(vm) {
@@ -131,16 +134,16 @@ private fun PyryNavHost(
                         is ChannelListEvent.RowTapped ->
                             navController.navigate("conversation_thread/${event.conversationId}")
                         ChannelListEvent.SettingsTapped ->
-                            navController.navigate(Routes.Settings)
+                            navController.navigate(Routes.SETTINGS)
                         ChannelListEvent.RecentDiscussionsTapped ->
-                            navController.navigate(Routes.DiscussionList)
+                            navController.navigate(Routes.DISCUSSION_LIST)
                         ChannelListEvent.CreateDiscussionTapped ->
                             vm.onEvent(event)
                     }
                 },
             )
         }
-        composable(Routes.DiscussionList) {
+        composable(Routes.DISCUSSION_LIST) {
             val vm = koinViewModel<DiscussionListViewModel>()
             val state by vm.state.collectAsStateWithLifecycle()
             LaunchedEffect(vm) {
@@ -166,32 +169,32 @@ private fun PyryNavHost(
             )
         }
         composable(
-            route = Routes.ConversationThread,
+            route = Routes.CONVERSATION_THREAD,
             arguments = listOf(navArgument("conversationId") { type = NavType.StringType }),
         ) { backStackEntry ->
             val conversationId = backStackEntry.arguments?.getString("conversationId").orEmpty()
             Text("Conversation thread placeholder: $conversationId")
         }
-        composable(Routes.Settings) {
+        composable(Routes.SETTINGS) {
             SettingsScreen(
                 onBack = { navController.popBackStack() },
-                onOpenLicense = { navController.navigate(Routes.License) },
+                onOpenLicense = { navController.navigate(Routes.LICENSE) },
             )
         }
-        composable(Routes.License) {
+        composable(Routes.LICENSE) {
             LicenseScreen(onBack = { navController.popBackStack() })
         }
     }
 }
 
-private const val SetupUrl = "https://pyryco.de/setup"
+private const val SETUP_URL = "https://pyryco.de/setup"
 
 private object Routes {
-    const val Welcome = "welcome"
-    const val Scanner = "scanner"
-    const val ChannelList = "channel_list"
-    const val DiscussionList = "discussions"
-    const val ConversationThread = "conversation_thread/{conversationId}"
-    const val Settings = "settings"
-    const val License = "license"
+    const val WELCOME = "welcome"
+    const val SCANNER = "scanner"
+    const val CHANNEL_LIST = "channel_list"
+    const val DISCUSSION_LIST = "discussions"
+    const val CONVERSATION_THREAD = "conversation_thread/{conversationId}"
+    const val SETTINGS = "settings"
+    const val LICENSE = "license"
 }

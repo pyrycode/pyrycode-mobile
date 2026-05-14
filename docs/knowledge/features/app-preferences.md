@@ -85,7 +85,7 @@ val paired: Boolean? by produceState<Boolean?>(initialValue = null, appPreferenc
 }
 when (val v = paired) {
     null -> Surface(Modifier.fillMaxSize()) {}                  // neutral placeholder during first emit
-    else -> PyryNavHost(if (v) Routes.ChannelList else Routes.Welcome)
+    else -> PyryNavHost(if (v) Routes.CHANNEL_LIST else Routes.WELCOME)
 }
 
 // In #12's Scanner destination on tap (no ViewModel — see Scanner screen feature doc)
@@ -94,8 +94,8 @@ val scope = rememberCoroutineScope()
 // ...inside onTap:
 scope.launch {
     appPreferences.setPairedServerExists(true)
-    navController.navigate(Routes.ChannelList) {
-        popUpTo(Routes.Scanner) { inclusive = true }
+    navController.navigate(Routes.CHANNEL_LIST) {
+        popUpTo(Routes.SCANNER) { inclusive = true }
         launchSingleTop = true
     }
 }

@@ -17,7 +17,6 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 class AppPreferencesTest {
-
     @get:Rule
     val tmp = TemporaryFolder()
 
@@ -28,10 +27,11 @@ class AppPreferencesTest {
     @Before
     fun setUp() {
         scope = CoroutineScope(Dispatchers.IO + Job())
-        dataStore = PreferenceDataStoreFactory.create(
-            scope = scope,
-            produceFile = { tmp.newFile("app_prefs.preferences_pb") },
-        )
+        dataStore =
+            PreferenceDataStoreFactory.create(
+                scope = scope,
+                produceFile = { tmp.newFile("app_prefs.preferences_pb") },
+            )
         prefs = AppPreferences(dataStore)
     }
 
@@ -41,13 +41,15 @@ class AppPreferencesTest {
     }
 
     @Test
-    fun pairedServerExists_defaultsToFalse() = runBlocking {
-        assertEquals(false, prefs.pairedServerExists.first())
-    }
+    fun pairedServerExists_defaultsToFalse() =
+        runBlocking {
+            assertEquals(false, prefs.pairedServerExists.first())
+        }
 
     @Test
-    fun setPairedServerExists_true_isReflectedInNextEmit() = runBlocking {
-        prefs.setPairedServerExists(true)
-        assertEquals(true, prefs.pairedServerExists.first())
-    }
+    fun setPairedServerExists_true_isReflectedInNextEmit() =
+        runBlocking {
+            prefs.setPairedServerExists(true)
+            assertEquals(true, prefs.pairedServerExists.first())
+        }
 }

@@ -46,7 +46,7 @@ One new id in `strings.xml`: `license_title = "License"`. The pre-existing `cd_b
 Mounted at the `license` route in `PyryNavHost` (`MainActivity.kt`):
 
 ```kotlin
-composable(Routes.License) {
+composable(Routes.LICENSE) {
     LicenseScreen(onBack = { navController.popBackStack() })
 }
 ```
@@ -54,10 +54,10 @@ composable(Routes.License) {
 Entry point is `SettingsScreen`'s About-section "License: MIT" row (`SettingsScreen.kt:190-194`), wired via an `onOpenLicense: () -> Unit` parameter passed from the destination block:
 
 ```kotlin
-composable(Routes.Settings) {
+composable(Routes.SETTINGS) {
     SettingsScreen(
         onBack = { navController.popBackStack() },
-        onOpenLicense = { navController.navigate(Routes.License) },
+        onOpenLicense = { navController.navigate(Routes.LICENSE) },
     )
 }
 ```

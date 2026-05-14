@@ -38,7 +38,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Conversation
-import de.pyryco.mobile.data.model.DefaultScratchCwd
+import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.ui.conversations.components.ConversationRow
 import de.pyryco.mobile.ui.conversations.components.DiscussionPreviewRow
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -49,9 +49,14 @@ import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 
 sealed interface ChannelListEvent {
-    data class RowTapped(val conversationId: String) : ChannelListEvent
+    data class RowTapped(
+        val conversationId: String,
+    ) : ChannelListEvent
+
     data object SettingsTapped : ChannelListEvent
+
     data object CreateDiscussionTapped : ChannelListEvent
+
     data object RecentDiscussionsTapped : ChannelListEvent
 }
 
@@ -106,52 +111,59 @@ fun ChannelListScreen(
         val bodyModifier = Modifier.padding(inner)
         when (state) {
             ChannelListUiState.Loading -> CenteredText("Loading…", bodyModifier)
-            is ChannelListUiState.Empty -> Column(bodyModifier.fillMaxSize()) {
-                RecentDiscussionsSection(
-                    discussions = state.recentDiscussions,
-                    totalCount = state.recentDiscussionsCount,
-                    onSeeAllClick = { onEvent(ChannelListEvent.RecentDiscussionsTapped) },
-                    onRowClick = { onEvent(ChannelListEvent.RowTapped(it)) },
+            is ChannelListUiState.Empty ->
+                Column(bodyModifier.fillMaxSize()) {
+                    RecentDiscussionsSection(
+                        discussions = state.recentDiscussions,
+                        totalCount = state.recentDiscussionsCount,
+                        onSeeAllClick = { onEvent(ChannelListEvent.RecentDiscussionsTapped) },
+                        onRowClick = { onEvent(ChannelListEvent.RowTapped(it)) },
+                    )
+                    Box(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(stringResource(R.string.channel_list_empty))
+                    }
+                }
+            is ChannelListUiState.Error ->
+                CenteredText(
+                    "Couldn't load channels: ${state.message}",
+                    bodyModifier,
                 )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(stringResource(R.string.channel_list_empty))
-                }
-            }
-            is ChannelListUiState.Error -> CenteredText(
-                "Couldn't load channels: ${state.message}",
-                bodyModifier,
-            )
-            is ChannelListUiState.Loaded -> Column(bodyModifier.fillMaxSize()) {
-                ChannelsSectionHeader()
-                LazyColumn(modifier = Modifier.weight(1f)) {
-                    items(items = state.channels, key = { it.id }) { channel ->
-                        ConversationRow(
-                            conversation = channel,
-                            lastMessage = null,
-                            onClick = { onEvent(ChannelListEvent.RowTapped(channel.id)) },
-                        )
-                    }
-                    item(key = "recent-discussions-section") {
-                        RecentDiscussionsSection(
-                            discussions = state.recentDiscussions,
-                            totalCount = state.recentDiscussionsCount,
-                            onSeeAllClick = { onEvent(ChannelListEvent.RecentDiscussionsTapped) },
-                            onRowClick = { onEvent(ChannelListEvent.RowTapped(it)) },
-                        )
+            is ChannelListUiState.Loaded ->
+                Column(bodyModifier.fillMaxSize()) {
+                    ChannelsSectionHeader()
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        items(items = state.channels, key = { it.id }) { channel ->
+                            ConversationRow(
+                                conversation = channel,
+                                lastMessage = null,
+                                onClick = { onEvent(ChannelListEvent.RowTapped(channel.id)) },
+                            )
+                        }
+                        item(key = "recent-discussions-section") {
+                            RecentDiscussionsSection(
+                                discussions = state.recentDiscussions,
+                                totalCount = state.recentDiscussionsCount,
+                                onSeeAllClick = { onEvent(ChannelListEvent.RecentDiscussionsTapped) },
+                                onRowClick = { onEvent(ChannelListEvent.RowTapped(it)) },
+                            )
+                        }
                     }
                 }
-            }
         }
     }
 }
 
 @Composable
-private fun CenteredText(text: String, modifier: Modifier) {
+private fun CenteredText(
+    text: String,
+    modifier: Modifier,
+) {
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(text)
     }
@@ -197,17 +209,20 @@ private fun RecentDiscussionsSection(
 }
 
 @Composable
-private fun SeeAllDiscussionsRow(totalCount: Int, onClick: () -> Unit) {
+private fun SeeAllDiscussionsRow(
+    totalCount: Int,
+    onClick: () -> Unit,
+) {
     val description = stringResource(R.string.cd_see_all_discussions, totalCount)
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .semantics(mergeDescendants = true) {
-                contentDescription = description
-                role = Role.Button
-            }
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .semantics(mergeDescendants = true) {
+                    contentDescription = description
+                    role = Role.Button
+                }.padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -225,77 +240,80 @@ private fun SeeAllDiscussionsRow(totalCount: Int, onClick: () -> Unit) {
     }
 }
 
-private fun previewChannels(now: Instant): List<Conversation> = listOf(
-    Conversation(
-        id = "channel-1",
-        name = "pyrycode-mobile",
-        cwd = "~/Workspace/Projects/pyrycode-mobile",
-        currentSessionId = "session-1",
-        sessionHistory = emptyList(),
-        isPromoted = true,
-        lastUsedAt = now - 12.minutes,
-    ),
-    Conversation(
-        id = "channel-2",
-        name = "pyrycode",
-        cwd = "~/Workspace/Projects/pyrycode",
-        currentSessionId = "session-2",
-        sessionHistory = emptyList(),
-        isPromoted = true,
-        lastUsedAt = now - 4.hours,
-    ),
-    Conversation(
-        id = "channel-3",
-        name = "scratch ideas",
-        cwd = DefaultScratchCwd,
-        currentSessionId = "session-3",
-        sessionHistory = emptyList(),
-        isPromoted = true,
-        lastUsedAt = now - 3.days,
-        isSleeping = true,
-    ),
-)
+private fun previewChannels(now: Instant): List<Conversation> =
+    listOf(
+        Conversation(
+            id = "channel-1",
+            name = "pyrycode-mobile",
+            cwd = "~/Workspace/Projects/pyrycode-mobile",
+            currentSessionId = "session-1",
+            sessionHistory = emptyList(),
+            isPromoted = true,
+            lastUsedAt = now - 12.minutes,
+        ),
+        Conversation(
+            id = "channel-2",
+            name = "pyrycode",
+            cwd = "~/Workspace/Projects/pyrycode",
+            currentSessionId = "session-2",
+            sessionHistory = emptyList(),
+            isPromoted = true,
+            lastUsedAt = now - 4.hours,
+        ),
+        Conversation(
+            id = "channel-3",
+            name = "scratch ideas",
+            cwd = DEFAULT_SCRATCH_CWD,
+            currentSessionId = "session-3",
+            sessionHistory = emptyList(),
+            isPromoted = true,
+            lastUsedAt = now - 3.days,
+            isSleeping = true,
+        ),
+    )
 
-private fun previewDiscussions(now: Instant): List<Conversation> = listOf(
-    Conversation(
-        id = "discussion-1",
-        name = "What's the safest way…",
-        cwd = DefaultScratchCwd,
-        currentSessionId = "session-d1",
-        sessionHistory = emptyList(),
-        isPromoted = false,
-        lastUsedAt = now - 12.minutes,
-    ),
-    Conversation(
-        id = "discussion-2",
-        name = "Help me debug auth flow",
-        cwd = DefaultScratchCwd,
-        currentSessionId = "session-d2",
-        sessionHistory = emptyList(),
-        isPromoted = false,
-        lastUsedAt = now - 2.hours,
-    ),
-    Conversation(
-        id = "discussion-3",
-        name = "Quick regex for log parsing",
-        cwd = DefaultScratchCwd,
-        currentSessionId = "session-d3",
-        sessionHistory = emptyList(),
-        isPromoted = false,
-        lastUsedAt = now - 26.hours,
-    ),
-)
+private fun previewDiscussions(now: Instant): List<Conversation> =
+    listOf(
+        Conversation(
+            id = "discussion-1",
+            name = "What's the safest way…",
+            cwd = DEFAULT_SCRATCH_CWD,
+            currentSessionId = "session-d1",
+            sessionHistory = emptyList(),
+            isPromoted = false,
+            lastUsedAt = now - 12.minutes,
+        ),
+        Conversation(
+            id = "discussion-2",
+            name = "Help me debug auth flow",
+            cwd = DEFAULT_SCRATCH_CWD,
+            currentSessionId = "session-d2",
+            sessionHistory = emptyList(),
+            isPromoted = false,
+            lastUsedAt = now - 2.hours,
+        ),
+        Conversation(
+            id = "discussion-3",
+            name = "Quick regex for log parsing",
+            cwd = DEFAULT_SCRATCH_CWD,
+            currentSessionId = "session-d3",
+            sessionHistory = emptyList(),
+            isPromoted = false,
+            lastUsedAt = now - 26.hours,
+        ),
+    )
 
 @Preview(name = "Loaded — Light", showBackground = true, widthDp = 412)
 @Composable
 private fun ChannelListScreenLoadedPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
         ChannelListScreen(
-            state = ChannelListUiState.Loaded(
-                channels = previewChannels(Clock.System.now()),
-                recentDiscussions = emptyList(),
-                recentDiscussionsCount = 0,
-            ),
+            state =
+                ChannelListUiState.Loaded(
+                    channels = previewChannels(Clock.System.now()),
+                    recentDiscussions = emptyList(),
+                    recentDiscussionsCount = 0,
+                ),
             onEvent = {},
         )
     }
@@ -307,11 +325,12 @@ private fun ChannelListScreenLoadedWithDiscussionsPreview() {
     val now: Instant = Clock.System.now()
     PyrycodeMobileTheme(darkTheme = false) {
         ChannelListScreen(
-            state = ChannelListUiState.Loaded(
-                channels = previewChannels(now),
-                recentDiscussions = previewDiscussions(now),
-                recentDiscussionsCount = 8,
-            ),
+            state =
+                ChannelListUiState.Loaded(
+                    channels = previewChannels(now),
+                    recentDiscussions = previewDiscussions(now),
+                    recentDiscussionsCount = 8,
+                ),
             onEvent = {},
         )
     }
@@ -322,10 +341,11 @@ private fun ChannelListScreenLoadedWithDiscussionsPreview() {
 private fun ChannelListScreenEmptyPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
         ChannelListScreen(
-            state = ChannelListUiState.Empty(
-                recentDiscussions = emptyList(),
-                recentDiscussionsCount = 0,
-            ),
+            state =
+                ChannelListUiState.Empty(
+                    recentDiscussions = emptyList(),
+                    recentDiscussionsCount = 0,
+                ),
             onEvent = {},
         )
     }
@@ -337,10 +357,11 @@ private fun ChannelListScreenEmptyWithDiscussionsPreview() {
     val now: Instant = Clock.System.now()
     PyrycodeMobileTheme(darkTheme = false) {
         ChannelListScreen(
-            state = ChannelListUiState.Empty(
-                recentDiscussions = previewDiscussions(now),
-                recentDiscussionsCount = 5,
-            ),
+            state =
+                ChannelListUiState.Empty(
+                    recentDiscussions = previewDiscussions(now),
+                    recentDiscussionsCount = 5,
+                ),
             onEvent = {},
         )
     }
@@ -357,11 +378,12 @@ private fun ChannelListScreenLoadedDarkPreview() {
     val now: Instant = Clock.System.now()
     PyrycodeMobileTheme(darkTheme = true) {
         ChannelListScreen(
-            state = ChannelListUiState.Loaded(
-                channels = previewChannels(now),
-                recentDiscussions = previewDiscussions(now),
-                recentDiscussionsCount = 8,
-            ),
+            state =
+                ChannelListUiState.Loaded(
+                    channels = previewChannels(now),
+                    recentDiscussions = previewDiscussions(now),
+                    recentDiscussionsCount = 8,
+                ),
             onEvent = {},
         )
     }
@@ -377,10 +399,11 @@ private fun ChannelListScreenLoadedDarkPreview() {
 private fun ChannelListScreenEmptyDarkPreview() {
     PyrycodeMobileTheme(darkTheme = true) {
         ChannelListScreen(
-            state = ChannelListUiState.Empty(
-                recentDiscussions = emptyList(),
-                recentDiscussionsCount = 0,
-            ),
+            state =
+                ChannelListUiState.Empty(
+                    recentDiscussions = emptyList(),
+                    recentDiscussionsCount = 0,
+                ),
             onEvent = {},
         )
     }

@@ -64,22 +64,22 @@ Rationale:
 
 Hit-testing is unaffected by `Modifier.alpha` — the row's `onClick` fires at full opacity. That's correct: discussions are interactive, just secondary. A truly-disabled visual would need `enabled = false` on the inner `ListItem` (propagates `LocalContentColor` through M3), not alpha.
 
-The "workspace label is absent on discussion rows" guarantee is **not** enforced by this screen. It falls out of `ConversationRow` calling `condenseWorkspace(conversation.cwd)`, which returns `null` for `DefaultScratchCwd`; the `WorkspaceChip` is gated on a non-null result. Fake-seeded discussions use `DefaultScratchCwd`, so no chip renders. The `@Preview` composables are the regression tripwire — a future change to `ConversationRow` or `condenseWorkspace` that re-introduces a label would show up in `DiscussionListScreenLoadedPreview`.
+The "workspace label is absent on discussion rows" guarantee is **not** enforced by this screen. It falls out of `ConversationRow` calling `condenseWorkspace(conversation.cwd)`, which returns `null` for `DEFAULT_SCRATCH_CWD`; the `WorkspaceChip` is gated on a non-null result. Fake-seeded discussions use `DEFAULT_SCRATCH_CWD`, so no chip renders. The `@Preview` composables are the regression tripwire — a future change to `ConversationRow` or `condenseWorkspace` that re-introduces a label would show up in `DiscussionListScreenLoadedPreview`.
 
 ## Previews
 
 Three `@Preview` composables live in the file:
 
-- **`DiscussionListScreenLoadedPreview`** — full `DiscussionListScreen(state = Loaded([d1, d2]), onEvent = {})` with two fixture discussions (one normal, one `isSleeping = true`), both at `DefaultScratchCwd`. Verifies the Loaded layout under `PyrycodeMobileTheme(darkTheme = false)`, the alpha dim, and the absence of workspace chips.
+- **`DiscussionListScreenLoadedPreview`** — full `DiscussionListScreen(state = Loaded([d1, d2]), onEvent = {})` with two fixture discussions (one normal, one `isSleeping = true`), both at `DEFAULT_SCRATCH_CWD`. Verifies the Loaded layout under `PyrycodeMobileTheme(darkTheme = false)`, the alpha dim, and the absence of workspace chips.
 - **`DiscussionListScreenWithMenuOpenPreview`** (#25) — renders a single `DiscussionRow(..., menuInitiallyExpanded = true)` so the static IDE preview shows the long-press `DropdownMenu` open over the row. Satisfies AC #5 ("at least one preview demonstrates the affordances"). The swipe surface is not previewable statically; gesture verification falls to manual exercise of the build.
-- **`DiscussionRowVsChannelRowPreview`** — a `Column { channelRow; discussionRow }` rendering the same shared `ConversationRow` at full opacity (channel: promoted, named, real cwd) above the alpha-0.65 instance (discussion: unpromoted, name=null, `DefaultScratchCwd`). This is the visual contract for the #24 de-emphasis AC — the contrast between the two rows is the acceptance test. Don't move this preview out of `DiscussionListScreen.kt`; it belongs with the file that owns the alpha call site.
+- **`DiscussionRowVsChannelRowPreview`** — a `Column { channelRow; discussionRow }` rendering the same shared `ConversationRow` at full opacity (channel: promoted, named, real cwd) above the alpha-0.65 instance (discussion: unpromoted, name=null, `DEFAULT_SCRATCH_CWD`). This is the visual contract for the #24 de-emphasis AC — the contrast between the two rows is the acceptance test. Don't move this preview out of `DiscussionListScreen.kt`; it belongs with the file that owns the alpha call site.
 
 No `Empty` / `Error` previews — those branches are placeholders awaiting designed visuals.
 
 ## Destination block (in `PyryNavHost`)
 
 ```kotlin
-composable(Routes.DiscussionList) {
+composable(Routes.DISCUSSION_LIST) {
     val vm = koinViewModel<DiscussionListViewModel>()
     val state by vm.state.collectAsStateWithLifecycle()
     LaunchedEffect(vm) {
@@ -106,7 +106,7 @@ composable(Routes.DiscussionList) {
 }
 ```
 
-`Routes.DiscussionList = "discussions"` (in the private `Routes` object alongside `ChannelList`, `ConversationThread`, etc.). The entry point is the channel-list inline Recent-discussions section's "See all discussions (N) →" link (#69; previously the #26 pill), which calls `navController.navigate(Routes.DiscussionList)` from `ChannelListEvent.RecentDiscussionsTapped`.
+`Routes.DISCUSSION_LIST = "discussions"` (in the private `Routes` object alongside `CHANNEL_LIST`, `CONVERSATION_THREAD`, etc.). The entry point is the channel-list inline Recent-discussions section's "See all discussions (N) →" link (#69; previously the #26 pill), which calls `navController.navigate(Routes.DISCUSSION_LIST)` from `ChannelListEvent.RecentDiscussionsTapped`.
 
 `RowTapped` is dispatched on both wires (destination-side `navigate` *and* VM-side `navigationChannel`); see the VM doc for the rationale. `BackTapped` routes only at the destination — the VM treats it as a no-op `Unit` arm. `SaveAsChannelRequested` (#25) routes only at the VM as a `Unit` stub — the composable-side branch (`vm.onEvent(event)`) exists for `when` exhaustiveness but the actual work is the VM `TODO(phase 2)` no-op. Phase 2 replaces the VM stub with a real handler; the destination wiring does not change.
 
@@ -122,12 +122,12 @@ composable(Routes.DiscussionList) {
 - **"Save as channel…" is gesture-only and Phase 0-stubbed.** Long-press menu + right-to-left swipe land in #25; both feed `DiscussionListEvent.SaveAsChannelRequested`, which the VM swallows as `Unit`. The Phase 2 promotion dialog replaces the stub. No leading-edge swipe, no undo affordance, no toast — explicit non-goals.
 - **No instrumented UI tests.** Visual regression is covered by the two `@Preview` composables. The VM-level unit tests cover state-derivation and navigation-emit behavior.
 - **`Loading` / `Error` / `Empty` are placeholder visuals.** Centered `Text` with no illustration, no retry button, no copy variation. Designed visuals land with their own tickets.
-- **Single entry point is the channel-list "See all discussions (N) →" link** (#69; #26 before it). No launcher tile, no debug button, no settings deep-link. If a follow-up wants a second entry point (e.g. a notification), wire it through the same `navController.navigate(Routes.DiscussionList)` call — don't replicate the destination wiring.
+- **Single entry point is the channel-list "See all discussions (N) →" link** (#69; #26 before it). No launcher tile, no debug button, no settings deep-link. If a follow-up wants a second entry point (e.g. a notification), wire it through the same `navController.navigate(Routes.DISCUSSION_LIST)` call — don't replicate the destination wiring.
 
 ## Related
 
 - Ticket notes: [`../codebase/24.md`](../codebase/24.md), [`../codebase/25.md`](../codebase/25.md)
 - Specs: `docs/specs/architecture/24-discussion-list-drilldown-screen.md`, `docs/specs/architecture/25-save-as-channel-affordances.md`
 - Sibling: [ChannelListScreen](channel-list-screen.md) — structural clone source; the `Scaffold + LazyColumn + when (state)` skeleton, the `koinViewModel<…>()` + `collectAsStateWithLifecycle()` destination shape, and the inline `onEvent` → `navigate` translation pattern all originated there
-- Upstream: [DiscussionListViewModel](discussion-list-viewmodel.md), [ConversationRow](conversation-row.md) (shared between tiers; gained the optional `onLongClick` parameter in #25), [Navigation](navigation.md) (the `discussions` route landed in `PyryNavHost`), [Data model](data-model.md) (`DefaultScratchCwd` → no workspace chip is the foundation of the AC)
-- Downstream: #26 (channel-list "Recent discussions" pill — adds `navController.navigate(Routes.DiscussionList)` at the call site), Phase 2 promotion dialog (replaces the `SaveAsChannelRequested` VM stub with a real handler — name/workspace picker + `repository.promote(...)`), Phase 4 (`RemoteConversationRepository` swaps in; this screen is unchanged), designed `Loading` / `Empty` / `Error` visuals
+- Upstream: [DiscussionListViewModel](discussion-list-viewmodel.md), [ConversationRow](conversation-row.md) (shared between tiers; gained the optional `onLongClick` parameter in #25), [Navigation](navigation.md) (the `discussions` route landed in `PyryNavHost`), [Data model](data-model.md) (`DEFAULT_SCRATCH_CWD` → no workspace chip is the foundation of the AC)
+- Downstream: #26 (channel-list "Recent discussions" pill — adds `navController.navigate(Routes.DISCUSSION_LIST)` at the call site), Phase 2 promotion dialog (replaces the `SaveAsChannelRequested` VM stub with a real handler — name/workspace picker + `repository.promote(...)`), Phase 4 (`RemoteConversationRepository` swaps in; this screen is unchanged), designed `Loading` / `Empty` / `Error` visuals

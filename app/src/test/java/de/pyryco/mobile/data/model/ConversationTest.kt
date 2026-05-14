@@ -7,16 +7,16 @@ import org.junit.Assert.assertNotSame
 import org.junit.Test
 
 class ConversationTest {
-
-    private fun sample() = Conversation(
-        id = "conv-1",
-        name = "channel-name",
-        cwd = "/tmp/work",
-        currentSessionId = "sess-1",
-        sessionHistory = listOf("sess-0", "sess-1"),
-        isPromoted = true,
-        lastUsedAt = Instant.fromEpochSeconds(0),
-    )
+    private fun sample() =
+        Conversation(
+            id = "conv-1",
+            name = "channel-name",
+            cwd = "/tmp/work",
+            currentSessionId = "sess-1",
+            sessionHistory = listOf("sess-0", "sess-1"),
+            isPromoted = true,
+            lastUsedAt = Instant.fromEpochSeconds(0),
+        )
 
     @Test
     fun equals_and_hashCode_match_for_identical_instances() {

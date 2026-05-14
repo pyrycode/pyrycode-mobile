@@ -21,7 +21,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Conversation
-import de.pyryco.mobile.data.model.DefaultScratchCwd
+import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Clock
 import kotlin.time.Duration.Companion.hours
@@ -33,24 +33,27 @@ fun DiscussionPreviewRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val displayName = conversation.name?.takeIf { it.isNotBlank() }
-        ?: stringResource(R.string.untitled_discussion)
+    val displayName =
+        conversation.name?.takeIf { it.isNotBlank() }
+            ?: stringResource(R.string.untitled_discussion)
     val scratchLabel = stringResource(R.string.discussion_preview_workspace_scratch)
     val workspaceLabel = discussionPreviewWorkspaceLabel(conversation.cwd, scratchLabel)
     val timeLabel = formatRelativeTime(conversation.lastUsedAt)
-    val meta = buildAnnotatedString {
-        withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) {
-            append(workspaceLabel)
+    val meta =
+        buildAnnotatedString {
+            withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) {
+                append(workspaceLabel)
+            }
+            append(" · ")
+            append(timeLabel)
         }
-        append(" · ")
-        append(timeLabel)
-    }
 
     Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .clickable(role = Role.Button, onClick = onClick)
+                .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text(
@@ -77,8 +80,11 @@ fun DiscussionPreviewRow(
     }
 }
 
-private fun discussionPreviewWorkspaceLabel(cwd: String, scratchLabel: String): String {
-    if (cwd == DefaultScratchCwd) return scratchLabel
+private fun discussionPreviewWorkspaceLabel(
+    cwd: String,
+    scratchLabel: String,
+): String {
+    if (cwd == DEFAULT_SCRATCH_CWD) return scratchLabel
     val segment = cwd.trimEnd('/').substringAfterLast('/')
     return segment.ifBlank { scratchLabel }
 }
@@ -88,15 +94,16 @@ private fun discussionPreviewWorkspaceLabel(cwd: String, scratchLabel: String): 
 private fun DiscussionPreviewRowScratchLightPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
         DiscussionPreviewRow(
-            conversation = Conversation(
-                id = "preview-d1",
-                name = "What's the safest way…",
-                cwd = DefaultScratchCwd,
-                currentSessionId = "session-1",
-                sessionHistory = emptyList(),
-                isPromoted = false,
-                lastUsedAt = Clock.System.now() - 12.minutes,
-            ),
+            conversation =
+                Conversation(
+                    id = "preview-d1",
+                    name = "What's the safest way…",
+                    cwd = DEFAULT_SCRATCH_CWD,
+                    currentSessionId = "session-1",
+                    sessionHistory = emptyList(),
+                    isPromoted = false,
+                    lastUsedAt = Clock.System.now() - 12.minutes,
+                ),
             onClick = {},
         )
     }
@@ -112,15 +119,16 @@ private fun DiscussionPreviewRowScratchLightPreview() {
 private fun DiscussionPreviewRowScratchDarkPreview() {
     PyrycodeMobileTheme(darkTheme = true) {
         DiscussionPreviewRow(
-            conversation = Conversation(
-                id = "preview-d2",
-                name = "Help me debug auth flow",
-                cwd = DefaultScratchCwd,
-                currentSessionId = "session-2",
-                sessionHistory = emptyList(),
-                isPromoted = false,
-                lastUsedAt = Clock.System.now() - 2.hours,
-            ),
+            conversation =
+                Conversation(
+                    id = "preview-d2",
+                    name = "Help me debug auth flow",
+                    cwd = DEFAULT_SCRATCH_CWD,
+                    currentSessionId = "session-2",
+                    sessionHistory = emptyList(),
+                    isPromoted = false,
+                    lastUsedAt = Clock.System.now() - 2.hours,
+                ),
             onClick = {},
         )
     }
@@ -131,15 +139,16 @@ private fun DiscussionPreviewRowScratchDarkPreview() {
 private fun DiscussionPreviewRowNamedCwdPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
         DiscussionPreviewRow(
-            conversation = Conversation(
-                id = "preview-d3",
-                name = "Quick regex for log parsing",
-                cwd = "~/Workspace/Projects/some-repo",
-                currentSessionId = "session-3",
-                sessionHistory = emptyList(),
-                isPromoted = false,
-                lastUsedAt = Clock.System.now() - 5.hours,
-            ),
+            conversation =
+                Conversation(
+                    id = "preview-d3",
+                    name = "Quick regex for log parsing",
+                    cwd = "~/Workspace/Projects/some-repo",
+                    currentSessionId = "session-3",
+                    sessionHistory = emptyList(),
+                    isPromoted = false,
+                    lastUsedAt = Clock.System.now() - 5.hours,
+                ),
             onClick = {},
         )
     }

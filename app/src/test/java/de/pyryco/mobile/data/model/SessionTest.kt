@@ -7,14 +7,14 @@ import org.junit.Assert.assertNotSame
 import org.junit.Test
 
 class SessionTest {
-
-    private fun sample() = Session(
-        id = "sess-1",
-        conversationId = "conv-1",
-        claudeSessionUuid = "00000000-0000-0000-0000-000000000001",
-        startedAt = Instant.fromEpochSeconds(0),
-        endedAt = null,
-    )
+    private fun sample() =
+        Session(
+            id = "sess-1",
+            conversationId = "conv-1",
+            claudeSessionUuid = "00000000-0000-0000-0000-000000000001",
+            startedAt = Instant.fromEpochSeconds(0),
+            endedAt = null,
+        )
 
     @Test
     fun equals_and_hashCode_match_for_identical_instances() {
