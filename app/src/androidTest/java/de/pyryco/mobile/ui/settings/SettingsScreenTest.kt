@@ -7,6 +7,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.BuildConfig
+import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Rule
 import org.junit.Test
@@ -21,7 +22,12 @@ class SettingsScreenTest {
     fun versionRow_rendersBuildConfigVersionName() {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
-                SettingsScreen(onBack = {}, onOpenLicense = {})
+                SettingsScreen(
+                    themeMode = ThemeMode.SYSTEM,
+                    onSelectTheme = {},
+                    onBack = {},
+                    onOpenLicense = {},
+                )
             }
         }
 
@@ -35,7 +41,12 @@ class SettingsScreenTest {
     fun openSourceRow_hasClickAction() {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
-                SettingsScreen(onBack = {}, onOpenLicense = {})
+                SettingsScreen(
+                    themeMode = ThemeMode.SYSTEM,
+                    onSelectTheme = {},
+                    onBack = {},
+                    onOpenLicense = {},
+                )
             }
         }
 
