@@ -4,9 +4,10 @@ Typed wrapper around a single shared `DataStore<Preferences>` for app-level key-
 
 ## What it does
 
-Exposes app-level preferences as typed `Flow<T>` reads + `suspend fun` writes. Today there is one preference:
+Exposes app-level preferences as typed `Flow<T>` reads + `suspend fun` writes. Two preferences today:
 
 - `pairedServerExists: Flow<Boolean>` — `false` by default; flips to `true` once the Scanner screen records a successful server pairing (#12). Read by `MainActivity`'s composition root to decide the `NavHost` start destination between `welcome` and `channel_list` (#13), and reserved for `Settings` (Phase 3) to surface pairing state.
+- `themeMode: Flow<ThemeMode>` — `ThemeMode.SYSTEM` by default (#86); persisted as the enum's `name` under `stringPreferencesKey("theme_mode")`. Both "key absent" and "stored string not in `ThemeMode.entries`" fall through to `SYSTEM` via `ThemeMode.entries.firstOrNull { it.name == stored } ?: ThemeMode.SYSTEM` — no throw, no `runCatching`. Read twice in `MainActivity.kt`: once at the `setContent` root to resolve `darkTheme: Boolean` for `PyrycodeMobileTheme(...)` (preserving `isSystemInDarkTheme()` on `SYSTEM`), once inside `composable(Routes.SETTINGS)` to drive the Theme row subtitle. The matching `suspend fun setThemeMode(mode: ThemeMode)` exists but has no production call site yet — the sibling picker ticket (split from #74 alongside #86) wires the write.
 
 Secrets (the pairing token itself) are explicitly **not** stored here — that's a separate security-sensitive ticket using EncryptedSharedPreferences / the Keystore. `AppPreferences` is only for non-secret booleans/strings/ints.
 
@@ -28,11 +29,31 @@ class AppPreferences(private val dataStore: DataStore<Preferences>) {
         dataStore.edit { prefs -> prefs[PAIRED_SERVER_EXISTS] = value }
     }
 
+    val themeMode: Flow<ThemeMode> =
+        dataStore.data.map { prefs ->
+            val stored = prefs[THEME_MODE]
+            ThemeMode.entries.firstOrNull { it.name == stored } ?: ThemeMode.SYSTEM
+        }
+
+    suspend fun setThemeMode(mode: ThemeMode) {
+        dataStore.edit { prefs -> prefs[THEME_MODE] = mode.name }
+    }
+
     private companion object {
         val PAIRED_SERVER_EXISTS = booleanPreferencesKey("paired_server_exists")
+        val THEME_MODE = stringPreferencesKey("theme_mode")
     }
 }
 ```
+
+`ThemeMode` is a sibling enum file in the same package:
+
+```kotlin
+// de/pyryco/mobile/data/preferences/ThemeMode.kt
+enum class ThemeMode { SYSTEM, LIGHT, DARK }
+```
+
+No companion methods on the enum — label mapping ("System default" / "Light" / "Dark") lives at the Settings call site, and dark/light resolution lives at the composition root (`when (themeMode) { SYSTEM -> isSystemInDarkTheme(); LIGHT -> false; DARK -> true }`). `PyrycodeMobileTheme`'s signature stays `darkTheme: Boolean`; the caller computes the boolean.
 
 ```kotlin
 // de/pyryco/mobile/di/AppModule.kt (excerpt)
@@ -52,7 +73,7 @@ Reads are reactive: collectors receive the current persisted value on subscripti
    ```kotlin
    val DARK_THEME = booleanPreferencesKey("dark_theme")
    ```
-   Pick the right type-safe builder for the value: `booleanPreferencesKey`, `intPreferencesKey`, `stringPreferencesKey`, `floatPreferencesKey`, `longPreferencesKey`, or `stringSetPreferencesKey`. **Do not** `stringPreferencesKey` + `.toBoolean()` shortcuts.
+   Pick the right type-safe builder for the value: `booleanPreferencesKey`, `intPreferencesKey`, `stringPreferencesKey`, `floatPreferencesKey`, `longPreferencesKey`, or `stringSetPreferencesKey`. **Do not** `stringPreferencesKey` + `.toBoolean()` shortcuts. For enum-typed prefs, use `stringPreferencesKey` storing `.name` — never `intPreferencesKey` storing an ordinal. Ordinals reshuffle on enum reorder/removal and silently corrupt the stored value across upgrades. See `themeMode` for the canonical shape.
 2. Add a `Flow<T>` reader with an explicit default via elvis:
    ```kotlin
    val darkTheme: Flow<Boolean> =
@@ -101,11 +122,13 @@ scope.launch {
 }
 ```
 
-Collecting reactively is also fine when a screen needs live updates — but note that `collectAsStateWithLifecycle` requires `androidx.lifecycle:lifecycle-runtime-compose`, which is **not** in the version catalog today (only `lifecycle-runtime-ktx` is wired). Don't add it for a one-shot read; reach for it only when a screen genuinely needs live re-composition on flag flips:
+Collecting reactively is the right shape when a screen genuinely needs live re-composition on flag flips. `collectAsStateWithLifecycle` is on the classpath today via `lifecycle-runtime-compose` (pulled in by a prior ticket; earlier revisions of this doc called it absent — that caveat is stale as of #86):
 
 ```kotlin
-val paired by appPrefs.pairedServerExists.collectAsStateWithLifecycle(initialValue = false)
+val themeMode by appPrefs.themeMode.collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
 ```
+
+Pass the enum's neutral default (the same value the cold flow would emit first on a fresh DataStore) as `initialValue` — that closes the one-frame gap between activity start and the first DataStore emission, so the UI never flashes the wrong scheme / wrong subtitle.
 
 ## State + concurrency
 
@@ -124,8 +147,8 @@ val paired by appPrefs.pairedServerExists.collectAsStateWithLifecycle(initialVal
 
 ## Related
 
-- Ticket notes: `../codebase/11.md`, `../codebase/12.md` (first write site), `../codebase/13.md` (first read site — `NavHost` start-destination gate)
-- Spec: `docs/specs/architecture/11-datastore-app-preferences.md`
+- Ticket notes: `../codebase/11.md`, `../codebase/12.md` (first write site), `../codebase/13.md` (first read site — `NavHost` start-destination gate), `../codebase/86.md` (second key — `themeMode`; first reactive-collect consumer)
+- Spec: `docs/specs/architecture/11-datastore-app-preferences.md`; `docs/specs/architecture/86-theme-mode-preference.md`
 - DI feature: `dependency-injection.md`
-- First consumers: #12 (Scanner pairing-write — merged), #13 (conditional `NavHost` start destination — merged).
-- Phase 3: theme + notification preferences will land as sibling classes in `data/preferences/`.
+- First consumers: #12 (Scanner pairing-write — merged), #13 (conditional `NavHost` start destination — merged), #86 (`themeMode` flow → `PyrycodeMobileTheme(darkTheme = …)` + Settings Theme row subtitle — merged).
+- Phase 3: notification + remaining `Settings` preferences will land as additional keys here (or as sibling classes once this file passes ~5 keys per the splitting rule above).
