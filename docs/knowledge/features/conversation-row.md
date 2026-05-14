@@ -45,7 +45,7 @@ Branches on `isPromoted` so the placeholder matches the CLAUDE.md vocabulary (ch
 
 The headline slot is a `Row { name; if (label != null) Text(label) }`. `condenseWorkspace(cwd)` returns the label, or `null` to suppress the decoration entirely:
 
-- `cwd == DefaultScratchCwd` (`"~/.pyrycode/scratch"`, the sentinel) → `null` (no label, headline reads as a bare name)
+- `cwd == DEFAULT_SCRATCH_CWD` (`"~/.pyrycode/scratch"`, the sentinel) → `null` (no label, headline reads as a bare name)
 - Else strip trailing slashes, take `substringAfterLast('/')`; if that's blank, fall back to the trimmed whole; if *that's* still blank, return `null`.
 
 | `cwd` | Label | Notes |
@@ -67,7 +67,7 @@ Name layout in the `Row`:
 - `maxLines = 1` + `TextOverflow.Ellipsis` — name ellipsizes first when long names crowd the label; pathological long single-segment labels ellipsize too.
 - `Arrangement.spacedBy(8.dp)` between `Row` children — applies only when both render; absent labels contribute nothing.
 
-The sentinel constant `DefaultScratchCwd` lives at the top level of `data/model/Conversation.kt` — single source of truth, imported by `ConversationRow`, `FakeConversationRepository` seeds, and the repository test that asserts on the scratch literal.
+The sentinel constant `DEFAULT_SCRATCH_CWD` lives at the top level of `data/model/Conversation.kt` — single source of truth, imported by `ConversationRow`, `FakeConversationRepository` seeds, and the repository test that asserts on the scratch literal.
 
 ### Sleeping-session indicator (#20)
 
@@ -133,7 +133,7 @@ LazyColumn { items(channels, key = { it.id }) { channel ->
 - `lastMessage.content` with embedded newlines or leading whitespace → normalized by `previewText`.
 - `lastUsedAt` in the future (clock skew, bad seed data) → `"just now"`.
 - Very long `displayName` → ellipsizes at 1 line via the explicit `maxLines = 1` on the name `Text` inside the headline `Row` (decoration-aware: `Modifier.weight(1f, fill = false)` yields to a fitting label first).
-- `cwd = ""` (current `createDiscussion(workspace = null)` output) → no label, via `condenseWorkspace`'s blank-fallback chain. Behaves identically to `cwd == DefaultScratchCwd` at the UI; aligning the writer with the sentinel is a deferred follow-up.
+- `cwd = ""` (current `createDiscussion(workspace = null)` output) → no label, via `condenseWorkspace`'s blank-fallback chain. Behaves identically to `cwd == DEFAULT_SCRATCH_CWD` at the UI; aligning the writer with the sentinel is a deferred follow-up.
 - `isSleeping = true` → leading 8.dp dot in the headline; row stays tappable, supporting-content preview stays at full opacity. `isSleeping = false` (default) → no dot, headline reads exactly as the #17/#19 baseline.
 - Strings are English literals. Localization is **out of scope** for Phase 0 — no `stringResource(...)`.
 
@@ -145,7 +145,7 @@ LazyColumn { items(channels, key = { it.id }) { channel ->
 - Role-based preview decoration (e.g. `"You: …"` for `Role.User`) — not in AC; future ticket if needed.
 - Extracting `previewText` / `condenseWorkspace` to a shared module — both remain `private` to this file. `formatRelativeTime` was extracted in #69 (peer file `RelativeTime.kt`, `internal`); the same move applies to either of the others when a second caller appears. `condenseWorkspace` was *not* shared with `DiscussionPreviewRow` in #69 — the two have intentionally different fallback rules, and the spec forbids a shared helper.
 - Tooltip / long-press to surface the full `cwd` path — explicit non-goal in #19's "Technical Notes".
-- Aligning `FakeConversationRepository.createDiscussion(workspace = null)` to write `DefaultScratchCwd` instead of `""` — works correctly today via the blank-fallback at the UI; deferred to a follow-up if filed.
+- Aligning `FakeConversationRepository.createDiscussion(workspace = null)` to write `DEFAULT_SCRATCH_CWD` instead of `""` — works correctly today via the blank-fallback at the UI; deferred to a follow-up if filed.
 - `ComposeTestRule` tests — `androidx-compose-ui-test-junit4` is in the catalog but has zero consumers; introducing it here would expand scope beyond the AC.
 
 ## Related

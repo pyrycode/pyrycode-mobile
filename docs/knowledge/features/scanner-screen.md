@@ -43,15 +43,15 @@ Three deliberate design points worth knowing:
 Mounted at the `scanner` route in `PyryNavHost` (see `MainActivity.kt`):
 
 ```kotlin
-composable(Routes.Scanner) {
+composable(Routes.SCANNER) {
     val appPreferences = koinInject<AppPreferences>()
     val scope = rememberCoroutineScope()
     ScannerScreen(
         onTap = {
             scope.launch {
                 appPreferences.setPairedServerExists(true)
-                navController.navigate(Routes.ChannelList) {
-                    popUpTo(Routes.Scanner) { inclusive = true }
+                navController.navigate(Routes.CHANNEL_LIST) {
+                    popUpTo(Routes.SCANNER) { inclusive = true }
                     launchSingleTop = true
                 }
             }
@@ -64,7 +64,7 @@ Notes:
 
 - **`koinInject<AppPreferences>()` from `org.koin.compose`**, not a `ScannerViewModel`. Phase 4 will replace this whole `composable(...)` block wholesale; a ViewModel here is over-engineering for a stub that exists to be deleted. The pattern is "destination-block-scoped Koin + `rememberCoroutineScope`" for stub destinations that need a one-shot suspend side-effect.
 - **`scope.launch { setPairedServerExists(true); navigate(...) }` is sequential.** Awaiting the DataStore write before navigating matters once #13 lands its `pairedServerExists` collector as the start-destination predicate — fire-and-forget would race the next composition.
-- **`popUpTo(Routes.Scanner) { inclusive = true }` + `launchSingleTop = true`.** The `inclusive = true` is what satisfies "scanner is removed from the back stack" (without `inclusive`, `popUpTo(Routes.Scanner)` is a no-op since Scanner is the top). `launchSingleTop` guards against double-tap stacking duplicate ChannelList entries during the in-flight coroutine.
+- **`popUpTo(Routes.SCANNER) { inclusive = true }` + `launchSingleTop = true`.** The `inclusive = true` is what satisfies "scanner is removed from the back stack" (without `inclusive`, `popUpTo(Routes.SCANNER)` is a no-op since Scanner is the top). `launchSingleTop` guards against double-tap stacking duplicate ChannelList entries during the in-flight coroutine.
 
 ## Why no ViewModel
 
@@ -72,14 +72,14 @@ Stub destinations with no observable state, no `UiState` to expose, and no lifec
 
 ## State + concurrency
 
-- **Scope.** `rememberCoroutineScope()` inside the `composable(Routes.Scanner)` block, tied to the destination's composition. Cancels if the destination leaves the back stack mid-write — acceptable for a millisecond-scale DataStore write.
+- **Scope.** `rememberCoroutineScope()` inside the `composable(Routes.SCANNER)` block, tied to the destination's composition. Cancels if the destination leaves the back stack mid-write — acceptable for a millisecond-scale DataStore write.
 - **Dispatcher.** `Dispatchers.Main.immediate` from `rememberCoroutineScope`; `DataStore.edit` internally hops to IO for the disk write, then resumes back on Main for `navController.navigate(...)`. No manual `withContext` needed.
 - **Cancellation race.** If cancellation occurs after the write returns but before `navigate(...)` runs, the preference is set but no navigation happens — and cancellation only happens via the destination leaving the back stack (user already navigated away). Acceptable.
 
 ## Error handling
 
 - **DataStore write failures** propagate as `IOException` to the (unregistered) `CoroutineExceptionHandler` → crash. For a Phase 0 stub on a fresh first-run install, a DataStore failure is a real bug that should be loud. No try/catch around the write; #13 / Phase 4 will revisit error UX once pairing has a real failure surface.
-- **Unknown routes** can't happen at runtime — `Routes.ChannelList` is registered in the same `NavHost` in the same file.
+- **Unknown routes** can't happen at runtime — `Routes.CHANNEL_LIST` is registered in the same `NavHost` in the same file.
 
 ## Edge cases / limitations
 
@@ -88,7 +88,7 @@ Stub destinations with no observable state, no `UiState` to expose, and no lifec
 - **Static scan-line.** No `rememberInfiniteTransition` animation. Animation polish is explicitly Phase 4's job (see the ticket's "Out of scope"). A motionless line reads as "scan area indicator" well enough for the stub.
 - **Radial gradients are circular, not elliptical.** Figma's SVG payload uses a `gradientTransform` matrix that produces an *elliptical* radial. Compose's `Brush.radialGradient` is circular only; matching the ellipse exactly requires a wrapping `Modifier.scale(...)` Box. The circular approximation reads identically as atmospheric haze and is what shipped — parity-of-intent, not pixel-identity of the SVG matrix.
 - **Light-theme appearance is auto-derived.** No Figma light mockup exists for this screen. The dark scheme is Phase 1.5's target; the light scheme is derived from theme tokens and the preview verifies it composes. Stripe alpha (`onSurface.copy(alpha = 0.04f)`) reads washed-out on a light surface — acceptable; do not branch on `isSystemInDarkTheme()`.
-- **Phase 4 walk-back.** The `Routes.Scanner` route constant survives the Phase 4 rewrite. Everything inside `composable(Routes.Scanner) { ... }` and the entire `ScannerScreen.kt` file do not. Don't add abstractions here anticipating the Phase 4 shape.
+- **Phase 4 walk-back.** The `Routes.SCANNER` route constant survives the Phase 4 rewrite. Everything inside `composable(Routes.SCANNER) { ... }` and the entire `ScannerScreen.kt` file do not. Don't add abstractions here anticipating the Phase 4 shape.
 - **Three-method instrumented test class since #101.** `app/src/androidTest/.../onboarding/ScannerScreenTest.kt` covers `topAppBar_rendersPairWithPyrycodeTitle` (exact match on `"Pair with pyrycode"`), `hintCard_rendersPyryPairInstruction` (substring match on `"pyry pair"` — covers the `buildAnnotatedString` body without depending on the full sentence), and `pasteCodeFallback_hasClickAction` (substring `"Trouble scanning?"` carries a click action). Structure only — neither the back-`IconButton` nor the `TextButton` wires-to-`onTap` contradiction is exercised; click-callback coverage is deferred until the Phase 4 rewrite splits `onTap` into per-affordance lambdas.
 
 ## Related

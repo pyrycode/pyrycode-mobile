@@ -101,7 +101,7 @@ viewModel { DiscussionListViewModel(get()) }
 
 Constructor parameter is the `ConversationRepository` interface; the singleton bound via `single { FakeConversationRepository() } bind ConversationRepository::class` resolves through `get()`. Phase 4's `RemoteConversationRepository` drops in behind the same bind line.
 
-Composable resolution at the `composable(Routes.DiscussionList) { ... }` destination:
+Composable resolution at the `composable(Routes.DISCUSSION_LIST) { ... }` destination:
 
 ```kotlin
 val vm = koinViewModel<DiscussionListViewModel>()
