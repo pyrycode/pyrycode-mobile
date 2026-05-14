@@ -11,15 +11,18 @@ QR-pairing screen — visually a "premium developer-tool" scanning moment (Figma
 
 ## How it works
 
-Pure stateless Composable. No `ViewModel`, no `UiState` / `Event` sealed types, no `Modifier` parameter — a fire-and-forget tap is the entire interaction model.
+Pure stateless Composable. No `ViewModel`, no `UiState` / `Event` sealed types — a fire-and-forget tap is the entire interaction model. The `modifier: Modifier = Modifier` parameter exists solely to satisfy compose-lints' `ComposeModifierMissing` rule (added in #84); the NavHost call site passes nothing and the default keeps positioning unchanged.
 
 ```kotlin
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ScannerScreen(onTap: () -> Unit)
+fun ScannerScreen(
+    onTap: () -> Unit,
+    modifier: Modifier = Modifier,
+)
 ```
 
-Composition shape: outer `Surface(color = colorScheme.surface, fillMaxSize, pointerInput { detectTapGestures { onTap() } })` over an inner `Column(systemBarsPadding)` containing the `TopAppBar`, a `weight(1f)` viewport `Box`, and the `"Trouble scanning?"` `TextButton`. All colors come from `MaterialTheme.colorScheme.*`, all type from `MaterialTheme.typography.*`. `Color.Transparent` is the only non-token `Color` used (top-app-bar container + radial-gradient terminal stops).
+Composition shape: outer `Surface(color = colorScheme.surface, modifier = modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { onTap() } })` over an inner `Column(systemBarsPadding)` containing the `TopAppBar`, a `weight(1f)` viewport `Box`, and the `"Trouble scanning?"` `TextButton`. All colors come from `MaterialTheme.colorScheme.*`, all type from `MaterialTheme.typography.*`. `Color.Transparent` is the only non-token `Color` used (top-app-bar container + radial-gradient terminal stops).
 
 The viewport `Box` is the visual centrepiece:
 
@@ -27,7 +30,7 @@ The viewport `Box` is the visual centrepiece:
 - **Radial gradients**: both painted inside a single `Modifier.drawBehind` lambda — two `drawRect(brush = Brush.radialGradient(...))` calls back-to-back. Centers and radius are derived from the lambda's `size` (`size.width * 0.30f`, `size.height * 0.70f`, `radius = maxOf(size.width, size.height) * 0.7f`), so the gradients adapt to any viewport dimension. Each gradient is a 3-stop: token-derived inner stop (`primary.copy(alpha = 0.12f)` / `tertiary.copy(alpha = 0.06f)`) → same color at `alpha = 0f` at offset 0.6 → `Color.Transparent` at offset 1.
 - **Atmospheric stripes**: a single `Canvas(Modifier.matchParentSize())` runs a `while (y <= size.height) { drawRect(...); y += 7.dp.toPx() }` loop with stripe color hoisted to a `val` at the call site (`colorScheme.onSurface.copy(alpha = 0.04f)` — `MaterialTheme.colorScheme` is not addressable from the `DrawScope` receiver). Stripe count self-terminates against the measured height; the Figma "exactly 105 stripes" figure is a function of the 736dp panel height in the locked design.
 - **Reticle (`Reticle`)**: private `Box(size = 248.dp)` parents four `Corner(...)` composables aligned to the four corners and two horizontally-padded scan-line layers — a 6dp-tall `Box(blur(12.dp, BlurredEdgeTreatment.Unbounded), background = primary.copy(alpha = 0.6f))` glow under a 2dp-tall `Box(background = primary)` crisp line. Both centered via `Modifier.align(Alignment.Center)`.
-- **`Corner(alignment, color)`**: 28dp-square box with two `Modifier.align(alignment)` rectangles — a `28×4.dp` horizontal stub and a `4×28.dp` vertical stub, each `RoundedCornerShape(2.dp)`, both painted `colorScheme.primary`. The `alignment` parameter anchors both stubs to the same corner of the 28dp box; positioning of the corner inside the 248dp reticle is via the outer `Modifier.align(...)` passed in.
+- **`Corner(alignment, color, modifier = Modifier)`**: 28dp-square box with two `Modifier.align(alignment)` rectangles — a `28×4.dp` horizontal stub and a `4×28.dp` vertical stub, each `RoundedCornerShape(2.dp)`, both painted `colorScheme.primary`. The `alignment` parameter anchors both stubs to the same corner of the 28dp box; positioning of the corner inside the 248dp reticle is via the outer `Modifier.align(...)` passed in.
 - **Hint card (`HintCard`)**: `Box(align(BottomCenter).padding(16.dp).fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(colorScheme.scrim.copy(alpha = 0.72f)).padding(horizontal = 16.dp, vertical = 12.dp))` wrapping a single `Text` whose content is `buildAnnotatedString { append("Run "); withStyle(SpanStyle(fontFamily = FontFamily.Monospace, color = colorScheme.tertiary)) { append("pyry pair") }; append(" on your pyrycode server to generate a QR code.") }`. Outer text uses `typography.bodyMedium` + `onSurface.copy(alpha = 0.92f)`. Non-interactive — taps bubble up to the outer `Surface`'s gesture detector.
 
 Recomposition seam: trivial. The whole screen recomposes when the M3 theme flips light/dark; nothing else mutates. The radial brushes, the `AnnotatedString`, the stripe color, and the corner composables are all reallocated on every recomposition — all cheap, all intentional (no `remember` blocks). The scan-line glow's `Modifier.blur(12.dp, BlurredEdgeTreatment.Unbounded)` requires API 31+; min SDK is 33, so production is safe — preview environments < API 31 render the line without halo.
