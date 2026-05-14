@@ -28,8 +28,16 @@ class AppPreferences(
         dataStore.edit { prefs -> prefs[THEME_MODE] = mode.name }
     }
 
+    val useWallpaperColors: Flow<Boolean> =
+        dataStore.data.map { prefs -> prefs[USE_WALLPAPER_COLORS] ?: false }
+
+    suspend fun setUseWallpaperColors(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[USE_WALLPAPER_COLORS] = enabled }
+    }
+
     private companion object {
         val PAIRED_SERVER_EXISTS = booleanPreferencesKey("paired_server_exists")
         val THEME_MODE = stringPreferencesKey("theme_mode")
+        val USE_WALLPAPER_COLORS = booleanPreferencesKey("use_wallpaper_colors")
     }
 }
