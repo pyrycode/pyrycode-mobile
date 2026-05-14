@@ -46,17 +46,22 @@ fun LicenseScreen(
         },
     ) { inner ->
         val context = LocalContext.current
-        val licenseText = remember(LICENSE_ASSET_NAME) {
-            context.assets.open(LICENSE_ASSET_NAME).bufferedReader().use { it.readText() }
-        }
+        val licenseText =
+            remember(LICENSE_ASSET_NAME) {
+                context.assets
+                    .open(LICENSE_ASSET_NAME)
+                    .bufferedReader()
+                    .use { it.readText() }
+            }
         Text(
             text = licenseText,
             style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier
-                .padding(inner)
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 16.dp),
+            modifier =
+                Modifier
+                    .padding(inner)
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 16.dp),
         )
     }
 }

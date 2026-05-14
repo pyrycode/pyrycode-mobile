@@ -41,10 +41,11 @@ fun ScannerDeniedScreen(
         modifier = modifier.fillMaxSize(),
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .systemBarsPadding()
-                .padding(horizontal = 32.dp, vertical = 32.dp),
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .systemBarsPadding()
+                    .padding(horizontal = 32.dp, vertical = 32.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Spacer(modifier = Modifier.height(32.dp))
@@ -58,8 +59,9 @@ fun ScannerDeniedScreen(
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "Pyrycode needs the camera to read the QR code from your server. " +
-                    "You can also paste the pairing code instead.",
+                text =
+                    "Pyrycode needs the camera to read the QR code from your server. " +
+                        "You can also paste the pairing code instead.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -112,12 +114,13 @@ private fun DeniedCameraIllustration(modifier: Modifier = Modifier) {
         val bridgeTopHalfWidth = w * 0.10f
         val bridgeBottomHalfWidth = bridgeTopHalfWidth + (bridgeBottomY - bridgeTopY)
         val cx = w / 2f
-        val bridge = Path().apply {
-            moveTo(cx - bridgeBottomHalfWidth, bridgeBottomY)
-            lineTo(cx - bridgeTopHalfWidth, bridgeTopY)
-            lineTo(cx + bridgeTopHalfWidth, bridgeTopY)
-            lineTo(cx + bridgeBottomHalfWidth, bridgeBottomY)
-        }
+        val bridge =
+            Path().apply {
+                moveTo(cx - bridgeBottomHalfWidth, bridgeBottomY)
+                lineTo(cx - bridgeTopHalfWidth, bridgeTopY)
+                lineTo(cx + bridgeTopHalfWidth, bridgeTopY)
+                lineTo(cx + bridgeBottomHalfWidth, bridgeBottomY)
+            }
         drawPath(path = bridge, color = outlineColor, style = stroke)
 
         // Lens — outer stroked circle + inner filled dot, centered on the camera body.

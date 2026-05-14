@@ -20,7 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.data.model.Conversation
-import de.pyryco.mobile.data.model.DefaultScratchCwd
+import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Clock
 
@@ -33,14 +33,16 @@ fun ConversationAvatar(
     modifier: Modifier = Modifier,
 ) {
     val palette = avatarPaletteFor(conversation)
-    val initials = remember(conversation.name, conversation.id) {
-        deriveInitials(conversation.name, fallback = conversation.id)
-    }
+    val initials =
+        remember(conversation.name, conversation.id) {
+            deriveInitials(conversation.name, fallback = conversation.id)
+        }
     Box(
-        modifier = modifier
-            .size(40.dp)
-            .clip(CircleShape)
-            .background(palette.container),
+        modifier =
+            modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(palette.container),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -71,12 +73,16 @@ internal fun paletteIndexFor(key: String): Int = Math.floorMod(key.hashCode(), 3
 
 private val wordBoundary = Regex("[^\\p{L}\\p{N}]+")
 
-internal fun deriveInitials(name: String?, fallback: String): String {
-    val words = name
-        ?.takeIf { it.isNotBlank() }
-        ?.split(wordBoundary)
-        ?.filter { it.isNotEmpty() }
-        .orEmpty()
+internal fun deriveInitials(
+    name: String?,
+    fallback: String,
+): String {
+    val words =
+        name
+            ?.takeIf { it.isNotBlank() }
+            ?.split(wordBoundary)
+            ?.filter { it.isNotEmpty() }
+            .orEmpty()
 
     return when {
         words.size >= 2 -> "${words[0].first()}${words[1].first()}".lowercase()
@@ -118,11 +124,12 @@ private fun ConversationAvatarDarkPreview() {
 @Composable
 private fun AvatarPalettePreviewColumn() {
     // Names chosen so paletteIndexFor lands on 0, 1, and 2 — sample renders all three M3 *-container pairs.
-    val previews = listOf(
-        previewAvatarConversation(id = "c0", name = "kitchenclaw refactor"),
-        previewAvatarConversation(id = "c1", name = "pyrycode discord integration"),
-        previewAvatarConversation(id = "c2", name = "rocd-thinking"),
-    )
+    val previews =
+        listOf(
+            previewAvatarConversation(id = "c0", name = "kitchenclaw refactor"),
+            previewAvatarConversation(id = "c1", name = "pyrycode discord integration"),
+            previewAvatarConversation(id = "c2", name = "rocd-thinking"),
+        )
     Column(
         modifier = Modifier.padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -131,11 +138,14 @@ private fun AvatarPalettePreviewColumn() {
     }
 }
 
-private fun previewAvatarConversation(id: String, name: String): Conversation =
+private fun previewAvatarConversation(
+    id: String,
+    name: String,
+): Conversation =
     Conversation(
         id = id,
         name = name,
-        cwd = DefaultScratchCwd,
+        cwd = DEFAULT_SCRATCH_CWD,
         currentSessionId = "session-$id",
         sessionHistory = emptyList(),
         isPromoted = true,

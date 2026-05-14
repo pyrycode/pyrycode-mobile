@@ -1,7 +1,7 @@
 package de.pyryco.mobile.ui.conversations.list
 
 import de.pyryco.mobile.data.model.Conversation
-import de.pyryco.mobile.data.model.DefaultScratchCwd
+import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -245,7 +245,7 @@ class DiscussionListViewModelTest {
         Conversation(
             id = id,
             name = null,
-            cwd = DefaultScratchCwd,
+            cwd = DEFAULT_SCRATCH_CWD,
             currentSessionId = "s-$id",
             sessionHistory = listOf("s-$id"),
             isPromoted = false,

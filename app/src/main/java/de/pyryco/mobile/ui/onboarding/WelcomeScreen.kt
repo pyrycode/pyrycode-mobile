@@ -38,24 +38,27 @@ fun WelcomeScreen(
 ) {
     val glowColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.surface)
-            .drawBehind {
-                drawRect(
-                    brush = Brush.radialGradient(
-                        colors = listOf(glowColor, Color.Transparent),
-                        center = Offset(size.width * 0.48f, size.height * 0.30f),
-                        radius = size.height * 0.53f,
-                    ),
-                )
-            },
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.surface)
+                .drawBehind {
+                    drawRect(
+                        brush =
+                            Brush.radialGradient(
+                                colors = listOf(glowColor, Color.Transparent),
+                                center = Offset(size.width * 0.48f, size.height * 0.30f),
+                                radius = size.height * 0.53f,
+                            ),
+                    )
+                },
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .systemBarsPadding()
-                .padding(horizontal = 32.dp),
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .systemBarsPadding()
+                    .padding(horizontal = 32.dp),
             verticalArrangement = Arrangement.SpaceBetween,
             horizontalAlignment = Alignment.Start,
         ) {
@@ -82,25 +85,28 @@ fun WelcomeScreen(
                     )
                 }
                 Text(
-                    text = "Pyrycode runs Claude on your computer or home server. " +
-                        "Channels and conversation history live on your machine, " +
-                        "accessible from any device.",
+                    text =
+                        "Pyrycode runs Claude on your computer or home server. " +
+                            "Channels and conversation history live on your machine, " +
+                            "accessible from any device.",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 16.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Button(
                     onClick = onPaired,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp),
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .height(56.dp),
                 ) {
                     Icon(
                         painter = painterResource(R.drawable.ic_qr_scan_frame),
@@ -112,16 +118,18 @@ fun WelcomeScreen(
                 }
                 TextButton(
                     onClick = onSetup,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp),
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .height(56.dp),
                 ) {
                     Text(text = "Set up pyrycode first")
                 }
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp),
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(

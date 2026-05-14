@@ -53,16 +53,18 @@ fun ScannerScreen(onTap: () -> Unit) {
     val stripeColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f)
     Surface(
         color = MaterialTheme.colorScheme.surface,
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
-                detectTapGestures(onTap = { onTap() })
-            },
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures(onTap = { onTap() })
+                },
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .systemBarsPadding(),
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .systemBarsPadding(),
         ) {
             TopAppBar(
                 title = {
@@ -79,40 +81,44 @@ fun ScannerScreen(onTap: () -> Unit) {
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
-                ),
+                colors =
+                    TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        titleContentColor = MaterialTheme.colorScheme.onSurface,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                    ),
             )
             Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerLowest)
-                    .drawBehind {
-                        val radius = maxOf(size.width, size.height) * 0.7f
-                        drawRect(
-                            brush = Brush.radialGradient(
-                                0f to blueStop,
-                                0.6f to blueStop.copy(alpha = 0f),
-                                1f to Color.Transparent,
-                                center = Offset(size.width * 0.30f, size.height * 0.40f),
-                                radius = radius,
-                            ),
-                        )
-                        drawRect(
-                            brush = Brush.radialGradient(
-                                0f to coralStop,
-                                0.6f to coralStop.copy(alpha = 0f),
-                                1f to Color.Transparent,
-                                center = Offset(size.width * 0.70f, size.height * 0.70f),
-                                radius = radius,
-                            ),
-                        )
-                    },
+                modifier =
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .clip(RoundedCornerShape(24.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerLowest)
+                        .drawBehind {
+                            val radius = maxOf(size.width, size.height) * 0.7f
+                            drawRect(
+                                brush =
+                                    Brush.radialGradient(
+                                        0f to blueStop,
+                                        0.6f to blueStop.copy(alpha = 0f),
+                                        1f to Color.Transparent,
+                                        center = Offset(size.width * 0.30f, size.height * 0.40f),
+                                        radius = radius,
+                                    ),
+                            )
+                            drawRect(
+                                brush =
+                                    Brush.radialGradient(
+                                        0f to coralStop,
+                                        0.6f to coralStop.copy(alpha = 0f),
+                                        1f to Color.Transparent,
+                                        center = Offset(size.width * 0.70f, size.height * 0.70f),
+                                        radius = radius,
+                                    ),
+                            )
+                        },
             ) {
                 Canvas(modifier = Modifier.matchParentSize()) {
                     val spacing = 7.dp.toPx()
@@ -129,16 +135,18 @@ fun ScannerScreen(onTap: () -> Unit) {
                 }
                 Reticle(modifier = Modifier.align(Alignment.Center))
                 HintCard(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(16.dp)
-                        .fillMaxWidth(),
+                    modifier =
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(16.dp)
+                            .fillMaxWidth(),
                 )
             }
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(8.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 TextButton(onClick = onTap) {
@@ -163,21 +171,23 @@ private fun Reticle(modifier: Modifier = Modifier) {
         Corner(modifier = Modifier.align(Alignment.BottomStart), alignment = Alignment.BottomStart, color = primary)
         Corner(modifier = Modifier.align(Alignment.BottomEnd), alignment = Alignment.BottomEnd, color = primary)
         Box(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .padding(horizontal = 8.dp)
-                .fillMaxWidth()
-                .height(6.dp)
-                .blur(radius = 12.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
-                .background(glow),
+            modifier =
+                Modifier
+                    .align(Alignment.Center)
+                    .padding(horizontal = 8.dp)
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .blur(radius = 12.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
+                    .background(glow),
         )
         Box(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .padding(horizontal = 8.dp)
-                .fillMaxWidth()
-                .height(2.dp)
-                .background(primary),
+            modifier =
+                Modifier
+                    .align(Alignment.Center)
+                    .padding(horizontal = 8.dp)
+                    .fillMaxWidth()
+                    .height(2.dp)
+                    .background(primary),
         )
     }
 }
@@ -190,18 +200,20 @@ private fun Corner(
 ) {
     Box(modifier = modifier.size(28.dp)) {
         Box(
-            modifier = Modifier
-                .align(alignment)
-                .size(width = 28.dp, height = 4.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(color),
+            modifier =
+                Modifier
+                    .align(alignment)
+                    .size(width = 28.dp, height = 4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(color),
         )
         Box(
-            modifier = Modifier
-                .align(alignment)
-                .size(width = 4.dp, height = 28.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(color),
+            modifier =
+                Modifier
+                    .align(alignment)
+                    .size(width = 4.dp, height = 28.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(color),
         )
     }
 }
@@ -209,24 +221,26 @@ private fun Corner(
 @Composable
 private fun HintCard(modifier: Modifier = Modifier) {
     Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.72f))
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+        modifier =
+            modifier
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.72f))
+                .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         Text(
-            text = buildAnnotatedString {
-                append("Run ")
-                withStyle(
-                    SpanStyle(
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.tertiary,
-                    ),
-                ) {
-                    append("pyry pair")
-                }
-                append(" on your pyrycode server to generate a QR code.")
-            },
+            text =
+                buildAnnotatedString {
+                    append("Run ")
+                    withStyle(
+                        SpanStyle(
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.tertiary,
+                        ),
+                    ) {
+                        append("pyry pair")
+                    }
+                    append(" on your pyrycode server to generate a QR code.")
+                },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.92f),
         )
