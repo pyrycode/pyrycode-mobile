@@ -19,7 +19,6 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -133,16 +132,181 @@ class DiscussionListViewModelTest {
         }
 
     @Test
-    fun saveAsChannelRequested_isNoOp_inPhase0() =
+    fun saveAsChannelRequested_setsPendingPromotion_whenIdIsInLoadedDiscussions() =
         runTest {
             val source = MutableSharedFlow<List<Conversation>>(replay = 0)
             val vm = DiscussionListViewModel(stubRepo(source))
+            val collector = launch { vm.state.collect { } }
+            advanceUntilIdle()
+            val d1 = sampleDiscussion("disc-1").copy(name = "ad-hoc kotlin question")
+            val d2 = sampleDiscussion("disc-2")
+            source.emit(listOf(d1, d2))
+            advanceUntilIdle()
 
             vm.onEvent(DiscussionListEvent.SaveAsChannelRequested("disc-1"))
             advanceUntilIdle()
 
-            val event = withTimeoutOrNull(50) { vm.navigationEvents.first() }
-            assertEquals(null, event)
+            assertEquals(
+                DiscussionListUiState.Loaded(
+                    listOf(d1, d2),
+                    pendingPromotion = PendingPromotion("disc-1", "ad-hoc kotlin question"),
+                ),
+                vm.state.value,
+            )
+            collector.cancel()
+        }
+
+    @Test
+    fun saveAsChannelRequested_isNoOp_whenIdIsNotInDiscussions() =
+        runTest {
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val vm = DiscussionListViewModel(stubRepo(source))
+            val collector = launch { vm.state.collect { } }
+            advanceUntilIdle()
+            source.emit(listOf(sampleDiscussion("disc-1")))
+            advanceUntilIdle()
+
+            vm.onEvent(DiscussionListEvent.SaveAsChannelRequested("unknown"))
+            advanceUntilIdle()
+
+            val s = vm.state.value
+            assertTrue("expected Loaded, was $s", s is DiscussionListUiState.Loaded)
+            assertEquals(null, (s as DiscussionListUiState.Loaded).pendingPromotion)
+            collector.cancel()
+        }
+
+    @Test
+    fun promoteCancelled_clearsPendingPromotion_andDoesNotCallPromote() =
+        runTest {
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val recording = recordingRepo(source)
+            val vm = DiscussionListViewModel(recording)
+            val collector = launch { vm.state.collect { } }
+            advanceUntilIdle()
+            source.emit(listOf(sampleDiscussion("disc-1").copy(name = "foo")))
+            advanceUntilIdle()
+
+            vm.onEvent(DiscussionListEvent.SaveAsChannelRequested("disc-1"))
+            advanceUntilIdle()
+            vm.onEvent(DiscussionListEvent.PromoteCancelled)
+            advanceUntilIdle()
+
+            val s = vm.state.value
+            assertTrue("expected Loaded, was $s", s is DiscussionListUiState.Loaded)
+            assertEquals(null, (s as DiscussionListUiState.Loaded).pendingPromotion)
+            assertEquals(emptyList<PromoteCall>(), recording.promoteCalls)
+            collector.cancel()
+        }
+
+    @Test
+    fun promoteConfirmed_callsPromote_withSourceName_whenNameIsNonBlank() =
+        runTest {
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val recording = recordingRepo(source)
+            val vm = DiscussionListViewModel(recording)
+            val collector = launch { vm.state.collect { } }
+            advanceUntilIdle()
+            source.emit(listOf(sampleDiscussion("disc-1").copy(name = "foo")))
+            advanceUntilIdle()
+
+            vm.onEvent(DiscussionListEvent.SaveAsChannelRequested("disc-1"))
+            advanceUntilIdle()
+            vm.onEvent(DiscussionListEvent.PromoteConfirmed)
+            advanceUntilIdle()
+
+            assertEquals(listOf(PromoteCall("disc-1", "foo", null)), recording.promoteCalls)
+            val s = vm.state.value
+            assertTrue("expected Loaded, was $s", s is DiscussionListUiState.Loaded)
+            assertEquals(null, (s as DiscussionListUiState.Loaded).pendingPromotion)
+            collector.cancel()
+        }
+
+    @Test
+    fun promoteConfirmed_callsPromote_withUntitledFallback_whenSourceNameIsNull() =
+        runTest {
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val recording = recordingRepo(source)
+            val vm = DiscussionListViewModel(recording)
+            val collector = launch { vm.state.collect { } }
+            advanceUntilIdle()
+            source.emit(listOf(sampleDiscussion("disc-1").copy(name = null)))
+            advanceUntilIdle()
+
+            vm.onEvent(DiscussionListEvent.SaveAsChannelRequested("disc-1"))
+            advanceUntilIdle()
+            vm.onEvent(DiscussionListEvent.PromoteConfirmed)
+            advanceUntilIdle()
+
+            assertEquals(
+                listOf(PromoteCall("disc-1", "Untitled channel", null)),
+                recording.promoteCalls,
+            )
+            collector.cancel()
+        }
+
+    @Test
+    fun promoteConfirmed_callsPromote_withUntitledFallback_whenSourceNameIsBlank() =
+        runTest {
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val recording = recordingRepo(source)
+            val vm = DiscussionListViewModel(recording)
+            val collector = launch { vm.state.collect { } }
+            advanceUntilIdle()
+            source.emit(listOf(sampleDiscussion("disc-1").copy(name = "   ")))
+            advanceUntilIdle()
+
+            vm.onEvent(DiscussionListEvent.SaveAsChannelRequested("disc-1"))
+            advanceUntilIdle()
+            vm.onEvent(DiscussionListEvent.PromoteConfirmed)
+            advanceUntilIdle()
+
+            assertEquals(
+                listOf(PromoteCall("disc-1", "Untitled channel", null)),
+                recording.promoteCalls,
+            )
+            collector.cancel()
+        }
+
+    @Test
+    fun promoteConfirmed_isNoOp_whenNoPendingPromotion() =
+        runTest {
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val recording = recordingRepo(source)
+            val vm = DiscussionListViewModel(recording)
+            val collector = launch { vm.state.collect { } }
+            advanceUntilIdle()
+            source.emit(listOf(sampleDiscussion("disc-1")))
+            advanceUntilIdle()
+
+            vm.onEvent(DiscussionListEvent.PromoteConfirmed)
+            advanceUntilIdle()
+
+            assertEquals(emptyList<PromoteCall>(), recording.promoteCalls)
+            collector.cancel()
+        }
+
+    @Test
+    fun pendingPromotion_cleared_whenUpstreamEmitsEmpty() =
+        runTest {
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val vm = DiscussionListViewModel(stubRepo(source))
+            val collector = launch { vm.state.collect { } }
+            advanceUntilIdle()
+            source.emit(listOf(sampleDiscussion("disc-1").copy(name = "foo")))
+            advanceUntilIdle()
+
+            vm.onEvent(DiscussionListEvent.SaveAsChannelRequested("disc-1"))
+            advanceUntilIdle()
+            source.emit(emptyList())
+            advanceUntilIdle()
+
+            assertEquals(DiscussionListUiState.Empty, vm.state.value)
+            source.emit(listOf(sampleDiscussion("disc-2")))
+            advanceUntilIdle()
+            val s = vm.state.value
+            assertTrue("expected Loaded, was $s", s is DiscussionListUiState.Loaded)
+            assertEquals(null, (s as DiscussionListUiState.Loaded).pendingPromotion)
+            collector.cancel()
         }
 
     @Test
@@ -240,6 +404,60 @@ class DiscussionListViewModelTest {
                 workspace: String,
             ): Session = TODO("not used")
         }
+
+    private data class PromoteCall(
+        val conversationId: String,
+        val name: String,
+        val workspace: String?,
+    )
+
+    private class RecordingRepo(
+        private val source: MutableSharedFlow<List<Conversation>>,
+    ) : ConversationRepository {
+        val promoteCalls = mutableListOf<PromoteCall>()
+
+        override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = source
+
+        override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = TODO("not used")
+
+        override suspend fun createDiscussion(workspace: String?): Conversation = TODO("not used")
+
+        override suspend fun promote(
+            conversationId: String,
+            name: String,
+            workspace: String?,
+        ): Conversation {
+            promoteCalls += PromoteCall(conversationId, name, workspace)
+            return Conversation(
+                id = conversationId,
+                name = name,
+                cwd = workspace ?: DEFAULT_SCRATCH_CWD,
+                currentSessionId = "s-$conversationId",
+                sessionHistory = listOf("s-$conversationId"),
+                isPromoted = true,
+                lastUsedAt = Instant.parse("2026-05-12T00:00:00Z"),
+            )
+        }
+
+        override suspend fun archive(conversationId: String): Unit = TODO("not used")
+
+        override suspend fun rename(
+            conversationId: String,
+            name: String,
+        ): Conversation = TODO("not used")
+
+        override suspend fun startNewSession(
+            conversationId: String,
+            workspace: String?,
+        ): Session = TODO("not used")
+
+        override suspend fun changeWorkspace(
+            conversationId: String,
+            workspace: String,
+        ): Session = TODO("not used")
+    }
+
+    private fun recordingRepo(source: MutableSharedFlow<List<Conversation>>): RecordingRepo = RecordingRepo(source)
 
     private fun sampleDiscussion(id: String): Conversation =
         Conversation(

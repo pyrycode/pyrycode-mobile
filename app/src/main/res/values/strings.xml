@@ -18,4 +18,8 @@
     <string name="settings_title">Settings</string>
     <string name="cd_add_memory_plugin">Add memory plugin</string>
     <string name="license_title">License</string>
+    <string name="promote_dialog_title">Save as channel?</string>
+    <string name="promote_dialog_body">Save \"%1$s\" as a channel?</string>
+    <string name="promote_dialog_confirm">Save as channel</string>
+    <string name="promote_dialog_cancel">Cancel</string>
 </resources>
