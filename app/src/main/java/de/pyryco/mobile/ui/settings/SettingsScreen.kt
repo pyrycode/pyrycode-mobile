@@ -2,6 +2,7 @@ package de.pyryco.mobile.ui.settings
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -47,12 +48,15 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 @Composable
 fun SettingsScreen(
     themeMode: ThemeMode,
+    useWallpaperColors: Boolean,
     onSelectTheme: (ThemeMode) -> Unit,
+    onToggleUseWallpaperColors: (Boolean) -> Unit,
     onBack: () -> Unit,
     onOpenLicense: () -> Unit,
     onOpenArchivedDiscussions: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val dynamicColorSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     Scaffold(
         modifier = modifier,
         topBar = {
@@ -70,7 +74,6 @@ fun SettingsScreen(
         },
     ) { inner ->
         val context = LocalContext.current
-        var materialYou by remember { mutableStateOf(true) }
         var defaultYolo by remember { mutableStateOf(false) }
         var pushNotifications by remember { mutableStateOf(true) }
         var showThemeDialog by remember { mutableStateOf(false) }
@@ -115,9 +118,19 @@ fun SettingsScreen(
                 onClick = { showThemeDialog = true },
             )
             SettingsRow(
-                headline = "Use Material You dynamic color",
+                headline = stringResource(R.string.settings_use_wallpaper_colors),
+                supporting =
+                    if (!dynamicColorSupported) {
+                        stringResource(R.string.settings_use_wallpaper_colors_unsupported)
+                    } else {
+                        null
+                    },
                 trailing = {
-                    Switch(checked = materialYou, onCheckedChange = { materialYou = it })
+                    Switch(
+                        checked = useWallpaperColors,
+                        onCheckedChange = onToggleUseWallpaperColors,
+                        enabled = dynamicColorSupported,
+                    )
                 },
             )
 
@@ -291,7 +304,9 @@ private fun SettingsScreenLightPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
         SettingsScreen(
             themeMode = ThemeMode.SYSTEM,
+            useWallpaperColors = false,
             onSelectTheme = {},
+            onToggleUseWallpaperColors = {},
             onBack = {},
             onOpenLicense = {},
             onOpenArchivedDiscussions = {},
@@ -305,7 +320,9 @@ private fun SettingsScreenDarkPreview() {
     PyrycodeMobileTheme(darkTheme = true) {
         SettingsScreen(
             themeMode = ThemeMode.SYSTEM,
+            useWallpaperColors = false,
             onSelectTheme = {},
+            onToggleUseWallpaperColors = {},
             onBack = {},
             onOpenLicense = {},
             onOpenArchivedDiscussions = {},

@@ -19,8 +19,19 @@ class SettingsViewModel(
             initialValue = ThemeMode.SYSTEM,
         )
 
+    val useWallpaperColors: StateFlow<Boolean> =
+        appPreferences.useWallpaperColors.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = false,
+        )
+
     fun onSelectTheme(mode: ThemeMode) {
         viewModelScope.launch { appPreferences.setThemeMode(mode) }
+    }
+
+    fun onToggleUseWallpaperColors(enabled: Boolean) {
+        viewModelScope.launch { appPreferences.setUseWallpaperColors(enabled) }
     }
 
     private companion object {

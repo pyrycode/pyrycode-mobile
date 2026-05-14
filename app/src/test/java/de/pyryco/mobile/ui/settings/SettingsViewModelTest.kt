@@ -116,4 +116,46 @@ class SettingsViewModelTest {
             assertEquals(ThemeMode.LIGHT, vm.themeMode.value)
             collector.cancel()
         }
+
+    @Test
+    fun useWallpaperColors_initialState_emitsFalse_whenNoStoredValue() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = SettingsViewModel(prefs)
+            val collector = launch { vm.useWallpaperColors.collect { } }
+            advanceUntilIdle()
+            assertEquals(false, vm.useWallpaperColors.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun useWallpaperColors_initialState_mirrorsPersistedTrue() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            prefs.setUseWallpaperColors(true)
+            advanceUntilIdle()
+            val vm = SettingsViewModel(prefs)
+            val collector = launch { vm.useWallpaperColors.collect { } }
+            advanceUntilIdle()
+            assertEquals(true, vm.useWallpaperColors.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun onToggleUseWallpaperColors_persistsAndFlowReEmits() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = SettingsViewModel(prefs)
+            val collector = launch { vm.useWallpaperColors.collect { } }
+            advanceUntilIdle()
+            vm.onToggleUseWallpaperColors(true)
+            advanceUntilIdle()
+            assertEquals(true, prefs.useWallpaperColors.first())
+            assertEquals(true, vm.useWallpaperColors.value)
+            vm.onToggleUseWallpaperColors(false)
+            advanceUntilIdle()
+            assertEquals(false, prefs.useWallpaperColors.first())
+            assertEquals(false, vm.useWallpaperColors.value)
+            collector.cancel()
+        }
 }

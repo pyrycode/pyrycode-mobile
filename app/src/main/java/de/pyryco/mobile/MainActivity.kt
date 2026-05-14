@@ -200,9 +200,12 @@ private fun PyryNavHost(
         composable(Routes.SETTINGS) {
             val vm = koinViewModel<SettingsViewModel>()
             val themeMode by vm.themeMode.collectAsStateWithLifecycle()
+            val useWallpaperColors by vm.useWallpaperColors.collectAsStateWithLifecycle()
             SettingsScreen(
                 themeMode = themeMode,
+                useWallpaperColors = useWallpaperColors,
                 onSelectTheme = vm::onSelectTheme,
+                onToggleUseWallpaperColors = vm::onToggleUseWallpaperColors,
                 onBack = { navController.popBackStack() },
                 onOpenLicense = { navController.navigate(Routes.LICENSE) },
                 onOpenArchivedDiscussions = { navController.navigate(Routes.ARCHIVED_DISCUSSIONS) },
