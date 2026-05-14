@@ -4,6 +4,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -17,7 +18,18 @@ class AppPreferences(
         dataStore.edit { prefs -> prefs[PAIRED_SERVER_EXISTS] = value }
     }
 
+    val themeMode: Flow<ThemeMode> =
+        dataStore.data.map { prefs ->
+            val stored = prefs[THEME_MODE]
+            ThemeMode.entries.firstOrNull { it.name == stored } ?: ThemeMode.SYSTEM
+        }
+
+    suspend fun setThemeMode(mode: ThemeMode) {
+        dataStore.edit { prefs -> prefs[THEME_MODE] = mode.name }
+    }
+
     private companion object {
         val PAIRED_SERVER_EXISTS = booleanPreferencesKey("paired_server_exists")
+        val THEME_MODE = stringPreferencesKey("theme_mode")
     }
 }

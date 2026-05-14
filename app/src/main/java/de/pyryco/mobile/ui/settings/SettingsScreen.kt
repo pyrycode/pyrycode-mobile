@@ -40,6 +40,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -48,6 +49,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenLicense: () -> Unit,
     modifier: Modifier = Modifier,
+    themeMode: ThemeMode = ThemeMode.SYSTEM,
 ) {
     Scaffold(
         modifier = modifier,
@@ -94,7 +96,7 @@ fun SettingsScreen(
             SettingsSectionHeader("Appearance")
             SettingsRow(
                 headline = "Theme",
-                supporting = "System",
+                supporting = themeMode.label(),
                 trailing = { ChevronIcon() },
                 onClick = {},
             )
@@ -260,6 +262,13 @@ private fun AddPill(onClick: () -> Unit) {
         Text(text = "Add", style = MaterialTheme.typography.labelLarge)
     }
 }
+
+private fun ThemeMode.label(): String =
+    when (this) {
+        ThemeMode.SYSTEM -> "System default"
+        ThemeMode.LIGHT -> "Light"
+        ThemeMode.DARK -> "Dark"
+    }
 
 private const val SOURCE_REPO_URL = "https://github.com/pyrycode/pyrycode-mobile"
 

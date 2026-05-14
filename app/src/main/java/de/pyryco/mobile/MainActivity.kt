@@ -6,6 +6,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
@@ -25,6 +26,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.ui.conversations.list.ChannelListEvent
 import de.pyryco.mobile.ui.conversations.list.ChannelListNavigation
 import de.pyryco.mobile.ui.conversations.list.ChannelListScreen
@@ -48,9 +50,17 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            PyrycodeMobileTheme {
+            val appPreferences = koinInject<AppPreferences>()
+            val themeMode by appPreferences.themeMode
+                .collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
+            val darkTheme =
+                when (themeMode) {
+                    ThemeMode.SYSTEM -> isSystemInDarkTheme()
+                    ThemeMode.LIGHT -> false
+                    ThemeMode.DARK -> true
+                }
+            PyrycodeMobileTheme(darkTheme = darkTheme) {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    val appPreferences = koinInject<AppPreferences>()
                     val paired: Boolean? by produceState<Boolean?>(
                         initialValue = null,
                         appPreferences,
@@ -180,9 +190,13 @@ private fun PyryNavHost(
             Text("Conversation thread placeholder: $conversationId")
         }
         composable(Routes.SETTINGS) {
+            val appPreferences = koinInject<AppPreferences>()
+            val themeMode by appPreferences.themeMode
+                .collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
             SettingsScreen(
                 onBack = { navController.popBackStack() },
                 onOpenLicense = { navController.navigate(Routes.LICENSE) },
+                themeMode = themeMode,
             )
         }
         composable(Routes.LICENSE) {

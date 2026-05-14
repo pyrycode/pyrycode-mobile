@@ -3,6 +3,8 @@ package de.pyryco.mobile.data.preferences
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -51,5 +53,27 @@ class AppPreferencesTest {
         runBlocking {
             prefs.setPairedServerExists(true)
             assertEquals(true, prefs.pairedServerExists.first())
+        }
+
+    @Test
+    fun themeMode_defaultsToSystem() =
+        runBlocking {
+            assertEquals(ThemeMode.SYSTEM, prefs.themeMode.first())
+        }
+
+    @Test
+    fun setThemeMode_roundTripsAllValues() =
+        runBlocking {
+            for (mode in ThemeMode.entries) {
+                prefs.setThemeMode(mode)
+                assertEquals(mode, prefs.themeMode.first())
+            }
+        }
+
+    @Test
+    fun themeMode_unparseableStoredValue_fallsBackToSystem() =
+        runBlocking {
+            dataStore.edit { it[stringPreferencesKey("theme_mode")] = "PURPLE" }
+            assertEquals(ThemeMode.SYSTEM, prefs.themeMode.first())
         }
 }
