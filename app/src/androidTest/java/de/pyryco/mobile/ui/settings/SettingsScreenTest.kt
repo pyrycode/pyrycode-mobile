@@ -24,7 +24,9 @@ class SettingsScreenTest {
             PyrycodeMobileTheme {
                 SettingsScreen(
                     themeMode = ThemeMode.SYSTEM,
+                    useWallpaperColors = false,
                     onSelectTheme = {},
+                    onToggleUseWallpaperColors = {},
                     onBack = {},
                     onOpenLicense = {},
                     onOpenArchivedDiscussions = {},
@@ -44,7 +46,9 @@ class SettingsScreenTest {
             PyrycodeMobileTheme {
                 SettingsScreen(
                     themeMode = ThemeMode.SYSTEM,
+                    useWallpaperColors = false,
                     onSelectTheme = {},
+                    onToggleUseWallpaperColors = {},
                     onBack = {},
                     onOpenLicense = {},
                     onOpenArchivedDiscussions = {},

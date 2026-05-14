@@ -23,6 +23,8 @@
     <string name="promote_dialog_confirm">Save as channel</string>
     <string name="promote_dialog_cancel">Cancel</string>
     <string name="settings_theme_dialog_title">Theme</string>
+    <string name="settings_use_wallpaper_colors">Use wallpaper colors</string>
+    <string name="settings_use_wallpaper_colors_unsupported">Requires Android 12 or newer</string>
     <string name="archived_discussions_title">Archived discussions</string>
     <string name="archived_discussions_empty">No archived discussions</string>
     <string name="archived_discussions_settings_row">Archived discussions</string>
