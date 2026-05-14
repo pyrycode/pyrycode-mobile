@@ -70,6 +70,8 @@ class DiscussionListViewModelTest {
 
                     override suspend fun archive(conversationId: String): Unit = TODO("not used")
 
+                    override suspend fun unarchive(conversationId: String): Unit = TODO("not used")
+
                     override suspend fun rename(
                         conversationId: String,
                         name: String,
@@ -356,6 +358,8 @@ class DiscussionListViewModelTest {
 
             override suspend fun archive(conversationId: String): Unit = TODO("not used")
 
+            override suspend fun unarchive(conversationId: String): Unit = TODO("not used")
+
             override suspend fun rename(
                 conversationId: String,
                 name: String,
@@ -388,6 +392,8 @@ class DiscussionListViewModelTest {
             ): Conversation = TODO("not used")
 
             override suspend fun archive(conversationId: String): Unit = TODO("not used")
+
+            override suspend fun unarchive(conversationId: String): Unit = TODO("not used")
 
             override suspend fun rename(
                 conversationId: String,
@@ -440,6 +446,8 @@ class DiscussionListViewModelTest {
         }
 
         override suspend fun archive(conversationId: String): Unit = TODO("not used")
+
+        override suspend fun unarchive(conversationId: String): Unit = TODO("not used")
 
         override suspend fun rename(
             conversationId: String,

@@ -132,6 +132,16 @@ class FakeConversationRepository(
         }
     }
 
+    override suspend fun unarchive(conversationId: String) {
+        state.update { records ->
+            val record = records[conversationId] ?: throw unknown(conversationId)
+            records + (
+                conversationId to
+                    record.copy(conversation = record.conversation.copy(archived = false))
+            )
+        }
+    }
+
     override suspend fun rename(
         conversationId: String,
         name: String,

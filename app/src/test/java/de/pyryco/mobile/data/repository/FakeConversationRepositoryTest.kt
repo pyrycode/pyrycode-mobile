@@ -286,6 +286,67 @@ class FakeConversationRepositoryTest {
         }
 
     @Test
+    fun unarchive_movesConversation_from_Archived_to_Discussions_andRetainsInStore() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val archivedId = "seed-discussion-archived"
+
+            assertTrue(
+                "seeded archived discussion must appear in Archived before unarchive",
+                repo.observeConversations(ConversationFilter.Archived).first().any { it.id == archivedId },
+            )
+            assertTrue(
+                "seeded archived discussion must not appear in Discussions before unarchive",
+                repo.observeConversations(ConversationFilter.Discussions).first().none { it.id == archivedId },
+            )
+
+            repo.unarchive(archivedId)
+
+            assertTrue(
+                "unarchived conversation must leave Archived",
+                repo.observeConversations(ConversationFilter.Archived).first().none { it.id == archivedId },
+            )
+            assertTrue(
+                "unarchived discussion must appear in Discussions",
+                repo.observeConversations(ConversationFilter.Discussions).first().any { it.id == archivedId },
+            )
+            assertTrue(
+                "unarchived discussion must not appear in Channels",
+                repo.observeConversations(ConversationFilter.Channels).first().none { it.id == archivedId },
+            )
+            assertTrue(
+                "unarchived conversation must be retained in All",
+                repo.observeConversations(ConversationFilter.All).first().any { it.id == archivedId },
+            )
+        }
+
+    @Test
+    fun unarchive_onUnknownId_throws() {
+        val repo = FakeConversationRepository()
+        try {
+            runBlocking { repo.unarchive("nope") }
+            assertTrue("expected IllegalArgumentException", false)
+        } catch (_: IllegalArgumentException) {
+            // expected
+        }
+    }
+
+    @Test
+    fun unarchive_isIdempotent() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val archivedId = "seed-discussion-archived"
+            repo.unarchive(archivedId)
+            repo.unarchive(archivedId)
+            val discussions = repo.observeConversations(ConversationFilter.Discussions).first()
+            assertEquals(
+                "unarchived conversation must appear exactly once after two unarchive() calls",
+                1,
+                discussions.count { it.id == archivedId },
+            )
+        }
+
+    @Test
     fun rename_updates_name_and_reEmits() =
         runBlocking {
             val repo = FakeConversationRepository()
