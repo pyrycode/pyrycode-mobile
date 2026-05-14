@@ -46,7 +46,7 @@ interface ConversationRepository {
     ): Session
 }
 
-enum class ConversationFilter { All, Channels, Discussions }
+enum class ConversationFilter { All, Channels, Discussions, Archived }
 
 /**
  * One row in the conversation thread. The stream interleaves messages

@@ -11,6 +11,7 @@ data class Conversation(
     val isPromoted: Boolean,
     val lastUsedAt: Instant,
     val isSleeping: Boolean = false,
+    val archived: Boolean = false,
 )
 
 /**

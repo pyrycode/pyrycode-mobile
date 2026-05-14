@@ -17,9 +17,10 @@ class FakeConversationRepositoryTest {
     fun observeConversations_emitsExpectedSeeds_initially_for_all_filters() =
         runBlocking {
             val repo = FakeConversationRepository()
-            assertEquals(5, repo.observeConversations(ConversationFilter.All).first().size)
+            assertEquals(6, repo.observeConversations(ConversationFilter.All).first().size)
             assertEquals(3, repo.observeConversations(ConversationFilter.Channels).first().size)
             assertEquals(2, repo.observeConversations(ConversationFilter.Discussions).first().size)
+            assertEquals(1, repo.observeConversations(ConversationFilter.Archived).first().size)
         }
 
     @Test
@@ -105,7 +106,7 @@ class FakeConversationRepositoryTest {
     fun seededDiscussions_remainEmpty() =
         runBlocking {
             val repo = FakeConversationRepository()
-            for (id in listOf("seed-discussion-a", "seed-discussion-b")) {
+            for (id in listOf("seed-discussion-a", "seed-discussion-b", "seed-discussion-archived")) {
                 assertEquals(
                     "discussion $id must be empty",
                     emptyList<ThreadItem>(),
@@ -157,7 +158,7 @@ class FakeConversationRepositoryTest {
             val repo = FakeConversationRepository()
             val created = repo.createDiscussion()
             val all = repo.observeConversations(ConversationFilter.All).first()
-            assertEquals(6, all.size)
+            assertEquals(7, all.size)
             assertTrue(all.any { it.id == created.id })
         }
 
@@ -205,12 +206,83 @@ class FakeConversationRepositoryTest {
         }
 
     @Test
-    fun archive_removes_from_observeConversations() =
+    fun archive_movesConversation_from_Discussions_to_Archived_andRetainsInStore() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val created = repo.createDiscussion()
+
+            assertTrue(
+                "newly created discussion must appear in Discussions",
+                repo.observeConversations(ConversationFilter.Discussions).first().any { it.id == created.id },
+            )
+            assertTrue(
+                "newly created discussion must not appear in Archived",
+                repo.observeConversations(ConversationFilter.Archived).first().none { it.id == created.id },
+            )
+
+            repo.archive(created.id)
+
+            assertTrue(
+                "archived conversation must leave Discussions",
+                repo.observeConversations(ConversationFilter.Discussions).first().none { it.id == created.id },
+            )
+            assertTrue(
+                "archived conversation must not appear in Channels",
+                repo.observeConversations(ConversationFilter.Channels).first().none { it.id == created.id },
+            )
+            assertTrue(
+                "archived conversation must appear in Archived",
+                repo.observeConversations(ConversationFilter.Archived).first().any { it.id == created.id },
+            )
+            assertTrue(
+                "archived conversation must be retained in All",
+                repo.observeConversations(ConversationFilter.All).first().any { it.id == created.id },
+            )
+        }
+
+    @Test
+    fun seededArchivedDiscussion_appearsIn_Archived_butNotIn_Discussions() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val archivedId = "seed-discussion-archived"
+            assertTrue(
+                "seeded archived discussion must appear in Archived",
+                repo.observeConversations(ConversationFilter.Archived).first().any { it.id == archivedId },
+            )
+            assertTrue(
+                "seeded archived discussion must not appear in Discussions",
+                repo.observeConversations(ConversationFilter.Discussions).first().none { it.id == archivedId },
+            )
+            assertTrue(
+                "seeded archived discussion must be retained in All",
+                repo.observeConversations(ConversationFilter.All).first().any { it.id == archivedId },
+            )
+        }
+
+    @Test
+    fun archive_onUnknownId_throws() {
+        val repo = FakeConversationRepository()
+        try {
+            runBlocking { repo.archive("nope") }
+            assertTrue("expected IllegalArgumentException", false)
+        } catch (_: IllegalArgumentException) {
+            // expected
+        }
+    }
+
+    @Test
+    fun archive_isIdempotent() =
         runBlocking {
             val repo = FakeConversationRepository()
             val created = repo.createDiscussion()
             repo.archive(created.id)
-            assertTrue(repo.observeConversations(ConversationFilter.All).first().none { it.id == created.id })
+            repo.archive(created.id)
+            val archived = repo.observeConversations(ConversationFilter.Archived).first()
+            assertEquals(
+                "archived conversation must appear exactly once after two archive() calls",
+                1,
+                archived.count { it.id == created.id },
+            )
         }
 
     @Test

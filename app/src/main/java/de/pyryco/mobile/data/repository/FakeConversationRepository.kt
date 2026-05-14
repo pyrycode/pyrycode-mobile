@@ -38,8 +38,9 @@ class FakeConversationRepository(
                 }.filter { conv ->
                     when (filter) {
                         ConversationFilter.All -> true
-                        ConversationFilter.Channels -> conv.isPromoted
-                        ConversationFilter.Discussions -> !conv.isPromoted
+                        ConversationFilter.Channels -> conv.isPromoted && !conv.archived
+                        ConversationFilter.Discussions -> !conv.isPromoted && !conv.archived
+                        ConversationFilter.Archived -> conv.archived
                     }
                 }.sortedByDescending { it.lastUsedAt }
         }
@@ -123,8 +124,11 @@ class FakeConversationRepository(
 
     override suspend fun archive(conversationId: String) {
         state.update { records ->
-            if (conversationId !in records) throw unknown(conversationId)
-            records - conversationId
+            val record = records[conversationId] ?: throw unknown(conversationId)
+            records + (
+                conversationId to
+                    record.copy(conversation = record.conversation.copy(archived = true))
+            )
         }
     }
 
@@ -319,6 +323,14 @@ class FakeConversationRepository(
                         claudeSessionUuid = "seed-claude-discussion-a",
                         lastUsedAt = Instant.parse("2026-05-11T14:00:00Z"),
                     ),
+                    seedDiscussion(
+                        id = "seed-discussion-archived",
+                        cwd = DEFAULT_SCRATCH_CWD,
+                        sessionId = "seed-session-discussion-archived",
+                        claudeSessionUuid = "seed-claude-discussion-archived",
+                        lastUsedAt = Instant.parse("2026-04-15T12:00:00Z"),
+                        archived = true,
+                    ),
                 )
             return seeds.associateBy { it.conversation.id }
         }
@@ -422,6 +434,7 @@ class FakeConversationRepository(
             sessionId: String,
             claudeSessionUuid: String,
             lastUsedAt: Instant,
+            archived: Boolean = false,
         ): ConversationRecord {
             val session =
                 Session(
@@ -440,6 +453,7 @@ class FakeConversationRepository(
                     sessionHistory = listOf(sessionId),
                     isPromoted = false,
                     lastUsedAt = lastUsedAt,
+                    archived = archived,
                 )
             return ConversationRecord(conversation, mapOf(sessionId to session))
         }

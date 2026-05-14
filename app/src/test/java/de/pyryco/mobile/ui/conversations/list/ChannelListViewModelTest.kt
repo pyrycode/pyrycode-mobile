@@ -348,6 +348,7 @@ class ChannelListViewModelTest {
                     ConversationFilter.Channels -> channels
                     ConversationFilter.Discussions -> discussions
                     ConversationFilter.All -> TODO("not used")
+                    ConversationFilter.Archived -> TODO("not used")
                 }
 
             override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = TODO("not used")
