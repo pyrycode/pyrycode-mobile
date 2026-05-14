@@ -20,8 +20,11 @@ Pure stateless Composable. No `ViewModel`, no `remember`, no I/O.
 fun WelcomeScreen(
     onPaired: () -> Unit,
     onSetup: () -> Unit,
+    modifier: Modifier = Modifier,
 )
 ```
+
+The `modifier` parameter landed in #84 to satisfy compose-lints' `ComposeModifierMissing` rule. It threads onto the outermost `Box` (`Box(modifier = modifier.fillMaxSize().background(…).drawBehind { … })`); the NavHost call site passes nothing and the default keeps positioning unchanged.
 
 Layout is a top-level `Box(fillMaxSize)` with three layers stacked back-to-front:
 
@@ -41,7 +44,7 @@ The screen is consumed in follow-up tickets that landed in any order:
 - **#12** wired `onPaired` to the `scanner` stub route; Phase 4 replaces the scanner body itself.
 - **#14** wired `onSetup` to an `Intent.ACTION_VIEW` launch at `https://pyryco.de/setup`.
 
-Keeping `WelcomeScreen.kt` free of `NavController` and `Intent` references is what made that parallelism work, and it keeps preview / future ComposeTestRule callers able to pass `onSetup = {}` no-ops without a real `Context`. The signature is **fixed**: don't add a `modifier` parameter, don't broaden the callbacks.
+Keeping `WelcomeScreen.kt` free of `NavController` and `Intent` references is what made that parallelism work, and it keeps preview / future ComposeTestRule callers able to pass `onSetup = {}` no-ops without a real `Context`. Callback surface stays narrow — don't broaden `onPaired` / `onSetup` into a single `(state, onEvent)` MVI shape (the screen has no state to manage). The `modifier` trailer added by #84 is the upstream-mandated exception — compose-lints' `ComposeModifierMissing` rule applies project-wide.
 
 ## Configuration / usage
 

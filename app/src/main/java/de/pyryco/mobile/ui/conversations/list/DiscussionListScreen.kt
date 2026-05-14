@@ -175,7 +175,7 @@ private fun DiscussionRow(
 @Composable
 private fun CenteredText(
     text: String,
-    modifier: Modifier,
+    modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(text)

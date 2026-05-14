@@ -23,6 +23,7 @@ spotless {
             "**/.gradle/**",
             "**/node_modules/**",
             "gradle/wrapper/**",
+            ".codegraph/**",
         )
         trimTrailingWhitespace()
         endWithNewline()

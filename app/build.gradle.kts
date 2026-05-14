@@ -41,6 +41,9 @@ android {
         compose = true
         buildConfig = true
     }
+    lint {
+        abortOnError = true
+    }
 }
 
 dependencies {
@@ -61,6 +64,7 @@ dependencies {
     implementation(libs.koin.androidx.compose)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.datetime)
+    lintChecks(libs.compose.lint.checks)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     androidTestImplementation(platform(libs.androidx.compose.bom))

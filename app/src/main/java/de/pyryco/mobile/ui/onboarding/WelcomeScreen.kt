@@ -35,11 +35,12 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 fun WelcomeScreen(
     onPaired: () -> Unit,
     onSetup: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val glowColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
     Box(
         modifier =
-            Modifier
+            modifier
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.surface)
                 .drawBehind {
