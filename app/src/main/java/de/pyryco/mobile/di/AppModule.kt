@@ -9,6 +9,7 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
+import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
 import de.pyryco.mobile.ui.settings.SettingsViewModel
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.dsl.viewModel
@@ -27,4 +28,5 @@ val appModule =
         viewModel { ChannelListViewModel(get()) }
         viewModel { DiscussionListViewModel(get()) }
         viewModel { SettingsViewModel(get()) }
+        viewModel { ArchivedDiscussionsViewModel(get()) }
     }

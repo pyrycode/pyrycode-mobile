@@ -50,6 +50,7 @@ fun SettingsScreen(
     onSelectTheme: (ThemeMode) -> Unit,
     onBack: () -> Unit,
     onOpenLicense: () -> Unit,
+    onOpenArchivedDiscussions: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Scaffold(
@@ -178,10 +179,9 @@ fun SettingsScreen(
 
             SettingsSectionHeader("Storage")
             SettingsRow(
-                headline = "Archived conversations",
-                supporting = "11 archived",
+                headline = stringResource(R.string.archived_discussions_settings_row),
                 trailing = { ChevronIcon() },
-                onClick = {},
+                onClick = onOpenArchivedDiscussions,
             )
             SettingsRow(
                 headline = "Clear cache",
@@ -294,6 +294,7 @@ private fun SettingsScreenLightPreview() {
             onSelectTheme = {},
             onBack = {},
             onOpenLicense = {},
+            onOpenArchivedDiscussions = {},
         )
     }
 }
@@ -307,6 +308,7 @@ private fun SettingsScreenDarkPreview() {
             onSelectTheme = {},
             onBack = {},
             onOpenLicense = {},
+            onOpenArchivedDiscussions = {},
         )
     }
 }
