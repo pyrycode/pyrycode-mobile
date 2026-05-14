@@ -46,7 +46,10 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ScannerScreen(onTap: () -> Unit) {
+fun ScannerScreen(
+    onTap: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     // Phase 1.5: every interactive element fires onTap (AC6)
     val blueStop = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
     val coralStop = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.06f)
@@ -54,7 +57,7 @@ fun ScannerScreen(onTap: () -> Unit) {
     Surface(
         color = MaterialTheme.colorScheme.surface,
         modifier =
-            Modifier
+            modifier
                 .fillMaxSize()
                 .pointerInput(Unit) {
                     detectTapGestures(onTap = { onTap() })
@@ -194,9 +197,9 @@ private fun Reticle(modifier: Modifier = Modifier) {
 
 @Composable
 private fun Corner(
-    modifier: Modifier = Modifier,
     alignment: Alignment,
     color: Color,
+    modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.size(28.dp)) {
         Box(
