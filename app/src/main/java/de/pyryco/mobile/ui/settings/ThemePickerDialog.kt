@@ -48,8 +48,7 @@ internal fun ThemePickerDialog(
                                     selected = isSelected,
                                     role = Role.RadioButton,
                                     onClick = { pending = mode },
-                                )
-                                .padding(vertical = 8.dp),
+                                ).padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         RadioButton(selected = isSelected, onClick = null)
