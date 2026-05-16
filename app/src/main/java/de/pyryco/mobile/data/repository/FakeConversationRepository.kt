@@ -48,8 +48,8 @@ class FakeConversationRepository(
 
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
         state.map { records ->
-            val messages = records[conversationId]?.messages ?: return@map emptyList()
-            buildThreadItems(messages)
+            val record = records[conversationId] ?: return@map emptyList()
+            buildThreadItems(record.messages, record.boundariesBySessionId)
         }
 
     override fun observeLastMessage(conversationId: String): Flow<Message?> =
@@ -57,7 +57,10 @@ class FakeConversationRepository(
             records[conversationId]?.messages?.maxByOrNull { it.timestamp }
         }
 
-    private fun buildThreadItems(messages: List<Message>): List<ThreadItem> {
+    private fun buildThreadItems(
+        messages: List<Message>,
+        boundariesBySessionId: Map<String, AuthoredBoundary>,
+    ): List<ThreadItem> {
         if (messages.isEmpty()) return emptyList()
         val sorted = messages.sortedBy { it.timestamp }
         val result = ArrayList<ThreadItem>(sorted.size + sorted.size / 4)
@@ -65,12 +68,14 @@ class FakeConversationRepository(
         for (message in sorted) {
             val prior = previousSessionId
             if (prior != null && prior != message.sessionId) {
+                val authored = boundariesBySessionId[message.sessionId]
                 result +=
                     ThreadItem.SessionBoundary(
                         previousSessionId = prior,
                         newSessionId = message.sessionId,
-                        reason = BoundaryReason.Clear,
+                        reason = authored?.reason ?: BoundaryReason.Clear,
                         occurredAt = message.timestamp,
+                        workspaceCwd = authored?.workspaceCwd,
                     )
             }
             result += ThreadItem.MessageItem(message)
@@ -250,6 +255,12 @@ class FakeConversationRepository(
         val conversation: Conversation,
         val sessions: Map<String, Session>,
         val messages: List<Message> = emptyList(),
+        val boundariesBySessionId: Map<String, AuthoredBoundary> = emptyMap(),
+    )
+
+    private data class AuthoredBoundary(
+        val reason: BoundaryReason,
+        val workspaceCwd: String?,
     )
 
     companion object {
@@ -280,6 +291,7 @@ class FakeConversationRepository(
                                             seedMsg(Role.User, "Also draft a quick note to the landlord.", "2026-04-28T10:20:00Z"),
                                             seedMsg(Role.Assistant, "Drafted. It's saved under.", "2026-04-28T10:28:00Z"),
                                         ),
+                                    nextBoundaryReason = BoundaryReason.Clear,
                                 ),
                             ),
                         currentMessages =
@@ -311,6 +323,8 @@ class FakeConversationRepository(
                                             seedMsg(Role.User, "Let's tackle the empty state first.", "2026-05-03T14:15:00Z"),
                                             seedMsg(Role.Assistant, "Started a sketch in.", "2026-05-03T14:24:00Z"),
                                         ),
+                                    nextBoundaryReason = BoundaryReason.WorkspaceChange,
+                                    nextWorkspaceCwd = "~/Workspace/pyrycode-mobile",
                                 ),
                             ),
                         currentMessages =
@@ -377,6 +391,7 @@ class FakeConversationRepository(
                                             seedMsg(Role.User, "Anna is out Thursday — who can cover.", "2026-04-30T11:15:00Z"),
                                             seedMsg(Role.Assistant, "Marko has the slot open. I drafted.", "2026-04-30T11:19:00Z"),
                                         ),
+                                    nextBoundaryReason = BoundaryReason.IdleEvict,
                                 ),
                             ),
                         currentMessages =
@@ -445,6 +460,8 @@ class FakeConversationRepository(
             val startedAt: Instant,
             val endedAt: Instant,
             val messages: List<SeedMessage>,
+            val nextBoundaryReason: BoundaryReason? = null,
+            val nextWorkspaceCwd: String? = null,
         )
 
         private fun seedChannel(
@@ -513,10 +530,19 @@ class FakeConversationRepository(
                     lastUsedAt = lastUsedAt,
                 )
             val sessions = (historicalSessions + currentSession).associateBy { it.id }
+            val orderedSessionIds = history.map { it.sessionId } + sessionId
+            val boundariesBySessionId =
+                history
+                    .mapIndexedNotNull { index, seed ->
+                        val reason = seed.nextBoundaryReason ?: return@mapIndexedNotNull null
+                        val successorId = orderedSessionIds[index + 1]
+                        successorId to AuthoredBoundary(reason, seed.nextWorkspaceCwd)
+                    }.toMap()
             return ConversationRecord(
                 conversation = conversation,
                 sessions = sessions,
                 messages = historicalMessages + currentMessageEntries,
+                boundariesBySessionId = boundariesBySessionId,
             )
         }
 

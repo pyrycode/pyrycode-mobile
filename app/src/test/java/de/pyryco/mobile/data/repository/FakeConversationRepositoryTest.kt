@@ -143,6 +143,65 @@ class FakeConversationRepositoryTest {
         }
 
     @Test
+    fun seededPersonalChannel_boundary_isClear_withNullWorkspaceCwd() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val items = repo.observeMessages("seed-channel-personal").first()
+            val boundary =
+                items.filterIsInstance<ThreadItem.SessionBoundary>().single()
+            assertEquals(BoundaryReason.Clear, boundary.reason)
+            assertNull(boundary.workspaceCwd)
+        }
+
+    @Test
+    fun seededPyrycodeMobileChannel_boundary_isWorkspaceChange_withSeededPath() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val items = repo.observeMessages("seed-channel-pyrycode-mobile").first()
+            val boundary =
+                items.filterIsInstance<ThreadItem.SessionBoundary>().single()
+            assertEquals(BoundaryReason.WorkspaceChange, boundary.reason)
+            assertEquals("~/Workspace/pyrycode-mobile", boundary.workspaceCwd)
+        }
+
+    @Test
+    fun seededJoiPilatesChannel_boundary_isIdleEvict_withNullWorkspaceCwd() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val items = repo.observeMessages("seed-channel-joi-pilates").first()
+            val boundary =
+                items.filterIsInstance<ThreadItem.SessionBoundary>().single()
+            assertEquals(BoundaryReason.IdleEvict, boundary.reason)
+            assertNull(boundary.workspaceCwd)
+        }
+
+    @Test
+    fun seededChannels_collectivelyExerciseAllBoundaryReasons() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val channelIds =
+                listOf(
+                    "seed-channel-personal",
+                    "seed-channel-pyrycode-mobile",
+                    "seed-channel-joi-pilates",
+                )
+            val reasons =
+                channelIds
+                    .map { repo.observeMessages(it).first() }
+                    .flatMap { it.filterIsInstance<ThreadItem.SessionBoundary>() }
+                    .map { it.reason }
+                    .toSet()
+            assertEquals(
+                setOf(
+                    BoundaryReason.Clear,
+                    BoundaryReason.IdleEvict,
+                    BoundaryReason.WorkspaceChange,
+                ),
+                reasons,
+            )
+        }
+
+    @Test
     fun observeMessages_emitsSeededToolMessage_withStructuredPayload() =
         runBlocking {
             val repo = FakeConversationRepository()
@@ -205,6 +264,7 @@ class FakeConversationRepositoryTest {
             assertEquals(sessionB, b.newSessionId)
             assertEquals(Instant.parse("2026-05-10T11:00:00Z"), b.occurredAt)
             assertEquals(BoundaryReason.Clear, b.reason)
+            assertNull(b.workspaceCwd)
 
             val boundaryIndex = items.indexOfFirst { it is ThreadItem.SessionBoundary }
             assertEquals(ThreadItem.MessageItem(messages[1]), items[boundaryIndex - 1])
