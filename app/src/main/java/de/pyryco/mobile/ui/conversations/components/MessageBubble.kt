@@ -15,12 +15,15 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.coroutines.delay
 import kotlinx.datetime.Clock
 
 private val MessageRowVerticalSpacing = 12.dp
@@ -35,6 +38,12 @@ private val UserBubbleShape =
 private val BubbleHorizontalPadding = 14.dp
 private val BubbleVerticalPadding = 12.dp
 
+private const val STREAMING_CARET_GLYPH = "▎"
+private const val STREAMING_REVEAL_CHARS_PER_SECOND = 50
+private const val STREAMING_REVEAL_STEP_CHARS = 1
+private const val STREAMING_REVEAL_STEP_MS: Long = 1000L / STREAMING_REVEAL_CHARS_PER_SECOND
+private const val STREAMING_CARET_BLINK_PERIOD_MS: Long = 500L
+
 @Composable
 fun MessageBubble(
     message: Message,
@@ -42,7 +51,7 @@ fun MessageBubble(
 ) {
     when (message.role) {
         Role.User -> UserMessageBubble(message.content, modifier)
-        Role.Assistant -> AssistantMessage(message.content, modifier)
+        Role.Assistant -> AssistantMessage(message, modifier)
         // Tool-role rendering lands in #131; ThreadScreen will route it before reaching here.
         Role.Tool -> Unit
     }
@@ -81,7 +90,7 @@ private fun UserMessageBubble(
 
 @Composable
 private fun AssistantMessage(
-    content: String,
+    message: Message,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -93,12 +102,53 @@ private fun AssistantMessage(
         CompositionLocalProvider(
             LocalContentColor provides MaterialTheme.colorScheme.onSurface,
         ) {
-            MarkdownText(
-                markdown = content,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            if (message.isStreaming) {
+                StreamingAssistantBody(
+                    content = message.content,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            } else {
+                MarkdownText(
+                    markdown = message.content,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun StreamingAssistantBody(
+    content: String,
+    modifier: Modifier = Modifier,
+) {
+    val revealedLength by produceState(initialValue = 0, key1 = content) {
+        while (value < content.length) {
+            delay(STREAMING_REVEAL_STEP_MS)
+            value = (value + STREAMING_REVEAL_STEP_CHARS).coerceAtMost(content.length)
+        }
+    }
+    val caretVisible by produceState(initialValue = true, key1 = Unit) {
+        while (true) {
+            delay(STREAMING_CARET_BLINK_PERIOD_MS)
+            value = !value
+        }
+    }
+    StreamingAssistantBodyView(
+        revealedText = content.take(revealedLength),
+        caretVisible = caretVisible,
+        modifier = modifier,
+    )
+}
+
+@Composable
+private fun StreamingAssistantBodyView(
+    revealedText: String,
+    caretVisible: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val displayText = if (caretVisible) revealedText + STREAMING_CARET_GLYPH else revealedText
+    MarkdownText(markdown = displayText, modifier = modifier)
 }
 
 private fun previewMessage(
@@ -223,7 +273,22 @@ Markdown:
 
 @Composable
 private fun MessageBubbleMarkdownPreviewBody() {
-    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+    Column(
+        modifier = Modifier.padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(MessageRowVerticalSpacing),
+    ) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            CompositionLocalProvider(
+                LocalContentColor provides MaterialTheme.colorScheme.onSurface,
+            ) {
+                StreamingAssistantBodyView(
+                    revealedText =
+                        MARKDOWN_PREVIEW_FIXTURE.take(MARKDOWN_PREVIEW_FIXTURE.length / 2),
+                    caretVisible = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
         MessageBubble(previewMessage(Role.Assistant, MARKDOWN_PREVIEW_FIXTURE))
     }
 }
