@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
+import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.ui.conversations.components.ConversationRow
 import de.pyryco.mobile.ui.conversations.components.DiscussionPreviewRow
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -115,6 +116,7 @@ fun ChannelListScreen(
                 Column(bodyModifier.fillMaxSize()) {
                     RecentDiscussionsSection(
                         discussions = state.recentDiscussions,
+                        lastMessages = state.recentDiscussionLastMessages,
                         totalCount = state.recentDiscussionsCount,
                         onSeeAllClick = { onEvent(ChannelListEvent.RecentDiscussionsTapped) },
                         onRowClick = { onEvent(ChannelListEvent.RowTapped(it)) },
@@ -147,6 +149,7 @@ fun ChannelListScreen(
                         item(key = "recent-discussions-section") {
                             RecentDiscussionsSection(
                                 discussions = state.recentDiscussions,
+                                lastMessages = state.recentDiscussionLastMessages,
                                 totalCount = state.recentDiscussionsCount,
                                 onSeeAllClick = { onEvent(ChannelListEvent.RecentDiscussionsTapped) },
                                 onRowClick = { onEvent(ChannelListEvent.RowTapped(it)) },
@@ -181,6 +184,7 @@ private fun ChannelsSectionHeader() {
 @Composable
 private fun RecentDiscussionsSection(
     discussions: List<Conversation>,
+    lastMessages: Map<String, Message>,
     totalCount: Int,
     onSeeAllClick: () -> Unit,
     onRowClick: (String) -> Unit,
@@ -200,6 +204,7 @@ private fun RecentDiscussionsSection(
         discussions.forEach { conversation ->
             DiscussionPreviewRow(
                 conversation = conversation,
+                lastMessage = lastMessages[conversation.id],
                 onClick = { onRowClick(conversation.id) },
             )
         }
