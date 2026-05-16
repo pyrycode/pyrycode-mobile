@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -64,7 +65,7 @@ fun WelcomeScreen(
             horizontalAlignment = Alignment.Start,
         ) {
             Column(
-                modifier = Modifier.padding(top = 136.dp),
+                modifier = Modifier.padding(top = 168.dp),
                 verticalArrangement = Arrangement.spacedBy(28.dp),
             ) {
                 Icon(
@@ -108,6 +109,7 @@ fun WelcomeScreen(
                         Modifier
                             .fillMaxWidth()
                             .height(56.dp),
+                    shape = RoundedCornerShape(28.dp),
                 ) {
                     Icon(
                         painter = painterResource(R.drawable.ic_qr_scan_frame),
