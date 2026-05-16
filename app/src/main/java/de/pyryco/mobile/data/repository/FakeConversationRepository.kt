@@ -183,6 +183,13 @@ class FakeConversationRepository(
         workspace: String,
     ): Session = mintNewSession(conversationId, workspace)
 
+    override suspend fun createWorkspaceFolder(name: String): String {
+        require(name.isNotBlank()) { "name must not be blank" }
+        val path = "pyry-workspace/$name"
+        bumpWorkspace(path)
+        return path
+    }
+
     override suspend fun sendMessage(
         conversationId: String,
         text: String,
