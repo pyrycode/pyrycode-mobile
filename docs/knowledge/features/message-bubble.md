@@ -1,6 +1,6 @@
 # MessageBubble
 
-Stateless row primitive (#128) rendering a single `Message` in the conversation thread surface. Two visual variants dispatched off `Message.role`: a right-aligned painted bubble for `Role.User` and a left-aligned flat text block for `Role.Assistant` (Claude-style — assistant text just flows in the column with the screen surface behind it). `Role.Tool` is a deliberate no-op pending #131. Plain text only — markdown rendering lands in #129, code blocks in #130, streaming caret in #132. Eventual call site is the `LazyColumn(reverseLayout = true)` body of [`ThreadScreen`](./thread-screen.md), but #128 ships the component without consumer wiring; the wiring waits for #127's fake `observeMessages(...)` repository.
+Stateless row primitive (#128) rendering a single `Message` in the conversation thread surface. Two visual variants dispatched off `Message.role`: a right-aligned painted bubble for `Role.User` (plain text) and a left-aligned flat text block for `Role.Assistant` (markdown-rendered via [`MarkdownText`](./markdown-text.md) since #129 — Claude-style, assistant text flows in the column with the screen surface behind it). `Role.Tool` is a deliberate no-op pending #131. Code-block styling lands in #130, streaming caret in #132. Eventual call site is the `LazyColumn(reverseLayout = true)` body of [`ThreadScreen`](./thread-screen.md), but #128 ships the component without consumer wiring; the wiring waits for #127's fake `observeMessages(...)` repository.
 
 Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). File: `MessageBubble.kt`. Sibling of [`DiscussionPreviewRow`](./discussion-preview-row.md), [`ConversationRow`](./conversation-row.md), `ArchiveRow.kt`.
 
@@ -9,7 +9,7 @@ Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/p
 Dispatches on `message.role` with a Kotlin `when`:
 
 - **`Role.User`** → `UserMessageBubble(content, modifier)` — outer `Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End)` pins to the right edge; inside, a `Surface(shape = UserBubbleShape, color = primaryContainer, modifier = Modifier.widthIn(max = UserBubbleMaxWidth))` wraps a `Text(content, style = bodyMedium, color = onPrimaryContainer)` with inner padding `14×12`. The asymmetric corner radii `(topStart = 20, topEnd = 20, bottomEnd = 6, bottomStart = 20)` give the bubble a "tail" pointing toward the user side.
-- **`Role.Assistant`** → `AssistantMessage(content, modifier)` — `Box(Modifier.fillMaxWidth())` containing a left-aligned `Text(content, modifier = Modifier.fillMaxWidth(), style = bodyMedium, color = onSurface)`. **No `Surface`, no `Modifier.background(...)`, no shape, no inner padding.** The assistant message flows in the column with the screen's surface color behind it.
+- **`Role.Assistant`** → `AssistantMessage(content, modifier)` — `Box(Modifier.fillMaxWidth())` containing a left-aligned [`MarkdownText(markdown = content, modifier = Modifier.fillMaxWidth())`](./markdown-text.md) wrapped in `CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) { ... }` (since #129; pre-#129 was a plain `Text(content, …)`). **No `Surface`, no `Modifier.background(...)`, no shape, no inner padding.** The assistant message flows in the column with the screen's surface color behind it.
 - **`Role.Tool`** → `Unit` — renders nothing. ThreadScreen will route `Role.Tool` to a separate tool-card composable (introduced in #131) before reaching this dispatcher. The no-op arm is the contract until then.
 
 Each variant adds `Modifier.padding(bottom = MessageRowVerticalSpacing = 12.dp)` to its outer container, so the per-row vertical rhythm lives on the component, not on the eventual `LazyColumn` consumer. The last message in the list carries a trailing 12dp before the (eventual) composer / status row — acceptable visual padding, not a bug.
@@ -66,22 +66,26 @@ Padding lives on the inner `Text`, not the outer `Surface`. The reverse (`Surfac
 
 `widthIn(max = UserBubbleMaxWidth = 320.dp)` caps the bubble at ~80% of a 412dp canvas (4dp-grid-aligned approximation of Figma's `w-[330px]` — `330.dp` is also acceptable for pixel-exact Figma match; pick one and name the constant). Short messages shrink-wrap; long messages wrap inside the cap.
 
-### Assistant variant — flat, deliberately diverges from Figma
+### Assistant variant — flat, deliberately diverges from Figma; markdown-rendered since #129
 
 ```kotlin
 Box(modifier = Modifier.fillMaxWidth().padding(bottom = MessageRowVerticalSpacing)) {
-    Text(
-        text = content,
-        modifier = Modifier.fillMaxWidth(),
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurface,
-    )
+    CompositionLocalProvider(
+        LocalContentColor provides MaterialTheme.colorScheme.onSurface,
+    ) {
+        MarkdownText(
+            markdown = content,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
 }
 ```
 
 **No `Surface`, no `Modifier.background(...)`, no shape.** The Figma frame (`16:25`, `16:32`, `16:42`, `16:54`) renders a bubbled assistant on `surface-container-high` with mirrored asymmetric rounding `(20/20/6/20)`. The #128 ticket body in both its Context paragraph ("Claude-style — flat assistant, bubbled user") and AC3 explicitly overrides that to a flat treatment. The architect spec records the precedence note: AC wins; Figma reconciliation is a downstream design call, not a #128 follow-up. If a code reviewer pushes back on the flat choice, the project escalation path is `needs-rework:po`, not in-PR debate.
 
 The asymmetry between variants is intentional — the user bubble is a self-contained painted surface, the assistant message is text that flows in the column with the screen's surface color behind it.
+
+**Why `CompositionLocalProvider(LocalContentColor provides onSurface)` rather than a `color: Color` argument on `MarkdownText` (since #129).** The renderer's signature is deliberately minimal (`markdown: String, modifier: Modifier = Modifier`) — no `color`, no `style`, no `onLinkClick`. The assistant surface owns the colour contract (`onSurface` reads against the screen's `surface`); future surfaces hosting the same renderer (system messages, tool cards) supply their own ambient via the same pattern. See [`MarkdownText`](./markdown-text.md) for the full rationale.
 
 ### Spacing — file-private named `val`s, no `LocalSpacing` provider
 
@@ -114,26 +118,30 @@ If a downstream ticket later wants to switch to consumer-side `Arrangement.space
 
 ## Configuration
 
-- **No new dependencies.** Uses only `androidx.compose.foundation.*` (`Row`, `Box`, `Column`, `Arrangement`, `fillMaxWidth`, `padding`, `widthIn`, `RoundedCornerShape`), `androidx.compose.material3.*` (`Surface`, `Text`, `MaterialTheme`), and `kotlinx.datetime.Clock` (in the preview helper only — production path uses the timestamp from the supplied `Message`).
-- **No new strings.** Plain `Text(message.content, …)` for both variants — no resource lookup, no role prefix, no fallback copy.
-- **No theme overrides.** Reads `colorScheme.primaryContainer`, `colorScheme.onPrimaryContainer`, `colorScheme.onSurface`, `typography.bodyMedium`. All are M3 defaults — no custom slots, no `CompositionLocal` overrides.
+- **One transitive dependency since #129:** the assistant variant routes through [`MarkdownText`](./markdown-text.md), which is wired against `org.jetbrains:markdown` (see [ADR 0002](../decisions/0002-markdown-renderer-library.md)). The component file itself still uses only `androidx.compose.foundation.*` (`Row`, `Box`, `Column`, `Arrangement`, `fillMaxWidth`, `padding`, `widthIn`, `RoundedCornerShape`), `androidx.compose.material3.*` (`LocalContentColor`, `Surface`, `Text`, `MaterialTheme`), `androidx.compose.runtime.CompositionLocalProvider`, and `kotlinx.datetime.Clock` (in the preview helper only — production path uses the timestamp from the supplied `Message`).
+- **No new strings.** User variant renders `Text(message.content, …)` plainly; assistant variant renders `MarkdownText(markdown = message.content, …)`. No resource lookup, no role prefix, no fallback copy.
+- **No theme overrides.** Reads `colorScheme.primaryContainer`, `colorScheme.onPrimaryContainer`, `colorScheme.onSurface`, `typography.bodyMedium` directly; the assistant variant supplies `onSurface` to the renderer through `LocalContentColor` rather than passing it as a parameter. All are M3 defaults — no custom slots.
 
 ## Previews
 
-Two `@Preview`s at the bottom of `MessageBubble.kt`, both `widthDp = 412`, both render a shared `MessageBubblePreviewSequence()` of four messages (User → Assistant → User → Assistant) inside `Surface { Column(Modifier.padding(horizontal = 16.dp)) { … } }`:
+Four `@Preview`s at the bottom of `MessageBubble.kt`, all `widthDp = 412`.
 
-- **`MessageBubbleLightPreview`** — `PyrycodeMobileTheme(darkTheme = false)`. Verifies the user bubble's `primaryContainer` fill and `onPrimaryContainer` text contrast against the light surface, plus the assistant variant's `onSurface` text legibility.
-- **`MessageBubbleDarkPreview`** — same shape, `darkTheme = true`, `uiMode = Configuration.UI_MODE_NIGHT_YES`. Verifies the same slots resolve correctly in the dark scheme.
+**Pair one — sequence rendering, plain-text-through-MarkdownText path** (added in #128, unchanged by #129). Both render a shared `MessageBubblePreviewSequence()` of four messages (User → Assistant → User → Assistant) inside `Surface { Column(Modifier.padding(horizontal = 16.dp)) { … } }`:
+
+- **`MessageBubbleLightPreview`** — `PyrycodeMobileTheme(darkTheme = false)`. Verifies the user bubble's `primaryContainer` fill and `onPrimaryContainer` text contrast against the light surface, plus the assistant variant's `onSurface` text legibility. Since #129, the assistant rows in this preview also serve as the no-markdown-syntax verification path through [`MarkdownText`](./markdown-text.md) — markdown-free assistant content must still render correctly.
+- **`MessageBubbleDarkPreview`** — same shape, `darkTheme = true`, `uiMode = Configuration.UI_MODE_NIGHT_YES`.
 
 The four-message sequence alternates roles to exercise both variants and the alternation rhythm. The last assistant message is a long multi-sentence string ("Good catch. There are three classes of edge case here, the most important being null user_ids in the legacy table — let me walk through each.") to verify multi-line wrap. The wrapping `Surface { Column(...) }` matches what the eventual `LazyColumn` runtime provides: the assistant variant's transparent background renders against the theme's surface color, and the user bubble has a 16dp column inset to pin against instead of the raw preview viewport edge.
 
-`previewMessage(role, content)` is a file-private factory that fixes the rest of the `Message` shape (`id = "preview-${role.name}"`, `sessionId = "preview-session"`, `timestamp = Clock.System.now()`, `isStreaming = false`). Keeps the four call sites in the sequence focused on the varying fields (role and content) instead of repeating the full constructor.
+**Pair two — markdown rendering** (added in #129; satisfies #129's AC6). `MessageBubbleMarkdownLightPreview` (`darkTheme = false`) and `MessageBubbleMarkdownDarkPreview` (`darkTheme = true`, `uiMode = Configuration.UI_MODE_NIGHT_YES`) render a single assistant-variant `MessageBubble` whose content is a file-private `MARKDOWN_PREVIEW_FIXTURE` raw triple-quoted string exercising every supported markdown element: h1/h2/h3, bold, italic, inline code, link to `https://pyryco.de`, unordered list, ordered list, blockquote, fenced Kotlin code block. The shared body composable `MessageBubbleMarkdownPreviewBody()` wraps the single bubble in `Column(Modifier.padding(horizontal = 16.dp))` for consistent inset.
+
+`previewMessage(role, content)` is a file-private factory that fixes the rest of the `Message` shape (`id = "preview-${role.name}"`, `sessionId = "preview-session"`, `timestamp = Clock.System.now()`, `isStreaming = false`). Keeps the call sites focused on the varying fields (role and content) instead of repeating the full constructor.
 
 No preview for the `Role.Tool` arm — the `when` renders nothing for it, so a preview would be a blank surface with no visual signal.
 
 ## Edge cases / limitations
 
-- **Plain text only.** `Text(message.content)` with no markdown parsing, no `buildAnnotatedString`, no code-block detection, no link recognition. Inline backticks render literally. Markdown rendering lands in #129, code blocks in #130.
+- **User variant is plain text; assistant variant renders markdown** (since #129). User messages render `Text(message.content)` with no parsing — the user wrote them, they're not markdown sources. Assistant messages render through [`MarkdownText`](./markdown-text.md): CommonMark element set (h1–h3, bold, italic, ordered/unordered lists, inline code, blockquote, inline links, fenced/indented code blocks). Unsupported AST kinds (tables, HTML, strikethrough, task lists, images) hit a `bodyMedium` raw-text fallback. Full code-block styling (outline border, language label, syntax highlighting) lands in #130.
 - **No streaming caret.** `Message.isStreaming = true` renders identically to `false` — no animated caret, no per-character reveal. #132 adds the caret without changing the public API.
 - **No timestamps in-bubble.** `Message.timestamp` is unused here. Per-bubble timestamps or per-session-delimiter timestamps are out of scope.
 - **No long-press, no `SelectionContainer`, no copy affordance.** The composable uses bare `Text(...)`, not `SelectionContainer { Text(...) }`. If long-press-to-copy lands later, the right place is a screen-level wrap of the `LazyColumn` body in a `SelectionContainer`, not per-bubble selection.
@@ -145,14 +153,15 @@ No preview for the `Role.Tool` arm — the `when` renders nothing for it, so a p
 
 ## Related
 
-- Ticket notes: [`../codebase/128.md`](../codebase/128.md)
-- Spec: `docs/specs/architecture/128-message-bubble-user-assistant-variants.md`
+- Ticket notes: [`../codebase/128.md`](../codebase/128.md), [`../codebase/129.md`](../codebase/129.md)
+- Specs: `docs/specs/architecture/128-message-bubble-user-assistant-variants.md`, `docs/specs/architecture/129-markdown-rendering-assistant-messages.md`
+- Decisions: [ADR 0002 — markdown renderer library](../decisions/0002-markdown-renderer-library.md) (assistant-variant rendering pipeline)
 - Upstream: [data model](./data-model.md) (`Message`, `Role`), [Thread screen](./thread-screen.md) (the eventual `LazyColumn(reverseLayout = true)` host — body wiring is downstream of #127)
+- Component pipeline: [`MarkdownText`](./markdown-text.md) (consumed by the assistant variant since #129)
 - Sibling pattern references: [`DiscussionPreviewRow`](./discussion-preview-row.md) (closest stateless-row composable; mirrored preview-pairing shape), [`ConversationRow`](./conversation-row.md), `ArchiveRow.kt`
 - Figma: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) — user variant matches nodes `16:23` / `16:39` / `16:51`; assistant variant **deliberately diverges** from `16:25` / `16:32` / `16:42` / `16:54` (Figma shows bubbled, AC mandates flat — AC wins, Figma reconciliation is a separate design call)
 - Downstream:
   - #127 — fake `observeMessages(conversationId)` repository (no consumer wiring until this lands)
-  - #129 — markdown rendering (replaces `Text(content, …)` inside both variant composables)
-  - #130 — code-block rendering (further extends the assistant variant's rendering)
+  - #130 — full code-block styling (outline border, language label, syntax highlighting). Replaces the `CodeBlock` composable inside [`MarkdownText`](./markdown-text.md) without changing `MessageBubble`'s API
   - #131 — tool-role rendering. Owns the `Role.Tool -> Unit` arm — either by introducing a `ToolMessage` composable and rewriting the arm, or by filtering `Role.Tool` upstream in `ThreadScreen`
-  - #132 — streaming caret + animation (consumes `Message.isStreaming`; public API unchanged)
+  - #132 — streaming caret + animation (consumes `Message.isStreaming`; public API unchanged; partial markdown strings flow through `MarkdownText` unchanged)
