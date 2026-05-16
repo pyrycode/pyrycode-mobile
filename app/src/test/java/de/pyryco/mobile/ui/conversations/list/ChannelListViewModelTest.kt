@@ -405,6 +405,11 @@ class ChannelListViewModelTest {
                 conversationId: String,
                 workspace: String,
             ): Session = TODO("not used")
+
+            override suspend fun sendMessage(
+                conversationId: String,
+                text: String,
+            ): Message = TODO("not used")
         }
 
     private fun erroringRepo(
@@ -449,6 +454,11 @@ class ChannelListViewModelTest {
                 conversationId: String,
                 workspace: String,
             ): Session = TODO("not used")
+
+            override suspend fun sendMessage(
+                conversationId: String,
+                text: String,
+            ): Message = TODO("not used")
         }
 
     private val sampleChannel =

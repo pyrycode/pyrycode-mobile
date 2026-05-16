@@ -53,6 +53,17 @@ interface ConversationRepository {
         conversationId: String,
         workspace: String,
     ): Session
+
+    /**
+     * Appends a user-authored [Message] to the conversation's current session.
+     * Returns the persisted message. Throws [IllegalArgumentException] if
+     * [conversationId] does not exist. Caller is responsible for non-blank
+     * validation of [text]; this method does not trim or reject blank input.
+     */
+    suspend fun sendMessage(
+        conversationId: String,
+        text: String,
+    ): Message
 }
 
 enum class ConversationFilter { All, Channels, Discussions, Archived }

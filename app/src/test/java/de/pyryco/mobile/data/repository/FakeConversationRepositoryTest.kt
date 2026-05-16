@@ -453,4 +453,79 @@ class FakeConversationRepositoryTest {
             // expected
         }
     }
+
+    @Test
+    fun sendMessage_appendsMessageAtTailOfObserveMessages() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val id = "seed-discussion-a"
+            val before = repo.observeMessages(id).first()
+            val currentSessionId =
+                repo
+                    .observeConversations(ConversationFilter.Discussions)
+                    .first()
+                    .first { it.id == id }
+                    .currentSessionId
+
+            val sent = repo.sendMessage(id, "hello")
+
+            val after = repo.observeMessages(id).first()
+            assertEquals(before.size + 1, after.size)
+            val tail = after.last()
+            assertTrue("tail must be a MessageItem, was $tail", tail is ThreadItem.MessageItem)
+            val message = (tail as ThreadItem.MessageItem).message
+            assertEquals(sent, message)
+            assertEquals("hello", message.content)
+            assertEquals(Role.User, message.role)
+            assertEquals(false, message.isStreaming)
+            assertEquals(currentSessionId, message.sessionId)
+        }
+
+    @Test
+    fun sendMessage_observeLastMessage_reEmitsTheNewMessage() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val id = "seed-discussion-a"
+            val sent = repo.sendMessage(id, "hello")
+            assertEquals(sent, repo.observeLastMessage(id).first())
+        }
+
+    @Test
+    fun sendMessage_updatesLastUsedAt_andReEmitsViaObserveConversations() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val id = "seed-discussion-b"
+            val before =
+                repo
+                    .observeConversations(ConversationFilter.Discussions)
+                    .first()
+                    .first { it.id == id }
+                    .lastUsedAt
+
+            val sent = repo.sendMessage(id, "hello")
+
+            val discussions = repo.observeConversations(ConversationFilter.Discussions).first()
+            val updated = discussions.first { it.id == id }
+            assertTrue(
+                "lastUsedAt must strictly increase ($before -> ${updated.lastUsedAt})",
+                updated.lastUsedAt > before,
+            )
+            assertEquals(sent.timestamp, updated.lastUsedAt)
+            assertEquals(
+                "conversation must now sort first by lastUsedAt descending",
+                id,
+                discussions.first().id,
+            )
+        }
+
+    @Test
+    fun sendMessage_onUnknownId_throws() {
+        val repo = FakeConversationRepository()
+        try {
+            runBlocking { repo.sendMessage("nope", "hi") }
+            assertTrue("expected IllegalArgumentException", false)
+        } catch (_: IllegalArgumentException) {
+            // expected
+        }
+    }
 }

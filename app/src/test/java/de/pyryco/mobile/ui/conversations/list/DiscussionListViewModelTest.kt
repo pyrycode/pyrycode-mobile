@@ -89,6 +89,11 @@ class DiscussionListViewModelTest {
                         conversationId: String,
                         workspace: String,
                     ): Session = TODO("not used")
+
+                    override suspend fun sendMessage(
+                        conversationId: String,
+                        text: String,
+                    ): Message = TODO("not used")
                 }
             val vm = DiscussionListViewModel(repo)
             val collector = launch { vm.state.collect { } }
@@ -379,6 +384,11 @@ class DiscussionListViewModelTest {
                 conversationId: String,
                 workspace: String,
             ): Session = TODO("not used")
+
+            override suspend fun sendMessage(
+                conversationId: String,
+                text: String,
+            ): Message = TODO("not used")
         }
 
     private fun erroringRepo(message: String?): ConversationRepository =
@@ -416,6 +426,11 @@ class DiscussionListViewModelTest {
                 conversationId: String,
                 workspace: String,
             ): Session = TODO("not used")
+
+            override suspend fun sendMessage(
+                conversationId: String,
+                text: String,
+            ): Message = TODO("not used")
         }
 
     private data class PromoteCall(
@@ -472,6 +487,11 @@ class DiscussionListViewModelTest {
             conversationId: String,
             workspace: String,
         ): Session = TODO("not used")
+
+        override suspend fun sendMessage(
+            conversationId: String,
+            text: String,
+        ): Message = TODO("not used")
     }
 
     private fun recordingRepo(source: MutableSharedFlow<List<Conversation>>): RecordingRepo = RecordingRepo(source)

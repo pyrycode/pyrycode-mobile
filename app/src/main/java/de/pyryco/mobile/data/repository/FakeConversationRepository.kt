@@ -171,6 +171,34 @@ class FakeConversationRepository(
         workspace: String,
     ): Session = mintNewSession(conversationId, workspace)
 
+    override suspend fun sendMessage(
+        conversationId: String,
+        text: String,
+    ): Message {
+        val now = Clock.System.now()
+        lateinit var appended: Message
+        state.update { records ->
+            val record = records[conversationId] ?: throw unknown(conversationId)
+            appended =
+                Message(
+                    id = UUID.randomUUID().toString(),
+                    sessionId = record.conversation.currentSessionId,
+                    role = Role.User,
+                    content = text,
+                    timestamp = now,
+                    isStreaming = false,
+                )
+            records + (
+                conversationId to
+                    record.copy(
+                        conversation = record.conversation.copy(lastUsedAt = now),
+                        messages = record.messages + appended,
+                    )
+            )
+        }
+        return appended
+    }
+
     private fun mintNewSession(
         conversationId: String,
         workspace: String?,
