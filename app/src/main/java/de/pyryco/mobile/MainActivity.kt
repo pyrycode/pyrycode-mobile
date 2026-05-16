@@ -41,7 +41,6 @@ import de.pyryco.mobile.ui.onboarding.WelcomeScreen
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsEvent
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsScreen
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
-import de.pyryco.mobile.ui.settings.LicenseScreen
 import de.pyryco.mobile.ui.settings.SettingsScreen
 import de.pyryco.mobile.ui.settings.SettingsViewModel
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -207,12 +206,8 @@ private fun PyryNavHost(
                 onSelectTheme = vm::onSelectTheme,
                 onToggleUseWallpaperColors = vm::onToggleUseWallpaperColors,
                 onBack = { navController.popBackStack() },
-                onOpenLicense = { navController.navigate(Routes.LICENSE) },
                 onOpenArchivedDiscussions = { navController.navigate(Routes.ARCHIVED_DISCUSSIONS) },
             )
-        }
-        composable(Routes.LICENSE) {
-            LicenseScreen(onBack = { navController.popBackStack() })
         }
         composable(Routes.ARCHIVED_DISCUSSIONS) {
             val vm = koinViewModel<ArchivedDiscussionsViewModel>()
@@ -241,6 +236,5 @@ private object Routes {
     const val DISCUSSION_LIST = "discussions"
     const val CONVERSATION_THREAD = "conversation_thread/{conversationId}"
     const val SETTINGS = "settings"
-    const val LICENSE = "license"
     const val ARCHIVED_DISCUSSIONS = "archived_discussions"
 }
