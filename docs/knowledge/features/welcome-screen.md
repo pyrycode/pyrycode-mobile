@@ -72,7 +72,7 @@ No DI wiring needed for this screen.
 
 Two vector drawables under `app/src/main/res/drawable/`, both rendered via `Icon(painter = painterResource(R.drawable.<id>), tint = colorScheme.primary)`:
 
-- **`ic_pyry_logo.xml`** — snowflake + center cursor (Figma node `9:2`, 104dp viewport). Decorative, `contentDescription = null` — the title text below carries the screen identity.
+- **`ic_pyry_logo.xml`** — snowflake + center cursor (Figma node `9:2`, 104dp viewport). Decorative, `contentDescription = null` — the title text below carries the screen identity. Six radial arm `<group>`s (pivots at canvas centre, 60°-interval rotations `-90 / -30 / 30 / 90 / 150 / 210`) plus a centre-cursor `<path>`. Arm `pathData` was geometry-bugged in #57 (shaft straddled the pivot, so opposite-rotation arms overlapped and the inner branches tangled with the cursor); #150 rewrote all six arm strings so the shaft starts *at* the pivot and extends outward, with branch forks moved into the outer half of the shaft — six distinct arms reach to ~10 % from each canvas edge with the Y-spike-at-tip pattern Figma node `9:4` shows.
 - **`ic_qr_scan_frame.xml`** — four-corner QR scanner frame (Figma node `9:41`, 20dp viewport). Used as the primary CTA leading icon.
 
 Both have a single uniform fill / stroke color in the raw XML so the Compose `Icon(tint = …)` recolors them across light and dark themes without per-theme variants. Don't add `material-icons-extended` for the QR frame — the ticket explicitly bans new icon packages; assets come from the Figma payload only.
@@ -87,6 +87,6 @@ Both have a single uniform fill / stroke color in the raw XML so the Compose `Ic
 
 - Spec (current): `docs/specs/architecture/57-welcome-screen-figma-polish.md`
 - Spec (original scaffold): `docs/specs/architecture/7-welcome-screen-scaffold.md`
-- Ticket notes: `../codebase/7.md` (scaffold), `../codebase/14.md` (`onSetup` external-browser wiring), `../codebase/57.md` (Figma polish), `../codebase/149.md` (pill CTA + 168.dp hero top padding refinement)
+- Ticket notes: `../codebase/7.md` (scaffold), `../codebase/14.md` (`onSetup` external-browser wiring), `../codebase/57.md` (Figma polish), `../codebase/149.md` (pill CTA + 168.dp hero top padding refinement), `../codebase/150.md` (logo arm geometry repair)
 - Figma node: `6:32` (412×892 baseline) — https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=6-32
 - Sibling: [Scanner screen](scanner-screen.md)
