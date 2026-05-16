@@ -5,6 +5,7 @@ import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
+import de.pyryco.mobile.data.model.ToolCall
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
@@ -318,6 +319,28 @@ class FakeConversationRepository(
                                 seedMsg(Role.Assistant, "Nothing major. The promotion dialog still.", "2026-05-10T08:50:00Z"),
                                 seedMsg(Role.User, "Open a ticket for the dialog and we'll size it.", "2026-05-10T08:58:00Z"),
                                 seedMsg(
+                                    Role.Tool,
+                                    "Read app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt",
+                                    "2026-05-10T08:59:00Z",
+                                    toolCall =
+                                        ToolCall(
+                                            toolName = "Read",
+                                            input = "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt",
+                                            output =
+                                                """
+                                                @Composable
+                                                fun ThreadScreen(
+                                                    state: ThreadUiState,
+                                                    onEvent: (ThreadEvent) -> Unit,
+                                                ) {
+                                                    Scaffold(topBar = { ThreadTopBar(state, onEvent) }) { padding ->
+                                                        MessageList(state.items, modifier = Modifier.padding(padding))
+                                                    }
+                                                }
+                                                """.trimIndent(),
+                                        ),
+                                ),
+                                seedMsg(
                                     Role.Assistant,
                                     """
                                     Drafted as #TBD with the architect notes. Three things I'd add for the dialog ticket:
@@ -405,13 +428,15 @@ class FakeConversationRepository(
             content: String,
             timestamp: String,
             isStreaming: Boolean = false,
-        ): SeedMessage = SeedMessage(role, content, Instant.parse(timestamp), isStreaming)
+            toolCall: ToolCall? = null,
+        ): SeedMessage = SeedMessage(role, content, Instant.parse(timestamp), isStreaming, toolCall)
 
         private data class SeedMessage(
             val role: Role,
             val content: String,
             val timestamp: Instant,
             val isStreaming: Boolean = false,
+            val toolCall: ToolCall? = null,
         )
 
         private data class SeedSession(
@@ -461,6 +486,7 @@ class FakeConversationRepository(
                             content = msg.content,
                             timestamp = msg.timestamp,
                             isStreaming = msg.isStreaming,
+                            toolCall = msg.toolCall,
                         )
                     }
                 }
@@ -473,6 +499,7 @@ class FakeConversationRepository(
                         content = msg.content,
                         timestamp = msg.timestamp,
                         isStreaming = msg.isStreaming,
+                        toolCall = msg.toolCall,
                     )
                 }
             val conversation =
@@ -530,6 +557,7 @@ class FakeConversationRepository(
                         content = msg.content,
                         timestamp = msg.timestamp,
                         isStreaming = msg.isStreaming,
+                        toolCall = msg.toolCall,
                     )
                 }
             return ConversationRecord(
