@@ -19,7 +19,7 @@
             android:strokeWidth="3.328"
             android:strokeLineCap="round"
             android:strokeLineJoin="round"
-            android:pathData="M1.664,8.944 H43.264 M22.464,8.944 L29.744,1.664 M22.464,8.944 L29.744,16.224 M34.944,8.944 L40.144,3.744 M34.944,8.944 L40.144,14.144" />
+            android:pathData="M22.464,8.944 H64.064 M47.424,8.944 L54.704,1.664 M47.424,8.944 L54.704,16.224 M58.864,8.944 L64.064,3.744 M58.864,8.944 L64.064,14.144" />
     </group>
 
     <group
@@ -33,7 +33,7 @@
             android:strokeWidth="3.328"
             android:strokeLineCap="round"
             android:strokeLineJoin="round"
-            android:pathData="M1.664,8.944 H43.264 M22.464,8.944 L29.744,1.664 M22.464,8.944 L29.744,16.224 M34.944,8.944 L40.144,3.744 M34.944,8.944 L40.144,14.144" />
+            android:pathData="M22.464,8.944 H64.064 M47.424,8.944 L54.704,1.664 M47.424,8.944 L54.704,16.224 M58.864,8.944 L64.064,3.744 M58.864,8.944 L64.064,14.144" />
     </group>
 
     <group
@@ -47,7 +47,7 @@
             android:strokeWidth="3.328"
             android:strokeLineCap="round"
             android:strokeLineJoin="round"
-            android:pathData="M1.664,8.944 H43.264 M22.464,8.944 L29.744,1.664 M22.464,8.944 L29.744,16.224 M34.944,8.944 L40.144,3.744 M34.944,8.944 L40.144,14.144" />
+            android:pathData="M22.464,8.944 H64.064 M47.424,8.944 L54.704,1.664 M47.424,8.944 L54.704,16.224 M58.864,8.944 L64.064,3.744 M58.864,8.944 L64.064,14.144" />
     </group>
 
     <group
@@ -61,7 +61,7 @@
             android:strokeWidth="3.328"
             android:strokeLineCap="round"
             android:strokeLineJoin="round"
-            android:pathData="M1.664,8.944 H43.264 M22.464,8.944 L29.744,1.664 M22.464,8.944 L29.744,16.224 M34.944,8.944 L40.144,3.744 M34.944,8.944 L40.144,14.144" />
+            android:pathData="M22.464,8.944 H64.064 M47.424,8.944 L54.704,1.664 M47.424,8.944 L54.704,16.224 M58.864,8.944 L64.064,3.744 M58.864,8.944 L64.064,14.144" />
     </group>
 
     <group
@@ -75,7 +75,7 @@
             android:strokeWidth="3.328"
             android:strokeLineCap="round"
             android:strokeLineJoin="round"
-            android:pathData="M1.664,8.944 H43.264 M22.464,8.944 L29.744,1.664 M22.464,8.944 L29.744,16.224 M34.944,8.944 L40.144,3.744 M34.944,8.944 L40.144,14.144" />
+            android:pathData="M22.464,8.944 H64.064 M47.424,8.944 L54.704,1.664 M47.424,8.944 L54.704,16.224 M58.864,8.944 L64.064,3.744 M58.864,8.944 L64.064,14.144" />
     </group>
 
     <group
@@ -89,6 +89,6 @@
             android:strokeWidth="3.328"
             android:strokeLineCap="round"
             android:strokeLineJoin="round"
-            android:pathData="M1.664,8.944 H43.264 M22.464,8.944 L29.744,1.664 M22.464,8.944 L29.744,16.224 M34.944,8.944 L40.144,3.744 M34.944,8.944 L40.144,14.144" />
+            android:pathData="M22.464,8.944 H64.064 M47.424,8.944 L54.704,1.664 M47.424,8.944 L54.704,16.224 M58.864,8.944 L64.064,3.744 M58.864,8.944 L64.064,14.144" />
     </group>
 </vector>
