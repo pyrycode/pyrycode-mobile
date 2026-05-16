@@ -623,4 +623,81 @@ class FakeConversationRepositoryTest {
             // expected
         }
     }
+
+    @Test
+    fun recentWorkspaces_dedupes_repeatedCwds() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val initialSize = repo.recentWorkspaces().first().size
+
+            repo.promote("seed-discussion-a", name = "a", workspace = "~/Workspace/foo")
+            repo.changeWorkspace("seed-channel-personal", "~/Workspace/foo")
+
+            val recents = repo.recentWorkspaces().first()
+            assertEquals(
+                "expected ~/Workspace/foo exactly once",
+                1,
+                recents.count { it == "~/Workspace/foo" },
+            )
+            assertEquals("~/Workspace/foo", recents.first())
+            assertEquals(
+                "list size grew by exactly one (foo added, not duplicated)",
+                initialSize + 1,
+                recents.size,
+            )
+        }
+
+    @Test
+    fun recentWorkspaces_ordersByMostRecentWrite() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+
+            assertEquals(
+                listOf(
+                    "~/Workspace/pyrycode-mobile",
+                    "~/Workspace/joi-pilates",
+                    "~/Workspace/personal",
+                ),
+                repo.recentWorkspaces().first(),
+            )
+
+            repo.changeWorkspace("seed-channel-personal", "~/Workspace/personal")
+            assertEquals(
+                "~/Workspace/personal",
+                repo.recentWorkspaces().first().first(),
+            )
+
+            repo.createDiscussion(workspace = "~/Workspace/new")
+            val afterCreate = repo.recentWorkspaces().first()
+            assertEquals("~/Workspace/new", afterCreate[0])
+            assertEquals("~/Workspace/personal", afterCreate[1])
+        }
+
+    @Test
+    fun recentWorkspaces_excludesEmptyStringAndDefaultScratch() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+
+            assertTrue(
+                "initial recents must not contain empty string",
+                repo.recentWorkspaces().first().none { it.isEmpty() },
+            )
+            assertTrue(
+                "initial recents must not contain DEFAULT_SCRATCH_CWD",
+                repo.recentWorkspaces().first().none { it == DEFAULT_SCRATCH_CWD },
+            )
+
+            repo.createDiscussion(workspace = null)
+            repo.createDiscussion(workspace = DEFAULT_SCRATCH_CWD)
+
+            val recents = repo.recentWorkspaces().first()
+            assertTrue(
+                "recents must not contain empty string after null-workspace createDiscussion",
+                recents.none { it.isEmpty() },
+            )
+            assertTrue(
+                "recents must not contain DEFAULT_SCRATCH_CWD after scratch-workspace createDiscussion",
+                recents.none { it == DEFAULT_SCRATCH_CWD },
+            )
+        }
 }
