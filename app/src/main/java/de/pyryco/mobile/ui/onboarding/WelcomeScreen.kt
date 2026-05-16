@@ -23,9 +23,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -72,7 +74,13 @@ fun WelcomeScreen(
                     painter = painterResource(R.drawable.ic_pyry_logo),
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(width = 92.dp, height = 104.dp),
+                    modifier =
+                        Modifier
+                            .shadow(
+                                elevation = 6.dp,
+                                shape = RectangleShape,
+                                clip = false,
+                            ).size(width = 92.dp, height = 104.dp),
                 )
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
