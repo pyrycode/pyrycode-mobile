@@ -30,5 +30,5 @@ val appModule =
         viewModel { DiscussionListViewModel(get()) }
         viewModel { SettingsViewModel(get(), get()) }
         viewModel { ArchivedDiscussionsViewModel(get()) }
-        viewModel { ThreadViewModel(get()) }
+        viewModel { ThreadViewModel(get(), get()) }
     }
