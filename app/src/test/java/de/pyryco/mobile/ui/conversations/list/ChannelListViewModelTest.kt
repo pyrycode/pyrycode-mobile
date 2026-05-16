@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.list
 
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -312,6 +314,28 @@ class ChannelListViewModelTest {
         }
 
     @Test
+    fun recentDiscussionLastMessages_populatedFromFake_endToEnd() =
+        runTest {
+            val vm = ChannelListViewModel(FakeConversationRepository())
+            val collector = launch { vm.state.collect { } }
+            advanceUntilIdle()
+            val state = vm.state.value
+            assertTrue("expected Loaded, was $state", state is ChannelListUiState.Loaded)
+            val loaded = state as ChannelListUiState.Loaded
+            val lastA = loaded.recentDiscussionLastMessages["seed-discussion-a"]
+            assertNotNull("seed-discussion-a should have a last message", lastA)
+            assertEquals(
+                Instant.parse("2026-05-11T14:00:00Z"),
+                lastA!!.timestamp,
+            )
+            assertTrue(
+                "seed-discussion-b has no messages — must be absent from the map",
+                "seed-discussion-b" !in loaded.recentDiscussionLastMessages,
+            )
+            collector.cancel()
+        }
+
+    @Test
     fun createDiscussionTapped_emitsToThreadNavigationWithCreatedId() =
         runTest {
             val repository = FakeConversationRepository()
@@ -352,6 +376,8 @@ class ChannelListViewModelTest {
                 }
 
             override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = TODO("not used")
+
+            override fun observeLastMessage(conversationId: String): Flow<Message?> = flowOf(null)
 
             override suspend fun createDiscussion(workspace: String?): Conversation = TODO("not used")
 
@@ -394,6 +420,8 @@ class ChannelListViewModelTest {
                 }
 
             override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = TODO("not used")
+
+            override fun observeLastMessage(conversationId: String): Flow<Message?> = TODO("not used")
 
             override suspend fun createDiscussion(workspace: String?): Conversation = TODO("not used")
 

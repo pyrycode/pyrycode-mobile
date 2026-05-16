@@ -51,6 +51,11 @@ class FakeConversationRepository(
             buildThreadItems(messages)
         }
 
+    override fun observeLastMessage(conversationId: String): Flow<Message?> =
+        state.map { records ->
+            records[conversationId]?.messages?.maxByOrNull { it.timestamp }
+        }
+
     private fun buildThreadItems(messages: List<Message>): List<ThreadItem> {
         if (messages.isEmpty()) return emptyList()
         val sorted = messages.sortedBy { it.timestamp }
@@ -332,6 +337,13 @@ class FakeConversationRepository(
                         sessionId = "seed-session-discussion-a",
                         claudeSessionUuid = "seed-claude-discussion-a",
                         lastUsedAt = Instant.parse("2026-05-11T14:00:00Z"),
+                        messages =
+                            listOf(
+                                seedMsg(Role.User, "What's a good name for a scratch script.", "2026-05-11T13:48:00Z"),
+                                seedMsg(Role.Assistant, "Something descriptive of the task — try.", "2026-05-11T13:52:00Z"),
+                                seedMsg(Role.User, "Use try-experiment-1.sh and move on.", "2026-05-11T13:58:00Z"),
+                                seedMsg(Role.Assistant, "Renamed. Ready when you are.", "2026-05-11T14:00:00Z"),
+                            ),
                     ),
                     seedDiscussion(
                         id = "seed-discussion-archived",
@@ -445,6 +457,7 @@ class FakeConversationRepository(
             claudeSessionUuid: String,
             lastUsedAt: Instant,
             archived: Boolean = false,
+            messages: List<SeedMessage> = emptyList(),
         ): ConversationRecord {
             val session =
                 Session(
@@ -465,7 +478,22 @@ class FakeConversationRepository(
                     lastUsedAt = lastUsedAt,
                     archived = archived,
                 )
-            return ConversationRecord(conversation, mapOf(sessionId to session))
+            val messageEntries =
+                messages.mapIndexed { index, msg ->
+                    Message(
+                        id = "$sessionId-msg-$index",
+                        sessionId = sessionId,
+                        role = msg.role,
+                        content = msg.content,
+                        timestamp = msg.timestamp,
+                        isStreaming = false,
+                    )
+                }
+            return ConversationRecord(
+                conversation = conversation,
+                sessions = mapOf(sessionId to session),
+                messages = messageEntries,
+            )
         }
     }
 }

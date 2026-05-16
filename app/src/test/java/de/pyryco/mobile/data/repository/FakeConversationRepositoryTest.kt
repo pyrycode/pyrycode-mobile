@@ -8,6 +8,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -36,7 +37,7 @@ class FakeConversationRepositoryTest {
             val repo = FakeConversationRepository()
             assertEquals(
                 emptyList<ThreadItem>(),
-                repo.observeMessages("seed-discussion-a").first(),
+                repo.observeMessages("seed-discussion-b").first(),
             )
         }
 
@@ -103,16 +104,42 @@ class FakeConversationRepositoryTest {
         }
 
     @Test
-    fun seededDiscussions_remainEmpty() =
+    fun seededDiscussions_remainEmpty_exceptDiscussionA() =
         runBlocking {
             val repo = FakeConversationRepository()
-            for (id in listOf("seed-discussion-a", "seed-discussion-b", "seed-discussion-archived")) {
+            for (id in listOf("seed-discussion-b", "seed-discussion-archived")) {
                 assertEquals(
                     "discussion $id must be empty",
                     emptyList<ThreadItem>(),
                     repo.observeMessages(id).first(),
                 )
             }
+        }
+
+    @Test
+    fun observeLastMessage_returnsNull_whenConversationHasNoMessages() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            assertNull(repo.observeLastMessage("seed-discussion-b").first())
+        }
+
+    @Test
+    fun observeLastMessage_returnsNull_whenConversationUnknown() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            assertNull(repo.observeLastMessage("does-not-exist").first())
+        }
+
+    @Test
+    fun observeLastMessage_returnsMostRecentByTimestamp_whenMessagesExist() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val last = repo.observeLastMessage("seed-discussion-a").first()
+            assertNotNull(last)
+            assertEquals(
+                Instant.parse("2026-05-11T14:00:00Z"),
+                last!!.timestamp,
+            )
         }
 
     @Test
