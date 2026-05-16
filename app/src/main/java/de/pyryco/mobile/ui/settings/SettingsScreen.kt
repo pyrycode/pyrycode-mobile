@@ -52,7 +52,6 @@ fun SettingsScreen(
     onSelectTheme: (ThemeMode) -> Unit,
     onToggleUseWallpaperColors: (Boolean) -> Unit,
     onBack: () -> Unit,
-    onOpenLicense: () -> Unit,
     onOpenArchivedDiscussions: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -221,8 +220,6 @@ fun SettingsScreen(
             )
             SettingsRow(
                 headline = "License: MIT",
-                trailing = { ChevronIcon() },
-                onClick = onOpenLicense,
             )
         }
     }
@@ -291,7 +288,7 @@ private fun AddPill(onClick: () -> Unit) {
 
 internal fun ThemeMode.label(): String =
     when (this) {
-        ThemeMode.SYSTEM -> "System default"
+        ThemeMode.SYSTEM -> "System"
         ThemeMode.LIGHT -> "Light"
         ThemeMode.DARK -> "Dark"
     }
@@ -308,7 +305,6 @@ private fun SettingsScreenLightPreview() {
             onSelectTheme = {},
             onToggleUseWallpaperColors = {},
             onBack = {},
-            onOpenLicense = {},
             onOpenArchivedDiscussions = {},
         )
     }
@@ -324,7 +320,6 @@ private fun SettingsScreenDarkPreview() {
             onSelectTheme = {},
             onToggleUseWallpaperColors = {},
             onBack = {},
-            onOpenLicense = {},
             onOpenArchivedDiscussions = {},
         )
     }

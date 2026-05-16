@@ -4,6 +4,7 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.BuildConfig
@@ -28,7 +29,6 @@ class SettingsScreenTest {
                     onSelectTheme = {},
                     onToggleUseWallpaperColors = {},
                     onBack = {},
-                    onOpenLicense = {},
                     onOpenArchivedDiscussions = {},
                 )
             }
@@ -50,7 +50,6 @@ class SettingsScreenTest {
                     onSelectTheme = {},
                     onToggleUseWallpaperColors = {},
                     onBack = {},
-                    onOpenLicense = {},
                     onOpenArchivedDiscussions = {},
                 )
             }
@@ -60,5 +59,47 @@ class SettingsScreenTest {
             .onNode(hasText("Open source", substring = true))
             .performScrollTo()
             .assert(hasClickAction())
+    }
+
+    @Test
+    fun wallpaperColorsRow_rendersMaterialYouLabel() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                SettingsScreen(
+                    themeMode = ThemeMode.SYSTEM,
+                    useWallpaperColors = false,
+                    onSelectTheme = {},
+                    onToggleUseWallpaperColors = {},
+                    onBack = {},
+                    onOpenArchivedDiscussions = {},
+                )
+            }
+        }
+
+        composeTestRule
+            .onNode(hasText("Use Material You dynamic color"))
+            .performScrollTo()
+            .assertExists()
+    }
+
+    @Test
+    fun licenseRow_hasNoClickAction() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                SettingsScreen(
+                    themeMode = ThemeMode.SYSTEM,
+                    useWallpaperColors = false,
+                    onSelectTheme = {},
+                    onToggleUseWallpaperColors = {},
+                    onBack = {},
+                    onOpenArchivedDiscussions = {},
+                )
+            }
+        }
+
+        composeTestRule
+            .onNodeWithText("License: MIT")
+            .performScrollTo()
+            .assert(hasClickAction().not())
     }
 }
