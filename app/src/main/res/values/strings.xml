@@ -25,5 +25,6 @@
     <string name="archived_discussions_title">Archived discussions</string>
     <string name="archived_discussions_empty">No archived discussions</string>
     <string name="archived_discussions_settings_row">Archived discussions</string>
+    <string name="archived_discussions_count_supporting">%1$d archived</string>
     <string name="restore_action">Restore</string>
 </resources>

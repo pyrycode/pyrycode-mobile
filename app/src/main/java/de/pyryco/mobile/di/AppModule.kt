@@ -27,6 +27,6 @@ val appModule =
         single { FakeConversationRepository() } bind ConversationRepository::class
         viewModel { ChannelListViewModel(get()) }
         viewModel { DiscussionListViewModel(get()) }
-        viewModel { SettingsViewModel(get()) }
+        viewModel { SettingsViewModel(get(), get()) }
         viewModel { ArchivedDiscussionsViewModel(get()) }
     }

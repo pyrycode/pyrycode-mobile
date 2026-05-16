@@ -6,7 +6,7 @@ Recovery surface for discussions that the (forthcoming) 30-day auto-archive work
 
 Lists archived discussions and lets the user restore any of them. Long-press a row → "Restore" dropdown → tap → `ConversationRepository.unarchive(id)` flips the bit (#96), the row leaves the `Archived` filter on the next stream emission, and the restored discussion reappears in the Recent discussions section of the channel list. The 30-day auto-archive worker itself is a separate ticket — this screen assumes archived rows exist (the `seed-discussion-archived` seed from #93 guarantees one for manual verification).
 
-The matching Settings row has no count subtitle: AC #5 doesn't request one, and live-counting would expand the surface into another `SettingsViewModel`-StateFlow combinator. If it ever lands, it sits in `SettingsViewModel` mapped from the same archived stream.
+The matching Settings row gained a live "N archived" supporting line in #164 — see [Settings screen § Storage](settings-screen.md) and [Settings ViewModel](settings-viewmodel.md). The pre-#164 framing in this doc was "no count subtitle, live-counting would expand the surface into another `SettingsViewModel`-StateFlow combinator" — that turned out to be exactly what #164 did, with the projection mirroring this screen's `!isPromoted` post-filter for cross-surface agreement. The two consumers now demonstrate a split: this screen surfaces `Error(message)` for the upstream because the list IS the screen's primary content; the Settings row's projection swallows the same upstream's errors via `.catch { emit(0) }` because it's supportive metadata about *this* screen.
 
 ## How it works
 
@@ -71,7 +71,7 @@ fun ArchivedDiscussionsScreen(
 `SettingsScreen` gains a required `onOpenArchivedDiscussions: () -> Unit` parameter (no default — navigation/event callbacks never carry defaults; rule established in #87 and #91). The pre-existing Storage row in `SettingsScreen`'s body is rewritten in place:
 
 - Headline → `stringResource(R.string.archived_discussions_settings_row)` ("Archived discussions"). The row only navigates to archived **discussions**, not archived channels, so the literal matches.
-- `supporting = "11 archived"` placeholder line dropped.
+- `supporting = "11 archived"` placeholder line dropped in #94 — and brought back as a real live count in #164 via the new `R.string.archived_discussions_count_supporting` format resource, backed by `SettingsViewModel.archivedDiscussionCount`.
 - `onClick = onOpenArchivedDiscussions`.
 
 `MainActivity.PyryNavHost`:
@@ -134,7 +134,7 @@ Manual verification path (per the spec):
 - **"Archive date" trailing slot is `formatRelativeTime(lastUsedAt)`, not a true `archivedAt`.** `Conversation` has no `archivedAt: Instant?` field; `archive(id)` (#93) flips a boolean without stamping a timestamp. The existing trailing slot prints "Apr 15" for the seed — close to the AC's "archive date" but not literally it. The natural owner of `archivedAt` is the 30-day auto-archive worker (it needs the timestamp to decide which records to evict); add the field there, then switch this screen's trailing slot to format it.
 - **Restore failure is not user-visible.** `viewModelScope.launch { repository.unarchive(id) }` fire-and-forget. The Fake's only failure path is `IllegalArgumentException("Unknown conversation: $id")` for an id no longer present, which is harmless (the row is already gone from the UI by the time the throw lands). Phase 4's Ktor remote will introduce real failure modes; the visible-error / retry surface lands then, not here.
 - **Archived **channels** are not shown.** The repository's `Archived` filter is `isPromoted`-agnostic by design (so it composes for a future archived-channels screen); this VM applies a `!isPromoted` post-filter. No production flow currently archives a channel, but the screen would still hide it if one existed. The path for a parallel archived-channels view is "a new VM that filters the same stream to `isPromoted`."
-- **No count on the Settings entry row.** Intentional — see § What it does.
+- **Settings entry-row count mirrors this screen's filter.** Since #164 the Settings row reads `"N archived"` where N = `count { !it.isPromoted }` on the same `Archived` upstream — same filter literal as this VM. If this VM's filter ever changes (e.g. excluding pinned archived rows), the Settings projection must change in lockstep, or the row and the list will disagree. See [Settings ViewModel § archivedDiscussionCount](settings-viewmodel.md).
 
 ## Testing
 
@@ -165,7 +165,7 @@ No dark previews this slice — the muted-alpha treatment renders identically mo
 
 ## Related
 
-- Ticket notes: [`../codebase/94.md`](../codebase/94.md)
+- Ticket notes: [`../codebase/94.md`](../codebase/94.md); [`../codebase/164.md`](../codebase/164.md) (Settings-side live-count projection over the same `Archived` upstream)
 - Spec: `docs/specs/architecture/94-archived-discussions-screen.md`
 - Data foundations: [`../codebase/93.md`](../codebase/93.md) (`Conversation.archived` + `ConversationFilter.Archived` + seed), [`../codebase/96.md`](../codebase/96.md) (`unarchive(id)` primitive)
 - Sibling screens: [Discussion list screen](discussion-list-screen.md) (shape it mirrors — `Scaffold` + back-arrow + `LazyColumn` + long-press menu + `alpha(0.65f)`; one tier different). Was siblings with `LicenseScreen` (#91) under `ui/settings/` until #163 deleted that screen.

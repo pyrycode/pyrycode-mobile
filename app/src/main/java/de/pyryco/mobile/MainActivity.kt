@@ -200,9 +200,11 @@ private fun PyryNavHost(
             val vm = koinViewModel<SettingsViewModel>()
             val themeMode by vm.themeMode.collectAsStateWithLifecycle()
             val useWallpaperColors by vm.useWallpaperColors.collectAsStateWithLifecycle()
+            val archivedDiscussionCount by vm.archivedDiscussionCount.collectAsStateWithLifecycle()
             SettingsScreen(
                 themeMode = themeMode,
                 useWallpaperColors = useWallpaperColors,
+                archivedDiscussionCount = archivedDiscussionCount,
                 onSelectTheme = vm::onSelectTheme,
                 onToggleUseWallpaperColors = vm::onToggleUseWallpaperColors,
                 onBack = { navController.popBackStack() },

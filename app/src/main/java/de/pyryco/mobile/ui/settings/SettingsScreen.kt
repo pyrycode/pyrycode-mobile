@@ -49,6 +49,7 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 fun SettingsScreen(
     themeMode: ThemeMode,
     useWallpaperColors: Boolean,
+    archivedDiscussionCount: Int,
     onSelectTheme: (ThemeMode) -> Unit,
     onToggleUseWallpaperColors: (Boolean) -> Unit,
     onBack: () -> Unit,
@@ -192,6 +193,11 @@ fun SettingsScreen(
             SettingsSectionHeader("Storage")
             SettingsRow(
                 headline = stringResource(R.string.archived_discussions_settings_row),
+                supporting =
+                    stringResource(
+                        R.string.archived_discussions_count_supporting,
+                        archivedDiscussionCount,
+                    ),
                 trailing = { ChevronIcon() },
                 onClick = onOpenArchivedDiscussions,
             )
@@ -302,6 +308,7 @@ private fun SettingsScreenLightPreview() {
         SettingsScreen(
             themeMode = ThemeMode.SYSTEM,
             useWallpaperColors = false,
+            archivedDiscussionCount = 11,
             onSelectTheme = {},
             onToggleUseWallpaperColors = {},
             onBack = {},
@@ -317,6 +324,7 @@ private fun SettingsScreenDarkPreview() {
         SettingsScreen(
             themeMode = ThemeMode.SYSTEM,
             useWallpaperColors = false,
+            archivedDiscussionCount = 11,
             onSelectTheme = {},
             onToggleUseWallpaperColors = {},
             onBack = {},
