@@ -11,7 +11,6 @@
     <string name="see_all_discussions_label">See all discussions (%d)</string>
     <string name="cd_see_all_discussions">See all %d recent discussions</string>
     <string name="untitled_discussion">Untitled discussion</string>
-    <string name="discussion_preview_placeholder_body">Tap to resume — message preview coming soon.</string>
     <string name="cd_pyrycode_logo">Pyrycode logo</string>
     <string name="channels_section_header">Channels</string>
     <string name="settings_title">Settings</string>
