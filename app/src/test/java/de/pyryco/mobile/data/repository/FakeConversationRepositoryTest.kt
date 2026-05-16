@@ -143,6 +143,41 @@ class FakeConversationRepositoryTest {
         }
 
     @Test
+    fun observeMessages_emitsSeededToolMessage_withStructuredPayload() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val items = repo.observeMessages("seed-channel-pyrycode-mobile").first()
+            val toolMessages =
+                items
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .map { it.message }
+                    .filter { it.role == Role.Tool }
+            assertEquals("expected exactly one tool message in seed channel", 1, toolMessages.size)
+            val tool = toolMessages.single()
+            val payload = tool.toolCall
+            assertNotNull("tool message must carry a non-null toolCall", payload)
+            assertEquals("Read", payload!!.toolName)
+            assertEquals(
+                "app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt",
+                payload.input,
+            )
+            assertEquals(
+                """
+                @Composable
+                fun ThreadScreen(
+                    state: ThreadUiState,
+                    onEvent: (ThreadEvent) -> Unit,
+                ) {
+                    Scaffold(topBar = { ThreadTopBar(state, onEvent) }) { padding ->
+                        MessageList(state.items, modifier = Modifier.padding(padding))
+                    }
+                }
+                """.trimIndent(),
+                payload.output,
+            )
+        }
+
+    @Test
     fun observeMessages_messagesAcrossTwoSessions_emitsExactlyOneBoundary() =
         runBlocking {
             val sessionA = "session-a"

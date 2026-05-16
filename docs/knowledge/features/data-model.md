@@ -61,12 +61,22 @@ data class Message(
     val content: String,
     val timestamp: Instant,
     val isStreaming: Boolean,
+    /** Non-null iff [role] is [Role.Tool]. */
+    val toolCall: ToolCall? = null,
 )
 
 enum class Role { User, Assistant, Tool }
+
+data class ToolCall(
+    val toolName: String,
+    val input: String,
+    val output: String,
+)
 ```
 
 `isStreaming = true` while assistant output is still arriving over the wire (Phase 4+). Phase 0/1 fake data is `isStreaming = false` for every message except one demo seed (the last assistant message of `seed-channel-pyrycode-mobile`'s current session, added in #184) so the [streaming reveal animation](./message-bubble.md#streaming-variant--progressive-reveal--blinking-caret-since-184) can be observed end-to-end without a real WS feed.
+
+`toolCall` (#191) carries the three pieces a `Role.Tool` message needs the [`ToolCallRow`](./message-bubble.md) consumer (#131) to discriminate: `toolName` (e.g. `"Read"`, `"Edit"`, `"Bash"`), `input` (the call payload — file path, command string, params), and `output` (the response text — file contents, command stdout, etc.). The field is **last** on `Message` and **defaulted to `null`** so every existing positional and named `Message(...)` call site is source-compatible. The invariant — `toolCall != null iff role == Role.Tool` — lives as a one-line KDoc on the field; it is **not** enforced at construction (no `init { }` guard, no `require(...)`). Reasoning: `FakeConversationRepository` is the sole `Message` producer in Phase 0 — there is no external path that could violate the invariant, so a runtime check would defend an unobserved failure mode. Phase 4's wire-parsing path is the right place to enforce it when it lands. No `output: String?` for "tool call in flight, no response yet" — that's a Phase 4 streaming concern; modelling it now would be the same kind of speculative defense. The shape was chosen (over a sealed `Message` hierarchy with a `Tool` variant) for size discipline: nullable-field is a 3-file change with zero forced consumer edits; sealed promotion would have cascaded into ≥16 `seedMsg` / `Message(...)` call sites + two test files. If #131 finds the lack of compile-time discrimination genuinely painful, a sealed promotion ticket can be split out — the `toolCall: ToolCall?` field added here becomes the payload of the eventual `Tool` variant, so nothing is wasted. See `../codebase/191.md` for the trade-off in full.
 
 ## Why `kotlinx.datetime.Instant`
 
@@ -81,7 +91,7 @@ CLAUDE.md's "Don't" section names Compose Multiplatform as a walk-back trigger. 
 
 ## Related
 
-- Ticket notes: `../codebase/2.md`
-- Spec: `docs/specs/architecture/2-conversation-session-message-data-classes.md`
+- Ticket notes: `../codebase/2.md` (skeleton), `../codebase/191.md` (`Message.toolCall: ToolCall? = null` + new `ToolCall(toolName, input, output)` type)
+- Spec: `docs/specs/architecture/2-conversation-session-message-data-classes.md`, `docs/specs/architecture/191-tool-message-structured-payload.md`
 - Decision: `../decisions/0001-kotlinx-datetime-for-data-layer.md`
-- Downstream: `conversation-repository.md` (#3 contract), conversation list + thread UI.
+- Downstream: `conversation-repository.md` (#3 contract — also propagates `toolCall` through `SeedMessage`/`seedMsg(...)` since #191), conversation list + thread UI (the eventual `ToolCallRow` consumer in #131).
