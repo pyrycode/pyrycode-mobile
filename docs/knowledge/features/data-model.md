@@ -66,7 +66,7 @@ data class Message(
 enum class Role { User, Assistant, Tool }
 ```
 
-`isStreaming = true` while assistant output is still arriving over the wire (Phase 4+). For Phase 0/1 fake data, every message is `isStreaming = false`.
+`isStreaming = true` while assistant output is still arriving over the wire (Phase 4+). Phase 0/1 fake data is `isStreaming = false` for every message except one demo seed (the last assistant message of `seed-channel-pyrycode-mobile`'s current session, added in #184) so the [streaming reveal animation](./message-bubble.md#streaming-variant--progressive-reveal--blinking-caret-since-184) can be observed end-to-end without a real WS feed.
 
 ## Why `kotlinx.datetime.Instant`
 

@@ -289,7 +289,20 @@ class FakeConversationRepository(
                                 seedMsg(Role.User, "Picking this back up — any blockers on the.", "2026-05-10T08:45:00Z"),
                                 seedMsg(Role.Assistant, "Nothing major. The promotion dialog still.", "2026-05-10T08:50:00Z"),
                                 seedMsg(Role.User, "Open a ticket for the dialog and we'll size it.", "2026-05-10T08:58:00Z"),
-                                seedMsg(Role.Assistant, "Drafted as #TBD with the architect notes.", "2026-05-10T09:00:00Z"),
+                                seedMsg(
+                                    Role.Assistant,
+                                    """
+                                    Drafted as #TBD with the architect notes. Three things I'd add for the dialog ticket:
+
+                                    1. **Validation** — name must be non-empty after trim; reject if a channel with the same name already exists in this conversation list.
+                                    2. **Workspace picker** — default to the current cwd, allow override via the existing `WorkspacePicker` composable.
+                                    3. **Cancel affordance** — Esc / back-press dismisses without promoting.
+
+                                    Want me to sketch the `UiState` shape before we open the issue?
+                                    """.trimIndent(),
+                                    "2026-05-10T09:00:00Z",
+                                    isStreaming = true,
+                                ),
                             ),
                     ),
                     seedChannel(
@@ -363,12 +376,14 @@ class FakeConversationRepository(
             role: Role,
             content: String,
             timestamp: String,
-        ): SeedMessage = SeedMessage(role, content, Instant.parse(timestamp))
+            isStreaming: Boolean = false,
+        ): SeedMessage = SeedMessage(role, content, Instant.parse(timestamp), isStreaming)
 
         private data class SeedMessage(
             val role: Role,
             val content: String,
             val timestamp: Instant,
+            val isStreaming: Boolean = false,
         )
 
         private data class SeedSession(
@@ -417,7 +432,7 @@ class FakeConversationRepository(
                             role = msg.role,
                             content = msg.content,
                             timestamp = msg.timestamp,
-                            isStreaming = false,
+                            isStreaming = msg.isStreaming,
                         )
                     }
                 }
@@ -429,7 +444,7 @@ class FakeConversationRepository(
                         role = msg.role,
                         content = msg.content,
                         timestamp = msg.timestamp,
-                        isStreaming = false,
+                        isStreaming = msg.isStreaming,
                     )
                 }
             val conversation =
@@ -486,7 +501,7 @@ class FakeConversationRepository(
                         role = msg.role,
                         content = msg.content,
                         timestamp = msg.timestamp,
-                        isStreaming = false,
+                        isStreaming = msg.isStreaming,
                     )
                 }
             return ConversationRecord(
