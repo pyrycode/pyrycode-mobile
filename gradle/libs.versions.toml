@@ -17,6 +17,7 @@ jetbrainsMarkdown = "0.7.3"
 navigationCompose = "2.9.5"
 koinBom = "4.0.4"
 ktlint = "1.5.0"
+snipmeHighlights = "1.1.0"
 spotless = "7.0.4"
 
 [libraries]
@@ -47,6 +48,7 @@ kotlinx-datetime = { group = "org.jetbrains.kotlinx", name = "kotlinx-datetime",
 jetbrains-markdown = { group = "org.jetbrains", name = "markdown", version.ref = "jetbrainsMarkdown" }
 koin-bom = { group = "io.insert-koin", name = "koin-bom", version.ref = "koinBom" }
 koin-androidx-compose = { group = "io.insert-koin", name = "koin-androidx-compose" }
+snipme-highlights = { group = "dev.snipme", name = "highlights", version.ref = "snipmeHighlights" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
