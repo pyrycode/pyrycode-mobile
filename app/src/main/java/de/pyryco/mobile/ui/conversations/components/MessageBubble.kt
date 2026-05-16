@@ -9,10 +9,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -88,12 +90,14 @@ private fun AssistantMessage(
                 .fillMaxWidth()
                 .padding(bottom = MessageRowVerticalSpacing),
     ) {
-        Text(
-            text = content,
-            modifier = Modifier.fillMaxWidth(),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
+        CompositionLocalProvider(
+            LocalContentColor provides MaterialTheme.colorScheme.onSurface,
+        ) {
+            MarkdownText(
+                markdown = content,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 
@@ -163,6 +167,63 @@ private fun MessageBubbleDarkPreview() {
     PyrycodeMobileTheme(darkTheme = true) {
         Surface {
             MessageBubblePreviewSequence()
+        }
+    }
+}
+
+private const val MARKDOWN_PREVIEW_FIXTURE = """
+# Heading 1
+## Heading 2
+### Heading 3
+
+Plain paragraph with **bold**, *italic*, `inline code`, and a [link](https://pyryco.de).
+
+- Unordered list item 1
+- Unordered list item 2
+
+1. Ordered list item 1
+2. Ordered list item 2
+
+> Blockquote — single line of quoted text.
+
+```kotlin
+fun migrate(legacy: List<LegacyOrder>): List<Order> =
+    legacy.map { it.toModern() }
+```
+"""
+
+@Composable
+private fun MessageBubbleMarkdownPreviewBody() {
+    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+        MessageBubble(previewMessage(Role.Assistant, MARKDOWN_PREVIEW_FIXTURE))
+    }
+}
+
+@Preview(
+    name = "MessageBubble — Markdown · Light",
+    showBackground = true,
+    widthDp = 412,
+)
+@Composable
+private fun MessageBubbleMarkdownLightPreview() {
+    PyrycodeMobileTheme(darkTheme = false) {
+        Surface {
+            MessageBubbleMarkdownPreviewBody()
+        }
+    }
+}
+
+@Preview(
+    name = "MessageBubble — Markdown · Dark",
+    showBackground = true,
+    widthDp = 412,
+    uiMode = Configuration.UI_MODE_NIGHT_YES,
+)
+@Composable
+private fun MessageBubbleMarkdownDarkPreview() {
+    PyrycodeMobileTheme(darkTheme = true) {
+        Surface {
+            MessageBubbleMarkdownPreviewBody()
         }
     }
 }

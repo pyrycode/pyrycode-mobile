@@ -94,6 +94,7 @@ dependencies {
     implementation(libs.koin.androidx.compose)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.datetime)
+    implementation(libs.jetbrains.markdown)
     lintChecks(libs.compose.lint.checks)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
