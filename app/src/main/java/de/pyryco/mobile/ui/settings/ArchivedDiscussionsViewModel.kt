@@ -5,20 +5,23 @@ import androidx.lifecycle.viewModelScope
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+enum class ArchiveTab { Channels, Discussions }
 
 sealed interface ArchivedDiscussionsUiState {
     data object Loading : ArchivedDiscussionsUiState
 
-    data object Empty : ArchivedDiscussionsUiState
-
     data class Loaded(
+        val channels: List<Conversation>,
         val discussions: List<Conversation>,
+        val selectedTab: ArchiveTab,
     ) : ArchivedDiscussionsUiState
 
     data class Error(
@@ -32,33 +35,41 @@ sealed interface ArchivedDiscussionsEvent {
     ) : ArchivedDiscussionsEvent
 
     data object BackTapped : ArchivedDiscussionsEvent
+
+    data class TabSelected(
+        val tab: ArchiveTab,
+    ) : ArchivedDiscussionsEvent
 }
 
 class ArchivedDiscussionsViewModel(
     private val repository: ConversationRepository,
 ) : ViewModel() {
+    private val selectedTab = MutableStateFlow(ArchiveTab.Discussions)
+
     val state: StateFlow<ArchivedDiscussionsUiState> =
-        repository
-            .observeConversations(ConversationFilter.Archived)
-            .map { conversations ->
-                val discussions = conversations.filter { !it.isPromoted }
-                if (discussions.isEmpty()) {
-                    ArchivedDiscussionsUiState.Empty
-                } else {
-                    ArchivedDiscussionsUiState.Loaded(discussions)
-                }
-            }.catch { e ->
-                val raw = e.message
-                emit(
-                    ArchivedDiscussionsUiState.Error(
-                        if (raw.isNullOrBlank()) "Failed to load archived discussions." else raw,
-                    ),
-                )
-            }.stateIn(
-                scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
-                initialValue = ArchivedDiscussionsUiState.Loading,
+        combine(
+            repository.observeConversations(ConversationFilter.Archived),
+            selectedTab,
+        ) { conversations, tab ->
+            val channels = conversations.filter { it.isPromoted }
+            val discussions = conversations.filter { !it.isPromoted }
+            ArchivedDiscussionsUiState.Loaded(
+                channels = channels,
+                discussions = discussions,
+                selectedTab = tab,
+            ) as ArchivedDiscussionsUiState
+        }.catch { e ->
+            val raw = e.message
+            emit(
+                ArchivedDiscussionsUiState.Error(
+                    if (raw.isNullOrBlank()) "Failed to load archived discussions." else raw,
+                ),
             )
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = ArchivedDiscussionsUiState.Loading,
+        )
 
     fun onEvent(event: ArchivedDiscussionsEvent) {
         when (event) {
@@ -66,6 +77,8 @@ class ArchivedDiscussionsViewModel(
                 viewModelScope.launch {
                     repository.unarchive(event.conversationId)
                 }
+            is ArchivedDiscussionsEvent.TabSelected ->
+                selectedTab.value = event.tab
             ArchivedDiscussionsEvent.BackTapped -> Unit
         }
     }

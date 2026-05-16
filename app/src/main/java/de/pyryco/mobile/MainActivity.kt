@@ -222,6 +222,8 @@ private fun PyryNavHost(
                             navController.popBackStack()
                         is ArchivedDiscussionsEvent.RestoreRequested ->
                             vm.onEvent(event)
+                        is ArchivedDiscussionsEvent.TabSelected ->
+                            vm.onEvent(event)
                     }
                 },
             )
