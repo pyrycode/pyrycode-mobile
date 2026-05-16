@@ -12,11 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
@@ -36,17 +32,6 @@ fun DiscussionPreviewRow(
     val displayName =
         conversation.name?.takeIf { it.isNotBlank() }
             ?: stringResource(R.string.untitled_discussion)
-    val scratchLabel = stringResource(R.string.discussion_preview_workspace_scratch)
-    val workspaceLabel = discussionPreviewWorkspaceLabel(conversation.cwd, scratchLabel)
-    val timeLabel = formatRelativeTime(conversation.lastUsedAt)
-    val meta =
-        buildAnnotatedString {
-            withStyle(SpanStyle(fontFamily = FontFamily.Monospace)) {
-                append(workspaceLabel)
-            }
-            append(" · ")
-            append(timeLabel)
-        }
 
     Column(
         modifier =
@@ -71,22 +56,13 @@ fun DiscussionPreviewRow(
             overflow = TextOverflow.Ellipsis,
         )
         Text(
-            text = meta,
+            text = formatRelativeTime(conversation.lastUsedAt),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.70f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
     }
-}
-
-private fun discussionPreviewWorkspaceLabel(
-    cwd: String,
-    scratchLabel: String,
-): String {
-    if (cwd == DEFAULT_SCRATCH_CWD) return scratchLabel
-    val segment = cwd.trimEnd('/').substringAfterLast('/')
-    return segment.ifBlank { scratchLabel }
 }
 
 @Preview(name = "Discussion preview — Light", showBackground = true, widthDp = 412)
