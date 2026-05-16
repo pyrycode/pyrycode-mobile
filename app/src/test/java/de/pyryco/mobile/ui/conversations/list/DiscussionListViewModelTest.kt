@@ -2,6 +2,7 @@ package de.pyryco.mobile.ui.conversations.list
 
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
+import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -59,6 +60,8 @@ class DiscussionListViewModelTest {
                     }
 
                     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = TODO("not used")
+
+                    override fun observeLastMessage(conversationId: String): Flow<Message?> = TODO("not used")
 
                     override suspend fun createDiscussion(workspace: String?): Conversation = TODO("not used")
 
@@ -348,6 +351,8 @@ class DiscussionListViewModelTest {
 
             override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = TODO("not used")
 
+            override fun observeLastMessage(conversationId: String): Flow<Message?> = TODO("not used")
+
             override suspend fun createDiscussion(workspace: String?): Conversation = TODO("not used")
 
             override suspend fun promote(
@@ -382,6 +387,8 @@ class DiscussionListViewModelTest {
                 flow { throw RuntimeException(message) }
 
             override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = TODO("not used")
+
+            override fun observeLastMessage(conversationId: String): Flow<Message?> = TODO("not used")
 
             override suspend fun createDiscussion(workspace: String?): Conversation = TODO("not used")
 
@@ -425,6 +432,8 @@ class DiscussionListViewModelTest {
         override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = source
 
         override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = TODO("not used")
+
+        override fun observeLastMessage(conversationId: String): Flow<Message?> = TODO("not used")
 
         override suspend fun createDiscussion(workspace: String?): Conversation = TODO("not used")
 
