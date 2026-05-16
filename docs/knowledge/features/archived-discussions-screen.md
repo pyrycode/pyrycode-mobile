@@ -1,6 +1,6 @@
 # Archived Discussions screen
 
-Recovery surface for discussions that the (forthcoming) 30-day auto-archive worker has evicted. Reached from Settings → "Archived discussions" since #94. Stateless screen + small ViewModel + nav-graph entry; shipped under `ui/settings/` (alongside `LicenseScreen` and `SettingsScreen`) because discoverability follows the entry point, not the entity.
+Recovery surface for discussions that the (forthcoming) 30-day auto-archive worker has evicted. Reached from Settings → "Archived discussions" since #94. Stateless screen + small ViewModel + nav-graph entry; shipped under `ui/settings/` (alongside `SettingsScreen`) because discoverability follows the entry point, not the entity. Was the sibling of `LicenseScreen` from #91 to #163; #163 deleted `LicenseScreen` along with its route, asset, and test once its Settings entry point disappeared.
 
 ## What it does
 
@@ -84,7 +84,6 @@ composable(Routes.SETTINGS) {
         themeMode = themeMode,
         onSelectTheme = vm::onSelectTheme,
         onBack = { navController.popBackStack() },
-        onOpenLicense = { navController.navigate(Routes.LICENSE) },
         onOpenArchivedDiscussions = { navController.navigate(Routes.ARCHIVED_DISCUSSIONS) },
     )
 }
@@ -103,7 +102,7 @@ composable(Routes.ARCHIVED_DISCUSSIONS) {
 }
 ```
 
-`Routes.ARCHIVED_DISCUSSIONS = "archived_discussions"`. The NavHost intercepts `BackTapped` before forwarding to the VM (the VM's `Unit` arm is a no-op); `RestoreRequested` is forwarded as-is. Same block shape as `composable(Routes.LICENSE)`.
+`Routes.ARCHIVED_DISCUSSIONS = "archived_discussions"`. The NavHost intercepts `BackTapped` before forwarding to the VM (the VM's `Unit` arm is a no-op); `RestoreRequested` is forwarded as-is.
 
 Koin: `viewModel { ArchivedDiscussionsViewModel(get()) }` in `appModule`.
 
@@ -169,7 +168,7 @@ No dark previews this slice — the muted-alpha treatment renders identically mo
 - Ticket notes: [`../codebase/94.md`](../codebase/94.md)
 - Spec: `docs/specs/architecture/94-archived-discussions-screen.md`
 - Data foundations: [`../codebase/93.md`](../codebase/93.md) (`Conversation.archived` + `ConversationFilter.Archived` + seed), [`../codebase/96.md`](../codebase/96.md) (`unarchive(id)` primitive)
-- Sibling screens: [Discussion list screen](discussion-list-screen.md) (shape it mirrors — `Scaffold` + back-arrow + `LazyColumn` + long-press menu + `alpha(0.65f)`; one tier different), [License screen](license-screen.md) (the other settings-package secondary screen)
+- Sibling screens: [Discussion list screen](discussion-list-screen.md) (shape it mirrors — `Scaffold` + back-arrow + `LazyColumn` + long-press menu + `alpha(0.65f)`; one tier different). Was siblings with `LicenseScreen` (#91) under `ui/settings/` until #163 deleted that screen.
 - Hosted ViewModel pattern: similar in shape to [Discussion list view-model](discussion-list-viewmodel.md), simpler — no `combine` (one upstream), no `navigationEvents` channel.
 - Entry point: [Settings screen](settings-screen.md) Storage section row
 - Navigation: [Navigation](navigation.md) — route `archived_discussions`

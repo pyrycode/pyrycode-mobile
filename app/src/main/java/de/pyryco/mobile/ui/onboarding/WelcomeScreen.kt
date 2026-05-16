@@ -72,7 +72,7 @@ fun WelcomeScreen(
                     painter = painterResource(R.drawable.ic_pyry_logo),
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(104.dp),
+                    modifier = Modifier.size(width = 92.dp, height = 104.dp),
                 )
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
