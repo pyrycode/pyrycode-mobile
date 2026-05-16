@@ -141,7 +141,6 @@ fun ChannelListScreen(
                         items(items = state.channels, key = { it.id }) { channel ->
                             ConversationRow(
                                 conversation = channel,
-                                lastMessage = null,
                                 onClick = { onEvent(ChannelListEvent.RowTapped(channel.id)) },
                             )
                         }

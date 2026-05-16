@@ -196,7 +196,6 @@ private fun DiscussionRow(
         Box {
             ConversationRow(
                 conversation = discussion,
-                lastMessage = null,
                 onClick = onTap,
                 modifier = Modifier.alpha(0.65f),
                 onLongClick = { menuExpanded = true },
@@ -313,12 +312,10 @@ private fun DiscussionRowVsChannelRowPreview() {
         Column {
             ConversationRow(
                 conversation = channel,
-                lastMessage = null,
                 onClick = {},
             )
             ConversationRow(
                 conversation = discussion,
-                lastMessage = null,
                 onClick = {},
                 modifier = Modifier.alpha(0.65f),
             )

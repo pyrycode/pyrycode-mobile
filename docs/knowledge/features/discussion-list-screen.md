@@ -78,7 +78,6 @@ The screen does not own any dialog state — it is purely a function of `state.p
 ```kotlin
 ConversationRow(
     conversation = discussion,
-    lastMessage = null,
     onClick = onTap,
     modifier = Modifier.alpha(0.65f),
     onLongClick = { menuExpanded = true },
@@ -95,13 +94,13 @@ Rationale:
 
 Hit-testing is unaffected by `Modifier.alpha` — the row's `onClick` fires at full opacity. That's correct: discussions are interactive, just secondary. A truly-disabled visual would need `enabled = false` on the inner `ListItem` (propagates `LocalContentColor` through M3), not alpha.
 
-The "workspace label is absent on discussion rows" guarantee is **not** enforced by this screen. It falls out of `ConversationRow` calling `condenseWorkspace(conversation.cwd)`, which returns `null` for `DEFAULT_SCRATCH_CWD`; the `WorkspaceChip` is gated on a non-null result. Fake-seeded discussions use `DEFAULT_SCRATCH_CWD`, so no chip renders. The `@Preview` composables are the regression tripwire — a future change to `ConversationRow` or `condenseWorkspace` that re-introduces a label would show up in `DiscussionListScreenLoadedPreview`.
+No workspace label renders on discussion rows because `ConversationRow` renders no workspace label on *any* row since #154 — Figma `15:8` walked the inline label off the shared primitive entirely. Pre-#154 this guarantee was a fall-out of `condenseWorkspace(DEFAULT_SCRATCH_CWD) == null`; now it is unconditional.
 
 ## Previews
 
 Three `@Preview` composables live in the file:
 
-- **`DiscussionListScreenLoadedPreview`** — full `DiscussionListScreen(state = Loaded([d1, d2]), onEvent = {})` with two fixture discussions (one normal, one `isSleeping = true`), both at `DEFAULT_SCRATCH_CWD`. Verifies the Loaded layout under `PyrycodeMobileTheme(darkTheme = false)`, the alpha dim, and the absence of workspace chips.
+- **`DiscussionListScreenLoadedPreview`** — full `DiscussionListScreen(state = Loaded([d1, d2]), onEvent = {})` with two fixture discussions (one normal, one `isSleeping = true`), both at `DEFAULT_SCRATCH_CWD`. Verifies the Loaded layout under `PyrycodeMobileTheme(darkTheme = false)` and the alpha dim. Since #154 the row is single-line so there is no workspace chip / supporting-text line to verify; the sleeping row's dot now renders *after* the name (between name and timestamp), not before it.
 - **`DiscussionListScreenWithMenuOpenPreview`** (#25) — renders a single `DiscussionRow(..., menuInitiallyExpanded = true)` so the static IDE preview shows the long-press `DropdownMenu` open over the row. Satisfies AC #5 ("at least one preview demonstrates the affordances"). The swipe surface is not previewable statically; gesture verification falls to manual exercise of the build.
 - **`DiscussionRowVsChannelRowPreview`** — a `Column { channelRow; discussionRow }` rendering the same shared `ConversationRow` at full opacity (channel: promoted, named, real cwd) above the alpha-0.65 instance (discussion: unpromoted, name=null, `DEFAULT_SCRATCH_CWD`). This is the visual contract for the #24 de-emphasis AC — the contrast between the two rows is the acceptance test. Don't move this preview out of `DiscussionListScreen.kt`; it belongs with the file that owns the alpha call site.
 
