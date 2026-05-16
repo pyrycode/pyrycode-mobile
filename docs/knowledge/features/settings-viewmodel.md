@@ -70,7 +70,6 @@ composable(Routes.SETTINGS) {
         onSelectTheme = vm::onSelectTheme,
         onToggleUseWallpaperColors = vm::onToggleUseWallpaperColors,
         onBack = { navController.popBackStack() },
-        onOpenLicense = { navController.navigate(Routes.LICENSE) },
         onOpenArchivedDiscussions = { navController.navigate(Routes.ARCHIVED_DISCUSSIONS) },
     )
 }
