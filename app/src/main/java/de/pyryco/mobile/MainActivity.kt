@@ -231,6 +231,7 @@ private fun PyryNavHost(
                             vm.onEvent(event)
                     }
                 },
+                effects = vm.effects,
             )
         }
     }

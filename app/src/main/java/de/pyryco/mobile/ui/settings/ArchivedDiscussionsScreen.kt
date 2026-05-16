@@ -8,31 +8,31 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SecondaryTabRow
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
-import de.pyryco.mobile.ui.conversations.components.ConversationRow
+import de.pyryco.mobile.ui.conversations.components.ArchiveRow
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.datetime.Instant
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -41,7 +41,20 @@ fun ArchivedDiscussionsScreen(
     state: ArchivedDiscussionsUiState,
     onEvent: (ArchivedDiscussionsEvent) -> Unit,
     modifier: Modifier = Modifier,
+    effects: Flow<ArchivedDiscussionsEffect> = emptyFlow(),
 ) {
+    val snackbarHostState = remember { SnackbarHostState() }
+    val resources = LocalResources.current
+    LaunchedEffect(effects, snackbarHostState) {
+        effects.collect { effect ->
+            when (effect) {
+                is ArchivedDiscussionsEffect.RestoreSucceeded ->
+                    snackbarHostState.showSnackbar(
+                        resources.getString(R.string.restored_snackbar, effect.displayName),
+                    )
+            }
+        }
+    }
     Scaffold(
         modifier = modifier,
         topBar = {
@@ -57,6 +70,7 @@ fun ArchivedDiscussionsScreen(
                 },
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { inner ->
         val bodyModifier = Modifier.padding(inner)
         when (state) {
@@ -118,43 +132,21 @@ private fun LoadedBody(
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize()) {
                 items(items = items, key = { it.id }) { conversation ->
-                    ArchivedDiscussionRow(
-                        discussion = conversation,
+                    val displayName = conversation.displayName()
+                    ArchiveRow(
+                        conversation = conversation,
+                        displayName = displayName,
                         onRestore = {
-                            onEvent(ArchivedDiscussionsEvent.RestoreRequested(conversation.id))
+                            onEvent(
+                                ArchivedDiscussionsEvent.RestoreRequested(
+                                    conversation.id,
+                                    displayName,
+                                ),
+                            )
                         },
                     )
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun ArchivedDiscussionRow(
-    discussion: Conversation,
-    onRestore: () -> Unit,
-    menuInitiallyExpanded: Boolean = false,
-) {
-    var menuExpanded by remember(discussion.id) { mutableStateOf(menuInitiallyExpanded) }
-    Box {
-        ConversationRow(
-            conversation = discussion,
-            onClick = {},
-            modifier = Modifier.alpha(0.65f),
-            onLongClick = { menuExpanded = true },
-        )
-        DropdownMenu(
-            expanded = menuExpanded,
-            onDismissRequest = { menuExpanded = false },
-        ) {
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.restore_action)) },
-                onClick = {
-                    menuExpanded = false
-                    onRestore()
-                },
-            )
         }
     }
 }
@@ -168,6 +160,10 @@ private fun CenteredText(
         Text(text)
     }
 }
+
+private fun Conversation.displayName(): String =
+    name?.takeIf { it.isNotBlank() }
+        ?: if (isPromoted) "Untitled channel" else "Untitled discussion"
 
 @Preview(name = "Archived — Discussions tab — Light", showBackground = true, widthDp = 412)
 @Composable
@@ -268,29 +264,6 @@ private fun ArchivedScreenDiscussionsEmptyPreview() {
                     selectedTab = ArchiveTab.Discussions,
                 ),
             onEvent = {},
-        )
-    }
-}
-
-@Preview(name = "Archived — Long-press menu", showBackground = true, widthDp = 412)
-@Composable
-private fun ArchivedDiscussionsRowMenuPreview() {
-    val discussion =
-        Conversation(
-            id = "seed-discussion-archived",
-            name = null,
-            cwd = DEFAULT_SCRATCH_CWD,
-            currentSessionId = "session-archived",
-            sessionHistory = emptyList(),
-            isPromoted = false,
-            lastUsedAt = Instant.parse("2026-04-15T12:00:00Z"),
-            archived = true,
-        )
-    PyrycodeMobileTheme(darkTheme = false) {
-        ArchivedDiscussionRow(
-            discussion = discussion,
-            onRestore = {},
-            menuInitiallyExpanded = true,
         )
     }
 }

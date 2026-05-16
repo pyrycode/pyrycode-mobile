@@ -5,11 +5,14 @@ import androidx.lifecycle.viewModelScope
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -32,6 +35,7 @@ sealed interface ArchivedDiscussionsUiState {
 sealed interface ArchivedDiscussionsEvent {
     data class RestoreRequested(
         val conversationId: String,
+        val displayName: String,
     ) : ArchivedDiscussionsEvent
 
     data object BackTapped : ArchivedDiscussionsEvent
@@ -41,10 +45,19 @@ sealed interface ArchivedDiscussionsEvent {
     ) : ArchivedDiscussionsEvent
 }
 
+sealed interface ArchivedDiscussionsEffect {
+    data class RestoreSucceeded(
+        val displayName: String,
+    ) : ArchivedDiscussionsEffect
+}
+
 class ArchivedDiscussionsViewModel(
     private val repository: ConversationRepository,
 ) : ViewModel() {
     private val selectedTab = MutableStateFlow(ArchiveTab.Discussions)
+
+    private val _effects = Channel<ArchivedDiscussionsEffect>(Channel.BUFFERED)
+    val effects: Flow<ArchivedDiscussionsEffect> = _effects.receiveAsFlow()
 
     val state: StateFlow<ArchivedDiscussionsUiState> =
         combine(
@@ -75,7 +88,15 @@ class ArchivedDiscussionsViewModel(
         when (event) {
             is ArchivedDiscussionsEvent.RestoreRequested ->
                 viewModelScope.launch {
-                    repository.unarchive(event.conversationId)
+                    // Swallow failures: the AC scopes a snackbar only on success; a failed
+                    // unarchive yields no UI surface in this slice. Re-throwing would crash
+                    // viewModelScope's child via the default uncaught handler.
+                    runCatching { repository.unarchive(event.conversationId) }
+                        .onSuccess {
+                            _effects.send(
+                                ArchivedDiscussionsEffect.RestoreSucceeded(event.displayName),
+                            )
+                        }
                 }
             is ArchivedDiscussionsEvent.TabSelected ->
                 selectedTab.value = event.tab

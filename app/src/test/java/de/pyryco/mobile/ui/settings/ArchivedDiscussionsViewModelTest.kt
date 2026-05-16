@@ -9,8 +9,10 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -18,12 +20,15 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import kotlin.time.Duration.Companion.milliseconds
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ArchivedDiscussionsViewModelTest {
@@ -256,10 +261,54 @@ class ArchivedDiscussionsViewModelTest {
             val collector = launch { vm.state.collect { } }
             advanceUntilIdle()
 
-            vm.onEvent(ArchivedDiscussionsEvent.RestoreRequested("disc-7"))
+            vm.onEvent(ArchivedDiscussionsEvent.RestoreRequested("disc-7", "Untitled discussion"))
             advanceUntilIdle()
 
             assertEquals(listOf("disc-7"), recording.unarchiveCalls)
+            collector.cancel()
+        }
+
+    @Test
+    fun restoreRequested_emitsRestoreSucceededEffect_afterUnarchive() =
+        runTest {
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val recording = recordingRepo(source)
+            val vm = ArchivedDiscussionsViewModel(recording)
+            val collector = launch { vm.state.collect { } }
+            advanceUntilIdle()
+
+            val effectDeferred = async { vm.effects.first() }
+            advanceUntilIdle()
+            vm.onEvent(
+                ArchivedDiscussionsEvent.RestoreRequested("disc-7", "old-project-experiments"),
+            )
+            advanceUntilIdle()
+
+            assertEquals(
+                ArchivedDiscussionsEffect.RestoreSucceeded(displayName = "old-project-experiments"),
+                effectDeferred.await(),
+            )
+            collector.cancel()
+        }
+
+    @Test
+    fun restoreRequested_doesNotEmitEffect_whenUnarchiveThrows() =
+        runTest {
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val vm = ArchivedDiscussionsViewModel(throwingUnarchiveRepo(source))
+            val collector = launch { vm.state.collect { } }
+            advanceUntilIdle()
+
+            vm.onEvent(
+                ArchivedDiscussionsEvent.RestoreRequested("disc-7", "old-project-experiments"),
+            )
+            advanceUntilIdle()
+
+            val emitted =
+                withTimeoutOrNull(100.milliseconds) {
+                    vm.effects.first()
+                }
+            assertNull("no effect should be emitted when unarchive throws, was $emitted", emitted)
             collector.cancel()
         }
 
@@ -423,6 +472,42 @@ class ArchivedDiscussionsViewModelTest {
     }
 
     private fun recordingRepo(source: MutableSharedFlow<List<Conversation>>): RecordingRepo = RecordingRepo(source)
+
+    private fun throwingUnarchiveRepo(source: MutableSharedFlow<List<Conversation>>): ConversationRepository =
+        object : ConversationRepository {
+            override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = source
+
+            override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = TODO("not used")
+
+            override fun observeLastMessage(conversationId: String): Flow<Message?> = TODO("not used")
+
+            override suspend fun createDiscussion(workspace: String?): Conversation = TODO("not used")
+
+            override suspend fun promote(
+                conversationId: String,
+                name: String,
+                workspace: String?,
+            ): Conversation = TODO("not used")
+
+            override suspend fun archive(conversationId: String): Unit = TODO("not used")
+
+            override suspend fun unarchive(conversationId: String): Unit = throw RuntimeException("boom")
+
+            override suspend fun rename(
+                conversationId: String,
+                name: String,
+            ): Conversation = TODO("not used")
+
+            override suspend fun startNewSession(
+                conversationId: String,
+                workspace: String?,
+            ): Session = TODO("not used")
+
+            override suspend fun changeWorkspace(
+                conversationId: String,
+                workspace: String,
+            ): Session = TODO("not used")
+        }
 
     private fun sampleArchivedDiscussion(id: String): Conversation =
         Conversation(
