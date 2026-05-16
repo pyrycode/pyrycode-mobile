@@ -31,8 +31,8 @@ Layout is a top-level `Box(fillMaxSize)` with three layers stacked back-to-front
 1. **Base** — `Modifier.background(colorScheme.surface)`.
 2. **Atmospheric glow** (since #57) — `Modifier.drawBehind` paints a `Brush.radialGradient` centered at roughly (48% width, 30% height), radius ~53% of height, fading from `colorScheme.primaryContainer.copy(alpha = 0.6f)` to `Color.Transparent`. Sits behind content without consuming layout space.
 3. **Content** — `Column(fillMaxSize, systemBarsPadding, horizontalPadding = 32.dp, SpaceBetween)`:
-   - Top-anchored **hero** (`padding(top = 136.dp)`, `spacedBy(28.dp)`): `Icon(R.drawable.ic_pyry_logo, tint = colorScheme.primary, size = 104.dp)`, then `"Pyrycode Mobile"` (`headlineLarge` / `onSurface`) stacked over `"Control Claude sessions on your phone."` (`titleMedium` / `onSurfaceVariant`), then a `bodyLarge` / `onSurfaceVariant` body paragraph explaining the local-first model.
-   - Bottom-anchored **CTA stack** (`padding(bottom = 16.dp)`, `spacedBy(12.dp)`): full-width 56dp-tall filled `Button` (`ic_qr_scan_frame` leading icon + label), full-width 56dp-tall `TextButton`, centred `labelSmall` footer at `onSurfaceVariant.copy(alpha = 0.55f)`.
+   - Top-anchored **hero** (`padding(top = 168.dp)` since #149, `spacedBy(28.dp)`): `Icon(R.drawable.ic_pyry_logo, tint = colorScheme.primary, size = 104.dp)`, then `"Pyrycode Mobile"` (`headlineLarge` / `onSurface`) stacked over `"Control Claude sessions on your phone."` (`titleMedium` / `onSurfaceVariant`), then a `bodyLarge` / `onSurfaceVariant` body paragraph explaining the local-first model. The 168.dp value is Figma node `6:32`'s `pt-[168px]` read as "below the safe area" — applied after `systemBarsPadding()` rather than with inset math (project-wide convention; see [`codebase/149.md`](../codebase/149.md)).
+   - Bottom-anchored **CTA stack** (`padding(bottom = 16.dp)`, `spacedBy(12.dp)`): full-width 56dp-tall filled `Button` with `shape = RoundedCornerShape(28.dp)` since #149 (corner = height / 2 ⇒ pill, matching Figma node `6:41`'s `rounded-[28px]`; `ic_qr_scan_frame` leading icon + label), full-width 56dp-tall `TextButton` (no shape override — M3 text-button surface has no fill, so corner radius is visually irrelevant even though Figma node `6:43` also declares `rounded-[28px]`), centred `labelSmall` footer at `onSurfaceVariant.copy(alpha = 0.55f)`.
 
 All colors come from `MaterialTheme.colorScheme.*` and all typography from `MaterialTheme.typography.*` — no hardcoded `Color(0x…)` literals, no custom `TextStyle(...)`. `Color.Transparent` (the terminal radial-gradient stop) is the only non-token `Color` and is permitted because it's a constant, not a hex literal. Edge-to-edge insets honored via `Modifier.systemBarsPadding()`.
 
@@ -87,6 +87,6 @@ Both have a single uniform fill / stroke color in the raw XML so the Compose `Ic
 
 - Spec (current): `docs/specs/architecture/57-welcome-screen-figma-polish.md`
 - Spec (original scaffold): `docs/specs/architecture/7-welcome-screen-scaffold.md`
-- Ticket notes: `../codebase/7.md` (scaffold), `../codebase/14.md` (`onSetup` external-browser wiring), `../codebase/57.md` (Figma polish)
+- Ticket notes: `../codebase/7.md` (scaffold), `../codebase/14.md` (`onSetup` external-browser wiring), `../codebase/57.md` (Figma polish), `../codebase/149.md` (pill CTA + 168.dp hero top padding refinement)
 - Figma node: `6:32` (412×892 baseline) — https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=6-32
 - Sibling: [Scanner screen](scanner-screen.md)
