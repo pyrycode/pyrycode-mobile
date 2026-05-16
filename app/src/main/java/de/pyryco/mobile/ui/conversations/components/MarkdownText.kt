@@ -235,7 +235,7 @@ private fun BlockQuoteBlock(
 }
 
 @Composable
-private fun CodeBlock(
+internal fun CodeBlock(
     content: String,
     language: String?,
 ) {

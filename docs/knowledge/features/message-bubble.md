@@ -1,6 +1,6 @@
 # MessageBubble
 
-Stateless row primitive (#128) rendering a single `Message` in the conversation thread surface. Two visual variants dispatched off `Message.role`: a right-aligned painted bubble for `Role.User` (plain text) and a left-aligned flat text block for `Role.Assistant` (markdown-rendered via [`MarkdownText`](./markdown-text.md) since #129 — Claude-style, assistant text flows in the column with the screen surface behind it). Assistant content reveals progressively with a blinking caret when `Message.isStreaming = true` (#184). `Role.Tool` is a deliberate no-op pending #131. Code-block styling landed in #130. Eventual call site is the `LazyColumn(reverseLayout = true)` body of [`ThreadScreen`](./thread-screen.md), but #128 ships the component without consumer wiring; the wiring waits for #127's fake `observeMessages(...)` repository.
+Stateless row primitive (#128) rendering a single `Message` in the conversation thread surface. Three visual variants dispatched off `Message.role`: a right-aligned painted bubble for `Role.User` (plain text); a left-aligned flat text block for `Role.Assistant` (markdown-rendered via [`MarkdownText`](./markdown-text.md) since #129 — Claude-style, assistant text flows in the column with the screen surface behind it); and a tap-to-expand `surfaceContainerHigh` card for `Role.Tool`, routed via [`ToolCallRow`](./tool-call-row.md) since #131. Assistant content reveals progressively with a blinking caret when `Message.isStreaming = true` (#184). Code-block styling landed in #130. Eventual call site is the `LazyColumn(reverseLayout = true)` body of [`ThreadScreen`](./thread-screen.md), but #128 ships the component without consumer wiring; the wiring waits for #127's fake `observeMessages(...)` repository.
 
 Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). File: `MessageBubble.kt`. Sibling of [`DiscussionPreviewRow`](./discussion-preview-row.md), [`ConversationRow`](./conversation-row.md), `ArchiveRow.kt`.
 
@@ -10,7 +10,7 @@ Dispatches on `message.role` with a Kotlin `when`:
 
 - **`Role.User`** → `UserMessageBubble(content, modifier)` — outer `Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End)` pins to the right edge; inside, a `Surface(shape = UserBubbleShape, color = primaryContainer, modifier = Modifier.widthIn(max = UserBubbleMaxWidth))` wraps a `Text(content, style = bodyMedium, color = onPrimaryContainer)` with inner padding `14×12`. The asymmetric corner radii `(topStart = 20, topEnd = 20, bottomEnd = 6, bottomStart = 20)` give the bubble a "tail" pointing toward the user side.
 - **`Role.Assistant`** → `AssistantMessage(message, modifier)` — `Box(Modifier.fillMaxWidth())` containing, inside `CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) { ... }`, either a static [`MarkdownText(markdown = message.content, modifier = Modifier.fillMaxWidth())`](./markdown-text.md) (when `message.isStreaming = false`) or a private `StreamingAssistantBody(content = message.content, modifier = Modifier.fillMaxWidth())` (when `message.isStreaming = true`) that reveals content progressively with a blinking caret (#184). **No `Surface`, no `Modifier.background(...)`, no shape, no inner padding.** The assistant message flows in the column with the screen's surface color behind it.
-- **`Role.Tool`** → `Unit` — renders nothing. ThreadScreen will route `Role.Tool` to a separate tool-card composable (introduced in #131) before reaching this dispatcher. The no-op arm is the contract until then.
+- **`Role.Tool`** → `message.toolCall?.let { ToolCallRow(toolCall = it, modifier = modifier) }` — routes the unwrapped [`ToolCall`](./data-model.md) payload to [`ToolCallRow`](./tool-call-row.md) since #131. The null-safe `?.let` absorbs the data-class invariant (`toolCall` non-null iff `role == Role.Tool`) silently — a `Role.Tool` message with `toolCall = null` (a data-layer bug) renders nothing, identical to the pre-#131 no-op. No defensive throw, no debug placeholder.
 
 Each variant adds `Modifier.padding(bottom = MessageRowVerticalSpacing = 12.dp)` to its outer container, so the per-row vertical rhythm lives on the component, not on the eventual `LazyColumn` consumer. The last message in the list carries a trailing 12dp before the (eventual) composer / status row — acceptable visual padding, not a bug.
 
@@ -36,14 +36,15 @@ The composable is **pure rendering** — no `remember`, no `LaunchedEffect`, no 
 when (message.role) {
     Role.User -> UserMessageBubble(message.content, modifier)
     Role.Assistant -> AssistantMessage(message, modifier)
-    // Tool-role rendering lands in #131; ThreadScreen will route it before reaching here.
-    Role.Tool -> Unit
+    Role.Tool -> message.toolCall?.let { ToolCallRow(toolCall = it, modifier = modifier) }
 }
 ```
 
 The assistant arm takes the full `Message` (since #184) rather than `message.content` so the streaming branch can read `isStreaming` and `content` together.
 
-The `Role.Tool -> Unit` arm is **deliberate, not a TODO**. The framework contract is: ThreadScreen routes `Role.Tool` to the (yet-to-land) tool-card composable from #131 before the list reaches this dispatcher. Rendering nothing is the right default until that route exists. No `error("Tool role not yet handled")` — would crash exactly the path the contract guarantees never happens. No debug placeholder `Text("[tool]")` — would leak into production builds where the contract isn't yet in force.
+Since #131, the `Role.Tool` arm routes the unwrapped `ToolCall` payload to [`ToolCallRow`](./tool-call-row.md). The `?.let` absorbs the [`Message`](./data-model.md) invariant (`toolCall` non-null iff `role == Role.Tool`) silently — a malformed `Role.Tool` message with `toolCall = null` (a data-layer bug) renders nothing, identical to the pre-#131 `Role.Tool -> Unit` posture. **No `!!`, no `requireNotNull`, no `error("...")`.** Visible-bug-but-not-crash failure mode.
+
+**Why routing happens here, not in `ThreadScreen`.** The architect spec for #131 considered both placements; this dispatcher was picked because it already owns the `Role`-fanout, and lifting Tool-routing one level up would force every future consumer of `Message` to repeat the null-unwrap. The dispatch contract for `Message` stays single-sourced.
 
 The absence of a default `else ->` arm is also deliberate: it keeps the Kotlin compiler enforcing exhaustiveness against the `Role` enum, so a future fourth value (e.g. `Role.System`) is flagged at this site as a hard compile-time decision rather than silently absorbed into a fallback. Project-wide pattern for `when (role)` / `when (kind)` dispatchers in `ui/conversations/components/`.
 
@@ -178,7 +179,7 @@ The fixture is the file-private `MARKDOWN_PREVIEW_FIXTURE` raw triple-quoted str
 
 `previewMessage(role, content)` is a file-private factory that fixes the rest of the `Message` shape (`id = "preview-${role.name}"`, `sessionId = "preview-session"`, `timestamp = Clock.System.now()`, `isStreaming = false`). Keeps the call sites focused on the varying fields (role and content) instead of repeating the full constructor.
 
-No preview for the `Role.Tool` arm — the `when` renders nothing for it, so a preview would be a blank surface with no visual signal.
+No preview for the `Role.Tool` arm — preview coverage for the tool-call surface lives in [`ToolCallRow.kt`](./tool-call-row.md#previews) (a 6-cell matrix × 2 themes since #131), not here.
 
 ## Edge cases / limitations
 
@@ -188,22 +189,20 @@ No preview for the `Role.Tool` arm — the `when` renders nothing for it, so a p
 - **Caret inside an open markdown construct falls back to plain text.** If the reveal cut lands inside an unclosed `**`, an unclosed backtick, an unterminated code fence, or an open `[link text`, the parser drops to its `else` raw-text fallback (per [`MarkdownText`](./markdown-text.md)) and the caret renders inside the unstyled fallback. Acceptable per AC2 — "the formatting that *can* apply does"; partial constructs go through the existing fallback.
 - **No timestamps in-bubble.** `Message.timestamp` is unused here. Per-bubble timestamps or per-session-delimiter timestamps are out of scope.
 - **No long-press, no `SelectionContainer`, no copy affordance.** The composable uses bare `Text(...)`, not `SelectionContainer { Text(...) }`. If long-press-to-copy lands later, the right place is a screen-level wrap of the `LazyColumn` body in a `SelectionContainer`, not per-bubble selection.
-- **`Role.Tool` renders nothing.** ThreadScreen is expected to filter or route `Role.Tool` upstream (currently no consumer is wired). If a `Role.Tool` message slips into a future `items(state.messages) { MessageBubble(it) }` call before #131 lands, the row will be invisible — visible only in the trailing 12dp gap (which collapses adjacent to surrounding messages). That's the contract until #131.
-- **No tool-role passthrough.** `MessageBubble` does not know about `ToolCard` or any sibling composable; the role-routing is local to this `when`. #131 either replaces the `Unit` arm with a real composable call, or filters tool messages out of `state.messages` upstream — either path satisfies the contract.
+- **`Role.Tool` routes to [`ToolCallRow`](./tool-call-row.md) since #131.** The null-safe `?.let` renders nothing if a `Role.Tool` message arrives with `toolCall = null` (a data-layer invariant violation). Pre-#131 the arm was `Role.Tool -> Unit` — the same posture, just realised through `ToolCallRow` once `ToolCall` is non-null.
 - **RTL.** `Arrangement.End` and `Modifier.fillMaxWidth()` respect `LayoutDirection` automatically — in RTL locales the user bubble pins to the left and the assistant text flows from the right. The corner-radius asymmetry (`bottomEnd = 6.dp` on `RoundedCornerShape`) is direction-aware and flips correctly. No explicit RTL handling needed.
 - **Bubble max-width is `320.dp`, not `330.dp`.** Chosen for 4dp-grid alignment; `330.dp` would be pixel-exact to Figma `w-[330px]`. Either is acceptable per the architect spec; the choice is documented in the file via the named constant.
 - **No instrumented tests.** Codebase has no `androidTest` infrastructure for thread/list components beyond existing fixtures — same precedent as #126's `ThreadScreen` (see [`thread-screen.md`](./thread-screen.md) § Testing). Visual verification is by the two `@Preview`s + `./gradlew assembleDebug` + `./gradlew lint`.
 
 ## Related
 
-- Ticket notes: [`../codebase/128.md`](../codebase/128.md), [`../codebase/129.md`](../codebase/129.md), [`../codebase/130.md`](../codebase/130.md), [`../codebase/184.md`](../codebase/184.md)
-- Specs: `docs/specs/architecture/128-message-bubble-user-assistant-variants.md`, `docs/specs/architecture/129-markdown-rendering-assistant-messages.md`, `docs/specs/architecture/130-code-block-rendering-syntax-highlighting.md`, `docs/specs/architecture/184-streaming-token-reveal-blinking-caret.md`
+- Ticket notes: [`../codebase/128.md`](../codebase/128.md), [`../codebase/129.md`](../codebase/129.md), [`../codebase/130.md`](../codebase/130.md), [`../codebase/131.md`](../codebase/131.md), [`../codebase/184.md`](../codebase/184.md)
+- Specs: `docs/specs/architecture/128-message-bubble-user-assistant-variants.md`, `docs/specs/architecture/129-markdown-rendering-assistant-messages.md`, `docs/specs/architecture/130-code-block-rendering-syntax-highlighting.md`, `docs/specs/architecture/131-tool-call-collapsed-expanded-component.md`, `docs/specs/architecture/184-streaming-token-reveal-blinking-caret.md`
 - Decisions: [ADR 0002 — markdown renderer library](../decisions/0002-markdown-renderer-library.md) (assistant-variant rendering pipeline), [ADR 0003 — syntax highlighter library](../decisions/0003-syntax-highlighter-library.md) (fenced-code styling)
 - Upstream: [data model](./data-model.md) (`Message`, `Role`, `isStreaming`), [Thread screen](./thread-screen.md) (the eventual `LazyColumn(reverseLayout = true)` host — body wiring is downstream of #127)
-- Component pipeline: [`MarkdownText`](./markdown-text.md) (consumed by the assistant variant since #129; the streaming caret in #184 rides through it as inline text without changing its signature)
+- Component pipeline: [`MarkdownText`](./markdown-text.md) (consumed by the assistant variant since #129; the streaming caret in #184 rides through it as inline text without changing its signature); [`ToolCallRow`](./tool-call-row.md) (consumed by the `Role.Tool` arm since #131)
 - Sibling pattern references: [`DiscussionPreviewRow`](./discussion-preview-row.md) (closest stateless-row composable; mirrored preview-pairing shape), [`ConversationRow`](./conversation-row.md), `ArchiveRow.kt`
 - Figma: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) — user variant matches nodes `16:23` / `16:39` / `16:51`; assistant variant **deliberately diverges** from `16:25` / `16:32` / `16:42` / `16:54` (Figma shows bubbled, AC mandates flat — AC wins, Figma reconciliation is a separate design call); streaming end-state at `16:54` → `16:56` shows the `▎` caret in body-text flow, which #184 reproduces exactly
 - Downstream:
   - #127 — fake `observeMessages(conversationId)` repository (no consumer wiring until this lands)
-  - #131 — tool-role rendering. Owns the `Role.Tool -> Unit` arm — either by introducing a `ToolMessage` composable and rewriting the arm, or by filtering `Role.Tool` upstream in `ThreadScreen`
   - #185 — auto-scroll behaviour that keeps the thread anchored to the bottom as the streaming message grows; consumes the same `Message.isStreaming` contract at the `ThreadScreen` layer, no change required inside `MessageBubble`

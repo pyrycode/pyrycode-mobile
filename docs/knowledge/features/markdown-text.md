@@ -79,7 +79,7 @@ Link text is built from the `LINK_TEXT` child's children, filtering `LBRACKET` /
 
 ### Code blocks
 
-Both `CODE_FENCE` and `CODE_BLOCK` dispatch to a single file-private `CodeBlock(content: String, language: String?)`. Visual structure since #130:
+Both `CODE_FENCE` and `CODE_BLOCK` dispatch to a single `internal fun CodeBlock(content: String, language: String?)`. Widened from `private` to `internal` in #131 (one-keyword edit, no body change) so [`ToolCallRow`](./tool-call-row.md) can reuse it for code-ish tool output via `language = null` — the same rounded `surfaceContainer` monospace surface, the same horizontal-scroll behaviour, no duplication of the visual contract. The two existing in-file call sites (`CODE_FENCE` / `CODE_BLOCK`) compile unchanged because `internal` is a superset of `private`-within-file. Visual structure since #130:
 
 ```kotlin
 Surface(shape = RoundedCornerShape(CodeBlockCornerRadius), color = surfaceContainer) {
@@ -191,10 +191,10 @@ Same shape as [`MessageBubble`](./message-bubble.md)'s file-private constants �
 
 ## Related
 
-- Ticket notes: [`../codebase/129.md`](../codebase/129.md), [`../codebase/130.md`](../codebase/130.md)
-- Specs: `docs/specs/architecture/129-markdown-rendering-assistant-messages.md`, `docs/specs/architecture/130-code-block-rendering-syntax-highlighting.md`
+- Ticket notes: [`../codebase/129.md`](../codebase/129.md), [`../codebase/130.md`](../codebase/130.md), [`../codebase/131.md`](../codebase/131.md)
+- Specs: `docs/specs/architecture/129-markdown-rendering-assistant-messages.md`, `docs/specs/architecture/130-code-block-rendering-syntax-highlighting.md`, `docs/specs/architecture/131-tool-call-collapsed-expanded-component.md`
 - Decisions: [ADR 0002 — markdown renderer library](../decisions/0002-markdown-renderer-library.md), [ADR 0003 — syntax highlighter library](../decisions/0003-syntax-highlighter-library.md)
-- Consumer: [`MessageBubble`](./message-bubble.md) (assistant variant only — user messages stay plain text)
+- Consumers: [`MessageBubble`](./message-bubble.md) assistant variant (user messages stay plain text); [`ToolCallRow`](./tool-call-row.md) reuses the `internal CodeBlock` for code-ish tool output since #131
 - Sibling component pattern: [`MessageBubble`](./message-bubble.md) (file-private spacing constants; preview pairing shape)
 - Local precedent for `buildAnnotatedString` / `SpanStyle` idioms: `ScannerScreen.kt:252-260`
 - Downstream:
