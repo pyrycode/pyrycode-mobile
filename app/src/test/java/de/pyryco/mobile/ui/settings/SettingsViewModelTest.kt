@@ -312,6 +312,11 @@ class SettingsViewModelTest {
                 conversationId: String,
                 workspace: String,
             ): Session = TODO("not used")
+
+            override suspend fun sendMessage(
+                conversationId: String,
+                text: String,
+            ): Message = TODO("not used")
         }
 
     private fun archivedDiscussion(id: String): Conversation =

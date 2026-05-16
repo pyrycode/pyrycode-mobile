@@ -92,6 +92,11 @@ class ArchivedDiscussionsViewModelTest {
                         conversationId: String,
                         workspace: String,
                     ): Session = TODO("not used")
+
+                    override suspend fun sendMessage(
+                        conversationId: String,
+                        text: String,
+                    ): Message = TODO("not used")
                 }
             val vm = ArchivedDiscussionsViewModel(repo)
             val collector = launch { vm.state.collect { } }
@@ -391,6 +396,11 @@ class ArchivedDiscussionsViewModelTest {
                 conversationId: String,
                 workspace: String,
             ): Session = TODO("not used")
+
+            override suspend fun sendMessage(
+                conversationId: String,
+                text: String,
+            ): Message = TODO("not used")
         }
 
     private fun erroringRepo(message: String?): ConversationRepository =
@@ -428,6 +438,11 @@ class ArchivedDiscussionsViewModelTest {
                 conversationId: String,
                 workspace: String,
             ): Session = TODO("not used")
+
+            override suspend fun sendMessage(
+                conversationId: String,
+                text: String,
+            ): Message = TODO("not used")
         }
 
     private class RecordingRepo(
@@ -469,6 +484,11 @@ class ArchivedDiscussionsViewModelTest {
             conversationId: String,
             workspace: String,
         ): Session = TODO("not used")
+
+        override suspend fun sendMessage(
+            conversationId: String,
+            text: String,
+        ): Message = TODO("not used")
     }
 
     private fun recordingRepo(source: MutableSharedFlow<List<Conversation>>): RecordingRepo = RecordingRepo(source)
@@ -507,6 +527,11 @@ class ArchivedDiscussionsViewModelTest {
                 conversationId: String,
                 workspace: String,
             ): Session = TODO("not used")
+
+            override suspend fun sendMessage(
+                conversationId: String,
+                text: String,
+            ): Message = TODO("not used")
         }
 
     private fun sampleArchivedDiscussion(id: String): Conversation =
