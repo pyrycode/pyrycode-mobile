@@ -79,11 +79,20 @@ sealed interface ThreadItem {
         val message: Message,
     ) : ThreadItem
 
+    /**
+     * Marks a transition between two sessions in the thread stream.
+     *
+     * Invariant: [workspaceCwd] is non-null iff [reason] is
+     * [BoundaryReason.WorkspaceChange]. For [BoundaryReason.Clear] and
+     * [BoundaryReason.IdleEvict] callers must observe `null`. Documented
+     * here and asserted in tests; not enforced at construction.
+     */
     data class SessionBoundary(
         val previousSessionId: String,
         val newSessionId: String,
         val reason: BoundaryReason,
         val occurredAt: Instant,
+        val workspaceCwd: String? = null,
     ) : ThreadItem
 }
 
