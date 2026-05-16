@@ -199,6 +199,7 @@ private fun PyryNavHost(
             ThreadScreen(
                 state = state,
                 onBack = { navController.popBackStack() },
+                onSendMessage = vm::sendMessage,
             )
         }
         composable(Routes.SETTINGS) {

@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 data class ThreadUiState(
     val conversationId: String,
@@ -18,7 +19,7 @@ data class ThreadUiState(
 
 class ThreadViewModel(
     savedStateHandle: SavedStateHandle,
-    repository: ConversationRepository,
+    private val repository: ConversationRepository,
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
@@ -41,6 +42,13 @@ class ThreadViewModel(
                         displayName = conversationId,
                     ),
             )
+
+    fun sendMessage(text: String) {
+        if (text.isBlank()) return
+        viewModelScope.launch {
+            repository.sendMessage(state.value.conversationId, text)
+        }
+    }
 }
 
 private fun Conversation.displayName(): String =
