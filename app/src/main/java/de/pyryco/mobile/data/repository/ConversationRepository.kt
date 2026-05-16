@@ -20,6 +20,13 @@ interface ConversationRepository {
 
     fun observeMessages(conversationId: String): Flow<List<ThreadItem>>
 
+    /**
+     * Emits the most-recent [Message] (by [Message.timestamp]) for the
+     * conversation, or `null` if the conversation has no messages or is
+     * unknown. Cold flow, re-emits on every state change.
+     */
+    fun observeLastMessage(conversationId: String): Flow<Message?>
+
     suspend fun createDiscussion(workspace: String? = null): Conversation
 
     suspend fun promote(
