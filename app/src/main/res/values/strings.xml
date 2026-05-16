@@ -22,8 +22,11 @@
     <string name="settings_theme_dialog_title">Theme</string>
     <string name="settings_use_wallpaper_colors">Use Material You dynamic color</string>
     <string name="settings_use_wallpaper_colors_unsupported">Requires Android 12 or newer</string>
-    <string name="archived_discussions_title">Archived discussions</string>
-    <string name="archived_discussions_empty">No archived discussions</string>
+    <string name="archived_title">Archived</string>
+    <string name="archived_tab_channels">Channels (%1$d)</string>
+    <string name="archived_tab_discussions">Discussions (%1$d)</string>
+    <string name="archived_empty_channels">No archived channels</string>
+    <string name="archived_empty_discussions">No archived discussions</string>
     <string name="archived_discussions_settings_row">Archived discussions</string>
     <string name="archived_discussions_count_supporting">%1$d archived</string>
     <string name="restore_action">Restore</string>

@@ -91,10 +91,8 @@ class ArchivedDiscussionsViewModelTest {
             val vm = ArchivedDiscussionsViewModel(repo)
             val collector = launch { vm.state.collect { } }
             advanceUntilIdle()
-            val discussions = listOf(sampleArchivedDiscussion("disc-1"))
-            source.emit(discussions)
+            source.emit(emptyList())
             advanceUntilIdle()
-            assertEquals(ArchivedDiscussionsUiState.Loaded(discussions), vm.state.value)
             assertTrue(
                 "VM must request the Archived filter, got $captured",
                 captured.contains(ConversationFilter.Archived),
@@ -103,7 +101,48 @@ class ArchivedDiscussionsViewModelTest {
         }
 
     @Test
-    fun loaded_dropsPromotedArchivedFromList() =
+    fun loaded_partitionsByIsPromoted() =
+        runTest {
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val vm = ArchivedDiscussionsViewModel(stubRepo(source))
+            val collector = launch { vm.state.collect { } }
+            advanceUntilIdle()
+            val discussionA = sampleArchivedDiscussion("disc-A")
+            val channelB = sampleArchivedChannel("chan-B")
+            val discussionC = sampleArchivedDiscussion("disc-C")
+            source.emit(listOf(discussionA, channelB, discussionC))
+            advanceUntilIdle()
+            assertEquals(
+                ArchivedDiscussionsUiState.Loaded(
+                    channels = listOf(channelB),
+                    discussions = listOf(discussionA, discussionC),
+                    selectedTab = ArchiveTab.Discussions,
+                ),
+                vm.state.value,
+            )
+            collector.cancel()
+        }
+
+    @Test
+    fun loaded_defaultSelectedTab_isDiscussions() =
+        runTest {
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val vm = ArchivedDiscussionsViewModel(stubRepo(source))
+            val collector = launch { vm.state.collect { } }
+            advanceUntilIdle()
+            source.emit(listOf(sampleArchivedDiscussion("disc-1")))
+            advanceUntilIdle()
+            val state = vm.state.value
+            assertTrue("expected Loaded, was $state", state is ArchivedDiscussionsUiState.Loaded)
+            assertEquals(
+                ArchiveTab.Discussions,
+                (state as ArchivedDiscussionsUiState.Loaded).selectedTab,
+            )
+            collector.cancel()
+        }
+
+    @Test
+    fun tabSelected_channels_updatesStateOnly() =
         runTest {
             val source = MutableSharedFlow<List<Conversation>>(replay = 0)
             val vm = ArchivedDiscussionsViewModel(stubRepo(source))
@@ -113,15 +152,83 @@ class ArchivedDiscussionsViewModelTest {
             val channel = sampleArchivedChannel("chan-1")
             source.emit(listOf(discussion, channel))
             advanceUntilIdle()
+
+            vm.onEvent(ArchivedDiscussionsEvent.TabSelected(ArchiveTab.Channels))
+            advanceUntilIdle()
+
             assertEquals(
-                ArchivedDiscussionsUiState.Loaded(listOf(discussion)),
+                ArchivedDiscussionsUiState.Loaded(
+                    channels = listOf(channel),
+                    discussions = listOf(discussion),
+                    selectedTab = ArchiveTab.Channels,
+                ),
                 vm.state.value,
             )
             collector.cancel()
         }
 
     @Test
-    fun empty_whenSourceEmitsEmptyList() =
+    fun tabSelected_discussions_returnsToDefault() =
+        runTest {
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val vm = ArchivedDiscussionsViewModel(stubRepo(source))
+            val collector = launch { vm.state.collect { } }
+            advanceUntilIdle()
+            source.emit(listOf(sampleArchivedDiscussion("disc-1"), sampleArchivedChannel("chan-1")))
+            advanceUntilIdle()
+
+            vm.onEvent(ArchivedDiscussionsEvent.TabSelected(ArchiveTab.Channels))
+            advanceUntilIdle()
+            vm.onEvent(ArchivedDiscussionsEvent.TabSelected(ArchiveTab.Discussions))
+            advanceUntilIdle()
+
+            val state = vm.state.value
+            assertTrue("expected Loaded, was $state", state is ArchivedDiscussionsUiState.Loaded)
+            assertEquals(
+                ArchiveTab.Discussions,
+                (state as ArchivedDiscussionsUiState.Loaded).selectedTab,
+            )
+            collector.cancel()
+        }
+
+    @Test
+    fun loaded_channels_emptyWhenAllUnpromoted() =
+        runTest {
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val vm = ArchivedDiscussionsViewModel(stubRepo(source))
+            val collector = launch { vm.state.collect { } }
+            advanceUntilIdle()
+            val discussion = sampleArchivedDiscussion("disc-A")
+            source.emit(listOf(discussion))
+            advanceUntilIdle()
+            val state = vm.state.value
+            assertTrue("expected Loaded, was $state", state is ArchivedDiscussionsUiState.Loaded)
+            val loaded = state as ArchivedDiscussionsUiState.Loaded
+            assertTrue("channels must be empty, was ${loaded.channels}", loaded.channels.isEmpty())
+            assertEquals(listOf(discussion), loaded.discussions)
+            collector.cancel()
+        }
+
+    @Test
+    fun loaded_discussions_emptyWhenAllPromoted() =
+        runTest {
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val vm = ArchivedDiscussionsViewModel(stubRepo(source))
+            val collector = launch { vm.state.collect { } }
+            advanceUntilIdle()
+            val channel = sampleArchivedChannel("chan-A")
+            source.emit(listOf(channel))
+            advanceUntilIdle()
+            val state = vm.state.value
+            assertTrue("expected Loaded, was $state", state is ArchivedDiscussionsUiState.Loaded)
+            val loaded = state as ArchivedDiscussionsUiState.Loaded
+            assertEquals(listOf(channel), loaded.channels)
+            assertTrue("discussions must be empty, was ${loaded.discussions}", loaded.discussions.isEmpty())
+            collector.cancel()
+        }
+
+    @Test
+    fun loaded_bothEmpty_whenSourceEmitsEmptyList() =
         runTest {
             val source = MutableSharedFlow<List<Conversation>>(replay = 0)
             val vm = ArchivedDiscussionsViewModel(stubRepo(source))
@@ -129,20 +236,14 @@ class ArchivedDiscussionsViewModelTest {
             advanceUntilIdle()
             source.emit(emptyList())
             advanceUntilIdle()
-            assertEquals(ArchivedDiscussionsUiState.Empty, vm.state.value)
-            collector.cancel()
-        }
-
-    @Test
-    fun empty_whenAllArchivedAreChannels() =
-        runTest {
-            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
-            val vm = ArchivedDiscussionsViewModel(stubRepo(source))
-            val collector = launch { vm.state.collect { } }
-            advanceUntilIdle()
-            source.emit(listOf(sampleArchivedChannel("chan-1")))
-            advanceUntilIdle()
-            assertEquals(ArchivedDiscussionsUiState.Empty, vm.state.value)
+            assertEquals(
+                ArchivedDiscussionsUiState.Loaded(
+                    channels = emptyList(),
+                    discussions = emptyList(),
+                    selectedTab = ArchiveTab.Discussions,
+                ),
+                vm.state.value,
+            )
             collector.cancel()
         }
 

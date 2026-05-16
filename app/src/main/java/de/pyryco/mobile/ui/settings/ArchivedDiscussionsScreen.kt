@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.settings
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -13,6 +14,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SecondaryTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -43,7 +46,7 @@ fun ArchivedDiscussionsScreen(
         modifier = modifier,
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.archived_discussions_title)) },
+                title = { Text(stringResource(R.string.archived_title)) },
                 navigationIcon = {
                     IconButton(onClick = { onEvent(ArchivedDiscussionsEvent.BackTapped) }) {
                         Icon(
@@ -58,27 +61,71 @@ fun ArchivedDiscussionsScreen(
         val bodyModifier = Modifier.padding(inner)
         when (state) {
             ArchivedDiscussionsUiState.Loading -> CenteredText("Loading…", bodyModifier)
-            ArchivedDiscussionsUiState.Empty ->
-                CenteredText(
-                    stringResource(R.string.archived_discussions_empty),
-                    bodyModifier,
-                )
             is ArchivedDiscussionsUiState.Error ->
                 CenteredText(
                     "Couldn't load archived discussions: ${state.message}",
                     bodyModifier,
                 )
             is ArchivedDiscussionsUiState.Loaded ->
-                LazyColumn(modifier = bodyModifier.fillMaxSize()) {
-                    items(items = state.discussions, key = { it.id }) { discussion ->
-                        ArchivedDiscussionRow(
-                            discussion = discussion,
-                            onRestore = {
-                                onEvent(ArchivedDiscussionsEvent.RestoreRequested(discussion.id))
-                            },
-                        )
-                    }
+                LoadedBody(
+                    state = state,
+                    onEvent = onEvent,
+                    modifier = bodyModifier,
+                )
+        }
+    }
+}
+
+@Composable
+private fun LoadedBody(
+    state: ArchivedDiscussionsUiState.Loaded,
+    onEvent: (ArchivedDiscussionsEvent) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.fillMaxSize()) {
+        SecondaryTabRow(selectedTabIndex = state.selectedTab.ordinal) {
+            Tab(
+                selected = state.selectedTab == ArchiveTab.Channels,
+                onClick = { onEvent(ArchivedDiscussionsEvent.TabSelected(ArchiveTab.Channels)) },
+                text = {
+                    Text(
+                        stringResource(R.string.archived_tab_channels, state.channels.size),
+                    )
+                },
+            )
+            Tab(
+                selected = state.selectedTab == ArchiveTab.Discussions,
+                onClick = { onEvent(ArchivedDiscussionsEvent.TabSelected(ArchiveTab.Discussions)) },
+                text = {
+                    Text(
+                        stringResource(R.string.archived_tab_discussions, state.discussions.size),
+                    )
+                },
+            )
+        }
+        val items =
+            when (state.selectedTab) {
+                ArchiveTab.Channels -> state.channels
+                ArchiveTab.Discussions -> state.discussions
+            }
+        if (items.isEmpty()) {
+            val emptyText =
+                when (state.selectedTab) {
+                    ArchiveTab.Channels -> stringResource(R.string.archived_empty_channels)
+                    ArchiveTab.Discussions -> stringResource(R.string.archived_empty_discussions)
                 }
+            CenteredText(emptyText, Modifier)
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                items(items = items, key = { it.id }) { conversation ->
+                    ArchivedDiscussionRow(
+                        discussion = conversation,
+                        onRestore = {
+                            onEvent(ArchivedDiscussionsEvent.RestoreRequested(conversation.id))
+                        },
+                    )
+                }
+            }
         }
     }
 }
@@ -122,36 +169,104 @@ private fun CenteredText(
     }
 }
 
-@Preview(name = "Archived — Loaded — Light", showBackground = true, widthDp = 412)
+@Preview(name = "Archived — Discussions tab — Light", showBackground = true, widthDp = 412)
 @Composable
-private fun ArchivedDiscussionsScreenLoadedPreview() {
-    val archived =
-        listOf(
-            Conversation(
-                id = "seed-discussion-archived",
-                name = null,
-                cwd = DEFAULT_SCRATCH_CWD,
-                currentSessionId = "session-archived",
-                sessionHistory = emptyList(),
-                isPromoted = false,
-                lastUsedAt = Instant.parse("2026-04-15T12:00:00Z"),
-                archived = true,
-            ),
+private fun ArchivedScreenDiscussionsPreview() {
+    val channel =
+        Conversation(
+            id = "seed-channel-archived",
+            name = "old-project-experiments",
+            cwd = "~/Workspace/old-project",
+            currentSessionId = "session-archived-channel",
+            sessionHistory = emptyList(),
+            isPromoted = true,
+            lastUsedAt = Instant.parse("2026-04-15T12:00:00Z"),
+            archived = true,
+        )
+    val discussion =
+        Conversation(
+            id = "seed-discussion-archived",
+            name = null,
+            cwd = DEFAULT_SCRATCH_CWD,
+            currentSessionId = "session-archived",
+            sessionHistory = emptyList(),
+            isPromoted = false,
+            lastUsedAt = Instant.parse("2026-04-15T12:00:00Z"),
+            archived = true,
         )
     PyrycodeMobileTheme(darkTheme = false) {
         ArchivedDiscussionsScreen(
-            state = ArchivedDiscussionsUiState.Loaded(archived),
+            state =
+                ArchivedDiscussionsUiState.Loaded(
+                    channels = listOf(channel),
+                    discussions = listOf(discussion),
+                    selectedTab = ArchiveTab.Discussions,
+                ),
             onEvent = {},
         )
     }
 }
 
-@Preview(name = "Archived — Empty — Light", showBackground = true, widthDp = 412)
+@Preview(name = "Archived — Channels tab — Light", showBackground = true, widthDp = 412)
 @Composable
-private fun ArchivedDiscussionsScreenEmptyPreview() {
+private fun ArchivedScreenChannelsPreview() {
+    val channel =
+        Conversation(
+            id = "seed-channel-archived",
+            name = "old-project-experiments",
+            cwd = "~/Workspace/old-project",
+            currentSessionId = "session-archived-channel",
+            sessionHistory = emptyList(),
+            isPromoted = true,
+            lastUsedAt = Instant.parse("2026-04-15T12:00:00Z"),
+            archived = true,
+        )
+    val discussion =
+        Conversation(
+            id = "seed-discussion-archived",
+            name = null,
+            cwd = DEFAULT_SCRATCH_CWD,
+            currentSessionId = "session-archived",
+            sessionHistory = emptyList(),
+            isPromoted = false,
+            lastUsedAt = Instant.parse("2026-04-15T12:00:00Z"),
+            archived = true,
+        )
     PyrycodeMobileTheme(darkTheme = false) {
         ArchivedDiscussionsScreen(
-            state = ArchivedDiscussionsUiState.Empty,
+            state =
+                ArchivedDiscussionsUiState.Loaded(
+                    channels = listOf(channel),
+                    discussions = listOf(discussion),
+                    selectedTab = ArchiveTab.Channels,
+                ),
+            onEvent = {},
+        )
+    }
+}
+
+@Preview(name = "Archived — Discussions tab empty — Light", showBackground = true, widthDp = 412)
+@Composable
+private fun ArchivedScreenDiscussionsEmptyPreview() {
+    val channel =
+        Conversation(
+            id = "seed-channel-archived",
+            name = "old-project-experiments",
+            cwd = "~/Workspace/old-project",
+            currentSessionId = "session-archived-channel",
+            sessionHistory = emptyList(),
+            isPromoted = true,
+            lastUsedAt = Instant.parse("2026-04-15T12:00:00Z"),
+            archived = true,
+        )
+    PyrycodeMobileTheme(darkTheme = false) {
+        ArchivedDiscussionsScreen(
+            state =
+                ArchivedDiscussionsUiState.Loaded(
+                    channels = listOf(channel),
+                    discussions = emptyList(),
+                    selectedTab = ArchiveTab.Discussions,
+                ),
             onEvent = {},
         )
     }
