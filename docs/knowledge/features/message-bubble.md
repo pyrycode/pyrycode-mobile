@@ -1,6 +1,6 @@
 # MessageBubble
 
-Stateless row primitive (#128) rendering a single `Message` in the conversation thread surface. Two visual variants dispatched off `Message.role`: a right-aligned painted bubble for `Role.User` (plain text) and a left-aligned flat text block for `Role.Assistant` (markdown-rendered via [`MarkdownText`](./markdown-text.md) since #129 — Claude-style, assistant text flows in the column with the screen surface behind it). `Role.Tool` is a deliberate no-op pending #131. Code-block styling lands in #130, streaming caret in #132. Eventual call site is the `LazyColumn(reverseLayout = true)` body of [`ThreadScreen`](./thread-screen.md), but #128 ships the component without consumer wiring; the wiring waits for #127's fake `observeMessages(...)` repository.
+Stateless row primitive (#128) rendering a single `Message` in the conversation thread surface. Two visual variants dispatched off `Message.role`: a right-aligned painted bubble for `Role.User` (plain text) and a left-aligned flat text block for `Role.Assistant` (markdown-rendered via [`MarkdownText`](./markdown-text.md) since #129 — Claude-style, assistant text flows in the column with the screen surface behind it). Assistant content reveals progressively with a blinking caret when `Message.isStreaming = true` (#184). `Role.Tool` is a deliberate no-op pending #131. Code-block styling landed in #130. Eventual call site is the `LazyColumn(reverseLayout = true)` body of [`ThreadScreen`](./thread-screen.md), but #128 ships the component without consumer wiring; the wiring waits for #127's fake `observeMessages(...)` repository.
 
 Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). File: `MessageBubble.kt`. Sibling of [`DiscussionPreviewRow`](./discussion-preview-row.md), [`ConversationRow`](./conversation-row.md), `ArchiveRow.kt`.
 
@@ -9,7 +9,7 @@ Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/p
 Dispatches on `message.role` with a Kotlin `when`:
 
 - **`Role.User`** → `UserMessageBubble(content, modifier)` — outer `Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End)` pins to the right edge; inside, a `Surface(shape = UserBubbleShape, color = primaryContainer, modifier = Modifier.widthIn(max = UserBubbleMaxWidth))` wraps a `Text(content, style = bodyMedium, color = onPrimaryContainer)` with inner padding `14×12`. The asymmetric corner radii `(topStart = 20, topEnd = 20, bottomEnd = 6, bottomStart = 20)` give the bubble a "tail" pointing toward the user side.
-- **`Role.Assistant`** → `AssistantMessage(content, modifier)` — `Box(Modifier.fillMaxWidth())` containing a left-aligned [`MarkdownText(markdown = content, modifier = Modifier.fillMaxWidth())`](./markdown-text.md) wrapped in `CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) { ... }` (since #129; pre-#129 was a plain `Text(content, …)`). **No `Surface`, no `Modifier.background(...)`, no shape, no inner padding.** The assistant message flows in the column with the screen's surface color behind it.
+- **`Role.Assistant`** → `AssistantMessage(message, modifier)` — `Box(Modifier.fillMaxWidth())` containing, inside `CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) { ... }`, either a static [`MarkdownText(markdown = message.content, modifier = Modifier.fillMaxWidth())`](./markdown-text.md) (when `message.isStreaming = false`) or a private `StreamingAssistantBody(content = message.content, modifier = Modifier.fillMaxWidth())` (when `message.isStreaming = true`) that reveals content progressively with a blinking caret (#184). **No `Surface`, no `Modifier.background(...)`, no shape, no inner padding.** The assistant message flows in the column with the screen's surface color behind it.
 - **`Role.Tool`** → `Unit` — renders nothing. ThreadScreen will route `Role.Tool` to a separate tool-card composable (introduced in #131) before reaching this dispatcher. The no-op arm is the contract until then.
 
 Each variant adds `Modifier.padding(bottom = MessageRowVerticalSpacing = 12.dp)` to its outer container, so the per-row vertical rhythm lives on the component, not on the eventual `LazyColumn` consumer. The last message in the list carries a trailing 12dp before the (eventual) composer / status row — acceptable visual padding, not a bug.
@@ -35,11 +35,13 @@ The composable is **pure rendering** — no `remember`, no `LaunchedEffect`, no 
 ```kotlin
 when (message.role) {
     Role.User -> UserMessageBubble(message.content, modifier)
-    Role.Assistant -> AssistantMessage(message.content, modifier)
+    Role.Assistant -> AssistantMessage(message, modifier)
     // Tool-role rendering lands in #131; ThreadScreen will route it before reaching here.
     Role.Tool -> Unit
 }
 ```
+
+The assistant arm takes the full `Message` (since #184) rather than `message.content` so the streaming branch can read `isStreaming` and `content` together.
 
 The `Role.Tool -> Unit` arm is **deliberate, not a TODO**. The framework contract is: ThreadScreen routes `Role.Tool` to the (yet-to-land) tool-card composable from #131 before the list reaches this dispatcher. Rendering nothing is the right default until that route exists. No `error("Tool role not yet handled")` — would crash exactly the path the contract guarantees never happens. No debug placeholder `Text("[tool]")` — would leak into production builds where the contract isn't yet in force.
 
@@ -73,10 +75,17 @@ Box(modifier = Modifier.fillMaxWidth().padding(bottom = MessageRowVerticalSpacin
     CompositionLocalProvider(
         LocalContentColor provides MaterialTheme.colorScheme.onSurface,
     ) {
-        MarkdownText(
-            markdown = content,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        if (message.isStreaming) {
+            StreamingAssistantBody(
+                content = message.content,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else {
+            MarkdownText(
+                markdown = message.content,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 ```
@@ -87,9 +96,28 @@ The asymmetry between variants is intentional — the user bubble is a self-cont
 
 **Why `CompositionLocalProvider(LocalContentColor provides onSurface)` rather than a `color: Color` argument on `MarkdownText` (since #129).** The renderer's signature is deliberately minimal (`markdown: String, modifier: Modifier = Modifier`) — no `color`, no `style`, no `onLinkClick`. The assistant surface owns the colour contract (`onSurface` reads against the screen's `surface`); future surfaces hosting the same renderer (system messages, tool cards) supply their own ambient via the same pattern. See [`MarkdownText`](./markdown-text.md) for the full rationale.
 
+### Streaming variant — progressive reveal + blinking caret (since #184)
+
+When `message.isStreaming = true`, the assistant arm routes to a private `StreamingAssistantBody(content, modifier)` instead of the static `MarkdownText(...)` call. The composable derives two pieces of state via `produceState`:
+
+- `revealedLength: State<Int>` keyed on `content`. Producer: `while (value < content.length) { delay(STREAMING_REVEAL_STEP_MS); value = (value + STREAMING_REVEAL_STEP_CHARS).coerceAtMost(content.length) }`. Reveal rate is one character per `STREAMING_REVEAL_STEP_MS = 20L` tick → 50 chars/sec. The `key1 = content` causes the producer to restart from 0 if the content snapshot changes (Phase 4: token-by-token growth from the WS feed).
+- `caretVisible: State<Boolean>` keyed on `Unit`. Producer: `while (true) { delay(STREAMING_CARET_BLINK_PERIOD_MS); value = !value }`. `STREAMING_CARET_BLINK_PERIOD_MS = 500L` → 1 Hz toggle / 0.5 Hz full blink cycle (conventional terminal caret cadence). Independent of the reveal — the caret keeps blinking after the prefix is fully revealed (visual "still live" signal) until `isStreaming` flips `false` and `AssistantMessage` un-mounts the streaming subtree.
+
+Both producers cancel automatically when the composable leaves composition (`produceState`'s built-in cleanup tied to the composition's coroutine scope). No `LaunchedEffect`, no `DisposableEffect`, no `viewModelScope` involvement.
+
+The two values feed a second private composable `StreamingAssistantBodyView(revealedText, caretVisible, modifier)` (pure rendering, no state) that computes `displayText = revealedText + (if (caretVisible) STREAMING_CARET_GLYPH else "")` and calls `MarkdownText(markdown = displayText, modifier = modifier)`. The state-shell vs view split exists so previews can call the view directly with a pinned snapshot — Android Studio's `@Preview` runtime renders `produceState`-driven composables but the captured snapshot of fast animations is non-deterministic; pinning gives a deterministic, reviewable mid-state.
+
+**Caret as inline text, not a sibling composable.** `STREAMING_CARET_GLYPH = "▎"` (U+258E LEFT ONE QUARTER BLOCK) — matches the Figma frame `16:56` end-state visual. The caret is appended to the revealed prefix and flows through `MarkdownText` as ordinary text, inheriting `LocalContentColor.current` (which the surrounding `CompositionLocalProvider` already pins to `onSurface`) and landing pixel-adjacent to the last revealed character regardless of which block element the prefix ends in (paragraph, heading, list item, blockquote, fenced code). A side-rendered caret would need text-measurement APIs and block-element-specific offset math; routing through the input string sidesteps both.
+
+**Zero animation cost when not streaming.** The `if (message.isStreaming)` branch is the seam — historical messages (the typical case in Phase 0 after one streaming demo, and effectively all assistant messages once Phase 4's WS feed flips messages to `isStreaming = false` on stream-end) take the unchanged static `MarkdownText(...)` path. No `produceState`, no coroutine, no extra recomposition for the static path.
+
+**Reveal restart on `content` change.** `produceState(initialValue = 0, key1 = content)` semantics: changing the key cancels the running producer and starts a new one. Phase 0 content is static so the producer runs once and the value pins at `content.length`. Phase 4 will grow `content` token-by-token; each growth restarts the reveal from 0 with the new (longer) content. That's the right behaviour as a safe default; if profiling Phase 4 ever flags the restart as wasteful, the right fix is hoisting `revealedLength` into the `ViewModel` keyed on `messageId` — not pre-paid here.
+
+**Lifetime tied to `LazyColumn` item disposal.** When a streaming message scrolls off-screen in `ThreadScreen`'s `LazyColumn`, the item composable is disposed, both `produceState` coroutines cancel, and `revealedLength` is lost. Scrolling back into view re-enters composition, `revealedLength` restarts from 0, and the message animates again from the top. Phase-0 acceptable. Phase 4 may want VM-side hoisting; not built now.
+
 ### Spacing — file-private named `val`s, no `LocalSpacing` provider
 
-Five constants at the top of `MessageBubble.kt`:
+Constants at the top of `MessageBubble.kt`:
 
 ```kotlin
 private val MessageRowVerticalSpacing = 12.dp     // Figma gap-[12px] on node 16:21
@@ -100,6 +128,13 @@ private val UserBubbleShape = RoundedCornerShape(
 )
 private val BubbleHorizontalPadding = 14.dp       // Figma px-[14px]
 private val BubbleVerticalPadding = 12.dp         // Figma py-[12px]
+
+// Streaming (#184)
+private const val STREAMING_CARET_GLYPH = "▎"     // U+258E LEFT ONE QUARTER BLOCK — Figma node 16:56
+private const val STREAMING_REVEAL_CHARS_PER_SECOND = 50
+private const val STREAMING_REVEAL_STEP_CHARS = 1
+private const val STREAMING_REVEAL_STEP_MS: Long = 1000L / STREAMING_REVEAL_CHARS_PER_SECOND  // 20ms at 50cps
+private const val STREAMING_CARET_BLINK_PERIOD_MS: Long = 500L  // 1Hz toggle / 0.5Hz full blink cycle
 ```
 
 M3 does not expose a spacing scale, and the codebase has no `LocalSpacing` `CompositionLocal` provider. AC4 ("Vertical spacing between consecutive messages uses M3 spacing tokens (not raw `.dp` literals)") is satisfied at the spirit level: named values, design intent legible, no scatter of bare literals at multiple sites. Other components in `ui/conversations/components/` still use bare `.dp` literals (`ArchiveRow.kt:43`, `ConversationRow.kt:53`) — `MessageBubble` is the first beachhead; **don't back-fill** the named-constants pattern into sibling files until they grow their own naming pressure. The first cross-component spacing pressure (e.g. `MessageRowVerticalSpacing` shared with the #135 session-boundary delimiter) is the trigger for extracting these to an `internal val` peer file in the same package, mirroring the [`RelativeTime`](./discussion-preview-row.md#shared-relativetime-helper) helper's shape.
@@ -113,8 +148,9 @@ If a downstream ticket later wants to switch to consumer-side `Arrangement.space
 ### Ignored `Message` fields
 
 - **`timestamp`** — not rendered in this ticket. Per-bubble or per-session-delimiter timestamp surfacing is a separate concern handled elsewhere.
-- **`isStreaming`** — ignored. Streaming caret + animation lands in #132 without changing the public API; the role-arm composables internalise the change.
 - **`id`, `sessionId`** — passed through `Message` for `equals` / recomposition stability and downstream consumption (the eventual `LazyColumn` may key items by `message.id`), but not visually surfaced here.
+
+`isStreaming` is consumed by the assistant arm since #184 — see the streaming-variant section above.
 
 ## Configuration
 
@@ -133,7 +169,12 @@ Four `@Preview`s at the bottom of `MessageBubble.kt`, all `widthDp = 412`.
 
 The four-message sequence alternates roles to exercise both variants and the alternation rhythm. The last assistant message is a long multi-sentence string ("Good catch. There are three classes of edge case here, the most important being null user_ids in the legacy table — let me walk through each.") to verify multi-line wrap. The wrapping `Surface { Column(...) }` matches what the eventual `LazyColumn` runtime provides: the assistant variant's transparent background renders against the theme's surface color, and the user bubble has a 16dp column inset to pin against instead of the raw preview viewport edge.
 
-**Pair two — markdown rendering** (added in #129; satisfies #129's AC6). `MessageBubbleMarkdownLightPreview` (`darkTheme = false`) and `MessageBubbleMarkdownDarkPreview` (`darkTheme = true`, `uiMode = Configuration.UI_MODE_NIGHT_YES`) render a single assistant-variant `MessageBubble` whose content is a file-private `MARKDOWN_PREVIEW_FIXTURE` raw triple-quoted string exercising every supported markdown element: h1/h2/h3, bold, italic, inline code, link to `https://pyryco.de`, unordered list, ordered list, blockquote, fenced Kotlin code block. The shared body composable `MessageBubbleMarkdownPreviewBody()` wraps the single bubble in `Column(Modifier.padding(horizontal = 16.dp))` for consistent inset.
+**Pair two — markdown rendering** (added in #129; extended in #184). `MessageBubbleMarkdownLightPreview` (`darkTheme = false`) and `MessageBubbleMarkdownDarkPreview` (`darkTheme = true`, `uiMode = Configuration.UI_MODE_NIGHT_YES`) invoke a shared body composable `MessageBubbleMarkdownPreviewBody()` that now renders two stacked entries inside `Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(MessageRowVerticalSpacing))`:
+
+1. A half-revealed streaming snapshot — `Box(Modifier.fillMaxWidth())` wrapping `CompositionLocalProvider(LocalContentColor provides onSurface) { StreamingAssistantBodyView(revealedText = MARKDOWN_PREVIEW_FIXTURE.take(MARKDOWN_PREVIEW_FIXTURE.length / 2), caretVisible = true) }`. The pinned snapshot guarantees the preview shows the caret glyph at the half-content mark deterministically (the `produceState`-driven path would render at an unpredictable position). The surrounding `CompositionLocalProvider` is required here because the view is invoked outside an `AssistantMessage` wrapper.
+2. The completed message — `MessageBubble(previewMessage(Role.Assistant, MARKDOWN_PREVIEW_FIXTURE))`, exercising the `isStreaming = false` static path through the full `MessageBubble` dispatch.
+
+The fixture is the file-private `MARKDOWN_PREVIEW_FIXTURE` raw triple-quoted string that exercises every supported markdown element since #129: h1/h2/h3, bold, italic, inline code, link to `https://pyryco.de`, unordered list, ordered list, blockquote, fenced Kotlin code block (plus the JSON / Bash / Markdown fences added in #130). The same fixture appears in both halves of the preview so the visual diff between them is exactly the streaming overlay (half-text + caret) vs the completed render.
 
 `previewMessage(role, content)` is a file-private factory that fixes the rest of the `Message` shape (`id = "preview-${role.name}"`, `sessionId = "preview-session"`, `timestamp = Clock.System.now()`, `isStreaming = false`). Keeps the call sites focused on the varying fields (role and content) instead of repeating the full constructor.
 
@@ -142,7 +183,9 @@ No preview for the `Role.Tool` arm — the `when` renders nothing for it, so a p
 ## Edge cases / limitations
 
 - **User variant is plain text; assistant variant renders markdown** (since #129). User messages render `Text(message.content)` with no parsing — the user wrote them, they're not markdown sources. Assistant messages render through [`MarkdownText`](./markdown-text.md): CommonMark element set (h1–h3, bold, italic, ordered/unordered lists, inline code, blockquote, inline links, fenced/indented code blocks). Unsupported AST kinds (tables, HTML, strikethrough, task lists, images) hit a `bodyMedium` raw-text fallback. Full code-block styling (outline border, language label, syntax highlighting) lands in #130.
-- **No streaming caret.** `Message.isStreaming = true` renders identically to `false` — no animated caret, no per-character reveal. #132 adds the caret without changing the public API.
+- **Streaming reveal is character-by-character at a fixed rate; no token-batch awareness.** Phase 0 has no token-batch source, so the "tokens" in token-reveal are characters. Phase 4's WS feed will grow `Message.content` token-batch by token-batch; the `produceState(key1 = content)` restart semantics mean each batch arrival restarts the reveal from 0 with the new content. Safe default; if profiling shows the restart is wasteful, the right fix is hoisting `revealedLength` to the VM keyed on `messageId` — see #184's lessons.
+- **Streaming state is lost on `LazyColumn` item disposal.** Scrolling a streaming message off-screen disposes the item, cancels both `produceState` coroutines, and forgets `revealedLength`. Scrolling back re-mounts the composable and the reveal restarts from 0. Phase-0 acceptable.
+- **Caret inside an open markdown construct falls back to plain text.** If the reveal cut lands inside an unclosed `**`, an unclosed backtick, an unterminated code fence, or an open `[link text`, the parser drops to its `else` raw-text fallback (per [`MarkdownText`](./markdown-text.md)) and the caret renders inside the unstyled fallback. Acceptable per AC2 — "the formatting that *can* apply does"; partial constructs go through the existing fallback.
 - **No timestamps in-bubble.** `Message.timestamp` is unused here. Per-bubble timestamps or per-session-delimiter timestamps are out of scope.
 - **No long-press, no `SelectionContainer`, no copy affordance.** The composable uses bare `Text(...)`, not `SelectionContainer { Text(...) }`. If long-press-to-copy lands later, the right place is a screen-level wrap of the `LazyColumn` body in a `SelectionContainer`, not per-bubble selection.
 - **`Role.Tool` renders nothing.** ThreadScreen is expected to filter or route `Role.Tool` upstream (currently no consumer is wired). If a `Role.Tool` message slips into a future `items(state.messages) { MessageBubble(it) }` call before #131 lands, the row will be invisible — visible only in the trailing 12dp gap (which collapses adjacent to surrounding messages). That's the contract until #131.
@@ -153,15 +196,14 @@ No preview for the `Role.Tool` arm — the `when` renders nothing for it, so a p
 
 ## Related
 
-- Ticket notes: [`../codebase/128.md`](../codebase/128.md), [`../codebase/129.md`](../codebase/129.md)
-- Specs: `docs/specs/architecture/128-message-bubble-user-assistant-variants.md`, `docs/specs/architecture/129-markdown-rendering-assistant-messages.md`
-- Decisions: [ADR 0002 — markdown renderer library](../decisions/0002-markdown-renderer-library.md) (assistant-variant rendering pipeline)
-- Upstream: [data model](./data-model.md) (`Message`, `Role`), [Thread screen](./thread-screen.md) (the eventual `LazyColumn(reverseLayout = true)` host — body wiring is downstream of #127)
-- Component pipeline: [`MarkdownText`](./markdown-text.md) (consumed by the assistant variant since #129)
+- Ticket notes: [`../codebase/128.md`](../codebase/128.md), [`../codebase/129.md`](../codebase/129.md), [`../codebase/130.md`](../codebase/130.md), [`../codebase/184.md`](../codebase/184.md)
+- Specs: `docs/specs/architecture/128-message-bubble-user-assistant-variants.md`, `docs/specs/architecture/129-markdown-rendering-assistant-messages.md`, `docs/specs/architecture/130-code-block-rendering-syntax-highlighting.md`, `docs/specs/architecture/184-streaming-token-reveal-blinking-caret.md`
+- Decisions: [ADR 0002 — markdown renderer library](../decisions/0002-markdown-renderer-library.md) (assistant-variant rendering pipeline), [ADR 0003 — syntax highlighter library](../decisions/0003-syntax-highlighter-library.md) (fenced-code styling)
+- Upstream: [data model](./data-model.md) (`Message`, `Role`, `isStreaming`), [Thread screen](./thread-screen.md) (the eventual `LazyColumn(reverseLayout = true)` host — body wiring is downstream of #127)
+- Component pipeline: [`MarkdownText`](./markdown-text.md) (consumed by the assistant variant since #129; the streaming caret in #184 rides through it as inline text without changing its signature)
 - Sibling pattern references: [`DiscussionPreviewRow`](./discussion-preview-row.md) (closest stateless-row composable; mirrored preview-pairing shape), [`ConversationRow`](./conversation-row.md), `ArchiveRow.kt`
-- Figma: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) — user variant matches nodes `16:23` / `16:39` / `16:51`; assistant variant **deliberately diverges** from `16:25` / `16:32` / `16:42` / `16:54` (Figma shows bubbled, AC mandates flat — AC wins, Figma reconciliation is a separate design call)
+- Figma: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) — user variant matches nodes `16:23` / `16:39` / `16:51`; assistant variant **deliberately diverges** from `16:25` / `16:32` / `16:42` / `16:54` (Figma shows bubbled, AC mandates flat — AC wins, Figma reconciliation is a separate design call); streaming end-state at `16:54` → `16:56` shows the `▎` caret in body-text flow, which #184 reproduces exactly
 - Downstream:
   - #127 — fake `observeMessages(conversationId)` repository (no consumer wiring until this lands)
-  - #130 — full code-block styling (outline border, language label, syntax highlighting). Replaces the `CodeBlock` composable inside [`MarkdownText`](./markdown-text.md) without changing `MessageBubble`'s API
   - #131 — tool-role rendering. Owns the `Role.Tool -> Unit` arm — either by introducing a `ToolMessage` composable and rewriting the arm, or by filtering `Role.Tool` upstream in `ThreadScreen`
-  - #132 — streaming caret + animation (consumes `Message.isStreaming`; public API unchanged; partial markdown strings flow through `MarkdownText` unchanged)
+  - #185 — auto-scroll behaviour that keeps the thread anchored to the bottom as the streaming message grows; consumes the same `Message.isStreaming` contract at the `ThreadScreen` layer, no change required inside `MessageBubble`
