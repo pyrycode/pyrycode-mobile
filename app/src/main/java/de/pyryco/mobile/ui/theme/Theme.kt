@@ -7,6 +7,7 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -245,6 +246,13 @@ private val highContrastDarkColorScheme =
         surfaceContainerHighest = surfaceContainerHighestDarkHighContrast,
     )
 
+private val lightWarningColors = WarningColors(warningLight)
+private val darkWarningColors = WarningColors(warningDark)
+private val mediumContrastLightWarningColors = WarningColors(warningLightMediumContrast)
+private val highContrastLightWarningColors = WarningColors(warningLightHighContrast)
+private val mediumContrastDarkWarningColors = WarningColors(warningDarkMediumContrast)
+private val highContrastDarkWarningColors = WarningColors(warningDarkHighContrast)
+
 @Immutable
 data class ColorFamily(
     val color: Color,
@@ -270,20 +278,26 @@ fun PyrycodeMobileTheme(
         @Composable()
         () -> Unit,
 ) {
-    val colorScheme =
+    val (colorScheme, warningColors) =
         when {
             dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
                 val context = LocalContext.current
-                if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+                if (darkTheme) {
+                    dynamicDarkColorScheme(context) to darkWarningColors
+                } else {
+                    dynamicLightColorScheme(context) to lightWarningColors
+                }
             }
 
-            darkTheme -> darkScheme
-            else -> lightScheme
+            darkTheme -> darkScheme to darkWarningColors
+            else -> lightScheme to lightWarningColors
         }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = AppTypography,
-        content = content,
-    )
+    CompositionLocalProvider(LocalWarningColors provides warningColors) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = AppTypography,
+            content = content,
+        )
+    }
 }
