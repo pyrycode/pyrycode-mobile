@@ -42,6 +42,28 @@ class SettingsScreenTest {
     }
 
     @Test
+    fun versionRow_rendersSupportingTextWithGitSha() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                SettingsScreen(
+                    themeMode = ThemeMode.SYSTEM,
+                    useWallpaperColors = false,
+                    archivedDiscussionCount = 0,
+                    onSelectTheme = {},
+                    onToggleUseWallpaperColors = {},
+                    onBack = {},
+                    onOpenArchivedDiscussions = {},
+                )
+            }
+        }
+
+        composeTestRule
+            .onNode(hasText("build ${BuildConfig.GIT_SHA}", substring = true))
+            .performScrollTo()
+            .assertExists()
+    }
+
+    @Test
     fun openSourceRow_hasClickAction() {
         composeTestRule.setContent {
             PyrycodeMobileTheme {

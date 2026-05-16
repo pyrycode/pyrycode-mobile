@@ -1,6 +1,32 @@
+import org.gradle.api.provider.ValueSource
+import org.gradle.api.provider.ValueSourceParameters
+import org.gradle.process.ExecOperations
+import java.io.ByteArrayOutputStream
+import javax.inject.Inject
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+}
+
+abstract class GitShaValueSource : ValueSource<String, ValueSourceParameters.None> {
+    @get:Inject
+    abstract val execOperations: ExecOperations
+
+    override fun obtain(): String =
+        try {
+            val stdout = ByteArrayOutputStream()
+            val result =
+                execOperations.exec {
+                    commandLine("git", "rev-parse", "--short", "HEAD")
+                    standardOutput = stdout
+                    isIgnoreExitValue = true
+                }
+            val sha = stdout.toString(Charsets.UTF_8).trim()
+            if (result.exitValue == 0 && sha.isNotEmpty()) sha else "unknown"
+        } catch (_: Throwable) {
+            "unknown"
+        }
 }
 
 android {
@@ -18,6 +44,9 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
+
+        val gitSha = providers.of(GitShaValueSource::class.java) {}
+        buildConfigField("String", "GIT_SHA", "\"${gitSha.get()}\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
