@@ -26,6 +26,7 @@ class SettingsScreenTest {
                 SettingsScreen(
                     themeMode = ThemeMode.SYSTEM,
                     useWallpaperColors = false,
+                    archivedDiscussionCount = 0,
                     onSelectTheme = {},
                     onToggleUseWallpaperColors = {},
                     onBack = {},
@@ -47,6 +48,7 @@ class SettingsScreenTest {
                 SettingsScreen(
                     themeMode = ThemeMode.SYSTEM,
                     useWallpaperColors = false,
+                    archivedDiscussionCount = 0,
                     onSelectTheme = {},
                     onToggleUseWallpaperColors = {},
                     onBack = {},
@@ -68,6 +70,7 @@ class SettingsScreenTest {
                 SettingsScreen(
                     themeMode = ThemeMode.SYSTEM,
                     useWallpaperColors = false,
+                    archivedDiscussionCount = 0,
                     onSelectTheme = {},
                     onToggleUseWallpaperColors = {},
                     onBack = {},
@@ -89,6 +92,7 @@ class SettingsScreenTest {
                 SettingsScreen(
                     themeMode = ThemeMode.SYSTEM,
                     useWallpaperColors = false,
+                    archivedDiscussionCount = 0,
                     onSelectTheme = {},
                     onToggleUseWallpaperColors = {},
                     onBack = {},
@@ -101,5 +105,27 @@ class SettingsScreenTest {
             .onNodeWithText("License: MIT")
             .performScrollTo()
             .assert(hasClickAction().not())
+    }
+
+    @Test
+    fun archivedDiscussionsRow_rendersSupportingTextWithCount() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                SettingsScreen(
+                    themeMode = ThemeMode.SYSTEM,
+                    useWallpaperColors = false,
+                    archivedDiscussionCount = 11,
+                    onSelectTheme = {},
+                    onToggleUseWallpaperColors = {},
+                    onBack = {},
+                    onOpenArchivedDiscussions = {},
+                )
+            }
+        }
+
+        composeTestRule
+            .onNode(hasText("11 archived", substring = true))
+            .performScrollTo()
+            .assertExists()
     }
 }
