@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,6 +35,8 @@ import de.pyryco.mobile.ui.conversations.list.DiscussionListEvent
 import de.pyryco.mobile.ui.conversations.list.DiscussionListNavigation
 import de.pyryco.mobile.ui.conversations.list.DiscussionListScreen
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
+import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
+import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerScreen
 import de.pyryco.mobile.ui.onboarding.WelcomeScreen
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsEvent
@@ -192,9 +193,13 @@ private fun PyryNavHost(
         composable(
             route = Routes.CONVERSATION_THREAD,
             arguments = listOf(navArgument("conversationId") { type = NavType.StringType }),
-        ) { backStackEntry ->
-            val conversationId = backStackEntry.arguments?.getString("conversationId").orEmpty()
-            Text("Conversation thread placeholder: $conversationId")
+        ) {
+            val vm = koinViewModel<ThreadViewModel>()
+            val state by vm.state.collectAsStateWithLifecycle()
+            ThreadScreen(
+                state = state,
+                onBack = { navController.popBackStack() },
+            )
         }
         composable(Routes.SETTINGS) {
             val vm = koinViewModel<SettingsViewModel>()
