@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,12 +14,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
@@ -36,6 +39,10 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import dev.snipme.highlights.Highlights
+import dev.snipme.highlights.model.CodeStructure
+import dev.snipme.highlights.model.PhraseLocation
+import dev.snipme.highlights.model.SyntaxLanguage
 import org.intellij.markdown.MarkdownElementTypes
 import org.intellij.markdown.MarkdownTokenTypes
 import org.intellij.markdown.ast.ASTNode
@@ -48,7 +55,14 @@ private val ListItemIndent = 8.dp
 private val BlockquoteBarWidth = 4.dp
 private val BlockquoteContentIndent = 12.dp
 private val CodeBlockCornerRadius = 8.dp
-private val CodeBlockPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+private val CodeBlockHorizontalPadding = 12.dp
+private val CodeBlockVerticalPadding = 8.dp
+private val CodeBlockLabelVerticalPadding = 4.dp
+private val CodeBlockPadding =
+    PaddingValues(
+        horizontal = CodeBlockHorizontalPadding,
+        vertical = CodeBlockVerticalPadding,
+    )
 
 private val MarkdownFlavour = CommonMarkFlavourDescriptor()
 
@@ -101,14 +115,21 @@ private fun MarkdownBlock(
                 node.children
                     .filter { it.type == MarkdownTokenTypes.CODE_FENCE_CONTENT }
                     .joinToString("\n") { it.getTextInNode(source).toString() }
-            CodeBlock(code)
+            val language =
+                node.children
+                    .firstOrNull { it.type == MarkdownTokenTypes.FENCE_LANG }
+                    ?.getTextInNode(source)
+                    ?.toString()
+                    ?.trim()
+                    ?.takeIf { it.isNotEmpty() }
+            CodeBlock(code, language)
         }
         MarkdownElementTypes.CODE_BLOCK -> {
             val code =
                 node.children
                     .filter { it.type == MarkdownTokenTypes.CODE_LINE }
                     .joinToString("\n") { it.getTextInNode(source).toString() }
-            CodeBlock(code)
+            CodeBlock(code, language = null)
         }
         else -> {
             val text = node.getTextInNode(source).toString().trim()
@@ -214,20 +235,120 @@ private fun BlockQuoteBlock(
 }
 
 @Composable
-private fun CodeBlock(content: String) {
+private fun CodeBlock(
+    content: String,
+    language: String?,
+) {
+    val syntaxLanguage = remember(language) { resolveSyntaxLanguage(language) }
+    val structure =
+        remember(content, syntaxLanguage) {
+            if (syntaxLanguage == null) null else tokeniseCode(content, syntaxLanguage)
+        }
+    val annotated = buildHighlightedCode(content, structure)
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(CodeBlockCornerRadius),
         color = MaterialTheme.colorScheme.surfaceContainer,
     ) {
-        Text(
-            text = content,
-            modifier = Modifier.padding(CodeBlockPadding),
-            style =
-                MaterialTheme.typography.bodyMedium.copy(
-                    fontFamily = FontFamily.Monospace,
-                ),
-        )
+        Box {
+            Text(
+                text = annotated,
+                modifier =
+                    Modifier
+                        .horizontalScroll(rememberScrollState())
+                        .padding(CodeBlockPadding),
+                style =
+                    MaterialTheme.typography.bodyMedium.copy(
+                        fontFamily = FontFamily.Monospace,
+                    ),
+                softWrap = false,
+            )
+            if (!language.isNullOrBlank()) {
+                Text(
+                    text = language,
+                    modifier =
+                        Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(
+                                horizontal = CodeBlockHorizontalPadding,
+                                vertical = CodeBlockLabelVerticalPadding,
+                            ),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun buildHighlightedCode(
+    content: String,
+    structure: CodeStructure?,
+): AnnotatedString {
+    if (structure == null) return AnnotatedString(content)
+    val keywordColor = MaterialTheme.colorScheme.tertiary
+    val stringColor = MaterialTheme.colorScheme.secondary
+    val literalColor = MaterialTheme.colorScheme.primary
+    val commentColor = MaterialTheme.colorScheme.onSurfaceVariant
+    return buildAnnotatedString {
+        append(content)
+        val length = content.length
+        structure.keywords.forEach {
+            applySpan(it, length, SpanStyle(color = keywordColor, fontWeight = FontWeight.Medium))
+        }
+        structure.annotations.forEach {
+            applySpan(it, length, SpanStyle(color = keywordColor))
+        }
+        structure.strings.forEach {
+            applySpan(it, length, SpanStyle(color = stringColor))
+        }
+        structure.literals.forEach {
+            applySpan(it, length, SpanStyle(color = literalColor))
+        }
+        structure.comments.forEach {
+            applySpan(it, length, SpanStyle(color = commentColor, fontStyle = FontStyle.Italic))
+        }
+        structure.multilineComments.forEach {
+            applySpan(it, length, SpanStyle(color = commentColor, fontStyle = FontStyle.Italic))
+        }
+    }
+}
+
+private fun AnnotatedString.Builder.applySpan(
+    location: PhraseLocation,
+    contentLength: Int,
+    style: SpanStyle,
+) {
+    val start = location.start.coerceIn(0, contentLength)
+    val end = location.end.coerceIn(start, contentLength)
+    if (end > start) addStyle(style, start, end)
+}
+
+private fun tokeniseCode(
+    content: String,
+    language: SyntaxLanguage,
+): CodeStructure? =
+    runCatching {
+        Highlights
+            .Builder()
+            .code(content)
+            .language(language)
+            .build()
+            .getCodeStructure()
+    }.getOrNull()
+
+private fun resolveSyntaxLanguage(fenceLang: String?): SyntaxLanguage? {
+    val name = fenceLang?.trim()?.lowercase() ?: return null
+    if (name.isEmpty()) return null
+    return when (name) {
+        "kotlin", "kt", "kts" -> SyntaxLanguage.KOTLIN
+        // JSON's grammar is a subset of JavaScript object literals — closest enum match exposed
+        // by dev.snipme:highlights, which has no dedicated JSON lexer. Strings, numbers, and
+        // punctuation tokenise correctly under JAVASCRIPT.
+        "json" -> SyntaxLanguage.JAVASCRIPT
+        "bash", "sh", "shell", "zsh" -> SyntaxLanguage.SHELL
+        else -> null
     }
 }
 

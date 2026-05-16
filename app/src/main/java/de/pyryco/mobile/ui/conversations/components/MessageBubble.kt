@@ -186,9 +186,38 @@ Plain paragraph with **bold**, *italic*, `inline code`, and a [link](https://pyr
 
 > Blockquote — single line of quoted text.
 
+Kotlin:
+
 ```kotlin
-fun migrate(legacy: List<LegacyOrder>): List<Order> =
+// migrate legacy orders into the modern shape
+fun migrate(legacy: List<LegacyOrder>, batchSize: Int = 100, dryRun: Boolean = false): List<Order> =
     legacy.map { it.toModern() }
+```
+
+JSON:
+
+```json
+{
+  "name": "pyrycode-mobile",
+  "version": 1,
+  "tags": ["android", "compose"]
+}
+```
+
+Bash:
+
+```bash
+# bootstrap the dev environment
+./gradlew assembleDebug
+echo "Build complete"
+```
+
+Markdown:
+
+```markdown
+# Heading
+- bullet
+**bold** and *italic*
 ```
 """
 

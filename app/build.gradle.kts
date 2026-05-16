@@ -95,6 +95,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.datetime)
     implementation(libs.jetbrains.markdown)
+    implementation(libs.snipme.highlights)
     lintChecks(libs.compose.lint.checks)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
