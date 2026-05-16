@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.onboarding
 
 import android.content.res.Configuration
+import android.graphics.BlurMaskFilter
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -27,14 +28,16 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.BlurredEdgeTreatment
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -167,31 +170,45 @@ fun ScannerScreen(
 @Composable
 private fun Reticle(modifier: Modifier = Modifier) {
     val primary = MaterialTheme.colorScheme.primary
-    val glow = primary.copy(alpha = 0.6f)
+    val shadowArgb = primary.copy(alpha = 0.6f).toArgb()
     Box(modifier = modifier.size(248.dp)) {
         Corner(modifier = Modifier.align(Alignment.TopStart), alignment = Alignment.TopStart, color = primary)
         Corner(modifier = Modifier.align(Alignment.TopEnd), alignment = Alignment.TopEnd, color = primary)
         Corner(modifier = Modifier.align(Alignment.BottomStart), alignment = Alignment.BottomStart, color = primary)
         Corner(modifier = Modifier.align(Alignment.BottomEnd), alignment = Alignment.BottomEnd, color = primary)
-        Box(
+        Canvas(
             modifier =
                 Modifier
                     .align(Alignment.Center)
                     .padding(horizontal = 8.dp)
                     .fillMaxWidth()
-                    .height(6.dp)
-                    .blur(radius = 12.dp, edgeTreatment = BlurredEdgeTreatment.Unbounded)
-                    .background(glow),
-        )
-        Box(
-            modifier =
-                Modifier
-                    .align(Alignment.Center)
-                    .padding(horizontal = 8.dp)
-                    .fillMaxWidth()
-                    .height(2.dp)
-                    .background(primary),
-        )
+                    .height(26.dp),
+        ) {
+            val lineHeightPx = 2.dp.toPx()
+            val lineTop = (size.height - lineHeightPx) / 2f
+            val shadowPaint =
+                Paint().apply {
+                    isAntiAlias = true
+                    asFrameworkPaint().apply {
+                        color = shadowArgb
+                        maskFilter = BlurMaskFilter(12.dp.toPx(), BlurMaskFilter.Blur.NORMAL)
+                    }
+                }
+            drawIntoCanvas { canvas ->
+                canvas.nativeCanvas.drawRect(
+                    0f,
+                    lineTop,
+                    size.width,
+                    lineTop + lineHeightPx,
+                    shadowPaint.asFrameworkPaint(),
+                )
+            }
+            drawRect(
+                color = primary,
+                topLeft = Offset(0f, lineTop),
+                size = Size(size.width, lineHeightPx),
+            )
+        }
     }
 }
 
