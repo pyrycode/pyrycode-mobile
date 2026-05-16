@@ -52,8 +52,7 @@ fun MessageBubble(
     when (message.role) {
         Role.User -> UserMessageBubble(message.content, modifier)
         Role.Assistant -> AssistantMessage(message, modifier)
-        // Tool-role rendering lands in #131; ThreadScreen will route it before reaching here.
-        Role.Tool -> Unit
+        Role.Tool -> message.toolCall?.let { ToolCallRow(toolCall = it, modifier = modifier) }
     }
 }
 
