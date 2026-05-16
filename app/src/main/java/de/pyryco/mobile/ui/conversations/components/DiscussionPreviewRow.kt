@@ -19,11 +19,11 @@ import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Message
-import de.pyryco.mobile.data.model.Role as MessageRole
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Clock
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
+import de.pyryco.mobile.data.model.Role as MessageRole
 
 @Composable
 fun DiscussionPreviewRow(
