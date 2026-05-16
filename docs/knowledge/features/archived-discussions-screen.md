@@ -57,7 +57,6 @@ fun ArchivedDiscussionsScreen(
 
 `ArchivedDiscussionRow(discussion, onRestore, menuInitiallyExpanded = false)` is a `Box` wrapping the shared [`ConversationRow`](conversation-row.md) with:
 
-- `lastMessage = null` — no per-`Conversation` last-message projection exists in Phase 0. The slot is wired; only the data isn't. When the projection lands, the supporting-text line fills automatically with no edit here.
 - `Modifier.alpha(0.65f)` — same muted treatment `DiscussionListScreen` uses for its secondary-tier rows (#69), lifted to here as the archived-tier signal. Reusing one alpha across both signals is deliberate; they don't coexist in the same screen, so re-using the number is correct.
 - `onLongClick = { menuExpanded = true }` — uses the optional `onLongClick: (() -> Unit)?` parameter on `ConversationRow` (added in #25), which switches the row's modifier chain from `clickable` to `combinedClickable`.
 - A sibling `DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false })` with one `DropdownMenuItem` "Restore" (`stringResource(R.string.restore_action)`) that dismisses the menu and dispatches `ArchivedDiscussionsEvent.RestoreRequested(discussion.id)`.
@@ -134,7 +133,6 @@ Manual verification path (per the spec):
 ## Edge cases / limitations
 
 - **"Archive date" trailing slot is `formatRelativeTime(lastUsedAt)`, not a true `archivedAt`.** `Conversation` has no `archivedAt: Instant?` field; `archive(id)` (#93) flips a boolean without stamping a timestamp. The existing trailing slot prints "Apr 15" for the seed — close to the AC's "archive date" but not literally it. The natural owner of `archivedAt` is the 30-day auto-archive worker (it needs the timestamp to decide which records to evict); add the field there, then switch this screen's trailing slot to format it.
-- **No per-`Conversation` last-message preview yet.** `lastMessage = null` is passed to `ConversationRow`, so the supporting-text slot is empty. The slot is wired and will fill automatically when the data layer grows a per-`Conversation` last-message projection. Don't try to derive previews from `observeMessages(conversationId)` here — that's one collector per visible row.
 - **Restore failure is not user-visible.** `viewModelScope.launch { repository.unarchive(id) }` fire-and-forget. The Fake's only failure path is `IllegalArgumentException("Unknown conversation: $id")` for an id no longer present, which is harmless (the row is already gone from the UI by the time the throw lands). Phase 4's Ktor remote will introduce real failure modes; the visible-error / retry surface lands then, not here.
 - **Archived **channels** are not shown.** The repository's `Archived` filter is `isPromoted`-agnostic by design (so it composes for a future archived-channels screen); this VM applies a `!isPromoted` post-filter. No production flow currently archives a channel, but the screen would still hide it if one existed. The path for a parallel archived-channels view is "a new VM that filters the same stream to `isPromoted`."
 - **No count on the Settings entry row.** Intentional — see § What it does.
@@ -176,4 +174,4 @@ No dark previews this slice — the muted-alpha treatment renders identically mo
 - Entry point: [Settings screen](settings-screen.md) Storage section row
 - Navigation: [Navigation](navigation.md) — route `archived_discussions`
 - Figma: N/A (no dedicated Archived Discussions view exists in the canonical Figma file `g2HIq2UyPhslEoHRokQmHG` yet — visuals derive from the Recent Discussions row treatment in #69 with the muted-alpha state signal). A dedicated Figma view is a recommended follow-up.
-- Follow-ups: (a) `Conversation.archivedAt: Instant?` stamped by the 30-day auto-archive worker, then this screen formats it instead of `lastUsedAt`; (b) per-`Conversation` last-message projection fills the supporting-text slot automatically; (c) dedicated Figma view; (d) visible-error / retry surface when Phase 4's Ktor remote arrives.
+- Follow-ups: (a) `Conversation.archivedAt: Instant?` stamped by the 30-day auto-archive worker, then this screen formats it instead of `lastUsedAt`; (b) dedicated Figma view; (c) visible-error / retry surface when Phase 4's Ktor remote arrives.

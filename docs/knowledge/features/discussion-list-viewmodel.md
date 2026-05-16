@@ -171,7 +171,7 @@ Two distinct fallbacks on purpose:
 - **`displayLabel`** matches `ConversationRow.displayName`'s `"Untitled discussion"` fallback so the dialog body reads the same identifier the user just long-pressed on the row.
 - **`derivedChannelName`** is what gets persisted as `Conversation.name` post-promote — `"Untitled channel"` because the conversation is now in the channels tier and `"Untitled discussion"` would be a misleading channel name.
 
-For named discussions, both return the same `sourceName` verbatim. The discussion list passes `lastMessage = null` to `ConversationRow` (no message-preview surface in Phase 0), so `Conversation.name` is the only "preview" available — using it as both the dialog identifier and the post-promote name is the simplest faithful reading of the ticket body.
+For named discussions, both return the same `sourceName` verbatim. Since #154 `ConversationRow` is a single-line "avatar + name + sleep-dot + timestamp" primitive with no message-preview surface, so `Conversation.name` is the only identifier the user actually saw on the row they long-pressed — using it as both the dialog identifier and the post-promote name is the simplest faithful reading of the ticket body.
 
 ## Wiring
 

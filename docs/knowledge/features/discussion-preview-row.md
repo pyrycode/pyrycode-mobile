@@ -36,9 +36,9 @@ The component is intentionally `Conversation`-shaped (not `String title + String
 
 ## How it works
 
-### Workspace-label rule diverges from `ConversationRow`
+### Workspace-label rule lives only here
 
-`ConversationRow.condenseWorkspace(cwd)` returns `String?` — `null` for `DEFAULT_SCRATCH_CWD`, so the caller omits the workspace chip entirely. `DiscussionPreviewRow` *always* renders a meta line and always shows a workspace label; collapsing to `"scratch"` is the contract. The rules are similar enough to look extractable and different enough that the spec explicitly forbids sharing — two near-twin helpers each one screen away from their caller beats one helper with a behaviour flag. See [`./conversation-row.md`](./conversation-row.md) for `condenseWorkspace`.
+`DiscussionPreviewRow` *always* renders a meta line and always shows a workspace label; collapsing to `"scratch"` for `DEFAULT_SCRATCH_CWD` is the contract. The historical contrast with `ConversationRow.condenseWorkspace` (which returned `String?` and omitted a chip on the default scratch path, pre-#154) is no longer load-bearing — `ConversationRow` has no workspace label at all since #154. The two-helpers-two-contracts arrangement collapsed to one helper inside `DiscussionPreviewRow`. Do not generalise across screens until a second caller materializes.
 
 ### Single `AnnotatedString` for the mixed-font meta line
 
@@ -92,7 +92,7 @@ Three `@Preview`s in `DiscussionPreviewRow.kt`, all `widthDp = 412`:
 ## Edge cases / limitations
 
 - **Body is a single non-parameterised placeholder.** `R.string.discussion_preview_placeholder_body` ships with the literal "Tap to resume — message preview coming soon." for every row, regardless of conversation content. The follow-up that wires real previews replaces the `stringResource(...)` body source with whatever the data layer surfaces (likely a per-`Conversation` last-message projection on the VM emission); the row's other lines are untouched.
-- **Workspace label is computed inline, not via `condenseWorkspace`.** Intentional — `ConversationRow.condenseWorkspace` returns `null` for `DEFAULT_SCRATCH_CWD` (the row omits the workspace chip), whereas `DiscussionPreviewRow` always renders a meta line and falls back to `"scratch"`. Two helpers, two contracts; do not consolidate.
+- **Workspace label is computed inline.** Always renders, falls back to `"scratch"` for `DEFAULT_SCRATCH_CWD` and for empty trailing segments. The historical "two helpers, two contracts" framing against `ConversationRow.condenseWorkspace` no longer applies — `ConversationRow` lost its workspace label entirely in #154, so this helper is the only one.
 - **No avatar, no leading slot, no trailing slot.** The Figma `15:8` treatment for discussions is content-only — title / body / meta on a tighter vertical rhythm than `ConversationRow`'s `ListItem`. Don't reach for `ListItem` here even if a future affordance lands (long-press → "Save as channel…", swipe action); add the gesture decorations to this `Column` directly, the way [`DiscussionListScreen`](./discussion-list-screen.md)'s row does.
 - **Relative-time strings are not localised.** `just now` / `Yesterday` / `Nm ago` etc. are Kotlin literals inside `formatRelativeTime`. Out of scope for #69; a localisation pass becomes ~6 `<plurals>` entries and a `Resources`-typed parameter.
 
@@ -100,6 +100,6 @@ Three `@Preview`s in `DiscussionPreviewRow.kt`, all `widthDp = 412`:
 
 - Ticket notes: [`../codebase/69.md`](../codebase/69.md)
 - Spec: `docs/specs/architecture/69-channel-list-recent-discussions-section.md`
-- Upstream: [data model](./data-model.md) (`Conversation`, `DEFAULT_SCRATCH_CWD`), [ConversationRow](./conversation-row.md) (`formatRelativeTime` originated here; `condenseWorkspace` rule is the contrast point)
+- Upstream: [data model](./data-model.md) (`Conversation`, `DEFAULT_SCRATCH_CWD`), [ConversationRow](./conversation-row.md) (`formatRelativeTime` originated here; the historical `condenseWorkspace` contrast point was removed in #154)
 - Consumer: [ChannelListScreen](./channel-list-screen.md) — `RecentDiscussionsSection` private composable iterates the VM's top-3 `recentDiscussions` and calls `DiscussionPreviewRow` for each
 - Downstream / follow-ups: real message-content previews (one-line body-source swap once the data layer surfaces a per-`Conversation` last-message projection), relative-time localisation, accessibility audit on the row hit area
