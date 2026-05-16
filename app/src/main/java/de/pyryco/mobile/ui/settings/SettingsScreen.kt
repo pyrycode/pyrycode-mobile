@@ -210,7 +210,7 @@ fun SettingsScreen(
             SettingsSectionHeader("About")
             SettingsRow(
                 headline = "Version ${BuildConfig.VERSION_NAME}",
-                supporting = "build ${BuildConfig.VERSION_CODE}",
+                supporting = "build ${BuildConfig.GIT_SHA}",
             )
             SettingsRow(
                 headline = "Open source · github.com/pyrycode/pyrycode-mobile",
