@@ -93,7 +93,6 @@ private fun ArchivedDiscussionRow(
     Box {
         ConversationRow(
             conversation = discussion,
-            lastMessage = null,
             onClick = {},
             modifier = Modifier.alpha(0.65f),
             onLongClick = { menuExpanded = true },

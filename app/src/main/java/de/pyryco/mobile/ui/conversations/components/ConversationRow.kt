@@ -21,8 +21,6 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
-import de.pyryco.mobile.data.model.Message
-import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Clock
 import kotlin.time.Duration.Companion.hours
@@ -31,7 +29,6 @@ import kotlin.time.Duration.Companion.hours
 @Composable
 fun ConversationRow(
     conversation: Conversation,
-    lastMessage: Message?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
@@ -55,6 +52,12 @@ fun ConversationRow(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                Text(
+                    text = displayName,
+                    modifier = Modifier.weight(1f, fill = false),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 if (conversation.isSleeping) {
                     Box(
                         modifier =
@@ -66,73 +69,36 @@ fun ConversationRow(
                                 ),
                     )
                 }
-                Text(
-                    text = displayName,
-                    modifier = Modifier.weight(1f, fill = false),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                val workspaceLabel = condenseWorkspace(conversation.cwd)
-                if (workspaceLabel != null) {
-                    Text(
-                        text = workspaceLabel,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
             }
         },
-        supportingContent =
-            lastMessage?.let { msg ->
-                {
-                    Text(
-                        text = previewText(msg.content),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            },
         trailingContent = {
             Text(text = formatRelativeTime(conversation.lastUsedAt))
         },
     )
 }
 
-private fun previewText(content: String): String = content.replace(Regex("\\s+"), " ").trim()
-
-private fun condenseWorkspace(cwd: String): String? {
-    if (cwd == DEFAULT_SCRATCH_CWD) return null
-    val trimmed = cwd.trimEnd('/')
-    val segment = trimmed.substringAfterLast('/')
-    return segment.ifBlank { trimmed.ifBlank { null } }
-}
-
-@Preview(name = "With message — Light", showBackground = true, widthDp = 412)
+@Preview(name = "Promoted channel — Light", showBackground = true, widthDp = 412)
 @Composable
-private fun ConversationRowWithMessagePreview() {
+private fun ConversationRowPromotedPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
         ConversationRow(
             conversation = previewConversation(name = "pyrycode-mobile", isPromoted = true),
-            lastMessage = previewMessage("Refactored the conversation repository to expose a Flow."),
             onClick = {},
         )
     }
 }
 
 @Preview(
-    name = "Without message — Dark",
+    name = "Untitled sleeping discussion — Dark",
     showBackground = true,
     widthDp = 412,
     uiMode = Configuration.UI_MODE_NIGHT_YES,
 )
 @Composable
-private fun ConversationRowWithoutMessagePreview() {
+private fun ConversationRowUntitledSleepingPreview() {
     PyrycodeMobileTheme(darkTheme = true) {
         ConversationRow(
             conversation = previewConversation(name = null, isPromoted = false, isSleeping = true),
-            lastMessage = null,
             onClick = {},
         )
     }
@@ -152,14 +118,4 @@ private fun previewConversation(
         isPromoted = isPromoted,
         lastUsedAt = Clock.System.now() - 2.hours,
         isSleeping = isSleeping,
-    )
-
-private fun previewMessage(content: String): Message =
-    Message(
-        id = "msg-1",
-        sessionId = "session-1",
-        role = Role.User,
-        content = content,
-        timestamp = Clock.System.now() - 2.hours,
-        isStreaming = false,
     )
