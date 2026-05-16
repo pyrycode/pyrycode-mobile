@@ -79,6 +79,25 @@ interface ConversationRepository {
      * do not need to override.
      */
     fun recentWorkspaces(): Flow<List<String>> = flowOf(emptyList())
+
+    /**
+     * Creates a new workspace folder under the `pyry-workspace/` prefix and
+     * registers it in the recents stream. Returns the created path string
+     * (e.g. `"pyry-workspace/scratch-1"`).
+     *
+     * Phase 0 implementations operate in-memory only; no filesystem I/O.
+     * Phase 4 implementations will create the folder server-side.
+     *
+     * Throws [IllegalArgumentException] if [name] is blank or whitespace-only.
+     * Trimming and basename normalization are caller concerns.
+     *
+     * Default throws — implementations that do not support folder creation
+     * (e.g. test fakes that ignore this surface) inherit the default. The
+     * Workspace Picker is the only production consumer; test fakes never
+     * invoke this method, so the throwing default is unreachable in tests.
+     */
+    suspend fun createWorkspaceFolder(name: String): String =
+        error("createWorkspaceFolder is not implemented for this ConversationRepository")
 }
 
 enum class ConversationFilter { All, Channels, Discussions, Archived }

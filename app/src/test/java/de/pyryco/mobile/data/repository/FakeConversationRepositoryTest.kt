@@ -700,4 +700,33 @@ class FakeConversationRepositoryTest {
                 recents.none { it == DEFAULT_SCRATCH_CWD },
             )
         }
+
+    @Test
+    fun createWorkspaceFolder_appearsAtPositionZeroOfRecents() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val initial = repo.recentWorkspaces().first()
+
+            val path = repo.createWorkspaceFolder("scratch-1")
+
+            assertEquals("pyry-workspace/scratch-1", path)
+            val updated = repo.recentWorkspaces().first()
+            assertEquals("pyry-workspace/scratch-1", updated.first())
+            assertEquals(
+                "list size grew by exactly one (path is new — no dedup collapse)",
+                initial.size + 1,
+                updated.size,
+            )
+        }
+
+    @Test
+    fun createWorkspaceFolder_blankName_throwsIllegalArgumentException() {
+        val repo = FakeConversationRepository()
+        try {
+            runBlocking { repo.createWorkspaceFolder("  ") }
+            assertTrue("expected IllegalArgumentException", false)
+        } catch (_: IllegalArgumentException) {
+            // expected
+        }
+    }
 }
