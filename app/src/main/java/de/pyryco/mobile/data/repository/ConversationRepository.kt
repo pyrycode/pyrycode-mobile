@@ -1,9 +1,11 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Session
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.datetime.Instant
 
 /**
@@ -64,6 +66,19 @@ interface ConversationRepository {
         conversationId: String,
         text: String,
     ): Message
+
+    /**
+     * Workspace folders previously bound to any conversation, deduped and ordered
+     * most-recent-first by the latest cwd-affecting write across all conversations.
+     *
+     * Excludes "no bound workspace" cwds: the empty string `""` and
+     * [DEFAULT_SCRATCH_CWD]. Cold flow; re-emits on every state change.
+     *
+     * Default returns an empty flow — implementations that do not track workspace
+     * history (e.g. test fakes that ignore this surface) inherit the default and
+     * do not need to override.
+     */
+    fun recentWorkspaces(): Flow<List<String>> = flowOf(emptyList())
 }
 
 enum class ConversationFilter { All, Channels, Discussions, Archived }

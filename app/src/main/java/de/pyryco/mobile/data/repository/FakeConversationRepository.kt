@@ -30,6 +30,8 @@ class FakeConversationRepository(
             },
         )
 
+    private val recents = MutableStateFlow<List<String>>(initialRecents())
+
     override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> =
         state.map { records ->
             records.values
@@ -56,6 +58,8 @@ class FakeConversationRepository(
         state.map { records ->
             records[conversationId]?.messages?.maxByOrNull { it.timestamp }
         }
+
+    override fun recentWorkspaces(): Flow<List<String>> = recents
 
     private fun buildThreadItems(
         messages: List<Message>,
@@ -109,6 +113,7 @@ class FakeConversationRepository(
             )
         val record = ConversationRecord(conversation, mapOf(sessionId to session))
         state.update { it + (conversationId to record) }
+        bumpWorkspace(conversation.cwd)
         return conversation
     }
 
@@ -130,6 +135,7 @@ class FakeConversationRepository(
                 )
             records + (conversationId to record.copy(conversation = updated))
         }
+        bumpWorkspace(updated.cwd)
         return updated
     }
 
@@ -211,6 +217,7 @@ class FakeConversationRepository(
     ): Session {
         val now = Clock.System.now()
         lateinit var newSession: Session
+        lateinit var resultCwd: String
         state.update { records ->
             val record = records[conversationId] ?: throw unknown(conversationId)
             val newSessionId = UUID.randomUUID().toString()
@@ -238,6 +245,7 @@ class FakeConversationRepository(
                     cwd = workspace ?: record.conversation.cwd,
                     lastUsedAt = now,
                 )
+            resultCwd = updatedConversation.cwd
             records + (
                 conversationId to
                     ConversationRecord(
@@ -246,7 +254,13 @@ class FakeConversationRepository(
                     )
             )
         }
+        bumpWorkspace(resultCwd)
         return newSession
+    }
+
+    private fun bumpWorkspace(cwd: String) {
+        if (cwd.isEmpty() || cwd == DEFAULT_SCRATCH_CWD) return
+        recents.update { current -> listOf(cwd) + current.filterNot { it == cwd } }
     }
 
     private fun unknown(id: String) = IllegalArgumentException("Unknown conversation: $id")
@@ -265,6 +279,14 @@ class FakeConversationRepository(
 
     companion object {
         private val SEED_RECORDS: Map<String, ConversationRecord> = buildSeedRecords()
+
+        private fun initialRecents(): List<String> =
+            SEED_RECORDS.values
+                .map { it.conversation }
+                .sortedByDescending { it.lastUsedAt }
+                .map { it.cwd }
+                .filterNot { it.isEmpty() || it == DEFAULT_SCRATCH_CWD }
+                .distinct()
 
         private fun buildSeedRecords(): Map<String, ConversationRecord> {
             // Intentionally not in lastUsedAt order — exercises the sort projection.
