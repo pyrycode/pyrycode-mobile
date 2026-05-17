@@ -28,6 +28,7 @@ fun ThreadTopAppBar(
     overflowExpanded: Boolean,
     onOverflowDismiss: () -> Unit,
     onOverflowEvent: (ThreadEvent) -> Unit,
+    isPromoted: Boolean,
     modifier: Modifier = Modifier,
 ) {
     TopAppBar(
@@ -59,6 +60,7 @@ fun ThreadTopAppBar(
                 }
                 ThreadOverflowMenu(
                     expanded = overflowExpanded,
+                    isPromoted = isPromoted,
                     onDismiss = onOverflowDismiss,
                     onEvent = onOverflowEvent,
                 )
