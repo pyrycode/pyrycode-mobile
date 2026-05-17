@@ -78,6 +78,7 @@ fun ThreadScreen(
                 overflowExpanded = overflowExpanded,
                 onOverflowDismiss = { overflowExpanded = false },
                 onOverflowEvent = onOverflowEvent,
+                isPromoted = state.isPromoted,
             )
         },
         bottomBar = {

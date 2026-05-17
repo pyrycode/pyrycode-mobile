@@ -36,6 +36,8 @@ sealed interface ThreadEvent {
     data object Archive : ThreadEvent
 
     data object ChannelInfo : ThreadEvent
+
+    data object SaveAsChannel : ThreadEvent
 }
 
 data class ThreadUiState(
@@ -158,6 +160,7 @@ class ThreadViewModel(
             ThreadEvent.NewSession,
             ThreadEvent.ChangeWorkspace,
             ThreadEvent.ChannelInfo,
+            ThreadEvent.SaveAsChannel,
             -> Unit
         }
     }
