@@ -2,7 +2,7 @@
 
 Stateless M3 `AlertDialog` (#141) prompting the user to rename a [`Conversation`](data-model.md) (channel or discussion — the dialog is type-agnostic; the repository call is `rename(conversationId, name)` either way). Renders Figma `19:14`: a `"Rename"` headline, a single `OutlinedTextField` pre-filled with the current name (full-range selected so typing immediately overwrites), and `Cancel` / `Save` text buttons. `Save` is disabled when the trimmed input is blank or equals the initial name; on tap it emits the trimmed name via `onSubmit`. `Cancel` / outside-tap / back-press route through `onDismiss` with no emission.
 
-Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). File: `RenameDialog.kt`. Sibling to [`CreateFolderDialog`](create-folder-dialog.md) (the structural template) and [`WorkspacePickerSheet`](workspace-picker-sheet.md). Hosted by [`ThreadScreen`](thread-screen.md); triggered today by the [`ThreadOverflowMenu`](thread-overflow-menu.md) `Rename` item, reusable by a future TopAppBar conversation-name-tap entry point (the title is already `clickable` since [#139](../codebase/139.md); the tap-to-rename wiring is not yet ticketed).
+Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). File: `RenameDialog.kt`. Sibling to [`CreateFolderDialog`](create-folder-dialog.md) (the original structural template), [`SaveAsChannelDialog`](save-as-channel-dialog.md) (sibling pre-filled-input dialog from [#142](../codebase/142.md) that lifts the same public-plus-`*Internal`-seam shape), and [`WorkspacePickerSheet`](workspace-picker-sheet.md). Hosted by [`ThreadScreen`](thread-screen.md); triggered today by the [`ThreadOverflowMenu`](thread-overflow-menu.md) `Rename` item, reusable by a future TopAppBar conversation-name-tap entry point (the title is already `clickable` since [#139](../codebase/139.md); the tap-to-rename wiring is not yet ticketed).
 
 ## Shape
 
@@ -199,7 +199,7 @@ sealed interface ThreadEvent {
 - Ticket notes: [`../codebase/141.md`](../codebase/141.md)
 - Spec: `docs/specs/architecture/141-rename-dialog-wiring.md`
 - Parent: this is the per-item follow-up for `ThreadEvent.Rename` from the [`ThreadOverflowMenu`](thread-overflow-menu.md) family — first downstream slice after [#252](../codebase/252.md) mounted the menu in production.
-- Sibling stateless dialogs in the same package: [`CreateFolderDialog`](create-folder-dialog.md) (#213) — the direct structural template.
+- Sibling stateless dialogs in the same package: [`CreateFolderDialog`](create-folder-dialog.md) (#213) — the original structural template; [`SaveAsChannelDialog`](save-as-channel-dialog.md) ([#142](../codebase/142.md)) — sibling pre-filled-input dialog using the same public-plus-`*Internal`-seam shape but with a single-gate `isSaveEnabled` (no unchanged-name check), an enum-payload `onSubmit` signature, and a `Column` with embedded radio rows in the `text` slot.
 - Upstream:
   - [`ThreadOverflowMenu`](thread-overflow-menu.md) — the `Rename` item that today is the sole entry point for this dialog. The menu's `onEvent` sink reaches `ThreadViewModel.onOverflowEvent`, whose `Rename` arm flips `pendingRenameDialog`.
   - [`ThreadScreen`](thread-screen.md) — the host. Renders the dialog as a `Scaffold` sibling gated on `state.showRenameDialog`.
