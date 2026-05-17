@@ -1,0 +1,119 @@
+# WorkspaceChip
+
+Stateless M3 `AssistChip` (#137) rendered at the top of a [`ThreadScreen`](thread-screen.md) body when the conversation is a **fresh, unpromoted discussion with zero messages**. Surfaces the chosen workspace as a basename label and routes tap → the existing [`WorkspacePicker`](workspace-picker.md) host. Disappears once the first real `ThreadItem.MessageItem` lands; design doc recommended this over a read-only downgrade for cleanliness.
+
+Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). File: `WorkspaceChip.kt`. Sibling to [`WorkspacePicker`](workspace-picker.md) — the chip is one of three planned trigger points for the picker host (the other two: [Channel List](channel-list-screen.md) FAB long-press from #221, [Thread screen](thread-screen.md) overflow "Change workspace…" from #208).
+
+## Shape
+
+```kotlin
+@Composable
+fun WorkspaceChip(
+    workspaceLabel: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+)
+```
+
+- **`public` (no `internal`).** Consumed from the sibling `ui/conversations/thread/` package.
+- **`workspaceLabel: String` is the already-derived basename**, not the raw `cwd`. The ViewModel resolves `Conversation.cwd` → label at the flow boundary; composables never see the raw path. See [`workspaceLabel()`](#workspacelabel-derivation) for the rule.
+- **`onClick: () -> Unit`.** The whole chip surface is the click target; the consumer wires this to the ViewModel's `onWorkspaceChipTapped` handler, which flips `pendingWorkspacePicker` to `true`.
+- **`modifier: Modifier = Modifier`.** Forwarded directly to the underlying `AssistChip`. The caller (`ThreadScreen`) is responsible for the surrounding `Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)` row.
+
+## What it renders
+
+An M3 `AssistChip` with a leading `Icons.Outlined.Folder` icon and label `"Workspace: $workspaceLabel (change)"`. No styled spans — the `(change)` parenthetical is plain text, hinting that the surface is tappable. No new colors, no theme additions; `AssistChip` defaults carry the correct surface/outline tokens.
+
+`leadingIcon` uses `contentDescription = null` — the label `Text` already conveys the affordance and `AssistChip` announces `Role.Button` with the full label string. A future a11y audit may add an `onClickLabel = "Change workspace"` on the chip's clickable; until then the default ("Activate") + label readback is sufficient.
+
+## `workspaceLabel` derivation
+
+Derived in [`ThreadViewModel.kt`](thread-screen.md) as a `private fun Conversation.workspaceLabel(): String`:
+
+```kotlin
+private fun Conversation.workspaceLabel(): String =
+    if (cwd.isEmpty() || cwd == DEFAULT_SCRATCH_CWD) {
+        "scratch"
+    } else {
+        cwd.substringAfterLast('/').ifEmpty { cwd }
+    }
+```
+
+The two-arm filter (`cwd.isEmpty() || cwd == DEFAULT_SCRATCH_CWD`) is intentionally identical to [`FakeConversationRepository`](conversation-repository.md)'s `bumpWorkspace` no-bound-workspace check at the data layer. Both `""` (the value [`createDiscussion(workspace = null)`](conversation-repository.md) seeds onto a fresh discussion) and the `DEFAULT_SCRATCH_CWD = "~/.pyrycode/scratch"` sentinel render as `"scratch"`. Any other `cwd` renders as its basename via `substringAfterLast('/')`; the `.ifEmpty { cwd }` guard returns the full string when there's no separator (e.g. bare `"X"`) and on the degenerate trailing-slash case (`"foo/"` → `"foo/"`). Fresh-discussion paths never have trailing slashes — `createWorkspaceFolder` shapes them as `"pyry-workspace/$name"` — so the degenerate behaviour is acceptable.
+
+Behaviour summary (all asserted by `ThreadViewModelTest`):
+
+| `cwd` | Label |
+| --- | --- |
+| `""` | `"scratch"` |
+| `"~/.pyrycode/scratch"` (= `DEFAULT_SCRATCH_CWD`) | `"scratch"` |
+| `"pyry-workspace/my-app"` | `"my-app"` |
+| `"~/Workspace/Projects/X"` | `"X"` |
+| `"X"` (no slash) | `"X"` |
+
+The label is a `String` field on [`ThreadUiState`](thread-screen.md), defaulted to `"scratch"` so the initial-value (pre-emission) frame paints the chip with the safe sentinel.
+
+## Visibility gate
+
+The chip's render condition is **inlined at the call site** in `ThreadScreen.kt`, not folded into a hidden boolean on `ThreadUiState`:
+
+```kotlin
+if (!state.isPromoted && !state.hasMessages) {
+    WorkspaceChip(
+        workspaceLabel = state.workspaceLabel,
+        onClick = onWorkspaceChipTapped,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+    )
+}
+```
+
+Two reasons for keeping the `&&` at the call site: (a) the predicate is the trivial conjunction of two raw fields, no extraction overhead; (b) `isPromoted` and `hasMessages` are useful raw signals for the imminent [`#138`](https://github.com/pyrycode/pyrycode-mobile/issues/138) empty-state copy and [`#208`](https://github.com/pyrycode/pyrycode-mobile/issues/208) overflow entry point to re-read without having to derive from a hidden combined boolean.
+
+`hasMessages` counts only `ThreadItem.MessageItem` — a `ThreadItem.SessionBoundary` that the chip itself triggers (via `changeWorkspace` → new session → boundary in the stream) does NOT flip the gate. The chip stays visible until the user actually sends a message.
+
+## How tap routes through
+
+`ThreadScreen` passes the chip's `onClick` to a flat `onWorkspaceChipTapped: () -> Unit` callback on its own signature, which the destination block binds to `vm::onWorkspaceChipTapped`. The VM handler is a synchronous flag flip — no coroutine, no repository call:
+
+```kotlin
+private val pendingWorkspacePicker = MutableStateFlow(false)
+
+fun onWorkspaceChipTapped() {
+    pendingWorkspacePicker.value = true
+}
+```
+
+`pendingWorkspacePicker` is combined into `state` alongside `observeConversations(All)` and `observeMessages(conversationId)`, surfacing as `ThreadUiState.workspacePickerVisible`. `ThreadScreen` reads that field and renders [`WorkspacePicker`](workspace-picker.md) as a `Scaffold` sibling (the picker's `ModalBottomSheet` lives in its own window — source-order placement doesn't affect Z-order). Same wiring shape as [`ChannelListViewModel`](channel-list-viewmodel.md) / [`ChannelListScreen`](channel-list-screen.md) from #221.
+
+On `onPicked(path)`, the VM clears the flag and calls `repository.changeWorkspace(conversationId, path)` on `viewModelScope`; the returned `Session` is discarded — the `Conversation.cwd` update propagates back via the `observeConversations` re-emission and `workspaceLabel` recomputes. On `onDismiss`, the VM clears the flag only — no repository call.
+
+## Previews
+
+Two `@Preview`s at the bottom of `WorkspaceChip.kt`:
+
+- **`WorkspaceChipLightPreview`** — `PyrycodeMobileTheme(darkTheme = false) { Surface { WorkspaceChip(workspaceLabel = "scratch", onClick = {}, modifier = …) } }`. Exercises the sentinel label.
+- **`WorkspaceChipDarkPreview`** — same shape with `darkTheme = true, uiMode = Configuration.UI_MODE_NIGHT_YES` and `workspaceLabel = "my-app"`. Exercises both the dark theme and the basename branch.
+
+Both previews wrap in `Surface` so the chip renders against the theme's surface color rather than the bare `showBackground = true` white/black. Required by AC5; the chip is never rendered in isolation in production — these are the regression artifact for the chip's visual appearance.
+
+## Edge cases / limitations
+
+- **Empty `conversationId` degenerate path is benign.** If `SavedStateHandle` is missing the nav arg, `conversationId = ""`; the fake's `observeMessages("")` returns `emptyList()` and `observeConversations` won't match. Result: `hasMessages = false`, `isPromoted = false`, `workspaceLabel = "scratch"` — the chip renders. The path is structurally unreachable in production (every nav edge passes a real id); calling `changeWorkspace("", path)` would throw in the fake (unknown id), but the chip's tap can only fire when the user is already on a real conversation's thread.
+- **Picker dismiss mid-write does not cancel `changeWorkspace`.** If the user dismisses the picker (clears the flag) while a `changeWorkspace` coroutine is in-flight, the launch continues on `viewModelScope` — it's not tied to the picker's visibility. The conversation's `cwd` still updates; the chip label re-renders if still visible. Acceptable; the picker's single-invocation guarantee (see [`WorkspacePicker`](workspace-picker.md)) means each `onPicked` corresponds to exactly one in-flight write.
+- **`changeWorkspace` on an empty thread creates a `SessionBoundary` immediately.** Picking a workspace before any message lands produces a [`SessionBoundary`](session-boundary-delimiter.md) in the stream right away; once the user sends a message, the thread renders `[boundary, message1]`. The "Workspace changed to X" boundary is informative but arguably redundant in this UX path — open product/design question, would require a new repository method or a behavior change on `changeWorkspace` to suppress. The chip's visibility logic already handles this correctly: boundaries don't count toward `hasMessages`.
+- **Chip-to-message-list spacing in the empty state is unstyled.** No spacer between the chip's padded row and the (empty) `LazyColumn`. Once [`#138`](https://github.com/pyrycode/pyrycode-mobile/issues/138)'s empty-state copy lands, that copy provides the visual anchor below the chip; no additional spacer needed here.
+- **No `AnimatedVisibility` on the gate.** The chip pops in/out instantly when `hasMessages` flips. Consistent with the rest of the screen's compose-state transitions; revisit if a designer requests a fade.
+- **Phase-4 `changeWorkspace` failures are not handled.** The Phase-0 fake doesn't throw for a valid `conversationId` (which is the only path the chip can reach). Phase-4's network-backed implementation will revisit error UI; same posture as [`WorkspacePicker`](workspace-picker.md) from #220.
+
+## Related
+
+- Ticket notes: [`../codebase/137.md`](../codebase/137.md) (this slice), [`../codebase/220.md`](../codebase/220.md) (the picker host), [`../codebase/221.md`](../codebase/221.md) (the Channel List FAB long-press — the canonical wiring pattern this slice mirrors)
+- Spec: `docs/specs/architecture/137-workspace-chip-empty-new-discussion-thread.md`
+- Figma: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) — Conversation Thread Screen canvas frame. The rendered Figma shows a populated thread, not the empty-state variant with the chip; chip styling is anchored by the ticket's "M3 `AssistChip` with leading folder icon" instruction rather than a pixel-exact reference.
+- Consumer: [Thread screen](thread-screen.md) — the chip's only call site; see also the screen's `ThreadUiState` widening for the four new fields (`isPromoted`, `hasMessages`, `workspaceLabel`, `workspacePickerVisible`) introduced by this slice.
+- Host opened by the tap: [Workspace picker](workspace-picker.md). Underlying surfaces: [Workspace picker sheet](workspace-picker-sheet.md), [Create folder dialog](create-folder-dialog.md).
+- Data layer touched: [`Conversation.cwd` + `DEFAULT_SCRATCH_CWD`](data-model.md), [`changeWorkspace(conversationId, workspace)`](conversation-repository.md).
+- Downstream / open:
+  - [`#208`](https://github.com/pyrycode/pyrycode-mobile/issues/208) — thread overflow "Change workspace…" reuses `ThreadUiState.workspacePickerVisible` + `onWorkspacePicked` / `onWorkspacePickerDismissed`. Both fields are pre-introduced by this slice; #208 adds the third trigger only.
+  - [`#138`](https://github.com/pyrycode/pyrycode-mobile/issues/138) — empty-state copy renders **below** the chip in the same `Column`; chip owns the topmost body slot.
+  - Open: suppress `SessionBoundary` emission when `changeWorkspace` is called on an empty thread. Requires either a new repository method or a behaviour change on `changeWorkspace`. Out-of-scope here.
