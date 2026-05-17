@@ -1,7 +1,9 @@
 package de.pyryco.mobile.ui.conversations.list
 
 import android.content.res.Configuration
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,6 +44,7 @@ import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.ui.conversations.components.ConversationRow
 import de.pyryco.mobile.ui.conversations.components.DiscussionPreviewRow
+import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
@@ -59,15 +62,25 @@ sealed interface ChannelListEvent {
     data object CreateDiscussionTapped : ChannelListEvent
 
     data object RecentDiscussionsTapped : ChannelListEvent
+
+    data object LongPressFab : ChannelListEvent
+
+    data class WorkspacePicked(
+        val workspace: String,
+    ) : ChannelListEvent
+
+    data object WorkspacePickerDismissed : ChannelListEvent
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ChannelListScreen(
     state: ChannelListUiState,
     onEvent: (ChannelListEvent) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val newDiscussionLabel = stringResource(R.string.cd_new_discussion)
+    val longPressLabel = stringResource(R.string.cd_long_press_fab_pick_workspace)
     Scaffold(
         modifier = modifier,
         topBar = {
@@ -98,13 +111,22 @@ fun ChannelListScreen(
         },
         floatingActionButton = {
             if (state is ChannelListUiState.Loaded || state is ChannelListUiState.Empty) {
-                FloatingActionButton(
-                    onClick = { onEvent(ChannelListEvent.CreateDiscussionTapped) },
+                Box(
+                    modifier =
+                        Modifier.combinedClickable(
+                            onClick = { onEvent(ChannelListEvent.CreateDiscussionTapped) },
+                            onLongClick = { onEvent(ChannelListEvent.LongPressFab) },
+                            onClickLabel = newDiscussionLabel,
+                            onLongClickLabel = longPressLabel,
+                            role = Role.Button,
+                        ),
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = stringResource(R.string.cd_new_discussion),
-                    )
+                    FloatingActionButton(onClick = {}) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = null,
+                        )
+                    }
                 }
             }
         },
@@ -159,6 +181,17 @@ fun ChannelListScreen(
                 }
         }
     }
+    val pickerVisible =
+        when (state) {
+            is ChannelListUiState.Loaded -> state.workspacePickerVisible
+            is ChannelListUiState.Empty -> state.workspacePickerVisible
+            ChannelListUiState.Loading, is ChannelListUiState.Error -> false
+        }
+    WorkspacePicker(
+        visible = pickerVisible,
+        onPicked = { path -> onEvent(ChannelListEvent.WorkspacePicked(path)) },
+        onDismiss = { onEvent(ChannelListEvent.WorkspacePickerDismissed) },
+    )
 }
 
 @Composable

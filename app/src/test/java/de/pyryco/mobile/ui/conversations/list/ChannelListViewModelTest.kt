@@ -360,6 +360,57 @@ class ChannelListViewModelTest {
             assertNotNull(createdId)
         }
 
+    @Test
+    fun longPressFab_setsWorkspacePickerVisibleToTrue() =
+        runTest {
+            val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val vm = ChannelListViewModel(stubRepo(channels, discussions))
+            val collector = launch { vm.state.collect { } }
+            advanceUntilIdle()
+            channels.emit(listOf(sampleChannel))
+            discussions.emit(emptyList())
+            advanceUntilIdle()
+
+            vm.onEvent(ChannelListEvent.LongPressFab)
+            advanceUntilIdle()
+
+            val state = vm.state.value
+            assertTrue("expected Loaded, was $state", state is ChannelListUiState.Loaded)
+            assertTrue((state as ChannelListUiState.Loaded).workspacePickerVisible)
+            collector.cancel()
+        }
+
+    @Test
+    fun workspacePicked_createsDiscussionWithPickedWorkspace_emitsNavigation_andClearsVisibility() =
+        runTest {
+            val repository = FakeConversationRepository()
+            val before = repository.observeConversations(ConversationFilter.Discussions).first()
+            val vm = ChannelListViewModel(repository)
+            val collector = launch { vm.state.collect { } }
+            advanceUntilIdle()
+
+            vm.onEvent(ChannelListEvent.LongPressFab)
+            advanceUntilIdle()
+
+            val deferredEvent = async { vm.navigationEvents.first() }
+            vm.onEvent(ChannelListEvent.WorkspacePicked("pyry-workspace/my-folder"))
+            advanceUntilIdle()
+
+            val event = deferredEvent.await()
+            assertTrue("expected ToThread, was $event", event is ChannelListNavigation.ToThread)
+            val after = repository.observeConversations(ConversationFilter.Discussions).first()
+            val beforeIds = before.map(Conversation::id).toSet()
+            val created = (after - before.toSet()).single { it.id !in beforeIds }
+            assertEquals("pyry-workspace/my-folder", created.cwd)
+            assertEquals(created.id, (event as ChannelListNavigation.ToThread).conversationId)
+
+            val state = vm.state.value
+            assertTrue("expected Loaded, was $state", state is ChannelListUiState.Loaded)
+            assertEquals(false, (state as ChannelListUiState.Loaded).workspacePickerVisible)
+            collector.cancel()
+        }
+
     // --- helpers ---
 
     private fun stubRepo(
