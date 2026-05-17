@@ -22,6 +22,7 @@ import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.ConnectionBanner
+import de.pyryco.mobile.ui.conversations.components.EmptyThreadState
 import de.pyryco.mobile.ui.conversations.components.MessageBubble
 import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
 import de.pyryco.mobile.ui.conversations.components.WorkspaceChip
@@ -77,38 +78,48 @@ fun ThreadScreen(
                             .padding(horizontal = 16.dp, vertical = 8.dp),
                 )
             }
-            val reversedItems = state.items.asReversed()
-            val cutoffChronologicalIndex =
-                remember(state.items) { mostRecentSessionBoundaryIndex(state.items) }
-            LazyColumn(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                reverseLayout = true,
-            ) {
-                itemsIndexed(
-                    items = reversedItems,
-                    key = { _, item ->
-                        when (item) {
-                            is ThreadItem.MessageItem -> "msg:${item.message.id}"
-                            is ThreadItem.SessionBoundary ->
-                                "boundary:${item.previousSessionId}->${item.newSessionId}"
-                        }
-                    },
-                ) { reversedIndex, item ->
-                    val chronologicalIndex = state.items.size - 1 - reversedIndex
-                    val rowAlpha =
-                        if (chronologicalIndex < cutoffChronologicalIndex) {
-                            ABOVE_DELIMITER_ALPHA
-                        } else {
-                            1f
-                        }
-                    Box(modifier = Modifier.alpha(rowAlpha)) {
-                        when (item) {
-                            is ThreadItem.MessageItem -> MessageBubble(message = item.message)
-                            is ThreadItem.SessionBoundary ->
-                                SessionBoundaryDelimiter(boundary = item)
+            if (!state.hasMessages) {
+                EmptyThreadState(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .padding(horizontal = 24.dp),
+                )
+            } else {
+                val reversedItems = state.items.asReversed()
+                val cutoffChronologicalIndex =
+                    remember(state.items) { mostRecentSessionBoundaryIndex(state.items) }
+                LazyColumn(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                    reverseLayout = true,
+                ) {
+                    itemsIndexed(
+                        items = reversedItems,
+                        key = { _, item ->
+                            when (item) {
+                                is ThreadItem.MessageItem -> "msg:${item.message.id}"
+                                is ThreadItem.SessionBoundary ->
+                                    "boundary:${item.previousSessionId}->${item.newSessionId}"
+                            }
+                        },
+                    ) { reversedIndex, item ->
+                        val chronologicalIndex = state.items.size - 1 - reversedIndex
+                        val rowAlpha =
+                            if (chronologicalIndex < cutoffChronologicalIndex) {
+                                ABOVE_DELIMITER_ALPHA
+                            } else {
+                                1f
+                            }
+                        Box(modifier = Modifier.alpha(rowAlpha)) {
+                            when (item) {
+                                is ThreadItem.MessageItem -> MessageBubble(message = item.message)
+                                is ThreadItem.SessionBoundary ->
+                                    SessionBoundaryDelimiter(boundary = item)
+                            }
                         }
                     }
                 }
