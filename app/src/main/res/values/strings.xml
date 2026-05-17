@@ -35,6 +35,7 @@
     <string name="archived_relative_subtitle">Archived %1$s</string>
     <string name="restored_snackbar">Restored %1$s</string>
     <string name="cd_restore_archive">Restore %1$s</string>
+    <string name="thread_empty_state">Send a message to get started</string>
     <string name="thread_input_placeholder">Message</string>
     <string name="cd_voice_input">Voice input</string>
     <string name="cd_send_message">Send message</string>
