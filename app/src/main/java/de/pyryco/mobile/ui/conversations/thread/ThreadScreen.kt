@@ -19,6 +19,7 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
+import de.pyryco.mobile.data.preferences.label
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.ConnectionBanner
@@ -61,7 +62,7 @@ fun ThreadScreen(
         bottomBar = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 ThreadStatusRow(
-                    model = state.model,
+                    model = state.selectedModel.label(),
                     effort = state.effort,
                     tokenPercent = state.tokenPercent,
                     onExpandClick = onExpandClick,

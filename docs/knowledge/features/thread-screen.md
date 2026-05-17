@@ -20,7 +20,7 @@ data class ThreadUiState(
     val workspaceLabel: String = "scratch",           // new in #137
     val workspacePickerVisible: Boolean = false,      // new in #137
     val items: List<ThreadItem> = emptyList(),        // new in #246
-    val model: String = "Opus 4.7",                   // new in #145
+    val selectedModel: Model = Model.OPUS_4_7,        // new in #145, retyped String→Model in #253
     val effort: String = "high",                      // new in #145
     val tokenPercent: Int = 0,                        // new in #145
 )
@@ -29,18 +29,25 @@ class ThreadViewModel(
     savedStateHandle: SavedStateHandle,
     private val repository: ConversationRepository,         // private val since #188
     private val connectionStateSource: ConnectionStateSource, // new in #201
+    private val appPreferences: AppPreferences,             // new in #253
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
 
     private val pendingWorkspacePicker = MutableStateFlow(false)  // new in #137
 
+    private val modelOverride = MutableStateFlow<Model?>(null)    // new in #253 — null ⇒ "use Settings default"
+
+    private val selectedModelFlow: Flow<Model> =                  // new in #253
+        combine(appPreferences.defaultModel, modelOverride) { default, override -> override ?: default }
+
     val state: StateFlow<ThreadUiState> =
-        combine(                                                  // shape since #137
+        combine(                                                  // shape since #137; widened 3→4 in #253
             repository.observeConversations(ConversationFilter.All),
             repository.observeMessages(conversationId),
             pendingWorkspacePicker,
-        ) { conversations, items, pickerVisible ->
+            selectedModelFlow,                                    // new in #253
+        ) { conversations, items, pickerVisible, selectedModel ->
             val conv = conversations.firstOrNull { it.id == conversationId }
             ThreadUiState(
                 conversationId = conversationId,
@@ -50,7 +57,7 @@ class ThreadViewModel(
                 workspaceLabel = conv?.workspaceLabel() ?: "scratch",
                 workspacePickerVisible = pickerVisible,
                 items = items,                                    // new in #246
-                model = STUB_MODEL,                               // new in #145
+                selectedModel = selectedModel,                    // new in #145, rewired from STUB_MODEL → prefs+override in #253
                 effort = STUB_EFFORT,                             // new in #145
                 tokenPercent = STUB_TOKEN_PERCENT,                // new in #145
             )
@@ -99,9 +106,12 @@ class ThreadViewModel(
         pendingWorkspacePicker.value = false
     }
 
-    companion object {                                      // new in #145
+    fun onModelSelected(model: Model) {                    // new in #253 — synchronous, does not write prefs
+        modelOverride.value = model
+    }
+
+    companion object {                                      // new in #145; STUB_MODEL deleted in #253
         // Phase 4 swap point: replace with backend AgentStatus flow.
-        private const val STUB_MODEL = "Opus 4.7"
         private const val STUB_EFFORT = "high"
         private const val STUB_TOKEN_PERCENT = 73
     }
@@ -145,7 +155,7 @@ fun ThreadScreen(
         bottomBar = {                                  // wrapped in Column in #145
             Column(modifier = Modifier.fillMaxWidth()) {
                 ThreadStatusRow(
-                    model = state.model,
+                    model = state.selectedModel.label(),   // state.model → state.selectedModel.label() in #253
                     effort = state.effort,
                     tokenPercent = state.tokenPercent,
                     onExpandClick = onExpandClick,
@@ -229,7 +239,7 @@ fun ThreadTopAppBar(
 )
 ```
 
-`ThreadUiState` is still a **`data class`, not a `sealed interface`.** The canonical pattern in this codebase (`ChannelListUiState`, `DiscussionListUiState`, `ArchivedDiscussionsUiState`) is sealed `Loading | Empty | Loaded | Error` precisely because each represents a real async data-load stage; this screen still has zero `Loading` / `Error` distinction worth modelling (the `displayName` lookup falls back to the raw id rather than failing, so there is no error state to project). The first downstream ticket that introduces an error path or a "load-bearing waiting" frame is the one that widens to a sealed envelope; the current `data class` becomes the `Loaded` variant via grep-replace. Post-#145 the class carries ten fields (`conversationId`, `displayName`, `isPromoted`, `hasMessages`, `workspaceLabel`, `workspacePickerVisible`, `items`, `model`, `effort`, `tokenPercent`); the three added in #145 all default so the pre-existing `assertEquals(ThreadUiState(...), vm.state.value)` test cases compile unchanged.
+`ThreadUiState` is still a **`data class`, not a `sealed interface`.** The canonical pattern in this codebase (`ChannelListUiState`, `DiscussionListUiState`, `ArchivedDiscussionsUiState`) is sealed `Loading | Empty | Loaded | Error` precisely because each represents a real async data-load stage; this screen still has zero `Loading` / `Error` distinction worth modelling (the `displayName` lookup falls back to the raw id rather than failing, so there is no error state to project). The first downstream ticket that introduces an error path or a "load-bearing waiting" frame is the one that widens to a sealed envelope; the current `data class` becomes the `Loaded` variant via grep-replace. Post-#145 the class carries ten fields (`conversationId`, `displayName`, `isPromoted`, `hasMessages`, `workspaceLabel`, `workspacePickerVisible`, `items`, `selectedModel`, `effort`, `tokenPercent`); the three added in #145 all default so the pre-existing `assertEquals(ThreadUiState(...), vm.state.value)` test cases compile unchanged. The `model: String` field was retyped to `selectedModel: Model` in [#253](../codebase/253.md) as part of typing the Status Sheet's radio-group contract; the field's data-class default position (last but one) is preserved.
 
 `ThreadScreen`'s signature is **`(state, onBack, onSendMessage, connectionState, onRetry, modifier, onTitleClick, onOverflowClick, onExpandClick, onWorkspaceChipTapped, onWorkspacePicked, onWorkspacePickerDismissed)` — still no `onEvent` lambda even after #188 + #201 + #137 + #145 each landed VM-owned (or destined-for-VM) actions.** Every other VM-backed screen in the codebase uses `(state: UiState, onEvent: (Event) -> Unit)` once they have at least one VM-owned event. #188 added `onSendMessage`, #201 added `onRetry`, #137 added three workspace handlers, #145 added `onExpandClick` (currently a `{}` placeholder until [#146](https://github.com/pyrycode/pyrycode-mobile/issues/146) wires the Status Sheet) — all as flat callbacks rather than folding into a sealed `ThreadEvent`. Flat callbacks across six event arms is still cheaper than scaffolding a sealed envelope (and #208's overflow → picker wiring adds zero further callbacks — it reuses the picker handlers introduced by #137). The fold to `ThreadEvent` is deferred to whichever ticket lands the *next* VM-owned event beyond #208's reuse and #146's sheet wiring (likely #140 overflow or #141 rename, whichever lands first). At that point the existing lambdas collapse into one `onEvent: (ThreadEvent) -> Unit` and `onBack` stays separate (pure navigation). `connectionState` stays a flat `State` parameter — it's state, not an event.
 
@@ -378,7 +388,7 @@ Inside the same `Scaffold.bottomBar` slot, the [`ThreadStatusRow`](thread-status
 bottomBar = {
     Column(modifier = Modifier.fillMaxWidth()) {
         ThreadStatusRow(
-            model = state.model,
+            model = state.selectedModel.label(),   // String → enum-derived in #253
             effort = state.effort,
             tokenPercent = state.tokenPercent,
             onExpandClick = onExpandClick,
@@ -390,7 +400,9 @@ bottomBar = {
 
 Pre-#145 the slot held only `ThreadInputBar(onSend = onSendMessage)`. The wrapper `Column` is one of two new things in #145; the other is the `ThreadStatusRow` itself. Crucially, **`Modifier.imePadding()` lives inside `ThreadInputBar` on its own outer `Column` (since [#188](../codebase/188.md)), not on the `Scaffold` bottomBar** — so only the input bar lifts when the soft keyboard opens, and the status row stays visually anchored above the lifted input bar. No new `imePadding` on the outer wrapper.
 
-The three new `ThreadUiState` fields (`model`, `effort`, `tokenPercent`) are populated from companion-object constants (`STUB_MODEL = "Opus 4.7"`, `STUB_EFFORT = "high"`, `STUB_TOKEN_PERCENT = 73`) inside the same `combine(...)` block. The stub `tokenPercent = 73` lands inside the [`warning`](warning-color.md) band so the threshold-driven color renders live in the running app, not just in previews. Phase-4 swap point: delete the companion, swap the three `STUB_*` references inside `combine` for reads off a backend `AgentStatus` flow arm.
+The three new `ThreadUiState` fields shipped in #145 (`model`, `effort`, `tokenPercent`) were populated from companion-object constants (`STUB_MODEL = "Opus 4.7"`, `STUB_EFFORT = "high"`, `STUB_TOKEN_PERCENT = 73`) inside the same `combine(...)` block. In [#253](../codebase/253.md) `model: String` was retyped to `selectedModel: Model` and rewired to a pre-combined `selectedModelFlow = combine(appPreferences.defaultModel, modelOverride) { default, override -> override ?: default }` folded as the fourth source into the main `combine`; the `STUB_MODEL` constant was deleted. `STUB_EFFORT` and `STUB_TOKEN_PERCENT` survive untouched. The stub `tokenPercent = 73` lands inside the [`warning`](warning-color.md) band so the threshold-driven color renders live in the running app, not just in previews. Phase-4 swap point: delete the remaining two-constant companion, swap each `STUB_*` reference inside `combine` for reads off a backend `AgentStatus` flow arm.
+
+The row reads the typed enum as `state.selectedModel.label()` via the new [`Model.label()`](app-preferences.md#design-decision-defer-label-extensions-on-data-layer-enums) extension at `data/preferences/Model.kt` — `ThreadStatusRow`'s `model: String` parameter shape is preserved so the row's eight previews, its signature, and its internal `AnnotatedString` body stay byte-identical. `ThreadViewModel.onModelSelected(model: Model)` is the per-conversation override surface — synchronous `MutableStateFlow.value` write, no `appPreferences.setDefaultModel(...)` call (override is in-memory only; Phase 4 will persist).
 
 `onExpandClick` defaults to `{}` on the `ThreadScreen` signature; `MainActivity` passes `onExpandClick = {}` with a `// TODO(#146)` marker until [#146](https://github.com/pyrycode/pyrycode-mobile/issues/146) wires the Status Sheet. Tapping the row today fires the ripple and does nothing observable.
 
@@ -459,10 +471,10 @@ The composable is **stateless** per the project convention — no `remember`, no
 
 ```kotlin
 // di/AppModule.kt:36
-viewModel { ThreadViewModel(get(), get(), get()) }
+viewModel { ThreadViewModel(get(), get(), get(), get()) }
 ```
 
-Post-#201: three `get()`s. The first resolves to the back-stack entry's `SavedStateHandle` (auto-provided by Koin's `koin-androidx-compose` artifact via `LocalViewModelStoreOwner`, which Compose Navigation 2.9+ wires to the `NavBackStackEntry`). The second resolves to the `ConversationRepository` singleton bound at `AppModule.kt:28` (`single { FakeConversationRepository() } bind ConversationRepository::class`). The third (added in #201) resolves to the `ConnectionStateSource` singleton bound at `AppModule.kt:31` since #196 (`single { FakeConnectionStateSource() } bind ConnectionStateSource::class`). No new imports — all three deps were already in scope by the time #201 landed; no new `gradle/libs.versions.toml` entries.
+Post-[#253](../codebase/253.md): four `get()`s. The first resolves to the back-stack entry's `SavedStateHandle` (auto-provided by Koin's `koin-androidx-compose` artifact via `LocalViewModelStoreOwner`, which Compose Navigation 2.9+ wires to the `NavBackStackEntry`). The second resolves to the `ConversationRepository` singleton bound at `AppModule.kt:28` (`single { FakeConversationRepository() } bind ConversationRepository::class`). The third (added in #201) resolves to the `ConnectionStateSource` singleton bound at `AppModule.kt:31` since #196 (`single { FakeConnectionStateSource() } bind ConnectionStateSource::class`). The fourth (added in #253) resolves to the `AppPreferences` singleton bound at `AppModule.kt:29` since [#11](../codebase/11.md) (`single { AppPreferences(get()) }`). No new module entries — all four deps were already in scope; no new `gradle/libs.versions.toml` entries.
 
 ### Destination block
 
@@ -500,14 +512,14 @@ The `Routes.CONVERSATION_THREAD = "conversation_thread/{conversationId}"` consta
 
 ## Testing
 
-`app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModelTest.kt` — twenty-one JUnit 4 tests post-#145 (seven from #139, two from #188, three from #201, six from #137 in the workspace-chip group, one added in #246 for the `items` passthrough, two added in #145 for the stub model/effort/tokenPercent fields). The pre-#139 plain-JUnit shape (no `runTest`, no `Dispatchers.setMain`) no longer works because `stateIn(viewModelScope, …)` requires a `Main` test dispatcher to publish emissions in test scope. The file adopts the canonical scaffold from `ChannelListViewModelTest:1-60`:
+`app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModelTest.kt` — twenty-five JUnit 4 tests post-[#253](../codebase/253.md) (seven from #139, two from #188, three from #201, six from #137 in the workspace-chip group, one added in #246 for the `items` passthrough, two added in #145 for the stub effort/tokenPercent + default-model fields, four added in #253 for `selectedModel` plumbing). The pre-#139 plain-JUnit shape (no `runTest`, no `Dispatchers.setMain`) no longer works because `stateIn(viewModelScope, …)` requires a `Main` test dispatcher to publish emissions in test scope; post-#253 the file additionally needs the `runTest { }` wrapper around every test because `makeVm` is now a `TestScope.()` receiver function that constructs a `TemporaryFolder`-backed `AppPreferences` on `backgroundScope`. The file adopts the canonical scaffold from `ChannelListViewModelTest:1-60` (extended in #253 with the prefs-DataStore harness from `AppPreferencesTest`):
 
 ```kotlin
 @Before fun setUpMainDispatcher() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
 @After  fun tearDownMainDispatcher() { Dispatchers.resetMain() }
 ```
 
-Since #201 the file also carries a `private fun makeVm(handle, repository, source = FakeConnectionStateSource())` helper at the bottom. Every existing `ThreadViewModel(handle, repository)` call site was rewritten as `makeVm(handle, repository)` to absorb the new constructor arg without threading a fixture through nine call sites — the default arg keeps `state`-focused tests terse and the three connection-focused tests pass an explicit source. Same shape as `ChannelListViewModelTest.makeVm` from #239.
+Since #201 the file also carries a `private fun makeVm(handle, repository, source = FakeConnectionStateSource())` helper at the bottom. Every existing `ThreadViewModel(handle, repository)` call site was rewritten as `makeVm(handle, repository)` to absorb the new constructor arg without threading a fixture through nine call sites — the default arg keeps `state`-focused tests terse and the three connection-focused tests pass an explicit source. Same shape as `ChannelListViewModelTest.makeVm` from #239. In [#253](../codebase/253.md) the helper gained a fourth defaulted parameter `prefs: AppPreferences = AppPreferences(newDataStore())` and became a `TestScope` receiver function (so it can call the `TestScope.newDataStore()` helper that builds a `PreferenceDataStoreFactory.create(scope = backgroundScope, produceFile = { tmp.newFile("prefs_${UUID.randomUUID()}.preferences_pb") })`). The `UUID.randomUUID()` per call guarantees per-VM prefs isolation when a single test constructs two VMs in one `runTest { }` block.
 
 Tests:
 
@@ -530,8 +542,12 @@ Tests:
 17. **`onWorkspacePicked_callsChangeWorkspaceOnceAndClearsPickerFlag`** (#137) — fresh discussion, call `vm.onWorkspaceChipTapped()`, assert `workspacePickerVisible == true`. Call `vm.onWorkspacePicked("pyry-workspace/my-app")`, `advanceUntilIdle()`, assert `workspacePickerVisible == false` AND the conversation's `cwd` is now `"pyry-workspace/my-app"` (re-fetched via `repository.observeConversations(All).first().first { it.id == … }`). Pins the side-effect-plus-flag-clear contract.
 18. **`onWorkspacePickerDismissed_clearsFlagWithoutCallingChangeWorkspace`** (#137) — fresh discussion, `onWorkspaceChipTapped`, `onWorkspacePickerDismissed`, assert `workspacePickerVisible == false` AND the conversation's `cwd` is unchanged (re-fetched via the same path). Pins the no-side-effect dismiss path.
 19. **`state_items_reflectsObserveMessagesStream`** (#246) — `FakeConversationRepository()`, VM on `seed-channel-personal` (the fake's seeded channel carries seeded messages per [#161](../codebase/161.md)), `runTest { launch collector; advanceUntilIdle() }`, assert `vm.state.value.items.isNotEmpty()` and `vm.state.value.items.first() is ThreadItem.MessageItem`. Mirrors the shape of `sendMessage_nonBlankText_appendsToConversation` from [#188](../codebase/188.md). Pins the load-bearing passthrough: the `observeMessages` stream now reaches the screen, not just the `hasMessages` derivation.
-20. **`state_initialValue_includesStubModelEffortAndTokenPercentDefaults`** (#145) — synchronous (no `runTest`), constructs `makeVm(handle, FakeConversationRepository())`, asserts `vm.state.value.model == "Opus 4.7"`, `effort == "high"`, `tokenPercent == 0`. Pins the data-class default contract — the pre-subscription initial frame that `stateIn(initialValue = …)` publishes.
-21. **`state_postSubscription_emitsStubModelEffortAndTokenPercent`** (#145) — `runTest { launch collector; advanceUntilIdle() }`, asserts `model == "Opus 4.7"`, `effort == "high"`, `tokenPercent == 73`. Pins the VM's explicit population inside `combine` — the assertion that fails if the Phase-4 swap drops one of the three fields. The 0-vs-73 asymmetry on `tokenPercent` between #20 and #21 is intentional.
+20. **`state_initialValue_includesDefaultModelEffortAndTokenPercentDefaults`** (#145; renamed in [#253](../codebase/253.md) from `*Stub*` → `*Default*`) — wrapped in `runTest { }` for the prefs-IO context (was synchronous pre-#253). Constructs `makeVm(handle, FakeConversationRepository())`, asserts `vm.state.value.selectedModel == Model.OPUS_4_7`, `effort == "high"`, `tokenPercent == 0`. Pins the data-class default contract — the pre-subscription initial frame that `stateIn(initialValue = …)` publishes.
+21. **`state_postSubscription_emitsDefaultModelEffortAndTokenPercent`** (#145; renamed in [#253](../codebase/253.md)) — `runTest { launch collector; advanceUntilIdle() }`, asserts `selectedModel == Model.OPUS_4_7`, `effort == "high"`, `tokenPercent == 73`. Pins the VM's explicit population inside `combine` — the assertion that fails if the Phase-4 swap drops `effort` or `tokenPercent`, or if the prefs-defaulted `selectedModel` stops propagating through the new pre-combined `selectedModelFlow`. The 0-vs-73 asymmetry on `tokenPercent` between #20 and #21 is intentional.
+22. **`selectedModel_followsAppPreferencesDefault`** ([#253](../codebase/253.md)) — `runTest { }`; calls `prefs.setDefaultModel(Model.SONNET_4_6)` **before** VM construction, then `vm.state.first { it.selectedModel == Model.SONNET_4_6 }` inside `withTimeout(2.seconds)`. Pins the AC line "populates `selectedModel` from `appPreferences.defaultModel` on conversation open".
+23. **`selectedModel_reemitsWhenAppPreferencesDefaultChanges`** ([#253](../codebase/253.md)) — subscribe, assert default `Model.OPUS_4_7`, call `prefs.setDefaultModel(Model.HAIKU_4_5)`, assert `state.first { it.selectedModel == Model.HAIKU_4_5 }`. Pins the reactive contract — the override-less case is a pure passthrough of `appPreferences.defaultModel`.
+24. **`onModelSelected_overridesPerConversationWithoutMutatingPreferences`** ([#253](../codebase/253.md)) — the AC's **explicit verification line**: pre-asserts `prefs.defaultModel.first() == Model.OPUS_4_7`, calls `vm.onModelSelected(Model.HAIKU_4_5)`, asserts `vm.state.value.selectedModel == Model.HAIKU_4_5`, then re-asserts `prefs.defaultModel.first() == Model.OPUS_4_7` (unchanged). Fails if anyone wires `onModelSelected` to also call `appPreferences.setDefaultModel(...)`.
+25. **`onModelSelected_overrideWinsOverSubsequentDefaultChange`** ([#253](../codebase/253.md)) — sets override to `Model.HAIKU_4_5`, then changes the prefs default to `Model.SONNET_4_6`, asserts `selectedModel` stays `Model.HAIKU_4_5`. Pins the `override ?: default` rule baked into `selectedModelFlow`.
 
 
 The `fixedRepo(conversations)` helper is an anonymous `object : ConversationRepository { … }` with `TODO("not used")` overrides plus a `flowOf(conversations)`-backed `observeConversations`. It's kept local rather than extracted — each test's bespoke conversation shape would force a builder-shaped helper that doesn't pay for itself yet.

@@ -1,5 +1,8 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.Preferences
 import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
@@ -7,6 +10,8 @@ import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
+import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -21,21 +26,30 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.withTimeout
 import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.util.UUID
+import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ThreadViewModelTest {
+    @get:Rule
+    val tmp = TemporaryFolder()
+
     @Before
     fun setUpMainDispatcher() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
@@ -46,24 +60,32 @@ class ThreadViewModelTest {
         Dispatchers.resetMain()
     }
 
-    @Test
-    fun state_initialValue_isConversationIdPlaceholderBeforeSubscription() {
-        val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-        val vm = makeVm(handle, FakeConversationRepository())
-        // No collect{} — the stateIn(WhileSubscribed) initial value is the conversationId fallback.
-        assertEquals(
-            ThreadUiState(conversationId = "seed-channel-personal", displayName = "seed-channel-personal"),
-            vm.state.value,
+    private fun TestScope.newDataStore(): DataStore<Preferences> =
+        PreferenceDataStoreFactory.create(
+            scope = backgroundScope,
+            produceFile = { tmp.newFile("prefs_${UUID.randomUUID()}.preferences_pb") },
         )
-    }
 
     @Test
-    fun connectionState_initialValue_isConnected() {
-        val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-        val vm = makeVm(handle, FakeConversationRepository())
-        // No collect{} — the stateIn(WhileSubscribed) initialValue matches the fake's seeded value.
-        assertEquals(ConnectionState.Connected, vm.connectionState.value)
-    }
+    fun state_initialValue_isConversationIdPlaceholderBeforeSubscription() =
+        runTest {
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, FakeConversationRepository())
+            // No collect{} — the stateIn(WhileSubscribed) initial value is the conversationId fallback.
+            assertEquals(
+                ThreadUiState(conversationId = "seed-channel-personal", displayName = "seed-channel-personal"),
+                vm.state.value,
+            )
+        }
+
+    @Test
+    fun connectionState_initialValue_isConnected() =
+        runTest {
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, FakeConversationRepository())
+            // No collect{} — the stateIn(WhileSubscribed) initialValue matches the fake's seeded value.
+            assertEquals(ConnectionState.Connected, vm.connectionState.value)
+        }
 
     @Test
     fun connectionState_reemitsOnSourceChange() =
@@ -162,33 +184,109 @@ class ThreadViewModelTest {
         }
 
     @Test
-    fun state_collapsesAbsentConversationIdToEmptyString() {
-        val handle = SavedStateHandle(initialState = emptyMap())
-        val vm = makeVm(handle, FakeConversationRepository())
-        assertEquals("", vm.state.value.conversationId)
-    }
+    fun state_collapsesAbsentConversationIdToEmptyString() =
+        runTest {
+            val handle = SavedStateHandle(initialState = emptyMap())
+            val vm = makeVm(handle, FakeConversationRepository())
+            assertEquals("", vm.state.value.conversationId)
+        }
 
     @Test
-    fun state_initialValue_includesStubModelEffortAndTokenPercentDefaults() {
-        val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-        val vm = makeVm(handle, FakeConversationRepository())
-        // No collect{} — the stateIn(WhileSubscribed) initial value is the data-class defaults.
-        assertEquals("Opus 4.7", vm.state.value.model)
-        assertEquals("high", vm.state.value.effort)
-        assertEquals(0, vm.state.value.tokenPercent)
-    }
+    fun state_initialValue_includesDefaultModelEffortAndTokenPercentDefaults() =
+        runTest {
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, FakeConversationRepository())
+            // No collect{} — the stateIn(WhileSubscribed) initial value is the data-class defaults.
+            assertEquals(Model.OPUS_4_7, vm.state.value.selectedModel)
+            assertEquals("high", vm.state.value.effort)
+            assertEquals(0, vm.state.value.tokenPercent)
+        }
 
     @Test
-    fun state_postSubscription_emitsStubModelEffortAndTokenPercent() =
+    fun state_postSubscription_emitsDefaultModelEffortAndTokenPercent() =
         runTest {
             val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
             val vm = makeVm(handle, FakeConversationRepository())
             val collector = launch { vm.state.collect {} }
             advanceUntilIdle()
-            assertEquals("Opus 4.7", vm.state.value.model)
+            assertEquals(Model.OPUS_4_7, vm.state.value.selectedModel)
             assertEquals("high", vm.state.value.effort)
             assertEquals(73, vm.state.value.tokenPercent)
             collector.cancel()
+        }
+
+    @Test
+    fun selectedModel_followsAppPreferencesDefault() =
+        runTest {
+            val prefs = AppPreferences(newDataStore())
+            prefs.setDefaultModel(Model.SONNET_4_6)
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
+            val seen =
+                withTimeout(2.seconds) {
+                    vm.state.first { it.selectedModel == Model.SONNET_4_6 }
+                }
+            assertEquals(Model.SONNET_4_6, seen.selectedModel)
+        }
+
+    @Test
+    fun selectedModel_reemitsWhenAppPreferencesDefaultChanges() =
+        runTest {
+            val prefs = AppPreferences(newDataStore())
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
+            val initial =
+                withTimeout(2.seconds) {
+                    vm.state.first { it.selectedModel == Model.OPUS_4_7 }
+                }
+            assertEquals(Model.OPUS_4_7, initial.selectedModel)
+            prefs.setDefaultModel(Model.HAIKU_4_5)
+            val updated =
+                withTimeout(2.seconds) {
+                    vm.state.first { it.selectedModel == Model.HAIKU_4_5 }
+                }
+            assertEquals(Model.HAIKU_4_5, updated.selectedModel)
+        }
+
+    @Test
+    fun onModelSelected_overridesPerConversationWithoutMutatingPreferences() =
+        runTest {
+            val prefs = AppPreferences(newDataStore())
+            // Sanity: the default starts at OPUS_4_7 (unparseable/missing → OPUS_4_7).
+            assertEquals(Model.OPUS_4_7, prefs.defaultModel.first())
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
+            withTimeout(2.seconds) {
+                vm.state.first { it.selectedModel == Model.OPUS_4_7 }
+            }
+            vm.onModelSelected(Model.HAIKU_4_5)
+            val seen =
+                withTimeout(2.seconds) {
+                    vm.state.first { it.selectedModel == Model.HAIKU_4_5 }
+                }
+            assertEquals(Model.HAIKU_4_5, seen.selectedModel)
+            // The AC's verification line: Settings default is unchanged.
+            assertEquals(Model.OPUS_4_7, prefs.defaultModel.first())
+        }
+
+    @Test
+    fun onModelSelected_overrideWinsOverSubsequentDefaultChange() =
+        runTest {
+            val prefs = AppPreferences(newDataStore())
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
+            withTimeout(2.seconds) {
+                vm.state.first { it.selectedModel == Model.OPUS_4_7 }
+            }
+            vm.onModelSelected(Model.HAIKU_4_5)
+            withTimeout(2.seconds) {
+                vm.state.first { it.selectedModel == Model.HAIKU_4_5 }
+            }
+            prefs.setDefaultModel(Model.SONNET_4_6)
+            advanceUntilIdle()
+            // The override sticks; the Settings default change does not override it.
+            assertEquals(Model.HAIKU_4_5, vm.state.value.selectedModel)
+            assertEquals(Model.SONNET_4_6, prefs.defaultModel.first())
         }
 
     @Test
@@ -398,11 +496,12 @@ class ThreadViewModelTest {
 
     // --- helpers ---
 
-    private fun makeVm(
+    private fun TestScope.makeVm(
         handle: SavedStateHandle,
         repository: ConversationRepository,
         source: ConnectionStateSource = FakeConnectionStateSource(),
-    ): ThreadViewModel = ThreadViewModel(handle, repository, source)
+        prefs: AppPreferences = AppPreferences(newDataStore()),
+    ): ThreadViewModel = ThreadViewModel(handle, repository, source, prefs)
 
     private class RecordingConnectionStateSource : ConnectionStateSource {
         private val state = MutableStateFlow<ConnectionState>(ConnectionState.Connected)

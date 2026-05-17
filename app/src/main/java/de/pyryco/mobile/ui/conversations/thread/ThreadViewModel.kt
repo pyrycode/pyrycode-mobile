@@ -6,10 +6,13 @@ import androidx.lifecycle.viewModelScope
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
+import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -25,7 +28,7 @@ data class ThreadUiState(
     val workspaceLabel: String = "scratch",
     val workspacePickerVisible: Boolean = false,
     val items: List<ThreadItem> = emptyList(),
-    val model: String = "Opus 4.7",
+    val selectedModel: Model = Model.OPUS_4_7,
     val effort: String = "high",
     val tokenPercent: Int = 0,
 )
@@ -34,18 +37,25 @@ class ThreadViewModel(
     savedStateHandle: SavedStateHandle,
     private val repository: ConversationRepository,
     private val connectionStateSource: ConnectionStateSource,
+    private val appPreferences: AppPreferences,
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
 
     private val pendingWorkspacePicker = MutableStateFlow(false)
 
+    private val modelOverride = MutableStateFlow<Model?>(null)
+
+    private val selectedModelFlow: Flow<Model> =
+        combine(appPreferences.defaultModel, modelOverride) { default, override -> override ?: default }
+
     val state: StateFlow<ThreadUiState> =
         combine(
             repository.observeConversations(ConversationFilter.All),
             repository.observeMessages(conversationId),
             pendingWorkspacePicker,
-        ) { conversations, items, pickerVisible ->
+            selectedModelFlow,
+        ) { conversations, items, pickerVisible, selectedModel ->
             val conv = conversations.firstOrNull { it.id == conversationId }
             ThreadUiState(
                 conversationId = conversationId,
@@ -55,7 +65,7 @@ class ThreadViewModel(
                 workspaceLabel = conv?.workspaceLabel() ?: "scratch",
                 workspacePickerVisible = pickerVisible,
                 items = items,
-                model = STUB_MODEL,
+                selectedModel = selectedModel,
                 effort = STUB_EFFORT,
                 tokenPercent = STUB_TOKEN_PERCENT,
             )
@@ -104,9 +114,12 @@ class ThreadViewModel(
         pendingWorkspacePicker.value = false
     }
 
+    fun onModelSelected(model: Model) {
+        modelOverride.value = model
+    }
+
     companion object {
         // Phase 4 swap point: replace with backend AgentStatus flow.
-        private const val STUB_MODEL = "Opus 4.7"
         private const val STUB_EFFORT = "high"
         private const val STUB_TOKEN_PERCENT = 73
     }
