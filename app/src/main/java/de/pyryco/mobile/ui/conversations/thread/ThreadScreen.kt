@@ -43,6 +43,7 @@ fun ThreadScreen(
     modifier: Modifier = Modifier,
     onTitleClick: () -> Unit = {},
     onOverflowClick: () -> Unit = {},
+    onExpandClick: () -> Unit = {},
     onWorkspaceChipTapped: () -> Unit = {},
     onWorkspacePicked: (String) -> Unit = {},
     onWorkspacePickerDismissed: () -> Unit = {},
@@ -58,7 +59,15 @@ fun ThreadScreen(
             )
         },
         bottomBar = {
-            ThreadInputBar(onSend = onSendMessage)
+            Column(modifier = Modifier.fillMaxWidth()) {
+                ThreadStatusRow(
+                    model = state.model,
+                    effort = state.effort,
+                    tokenPercent = state.tokenPercent,
+                    onExpandClick = onExpandClick,
+                )
+                ThreadInputBar(onSend = onSendMessage)
+            }
         },
     ) { inner ->
         Column(
@@ -198,6 +207,7 @@ private fun ThreadScreenLightPreview() {
                     displayName = "kitchenclaw refactor",
                     isPromoted = true,
                     items = previewItems(),
+                    tokenPercent = 73,
                 ),
             onBack = {},
             onSendMessage = {},
@@ -218,6 +228,7 @@ private fun ThreadScreenDarkPreview() {
                     displayName = "kitchenclaw refactor",
                     isPromoted = true,
                     items = previewItems(),
+                    tokenPercent = 73,
                 ),
             onBack = {},
             onSendMessage = {},
@@ -342,6 +353,7 @@ private fun ThreadScreenAboveDelimiterDimLightPreview() {
                     displayName = "kitchenclaw refactor",
                     isPromoted = true,
                     items = previewItemsWithBoundaries(),
+                    tokenPercent = 73,
                 ),
             onBack = {},
             onSendMessage = {},
@@ -362,6 +374,7 @@ private fun ThreadScreenAboveDelimiterDimDarkPreview() {
                     displayName = "kitchenclaw refactor",
                     isPromoted = true,
                     items = previewItemsWithBoundaries(),
+                    tokenPercent = 73,
                 ),
             onBack = {},
             onSendMessage = {},

@@ -25,6 +25,9 @@ data class ThreadUiState(
     val workspaceLabel: String = "scratch",
     val workspacePickerVisible: Boolean = false,
     val items: List<ThreadItem> = emptyList(),
+    val model: String = "Opus 4.7",
+    val effort: String = "high",
+    val tokenPercent: Int = 0,
 )
 
 class ThreadViewModel(
@@ -52,6 +55,9 @@ class ThreadViewModel(
                 workspaceLabel = conv?.workspaceLabel() ?: "scratch",
                 workspacePickerVisible = pickerVisible,
                 items = items,
+                model = STUB_MODEL,
+                effort = STUB_EFFORT,
+                tokenPercent = STUB_TOKEN_PERCENT,
             )
         }.stateIn(
             scope = viewModelScope,
@@ -96,6 +102,13 @@ class ThreadViewModel(
 
     fun onWorkspacePickerDismissed() {
         pendingWorkspacePicker.value = false
+    }
+
+    companion object {
+        // Phase 4 swap point: replace with backend AgentStatus flow.
+        private const val STUB_MODEL = "Opus 4.7"
+        private const val STUB_EFFORT = "high"
+        private const val STUB_TOKEN_PERCENT = 73
     }
 }
 

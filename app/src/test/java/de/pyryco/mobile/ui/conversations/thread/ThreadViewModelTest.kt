@@ -169,6 +169,29 @@ class ThreadViewModelTest {
     }
 
     @Test
+    fun state_initialValue_includesStubModelEffortAndTokenPercentDefaults() {
+        val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+        val vm = makeVm(handle, FakeConversationRepository())
+        // No collect{} — the stateIn(WhileSubscribed) initial value is the data-class defaults.
+        assertEquals("Opus 4.7", vm.state.value.model)
+        assertEquals("high", vm.state.value.effort)
+        assertEquals(0, vm.state.value.tokenPercent)
+    }
+
+    @Test
+    fun state_postSubscription_emitsStubModelEffortAndTokenPercent() =
+        runTest {
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, FakeConversationRepository())
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals("Opus 4.7", vm.state.value.model)
+            assertEquals("high", vm.state.value.effort)
+            assertEquals(73, vm.state.value.tokenPercent)
+            collector.cancel()
+        }
+
+    @Test
     fun sendMessage_blankText_isNoOp() =
         runTest {
             val repository = FakeConversationRepository()
