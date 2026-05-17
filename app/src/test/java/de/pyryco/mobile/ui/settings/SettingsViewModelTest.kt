@@ -9,6 +9,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.Effort
+import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -172,6 +173,66 @@ class SettingsViewModelTest {
             advanceUntilIdle()
             assertEquals(false, prefs.useWallpaperColors.first())
             assertEquals(false, vm.useWallpaperColors.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun defaultModel_initialState_emitsOpus47_whenNoStoredValue() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs)
+            val collector = launch { vm.defaultModel.collect { } }
+            advanceUntilIdle()
+            assertEquals(Model.OPUS_4_7, vm.defaultModel.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun defaultModel_initialState_mirrorsPersistedValue() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            prefs.setDefaultModel(Model.HAIKU_4_5)
+            advanceUntilIdle()
+            val vm = makeVm(prefs)
+            val collector = launch { vm.defaultModel.collect { } }
+            advanceUntilIdle()
+            assertEquals(Model.HAIKU_4_5, vm.defaultModel.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun onSelectDefaultModel_persistsSonnet46() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs)
+            vm.onSelectDefaultModel(Model.SONNET_4_6)
+            advanceUntilIdle()
+            assertEquals(Model.SONNET_4_6, prefs.defaultModel.first())
+        }
+
+    @Test
+    fun onSelectDefaultModel_persistsHaiku45() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs)
+            vm.onSelectDefaultModel(Model.HAIKU_4_5)
+            advanceUntilIdle()
+            assertEquals(Model.HAIKU_4_5, prefs.defaultModel.first())
+        }
+
+    @Test
+    fun defaultModel_flowReEmits_afterOnSelectDefaultModel() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs)
+            val collector = launch { vm.defaultModel.collect { } }
+            advanceUntilIdle()
+            vm.onSelectDefaultModel(Model.SONNET_4_6)
+            advanceUntilIdle()
+            assertEquals(Model.SONNET_4_6, vm.defaultModel.value)
+            vm.onSelectDefaultModel(Model.HAIKU_4_5)
+            advanceUntilIdle()
+            assertEquals(Model.HAIKU_4_5, vm.defaultModel.value)
             collector.cancel()
         }
 
