@@ -520,12 +520,70 @@ class ThreadViewModelTest {
             advanceUntilIdle()
 
             vm.onOverflowEvent(ThreadEvent.NewSession)
-            vm.onOverflowEvent(ThreadEvent.Rename)
             vm.onOverflowEvent(ThreadEvent.ChangeWorkspace)
             vm.onOverflowEvent(ThreadEvent.ChannelInfo)
             advanceUntilIdle()
 
             assertTrue(repo.archiveCalls.isEmpty())
+            collector.cancel()
+        }
+
+    @Test
+    fun onOverflowEvent_rename_setsShowRenameDialogFlag() =
+        runTest {
+            val repo = RecordingRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.Rename)
+            advanceUntilIdle()
+
+            assertTrue(vm.state.value.showRenameDialog)
+            assertTrue(repo.renameCalls.isEmpty())
+            collector.cancel()
+        }
+
+    @Test
+    fun onOverflowEvent_renameSubmit_callsRepositoryAndClearsFlag() =
+        runTest {
+            val repo = RecordingRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.Rename)
+            advanceUntilIdle()
+            assertTrue(vm.state.value.showRenameDialog)
+
+            vm.onOverflowEvent(ThreadEvent.RenameSubmit("new name"))
+            advanceUntilIdle()
+
+            assertFalse(vm.state.value.showRenameDialog)
+            assertEquals(listOf("seed-channel-personal" to "new name"), repo.renameCalls)
+            collector.cancel()
+        }
+
+    @Test
+    fun onOverflowEvent_renameDismiss_clearsFlagWithoutRepositoryCall() =
+        runTest {
+            val repo = RecordingRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.Rename)
+            advanceUntilIdle()
+            assertTrue(vm.state.value.showRenameDialog)
+
+            vm.onOverflowEvent(ThreadEvent.RenameDismiss)
+            advanceUntilIdle()
+
+            assertFalse(vm.state.value.showRenameDialog)
+            assertTrue(repo.renameCalls.isEmpty())
             collector.cancel()
         }
 
@@ -540,6 +598,7 @@ class ThreadViewModelTest {
 
     private class RecordingRepo : ConversationRepository {
         val archiveCalls = mutableListOf<String>()
+        val renameCalls = mutableListOf<Pair<String, String>>()
 
         override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = flowOf(emptyList())
 
@@ -564,7 +623,18 @@ class ThreadViewModelTest {
         override suspend fun rename(
             conversationId: String,
             name: String,
-        ): Conversation = TODO("not used")
+        ): Conversation {
+            renameCalls += conversationId to name
+            return Conversation(
+                id = conversationId,
+                name = name,
+                cwd = "",
+                currentSessionId = "$conversationId-s1",
+                sessionHistory = listOf("$conversationId-s1"),
+                isPromoted = false,
+                lastUsedAt = Instant.parse("2026-05-17T00:00:00Z"),
+            )
+        }
 
         override suspend fun startNewSession(
             conversationId: String,

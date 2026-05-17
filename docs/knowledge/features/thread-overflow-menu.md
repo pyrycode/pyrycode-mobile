@@ -27,6 +27,8 @@ fun ThreadOverflowMenu(
 sealed interface ThreadEvent {
     data object NewSession : ThreadEvent
     data object Rename : ThreadEvent
+    data class RenameSubmit(val name: String) : ThreadEvent       // added in #141
+    data object RenameDismiss : ThreadEvent                       // added in #141
     data object ChangeWorkspace : ThreadEvent
     data object Archive : ThreadEvent
     data object ChannelInfo : ThreadEvent
@@ -35,8 +37,9 @@ sealed interface ThreadEvent {
 
 Co-located with `ThreadViewModel` at the top of `ThreadViewModel.kt` (above the `ThreadUiState` data class), not in its own file — the dispatcher (`onOverflowEvent`) is the only consumer in this slice. Placement follows the consumer; the screen-level precedent `DiscussionListEvent` / `ChannelListEvent` declare next to the screen file but that did not fit because in this slice the screen does not yet consume the sealed surface.
 
-- **`data object` (not plain `object`) on every case.** Sole behavioural difference is auto-generated `toString`/`equals`/`hashCode`. The `toString` (`"NewSession"`, etc.) makes the Compose-test combined-log assertion `log == listOf("dismiss", "event:NewSession")` readable without a custom matcher.
-- **Parameterless.** No per-event payload — the conversation id is sourced from the VM's `state.value.conversationId` at dispatch time inside `onOverflowEvent`, not embedded in the event. If a future ticket adds a payload field to any case (e.g. `Rename(newName: String)`), that case migrates to `data class`.
+- **Mixed `data object` and `data class` since [#141](../codebase/141.md).** Five `data object` cases (menu-item taps, parameterless) and one `data class` case (`RenameSubmit(val name: String)`, the dialog-Save dispatch carrying the user-trimmed new name). The [#251](../codebase/251.md) reservation for "a future menu item with a payload migrates that case to `data class`" cashed in at #141 — the rename family is now contiguous in the sealed surface (`Rename, RenameSubmit, RenameDismiss`), and the parameter-bearing case sits in the middle so the trim-authority contract stays at the UI boundary (the dialog trims; the VM forwards `event.name` to `repository.rename` without re-trimming).
+- **`data object` semantics: `toString` is the load-bearing auto-generation.** The Compose-test combined-log assertion `log == listOf("dismiss", "event:NewSession")` reads cleanly because `data object NewSession.toString() == "NewSession"`; plain `object` would produce `"NewSession@<hashcode>"`.
+- **Conversation id is sourced from `state.value.conversationId` at dispatch time** inside `onOverflowEvent`, not embedded on the events — same one-grep convention as `sendMessage`. `RenameSubmit.name` is the *only* payload field carried by any case, and it exists because the trimmed name has no other lookup path from the VM (the dialog is the trim authority; the field text is local to the dialog composable).
 - **Scope is overflow-only.** Existing plain handler methods on `ThreadViewModel` (`sendMessage`, `retry`, `onWorkspaceChipTapped`, `onWorkspacePicked`, `onWorkspacePickerDismissed`, `onModelSelected`) are **not** migrated to `ThreadEvent` in this slice. Option (ii) from the convention question on [#203](https://github.com/pyrycode/pyrycode-mobile/issues/203); option (iii) — migrate all six alongside the overflow work — was rejected as oversized.
 
 ## What it does
@@ -62,7 +65,7 @@ Same dismiss-before-handler pattern as `DiscussionListScreen.kt:209-212` (`onCli
 
 ## ViewModel dispatcher
 
-`ThreadViewModel` exposes a single 10-line `when` dispatcher:
+`ThreadViewModel.onOverflowEvent` is a `when` dispatcher over the sealed surface. Two side effects ship today (`Archive`, `RenameSubmit`); two visibility-flag flips support the rename dialog flow (`Rename`, `RenameDismiss`); three cases remain exhaustive `Unit` arms pending their per-item follow-ups.
 
 ```kotlin
 fun onOverflowEvent(event: ThreadEvent) {
@@ -71,8 +74,15 @@ fun onOverflowEvent(event: ThreadEvent) {
             viewModelScope.launch {
                 repository.archive(state.value.conversationId)
             }
+        ThreadEvent.Rename -> pendingRenameDialog.value = true             // added in #141
+        is ThreadEvent.RenameSubmit -> {                                   // added in #141
+            pendingRenameDialog.value = false
+            viewModelScope.launch {
+                repository.rename(state.value.conversationId, event.name)
+            }
+        }
+        ThreadEvent.RenameDismiss -> pendingRenameDialog.value = false     // added in #141
         ThreadEvent.NewSession,
-        ThreadEvent.Rename,
         ThreadEvent.ChangeWorkspace,
         ThreadEvent.ChannelInfo,
         -> Unit
@@ -80,10 +90,11 @@ fun onOverflowEvent(event: ThreadEvent) {
 }
 ```
 
-- **`Archive` is the only side effect this slice ships.** The other four branches are intentionally an exhaustive `Unit` arm — exhaustive `when` over the sealed surface guarantees that a missing case is a compile error, so no TODO comments / no stub bodies are needed. Downstream tickets fill them in (rename dialog → `Rename`, [#208](https://github.com/pyrycode/pyrycode-mobile/issues/208) → `ChangeWorkspace`, Channel Info sheet host → `ChannelInfo`, eventual `startNewSession` wiring → `NewSession`).
-- **`viewModelScope.launch { repository.archive(...) }`** is the same shape as the pre-existing `sendMessage` launcher at `ThreadViewModel.kt:103-108`. No new dispatcher, no `Job` retention.
-- **Conversation id is read from `state.value.conversationId`, not the constructor-captured `private val conversationId`.** Both resolve to the same value (the data-class default mirrors the constructor field; no mutation path overwrites it), but `state.value.conversationId` matches the existing `sendMessage` read pattern for one-grep convention.
-- **No optimistic UI update; no error handling.** `archive(id)` is documented to throw `IllegalArgumentException` for unknown ids per the [`ConversationRepository`](conversation-repository.md) contract, but the id we pass came from our own state — the throw branch is unreachable in production. The existing `state` flow re-emits naturally when `repository.archive` mutates the underlying `observeConversations` set; no manual `_state.value = ...` write needed.
+- **`Archive` was the only side effect through [#252](../codebase/252.md); [#141](../codebase/141.md) added `RenameSubmit`.** Both follow the identical `viewModelScope.launch { repository.<verb>(state.value.conversationId, ...) }` shape — fire-and-forget, no `Job` retention, conversation id read from `state.value` for one-grep convention with `sendMessage`. The three remaining `Unit` arms (`NewSession`, `ChangeWorkspace`, `ChannelInfo`) await their per-item follow-ups ([#208](https://github.com/pyrycode/pyrycode-mobile/issues/208) → `ChangeWorkspace`, Channel Info sheet host → `ChannelInfo`, eventual `startNewSession` wiring → `NewSession`).
+- **The rename flow is split across three cases.** `Rename` (menu-tap trigger) flips `pendingRenameDialog.value = true`, which surfaces to `ThreadUiState.showRenameDialog` via the main `combine(...)` block. `RenameSubmit(name)` (dialog Save tap) flips the flag back to `false` **synchronously before** launching `repository.rename(...)` — the synchronous ordering matters: it dismisses the dialog immediately so the UI doesn't wait for the suspend to complete, and a re-tap of `Rename` during an in-flight rename has well-defined state. `RenameDismiss` (dialog Cancel / outside-tap / back-press) flips the flag to `false` only.
+- **Conversation id is read from `state.value.conversationId`, not the constructor-captured `private val conversationId`.** Both resolve to the same value (the data-class default mirrors the constructor field; no mutation path overwrites it), but `state.value.conversationId` matches the existing `sendMessage` read pattern for one-grep convention. Applies to both `Archive` and `RenameSubmit`.
+- **`pendingRenameDialog: MutableStateFlow<Boolean>` is a private VM field**, mirroring `pendingWorkspacePicker` from [#137](../codebase/137.md). It's the fourth source folded into the main `combine(...)` block on `ThreadViewModel.state` — making the block five-arity total (`observeConversations, observeMessages, pendingWorkspacePicker, pendingRenameDialog, selectedModelFlow`), which is exactly the native `kotlinx.coroutines.flow.combine` overload ceiling. **The VM-owned vs. screen-hoisted choice matters**: dialog visibility belongs on the VM (and on `ThreadUiState`) because the dialog represents in-progress operation state and has multiple potential trigger points (today's overflow item, tomorrow's TopAppBar tap-to-rename) — centralising on the VM keeps the dialog single-sourced. Contrast against `overflowExpanded` ([#252](../codebase/252.md)) and `sheetVisible` ([#254](../codebase/254.md)), which are screen-hoisted `var ... by rememberSaveable { mutableStateOf(false) }` because they're pure UI presentation with no business meaning the VM needs to react to.
+- **No optimistic UI update; no error handling.** Both `archive(id)` and `rename(id, name)` are documented to throw `IllegalArgumentException` for unknown ids per the [`ConversationRepository`](conversation-repository.md) contract, but the id we pass came from our own state — the throw branch is unreachable in production. The existing `state` flow re-emits naturally when `repository.archive` / `repository.rename` mutate the underlying `observeConversations` set; no manual `_state.value = ...` write needed.
 
 ## Configuration / wiring
 
@@ -119,11 +130,11 @@ No test for `ThreadEvent` exhaustiveness — Kotlin's `when` compiler-enforces i
 
 ## Edge cases / limitations
 
-- **Mounted in production since [#252](../codebase/252.md).** Tapping the `MoreVert` overflow icon now opens the menu; tapping an item closes the menu and dispatches the corresponding `ThreadEvent` through `ThreadViewModel.onOverflowEvent`. Only `Archive` has an observable effect today (archives the conversation via `repository.archive`); the other four cases are intentionally no-op `Unit` arms on the VM until each per-item follow-up wires its handler — UX-wise the menu still closes correctly thanks to dismiss-before-handler ordering.
+- **Mounted in production since [#252](../codebase/252.md); `Rename` wired in [#141](../codebase/141.md).** Tapping the `MoreVert` overflow icon opens the menu; tapping an item closes the menu and dispatches the corresponding `ThreadEvent` through `ThreadViewModel.onOverflowEvent`. **Two cases have observable effects today**: `Archive` calls `repository.archive(id)` and `Rename` opens the [`RenameDialog`](rename-dialog.md) (whose Save tap routes through `RenameSubmit(name)` → `repository.rename(id, name)`). The other three cases (`NewSession`, `ChangeWorkspace`, `ChannelInfo`) are intentionally no-op `Unit` arms on the VM until each per-item follow-up wires its handler — UX-wise the menu still closes correctly thanks to dismiss-before-handler ordering.
 - **Single sink — sealed dispatch is the only event shape this composable speaks.** A future menu item with a payload (e.g. a context-sensitive "Move to channel X" with an id) migrates that case to `data class`; the sink stays `(ThreadEvent) -> Unit`.
 - **No leading icons on items.** Vanilla M3 `DropdownMenuItem` text-only rows — Figma `16:16` for the open-menu state doesn't include icons, the design intentionally inherits M3 defaults (surface container, body-large item text, standard insets). Adding leading icons later is a `leadingIcon = { Icon(...) }` per-item edit that doesn't touch the public signature.
 - **No dividers, no section headers.** Five flat items; the M3 `DropdownMenuItem` divider helper exists but the design doesn't use it. If a follow-up needs to split into "common actions" + "destructive actions" sections, `HorizontalDivider()` between items is the conventional shape — but the menu currently has no destructive emphasis on `Archive` (archive is reversible via `unarchive`; the eventual destructive surface is `delete`, owned by [`ChannelInfoSheet`](channel-info-sheet.md)).
-- **Empty `Unit` arm covers four cases.** Post-[#252](../codebase/252.md) the menu mounts in production and dispatches all five events, but the four non-`Archive` cases land on the VM's exhaustive `Unit` branch — no UI response until each per-item host follow-up wires its handler. The dismiss-before-handler ordering means the menu still closes correctly even when the event is a no-op — UX-wise the user sees the menu close and nothing further happens.
+- **Empty `Unit` arm covers three cases post-[#141](../codebase/141.md)** (down from four). `NewSession`, `ChangeWorkspace`, and `ChannelInfo` land on the VM's exhaustive `Unit` branch — no UI response until each per-item host follow-up wires its handler. The dismiss-before-handler ordering means the menu still closes correctly even when the event is a no-op — UX-wise the user sees the menu close and nothing further happens.
 
 ## Related
 
@@ -136,8 +147,8 @@ No test for `ThreadEvent` exhaustiveness — Kotlin's `when` compiler-enforces i
   - [`DiscussionListScreen`'s long-press menu](discussion-list-screen.md) — the only other production `DropdownMenu` call site; established the `onClick = { menuExpanded = false; onSaveAsChannel() }` dismiss-before-handler precedent this composable mirrors.
   - [`ConversationRepository`](conversation-repository.md) — the `suspend fun archive(conversationId)` contract `onOverflowEvent(Archive)` invokes.
 - Downstream:
-  - Per-item follow-ups, one for each currently-empty `when` branch:
-    - Rename dialog (`Rename`) — eventually under the successor to [#141](https://github.com/pyrycode/pyrycode-mobile/issues/141).
+  - Per-item follow-ups, one for each currently-empty `when` branch (was four pre-#141; now three after the rename slice landed):
+    - [`#141`](../codebase/141.md) ✅ — rename dialog wiring; sibling [`RenameDialog`](rename-dialog.md) composable + two new `ThreadEvent` cases (`RenameSubmit(name)`, `RenameDismiss`) + `pendingRenameDialog` flag.
     - [#208](https://github.com/pyrycode/pyrycode-mobile/issues/208) (`ChangeWorkspace`) — reuses the `workspacePickerVisible` flag and the two picker handlers introduced by [#137](../codebase/137.md).
     - Channel Info sheet host (`ChannelInfo`) — eventual successor to [#217](../codebase/217.md), the slice that shipped the stateless [`ChannelInfoSheet`](channel-info-sheet.md).
     - `NewSession` — not yet ticketed; will call `repository.startNewSession(state.value.conversationId, workspace = null)` inside the same `viewModelScope.launch` shape `Archive` uses today.

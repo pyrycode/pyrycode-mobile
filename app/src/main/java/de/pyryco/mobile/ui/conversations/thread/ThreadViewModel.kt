@@ -25,6 +25,12 @@ sealed interface ThreadEvent {
 
     data object Rename : ThreadEvent
 
+    data class RenameSubmit(
+        val name: String,
+    ) : ThreadEvent
+
+    data object RenameDismiss : ThreadEvent
+
     data object ChangeWorkspace : ThreadEvent
 
     data object Archive : ThreadEvent
@@ -39,6 +45,7 @@ data class ThreadUiState(
     val hasMessages: Boolean = false,
     val workspaceLabel: String = "scratch",
     val workspacePickerVisible: Boolean = false,
+    val showRenameDialog: Boolean = false,
     val items: List<ThreadItem> = emptyList(),
     val selectedModel: Model = Model.OPUS_4_7,
     val effort: String = "high",
@@ -56,6 +63,8 @@ class ThreadViewModel(
 
     private val pendingWorkspacePicker = MutableStateFlow(false)
 
+    private val pendingRenameDialog = MutableStateFlow(false)
+
     private val modelOverride = MutableStateFlow<Model?>(null)
 
     private val selectedModelFlow: Flow<Model> =
@@ -66,8 +75,9 @@ class ThreadViewModel(
             repository.observeConversations(ConversationFilter.All),
             repository.observeMessages(conversationId),
             pendingWorkspacePicker,
+            pendingRenameDialog,
             selectedModelFlow,
-        ) { conversations, items, pickerVisible, selectedModel ->
+        ) { conversations, items, pickerVisible, renameDialogVisible, selectedModel ->
             val conv = conversations.firstOrNull { it.id == conversationId }
             ThreadUiState(
                 conversationId = conversationId,
@@ -76,6 +86,7 @@ class ThreadViewModel(
                 hasMessages = items.any { it is ThreadItem.MessageItem },
                 workspaceLabel = conv?.workspaceLabel() ?: "scratch",
                 workspacePickerVisible = pickerVisible,
+                showRenameDialog = renameDialogVisible,
                 items = items,
                 selectedModel = selectedModel,
                 effort = STUB_EFFORT,
@@ -136,8 +147,15 @@ class ThreadViewModel(
                 viewModelScope.launch {
                     repository.archive(state.value.conversationId)
                 }
+            ThreadEvent.Rename -> pendingRenameDialog.value = true
+            is ThreadEvent.RenameSubmit -> {
+                pendingRenameDialog.value = false
+                viewModelScope.launch {
+                    repository.rename(state.value.conversationId, event.name)
+                }
+            }
+            ThreadEvent.RenameDismiss -> pendingRenameDialog.value = false
             ThreadEvent.NewSession,
-            ThreadEvent.Rename,
             ThreadEvent.ChangeWorkspace,
             ThreadEvent.ChannelInfo,
             -> Unit
