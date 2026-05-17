@@ -19,12 +19,13 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -111,23 +112,12 @@ fun ChannelListScreen(
         },
         floatingActionButton = {
             if (state is ChannelListUiState.Loaded || state is ChannelListUiState.Empty) {
-                Box(
-                    modifier =
-                        Modifier.combinedClickable(
-                            onClick = { onEvent(ChannelListEvent.CreateDiscussionTapped) },
-                            onLongClick = { onEvent(ChannelListEvent.LongPressFab) },
-                            onClickLabel = newDiscussionLabel,
-                            onLongClickLabel = longPressLabel,
-                            role = Role.Button,
-                        ),
-                ) {
-                    FloatingActionButton(onClick = {}) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = null,
-                        )
-                    }
-                }
+                ChannelListFab(
+                    onTap = { onEvent(ChannelListEvent.CreateDiscussionTapped) },
+                    onLongPress = { onEvent(ChannelListEvent.LongPressFab) },
+                    onTapLabel = newDiscussionLabel,
+                    onLongPressLabel = longPressLabel,
+                )
             }
         },
     ) { inner ->
@@ -201,6 +191,37 @@ private fun CenteredText(
 ) {
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(text)
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ChannelListFab(
+    onTap: () -> Unit,
+    onLongPress: () -> Unit,
+    onTapLabel: String,
+    onLongPressLabel: String,
+) {
+    Surface(
+        modifier =
+            Modifier
+                .size(56.dp)
+                .combinedClickable(
+                    onClick = onTap,
+                    onLongClick = onLongPress,
+                    onClickLabel = onTapLabel,
+                    onLongClickLabel = onLongPressLabel,
+                    role = Role.Button,
+                ),
+        shape = FloatingActionButtonDefaults.shape,
+        color = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        tonalElevation = 6.dp,
+        shadowElevation = 6.dp,
+    ) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Icon(imageVector = Icons.Default.Add, contentDescription = null)
+        }
     }
 }
 
