@@ -221,14 +221,17 @@ private fun PyryNavHost(
             val themeMode by vm.themeMode.collectAsStateWithLifecycle()
             val useWallpaperColors by vm.useWallpaperColors.collectAsStateWithLifecycle()
             val archivedDiscussionCount by vm.archivedDiscussionCount.collectAsStateWithLifecycle()
+            val defaultModel by vm.defaultModel.collectAsStateWithLifecycle()
             val defaultEffort by vm.defaultEffort.collectAsStateWithLifecycle()
             SettingsScreen(
                 themeMode = themeMode,
                 useWallpaperColors = useWallpaperColors,
                 archivedDiscussionCount = archivedDiscussionCount,
+                defaultModel = defaultModel,
                 defaultEffort = defaultEffort,
                 onSelectTheme = vm::onSelectTheme,
                 onToggleUseWallpaperColors = vm::onToggleUseWallpaperColors,
+                onSelectDefaultModel = vm::onSelectDefaultModel,
                 onSelectDefaultEffort = vm::onSelectDefaultEffort,
                 onBack = { navController.popBackStack() },
                 onOpenArchivedDiscussions = { navController.navigate(Routes.ARCHIVED_DISCUSSIONS) },

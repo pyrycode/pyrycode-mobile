@@ -42,7 +42,9 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.preferences.Effort
+import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.preferences.ThemeMode
+import de.pyryco.mobile.data.preferences.label
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -51,9 +53,11 @@ fun SettingsScreen(
     themeMode: ThemeMode,
     useWallpaperColors: Boolean,
     archivedDiscussionCount: Int,
+    defaultModel: Model,
     defaultEffort: Effort,
     onSelectTheme: (ThemeMode) -> Unit,
     onToggleUseWallpaperColors: (Boolean) -> Unit,
+    onSelectDefaultModel: (Model) -> Unit,
     onSelectDefaultEffort: (Effort) -> Unit,
     onBack: () -> Unit,
     onOpenArchivedDiscussions: () -> Unit,
@@ -80,6 +84,7 @@ fun SettingsScreen(
         var defaultYolo by remember { mutableStateOf(false) }
         var pushNotifications by remember { mutableStateOf(true) }
         var showThemeDialog by remember { mutableStateOf(false) }
+        var showModelDialog by remember { mutableStateOf(false) }
         var showEffortDialog by remember { mutableStateOf(false) }
 
         if (showThemeDialog) {
@@ -90,6 +95,17 @@ fun SettingsScreen(
                     showThemeDialog = false
                 },
                 onDismiss = { showThemeDialog = false },
+            )
+        }
+
+        if (showModelDialog) {
+            ModelPickerDialog(
+                selected = defaultModel,
+                onConfirm = { model ->
+                    onSelectDefaultModel(model)
+                    showModelDialog = false
+                },
+                onDismiss = { showModelDialog = false },
             )
         }
 
@@ -152,9 +168,9 @@ fun SettingsScreen(
             SettingsSectionHeader("Defaults for new conversations")
             SettingsRow(
                 headline = "Default model",
-                supporting = "Opus 4.7",
+                supporting = defaultModel.label(),
                 trailing = { ChevronIcon() },
-                onClick = {},
+                onClick = { showModelDialog = true },
             )
             SettingsRow(
                 headline = "Default effort",
@@ -324,9 +340,11 @@ private fun SettingsScreenLightPreview() {
             themeMode = ThemeMode.SYSTEM,
             useWallpaperColors = false,
             archivedDiscussionCount = 11,
+            defaultModel = Model.OPUS_4_7,
             defaultEffort = Effort.HIGH,
             onSelectTheme = {},
             onToggleUseWallpaperColors = {},
+            onSelectDefaultModel = {},
             onSelectDefaultEffort = {},
             onBack = {},
             onOpenArchivedDiscussions = {},
@@ -342,9 +360,11 @@ private fun SettingsScreenDarkPreview() {
             themeMode = ThemeMode.SYSTEM,
             useWallpaperColors = false,
             archivedDiscussionCount = 11,
+            defaultModel = Model.OPUS_4_7,
             defaultEffort = Effort.HIGH,
             onSelectTheme = {},
             onToggleUseWallpaperColors = {},
+            onSelectDefaultModel = {},
             onSelectDefaultEffort = {},
             onBack = {},
             onOpenArchivedDiscussions = {},

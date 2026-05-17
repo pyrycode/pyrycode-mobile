@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.Effort
+import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -32,6 +33,13 @@ class SettingsViewModel(
             initialValue = false,
         )
 
+    val defaultModel: StateFlow<Model> =
+        appPreferences.defaultModel.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = Model.OPUS_4_7,
+        )
+
     val defaultEffort: StateFlow<Effort> =
         appPreferences.defaultEffort.stateIn(
             scope = viewModelScope,
@@ -56,6 +64,10 @@ class SettingsViewModel(
 
     fun onToggleUseWallpaperColors(enabled: Boolean) {
         viewModelScope.launch { appPreferences.setUseWallpaperColors(enabled) }
+    }
+
+    fun onSelectDefaultModel(model: Model) {
+        viewModelScope.launch { appPreferences.setDefaultModel(model) }
     }
 
     fun onSelectDefaultEffort(effort: Effort) {
