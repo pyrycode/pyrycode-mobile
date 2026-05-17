@@ -55,10 +55,12 @@ fun SettingsScreen(
     archivedDiscussionCount: Int,
     defaultModel: Model,
     defaultEffort: Effort,
+    defaultYolo: Boolean,
     onSelectTheme: (ThemeMode) -> Unit,
     onToggleUseWallpaperColors: (Boolean) -> Unit,
     onSelectDefaultModel: (Model) -> Unit,
     onSelectDefaultEffort: (Effort) -> Unit,
+    onToggleDefaultYolo: (Boolean) -> Unit,
     onBack: () -> Unit,
     onOpenArchivedDiscussions: () -> Unit,
     modifier: Modifier = Modifier,
@@ -81,7 +83,6 @@ fun SettingsScreen(
         },
     ) { inner ->
         val context = LocalContext.current
-        var defaultYolo by remember { mutableStateOf(false) }
         var pushNotifications by remember { mutableStateOf(true) }
         var showThemeDialog by remember { mutableStateOf(false) }
         var showModelDialog by remember { mutableStateOf(false) }
@@ -182,7 +183,7 @@ fun SettingsScreen(
                 headline = "Default YOLO",
                 supporting = "off",
                 trailing = {
-                    Switch(checked = defaultYolo, onCheckedChange = { defaultYolo = it })
+                    Switch(checked = defaultYolo, onCheckedChange = onToggleDefaultYolo)
                 },
             )
             SettingsRow(
@@ -342,10 +343,12 @@ private fun SettingsScreenLightPreview() {
             archivedDiscussionCount = 11,
             defaultModel = Model.OPUS_4_7,
             defaultEffort = Effort.HIGH,
+            defaultYolo = false,
             onSelectTheme = {},
             onToggleUseWallpaperColors = {},
             onSelectDefaultModel = {},
             onSelectDefaultEffort = {},
+            onToggleDefaultYolo = {},
             onBack = {},
             onOpenArchivedDiscussions = {},
         )
@@ -362,10 +365,12 @@ private fun SettingsScreenDarkPreview() {
             archivedDiscussionCount = 11,
             defaultModel = Model.OPUS_4_7,
             defaultEffort = Effort.HIGH,
+            defaultYolo = false,
             onSelectTheme = {},
             onToggleUseWallpaperColors = {},
             onSelectDefaultModel = {},
             onSelectDefaultEffort = {},
+            onToggleDefaultYolo = {},
             onBack = {},
             onOpenArchivedDiscussions = {},
         )

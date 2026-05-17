@@ -297,6 +297,48 @@ class SettingsViewModelTest {
         }
 
     @Test
+    fun defaultYolo_initialState_emitsFalse_whenNoStoredValue() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs)
+            val collector = launch { vm.defaultYolo.collect { } }
+            advanceUntilIdle()
+            assertEquals(false, vm.defaultYolo.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun defaultYolo_initialState_mirrorsPersistedTrue() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            prefs.setDefaultYolo(true)
+            advanceUntilIdle()
+            val vm = makeVm(prefs)
+            val collector = launch { vm.defaultYolo.collect { } }
+            advanceUntilIdle()
+            assertEquals(true, vm.defaultYolo.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun onToggleDefaultYolo_persistsAndFlowReEmits() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs)
+            val collector = launch { vm.defaultYolo.collect { } }
+            advanceUntilIdle()
+            vm.onToggleDefaultYolo(true)
+            advanceUntilIdle()
+            assertEquals(true, prefs.defaultYolo.first())
+            assertEquals(true, vm.defaultYolo.value)
+            vm.onToggleDefaultYolo(false)
+            advanceUntilIdle()
+            assertEquals(false, prefs.defaultYolo.first())
+            assertEquals(false, vm.defaultYolo.value)
+            collector.cancel()
+        }
+
+    @Test
     fun archivedDiscussionCount_initialValue_isZero() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())
