@@ -1,12 +1,12 @@
 # Thread screen
 
-Outer shell for the conversation thread at the `conversation_thread/{conversationId}` route. Skeleton landed in [#126](../codebase/126.md) (route + VM + empty `LazyColumn`); the TopAppBar slot was promoted from placeholder to the real Figma `16:8` chrome in [#139](../codebase/139.md). Downstream `feat(ui/thread):` work (#128 message bubble, #133 input bar, #134 connection banner, #135 session-boundary delimiter, #137/#138 empty states, #140 overflow menu, #141 rename dialog, #145 status row) lands additively without rewriting the skeleton.
+Outer shell for the conversation thread at the `conversation_thread/{conversationId}` route. Skeleton landed in [#126](../codebase/126.md) (route + VM + empty `LazyColumn`); the TopAppBar slot was promoted from placeholder to the real Figma `16:8` chrome in [#139](../codebase/139.md); the `bottomBar` slot was filled with the composer in [#188](../codebase/188.md) — see [Thread input bar](thread-input-bar.md). Remaining downstream `feat(ui/thread):` work (#128 message bubble, #134 connection banner, #135 session-boundary delimiter, #137/#138 empty states, #140 overflow menu, #141 rename dialog, #145 status row) lands additively without rewriting the skeleton.
 
-Package: `de.pyryco.mobile.ui.conversations.thread` (`app/src/main/java/de/pyryco/mobile/ui/conversations/thread/`). Files: `ThreadScreen.kt`, `ThreadTopAppBar.kt`, `ThreadViewModel.kt`. Figma reference frame: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) — the TopAppBar region (back arrow + title + `more_vert` overflow) and the empty reverse-layout `LazyColumn` shell are in scope here; the message list, status row, and composer in the same frame are deferred to the downstream tickets above.
+Package: `de.pyryco.mobile.ui.conversations.thread` (`app/src/main/java/de/pyryco/mobile/ui/conversations/thread/`). Files: `ThreadScreen.kt`, `ThreadTopAppBar.kt`, `ThreadInputBar.kt`, `ThreadViewModel.kt`. Figma reference frame: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) — the TopAppBar region (back arrow + title + `more_vert` overflow), the empty reverse-layout `LazyColumn` shell, and the composer (subframe `16:61`) are in scope here; the message list, status row, connection banner, and other body decorations in the same frame are deferred to the downstream tickets above.
 
 ## What it does
 
-Renders the chrome of the thread surface — a `Scaffold` with a real Figma-matched `TopAppBar` (back icon + tappable title + overflow icon) over an empty `LazyColumn(reverseLayout = true)` body — and resolves the conversation's `displayName` from the repository via `ThreadViewModel`. No message rendering, no input bar yet; the body is `items(emptyList<Unit>()) { }` so the screen renders as a titled empty surface. Tapping the back arrow pops the nav back stack via an `onBack: () -> Unit` callback. Tapping the title and tapping the overflow each invoke a separate lambda (`onTitleClick`, `onOverflowClick`) — both default to `{}` no-ops; #141 (rename dialog) and #140 (overflow menu) replace the defaults at the destination block when they land.
+Renders the chrome of the thread surface — a `Scaffold` with a real Figma-matched `TopAppBar` (back icon + tappable title + overflow icon) over an empty `LazyColumn(reverseLayout = true)` body and a `ThreadInputBar` composer in the `bottomBar` slot — and resolves the conversation's `displayName` from the repository via `ThreadViewModel`. No message rendering yet; the body is `items(emptyList<Unit>()) { }` so the screen renders as a titled empty surface with a working composer below it. Tapping the back arrow pops the nav back stack via an `onBack: () -> Unit` callback. Typing into the composer and tapping send (or the IME `Send` action) routes through a new `onSendMessage: (String) -> Unit` callback into `ThreadViewModel.sendMessage` and onward to `ConversationRepository.sendMessage`. Tapping the title and tapping the overflow each invoke a separate lambda (`onTitleClick`, `onOverflowClick`) — both default to `{}` no-ops; #141 (rename dialog) and #140 (overflow menu) replace the defaults at the destination block when they land.
 
 ## Shape
 
@@ -19,7 +19,7 @@ data class ThreadUiState(
 
 class ThreadViewModel(
     savedStateHandle: SavedStateHandle,
-    repository: ConversationRepository,
+    private val repository: ConversationRepository,   // private val since #188
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
@@ -42,6 +42,13 @@ class ThreadViewModel(
                         displayName = conversationId,
                     ),
             )
+
+    fun sendMessage(text: String) {
+        if (text.isBlank()) return
+        viewModelScope.launch {
+            repository.sendMessage(state.value.conversationId, text)
+        }
+    }
 }
 
 private fun Conversation.displayName(): String =
@@ -54,6 +61,7 @@ private fun Conversation.displayName(): String =
 fun ThreadScreen(
     state: ThreadUiState,
     onBack: () -> Unit,
+    onSendMessage: (String) -> Unit,   // new in #188, no default
     modifier: Modifier = Modifier,
     onTitleClick: () -> Unit = {},
     onOverflowClick: () -> Unit = {},
@@ -67,6 +75,9 @@ fun ThreadScreen(
                 onTitleClick = onTitleClick,
                 onOverflowClick = onOverflowClick,
             )
+        },
+        bottomBar = {
+            ThreadInputBar(onSend = onSendMessage)
         },
     ) { inner ->
         LazyColumn(
@@ -92,7 +103,7 @@ fun ThreadTopAppBar(
 
 `ThreadUiState` is still a **`data class`, not a `sealed interface`.** The canonical pattern in this codebase (`ChannelListUiState`, `DiscussionListUiState`, `ArchivedDiscussionsUiState`) is sealed `Loading | Empty | Loaded | Error` precisely because each represents a real async data-load stage; this screen still has zero `Loading` / `Error` distinction worth modelling (the `displayName` lookup falls back to the raw id rather than failing, so there is no error state to project). The first downstream ticket that introduces an error path or a "load-bearing waiting" frame (likely #128 once it subscribes to `observeMessages`) is the one that widens to a sealed envelope; the current `data class` becomes the `Loaded` variant via grep-replace.
 
-`ThreadScreen`'s signature is **`(state, onBack, modifier, onTitleClick, onOverflowClick)` — still no `onEvent` lambda.** Every other VM-backed screen in the codebase uses `(state: UiState, onEvent: (Event) -> Unit)` because each has at least one VM-owned event. This screen still has none (`onBack` and the two new lambdas are pure-navigation hooks owned by the destination, not VM-owned events). Introducing a sealed `ThreadEvent { BackTapped, TitleTapped, OverflowTapped }` to hold three no-op-arms would be ceremony. The signature widens to `(state, onBack, onEvent)` — *or* the three callbacks fold into a then-introduced `ThreadEvent` — when the first VM-owned event lands (#133's composer send is the most likely first).
+`ThreadScreen`'s signature is **`(state, onBack, onSendMessage, modifier, onTitleClick, onOverflowClick)` — still no `onEvent` lambda even after #188 landed the first VM-owned action.** Every other VM-backed screen in the codebase uses `(state: UiState, onEvent: (Event) -> Unit)` once they have at least one VM-owned event. #188 added `onSendMessage: (String) -> Unit` as a fourth flat callback rather than folding into a sealed `ThreadEvent { SendMessage(text), TitleTapped, OverflowTapped, … }` — flat-callbacks for one event arm was cheaper than scaffolding a sealed envelope for one arm. The fold to `ThreadEvent` is deferred to whichever ticket lands the *second* VM-owned event (#140 overflow or #141 rename, depending on whose handler routes through the VM rather than directly to nav). At that point the four lambdas (`onSendMessage`, `onTitleClick`, `onOverflowClick`, and whichever new one arrives) collapse into one `onEvent: (ThreadEvent) -> Unit` and `onBack` stays separate (pure navigation).
 
 ## How it works
 
@@ -178,7 +189,7 @@ Post-#139: two `get()`s. The first resolves to the back-stack entry's `SavedStat
 ### Destination block — unchanged post-#139
 
 ```kotlin
-// MainActivity.kt:193-203
+// MainActivity.kt:197-208
 composable(
     route = Routes.CONVERSATION_THREAD,
     arguments = listOf(navArgument("conversationId") { type = NavType.StringType }),
@@ -188,11 +199,12 @@ composable(
     ThreadScreen(
         state = state,
         onBack = { navController.popBackStack() },
+        onSendMessage = vm::sendMessage,   // added in #188
     )
 }
 ```
 
-The `Routes.CONVERSATION_THREAD = "conversation_thread/{conversationId}"` constant, the `navArgument` declaration, and the four pre-existing call sites at `MainActivity.kt:142-143, 151-152, 169-170, 178-179` are **all unchanged** from #15 / #126. The new `onTitleClick` / `onOverflowClick` lambdas fall through to their `{}` defaults until #141 / #140 wire real handlers — #141 adds one named parameter binding `onTitleClick = { showRenameDialog = true }`; #140 adds the symmetric `onOverflowClick = …`. Keeping `MainActivity` out of #139's diff was deliberate (preserves the cheapest split for the downstream tickets).
+The `Routes.CONVERSATION_THREAD = "conversation_thread/{conversationId}"` constant, the `navArgument` declaration, and the four pre-existing call sites at `MainActivity.kt:142-143, 151-152, 169-170, 178-179` are **all unchanged** from #15 / #126. The `onTitleClick` / `onOverflowClick` lambdas still fall through to their `{}` defaults until #141 / #140 wire real handlers — #141 adds one named parameter binding `onTitleClick = { showRenameDialog = true }`; #140 adds the symmetric `onOverflowClick = …`. Method-reference syntax `vm::sendMessage` (rather than a fresh lambda `{ text -> vm.sendMessage(text) }`) avoids a new lambda allocation per recomposition of the destination block.
 
 ## Configuration
 
@@ -234,7 +246,7 @@ Neither preview passes `onTitleClick` / `onOverflowClick` — the defaults apply
 
 ## Edge cases / limitations
 
-- **No data loading for messages yet.** `ThreadViewModel` subscribes to `observeConversations(All)` for the title, but not to `observeMessages(conversationId)` — that's #128's wiring. The `LazyColumn` body still renders nothing.
+- **No data loading for messages yet.** `ThreadViewModel` subscribes to `observeConversations(All)` for the title, but not to `observeMessages(conversationId)` — that's #128's wiring. The `LazyColumn` body still renders nothing. Sending a message via the composer (#188) appends through the repository but the appended `Message` is invisible at the screen level until #128 lands — the only feedback that send fired is the cleared input field.
 - **`displayName` falls back to the raw `conversationId` when the lookup misses.** Path is not user-reachable in production (every nav edge passes a real id) but the property is observable and pinned by a test. Deep links and process-death restoration go through the same path.
 - **Title-tap ripple aligns with text bounds, not the full title-slot column.** Deliberate tradeoff for the rename entry — if #141's UX widens to "tap anywhere in the bar to rename", `ThreadTopAppBar` widens the clickable region to a wrapping `Row`.
 - **`onTitleClick` / `onOverflowClick` are no-op stubs at the destination block.** #141 wires the rename dialog through `onTitleClick`; #140 wires the overflow menu through `onOverflowClick`. Until they land, both icons announce their content descriptions to TalkBack but do nothing visible on tap.
@@ -244,8 +256,9 @@ Neither preview passes `onTitleClick` / `onOverflowClick` — the defaults apply
 
 ## Related
 
-- Ticket notes: [`../codebase/126.md`](../codebase/126.md) (skeleton), [`../codebase/139.md`](../codebase/139.md) (TopAppBar promotion), [`../codebase/15.md`](../codebase/15.md) (the placeholder route this slice replaces)
-- Specs: `docs/specs/architecture/15-conversation-thread-placeholder-route.md`, `docs/specs/architecture/126-thread-screen-skeleton.md`, `docs/specs/architecture/139-thread-topappbar-back-title-overflow.md`
-- Upstream: [Navigation](navigation.md) (the `conversation_thread/{conversationId}` route this destination consumes), [Conversation repository](conversation-repository.md) (the `observeConversations(All)` source the VM consumes), [Dependency injection](dependency-injection.md) (Koin `viewModel { ThreadViewModel(get(), get()) }` binding)
-- Downstream (each replaces a body slot here, not the chrome): #128 message bubble (widens `ThreadUiState` to sealed `Loading | Loaded(messages, displayName, …) | Error` and subscribes to `observeMessages`), #133 input bar (introduces the first VM-owned `ThreadEvent` and the `onEvent` lambda), #134 connection banner, #135 session-boundary delimiter, #137/#138 empty states, #140 overflow menu (wires `onOverflowClick`), #141 rename dialog (wires `onTitleClick`; live re-emission already free post-#139), #145 status row
-- Figma: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) (the complete future state; this slice ships the outer shell + the TopAppBar chrome)
+- Ticket notes: [`../codebase/126.md`](../codebase/126.md) (skeleton), [`../codebase/139.md`](../codebase/139.md) (TopAppBar promotion), [`../codebase/188.md`](../codebase/188.md) (input bar + `sendMessage`), [`../codebase/15.md`](../codebase/15.md) (the placeholder route this slice replaces)
+- Specs: `docs/specs/architecture/15-conversation-thread-placeholder-route.md`, `docs/specs/architecture/126-thread-screen-skeleton.md`, `docs/specs/architecture/139-thread-topappbar-back-title-overflow.md`, `docs/specs/architecture/188-thread-input-bar.md`
+- Upstream: [Navigation](navigation.md) (the `conversation_thread/{conversationId}` route this destination consumes), [Conversation repository](conversation-repository.md) (the `observeConversations(All)` source the VM consumes; `sendMessage` it forwards to since #188), [Dependency injection](dependency-injection.md) (Koin `viewModel { ThreadViewModel(get(), get()) }` binding)
+- Child components: [Thread input bar](thread-input-bar.md) (the composer in `bottomBar`, landed in #188)
+- Downstream remaining (each replaces a body slot here, not the chrome): #128 message bubble (widens `ThreadUiState` to sealed `Loading | Loaded(messages, displayName, …) | Error` and subscribes to `observeMessages`), #134 connection banner, #135 session-boundary delimiter, #137/#138 empty states, #140 overflow menu (wires `onOverflowClick`), #141 rename dialog (wires `onTitleClick`; live re-emission already free post-#139), #145 status row
+- Figma: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) (the complete future state; this slice ships the outer shell + the TopAppBar chrome + the composer in `bottomBar`)
