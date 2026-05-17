@@ -3,7 +3,9 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import kotlinx.coroutines.flow.SharingStarted
@@ -20,6 +22,7 @@ data class ThreadUiState(
 class ThreadViewModel(
     savedStateHandle: SavedStateHandle,
     private val repository: ConversationRepository,
+    private val connectionStateSource: ConnectionStateSource,
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
@@ -43,11 +46,24 @@ class ThreadViewModel(
                     ),
             )
 
+    val connectionState: StateFlow<ConnectionState> =
+        connectionStateSource
+            .observe()
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = ConnectionState.Connected,
+            )
+
     fun sendMessage(text: String) {
         if (text.isBlank()) return
         viewModelScope.launch {
             repository.sendMessage(state.value.conversationId, text)
         }
+    }
+
+    fun retry() {
+        viewModelScope.launch { connectionStateSource.retry() }
     }
 }
 

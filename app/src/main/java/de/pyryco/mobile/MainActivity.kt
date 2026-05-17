@@ -200,10 +200,13 @@ private fun PyryNavHost(
         ) {
             val vm = koinViewModel<ThreadViewModel>()
             val state by vm.state.collectAsStateWithLifecycle()
+            val connectionState by vm.connectionState.collectAsStateWithLifecycle()
             ThreadScreen(
                 state = state,
                 onBack = { navController.popBackStack() },
                 onSendMessage = vm::sendMessage,
+                connectionState = connectionState,
+                onRetry = vm::retry,
             )
         }
         composable(Routes.SETTINGS) {
