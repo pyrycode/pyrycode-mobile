@@ -159,6 +159,12 @@ class FakeConversationRepository(
         }
     }
 
+    // See ConversationRepository.delete contract: tolerant of unknown ids
+    // (Map - missingKey returns an equals-identical map, so StateFlow does not re-emit).
+    override suspend fun delete(conversationId: String) {
+        state.update { it - conversationId }
+    }
+
     override suspend fun rename(
         conversationId: String,
         name: String,

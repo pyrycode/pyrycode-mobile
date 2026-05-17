@@ -469,6 +469,78 @@ class FakeConversationRepositoryTest {
         }
 
     @Test
+    fun delete_removesConversation_from_observeConversations_All() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val created = repo.createDiscussion()
+
+            assertTrue(
+                "newly created discussion must appear in All before delete",
+                repo.observeConversations(ConversationFilter.All).first().any { it.id == created.id },
+            )
+
+            repo.delete(created.id)
+
+            assertTrue(
+                "deleted conversation must not appear in All",
+                repo.observeConversations(ConversationFilter.All).first().none { it.id == created.id },
+            )
+        }
+
+    @Test
+    fun delete_onUnknownId_doesNotThrow() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            repo.delete("nope")
+        }
+
+    @Test
+    fun delete_isIdempotent() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val created = repo.createDiscussion()
+            repo.delete(created.id)
+            repo.delete(created.id)
+            assertTrue(
+                "twice-deleted conversation must be absent from All",
+                repo.observeConversations(ConversationFilter.All).first().none { it.id == created.id },
+            )
+        }
+
+    @Test
+    fun delete_causes_observeMessages_toReEmitEmpty() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val seedId = "seed-channel-pyrycode-mobile"
+            assertTrue(
+                "seed channel must have messages before delete",
+                repo.observeMessages(seedId).first().isNotEmpty(),
+            )
+
+            repo.delete(seedId)
+
+            assertEquals(
+                emptyList<ThreadItem>(),
+                repo.observeMessages(seedId).first(),
+            )
+        }
+
+    @Test
+    fun delete_causes_observeLastMessage_toReEmitNull() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val seedId = "seed-channel-pyrycode-mobile"
+            assertNotNull(
+                "seed channel must have a last message before delete",
+                repo.observeLastMessage(seedId).first(),
+            )
+
+            repo.delete(seedId)
+
+            assertNull(repo.observeLastMessage(seedId).first())
+        }
+
+    @Test
     fun rename_updates_name_and_reEmits() =
         runBlocking {
             val repo = FakeConversationRepository()
