@@ -207,6 +207,8 @@ private fun PyryNavHost(
                 onSendMessage = vm::sendMessage,
                 connectionState = connectionState,
                 onRetry = vm::retry,
+                // TODO(#146): open Status Sheet
+                onExpandClick = {},
                 onWorkspaceChipTapped = vm::onWorkspaceChipTapped,
                 onWorkspacePicked = vm::onWorkspacePicked,
                 onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,

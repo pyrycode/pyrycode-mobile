@@ -40,4 +40,5 @@
     <string name="cd_voice_input">Voice input</string>
     <string name="cd_send_message">Send message</string>
     <string name="voice_input_toast">Voice input — Phase 6</string>
+    <string name="cd_thread_status_expand">Expand status details</string>
 </resources>
