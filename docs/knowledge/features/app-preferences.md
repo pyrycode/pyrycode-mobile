@@ -4,11 +4,18 @@ Typed wrapper around a single shared `DataStore<Preferences>` for app-level key-
 
 ## What it does
 
-Exposes app-level preferences as typed `Flow<T>` reads + `suspend fun` writes. Three preferences today:
+Exposes app-level preferences as typed `Flow<T>` reads + `suspend fun` writes. Seven preferences today, split into two groups — the three foundational keys (pairing + appearance) and the four "Defaults for new conversations" keys added in #231:
 
 - `pairedServerExists: Flow<Boolean>` — `false` by default; flips to `true` once the Scanner screen records a successful server pairing (#12). Read by `MainActivity`'s composition root to decide the `NavHost` start destination between `welcome` and `channel_list` (#13), and reserved for `Settings` (Phase 3) to surface pairing state.
 - `themeMode: Flow<ThemeMode>` — `ThemeMode.SYSTEM` by default (#86); persisted as the enum's `name` under `stringPreferencesKey("theme_mode")`. Both "key absent" and "stored string not in `ThemeMode.entries`" fall through to `SYSTEM` via `ThemeMode.entries.firstOrNull { it.name == stored } ?: ThemeMode.SYSTEM` — no throw, no `runCatching`. Read at two surfaces: at `MainActivity.setContent`'s root, an `appPreferences.themeMode.collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)` resolves `darkTheme: Boolean` for `PyrycodeMobileTheme(...)` (preserving `isSystemInDarkTheme()` on `SYSTEM`); since #87 the Settings route reads it via `koinViewModel<SettingsViewModel>().themeMode.collectAsStateWithLifecycle()` (a `StateFlow` projection over the same upstream — see [Settings ViewModel](settings-viewmodel.md)). The matching `suspend fun setThemeMode(mode: ThemeMode)` is wired in #87 by `SettingsViewModel.onSelectTheme(...)`, called from the Settings → Theme picker dialog's confirm button; one write fans out to both collectors above.
 - `useWallpaperColors: Flow<Boolean>` — `false` by default (#88); `booleanPreferencesKey("use_wallpaper_colors")`. Read at two surfaces: at `MainActivity.setContent`'s root as a sibling to the `themeMode` collector, then forwarded into `PyrycodeMobileTheme(darkTheme = …, dynamicColor = useWallpaperColors)`; and since #89 inside `composable(Routes.SETTINGS)` via `koinViewModel<SettingsViewModel>().useWallpaperColors.collectAsStateWithLifecycle()` (a `StateFlow` projection over the same upstream — see [Settings ViewModel](settings-viewmodel.md)). The theme's pre-existing SDK gate (`dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S` at `Theme.kt:275`) handles the "Android < 12 OR preference false → brand palette" branch internally, so no composition-root version check is needed. Matching `suspend fun setUseWallpaperColors(enabled: Boolean)` is wired in #89 by `SettingsViewModel.onToggleUseWallpaperColors(...)`, called from the Settings → Appearance "Use Material You dynamic color" switch row's `onCheckedChange` (headline updated from the prior "Use wallpaper colors" in #163 to match Figma `17:2`); one write fans out to both collectors above.
+
+"Defaults for new conversations" keys (#231, schema-only — no UI/consumer wiring yet; read by the eventual new-conversation materialiser and by the StatusSheet override stubs #228/#229):
+
+- `defaultModel: Flow<Model>` — `Model.OPUS_4_7` by default; `stringPreferencesKey("default_model")` holding `.name`. Tolerant-unknown fallback via `Model.entries.firstOrNull { it.name == stored } ?: Model.OPUS_4_7` — same shape as `themeMode`. Matching `suspend fun setDefaultModel(model: Model)` will be wired by the Settings model-picker slice. `Model` is identifier-only (`{ OPUS_4_7, SONNET_4_6, HAIKU_4_5 }`) in `data/preferences/Model.kt` — see [the deferred-`.label()` decision below](#design-decision-defer-label-extensions-on-data-layer-enums).
+- `defaultEffort: Flow<Effort>` — `Effort.HIGH` by default; `stringPreferencesKey("default_effort")` holding `.name`. Same tolerant-unknown fallback shape. Matching `suspend fun setDefaultEffort(effort: Effort)`. `Effort` is identifier-only (`{ LOW, MEDIUM, HIGH, XHIGH, MAX }`) in `data/preferences/Effort.kt`.
+- `defaultYolo: Flow<Boolean>` — `false` by default; `booleanPreferencesKey("default_yolo")`. Mirrors `pairedServerExists` / `useWallpaperColors`. Matching `suspend fun setDefaultYolo(enabled: Boolean)`.
+- `defaultWorkspace: Flow<String>` — `DEFAULT_SCRATCH_CWD` by default (imported from `de.pyryco.mobile.data.model`, **not** re-declared here); `stringPreferencesKey("default_workspace")`. Holds either the scratch-cwd sentinel or a bound-folder cwd as a plain `String` — reuses the same convention `Conversation.cwd` already encodes, deliberately not a `sealed Workspace { Scratch; Bound(cwd) }` (would be premature abstraction for one slice of work; downstream consumers all work in `String` terms). Matching `suspend fun setDefaultWorkspace(cwd: String)`.
 
 Secrets (the pairing token itself) are explicitly **not** stored here — that's a separate security-sensitive ticket using EncryptedSharedPreferences / the Keystore. `AppPreferences` is only for non-secret booleans/strings/ints.
 
@@ -47,22 +54,66 @@ class AppPreferences(private val dataStore: DataStore<Preferences>) {
         dataStore.edit { prefs -> prefs[USE_WALLPAPER_COLORS] = enabled }
     }
 
+    val defaultModel: Flow<Model> =
+        dataStore.data.map { prefs ->
+            val stored = prefs[DEFAULT_MODEL]
+            Model.entries.firstOrNull { it.name == stored } ?: Model.OPUS_4_7
+        }
+
+    suspend fun setDefaultModel(model: Model) {
+        dataStore.edit { prefs -> prefs[DEFAULT_MODEL] = model.name }
+    }
+
+    val defaultEffort: Flow<Effort> =
+        dataStore.data.map { prefs ->
+            val stored = prefs[DEFAULT_EFFORT]
+            Effort.entries.firstOrNull { it.name == stored } ?: Effort.HIGH
+        }
+
+    suspend fun setDefaultEffort(effort: Effort) {
+        dataStore.edit { prefs -> prefs[DEFAULT_EFFORT] = effort.name }
+    }
+
+    val defaultYolo: Flow<Boolean> =
+        dataStore.data.map { prefs -> prefs[DEFAULT_YOLO] ?: false }
+
+    suspend fun setDefaultYolo(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[DEFAULT_YOLO] = enabled }
+    }
+
+    val defaultWorkspace: Flow<String> =
+        dataStore.data.map { prefs -> prefs[DEFAULT_WORKSPACE] ?: DEFAULT_SCRATCH_CWD }
+
+    suspend fun setDefaultWorkspace(cwd: String) {
+        dataStore.edit { prefs -> prefs[DEFAULT_WORKSPACE] = cwd }
+    }
+
     private companion object {
         val PAIRED_SERVER_EXISTS = booleanPreferencesKey("paired_server_exists")
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val USE_WALLPAPER_COLORS = booleanPreferencesKey("use_wallpaper_colors")
+        val DEFAULT_MODEL = stringPreferencesKey("default_model")
+        val DEFAULT_EFFORT = stringPreferencesKey("default_effort")
+        val DEFAULT_YOLO = booleanPreferencesKey("default_yolo")
+        val DEFAULT_WORKSPACE = stringPreferencesKey("default_workspace")
     }
 }
 ```
 
-`ThemeMode` is a sibling enum file in the same package:
+Sibling enum files in the same package — all identifier-only, no companion methods, no `.label()` extensions:
 
 ```kotlin
 // de/pyryco/mobile/data/preferences/ThemeMode.kt
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
+
+// de/pyryco/mobile/data/preferences/Model.kt          (#231)
+enum class Model { OPUS_4_7, SONNET_4_6, HAIKU_4_5 }
+
+// de/pyryco/mobile/data/preferences/Effort.kt         (#231)
+enum class Effort { LOW, MEDIUM, HIGH, XHIGH, MAX }
 ```
 
-No companion methods on the enum — label mapping ("System" / "Light" / "Dark", per the `internal ThemeMode.label()` extension at the bottom of `SettingsScreen.kt`; was `"System default"` between #86 and #163) lives at the Settings call site, and dark/light resolution lives at the composition root (`when (themeMode) { SYSTEM -> isSystemInDarkTheme(); LIGHT -> false; DARK -> true }`). `PyrycodeMobileTheme`'s signature stays `darkTheme: Boolean`; the caller computes the boolean.
+`ThemeMode`'s label mapping ("System" / "Light" / "Dark", per the `internal ThemeMode.label()` extension at the bottom of `SettingsScreen.kt`; was `"System default"` between #86 and #163) lives at the Settings call site, and dark/light resolution lives at the composition root (`when (themeMode) { SYSTEM -> isSystemInDarkTheme(); LIGHT -> false; DARK -> true }`). `PyrycodeMobileTheme`'s signature stays `darkTheme: Boolean`; the caller computes the boolean. <a id="design-decision-defer-label-extensions-on-data-layer-enums"></a>`Model` and `Effort` follow the same convention by design: the first UI consumer (Settings model/effort pickers) owns label strings — baking them in here now would either be unused dead code or pin `String` literals into the data layer that may want to be Android string resources later. `CLAUDE.md` lists Compose Multiplatform as a walk-back trigger and asks for `data/` to stay portable; display strings are not data-layer concerns. The identifier shape (`OPUS_4_7`, `HAIKU_4_5`) documents the model unambiguously for non-UI consumers like the StatusSheet override stubs in #228 / #229.
 
 ```kotlin
 // de/pyryco/mobile/di/AppModule.kt (excerpt)
@@ -97,6 +148,8 @@ Reads are reactive: collectors receive the current persisted value on subscripti
 4. Add a unit test mirroring `AppPreferencesTest`: default-on-miss + round-trip.
 
 Once `AppPreferences` accumulates ~5 keys, consider splitting by domain (`AppPreferences` + `ThemePreferences` + `NotificationPreferences`), each backed by its **own** `DataStore<Preferences>` file binding in `AppModule.kt`. Don't pre-abstract over preference classes — rule of three.
+
+**Current count: 7 keys (post-#231).** The threshold is crossed but the split was deliberately deferred: the four #231 keys (`defaultModel`, `defaultEffort`, `defaultYolo`, `defaultWorkspace`) form one logical group ("defaults for new conversations") that the next two-or-three Settings UI slices will consume together — splitting before those land would force re-stitching imports across two preference classes within the same feature. **Re-evaluate the split when the first non-defaults Phase-3 key (notifications) lands** — that's the natural seam between `AppPreferences` (pairing/theme + defaults bundle) and a new `NotificationPreferences`.
 
 ## Configuration
 
@@ -156,8 +209,8 @@ Pass the enum's neutral default (the same value the cold flow would emit first o
 
 ## Related
 
-- Ticket notes: `../codebase/11.md`, `../codebase/12.md` (first write site), `../codebase/13.md` (first read site — `NavHost` start-destination gate), `../codebase/86.md` (second key — `themeMode`; first reactive-collect consumer), `../codebase/87.md` (first `setThemeMode` write site — Settings Theme picker dialog via `SettingsViewModel`), `../codebase/88.md` (third key — `useWallpaperColors`; second sibling collector at `setContent` root → `PyrycodeMobileTheme(dynamicColor = …)`), `../codebase/89.md` (first `setUseWallpaperColors` write site — Settings Use-wallpaper-colors switch row via `SettingsViewModel.onToggleUseWallpaperColors`)
-- Spec: `docs/specs/architecture/11-datastore-app-preferences.md`; `docs/specs/architecture/86-theme-mode-preference.md`; `docs/specs/architecture/87-settings-theme-picker-dialog.md`; `docs/specs/architecture/88-use-wallpaper-colors-preference.md`; `docs/specs/architecture/89-settings-use-wallpaper-colors-switch.md`
+- Ticket notes: `../codebase/11.md`, `../codebase/12.md` (first write site), `../codebase/13.md` (first read site — `NavHost` start-destination gate), `../codebase/86.md` (second key — `themeMode`; first reactive-collect consumer), `../codebase/87.md` (first `setThemeMode` write site — Settings Theme picker dialog via `SettingsViewModel`), `../codebase/88.md` (third key — `useWallpaperColors`; second sibling collector at `setContent` root → `PyrycodeMobileTheme(dynamicColor = …)`), `../codebase/89.md` (first `setUseWallpaperColors` write site — Settings Use-wallpaper-colors switch row via `SettingsViewModel.onToggleUseWallpaperColors`), `../codebase/231.md` (keys 4–7 — "Defaults for new conversations" schema: `defaultModel`, `defaultEffort`, `defaultYolo`, `defaultWorkspace` + `Model` / `Effort` sibling enums; schema-only, no UI/consumer wiring yet)
+- Spec: `docs/specs/architecture/11-datastore-app-preferences.md`; `docs/specs/architecture/86-theme-mode-preference.md`; `docs/specs/architecture/87-settings-theme-picker-dialog.md`; `docs/specs/architecture/88-use-wallpaper-colors-preference.md`; `docs/specs/architecture/89-settings-use-wallpaper-colors-switch.md`; `docs/specs/architecture/231-defaults-schema-model-effort-yolo-workspace.md`
 - DI feature: `dependency-injection.md`
-- First consumers: #12 (Scanner pairing-write — merged), #13 (conditional `NavHost` start destination — merged), #86 (`themeMode` flow → `PyrycodeMobileTheme(darkTheme = …)` + Settings Theme row subtitle — merged), #87 (`setThemeMode` write site — merged), #88 (`useWallpaperColors` flow → `PyrycodeMobileTheme(dynamicColor = …)` — merged), #89 (`setUseWallpaperColors` write site — Settings → Appearance switch row via `SettingsViewModel` — this slice).
-- Phase 3: notification + remaining `Settings` preferences will land as additional keys here (or as sibling classes once this file passes ~5 keys per the splitting rule above).
+- First consumers: #12 (Scanner pairing-write — merged), #13 (conditional `NavHost` start destination — merged), #86 (`themeMode` flow → `PyrycodeMobileTheme(darkTheme = …)` + Settings Theme row subtitle — merged), #87 (`setThemeMode` write site — merged), #88 (`useWallpaperColors` flow → `PyrycodeMobileTheme(dynamicColor = …)` — merged), #89 (`setUseWallpaperColors` write site — Settings → Appearance switch row via `SettingsViewModel` — merged), #231 (`defaultModel` / `defaultEffort` / `defaultYolo` / `defaultWorkspace` schema landed — pending consumers: Settings UI picker slices, the new-conversation materialiser, and the StatusSheet override stubs in #228 / #229).
+- Phase 3: notification + remaining `Settings` preferences will land as additional keys here (or as sibling classes once this file passes the splitting rule above — re-evaluate at the first non-defaults key).
