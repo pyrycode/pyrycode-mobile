@@ -58,13 +58,14 @@ fun ThreadScreen(
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
     onTitleClick: () -> Unit = {},
-    onOverflowClick: () -> Unit = {},
+    onOverflowEvent: (ThreadEvent) -> Unit = {},
     onModelSelected: (Model) -> Unit = {},
     onWorkspaceChipTapped: () -> Unit = {},
     onWorkspacePicked: (String) -> Unit = {},
     onWorkspacePickerDismissed: () -> Unit = {},
 ) {
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
+    var overflowExpanded by rememberSaveable { mutableStateOf(false) }
     Scaffold(
         modifier = modifier,
         topBar = {
@@ -72,7 +73,10 @@ fun ThreadScreen(
                 title = state.displayName,
                 onBack = onBack,
                 onTitleClick = onTitleClick,
-                onOverflowClick = onOverflowClick,
+                onOverflowClick = { overflowExpanded = true },
+                overflowExpanded = overflowExpanded,
+                onOverflowDismiss = { overflowExpanded = false },
+                onOverflowEvent = onOverflowEvent,
             )
         },
         bottomBar = {

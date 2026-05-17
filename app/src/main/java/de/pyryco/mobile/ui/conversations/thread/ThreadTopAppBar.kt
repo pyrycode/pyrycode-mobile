@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
@@ -24,6 +25,9 @@ fun ThreadTopAppBar(
     onBack: () -> Unit,
     onTitleClick: () -> Unit,
     onOverflowClick: () -> Unit,
+    overflowExpanded: Boolean,
+    onOverflowDismiss: () -> Unit,
+    onOverflowEvent: (ThreadEvent) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     TopAppBar(
@@ -46,10 +50,17 @@ fun ThreadTopAppBar(
             )
         },
         actions = {
-            IconButton(onClick = onOverflowClick) {
-                Icon(
-                    imageVector = Icons.Filled.MoreVert,
-                    contentDescription = stringResource(R.string.cd_more_actions),
+            Box {
+                IconButton(onClick = onOverflowClick) {
+                    Icon(
+                        imageVector = Icons.Filled.MoreVert,
+                        contentDescription = stringResource(R.string.cd_more_actions),
+                    )
+                }
+                ThreadOverflowMenu(
+                    expanded = overflowExpanded,
+                    onDismiss = onOverflowDismiss,
+                    onEvent = onOverflowEvent,
                 )
             }
         },
