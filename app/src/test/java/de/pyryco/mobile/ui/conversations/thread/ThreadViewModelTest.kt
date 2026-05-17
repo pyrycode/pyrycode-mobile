@@ -494,6 +494,41 @@ class ThreadViewModelTest {
             collector.cancel()
         }
 
+    @Test
+    fun onOverflowEvent_archive_callsRepositoryArchiveOnceWithCurrentConversationId() =
+        runTest {
+            val repo = RecordingRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.Archive)
+            advanceUntilIdle()
+
+            assertEquals(listOf("seed-channel-personal"), repo.archiveCalls)
+            collector.cancel()
+        }
+
+    @Test
+    fun onOverflowEvent_otherCases_doNotCallArchive() =
+        runTest {
+            val repo = RecordingRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.NewSession)
+            vm.onOverflowEvent(ThreadEvent.Rename)
+            vm.onOverflowEvent(ThreadEvent.ChangeWorkspace)
+            vm.onOverflowEvent(ThreadEvent.ChannelInfo)
+            advanceUntilIdle()
+
+            assertTrue(repo.archiveCalls.isEmpty())
+            collector.cancel()
+        }
+
     // --- helpers ---
 
     private fun TestScope.makeVm(
@@ -502,6 +537,50 @@ class ThreadViewModelTest {
         source: ConnectionStateSource = FakeConnectionStateSource(),
         prefs: AppPreferences = AppPreferences(newDataStore()),
     ): ThreadViewModel = ThreadViewModel(handle, repository, source, prefs)
+
+    private class RecordingRepo : ConversationRepository {
+        val archiveCalls = mutableListOf<String>()
+
+        override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = flowOf(emptyList())
+
+        override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = flowOf(emptyList())
+
+        override fun observeLastMessage(conversationId: String): Flow<Message?> = flowOf(null)
+
+        override suspend fun createDiscussion(workspace: String?): Conversation = TODO("not used")
+
+        override suspend fun promote(
+            conversationId: String,
+            name: String,
+            workspace: String?,
+        ): Conversation = TODO("not used")
+
+        override suspend fun archive(conversationId: String) {
+            archiveCalls += conversationId
+        }
+
+        override suspend fun unarchive(conversationId: String): Unit = TODO("not used")
+
+        override suspend fun rename(
+            conversationId: String,
+            name: String,
+        ): Conversation = TODO("not used")
+
+        override suspend fun startNewSession(
+            conversationId: String,
+            workspace: String?,
+        ): Session = TODO("not used")
+
+        override suspend fun changeWorkspace(
+            conversationId: String,
+            workspace: String,
+        ): Session = TODO("not used")
+
+        override suspend fun sendMessage(
+            conversationId: String,
+            text: String,
+        ): Message = TODO("not used")
+    }
 
     private class RecordingConnectionStateSource : ConnectionStateSource {
         private val state = MutableStateFlow<ConnectionState>(ConnectionState.Connected)

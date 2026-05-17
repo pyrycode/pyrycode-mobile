@@ -20,6 +20,18 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+sealed interface ThreadEvent {
+    data object NewSession : ThreadEvent
+
+    data object Rename : ThreadEvent
+
+    data object ChangeWorkspace : ThreadEvent
+
+    data object Archive : ThreadEvent
+
+    data object ChannelInfo : ThreadEvent
+}
+
 data class ThreadUiState(
     val conversationId: String,
     val displayName: String,
@@ -116,6 +128,20 @@ class ThreadViewModel(
 
     fun onModelSelected(model: Model) {
         modelOverride.value = model
+    }
+
+    fun onOverflowEvent(event: ThreadEvent) {
+        when (event) {
+            ThreadEvent.Archive ->
+                viewModelScope.launch {
+                    repository.archive(state.value.conversationId)
+                }
+            ThreadEvent.NewSession,
+            ThreadEvent.Rename,
+            ThreadEvent.ChangeWorkspace,
+            ThreadEvent.ChannelInfo,
+            -> Unit
+        }
     }
 
     companion object {
