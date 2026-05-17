@@ -23,7 +23,8 @@ data class ThreadUiState(
     val saveAsChannelDialog: SaveAsChannelDialogState? = null,  // new in #142 — nullable sub-state carrier
     val items: List<ThreadItem> = emptyList(),        // new in #246
     val selectedModel: Model = Model.OPUS_4_7,        // new in #145, retyped String→Model in #253
-    val effort: String = "high",                      // new in #145
+    val selectedEffort: Effort = Effort.HIGH,         // new in #145 as `effort: String`, retyped String→Effort in #229
+    val yoloEnabled: Boolean = false,                 // new in #229 — always false, ignores AppPreferences.defaultYolo
     val tokenPercent: Int = 0,                        // new in #145
 )
 
@@ -48,19 +49,31 @@ class ThreadViewModel(
     private val selectedModelFlow: Flow<Model> =                  // new in #253
         combine(appPreferences.defaultModel, modelOverride) { default, override -> override ?: default }
 
+    private val effortOverride = MutableStateFlow<Effort?>(null)  // new in #229 — null ⇒ "use Settings default"
+
+    private val selectedEffortFlow: Flow<Effort> =                // new in #229 — mirrors selectedModelFlow shape
+        combine(appPreferences.defaultEffort, effortOverride) { default, override -> override ?: default }
+
+    private val yoloEnabled = MutableStateFlow(false)             // new in #229 — hardcoded false, NO defaultYolo read
+
+    private val runConfigFlow: Flow<RunConfig> =                  // new in #229 — pre-combiner keeps outer combine at 5-arity
+        combine(selectedModelFlow, selectedEffortFlow, yoloEnabled) { model, effort, yolo ->
+            RunConfig(model, effort, yolo)
+        }
+
     private val transientDialogs: Flow<TransientDialogs> =        // new in #142 — pre-combiner keeps outer combine at 5-arity
         combine(pendingRenameDialog, pendingSaveAsChannelDialog) { rename, save ->
             TransientDialogs(renameVisible = rename, saveAsChannel = save)
         }
 
     val state: StateFlow<ThreadUiState> =
-        combine(                                                  // shape since #137; widened 3→4 in #253; widened 4→5 in #141; arm 4 bundled in #142
+        combine(                                                  // shape since #137; widened 3→4 in #253; widened 4→5 in #141; arm 4 bundled in #142; arm 5 bundled in #229
             repository.observeConversations(ConversationFilter.All),
             repository.observeMessages(conversationId),
             pendingWorkspacePicker,
             transientDialogs,                                     // new in #142 — bundles pendingRenameDialog + pendingSaveAsChannelDialog
-            selectedModelFlow,                                    // new in #253
-        ) { conversations, items, pickerVisible, dialogs, selectedModel ->
+            runConfigFlow,                                        // new in #229 — bundles selectedModelFlow + selectedEffortFlow + yoloEnabled
+        ) { conversations, items, pickerVisible, dialogs, runConfig ->
             val conv = conversations.firstOrNull { it.id == conversationId }
             ThreadUiState(
                 conversationId = conversationId,
@@ -72,8 +85,9 @@ class ThreadViewModel(
                 showRenameDialog = dialogs.renameVisible,         // new in #141, destructured from bundle in #142
                 saveAsChannelDialog = dialogs.saveAsChannel,      // new in #142
                 items = items,                                    // new in #246
-                selectedModel = selectedModel,                    // new in #145, rewired from STUB_MODEL → prefs+override in #253
-                effort = STUB_EFFORT,                             // new in #145
+                selectedModel = runConfig.model,                  // new in #145, rewired from STUB_MODEL → prefs+override in #253, bundled in #229
+                selectedEffort = runConfig.effort,                // new in #145 as STUB_EFFORT, rewired to prefs+override in #229
+                yoloEnabled = runConfig.yoloEnabled,              // new in #229
                 tokenPercent = STUB_TOKEN_PERCENT,                // new in #145
             )
         }.stateIn(
@@ -125,9 +139,22 @@ class ThreadViewModel(
         modelOverride.value = model
     }
 
-    companion object {                                      // new in #145; STUB_MODEL deleted in #253
+    fun onEffortSelected(effort: Effort) {                 // new in #229 — synchronous, does not write prefs
+        effortOverride.value = effort
+    }
+
+    fun onYoloToggled(enabled: Boolean) {                  // new in #229 — synchronous, single writer of yoloEnabled
+        yoloEnabled.value = enabled
+    }
+
+    private data class RunConfig(                          // new in #229 — file-private bundle for the runConfigFlow pre-combine
+        val model: Model,
+        val effort: Effort,
+        val yoloEnabled: Boolean,
+    )
+
+    companion object {                                      // new in #145; STUB_MODEL deleted in #253; STUB_EFFORT deleted in #229
         // Phase 4 swap point: replace with backend AgentStatus flow.
-        private const val STUB_EFFORT = "high"
         private const val STUB_TOKEN_PERCENT = 73
     }
 }
@@ -153,6 +180,8 @@ fun ThreadScreen(
     onTitleClick: () -> Unit = {},
     onOverflowEvent: (ThreadEvent) -> Unit = {},      // new in #252 — renamed in place from onOverflowClick (#139)
     onModelSelected: (Model) -> Unit = {},            // new in #254 — replaces onExpandClick from #145
+    onEffortSelected: (Effort) -> Unit = {},          // new in #229
+    onYoloToggled: (Boolean) -> Unit = {},            // new in #229
     onWorkspaceChipTapped: () -> Unit = {},           // new in #137
     onWorkspacePicked: (String) -> Unit = {},         // new in #137
     onWorkspacePickerDismissed: () -> Unit = {},      // new in #137
@@ -175,10 +204,10 @@ fun ThreadScreen(
         bottomBar = {                                  // wrapped in Column in #145
             Column(modifier = Modifier.fillMaxWidth()) {
                 ThreadStatusRow(
-                    model = state.selectedModel.label(),   // state.model → state.selectedModel.label() in #253
-                    effort = state.effort,
+                    model = state.selectedModel.label(),         // state.model → state.selectedModel.label() in #253
+                    effort = state.selectedEffort.label(),       // state.effort → state.selectedEffort.label() in #229
                     tokenPercent = state.tokenPercent,
-                    onExpandClick = { sheetVisible = true },   // wired internally in #254
+                    onExpandClick = { sheetVisible = true },     // wired internally in #254
                 )
                 ThreadInputBar(onSend = onSendMessage)
             }
@@ -263,13 +292,20 @@ fun ThreadScreen(
             onDismiss = { onOverflowEvent(ThreadEvent.SaveAsChannelDismiss) },
         )
     }
-    if (sheetVisible) {                           // Scaffold sibling, new in #254
+    if (sheetVisible) {                           // Scaffold sibling, new in #254; widened in #229
         StatusSheet(
             selectedModel = state.selectedModel,
             onModelSelected = { model ->
                 onModelSelected(model)
                 sheetVisible = false              // auto-close on selection
             },
+            selectedEffort = state.selectedEffort,          // new in #229
+            onEffortSelected = { effort ->                  // new in #229 — auto-close (discrete pick)
+                onEffortSelected(effort)
+                sheetVisible = false
+            },
+            yoloEnabled = state.yoloEnabled,                // new in #229
+            onYoloToggled = onYoloToggled,                  // new in #229 — NO auto-close (toggle state-change)
             onDismiss = { sheetVisible = false },
         )
     }
@@ -290,7 +326,7 @@ fun ThreadTopAppBar(
 )
 ```
 
-`ThreadUiState` is still a **`data class`, not a `sealed interface`.** The canonical pattern in this codebase (`ChannelListUiState`, `DiscussionListUiState`, `ArchivedDiscussionsUiState`) is sealed `Loading | Empty | Loaded | Error` precisely because each represents a real async data-load stage; this screen still has zero `Loading` / `Error` distinction worth modelling (the `displayName` lookup falls back to the raw id rather than failing, so there is no error state to project). The first downstream ticket that introduces an error path or a "load-bearing waiting" frame is the one that widens to a sealed envelope; the current `data class` becomes the `Loaded` variant via grep-replace. Post-[#142](../codebase/142.md) the class carries twelve fields (`conversationId`, `displayName`, `isPromoted`, `hasMessages`, `workspaceLabel`, `workspacePickerVisible`, `showRenameDialog`, `saveAsChannelDialog`, `items`, `selectedModel`, `effort`, `tokenPercent`); the two added since #145 (`showRenameDialog` from #141, `saveAsChannelDialog` from #142) both default so the pre-existing `assertEquals(ThreadUiState(...), vm.state.value)` test cases compile unchanged. The `model: String` field was retyped to `selectedModel: Model` in [#253](../codebase/253.md) as part of typing the Status Sheet's radio-group contract; the field's data-class default position (third from last) is preserved.
+`ThreadUiState` is still a **`data class`, not a `sealed interface`.** The canonical pattern in this codebase (`ChannelListUiState`, `DiscussionListUiState`, `ArchivedDiscussionsUiState`) is sealed `Loading | Empty | Loaded | Error` precisely because each represents a real async data-load stage; this screen still has zero `Loading` / `Error` distinction worth modelling (the `displayName` lookup falls back to the raw id rather than failing, so there is no error state to project). The first downstream ticket that introduces an error path or a "load-bearing waiting" frame is the one that widens to a sealed envelope; the current `data class` becomes the `Loaded` variant via grep-replace. Post-[#229](../codebase/229.md) the class carries thirteen fields (`conversationId`, `displayName`, `isPromoted`, `hasMessages`, `workspaceLabel`, `workspacePickerVisible`, `showRenameDialog`, `saveAsChannelDialog`, `items`, `selectedModel`, `selectedEffort`, `yoloEnabled`, `tokenPercent`); the additions since #145 (`showRenameDialog` from #141, `saveAsChannelDialog` from #142, `yoloEnabled` from #229) all default so the pre-existing `assertEquals(ThreadUiState(...), vm.state.value)` test cases compile unchanged. The `model: String` field was retyped to `selectedModel: Model` in [#253](../codebase/253.md) and the `effort: String` field was similarly retyped to `selectedEffort: Effort` in [#229](../codebase/229.md) — both as part of typing the Status Sheet's selection contracts; the fields' data-class default positions are preserved.
 
 `ThreadScreen`'s signature is **`(state, onBack, onSendMessage, connectionState, onRetry, modifier, onTitleClick, onOverflowEvent, onModelSelected, onWorkspaceChipTapped, onWorkspacePicked, onWorkspacePickerDismissed)` — mixed: one sealed-event sink (`onOverflowEvent`) alongside six flat callbacks.** Every other VM-backed screen in the codebase uses `(state: UiState, onEvent: (Event) -> Unit)` once they have at least one VM-owned event. #188 added `onSendMessage`, #201 added `onRetry`, #137 added three workspace handlers, #145 added a hoisted `onExpandClick` placeholder that #254 deleted in favour of an internal `{ sheetVisible = true }` plus a new `onModelSelected: (Model) -> Unit` parameter bound to `vm::onModelSelected` ([#253](../codebase/253.md)) — all as flat callbacks rather than folding into a sealed `ThreadEvent`. [`#251`](../codebase/251.md) **introduced** the `sealed interface ThreadEvent` (co-located at the top of `ThreadViewModel.kt`) and a `ThreadViewModel.onOverflowEvent(event: ThreadEvent)` dispatcher, **scoped to overflow only**: the existing six plain handlers (`sendMessage`, `retry`, `onWorkspaceChipTapped`, `onWorkspacePicked`, `onWorkspacePickerDismissed`, `onModelSelected`) are not migrated to the sealed surface. [`#252`](../codebase/252.md) mounted the [`ThreadOverflowMenu`](thread-overflow-menu.md) inside `ThreadTopAppBar`'s `actions` slot — `ThreadScreen` hoists `var overflowExpanded by rememberSaveable { mutableStateOf(false) }`, the screen's `onOverflowClick: () -> Unit = {}` parameter was renamed in place to `onOverflowEvent: (ThreadEvent) -> Unit = {}`, and `MainActivity` binds `onOverflowEvent = vm::onOverflowEvent` at the destination block. The screen-level `(state, onEvent)` collapse for *every* event (rolling the six plain methods into `ThreadEvent` too) is option (iii) from #203's convention question and remains deferred. `connectionState` stays a flat `State` parameter — it's state, not an event.
 
@@ -441,10 +477,10 @@ Inside the same `Scaffold.bottomBar` slot, the [`ThreadStatusRow`](thread-status
 bottomBar = {
     Column(modifier = Modifier.fillMaxWidth()) {
         ThreadStatusRow(
-            model = state.selectedModel.label(),   // String → enum-derived in #253
-            effort = state.effort,
+            model = state.selectedModel.label(),         // String → enum-derived in #253
+            effort = state.selectedEffort.label(),       // String → enum-derived in #229
             tokenPercent = state.tokenPercent,
-            onExpandClick = { sheetVisible = true },   // wired internally in #254
+            onExpandClick = { sheetVisible = true },     // wired internally in #254
         )
         ThreadInputBar(onSend = onSendMessage)
     }
@@ -453,11 +489,11 @@ bottomBar = {
 
 Pre-#145 the slot held only `ThreadInputBar(onSend = onSendMessage)`. The wrapper `Column` is one of two new things in #145; the other is the `ThreadStatusRow` itself. Crucially, **`Modifier.imePadding()` lives inside `ThreadInputBar` on its own outer `Column` (since [#188](../codebase/188.md)), not on the `Scaffold` bottomBar** — so only the input bar lifts when the soft keyboard opens, and the status row stays visually anchored above the lifted input bar. No new `imePadding` on the outer wrapper.
 
-The three new `ThreadUiState` fields shipped in #145 (`model`, `effort`, `tokenPercent`) were populated from companion-object constants (`STUB_MODEL = "Opus 4.7"`, `STUB_EFFORT = "high"`, `STUB_TOKEN_PERCENT = 73`) inside the same `combine(...)` block. In [#253](../codebase/253.md) `model: String` was retyped to `selectedModel: Model` and rewired to a pre-combined `selectedModelFlow = combine(appPreferences.defaultModel, modelOverride) { default, override -> override ?: default }` folded as the fourth source into the main `combine`; the `STUB_MODEL` constant was deleted. `STUB_EFFORT` and `STUB_TOKEN_PERCENT` survive untouched. The stub `tokenPercent = 73` lands inside the [`warning`](warning-color.md) band so the threshold-driven color renders live in the running app, not just in previews. Phase-4 swap point: delete the remaining two-constant companion, swap each `STUB_*` reference inside `combine` for reads off a backend `AgentStatus` flow arm.
+The three new `ThreadUiState` fields shipped in #145 (`model`, `effort`, `tokenPercent`) were populated from companion-object constants (`STUB_MODEL = "Opus 4.7"`, `STUB_EFFORT = "high"`, `STUB_TOKEN_PERCENT = 73`) inside the same `combine(...)` block. In [#253](../codebase/253.md) `model: String` was retyped to `selectedModel: Model` and rewired to a pre-combined `selectedModelFlow = combine(appPreferences.defaultModel, modelOverride) { default, override -> override ?: default }`; the `STUB_MODEL` constant was deleted. In [#229](../codebase/229.md) `effort: String` was retyped to `selectedEffort: Effort` and rewired to a pre-combined `selectedEffortFlow` mirroring `selectedModelFlow`'s shape; `STUB_EFFORT` was deleted. `STUB_TOKEN_PERCENT` survives untouched. The stub `tokenPercent = 73` lands inside the [`warning`](warning-color.md) band so the threshold-driven color renders live in the running app, not just in previews. Phase-4 swap point: delete the remaining single-constant companion, swap `STUB_TOKEN_PERCENT` inside `combine` for a read off a backend `AgentStatus` flow arm.
 
-The row reads the typed enum as `state.selectedModel.label()` via the new [`Model.label()`](app-preferences.md#design-decision-defer-label-extensions-on-data-layer-enums) extension at `data/preferences/Model.kt` — `ThreadStatusRow`'s `model: String` parameter shape is preserved so the row's eight previews, its signature, and its internal `AnnotatedString` body stay byte-identical. `ThreadViewModel.onModelSelected(model: Model)` is the per-conversation override surface — synchronous `MutableStateFlow.value` write, no `appPreferences.setDefaultModel(...)` call (override is in-memory only; Phase 4 will persist).
+The row reads the typed enums as `state.selectedModel.label()` (via the [`Model.label()`](app-preferences.md#design-decision-defer-label-extensions-on-data-layer-enums) extension at `data/preferences/Model.kt`) and `state.selectedEffort.label()` (via the public [`Effort.label()`](app-preferences.md#design-decision-defer-label-extensions-on-data-layer-enums) extension at `ui/settings/EffortPickerDialog.kt:77`, widened from `internal` to public in [#229](../codebase/229.md) when this slice became the second consumer) — `ThreadStatusRow`'s `model: String` / `effort: String` parameter shape is preserved so the row's previews, its signature, and its internal `AnnotatedString` body stay byte-identical. `ThreadViewModel.onModelSelected(model: Model)` and `onEffortSelected(effort: Effort)` are the per-conversation override surfaces — synchronous `MutableStateFlow.value` writes, no `appPreferences.setDefault*(...)` calls (overrides are in-memory only; Phase 4 will persist).
 
-Post-[#254](../codebase/254.md) the `onExpandClick` parameter on `ThreadScreen` is **deleted** — the screen owns the trigger via an internal `{ sheetVisible = true }` lambda passed straight to the row. A new `onModelSelected: (Model) -> Unit = {}` parameter takes its slot on the signature, bound to `vm::onModelSelected` ([#253](../codebase/253.md)) at the `MainActivity` destination. Tapping the row opens the [`StatusSheet`](status-sheet.md); selecting a model forwards the event to the VM and auto-closes the sheet. See the [Status Sheet hosting](#status-sheet-hosting-post-254) section below for the host wiring.
+Post-[#254](../codebase/254.md) the `onExpandClick` parameter on `ThreadScreen` is **deleted** — the screen owns the trigger via an internal `{ sheetVisible = true }` lambda passed straight to the row. A new `onModelSelected: (Model) -> Unit = {}` parameter takes its slot on the signature, bound to `vm::onModelSelected` ([#253](../codebase/253.md)) at the `MainActivity` destination. [#229](../codebase/229.md) appended two more sheet callbacks: `onEffortSelected: (Effort) -> Unit = {}` and `onYoloToggled: (Boolean) -> Unit = {}`, both bound to the matching `vm::` method references. Tapping the row opens the [`StatusSheet`](status-sheet.md); model/effort selections forward to the VM and auto-close the sheet; YOLO toggles forward to the VM but **keep the sheet open** (a Switch is a state-change the user may want to immediately reverse). See the [Status Sheet hosting](#status-sheet-hosting-post-254) section below for the host wiring.
 
 ### Status Sheet hosting (post-#254)
 
@@ -477,20 +513,38 @@ if (sheetVisible) {
         selectedModel = state.selectedModel,
         onModelSelected = { model ->
             onModelSelected(model)
-            sheetVisible = false              // auto-close on selection
+            sheetVisible = false              // auto-close on Model pick
         },
+        selectedEffort = state.selectedEffort,        // new in #229
+        onEffortSelected = { effort ->                // new in #229
+            onEffortSelected(effort)
+            sheetVisible = false              // auto-close on Effort pick
+        },
+        yoloEnabled = state.yoloEnabled,              // new in #229
+        onYoloToggled = onYoloToggled,                // new in #229 — passthrough; NO auto-close on toggle
         onDismiss = { sheetVisible = false },
     )
 }
 ```
 
-Three design points pinned in #254:
+Three design points pinned in #254 + one widened in #229:
 
 1. **Gated `if (sheetVisible) { StatusSheet(...) }`, not `AnimatedVisibility`.** `ModalBottomSheet` runs its own enter/exit animation; wrapping in `AnimatedVisibility` would double-animate the sheet. The `if` creates the composable on first show and destroys it on dismiss — what `ModalBottomSheet` expects. Same shape as the [`WorkspacePicker`](workspace-picker.md) sibling.
 2. **Sibling-to-Scaffold placement.** `ModalBottomSheet` lives in its own window, so source-order placement doesn't affect Z-order. Placing the sheet inside the `Scaffold`'s content slot would have worked but would mix the sheet's window-managed lifecycle with the body's layout-managed siblings.
-3. **Auto-close on selection.** The screen-side `onModelSelected = { model -> onModelSelected(model); sheetVisible = false }` flips visibility off immediately after forwarding. For a single-section sheet this matches the M3 modal-bottom-sheet convention (action-completing sheet, user picked, work is done). `ModalBottomSheet`'s hide animation runs on a coroutine the framework owns — no `sheetState.hide()` call needed before the flag flip. The auto-close decision will be revisited when [#229](https://github.com/pyrycode/pyrycode-mobile/issues/229) (Effort + YOLO) and [#230](https://github.com/pyrycode/pyrycode-mobile/issues/230) (Context window) make the sheet a multi-setting surface.
+3. **Asymmetric auto-close (resolution of the [#254](../codebase/254.md) open question, decided in [#229](../codebase/229.md)).** Single-pick sections (Model radio, Effort chip) wrap in `{ value -> upstream(value); sheetVisible = false }` — a discrete pick is a complete action, M3 modal-bottom-sheet convention. Toggle sections (YOLO Switch) pass the upstream callback straight through with no auto-close — a Switch is a state-change the user may want to immediately reverse; closing the sheet would force a re-open just to undo. Apply the same rule to [#230](https://github.com/pyrycode/pyrycode-mobile/issues/230)'s Context window section based on whether it's a picker or a toggle.
+4. **`ModalBottomSheet`'s hide animation runs on a coroutine the framework owns** — no `sheetState.hide()` call needed before flipping `sheetVisible = false`.
 
-The screen-side `onModelSelected: (Model) -> Unit = {}` parameter defaults to `{}` so the four existing `@Preview` composables keep compiling unchanged; `MainActivity` binds `onModelSelected = vm::onModelSelected` at the `CONVERSATION_THREAD` destination.
+The screen-side `onModelSelected: (Model) -> Unit = {}`, `onEffortSelected: (Effort) -> Unit = {}`, `onYoloToggled: (Boolean) -> Unit = {}` all default to `{}` so the four existing `@Preview` composables keep compiling unchanged; `MainActivity` binds all three at the `CONVERSATION_THREAD` destination:
+
+```kotlin
+ThreadScreen(
+    // ...
+    onModelSelected = vm::onModelSelected,
+    onEffortSelected = vm::onEffortSelected,     // new in #229
+    onYoloToggled = vm::onYoloToggled,           // new in #229
+    // ...
+)
+```
 
 ### Connection-banner wiring
 

@@ -31,6 +31,7 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
+import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.preferences.label
 import de.pyryco.mobile.data.repository.BoundaryReason
@@ -44,6 +45,7 @@ import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
 import de.pyryco.mobile.ui.conversations.components.StatusSheet
 import de.pyryco.mobile.ui.conversations.components.WorkspaceChip
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
+import de.pyryco.mobile.ui.settings.label
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.datetime.Instant
@@ -62,6 +64,8 @@ fun ThreadScreen(
     onTitleClick: () -> Unit = {},
     onOverflowEvent: (ThreadEvent) -> Unit = {},
     onModelSelected: (Model) -> Unit = {},
+    onEffortSelected: (Effort) -> Unit = {},
+    onYoloToggled: (Boolean) -> Unit = {},
     onWorkspaceChipTapped: () -> Unit = {},
     onWorkspacePicked: (String) -> Unit = {},
     onWorkspacePickerDismissed: () -> Unit = {},
@@ -86,7 +90,7 @@ fun ThreadScreen(
             Column(modifier = Modifier.fillMaxWidth()) {
                 ThreadStatusRow(
                     model = state.selectedModel.label(),
-                    effort = state.effort,
+                    effort = state.selectedEffort.label(),
                     tokenPercent = state.tokenPercent,
                     onExpandClick = { sheetVisible = true },
                 )
@@ -233,6 +237,13 @@ fun ThreadScreen(
                 onModelSelected(model)
                 sheetVisible = false
             },
+            selectedEffort = state.selectedEffort,
+            onEffortSelected = { effort ->
+                onEffortSelected(effort)
+                sheetVisible = false
+            },
+            yoloEnabled = state.yoloEnabled,
+            onYoloToggled = onYoloToggled,
             onDismiss = { sheetVisible = false },
         )
     }

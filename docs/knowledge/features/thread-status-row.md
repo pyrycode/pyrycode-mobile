@@ -8,7 +8,7 @@ Package: `de.pyryco.mobile.ui.conversations.thread` (`app/src/main/java/de/pyryc
 
 Renders three pieces of information the user wants at a glance while talking to the agent — the current model (`Opus 4.7`), the effort level (`high`), and the proportion of the context window consumed (`73% used`) — composed into a single monospaced text run with a trailing `▴` icon. The full row is `clickable`; tapping anywhere invokes `onExpandClick`. The token-percent segment changes color across three threshold bands so the user notices the context window filling up at a glance: neutral under 50%, [warning](warning-color.md) between 50% and 94%, error at 95% or above.
 
-The values are populated by `ThreadViewModel` inside its main `combine(...)` block. As of [#253](../codebase/253.md), `model` is **no longer a stub** — `ThreadUiState.selectedModel: Model` is sourced from `appPreferences.defaultModel` (with an in-memory per-conversation override on `MutableStateFlow<Model?>`) via a pre-combined `selectedModelFlow`, and the row reads the display label via `state.selectedModel.label()` at the [`ThreadScreen`](thread-screen.md) callsite. `effort` and `tokenPercent` are still companion-object constants (`STUB_EFFORT = "high"`, `STUB_TOKEN_PERCENT = 73`); Phase 4 swaps both for reads off a backend `AgentStatus` flow. The row's own parameter shape (`model: String`, `effort: String`, `tokenPercent: Int`) is **preserved across #253** — typing the row's parameter list against `Model` was deliberately rejected so the row stays primitive at the leaf, with the type information one layer up at the screen-VM boundary.
+The values are populated by `ThreadViewModel` inside its main `combine(...)` block. As of [#253](../codebase/253.md), `model` is **no longer a stub** — `ThreadUiState.selectedModel: Model` is sourced from `appPreferences.defaultModel` (with an in-memory per-conversation override on `MutableStateFlow<Model?>`) via a pre-combined `selectedModelFlow`, and the row reads the display label via `state.selectedModel.label()` at the [`ThreadScreen`](thread-screen.md) callsite. As of [#229](../codebase/229.md), `effort` is **no longer a stub either** — `ThreadUiState.selectedEffort: Effort` is sourced from `appPreferences.defaultEffort` (with an in-memory per-conversation override on `MutableStateFlow<Effort?>`) via a pre-combined `selectedEffortFlow`, and the row reads the display label via `state.selectedEffort.label()` at the [`ThreadScreen`](thread-screen.md) callsite (using the public `Effort.label()` extension widened from `internal` in the same slice). Only `tokenPercent` remains a companion-object constant (`STUB_TOKEN_PERCENT = 73`); Phase 4 swaps it for a read off a backend `AgentStatus` flow. The row's own parameter shape (`model: String`, `effort: String`, `tokenPercent: Int`) is **preserved across both #253 and #229** — typing the row's parameter list against `Model` / `Effort` was deliberately rejected so the row stays primitive at the leaf, with the type information one layer up at the screen-VM boundary.
 
 ## Shape
 
@@ -111,30 +111,32 @@ The 14.dp size was tuned to read at the same baseline as the 12.sp text without 
 bottomBar = {
     Column(modifier = Modifier.fillMaxWidth()) {
         ThreadStatusRow(
-            model = state.selectedModel.label(),       // String → enum-derived in #253
-            effort = state.effort,
+            model = state.selectedModel.label(),         // String → enum-derived in #253
+            effort = state.selectedEffort.label(),       // String → enum-derived in #229
             tokenPercent = state.tokenPercent,
-            onExpandClick = { sheetVisible = true },   // wired internally in #254
+            onExpandClick = { sheetVisible = true },     // wired internally in #254
         )
         ThreadInputBar(onSend = onSendMessage)
     }
 },
 ```
 
-Pre-#145 the `bottomBar` slot held only `ThreadInputBar(onSend = onSendMessage)`. Post-#145 a `Column` wraps both children inside the same `bottomBar` slot. Post-[#253](../codebase/253.md) the `model =` argument is sourced from the typed `state.selectedModel: Model` via a new [`Model.label()`](app-preferences.md#design-decision-defer-label-extensions-on-data-layer-enums) extension at `data/preferences/Model.kt` — the row's own `model: String` parameter is unchanged. Post-[#254](../codebase/254.md) the `onExpandClick` argument inside `bottomBar` is wired to an internal `{ sheetVisible = true }` lambda that flips a `var sheetVisible by rememberSaveable { mutableStateOf(false) }` flag hoisted at the top of the `ThreadScreen` body — the row stays a stateless surface; the screen owns sheet visibility. Crucially, `Modifier.imePadding()` already lives **inside** `ThreadInputBar` on its own outer `Column` (since [#188](../codebase/188.md)), not on the `Scaffold` bottomBar — so only the input bar lifts when the soft keyboard opens, and the status row stays visually anchored above it. No new `imePadding` is added on the outer wrapper.
+Pre-#145 the `bottomBar` slot held only `ThreadInputBar(onSend = onSendMessage)`. Post-#145 a `Column` wraps both children inside the same `bottomBar` slot. Post-[#253](../codebase/253.md) the `model =` argument is sourced from the typed `state.selectedModel: Model` via a new [`Model.label()`](app-preferences.md#design-decision-defer-label-extensions-on-data-layer-enums) extension at `data/preferences/Model.kt`; post-[#229](../codebase/229.md) the `effort =` argument is similarly sourced from `state.selectedEffort: Effort` via the public [`Effort.label()`](app-preferences.md#design-decision-defer-label-extensions-on-data-layer-enums) extension at `ui/settings/EffortPickerDialog.kt:77` (widened from `internal` to public in #229 when the StatusSheet became the second consumer alongside the [#233](../codebase/233.md) `EffortPickerDialog`). The row's own `model: String` / `effort: String` parameters are unchanged. Post-[#254](../codebase/254.md) the `onExpandClick` argument inside `bottomBar` is wired to an internal `{ sheetVisible = true }` lambda that flips a `var sheetVisible by rememberSaveable { mutableStateOf(false) }` flag hoisted at the top of the `ThreadScreen` body — the row stays a stateless surface; the screen owns sheet visibility. Crucially, `Modifier.imePadding()` already lives **inside** `ThreadInputBar` on its own outer `Column` (since [#188](../codebase/188.md)), not on the `Scaffold` bottomBar — so only the input bar lifts when the soft keyboard opens, and the status row stays visually anchored above it. No new `imePadding` is added on the outer wrapper.
 
-In #145, `ThreadScreen` grew one new defaulted parameter `onExpandClick: () -> Unit = {}` to plumb the row's tap up to the host. In [#254](../codebase/254.md), that parameter was **deleted** — `ThreadScreen` owns the trigger via an internal lambda passed straight to the row, and a new `onModelSelected: (Model) -> Unit = {}` parameter took its slot to forward the sheet's radio-row taps. The signature stays flat-callback rather than folding into a sealed `ThreadEvent` — see the [thread-screen shape note](thread-screen.md#shape) for the deferred fold.
+In #145, `ThreadScreen` grew one new defaulted parameter `onExpandClick: () -> Unit = {}` to plumb the row's tap up to the host. In [#254](../codebase/254.md), that parameter was **deleted** — `ThreadScreen` owns the trigger via an internal lambda passed straight to the row, and a new `onModelSelected: (Model) -> Unit = {}` parameter took its slot to forward the sheet's radio-row taps. [#229](../codebase/229.md) appended two more sheet callbacks (`onEffortSelected: (Effort) -> Unit = {}` + `onYoloToggled: (Boolean) -> Unit = {}`) alongside `onModelSelected`. The signature stays flat-callback rather than folding into a sealed `ThreadEvent` — see the [thread-screen shape note](thread-screen.md#shape) for the deferred fold.
 
 ### `MainActivity` destination
 
-The row's tap behaviour is fully internal to `ThreadScreen` post-[#254](../codebase/254.md). `MainActivity` does **not** pass anything for the row's `onExpandClick`; instead it binds `onModelSelected = vm::onModelSelected` so the sheet's radio-row taps reach [`ThreadViewModel.onModelSelected`](thread-screen.md#viewmodel) ([#253](../codebase/253.md)):
+The row's tap behaviour is fully internal to `ThreadScreen` post-[#254](../codebase/254.md). `MainActivity` does **not** pass anything for the row's `onExpandClick`; instead it binds the StatusSheet's per-section mutators so the sheet's selections reach [`ThreadViewModel`](thread-screen.md#viewmodel):
 
 ```kotlin
-// MainActivity.kt:204-215 (post-#254)
+// MainActivity.kt:204-215 (post-#229)
 ThreadScreen(
     state = state,
     // ...
-    onModelSelected = vm::onModelSelected,
+    onModelSelected = vm::onModelSelected,     // #253
+    onEffortSelected = vm::onEffortSelected,   // #229
+    onYoloToggled = vm::onYoloToggled,         // #229
     // ...
 )
 ```
@@ -145,9 +147,10 @@ The `// TODO(#146): open Status Sheet` placeholder + the `onExpandClick = {}` li
 
 ```kotlin
 data class ThreadUiState(
-    // ...seven pre-existing fields unchanged...
-    val selectedModel: Model = Model.OPUS_4_7,   // String → Model in #253
-    val effort: String = "high",
+    // ...nine pre-existing fields unchanged...
+    val selectedModel: Model = Model.OPUS_4_7,        // String → Model in #253
+    val selectedEffort: Effort = Effort.HIGH,         // String → Effort in #229
+    val yoloEnabled: Boolean = false,                 // new in #229 — sibling field on ThreadUiState; NOT a status-row input
     val tokenPercent: Int = 0,
 )
 ```
@@ -155,52 +158,19 @@ data class ThreadUiState(
 The defaults serve a dual purpose:
 
 1. The `stateIn(initialValue = ThreadUiState(conversationId, displayName))` literal at `ThreadViewModel.kt` keeps compiling unchanged.
-2. The `selectedModel` / `effort` defaults match the rendered stub so the pre-subscription initial frame already paints the right strings — only `tokenPercent` differs between the initial frame (`0`) and post-subscription (`73`). That asymmetry is deliberate and pinned by the two test methods below.
+2. The `selectedModel` / `selectedEffort` defaults match the rendered stub so the pre-subscription initial frame already paints the right strings — only `tokenPercent` differs between the initial frame (`0`) and post-subscription (`73`). That asymmetry is deliberate and pinned by the two test methods below.
+
+`yoloEnabled` does **not** surface on this row — it lives on `ThreadUiState` to back the [`StatusSheet`](status-sheet.md)'s YOLO section, but the row only shows `model · effort · NN% used ▴`. Adding YOLO to the row would defeat the architectural single-writer / intentional-friction design that [#229](../codebase/229.md) implemented (`yoloEnabled` is only togglable from inside the sheet, never from the status row).
 
 ### `ThreadViewModel` populates inside `combine`
 
-```kotlin
-class ThreadViewModel(
-    savedStateHandle: SavedStateHandle,
-    private val repository: ConversationRepository,
-    private val connectionStateSource: ConnectionStateSource,
-    private val appPreferences: AppPreferences,    // new in #253
-) : ViewModel() {
-    private val modelOverride = MutableStateFlow<Model?>(null)         // new in #253
+See [`ThreadViewModel`](thread-screen.md#viewmodel) for the full main `combine(...)` block. Highlights for the row's three fields:
 
-    private val selectedModelFlow: Flow<Model> =                       // new in #253
-        combine(appPreferences.defaultModel, modelOverride) { default, override -> override ?: default }
+- **`selectedModel: Model`** ([#253](../codebase/253.md)) — pre-combined `selectedModelFlow = combine(appPreferences.defaultModel, modelOverride: MutableStateFlow<Model?>) { d, o -> o ?: d }` folded into the main combine. `STUB_MODEL` deleted.
+- **`selectedEffort: Effort`** ([#229](../codebase/229.md)) — pre-combined `selectedEffortFlow = combine(appPreferences.defaultEffort, effortOverride: MutableStateFlow<Effort?>) { d, o -> o ?: d }`, mirroring `selectedModelFlow` shape. `STUB_EFFORT` deleted. Both flows are bundled into a single `runConfigFlow` (file-private `RunConfig` data class) alongside `yoloEnabled: MutableStateFlow<Boolean>` to stay under `combine`'s 5-arg overload ceiling.
+- **`tokenPercent: Int`** — still companion-object constant `STUB_TOKEN_PERCENT = 73`. Phase 4 swaps this for an `agentStatus.tokenPercent` read off a new backend flow arm; the `selectedModel` / `selectedEffort` arms are already wired and the Phase-4 surgery would extend them with backend-sourced "current value" overrides above the existing `*Override` flows, or persist the overrides themselves — either is a non-breaking widening.
 
-    val state: StateFlow<ThreadUiState> = combine(
-        repository.observeConversations(ConversationFilter.All),
-        repository.observeMessages(conversationId),
-        pendingWorkspacePicker,
-        selectedModelFlow,                                             // 4th source added in #253
-    ) { conversations, items, pickerVisible, selectedModel ->
-        ThreadUiState(
-            // ...existing fields...
-            selectedModel = selectedModel,                             // was `model = STUB_MODEL` pre-#253
-            effort = STUB_EFFORT,
-            tokenPercent = STUB_TOKEN_PERCENT,
-        )
-    }.stateIn(...)
-
-    fun onModelSelected(model: Model) {                                // new in #253 — synchronous, does not write prefs
-        modelOverride.value = model
-    }
-
-    companion object {
-        // Phase 4 swap point: replace with backend AgentStatus flow.
-        // STUB_MODEL was here pre-#253; deleted when model became a typed prefs-sourced flow.
-        private const val STUB_EFFORT = "high"
-        private const val STUB_TOKEN_PERCENT = 73
-    }
-}
-```
-
-Phase-4 swap for the remaining two stubs is two find-and-replace steps: delete the companion, swap each `STUB_*` reference inside `combine` for a `agentStatus.field` read off a new flow arm. The `selectedModel` arm is already wired to a flow — Phase 4 may extend it with a backend-sourced "current model" override that sits **above** `modelOverride` (e.g. if the agent backend reports a model switch), or persist `modelOverride` itself; either is a non-breaking widening of the same flow shape.
-
-The stub `tokenPercent = 73` lands inside the warning band on purpose — the developer and the reviewer see the threshold-driven warning color in the running app, not just in previews. The `selectedModel` default (`Model.OPUS_4_7`) renders `"Opus 4.7"` via `Model.label()`, identical to the pre-#253 string stub.
+The stub `tokenPercent = 73` lands inside the warning band on purpose — the developer and the reviewer see the threshold-driven warning color in the running app, not just in previews. The `selectedModel` default (`Model.OPUS_4_7`) renders `"Opus 4.7"` via `Model.label()`; the `selectedEffort` default (`Effort.HIGH`) renders `"high"` via `Effort.label()` — both identical to the pre-rewire string stubs.
 
 ## State + concurrency
 
@@ -241,19 +211,19 @@ Naming convention `<Component> — <Theme>, <Variant>` matches the [thread-input
 
 ## Edge cases / limitations
 
-- **Tapping the row opens the [`StatusSheet`](status-sheet.md)** (since [#254](../codebase/254.md)). `ThreadScreen` owns a `rememberSaveable`-hoisted `sheetVisible` flag and binds the row's `onExpandClick = { sheetVisible = true }` internally; the Model section's radio-row taps flow back via the new `onModelSelected: (Model) -> Unit` parameter bound to `vm::onModelSelected` at `MainActivity`. Pre-#254 the row's tap was a no-op (`onExpandClick = {}` placeholder with a `TODO(#146)` marker); that placeholder is now gone.
-- **`effort` and `tokenPercent` are still stub-populated in the VM.** Phase 4 replaces the remaining two `STUB_*` companion-object constants with reads off a backend `AgentStatus` flow. The row's own parameter shape (`String`, `String`, `Int`) is the stable contract — no `enum class Effort` or `value class TokenPercent` wrapper here. Validation of out-of-range or empty values is Phase 4's responsibility. As of [#253](../codebase/253.md), `model` is no longer in this bucket — `ThreadUiState.selectedModel: Model` is sourced from `appPreferences.defaultModel` with an in-memory per-conversation override, and the screen derives the label string at the boundary.
-- **One-frame visual asymmetry between initial frame and post-subscription frame.** `tokenPercent` defaults to `0` on `ThreadUiState` (rendered in the under-50% neutral color) and flips to `73` (warning band) on the `combine`'s first emission. The fake's `combine` upstream emits synchronously on first subscription, so the initial frame is invisible in the running app — but the asymmetry is pinned by the two test methods on purpose, so a reviewer doesn't accidentally "fix" the data-class default to `73`. As of [#253](../codebase/253.md) the `selectedModel` axis is symmetric — both frames render `Model.OPUS_4_7` (data-class default) which `Model.label()` maps to `"Opus 4.7"`, identical to the pre-#253 stub.
+- **Tapping the row opens the [`StatusSheet`](status-sheet.md)** (since [#254](../codebase/254.md)). `ThreadScreen` owns a `rememberSaveable`-hoisted `sheetVisible` flag and binds the row's `onExpandClick = { sheetVisible = true }` internally; the sheet's selection events flow back via `onModelSelected: (Model) -> Unit` (#254), `onEffortSelected: (Effort) -> Unit` (#229), and `onYoloToggled: (Boolean) -> Unit` (#229) parameters, all bound to the matching `vm::` method references at `MainActivity`. Pre-#254 the row's tap was a no-op (`onExpandClick = {}` placeholder with a `TODO(#146)` marker); that placeholder is now gone.
+- **Only `tokenPercent` is still stub-populated in the VM.** Phase 4 replaces the last `STUB_TOKEN_PERCENT` companion-object constant with a read off a backend `AgentStatus` flow. The row's own parameter shape (`String`, `String`, `Int`) is the stable contract — no `enum class Effort` or `value class TokenPercent` wrapper at the row leaf; the type information lives at the VM/screen boundary. Validation of out-of-range or empty values is Phase 4's responsibility. As of [#253](../codebase/253.md), `model` is sourced from `appPreferences.defaultModel` with an in-memory per-conversation override; as of [#229](../codebase/229.md), `effort` is sourced from `appPreferences.defaultEffort` the same way. The screen derives both label strings at the boundary.
+- **One-frame visual asymmetry between initial frame and post-subscription frame.** `tokenPercent` defaults to `0` on `ThreadUiState` (rendered in the under-50% neutral color) and flips to `73` (warning band) on the `combine`'s first emission. The fake's `combine` upstream emits synchronously on first subscription, so the initial frame is invisible in the running app — but the asymmetry is pinned by the two test methods on purpose, so a reviewer doesn't accidentally "fix" the data-class default to `73`. The `selectedModel` axis is symmetric across the data-class default ([#253](../codebase/253.md) — both frames render `Model.OPUS_4_7` → `"Opus 4.7"`), and the `selectedEffort` axis is symmetric the same way ([#229](../codebase/229.md) — both frames render `Effort.HIGH` → `"high"`); only `tokenPercent` remains the load-bearing asymmetry.
 - **No animation on threshold transitions.** When `tokenPercent` crosses 50 or 95, the percent-segment color swaps instantly. An `animateColorAsState` per-color fade is a follow-up if designer signs off on a duration.
 - **Row is always visible — no `AnimatedVisibility`.** The row is part of the steady-state chrome; it does not appear/disappear under any state. Compare with [`EmptyThreadState`](empty-thread-state.md) and [`WorkspaceChip`](workspace-chip.md) which gate on `!hasMessages` and `!isPromoted && !hasMessages` respectively.
 - **No interaction with `WorkspaceChip` or `EmptyThreadState`.** All three live in different slots of the `Scaffold` body / `bottomBar`. The status row is the constant cap on the composer cluster regardless of which empty-state branch the body renders.
 
 ## Related
 
-- Ticket notes: [`../codebase/145.md`](../codebase/145.md) (this implementation), [`../codebase/253.md`](../codebase/253.md) (model rewired from `STUB_MODEL` constant to typed `Model` enum sourced from `AppPreferences.defaultModel` with per-conversation override; row's `model: String` parameter shape preserved), [`../codebase/254.md`](../codebase/254.md) (row's `onExpandClick` now opens the [`StatusSheet`](status-sheet.md) — sheet visibility hoisted into `ThreadScreen` via `rememberSaveable`; `ThreadScreen.onExpandClick` parameter deleted, replaced by `onModelSelected: (Model) -> Unit`)
+- Ticket notes: [`../codebase/145.md`](../codebase/145.md) (this implementation), [`../codebase/253.md`](../codebase/253.md) (model rewired from `STUB_MODEL` constant to typed `Model` enum sourced from `AppPreferences.defaultModel` with per-conversation override; row's `model: String` parameter shape preserved), [`../codebase/254.md`](../codebase/254.md) (row's `onExpandClick` now opens the [`StatusSheet`](status-sheet.md) — sheet visibility hoisted into `ThreadScreen` via `rememberSaveable`; `ThreadScreen.onExpandClick` parameter deleted, replaced by `onModelSelected: (Model) -> Unit`), [`../codebase/229.md`](../codebase/229.md) (effort rewired from `STUB_EFFORT` constant to typed `Effort` enum sourced from `AppPreferences.defaultEffort` with per-conversation override; row's `effort: String` parameter shape preserved — only `tokenPercent` remains a stub)
 - Spec: `docs/specs/architecture/145-thread-status-row.md`
 - Parent: [Thread screen](thread-screen.md) (the screen this mounts into; pre-#145 had only `ThreadInputBar` in `bottomBar`)
 - Sibling: [Thread input bar](thread-input-bar.md) (the composer this row stacks above, inside the same `Column` in `bottomBar`)
 - Upstream: [Warning color slot](warning-color.md) (the `colorScheme.warning` slot the 50–94% band consumes, landed in [#119](../codebase/119.md))
-- Downstream: [`StatusSheet`](status-sheet.md) ([#254](../codebase/254.md)) — the sheet that `onExpandClick` now opens. Sibling sections [#229](https://github.com/pyrycode/pyrycode-mobile/issues/229) (Effort + YOLO) and [#230](https://github.com/pyrycode/pyrycode-mobile/issues/230) (Context window) append into the same `StatusSheetContent` `Column` without further row-side changes.
+- Downstream: [`StatusSheet`](status-sheet.md) ([#254](../codebase/254.md) shell + Model; [#229](../codebase/229.md) Effort + YOLO; [#230](https://github.com/pyrycode/pyrycode-mobile/issues/230) Context window pending) — the sheet that `onExpandClick` opens. The #229 Effort wire-through preserves the row's `effort: String` parameter shape; the YOLO toggle has no row surface (intentional friction — YOLO is only togglable from inside the sheet).
 - Figma: [`16:58`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-58) (the status row specifically); parent [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8)
