@@ -37,7 +37,18 @@ sealed interface ThreadEvent {
     data object Archive : ThreadEvent
 
     data object ChannelInfo : ThreadEvent
+
+    data object SaveAsChannel : ThreadEvent
+
+    data class SaveAsChannelSubmit(
+        val name: String,
+        val workspace: WorkspaceChoice,
+    ) : ThreadEvent
+
+    data object SaveAsChannelDismiss : ThreadEvent
 }
+
+enum class WorkspaceChoice { DEDICATED, SCRATCH }
 
 data class ThreadUiState(
     val conversationId: String,
@@ -47,11 +58,16 @@ data class ThreadUiState(
     val workspaceLabel: String = "scratch",
     val workspacePickerVisible: Boolean = false,
     val showRenameDialog: Boolean = false,
+    val saveAsChannelDialog: SaveAsChannelDialogState? = null,
     val items: List<ThreadItem> = emptyList(),
     val selectedModel: Model = Model.OPUS_4_7,
     val selectedEffort: Effort = Effort.HIGH,
     val yoloEnabled: Boolean = false,
     val tokenPercent: Int = 0,
+)
+
+data class SaveAsChannelDialogState(
+    val initialName: String,
 )
 
 class ThreadViewModel(
@@ -66,6 +82,8 @@ class ThreadViewModel(
     private val pendingWorkspacePicker = MutableStateFlow(false)
 
     private val pendingRenameDialog = MutableStateFlow(false)
+
+    private val pendingSaveAsChannelDialog = MutableStateFlow<SaveAsChannelDialogState?>(null)
 
     private val modelOverride = MutableStateFlow<Model?>(null)
 
@@ -86,14 +104,19 @@ class ThreadViewModel(
             yoloEnabled,
         ) { model, effort, yolo -> RunConfig(model, effort, yolo) }
 
+    private val transientDialogs: Flow<TransientDialogs> =
+        combine(pendingRenameDialog, pendingSaveAsChannelDialog) { rename, save ->
+            TransientDialogs(renameVisible = rename, saveAsChannel = save)
+        }
+
     val state: StateFlow<ThreadUiState> =
         combine(
             repository.observeConversations(ConversationFilter.All),
             repository.observeMessages(conversationId),
             pendingWorkspacePicker,
-            pendingRenameDialog,
+            transientDialogs,
             runConfigFlow,
-        ) { conversations, items, pickerVisible, renameDialogVisible, runConfig ->
+        ) { conversations, items, pickerVisible, dialogs, runConfig ->
             val conv = conversations.firstOrNull { it.id == conversationId }
             ThreadUiState(
                 conversationId = conversationId,
@@ -102,7 +125,8 @@ class ThreadViewModel(
                 hasMessages = items.any { it is ThreadItem.MessageItem },
                 workspaceLabel = conv?.workspaceLabel() ?: "scratch",
                 workspacePickerVisible = pickerVisible,
-                showRenameDialog = renameDialogVisible,
+                showRenameDialog = dialogs.renameVisible,
+                saveAsChannelDialog = dialogs.saveAsChannel,
                 items = items,
                 selectedModel = runConfig.model,
                 selectedEffort = runConfig.effort,
@@ -180,6 +204,20 @@ class ThreadViewModel(
                 }
             }
             ThreadEvent.RenameDismiss -> pendingRenameDialog.value = false
+            ThreadEvent.SaveAsChannel ->
+                pendingSaveAsChannelDialog.value =
+                    SaveAsChannelDialogState(initialName = AUTO_SUGGESTED_CHANNEL_NAME)
+            is ThreadEvent.SaveAsChannelSubmit -> {
+                pendingSaveAsChannelDialog.value = null
+                viewModelScope.launch {
+                    repository.promote(
+                        state.value.conversationId,
+                        event.name,
+                        resolveWorkspace(event.name, event.workspace),
+                    )
+                }
+            }
+            ThreadEvent.SaveAsChannelDismiss -> pendingSaveAsChannelDialog.value = null
             ThreadEvent.NewSession,
             ThreadEvent.ChangeWorkspace,
             ThreadEvent.ChannelInfo,
@@ -193,11 +231,36 @@ class ThreadViewModel(
         val yoloEnabled: Boolean,
     )
 
+    private data class TransientDialogs(
+        val renameVisible: Boolean,
+        val saveAsChannel: SaveAsChannelDialogState?,
+    )
+
     companion object {
         // Phase 4 swap point: replace with backend AgentStatus flow.
         private const val STUB_TOKEN_PERCENT = 73
     }
 }
+
+// Phase 4 swap point: replace with a generator that synthesizes a title from
+// the first user message in the conversation.
+private const val AUTO_SUGGESTED_CHANNEL_NAME = "New channel"
+
+private fun resolveWorkspace(
+    name: String,
+    choice: WorkspaceChoice,
+): String? =
+    when (choice) {
+        WorkspaceChoice.DEDICATED -> "pyry-workspace/channels/${name.toChannelSlug()}"
+        WorkspaceChoice.SCRATCH -> null
+    }
+
+private fun String.toChannelSlug(): String =
+    lowercase()
+        .replace(Regex("\\s+"), "-")
+        .replace(Regex("[^a-z0-9-]"), "")
+        .trim('-')
+        .ifEmpty { "channel" }
 
 private fun Conversation.displayName(): String =
     name?.takeIf { it.isNotBlank() }

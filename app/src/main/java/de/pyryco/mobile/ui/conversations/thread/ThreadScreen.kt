@@ -40,6 +40,7 @@ import de.pyryco.mobile.ui.conversations.components.ConnectionBanner
 import de.pyryco.mobile.ui.conversations.components.EmptyThreadState
 import de.pyryco.mobile.ui.conversations.components.MessageBubble
 import de.pyryco.mobile.ui.conversations.components.RenameDialog
+import de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog
 import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
 import de.pyryco.mobile.ui.conversations.components.StatusSheet
 import de.pyryco.mobile.ui.conversations.components.WorkspaceChip
@@ -82,6 +83,7 @@ fun ThreadScreen(
                 overflowExpanded = overflowExpanded,
                 onOverflowDismiss = { overflowExpanded = false },
                 onOverflowEvent = onOverflowEvent,
+                isPromoted = state.isPromoted,
             )
         },
         bottomBar = {
@@ -215,6 +217,17 @@ fun ThreadScreen(
             initialName = state.displayName,
             onSubmit = { onOverflowEvent(ThreadEvent.RenameSubmit(it)) },
             onDismiss = { onOverflowEvent(ThreadEvent.RenameDismiss) },
+        )
+    }
+    state.saveAsChannelDialog?.let { dialogState ->
+        SaveAsChannelDialog(
+            initialName = dialogState.initialName,
+            onSubmit = { name, workspace ->
+                onOverflowEvent(
+                    ThreadEvent.SaveAsChannelSubmit(name = name, workspace = workspace),
+                )
+            },
+            onDismiss = { onOverflowEvent(ThreadEvent.SaveAsChannelDismiss) },
         )
     }
     if (sheetVisible) {
