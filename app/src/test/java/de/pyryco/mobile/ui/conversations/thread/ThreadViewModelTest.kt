@@ -18,6 +18,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -26,7 +27,6 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.datetime.Instant
-import kotlinx.coroutines.flow.first
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -266,6 +266,25 @@ class ThreadViewModelTest {
             val collector = launch { vm.state.collect {} }
             advanceUntilIdle()
             assertEquals("my-app", vm.state.value.workspaceLabel)
+            collector.cancel()
+        }
+
+    @Test
+    fun state_items_reflectsObserveMessagesStream() =
+        runTest {
+            val repository = FakeConversationRepository()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repository)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertTrue(
+                vm.state.value.items
+                    .isNotEmpty(),
+            )
+            assertTrue(
+                vm.state.value.items
+                    .first() is ThreadItem.MessageItem,
+            )
             collector.cancel()
         }
 

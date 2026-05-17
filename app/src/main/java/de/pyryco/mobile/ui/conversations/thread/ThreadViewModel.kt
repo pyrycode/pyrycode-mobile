@@ -24,6 +24,7 @@ data class ThreadUiState(
     val hasMessages: Boolean = false,
     val workspaceLabel: String = "scratch",
     val workspacePickerVisible: Boolean = false,
+    val items: List<ThreadItem> = emptyList(),
 )
 
 class ThreadViewModel(
@@ -50,6 +51,7 @@ class ThreadViewModel(
                 hasMessages = items.any { it is ThreadItem.MessageItem },
                 workspaceLabel = conv?.workspaceLabel() ?: "scratch",
                 workspacePickerVisible = pickerVisible,
+                items = items,
             )
         }.stateIn(
             scope = viewModelScope,
