@@ -7,16 +7,24 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.data.model.ConnectionState
@@ -35,6 +43,7 @@ import de.pyryco.mobile.ui.conversations.components.StatusSheet
 import de.pyryco.mobile.ui.conversations.components.WorkspaceChip
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.datetime.Instant
 
 private const val ABOVE_DELIMITER_ALPHA = 0.55f
@@ -107,11 +116,55 @@ fun ThreadScreen(
                 val reversedItems = state.items.asReversed()
                 val cutoffChronologicalIndex =
                     remember(state.items) { mostRecentSessionBoundaryIndex(state.items) }
+                val listState = rememberLazyListState()
+                val hasStreamingMessage by remember(state.items) {
+                    derivedStateOf {
+                        state.items.any { it is ThreadItem.MessageItem && it.message.isStreaming }
+                    }
+                }
+                var userScrolledAway by remember { mutableStateOf(false) }
+                val autoScrollNestedScroll =
+                    remember {
+                        object : NestedScrollConnection {
+                            override fun onPreScroll(
+                                available: Offset,
+                                source: NestedScrollSource,
+                            ): Offset {
+                                if (source == NestedScrollSource.UserInput && available.y != 0f) {
+                                    userScrolledAway = true
+                                }
+                                return Offset.Zero
+                            }
+                        }
+                    }
+                LaunchedEffect(listState) {
+                    snapshotFlow {
+                        listState.firstVisibleItemIndex == 0 &&
+                            listState.firstVisibleItemScrollOffset == 0
+                    }.collect { atBottom ->
+                        if (atBottom) userScrolledAway = false
+                    }
+                }
+                LaunchedEffect(hasStreamingMessage, listState) {
+                    if (!hasStreamingMessage) return@LaunchedEffect
+                    snapshotFlow {
+                        listState.layoutInfo.visibleItemsInfo
+                            .firstOrNull { it.index == 0 }
+                            ?.size ?: 0
+                    }.distinctUntilChanged()
+                        .collect {
+                            if (!userScrolledAway) {
+                                listState.scrollToItem(0)
+                            }
+                        }
+                }
                 LazyColumn(
+                    state = listState,
                     modifier =
                         Modifier
                             .fillMaxWidth()
-                            .weight(1f),
+                            .weight(1f)
+                            .nestedScroll(autoScrollNestedScroll),
                     reverseLayout = true,
                 ) {
                     itemsIndexed(
