@@ -3,6 +3,7 @@ package de.pyryco.mobile.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -31,6 +32,13 @@ class SettingsViewModel(
             initialValue = false,
         )
 
+    val defaultEffort: StateFlow<Effort> =
+        appPreferences.defaultEffort.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = Effort.HIGH,
+        )
+
     val archivedDiscussionCount: StateFlow<Int> =
         conversationRepository
             .observeConversations(ConversationFilter.Archived)
@@ -48,6 +56,10 @@ class SettingsViewModel(
 
     fun onToggleUseWallpaperColors(enabled: Boolean) {
         viewModelScope.launch { appPreferences.setUseWallpaperColors(enabled) }
+    }
+
+    fun onSelectDefaultEffort(effort: Effort) {
+        viewModelScope.launch { appPreferences.setDefaultEffort(effort) }
     }
 
     private companion object {
