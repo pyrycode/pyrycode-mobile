@@ -61,8 +61,8 @@ class ChannelListViewModelTest {
 
     private fun TestScope.makeVm(
         repository: ConversationRepository,
-        @Suppress("UNUSED_PARAMETER") prefs: AppPreferences = AppPreferences(newDataStore()),
-    ): ChannelListViewModel = ChannelListViewModel(repository)
+        prefs: AppPreferences = AppPreferences(newDataStore()),
+    ): ChannelListViewModel = ChannelListViewModel(repository, prefs)
 
     @Test
     fun initialState_isLoading() =
@@ -432,6 +432,45 @@ class ChannelListViewModelTest {
             assertTrue("expected Loaded, was $state", state is ChannelListUiState.Loaded)
             assertEquals(false, (state as ChannelListUiState.Loaded).workspacePickerVisible)
             collector.cancel()
+        }
+
+    @Test
+    fun shortPressFab_usesPersistedDefaultWorkspace() =
+        runTest(dispatcher) {
+            val repository = FakeConversationRepository()
+            val before = repository.observeConversations(ConversationFilter.Discussions).first()
+            val prefs = AppPreferences(newDataStore())
+            prefs.setDefaultWorkspace("~/projects/my-thing")
+            advanceUntilIdle()
+            val vm = makeVm(repository, prefs = prefs)
+
+            vm.onEvent(ChannelListEvent.CreateDiscussionTapped)
+            advanceUntilIdle()
+
+            val after = repository.observeConversations(ConversationFilter.Discussions).first()
+            val beforeIds = before.map(Conversation::id).toSet()
+            val created = (after - before.toSet()).single { it.id !in beforeIds }
+            assertEquals("~/projects/my-thing", created.cwd)
+        }
+
+    @Test
+    fun longPressPicker_overridesDefaultWorkspace() =
+        runTest(dispatcher) {
+            val repository = FakeConversationRepository()
+            val before = repository.observeConversations(ConversationFilter.Discussions).first()
+            val prefs = AppPreferences(newDataStore())
+            prefs.setDefaultWorkspace("~/projects/default-path")
+            advanceUntilIdle()
+            val vm = makeVm(repository, prefs = prefs)
+
+            vm.onEvent(ChannelListEvent.LongPressFab)
+            vm.onEvent(ChannelListEvent.WorkspacePicked("~/projects/user-pick"))
+            advanceUntilIdle()
+
+            val after = repository.observeConversations(ConversationFilter.Discussions).first()
+            val beforeIds = before.map(Conversation::id).toSet()
+            val created = (after - before.toSet()).single { it.id !in beforeIds }
+            assertEquals("~/projects/user-pick", created.cwd)
         }
 
     // --- helpers ---

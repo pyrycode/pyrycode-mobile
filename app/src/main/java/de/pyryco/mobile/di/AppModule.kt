@@ -29,7 +29,7 @@ val appModule =
         single { AppPreferences(get()) }
         single { FakeConversationRepository() } bind ConversationRepository::class
         single { FakeConnectionStateSource() } bind ConnectionStateSource::class
-        viewModel { ChannelListViewModel(get()) }
+        viewModel { ChannelListViewModel(get(), get()) }
         viewModel { DiscussionListViewModel(get()) }
         viewModel { SettingsViewModel(get(), get()) }
         viewModel { ArchivedDiscussionsViewModel(get()) }
