@@ -3,6 +3,7 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -124,6 +125,50 @@ class ThreadViewModelTest {
         val vm = ThreadViewModel(handle, FakeConversationRepository())
         assertEquals("", vm.state.value.conversationId)
     }
+
+    @Test
+    fun sendMessage_blankText_isNoOp() =
+        runTest {
+            val repository = FakeConversationRepository()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = ThreadViewModel(handle, repository)
+            val observed = mutableListOf<List<ThreadItem>>()
+            val collector =
+                launch {
+                    repository.observeMessages("seed-channel-personal").collect { observed += it }
+                }
+            advanceUntilIdle()
+            val initialCount = observed.last().size
+            vm.sendMessage("")
+            vm.sendMessage("   \n\t ")
+            advanceUntilIdle()
+            assertEquals(initialCount, observed.last().size)
+            collector.cancel()
+        }
+
+    @Test
+    fun sendMessage_nonBlankText_appendsToConversation() =
+        runTest {
+            val repository = FakeConversationRepository()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = ThreadViewModel(handle, repository)
+            val observed = mutableListOf<List<ThreadItem>>()
+            val collector =
+                launch {
+                    repository.observeMessages("seed-channel-personal").collect { observed += it }
+                }
+            advanceUntilIdle()
+            val initialCount = observed.last().size
+            vm.sendMessage("Hello world")
+            advanceUntilIdle()
+            val latest = observed.last()
+            assertEquals(initialCount + 1, latest.size)
+            val appended = (latest.last() as ThreadItem.MessageItem).message
+            assertEquals("Hello world", appended.content)
+            assertEquals(Role.User, appended.role)
+            assertEquals("seed-session-personal", appended.sessionId)
+            collector.cancel()
+        }
 
     // --- helpers ---
 

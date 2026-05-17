@@ -16,6 +16,7 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 fun ThreadScreen(
     state: ThreadUiState,
     onBack: () -> Unit,
+    onSendMessage: (String) -> Unit,
     modifier: Modifier = Modifier,
     onTitleClick: () -> Unit = {},
     onOverflowClick: () -> Unit = {},
@@ -29,6 +30,9 @@ fun ThreadScreen(
                 onTitleClick = onTitleClick,
                 onOverflowClick = onOverflowClick,
             )
+        },
+        bottomBar = {
+            ThreadInputBar(onSend = onSendMessage)
         },
     ) { inner ->
         LazyColumn(
@@ -54,6 +58,7 @@ private fun ThreadScreenLightPreview() {
                     displayName = "kitchenclaw refactor",
                 ),
             onBack = {},
+            onSendMessage = {},
         )
     }
 }
@@ -69,6 +74,7 @@ private fun ThreadScreenDarkPreview() {
                     displayName = "kitchenclaw refactor",
                 ),
             onBack = {},
+            onSendMessage = {},
         )
     }
 }
