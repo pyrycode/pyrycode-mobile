@@ -8,7 +8,7 @@ Package: `de.pyryco.mobile.ui.conversations.thread` (`app/src/main/java/de/pyryc
 
 Renders three pieces of information the user wants at a glance while talking to the agent — the current model (`Opus 4.7`), the effort level (`high`), and the proportion of the context window consumed (`73% used`) — composed into a single monospaced text run with a trailing `▴` icon. The full row is `clickable`; tapping anywhere invokes `onExpandClick`. The token-percent segment changes color across three threshold bands so the user notices the context window filling up at a glance: neutral under 50%, [warning](warning-color.md) between 50% and 94%, error at 95% or above.
 
-The values are stub-populated by `ThreadViewModel` from three companion-object constants (`STUB_MODEL = "Opus 4.7"`, `STUB_EFFORT = "high"`, `STUB_TOKEN_PERCENT = 73`) — Phase 4 swaps the three constant references for reads off a backend `AgentStatus` flow, with the `ThreadUiState` field shape (`String`, `String`, `Int`) as the stable contract.
+The values are populated by `ThreadViewModel` inside its main `combine(...)` block. As of [#253](../codebase/253.md), `model` is **no longer a stub** — `ThreadUiState.selectedModel: Model` is sourced from `appPreferences.defaultModel` (with an in-memory per-conversation override on `MutableStateFlow<Model?>`) via a pre-combined `selectedModelFlow`, and the row reads the display label via `state.selectedModel.label()` at the [`ThreadScreen`](thread-screen.md) callsite. `effort` and `tokenPercent` are still companion-object constants (`STUB_EFFORT = "high"`, `STUB_TOKEN_PERCENT = 73`); Phase 4 swaps both for reads off a backend `AgentStatus` flow. The row's own parameter shape (`model: String`, `effort: String`, `tokenPercent: Int`) is **preserved across #253** — typing the row's parameter list against `Model` was deliberately rejected so the row stays primitive at the leaf, with the type information one layer up at the screen-VM boundary.
 
 ## Shape
 
@@ -111,7 +111,7 @@ The 14.dp size was tuned to read at the same baseline as the 12.sp text without 
 bottomBar = {
     Column(modifier = Modifier.fillMaxWidth()) {
         ThreadStatusRow(
-            model = state.model,
+            model = state.selectedModel.label(),   // String → enum-derived in #253
             effort = state.effort,
             tokenPercent = state.tokenPercent,
             onExpandClick = onExpandClick,
@@ -121,7 +121,7 @@ bottomBar = {
 },
 ```
 
-Pre-#145 the `bottomBar` slot held only `ThreadInputBar(onSend = onSendMessage)`. Post-#145 a `Column` wraps both children inside the same `bottomBar` slot. Crucially, `Modifier.imePadding()` already lives **inside** `ThreadInputBar` on its own outer `Column` (since [#188](../codebase/188.md)), not on the `Scaffold` bottomBar — so only the input bar lifts when the soft keyboard opens, and the status row stays visually anchored above it. No new `imePadding` is added on the outer wrapper.
+Pre-#145 the `bottomBar` slot held only `ThreadInputBar(onSend = onSendMessage)`. Post-#145 a `Column` wraps both children inside the same `bottomBar` slot. Post-[#253](../codebase/253.md) the `model =` argument is sourced from the typed `state.selectedModel: Model` via a new [`Model.label()`](app-preferences.md#design-decision-defer-label-extensions-on-data-layer-enums) extension at `data/preferences/Model.kt` — the row's own `model: String` parameter is unchanged. Crucially, `Modifier.imePadding()` already lives **inside** `ThreadInputBar` on its own outer `Column` (since [#188](../codebase/188.md)), not on the `Scaffold` bottomBar — so only the input bar lifts when the soft keyboard opens, and the status row stays visually anchored above it. No new `imePadding` is added on the outer wrapper.
 
 `ThreadScreen` grows one new defaulted parameter `onExpandClick: () -> Unit = {}` matching the existing optional-callback style. The signature stays flat-callback rather than folding into a sealed `ThreadEvent` — see the [thread-screen shape note](thread-screen.md#shape) for the deferred fold.
 
@@ -140,7 +140,7 @@ Placeholder until [#146](https://github.com/pyrycode/pyrycode-mobile/issues/146)
 ```kotlin
 data class ThreadUiState(
     // ...seven pre-existing fields unchanged...
-    val model: String = "Opus 4.7",
+    val selectedModel: Model = Model.OPUS_4_7,   // String → Model in #253
     val effort: String = "high",
     val tokenPercent: Int = 0,
 )
@@ -149,34 +149,52 @@ data class ThreadUiState(
 The defaults serve a dual purpose:
 
 1. The `stateIn(initialValue = ThreadUiState(conversationId, displayName))` literal at `ThreadViewModel.kt` keeps compiling unchanged.
-2. The `model` / `effort` defaults match the Phase-2 stub so the pre-subscription initial frame already paints the right strings — only `tokenPercent` differs between the initial frame (`0`) and post-subscription (`73`). That asymmetry is deliberate and pinned by the two test methods below.
+2. The `selectedModel` / `effort` defaults match the rendered stub so the pre-subscription initial frame already paints the right strings — only `tokenPercent` differs between the initial frame (`0`) and post-subscription (`73`). That asymmetry is deliberate and pinned by the two test methods below.
 
 ### `ThreadViewModel` populates inside `combine`
 
 ```kotlin
-class ThreadViewModel(...) : ViewModel() {
-    // ...existing state pipeline unchanged...
-    val state: StateFlow<ThreadUiState> = combine(...) { conversations, items, pickerVisible ->
+class ThreadViewModel(
+    savedStateHandle: SavedStateHandle,
+    private val repository: ConversationRepository,
+    private val connectionStateSource: ConnectionStateSource,
+    private val appPreferences: AppPreferences,    // new in #253
+) : ViewModel() {
+    private val modelOverride = MutableStateFlow<Model?>(null)         // new in #253
+
+    private val selectedModelFlow: Flow<Model> =                       // new in #253
+        combine(appPreferences.defaultModel, modelOverride) { default, override -> override ?: default }
+
+    val state: StateFlow<ThreadUiState> = combine(
+        repository.observeConversations(ConversationFilter.All),
+        repository.observeMessages(conversationId),
+        pendingWorkspacePicker,
+        selectedModelFlow,                                             // 4th source added in #253
+    ) { conversations, items, pickerVisible, selectedModel ->
         ThreadUiState(
             // ...existing fields...
-            model = STUB_MODEL,
+            selectedModel = selectedModel,                             // was `model = STUB_MODEL` pre-#253
             effort = STUB_EFFORT,
             tokenPercent = STUB_TOKEN_PERCENT,
         )
     }.stateIn(...)
 
+    fun onModelSelected(model: Model) {                                // new in #253 — synchronous, does not write prefs
+        modelOverride.value = model
+    }
+
     companion object {
         // Phase 4 swap point: replace with backend AgentStatus flow.
-        private const val STUB_MODEL = "Opus 4.7"
+        // STUB_MODEL was here pre-#253; deleted when model became a typed prefs-sourced flow.
         private const val STUB_EFFORT = "high"
         private const val STUB_TOKEN_PERCENT = 73
     }
 }
 ```
 
-Phase-4 swap is two find-and-replace steps: delete the companion, swap each `STUB_*` reference inside `combine` to a `agentStatus.field` read off a new flow arm. The field shape (`String`, `String`, `Int`) is the stable contract.
+Phase-4 swap for the remaining two stubs is two find-and-replace steps: delete the companion, swap each `STUB_*` reference inside `combine` for a `agentStatus.field` read off a new flow arm. The `selectedModel` arm is already wired to a flow — Phase 4 may extend it with a backend-sourced "current model" override that sits **above** `modelOverride` (e.g. if the agent backend reports a model switch), or persist `modelOverride` itself; either is a non-breaking widening of the same flow shape.
 
-The stub `tokenPercent = 73` lands inside the warning band on purpose — the developer and the reviewer see the threshold-driven warning color in the running app, not just in previews.
+The stub `tokenPercent = 73` lands inside the warning band on purpose — the developer and the reviewer see the threshold-driven warning color in the running app, not just in previews. The `selectedModel` default (`Model.OPUS_4_7`) renders `"Opus 4.7"` via `Model.label()`, identical to the pre-#253 string stub.
 
 ## State + concurrency
 
@@ -190,12 +208,12 @@ No new failure modes. Empty `model` / `effort` strings produce a visually awkwar
 
 ## Testing
 
-Two new unit tests in `ThreadViewModelTest.kt`:
+Two unit tests in `ThreadViewModelTest.kt` (added in #145, renamed in [#253](../codebase/253.md) `*Stub*` → `*Default*` once `model` stopped being a stub):
 
-1. **`state_initialValue_includesStubModelEffortAndTokenPercentDefaults`** — synchronous (no `runTest`), constructs the VM, reads `vm.state.value` without a launched collector. Asserts `model == "Opus 4.7"`, `effort == "high"`, `tokenPercent == 0`. Pins the data-class default contract — the pre-subscription initial frame that `stateIn(initialValue = …)` publishes.
-2. **`state_postSubscription_emitsStubModelEffortAndTokenPercent`** — `runTest { launch collector; advanceUntilIdle(); ... collector.cancel() }`. Asserts `model == "Opus 4.7"`, `effort == "high"`, `tokenPercent == 73`. Pins the VM's explicit population inside `combine` — this is the assertion that fails if the Phase-4 swap drops one of the three fields.
+1. **`state_initialValue_includesDefaultModelEffortAndTokenPercentDefaults`** — wrapped in `runTest { }` post-#253 for the prefs-IO context. Constructs the VM, reads `vm.state.value` without a launched collector. Asserts `selectedModel == Model.OPUS_4_7`, `effort == "high"`, `tokenPercent == 0`. Pins the data-class default contract — the pre-subscription initial frame that `stateIn(initialValue = …)` publishes.
+2. **`state_postSubscription_emitsDefaultModelEffortAndTokenPercent`** — `runTest { launch collector; advanceUntilIdle(); ... collector.cancel() }`. Asserts `selectedModel == Model.OPUS_4_7`, `effort == "high"`, `tokenPercent == 73`. Pins the VM's explicit population inside `combine` — this is the assertion that fails if the Phase-4 swap drops `effort` or `tokenPercent`, or if the prefs-defaulted `selectedModel` stops propagating through `selectedModelFlow`.
 
-The two-test split is deliberate: the initial frame and the post-subscription frame differ on `tokenPercent` (0 vs 73) by design. Covering both pins the data-class defaults *and* the combine-block population separately.
+The two-test split is deliberate: the initial frame and the post-subscription frame differ on `tokenPercent` (0 vs 73) by design. Covering both pins the data-class defaults *and* the combine-block population separately. The `selectedModel` plumbing is covered separately by four additional tests landed in [#253](../codebase/253.md) (default-tracking, default-reemission, override-without-mutation, override-stickiness) — see the [thread-screen test list](thread-screen.md#testing) for the full inventory.
 
 No Compose UI tests. `ThreadStatusRow` is rendered exclusively through `ThreadScreen`'s `bottomBar`, and the project currently has no `ThreadScreen` compose tests under `app/src/androidTest/`. The eight previews are the visual gate.
 
@@ -218,15 +236,15 @@ Naming convention `<Component> — <Theme>, <Variant>` matches the [thread-input
 ## Edge cases / limitations
 
 - **`onExpandClick = {}` is a placeholder at the destination.** The Status Sheet itself is the sibling [#146](https://github.com/pyrycode/pyrycode-mobile/issues/146); until that ticket lands, tapping the row fires the ripple and does nothing observable. The `TODO(#146)` marker in `MainActivity.kt:209` is the wiring breadcrumb.
-- **Stub values are hard-coded in the VM.** Phase 4 replaces the three `STUB_*` companion-object constants with reads off a backend `AgentStatus` flow. The field shape on `ThreadUiState` (`String`, `String`, `Int`) is the stable contract — no `enum class Effort` or `value class TokenPercent` wrapper here. Validation of out-of-range or empty values is Phase 4's responsibility.
-- **One-frame visual asymmetry between initial frame and post-subscription frame.** `tokenPercent` defaults to `0` on `ThreadUiState` (rendered in the under-50% neutral color) and flips to `73` (warning band) on the `combine`'s first emission. The fake's `combine` upstream emits synchronously on first subscription, so the initial frame is invisible in the running app — but the asymmetry is pinned by the two test methods on purpose, so a reviewer doesn't accidentally "fix" the data-class default to `73`.
+- **`effort` and `tokenPercent` are still stub-populated in the VM.** Phase 4 replaces the remaining two `STUB_*` companion-object constants with reads off a backend `AgentStatus` flow. The row's own parameter shape (`String`, `String`, `Int`) is the stable contract — no `enum class Effort` or `value class TokenPercent` wrapper here. Validation of out-of-range or empty values is Phase 4's responsibility. As of [#253](../codebase/253.md), `model` is no longer in this bucket — `ThreadUiState.selectedModel: Model` is sourced from `appPreferences.defaultModel` with an in-memory per-conversation override, and the screen derives the label string at the boundary.
+- **One-frame visual asymmetry between initial frame and post-subscription frame.** `tokenPercent` defaults to `0` on `ThreadUiState` (rendered in the under-50% neutral color) and flips to `73` (warning band) on the `combine`'s first emission. The fake's `combine` upstream emits synchronously on first subscription, so the initial frame is invisible in the running app — but the asymmetry is pinned by the two test methods on purpose, so a reviewer doesn't accidentally "fix" the data-class default to `73`. As of [#253](../codebase/253.md) the `selectedModel` axis is symmetric — both frames render `Model.OPUS_4_7` (data-class default) which `Model.label()` maps to `"Opus 4.7"`, identical to the pre-#253 stub.
 - **No animation on threshold transitions.** When `tokenPercent` crosses 50 or 95, the percent-segment color swaps instantly. An `animateColorAsState` per-color fade is a follow-up if designer signs off on a duration.
 - **Row is always visible — no `AnimatedVisibility`.** The row is part of the steady-state chrome; it does not appear/disappear under any state. Compare with [`EmptyThreadState`](empty-thread-state.md) and [`WorkspaceChip`](workspace-chip.md) which gate on `!hasMessages` and `!isPromoted && !hasMessages` respectively.
 - **No interaction with `WorkspaceChip` or `EmptyThreadState`.** All three live in different slots of the `Scaffold` body / `bottomBar`. The status row is the constant cap on the composer cluster regardless of which empty-state branch the body renders.
 
 ## Related
 
-- Ticket notes: [`../codebase/145.md`](../codebase/145.md) (this implementation)
+- Ticket notes: [`../codebase/145.md`](../codebase/145.md) (this implementation), [`../codebase/253.md`](../codebase/253.md) (model rewired from `STUB_MODEL` constant to typed `Model` enum sourced from `AppPreferences.defaultModel` with per-conversation override; row's `model: String` parameter shape preserved)
 - Spec: `docs/specs/architecture/145-thread-status-row.md`
 - Parent: [Thread screen](thread-screen.md) (the screen this mounts into; pre-#145 had only `ThreadInputBar` in `bottomBar`)
 - Sibling: [Thread input bar](thread-input-bar.md) (the composer this row stacks above, inside the same `Column` in `bottomBar`)
