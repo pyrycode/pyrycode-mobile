@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
@@ -48,7 +49,8 @@ data class ThreadUiState(
     val showRenameDialog: Boolean = false,
     val items: List<ThreadItem> = emptyList(),
     val selectedModel: Model = Model.OPUS_4_7,
-    val effort: String = "high",
+    val selectedEffort: Effort = Effort.HIGH,
+    val yoloEnabled: Boolean = false,
     val tokenPercent: Int = 0,
 )
 
@@ -70,14 +72,28 @@ class ThreadViewModel(
     private val selectedModelFlow: Flow<Model> =
         combine(appPreferences.defaultModel, modelOverride) { default, override -> override ?: default }
 
+    private val effortOverride = MutableStateFlow<Effort?>(null)
+
+    private val selectedEffortFlow: Flow<Effort> =
+        combine(appPreferences.defaultEffort, effortOverride) { default, override -> override ?: default }
+
+    private val yoloEnabled = MutableStateFlow(false)
+
+    private val runConfigFlow: Flow<RunConfig> =
+        combine(
+            selectedModelFlow,
+            selectedEffortFlow,
+            yoloEnabled,
+        ) { model, effort, yolo -> RunConfig(model, effort, yolo) }
+
     val state: StateFlow<ThreadUiState> =
         combine(
             repository.observeConversations(ConversationFilter.All),
             repository.observeMessages(conversationId),
             pendingWorkspacePicker,
             pendingRenameDialog,
-            selectedModelFlow,
-        ) { conversations, items, pickerVisible, renameDialogVisible, selectedModel ->
+            runConfigFlow,
+        ) { conversations, items, pickerVisible, renameDialogVisible, runConfig ->
             val conv = conversations.firstOrNull { it.id == conversationId }
             ThreadUiState(
                 conversationId = conversationId,
@@ -88,8 +104,9 @@ class ThreadViewModel(
                 workspacePickerVisible = pickerVisible,
                 showRenameDialog = renameDialogVisible,
                 items = items,
-                selectedModel = selectedModel,
-                effort = STUB_EFFORT,
+                selectedModel = runConfig.model,
+                selectedEffort = runConfig.effort,
+                yoloEnabled = runConfig.yoloEnabled,
                 tokenPercent = STUB_TOKEN_PERCENT,
             )
         }.stateIn(
@@ -141,6 +158,14 @@ class ThreadViewModel(
         modelOverride.value = model
     }
 
+    fun onEffortSelected(effort: Effort) {
+        effortOverride.value = effort
+    }
+
+    fun onYoloToggled(enabled: Boolean) {
+        yoloEnabled.value = enabled
+    }
+
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
             ThreadEvent.Archive ->
@@ -162,9 +187,14 @@ class ThreadViewModel(
         }
     }
 
+    private data class RunConfig(
+        val model: Model,
+        val effort: Effort,
+        val yoloEnabled: Boolean,
+    )
+
     companion object {
         // Phase 4 swap point: replace with backend AgentStatus flow.
-        private const val STUB_EFFORT = "high"
         private const val STUB_TOKEN_PERCENT = 73
     }
 }

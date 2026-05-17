@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasContentDescription
@@ -9,6 +10,7 @@ import androidx.compose.ui.test.isSelectable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
@@ -28,6 +30,10 @@ class StatusSheetTest {
                 StatusSheetContent(
                     selectedModel = Model.OPUS_4_7,
                     onModelSelected = {},
+                    selectedEffort = Effort.HIGH,
+                    onEffortSelected = {},
+                    yoloEnabled = false,
+                    onYoloToggled = {},
                     onDismiss = {},
                 )
             }
@@ -50,6 +56,10 @@ class StatusSheetTest {
                 StatusSheetContent(
                     selectedModel = Model.OPUS_4_7,
                     onModelSelected = picks::add,
+                    selectedEffort = Effort.HIGH,
+                    onEffortSelected = {},
+                    yoloEnabled = false,
+                    onYoloToggled = {},
                     onDismiss = {},
                 )
             }
@@ -68,6 +78,10 @@ class StatusSheetTest {
                 StatusSheetContent(
                     selectedModel = Model.OPUS_4_7,
                     onModelSelected = picks::add,
+                    selectedEffort = Effort.HIGH,
+                    onEffortSelected = {},
+                    yoloEnabled = false,
+                    onYoloToggled = {},
                     onDismiss = {},
                 )
             }
@@ -86,6 +100,10 @@ class StatusSheetTest {
                 StatusSheetContent(
                     selectedModel = Model.OPUS_4_7,
                     onModelSelected = {},
+                    selectedEffort = Effort.HIGH,
+                    onEffortSelected = {},
+                    yoloEnabled = false,
+                    onYoloToggled = {},
                     onDismiss = { invoked++ },
                 )
             }
@@ -103,6 +121,10 @@ class StatusSheetTest {
                 StatusSheetContent(
                     selectedModel = Model.SONNET_4_6,
                     onModelSelected = {},
+                    selectedEffort = Effort.HIGH,
+                    onEffortSelected = {},
+                    yoloEnabled = false,
+                    onYoloToggled = {},
                     onDismiss = {},
                 )
             }
@@ -111,5 +133,142 @@ class StatusSheetTest {
         composeTestRule
             .onNode(isSelectable() and hasAnyDescendant(hasText("Sonnet 4.6")))
             .assertIsSelected()
+    }
+
+    @Test
+    fun renders_effort_section_with_all_five_chips() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                StatusSheetContent(
+                    selectedModel = Model.OPUS_4_7,
+                    onModelSelected = {},
+                    selectedEffort = Effort.HIGH,
+                    onEffortSelected = {},
+                    yoloEnabled = false,
+                    onYoloToggled = {},
+                    onDismiss = {},
+                )
+            }
+        }
+
+        composeTestRule.onNode(hasText("Effort")).assertIsDisplayed()
+        composeTestRule.onNode(hasText("low")).assertIsDisplayed()
+        composeTestRule.onNode(hasText("medium")).assertIsDisplayed()
+        composeTestRule.onNode(hasText("high")).assertIsDisplayed()
+        composeTestRule.onNode(hasText("xhigh")).assertIsDisplayed()
+        composeTestRule.onNode(hasText("max")).assertIsDisplayed()
+    }
+
+    @Test
+    fun tapping_low_chip_invokes_onEffortSelected_with_low() {
+        val picks = mutableListOf<Effort>()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                StatusSheetContent(
+                    selectedModel = Model.OPUS_4_7,
+                    onModelSelected = {},
+                    selectedEffort = Effort.HIGH,
+                    onEffortSelected = picks::add,
+                    yoloEnabled = false,
+                    onYoloToggled = {},
+                    onDismiss = {},
+                )
+            }
+        }
+
+        composeTestRule.onNode(hasText("low")).performClick()
+
+        assertEquals(listOf(Effort.LOW), picks)
+    }
+
+    @Test
+    fun selected_effort_chip_reports_selected_semantics() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                StatusSheetContent(
+                    selectedModel = Model.OPUS_4_7,
+                    onModelSelected = {},
+                    selectedEffort = Effort.MAX,
+                    onEffortSelected = {},
+                    yoloEnabled = false,
+                    onYoloToggled = {},
+                    onDismiss = {},
+                )
+            }
+        }
+
+        composeTestRule
+            .onNode(isSelectable() and hasAnyDescendant(hasText("max")))
+            .assertIsSelected()
+        composeTestRule
+            .onNode(isSelectable() and hasAnyDescendant(hasText("low")))
+            .assertIsNotSelected()
+    }
+
+    @Test
+    fun renders_yolo_section_with_title_and_supporting_text() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                StatusSheetContent(
+                    selectedModel = Model.OPUS_4_7,
+                    onModelSelected = {},
+                    selectedEffort = Effort.HIGH,
+                    onEffortSelected = {},
+                    yoloEnabled = false,
+                    onYoloToggled = {},
+                    onDismiss = {},
+                )
+            }
+        }
+
+        composeTestRule.onNode(hasText("YOLO mode")).assertIsDisplayed()
+        composeTestRule.onNode(hasText("Auto-accept tool calls")).assertIsDisplayed()
+        composeTestRule
+            .onNode(hasText("Claude runs commands without asking for confirmation. Use carefully."))
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun tapping_yolo_row_when_off_invokes_onYoloToggled_with_true() {
+        val toggles = mutableListOf<Boolean>()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                StatusSheetContent(
+                    selectedModel = Model.OPUS_4_7,
+                    onModelSelected = {},
+                    selectedEffort = Effort.HIGH,
+                    onEffortSelected = {},
+                    yoloEnabled = false,
+                    onYoloToggled = toggles::add,
+                    onDismiss = {},
+                )
+            }
+        }
+
+        composeTestRule.onNode(hasText("Auto-accept tool calls")).performClick()
+
+        assertEquals(listOf(true), toggles)
+    }
+
+    @Test
+    fun tapping_yolo_row_when_on_invokes_onYoloToggled_with_false() {
+        val toggles = mutableListOf<Boolean>()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                StatusSheetContent(
+                    selectedModel = Model.OPUS_4_7,
+                    onModelSelected = {},
+                    selectedEffort = Effort.HIGH,
+                    onEffortSelected = {},
+                    yoloEnabled = true,
+                    onYoloToggled = toggles::add,
+                    onDismiss = {},
+                )
+            }
+        }
+
+        composeTestRule.onNode(hasText("Auto-accept tool calls")).performClick()
+
+        assertEquals(listOf(false), toggles)
     }
 }

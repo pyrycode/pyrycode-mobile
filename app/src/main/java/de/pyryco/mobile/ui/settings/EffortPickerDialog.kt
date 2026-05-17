@@ -74,7 +74,7 @@ internal fun EffortPickerDialog(
     )
 }
 
-internal fun Effort.label(): String =
+fun Effort.label(): String =
     when (this) {
         Effort.LOW -> "low"
         Effort.MEDIUM -> "medium"

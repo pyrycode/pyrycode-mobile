@@ -209,6 +209,8 @@ private fun PyryNavHost(
                 onRetry = vm::retry,
                 onOverflowEvent = vm::onOverflowEvent,
                 onModelSelected = vm::onModelSelected,
+                onEffortSelected = vm::onEffortSelected,
+                onYoloToggled = vm::onYoloToggled,
                 onWorkspaceChipTapped = vm::onWorkspaceChipTapped,
                 onWorkspacePicked = vm::onWorkspacePicked,
                 onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,

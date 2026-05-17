@@ -11,6 +11,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
@@ -198,7 +199,8 @@ class ThreadViewModelTest {
             val vm = makeVm(handle, FakeConversationRepository())
             // No collect{} — the stateIn(WhileSubscribed) initial value is the data-class defaults.
             assertEquals(Model.OPUS_4_7, vm.state.value.selectedModel)
-            assertEquals("high", vm.state.value.effort)
+            assertEquals(Effort.HIGH, vm.state.value.selectedEffort)
+            assertFalse(vm.state.value.yoloEnabled)
             assertEquals(0, vm.state.value.tokenPercent)
         }
 
@@ -210,7 +212,8 @@ class ThreadViewModelTest {
             val collector = launch { vm.state.collect {} }
             advanceUntilIdle()
             assertEquals(Model.OPUS_4_7, vm.state.value.selectedModel)
-            assertEquals("high", vm.state.value.effort)
+            assertEquals(Effort.HIGH, vm.state.value.selectedEffort)
+            assertFalse(vm.state.value.yoloEnabled)
             assertEquals(73, vm.state.value.tokenPercent)
             collector.cancel()
         }
@@ -287,6 +290,129 @@ class ThreadViewModelTest {
             // The override sticks; the Settings default change does not override it.
             assertEquals(Model.HAIKU_4_5, vm.state.value.selectedModel)
             assertEquals(Model.SONNET_4_6, prefs.defaultModel.first())
+        }
+
+    @Test
+    fun selectedEffort_followsAppPreferencesDefault() =
+        runTest {
+            val prefs = AppPreferences(newDataStore())
+            prefs.setDefaultEffort(Effort.LOW)
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
+            val seen =
+                withTimeout(2.seconds) {
+                    vm.state.first { it.selectedEffort == Effort.LOW }
+                }
+            assertEquals(Effort.LOW, seen.selectedEffort)
+        }
+
+    @Test
+    fun selectedEffort_reemitsWhenAppPreferencesDefaultChanges() =
+        runTest {
+            val prefs = AppPreferences(newDataStore())
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
+            val initial =
+                withTimeout(2.seconds) {
+                    vm.state.first { it.selectedEffort == Effort.HIGH }
+                }
+            assertEquals(Effort.HIGH, initial.selectedEffort)
+            prefs.setDefaultEffort(Effort.MAX)
+            val updated =
+                withTimeout(2.seconds) {
+                    vm.state.first { it.selectedEffort == Effort.MAX }
+                }
+            assertEquals(Effort.MAX, updated.selectedEffort)
+        }
+
+    @Test
+    fun onEffortSelected_overridesPerConversationWithoutMutatingPreferences() =
+        runTest {
+            val prefs = AppPreferences(newDataStore())
+            assertEquals(Effort.HIGH, prefs.defaultEffort.first())
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
+            withTimeout(2.seconds) {
+                vm.state.first { it.selectedEffort == Effort.HIGH }
+            }
+            vm.onEffortSelected(Effort.MAX)
+            val seen =
+                withTimeout(2.seconds) {
+                    vm.state.first { it.selectedEffort == Effort.MAX }
+                }
+            assertEquals(Effort.MAX, seen.selectedEffort)
+            // The AC's verification line: Settings default is unchanged.
+            assertEquals(Effort.HIGH, prefs.defaultEffort.first())
+        }
+
+    @Test
+    fun onEffortSelected_overrideWinsOverSubsequentDefaultChange() =
+        runTest {
+            val prefs = AppPreferences(newDataStore())
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
+            withTimeout(2.seconds) {
+                vm.state.first { it.selectedEffort == Effort.HIGH }
+            }
+            vm.onEffortSelected(Effort.MAX)
+            withTimeout(2.seconds) {
+                vm.state.first { it.selectedEffort == Effort.MAX }
+            }
+            prefs.setDefaultEffort(Effort.LOW)
+            advanceUntilIdle()
+            assertEquals(Effort.MAX, vm.state.value.selectedEffort)
+            assertEquals(Effort.LOW, prefs.defaultEffort.first())
+        }
+
+    @Test
+    fun yoloEnabled_initialValueIsFalseRegardlessOfAppPreferencesDefault() =
+        runTest {
+            val prefs = AppPreferences(newDataStore())
+            // The dormant defaultYolo preference is set to true; the VM must ignore it.
+            prefs.setDefaultYolo(true)
+            assertTrue(prefs.defaultYolo.first())
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertFalse(vm.state.value.yoloEnabled)
+            collector.cancel()
+        }
+
+    @Test
+    fun onYoloToggled_flipsStateAndDoesNotMutatePreferences() =
+        runTest {
+            val prefs = AppPreferences(newDataStore())
+            assertFalse(prefs.defaultYolo.first())
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertFalse(vm.state.value.yoloEnabled)
+            vm.onYoloToggled(true)
+            advanceUntilIdle()
+            assertTrue(vm.state.value.yoloEnabled)
+            // AC verification: Settings default is unchanged by the per-conversation toggle.
+            assertFalse(prefs.defaultYolo.first())
+            vm.onYoloToggled(false)
+            advanceUntilIdle()
+            assertFalse(vm.state.value.yoloEnabled)
+            collector.cancel()
+        }
+
+    @Test
+    fun yoloEnabled_remainsFalseWhenAppPreferencesDefaultYoloChanges() =
+        runTest {
+            val prefs = AppPreferences(newDataStore())
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertFalse(vm.state.value.yoloEnabled)
+            prefs.setDefaultYolo(true)
+            advanceUntilIdle()
+            assertFalse(vm.state.value.yoloEnabled)
+            collector.cancel()
         }
 
     @Test
