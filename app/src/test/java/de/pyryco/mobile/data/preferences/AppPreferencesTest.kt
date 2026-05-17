@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -92,5 +93,81 @@ class AppPreferencesTest {
             assertEquals(true, prefs.useWallpaperColors.first())
             prefs.setUseWallpaperColors(false)
             assertEquals(false, prefs.useWallpaperColors.first())
+        }
+
+    @Test
+    fun defaultModel_defaultsToOpus47() =
+        runBlocking {
+            assertEquals(Model.OPUS_4_7, prefs.defaultModel.first())
+        }
+
+    @Test
+    fun setDefaultModel_roundTripsAllValues() =
+        runBlocking {
+            for (model in Model.entries) {
+                prefs.setDefaultModel(model)
+                assertEquals(model, prefs.defaultModel.first())
+            }
+        }
+
+    @Test
+    fun defaultModel_unparseableStoredValue_fallsBackToOpus47() =
+        runBlocking {
+            dataStore.edit { it[stringPreferencesKey("default_model")] = "GPT5" }
+            assertEquals(Model.OPUS_4_7, prefs.defaultModel.first())
+        }
+
+    @Test
+    fun defaultEffort_defaultsToHigh() =
+        runBlocking {
+            assertEquals(Effort.HIGH, prefs.defaultEffort.first())
+        }
+
+    @Test
+    fun setDefaultEffort_roundTripsAllValues() =
+        runBlocking {
+            for (effort in Effort.entries) {
+                prefs.setDefaultEffort(effort)
+                assertEquals(effort, prefs.defaultEffort.first())
+            }
+        }
+
+    @Test
+    fun defaultEffort_unparseableStoredValue_fallsBackToHigh() =
+        runBlocking {
+            dataStore.edit { it[stringPreferencesKey("default_effort")] = "ULTRA" }
+            assertEquals(Effort.HIGH, prefs.defaultEffort.first())
+        }
+
+    @Test
+    fun defaultYolo_defaultsToFalse() =
+        runBlocking {
+            assertEquals(false, prefs.defaultYolo.first())
+        }
+
+    @Test
+    fun setDefaultYolo_roundTripsBothValues() =
+        runBlocking {
+            prefs.setDefaultYolo(true)
+            assertEquals(true, prefs.defaultYolo.first())
+            prefs.setDefaultYolo(false)
+            assertEquals(false, prefs.defaultYolo.first())
+            prefs.setDefaultYolo(true)
+            assertEquals(true, prefs.defaultYolo.first())
+        }
+
+    @Test
+    fun defaultWorkspace_defaultsToScratchCwd() =
+        runBlocking {
+            assertEquals(DEFAULT_SCRATCH_CWD, prefs.defaultWorkspace.first())
+        }
+
+    @Test
+    fun setDefaultWorkspace_roundTripsCustomCwd() =
+        runBlocking {
+            prefs.setDefaultWorkspace("/home/user/code/myproj")
+            assertEquals("/home/user/code/myproj", prefs.defaultWorkspace.first())
+            prefs.setDefaultWorkspace(DEFAULT_SCRATCH_CWD)
+            assertEquals(DEFAULT_SCRATCH_CWD, prefs.defaultWorkspace.first())
         }
 }
