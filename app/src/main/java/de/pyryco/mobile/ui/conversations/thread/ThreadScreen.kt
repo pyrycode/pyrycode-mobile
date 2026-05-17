@@ -11,8 +11,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.ui.conversations.components.ConnectionBanner
+import de.pyryco.mobile.ui.conversations.components.WorkspaceChip
+import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -26,6 +29,9 @@ fun ThreadScreen(
     modifier: Modifier = Modifier,
     onTitleClick: () -> Unit = {},
     onOverflowClick: () -> Unit = {},
+    onWorkspaceChipTapped: () -> Unit = {},
+    onWorkspacePicked: (String) -> Unit = {},
+    onWorkspacePickerDismissed: () -> Unit = {},
 ) {
     Scaffold(
         modifier = modifier,
@@ -48,6 +54,16 @@ fun ThreadScreen(
                     .fillMaxSize(),
         ) {
             ConnectionBanner(state = connectionState, onRetry = onRetry)
+            if (!state.isPromoted && !state.hasMessages) {
+                WorkspaceChip(
+                    workspaceLabel = state.workspaceLabel,
+                    onClick = onWorkspaceChipTapped,
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
             LazyColumn(
                 modifier =
                     Modifier
@@ -59,6 +75,11 @@ fun ThreadScreen(
             }
         }
     }
+    WorkspacePicker(
+        visible = state.workspacePickerVisible,
+        onPicked = onWorkspacePicked,
+        onDismiss = onWorkspacePickerDismissed,
+    )
 }
 
 @Preview(name = "Thread — Light", showBackground = true, widthDp = 412)

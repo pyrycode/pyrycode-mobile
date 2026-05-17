@@ -5,18 +5,25 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.ThreadItem
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 data class ThreadUiState(
     val conversationId: String,
     val displayName: String,
+    val isPromoted: Boolean = false,
+    val hasMessages: Boolean = false,
+    val workspaceLabel: String = "scratch",
+    val workspacePickerVisible: Boolean = false,
 )
 
 class ThreadViewModel(
@@ -27,24 +34,32 @@ class ThreadViewModel(
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
 
+    private val pendingWorkspacePicker = MutableStateFlow(false)
+
     val state: StateFlow<ThreadUiState> =
-        repository
-            .observeConversations(ConversationFilter.All)
-            .map { list ->
-                val conv = list.firstOrNull { it.id == conversationId }
+        combine(
+            repository.observeConversations(ConversationFilter.All),
+            repository.observeMessages(conversationId),
+            pendingWorkspacePicker,
+        ) { conversations, items, pickerVisible ->
+            val conv = conversations.firstOrNull { it.id == conversationId }
+            ThreadUiState(
+                conversationId = conversationId,
+                displayName = conv?.displayName() ?: conversationId,
+                isPromoted = conv?.isPromoted ?: false,
+                hasMessages = items.any { it is ThreadItem.MessageItem },
+                workspaceLabel = conv?.workspaceLabel() ?: "scratch",
+                workspacePickerVisible = pickerVisible,
+            )
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue =
                 ThreadUiState(
                     conversationId = conversationId,
-                    displayName = conv?.displayName() ?: conversationId,
-                )
-            }.stateIn(
-                scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(5_000),
-                initialValue =
-                    ThreadUiState(
-                        conversationId = conversationId,
-                        displayName = conversationId,
-                    ),
-            )
+                    displayName = conversationId,
+                ),
+        )
 
     val connectionState: StateFlow<ConnectionState> =
         connectionStateSource
@@ -65,8 +80,30 @@ class ThreadViewModel(
     fun retry() {
         viewModelScope.launch { connectionStateSource.retry() }
     }
+
+    fun onWorkspaceChipTapped() {
+        pendingWorkspacePicker.value = true
+    }
+
+    fun onWorkspacePicked(path: String) {
+        pendingWorkspacePicker.value = false
+        viewModelScope.launch {
+            repository.changeWorkspace(conversationId, path)
+        }
+    }
+
+    fun onWorkspacePickerDismissed() {
+        pendingWorkspacePicker.value = false
+    }
 }
 
 private fun Conversation.displayName(): String =
     name?.takeIf { it.isNotBlank() }
         ?: if (isPromoted) "Untitled channel" else "Untitled discussion"
+
+private fun Conversation.workspaceLabel(): String =
+    if (cwd.isEmpty() || cwd == DEFAULT_SCRATCH_CWD) {
+        "scratch"
+    } else {
+        cwd.substringAfterLast('/').ifEmpty { cwd }
+    }

@@ -207,6 +207,9 @@ private fun PyryNavHost(
                 onSendMessage = vm::sendMessage,
                 connectionState = connectionState,
                 onRetry = vm::retry,
+                onWorkspaceChipTapped = vm::onWorkspaceChipTapped,
+                onWorkspacePicked = vm::onWorkspacePicked,
+                onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
             )
         }
         composable(Routes.SETTINGS) {

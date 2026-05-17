@@ -1,6 +1,6 @@
 # Thread screen
 
-Outer shell for the conversation thread at the `conversation_thread/{conversationId}` route. Skeleton landed in [#126](../codebase/126.md) (route + VM + empty `LazyColumn`); the TopAppBar slot was promoted from placeholder to the real Figma `16:8` chrome in [#139](../codebase/139.md); the `bottomBar` slot was filled with the composer in [#188](../codebase/188.md) — see [Thread input bar](thread-input-bar.md); the [`ConnectionBanner`](connection-banner.md) was wired between the TopAppBar and the message list in [#201](../codebase/201.md) (split from #197, originally #134). Remaining downstream `feat(ui/thread):` work (#128 message bubble, #135 session-boundary delimiter, #137/#138 empty states, #140 overflow menu, #141 rename dialog, #145 status row) lands additively without rewriting the skeleton.
+Outer shell for the conversation thread at the `conversation_thread/{conversationId}` route. Skeleton landed in [#126](../codebase/126.md) (route + VM + empty `LazyColumn`); the TopAppBar slot was promoted from placeholder to the real Figma `16:8` chrome in [#139](../codebase/139.md); the `bottomBar` slot was filled with the composer in [#188](../codebase/188.md) — see [Thread input bar](thread-input-bar.md); the [`ConnectionBanner`](connection-banner.md) was wired between the TopAppBar and the message list in [#201](../codebase/201.md) (split from #197, originally #134); the empty-discussion [`WorkspaceChip`](workspace-chip.md) was wired between the banner and the message list in [#137](../codebase/137.md), which also widened `ThreadUiState` by four fields and added the screen-root [`WorkspacePicker`](workspace-picker.md) host. Remaining downstream `feat(ui/thread):` work (#128 message bubble, #138 empty-state copy below the chip, #140 overflow menu, #141 rename dialog, #145 status row, [#208](https://github.com/pyrycode/pyrycode-mobile/issues/208) overflow → picker wiring — which reuses the picker state introduced by #137) lands additively without rewriting the skeleton.
 
 Package: `de.pyryco.mobile.ui.conversations.thread` (`app/src/main/java/de/pyryco/mobile/ui/conversations/thread/`). Files: `ThreadScreen.kt`, `ThreadTopAppBar.kt`, `ThreadInputBar.kt`, `ThreadViewModel.kt`. The [`ConnectionBanner`](connection-banner.md) it consumes lives one package over at `ui/conversations/components/ConnectionBanner.kt`. Figma reference frame: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) — the TopAppBar region (back arrow + title + `more_vert` overflow), the empty reverse-layout `LazyColumn` shell, the composer (subframe `16:61`), and the banner slot between them are in scope here; the message list, status row, and other body decorations in the same frame are deferred to the downstream tickets above.
 
@@ -15,6 +15,10 @@ Renders the chrome of the thread surface — a `Scaffold` with a real Figma-matc
 data class ThreadUiState(
     val conversationId: String,
     val displayName: String,
+    val isPromoted: Boolean = false,                  // new in #137
+    val hasMessages: Boolean = false,                 // new in #137
+    val workspaceLabel: String = "scratch",           // new in #137
+    val workspacePickerVisible: Boolean = false,      // new in #137
 )
 
 class ThreadViewModel(
@@ -25,24 +29,32 @@ class ThreadViewModel(
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
 
+    private val pendingWorkspacePicker = MutableStateFlow(false)  // new in #137
+
     val state: StateFlow<ThreadUiState> =
-        repository
-            .observeConversations(ConversationFilter.All)
-            .map { list ->
-                val conv = list.firstOrNull { it.id == conversationId }
+        combine(                                                  // shape since #137
+            repository.observeConversations(ConversationFilter.All),
+            repository.observeMessages(conversationId),
+            pendingWorkspacePicker,
+        ) { conversations, items, pickerVisible ->
+            val conv = conversations.firstOrNull { it.id == conversationId }
+            ThreadUiState(
+                conversationId = conversationId,
+                displayName = conv?.displayName() ?: conversationId,
+                isPromoted = conv?.isPromoted ?: false,
+                hasMessages = items.any { it is ThreadItem.MessageItem },
+                workspaceLabel = conv?.workspaceLabel() ?: "scratch",
+                workspacePickerVisible = pickerVisible,
+            )
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue =
                 ThreadUiState(
                     conversationId = conversationId,
-                    displayName = conv?.displayName() ?: conversationId,
-                )
-            }.stateIn(
-                scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(5_000),
-                initialValue =
-                    ThreadUiState(
-                        conversationId = conversationId,
-                        displayName = conversationId,
-                    ),
-            )
+                    displayName = conversationId,
+                ),
+        )
 
     val connectionState: StateFlow<ConnectionState> =     // new in #201
         connectionStateSource
@@ -63,11 +75,30 @@ class ThreadViewModel(
     fun retry() {                                          // new in #201
         viewModelScope.launch { connectionStateSource.retry() }
     }
+
+    fun onWorkspaceChipTapped() {                          // new in #137
+        pendingWorkspacePicker.value = true
+    }
+
+    fun onWorkspacePicked(path: String) {                  // new in #137
+        pendingWorkspacePicker.value = false
+        viewModelScope.launch {
+            repository.changeWorkspace(conversationId, path)
+        }
+    }
+
+    fun onWorkspacePickerDismissed() {                     // new in #137
+        pendingWorkspacePicker.value = false
+    }
 }
 
 private fun Conversation.displayName(): String =
     name?.takeIf { it.isNotBlank() }
         ?: if (isPromoted) "Untitled channel" else "Untitled discussion"
+
+private fun Conversation.workspaceLabel(): String =        // new in #137
+    if (cwd.isEmpty() || cwd == DEFAULT_SCRATCH_CWD) "scratch"
+    else cwd.substringAfterLast('/').ifEmpty { cwd }
 
 // ThreadScreen.kt
 @OptIn(ExperimentalMaterial3Api::class)
@@ -81,6 +112,9 @@ fun ThreadScreen(
     modifier: Modifier = Modifier,
     onTitleClick: () -> Unit = {},
     onOverflowClick: () -> Unit = {},
+    onWorkspaceChipTapped: () -> Unit = {},           // new in #137
+    onWorkspacePicked: (String) -> Unit = {},         // new in #137
+    onWorkspacePickerDismissed: () -> Unit = {},      // new in #137
 ) {
     Scaffold(
         modifier = modifier,
@@ -100,6 +134,14 @@ fun ThreadScreen(
             modifier = Modifier.padding(inner).fillMaxSize(),
         ) {
             ConnectionBanner(state = connectionState, onRetry = onRetry)
+            if (!state.isPromoted && !state.hasMessages) {       // new in #137
+                WorkspaceChip(
+                    workspaceLabel = state.workspaceLabel,
+                    onClick = onWorkspaceChipTapped,
+                    modifier = Modifier.fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
             LazyColumn(
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 reverseLayout = true,
@@ -108,6 +150,11 @@ fun ThreadScreen(
             }
         }
     }
+    WorkspacePicker(                              // Scaffold sibling, new in #137
+        visible = state.workspacePickerVisible,
+        onPicked = onWorkspacePicked,
+        onDismiss = onWorkspacePickerDismissed,
+    )
 }
 
 // ThreadTopAppBar.kt
@@ -122,9 +169,9 @@ fun ThreadTopAppBar(
 )
 ```
 
-`ThreadUiState` is still a **`data class`, not a `sealed interface`.** The canonical pattern in this codebase (`ChannelListUiState`, `DiscussionListUiState`, `ArchivedDiscussionsUiState`) is sealed `Loading | Empty | Loaded | Error` precisely because each represents a real async data-load stage; this screen still has zero `Loading` / `Error` distinction worth modelling (the `displayName` lookup falls back to the raw id rather than failing, so there is no error state to project). The first downstream ticket that introduces an error path or a "load-bearing waiting" frame (likely #128 once it subscribes to `observeMessages`) is the one that widens to a sealed envelope; the current `data class` becomes the `Loaded` variant via grep-replace.
+`ThreadUiState` is still a **`data class`, not a `sealed interface`.** The canonical pattern in this codebase (`ChannelListUiState`, `DiscussionListUiState`, `ArchivedDiscussionsUiState`) is sealed `Loading | Empty | Loaded | Error` precisely because each represents a real async data-load stage; this screen still has zero `Loading` / `Error` distinction worth modelling (the `displayName` lookup falls back to the raw id rather than failing, so there is no error state to project). The first downstream ticket that introduces an error path or a "load-bearing waiting" frame (likely #128 once it widens the message subscription to drive a load-bearing waiting frame — #137 already subscribes to `observeMessages` for `hasMessages`, but only as a `false → true` flip; there's still no `Loading` distinction worth modelling) is the one that widens to a sealed envelope; the current `data class` becomes the `Loaded` variant via grep-replace. Post-#137 the class carries six fields (`conversationId`, `displayName`, `isPromoted`, `hasMessages`, `workspaceLabel`, `workspacePickerVisible`); the four added in #137 all default so the seven pre-existing `assertEquals(ThreadUiState(...), vm.state.value)` test cases compile unchanged.
 
-`ThreadScreen`'s signature is **`(state, onBack, onSendMessage, connectionState, onRetry, modifier, onTitleClick, onOverflowClick)` — still no `onEvent` lambda even after #188 + #201 each landed VM-owned actions.** Every other VM-backed screen in the codebase uses `(state: UiState, onEvent: (Event) -> Unit)` once they have at least one VM-owned event. #188 added `onSendMessage: (String) -> Unit` as a flat callback rather than folding into a sealed `ThreadEvent { SendMessage(text), Retry, TitleTapped, OverflowTapped, … }`; #201 added `onRetry: () -> Unit` and `connectionState: ConnectionState` (the latter is *state*, not an event — see [Connection-banner wiring](#connection-banner-wiring) for why it's a separate `StateFlow` rather than a field on `ThreadUiState`). Flat callbacks for two event arms is still cheaper than scaffolding a sealed envelope. The fold to `ThreadEvent` is deferred to whichever ticket lands the *third* VM-owned event (#140 overflow or #141 rename, depending on whose handler routes through the VM rather than directly to nav). At that point the existing lambdas (`onSendMessage`, `onRetry`, `onTitleClick`, `onOverflowClick`, plus whichever new one arrives) collapse into one `onEvent: (ThreadEvent) -> Unit` and `onBack` stays separate (pure navigation). `connectionState` stays a flat `State` parameter — it's state, not an event.
+`ThreadScreen`'s signature is **`(state, onBack, onSendMessage, connectionState, onRetry, modifier, onTitleClick, onOverflowClick, onWorkspaceChipTapped, onWorkspacePicked, onWorkspacePickerDismissed)` — still no `onEvent` lambda even after #188 + #201 + #137 each landed VM-owned actions.** Every other VM-backed screen in the codebase uses `(state: UiState, onEvent: (Event) -> Unit)` once they have at least one VM-owned event. #188 added `onSendMessage: (String) -> Unit`, #201 added `onRetry: () -> Unit`, and #137 added `onWorkspaceChipTapped`, `onWorkspacePicked`, `onWorkspacePickerDismissed` — all as flat callbacks rather than folding into a sealed `ThreadEvent { SendMessage(text), Retry, ChipTapped, WorkspacePicked(path), PickerDismissed, … }`. Flat callbacks across five event arms is still cheaper than scaffolding a sealed envelope (and #208's overflow → picker wiring adds zero further callbacks — it reuses the picker handlers introduced by #137). The fold to `ThreadEvent` is deferred to whichever ticket lands the *next* VM-owned event beyond #208's reuse (likely #128's message-bubble interactions or #145's status row). At that point the existing lambdas collapse into one `onEvent: (ThreadEvent) -> Unit` and `onBack` stays separate (pure navigation). `connectionState` stays a flat `State` parameter — it's state, not an event.
 
 ## How it works
 
@@ -132,7 +179,31 @@ fun ThreadTopAppBar(
 
 The `.orEmpty()` is a **type-system narrowing, not a defensive fallback** — Compose Navigation guarantees the `navArgument("conversationId") { type = NavType.StringType }` is present before the destination composes. Post-#139 the `conversationId` is lifted to a `private val` field on the VM so the `map { … }` body and the `stateIn(initialValue = …)` both reference one source of truth; before #139 the inline `savedStateHandle.get<String>("conversationId").orEmpty()` lived directly in the `MutableStateFlow(...)` constructor. The narrowing collapses `String?` to `String` so the `data class` field reads cleanly and the title `Text` is non-null at every callsite.
 
-### `observeConversations(All).map { firstOrNull }.stateIn(WhileSubscribed)` — option (c)
+### `combine(observeConversations, observeMessages, pendingWorkspacePicker).stateIn(WhileSubscribed)` — three upstreams since #137
+
+Post-#137 the single `.map { … }` over `observeConversations(All)` was widened to a `combine` of three upstreams:
+
+```kotlin
+combine(
+    repository.observeConversations(ConversationFilter.All),
+    repository.observeMessages(conversationId),
+    pendingWorkspacePicker,
+) { conversations, items, pickerVisible ->
+    val conv = conversations.firstOrNull { it.id == conversationId }
+    ThreadUiState(
+        conversationId = conversationId,
+        displayName = conv?.displayName() ?: conversationId,
+        isPromoted = conv?.isPromoted ?: false,
+        hasMessages = items.any { it is ThreadItem.MessageItem },
+        workspaceLabel = conv?.workspaceLabel() ?: "scratch",
+        workspacePickerVisible = pickerVisible,
+    )
+}.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), initialValue = ThreadUiState(conversationId, displayName = conversationId))
+```
+
+`pendingWorkspacePicker = MutableStateFlow(false)` is a private hot source backing the chip-opens-picker signal. `observeMessages` re-emits on `sendMessage` (the `hasMessages` flip happens there) and on `changeWorkspace` (a new `SessionBoundary` arrives; `hasMessages` stays `false` because boundaries don't count toward the `MessageItem`-only filter). The `initialValue` block is byte-identical to its pre-#137 shape — it still constructs `ThreadUiState(conversationId, displayName = conversationId)` with the four new fields defaulting; the `state_initialValue_isConversationIdPlaceholderBeforeSubscription` test continues to pass full equality. Conversation-missing edge case: `conv` is `null` → `isPromoted = false` (treated as discussion), `workspaceLabel = "scratch"` (safe default for the chip). The `combine` over three independent signals was the right shape; collapsing the message subscription into the conversations map by calling `observeMessages(id).first()` inside the lambda would have blocked the upstream — see [`../codebase/137.md`](../codebase/137.md) lessons learned.
+
+### `observeConversations(All).map { firstOrNull }` — option (c) for `displayName` derivation
 
 #139 picked option (c) of three plumbing options for surfacing `displayName` in `ThreadUiState` — filter the existing `observeConversations(All)` flow inside the VM rather than adding a route nav arg (option a) or a new `observeConversation(id)` repo method (option b). Tradeoffs:
 
@@ -181,6 +252,36 @@ When #141's rename success path eventually calls `repository.rename(conversation
 The body shape is unchanged from #126: `items(emptyList<Unit>()) { }` inside a `LazyColumn` with `reverseLayout = true`. The reverse layout is invisible until messages render; baking it in now means #128's `items(state.messages) { … }` lands with no axis-flip work. No `verticalArrangement = Arrangement.Bottom` override — `reverseLayout = true` already pins the first item to the bottom edge.
 
 Post-#201 the `LazyColumn` is nested inside a `Column` wrapper alongside the `ConnectionBanner` (see [Connection-banner wiring](#connection-banner-wiring) below). The list now carries `Modifier.fillMaxWidth().weight(1f)` rather than `.fillMaxSize()` — inside a `Column`, `fillMaxSize` ignores `weight` semantics and over-claims vertical space, fighting with siblings. The `reverseLayout = true` semantics are unchanged: the list still scrolls upward from the bottom of its weight-allocated region, with the banner pinned above it.
+
+### Workspace-chip wiring (post-#137)
+
+Between the `ConnectionBanner` and the `LazyColumn`, the body `Column` carries a conditional [`WorkspaceChip`](workspace-chip.md):
+
+```kotlin
+if (!state.isPromoted && !state.hasMessages) {
+    WorkspaceChip(
+        workspaceLabel = state.workspaceLabel,
+        onClick = onWorkspaceChipTapped,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+    )
+}
+```
+
+The `&&` predicate stays inlined at the call site (not derived onto a hidden `showWorkspaceChip` boolean) because the same two raw fields will be re-consumed by #138 (empty-state copy) and #208 (overflow → picker entry point) — pre-fusing them would force re-derivation downstream. `workspaceLabel` is already-derived (the VM resolves `Conversation.cwd` → basename at the flow boundary via the private `workspaceLabel()` extension); composables never see the raw path. The chip lives in the existing `Column` slot, **not** inside the `LazyColumn` as a header item — it doesn't participate in scroll, doesn't get recycled, doesn't need a `key`, and the current empty `items(emptyList<Unit>()) { }` body has no `item { … }` slot to add it to without forcing a structural rewrite that #128's eventual `items(state.messages) { … }` would have to undo.
+
+Inside the same `Column`, immediately after the `Scaffold`'s closing brace, the [`WorkspacePicker`](workspace-picker.md) host is rendered as a **`Scaffold` sibling** (not inside the content slot):
+
+```kotlin
+WorkspacePicker(
+    visible = state.workspacePickerVisible,
+    onPicked = onWorkspacePicked,
+    onDismiss = onWorkspacePickerDismissed,
+)
+```
+
+The picker's `ModalBottomSheet` lives in its own window, so source-order placement doesn't affect Z-order — sibling-to-Scaffold mirrors [`ChannelListScreen.kt:180-184`](channel-list-screen.md) exactly (the canonical wiring shape from [#221](../codebase/221.md)). #208 will reuse this exact host call by routing its overflow tap to the same `pendingWorkspacePicker.value = true` flag; no second `WorkspacePicker` invocation needed.
+
+The three VM handlers (`onWorkspaceChipTapped`, `onWorkspacePicked`, `onWorkspacePickerDismissed`) all mirror `ChannelListViewModel`'s picker-trigger handlers. `onWorkspacePicked(path)` clears the flag *then* launches `repository.changeWorkspace(conversationId, path)` on `viewModelScope`; the returned `Session` is discarded — the `Conversation.cwd` update propagates back via the `observeConversations` re-emission to the `combine` arm, and `workspaceLabel` recomputes automatically. `onWorkspacePickerDismissed` clears the flag only — no repository call. See [`WorkspaceChip`](workspace-chip.md) for the full data-flow.
 
 ### Connection-banner wiring
 
@@ -255,7 +356,7 @@ Post-#201: three `get()`s. The first resolves to the back-stack entry's `SavedSt
 ### Destination block
 
 ```kotlin
-// MainActivity.kt:197-211
+// MainActivity.kt:197-214 (post-#137)
 composable(
     route = Routes.CONVERSATION_THREAD,
     arguments = listOf(navArgument("conversationId") { type = NavType.StringType }),
@@ -266,9 +367,12 @@ composable(
     ThreadScreen(
         state = state,
         onBack = { navController.popBackStack() },
-        onSendMessage = vm::sendMessage,   // added in #188
-        connectionState = connectionState, // added in #201
-        onRetry = vm::retry,               // added in #201
+        onSendMessage = vm::sendMessage,                       // added in #188
+        connectionState = connectionState,                     // added in #201
+        onRetry = vm::retry,                                   // added in #201
+        onWorkspaceChipTapped = vm::onWorkspaceChipTapped,             // added in #137
+        onWorkspacePicked = vm::onWorkspacePicked,                     // added in #137
+        onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,   // added in #137
     )
 }
 ```
@@ -283,7 +387,7 @@ The `Routes.CONVERSATION_THREAD = "conversation_thread/{conversationId}"` consta
 
 ## Testing
 
-`app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModelTest.kt` — twelve JUnit 4 tests post-#201 (seven from #139, two from #188, three new in #201). The pre-#139 plain-JUnit shape (no `runTest`, no `Dispatchers.setMain`) no longer works because `stateIn(viewModelScope, …)` requires a `Main` test dispatcher to publish emissions in test scope. The file adopts the canonical scaffold from `ChannelListViewModelTest:1-60`:
+`app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModelTest.kt` — eighteen JUnit 4 tests post-#137 (seven from #139, two from #188, three from #201, six from #137 in the workspace-chip group). The pre-#139 plain-JUnit shape (no `runTest`, no `Dispatchers.setMain`) no longer works because `stateIn(viewModelScope, …)` requires a `Main` test dispatcher to publish emissions in test scope. The file adopts the canonical scaffold from `ChannelListViewModelTest:1-60`:
 
 ```kotlin
 @Before fun setUpMainDispatcher() { Dispatchers.setMain(UnconfinedTestDispatcher()) }
@@ -306,6 +410,13 @@ Tests:
 10. **`connectionState_initialValue_isConnected`** (#201) — construct VM with default `FakeConnectionStateSource()`. Without any collector, assert `vm.connectionState.value == ConnectionState.Connected`. Pins the AC1 default + the `WhileSubscribed` initialValue contract. Synchronous; no `runTest { }` wrapper needed.
 11. **`connectionState_reemitsOnSourceChange`** (#201) — construct a `FakeConnectionStateSource` explicitly, build the VM with it, launch a collector, call `source.emit(ConnectionState.Offline)`, `advanceUntilIdle()`, assert `vm.connectionState.value == ConnectionState.Offline`. Pins the AC1 "exposes current state" wiring (not just the initialValue).
 12. **`retry_invokesSourceRetry`** (#201) — construct a `RecordingConnectionStateSource` (file-private test double; see below), call `vm.retry()`, `advanceUntilIdle()`, assert `source.retryCallCount == 1`. Pins AC2: the VM actually forwards to the source rather than swallowing the call.
+13. **`state_workspaceLabel_isScratch_whenCwdIsEmptyString`** (#137) — `repository.createDiscussion(workspace = null)`, assert pre-condition `freshDiscussion.cwd == ""`, then assert `vm.state.value.workspaceLabel == "scratch"`. Exercises the `cwd.isEmpty()` branch of `Conversation.workspaceLabel()` — the actual default state of a fresh discussion per `FakeConversationRepository.createDiscussion`.
+14. **`state_workspaceLabel_isScratch_whenCwdIsDefaultScratchSentinel`** (#137) — `fixedRepo` with one discussion at `cwd = DEFAULT_SCRATCH_CWD`, assert label `"scratch"`. Exercises the sentinel branch — both `""` and the sentinel must collapse to the same label, matching `FakeConversationRepository.bumpWorkspace`'s no-bound-workspace filter.
+15. **`state_workspaceLabel_isBasename_forArbitraryCwd`** (#137) — `fixedRepo` with `cwd = "pyry-workspace/my-app"`, assert label `"my-app"`. Exercises the `substringAfterLast('/')` happy path.
+16. **`state_chipFields_reflectChannelAndMessagePresence`** (#137) — single test walking both raw chip-gate fields across two VMs. Seeded channel (`seed-channel-personal`) → assert `isPromoted = true`, `hasMessages = true` (the seed carries messages). Fresh discussion via `createDiscussion(null)` → assert `isPromoted = false`, `hasMessages = false`. Then call `discussionVm.sendMessage("hi")`, `advanceUntilIdle()`, assert `hasMessages` flipped to `true` while `isPromoted` stays `false`. Locks the two raw signals that the chip's call-site `if (!isPromoted && !hasMessages)` consumes.
+17. **`onWorkspacePicked_callsChangeWorkspaceOnceAndClearsPickerFlag`** (#137) — fresh discussion, call `vm.onWorkspaceChipTapped()`, assert `workspacePickerVisible == true`. Call `vm.onWorkspacePicked("pyry-workspace/my-app")`, `advanceUntilIdle()`, assert `workspacePickerVisible == false` AND the conversation's `cwd` is now `"pyry-workspace/my-app"` (re-fetched via `repository.observeConversations(All).first().first { it.id == … }`). Pins the side-effect-plus-flag-clear contract.
+18. **`onWorkspacePickerDismissed_clearsFlagWithoutCallingChangeWorkspace`** (#137) — fresh discussion, `onWorkspaceChipTapped`, `onWorkspacePickerDismissed`, assert `workspacePickerVisible == false` AND the conversation's `cwd` is unchanged (re-fetched via the same path). Pins the no-side-effect dismiss path.
+
 
 The `fixedRepo(conversations)` helper is an anonymous `object : ConversationRepository { … }` with `TODO("not used")` overrides plus a `flowOf(conversations)`-backed `observeConversations`. It's kept local rather than extracted — each test's bespoke conversation shape would force a builder-shaped helper that doesn't pay for itself yet.
 
@@ -336,7 +447,7 @@ Both previews use the steady-state `ConnectionState.Connected`, so the banner is
 
 ## Edge cases / limitations
 
-- **No data loading for messages yet.** `ThreadViewModel` subscribes to `observeConversations(All)` for the title, but not to `observeMessages(conversationId)` — that's #128's wiring. The `LazyColumn` body still renders nothing. Sending a message via the composer (#188) appends through the repository but the appended `Message` is invisible at the screen level until #128 lands — the only feedback that send fired is the cleared input field.
+- **Message rendering is still not wired into the `LazyColumn`.** Post-#137 the VM subscribes to `observeMessages(conversationId)` — but only to compute the `hasMessages: Boolean` gate for the [`WorkspaceChip`](workspace-chip.md). The full message list still isn't projected onto the body; the `LazyColumn` body is still `items(emptyList<Unit>()) { }`. That's #128's wiring. Sending a message via the composer (#188) appends through the repository and flips `hasMessages = true` (hiding the chip on the next emission), but the appended `Message` itself remains invisible at the screen level until #128 lands — the only feedback that send fired is the cleared input field and (on a fresh discussion) the disappearance of the workspace chip.
 - **`displayName` falls back to the raw `conversationId` when the lookup misses.** Path is not user-reachable in production (every nav edge passes a real id) but the property is observable and pinned by a test. Deep links and process-death restoration go through the same path.
 - **Banner is invisible under normal use.** The Phase-2 `FakeConnectionStateSource` always emits `Connected`; the banner short-circuits to zero height. The integration is exercised by VM unit tests that push `Offline` / `Connecting` / `Reconnecting` through the fake — the user-facing disconnected affordance lands when Phase 4 swaps the binding to the real Ktor-backed source.
 - **`retry()` is a Phase-2 no-op.** The fake's `retry()` does nothing; the VM still routes the call through `viewModelScope.launch` so the Phase-4 swap is binding-only. Tapping the `Offline` banner today fires the ripple, increments `RecordingConnectionStateSource.retryCallCount` in tests, and does nothing observable in the running app.
@@ -349,9 +460,9 @@ Both previews use the steady-state `ConnectionState.Connected`, so the banner is
 
 ## Related
 
-- Ticket notes: [`../codebase/126.md`](../codebase/126.md) (skeleton), [`../codebase/139.md`](../codebase/139.md) (TopAppBar promotion), [`../codebase/188.md`](../codebase/188.md) (input bar + `sendMessage`), [`../codebase/201.md`](../codebase/201.md) (ConnectionBanner wiring), [`../codebase/15.md`](../codebase/15.md) (the placeholder route this slice replaces)
-- Specs: `docs/specs/architecture/15-conversation-thread-placeholder-route.md`, `docs/specs/architecture/126-thread-screen-skeleton.md`, `docs/specs/architecture/139-thread-topappbar-back-title-overflow.md`, `docs/specs/architecture/188-thread-input-bar.md`, `docs/specs/architecture/201-thread-screen-wire-connectionbanner.md`
-- Upstream: [Navigation](navigation.md) (the `conversation_thread/{conversationId}` route this destination consumes), [Conversation repository](conversation-repository.md) (the `observeConversations(All)` source the VM consumes; `sendMessage` it forwards to since #188), [Connection state](connection-state.md) (the `ConnectionStateSource.observe()` / `retry()` contract the VM consumes since #201), [Dependency injection](dependency-injection.md) (Koin `viewModel { ThreadViewModel(get(), get(), get()) }` binding — third `get()` added in #201)
-- Child components: [Thread input bar](thread-input-bar.md) (the composer in `bottomBar`, landed in #188), [ConnectionBanner](connection-banner.md) (the banner between TopAppBar and message list, wired in #201)
-- Downstream remaining (each replaces a body slot here, not the chrome): #128 message bubble (widens `ThreadUiState` to sealed `Loading | Loaded(messages, displayName, …) | Error` and subscribes to `observeMessages`), #135 session-boundary delimiter, #137/#138 empty states, #140 overflow menu (wires `onOverflowClick`), #141 rename dialog (wires `onTitleClick`; live re-emission already free post-#139), #145 status row
-- Figma: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) (the complete future state; this slice ships the outer shell + the TopAppBar chrome + the composer in `bottomBar` + the connection banner slot between them)
+- Ticket notes: [`../codebase/126.md`](../codebase/126.md) (skeleton), [`../codebase/139.md`](../codebase/139.md) (TopAppBar promotion), [`../codebase/188.md`](../codebase/188.md) (input bar + `sendMessage`), [`../codebase/201.md`](../codebase/201.md) (ConnectionBanner wiring), [`../codebase/137.md`](../codebase/137.md) (WorkspaceChip + WorkspacePicker hosting + `ThreadUiState` widening to six fields), [`../codebase/15.md`](../codebase/15.md) (the placeholder route this slice replaces)
+- Specs: `docs/specs/architecture/15-conversation-thread-placeholder-route.md`, `docs/specs/architecture/126-thread-screen-skeleton.md`, `docs/specs/architecture/139-thread-topappbar-back-title-overflow.md`, `docs/specs/architecture/188-thread-input-bar.md`, `docs/specs/architecture/201-thread-screen-wire-connectionbanner.md`, `docs/specs/architecture/137-workspace-chip-empty-new-discussion-thread.md`
+- Upstream: [Navigation](navigation.md) (the `conversation_thread/{conversationId}` route this destination consumes), [Conversation repository](conversation-repository.md) (the `observeConversations(All)` + `observeMessages` + `changeWorkspace` surfaces the VM consumes; `sendMessage` it forwards to since #188; `observeMessages` + `changeWorkspace` added since #137), [Connection state](connection-state.md) (the `ConnectionStateSource.observe()` / `retry()` contract the VM consumes since #201), [Dependency injection](dependency-injection.md) (Koin `viewModel { ThreadViewModel(get(), get(), get()) }` binding — third `get()` added in #201)
+- Child components: [Thread input bar](thread-input-bar.md) (the composer in `bottomBar`, landed in #188), [ConnectionBanner](connection-banner.md) (the banner between TopAppBar and message list, wired in #201), [WorkspaceChip](workspace-chip.md) (the empty-discussion chip between banner and list, wired in #137), [WorkspacePicker](workspace-picker.md) (rendered as Scaffold sibling, wired in #137)
+- Downstream remaining (each replaces a body slot here, not the chrome): #128 message bubble (widens `ThreadUiState` to sealed `Loading | Loaded(messages, displayName, …) | Error` and consumes `observeMessages` for full content rather than just the `hasMessages` flag #137 added), #135 session-boundary delimiter, #138 empty-state copy (renders below the #137 chip), #140 overflow menu (wires `onOverflowClick`), #141 rename dialog (wires `onTitleClick`; live re-emission already free post-#139), #145 status row, [#208](https://github.com/pyrycode/pyrycode-mobile/issues/208) overflow "Change workspace…" (reuses `workspacePickerVisible` + the two picker handlers introduced by #137)
+- Figma: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) (the complete future state; this slice ships the outer shell + the TopAppBar chrome + the composer in `bottomBar` + the connection banner slot between them + the empty-discussion workspace chip between banner and list + the picker host at screen root)

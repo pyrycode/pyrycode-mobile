@@ -3,6 +3,7 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
@@ -25,8 +26,11 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.datetime.Instant
+import kotlinx.coroutines.flow.first
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -208,6 +212,148 @@ class ThreadViewModelTest {
             collector.cancel()
         }
 
+    @Test
+    fun state_workspaceLabel_isScratch_whenCwdIsEmptyString() =
+        runTest {
+            val repository = FakeConversationRepository()
+            val freshDiscussion = repository.createDiscussion(workspace = null)
+            // Pre-condition: createDiscussion(null) yields cwd = "" (see FakeConversationRepository.createDiscussion).
+            assertEquals("", freshDiscussion.cwd)
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to freshDiscussion.id))
+            val vm = makeVm(handle, repository)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals("scratch", vm.state.value.workspaceLabel)
+            collector.cancel()
+        }
+
+    @Test
+    fun state_workspaceLabel_isScratch_whenCwdIsDefaultScratchSentinel() =
+        runTest {
+            val scratchDiscussion =
+                Conversation(
+                    id = "d-scratch",
+                    name = null,
+                    cwd = DEFAULT_SCRATCH_CWD,
+                    currentSessionId = "d-scratch-s1",
+                    sessionHistory = listOf("d-scratch-s1"),
+                    isPromoted = false,
+                    lastUsedAt = Instant.parse("2026-05-12T00:00:00Z"),
+                )
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "d-scratch"))
+            val vm = makeVm(handle, fixedRepo(listOf(scratchDiscussion)))
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals("scratch", vm.state.value.workspaceLabel)
+            collector.cancel()
+        }
+
+    @Test
+    fun state_workspaceLabel_isBasename_forArbitraryCwd() =
+        runTest {
+            val boundDiscussion =
+                Conversation(
+                    id = "d-my-app",
+                    name = null,
+                    cwd = "pyry-workspace/my-app",
+                    currentSessionId = "d-my-app-s1",
+                    sessionHistory = listOf("d-my-app-s1"),
+                    isPromoted = false,
+                    lastUsedAt = Instant.parse("2026-05-12T00:00:00Z"),
+                )
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "d-my-app"))
+            val vm = makeVm(handle, fixedRepo(listOf(boundDiscussion)))
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals("my-app", vm.state.value.workspaceLabel)
+            collector.cancel()
+        }
+
+    @Test
+    fun state_chipFields_reflectChannelAndMessagePresence() =
+        runTest {
+            // Seeded channel: isPromoted = true; hasMessages = true (currentMessages are seeded).
+            val channelHandle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val channelRepo = FakeConversationRepository()
+            val channelVm = makeVm(channelHandle, channelRepo)
+            val channelCollector = launch { channelVm.state.collect {} }
+            advanceUntilIdle()
+            assertTrue(channelVm.state.value.isPromoted)
+            assertTrue(channelVm.state.value.hasMessages)
+            channelCollector.cancel()
+
+            // Fresh discussion: isPromoted = false; hasMessages flips from false → true on sendMessage.
+            val discussionRepo = FakeConversationRepository()
+            val freshDiscussion = discussionRepo.createDiscussion(workspace = null)
+            val discussionHandle =
+                SavedStateHandle(initialState = mapOf("conversationId" to freshDiscussion.id))
+            val discussionVm = makeVm(discussionHandle, discussionRepo)
+            val discussionCollector = launch { discussionVm.state.collect {} }
+            advanceUntilIdle()
+            assertFalse(discussionVm.state.value.isPromoted)
+            assertFalse(discussionVm.state.value.hasMessages)
+
+            discussionVm.sendMessage("hi")
+            advanceUntilIdle()
+            assertFalse(discussionVm.state.value.isPromoted)
+            assertTrue(discussionVm.state.value.hasMessages)
+            discussionCollector.cancel()
+        }
+
+    @Test
+    fun onWorkspacePicked_callsChangeWorkspaceOnceAndClearsPickerFlag() =
+        runTest {
+            val repository = FakeConversationRepository()
+            val freshDiscussion = repository.createDiscussion(workspace = null)
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to freshDiscussion.id))
+            val vm = makeVm(handle, repository)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onWorkspaceChipTapped()
+            advanceUntilIdle()
+            assertTrue(vm.state.value.workspacePickerVisible)
+
+            vm.onWorkspacePicked("pyry-workspace/my-app")
+            advanceUntilIdle()
+
+            assertFalse(vm.state.value.workspacePickerVisible)
+            val persisted =
+                repository
+                    .observeConversations(ConversationFilter.All)
+                    .first()
+                    .first { it.id == freshDiscussion.id }
+            assertEquals("pyry-workspace/my-app", persisted.cwd)
+            collector.cancel()
+        }
+
+    @Test
+    fun onWorkspacePickerDismissed_clearsFlagWithoutCallingChangeWorkspace() =
+        runTest {
+            val repository = FakeConversationRepository()
+            val freshDiscussion = repository.createDiscussion(workspace = null)
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to freshDiscussion.id))
+            val vm = makeVm(handle, repository)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onWorkspaceChipTapped()
+            advanceUntilIdle()
+            assertTrue(vm.state.value.workspacePickerVisible)
+
+            vm.onWorkspacePickerDismissed()
+            advanceUntilIdle()
+
+            assertFalse(vm.state.value.workspacePickerVisible)
+            val persisted =
+                repository
+                    .observeConversations(ConversationFilter.All)
+                    .first()
+                    .first { it.id == freshDiscussion.id }
+            assertEquals(freshDiscussion.cwd, persisted.cwd)
+            collector.cancel()
+        }
+
     // --- helpers ---
 
     private fun makeVm(
@@ -232,7 +378,7 @@ class ThreadViewModelTest {
         object : ConversationRepository {
             override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = flowOf(conversations)
 
-            override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = TODO("not used")
+            override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = flowOf(emptyList())
 
             override fun observeLastMessage(conversationId: String): Flow<Message?> = flowOf(null)
 
