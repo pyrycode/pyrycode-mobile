@@ -41,6 +41,25 @@ interface ConversationRepository {
 
     suspend fun unarchive(conversationId: String)
 
+    /**
+     * Permanently removes the conversation from the store. Tolerant of unknown
+     * ids: calling `delete` on an id that is not present is a silent no-op.
+     *
+     * Unlike [archive] and [unarchive], which throw [IllegalArgumentException]
+     * on unknown ids, `delete` converges on the post-condition — after a
+     * successful return, the conversation is not in [observeConversations].
+     *
+     * Streams collected for the deleted conversation re-emit the empty
+     * projection ([observeMessages] → `emptyList()`; [observeLastMessage] →
+     * `null`); they do not complete.
+     *
+     * Default throws — implementations that do not support deletion inherit
+     * the default. The Channel Info sheet is the only production consumer;
+     * test fakes never invoke this method, so the throwing default is
+     * unreachable in tests today.
+     */
+    suspend fun delete(conversationId: String): Unit = error("delete is not implemented for this ConversationRepository")
+
     suspend fun rename(
         conversationId: String,
         name: String,
