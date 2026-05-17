@@ -1,6 +1,6 @@
 # WorkspacePicker
 
-Stateful host composable (#220) that owns the workspace-picker flow: it composes [`WorkspacePickerSheet`](./workspace-picker-sheet.md) (#212) and [`CreateFolderDialog`](./create-folder-dialog.md) (#213), reads [`recentWorkspaces()`](./conversation-repository.md), calls [`createWorkspaceFolder(name)`](./conversation-repository.md) on submit, and reports the picked path back to the caller via a single `onPicked` callback. Each consumer screen contributes one `Boolean` (`visible`) to its `UiState` and one callback (`onPicked(path)`) — every other piece of wiring (repository binding, sheet ↔ dialog sequencing, single-invocation guarantee) lives inside the host.
+Stateful host composable (#220) that owns the workspace-picker flow: it composes [`WorkspacePickerSheet`](./workspace-picker-sheet.md) (#212) and [`CreateFolderDialog`](./create-folder-dialog.md) (#213), reads [`recentWorkspaces()`](./conversation-repository.md), calls [`createWorkspaceFolder(name)`](./conversation-repository.md) on submit, and reports the picked path back to the caller via a single `onPicked` callback. Each consumer screen contributes one `Boolean` (`visible`) to its `UiState` and one callback (`onPicked(path)`) — every other piece of wiring (repository binding, sheet ↔ dialog sequencing, single-invocation guarantee) lives inside the host. First consumer (#221): [`ChannelListScreen`](./channel-list-screen.md)'s FAB long-press → picker → `repository.createDiscussion(workspace = path)` → navigate.
 
 Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). File: `WorkspacePicker.kt`. Sibling to [`WorkspacePickerSheet`](./workspace-picker-sheet.md) and [`CreateFolderDialog`](./create-folder-dialog.md) — the host that the other two were designed to compose into.
 
@@ -18,7 +18,7 @@ fun WorkspacePicker(
 
 - **`public` (no `internal`).** Unlike the two children, the host is the package's public contract — consumer screens in sibling packages (`ui/conversations/list/`, `ui/conversations/thread/`) call it directly. Kotlin's default top-level visibility is `public`; do not add `internal`.
 - **`visible: Boolean` is a hoisted prop.** Each consumer owns its own visibility flag (typically a `combine` arm on the screen's `UiState`, mirroring [`DiscussionListViewModel`](./discussion-list-viewmodel.md)'s `pendingPromotion` pattern). When `visible == false` the host renders nothing (early return before any `koinInject` / `remember` / `LaunchedEffect`).
-- **`onPicked: (String) -> Unit`.** Single callback for both "user tapped a recent row" and "user created a new folder and we got back a path." The consumer cannot distinguish — by design: the three near-term consumers (Channel List FAB long-press, [`ThreadScreen`](./thread-screen.md) empty-state chip from #137, thread overflow "Change workspace…" from #208) take the same next action regardless of which path produced the result.
+- **`onPicked: (String) -> Unit`.** Single callback for both "user tapped a recent row" and "user created a new folder and we got back a path." The consumer cannot distinguish — by design: the three near-term consumers (Channel List FAB long-press — shipped in #221, [`ThreadScreen`](./thread-screen.md) empty-state chip from #137, thread overflow "Change workspace…" from #208) take the same next action regardless of which path produced the result.
 - **`onDismiss: () -> Unit`.** Fires only when the user dismisses the **sheet** (close icon, scrim tap, drag-down, back-press while the dialog is not open). Cancelling the create-folder dialog does NOT fire `onDismiss` — the sheet stays visible, the dialog just closes.
 - **`modifier: Modifier = Modifier`.** Forwarded to the underlying `WorkspacePickerSheet`; lets consumers attach semantics or test tags. Has no effect when invisible.
 
@@ -107,23 +107,48 @@ If the consumer flips `visible = false` while a `createWorkspaceFolder` coroutin
 
 ## Usage
 
-Consumers add one `Boolean` to their `UiState` and one callback to forward the picked path. The established pattern is a `combine` arm on the ViewModel, mirroring [`DiscussionListViewModel`](./discussion-list-viewmodel.md)'s `pendingPromotion`:
+Consumers add one `Boolean` to their `UiState` and one callback to forward the picked path. The established pattern is a `combine` arm on the ViewModel, mirroring [`DiscussionListViewModel`](./discussion-list-viewmodel.md)'s `pendingPromotion`. [`ChannelListViewModel`](./channel-list-viewmodel.md) (#221) is the first concrete instance:
 
 ```kotlin
-data class UiState(
+// In the UiState (each non-Loading/Error variant):
+data class Loaded(
     /* … other state … */
-    val pendingWorkspacePicker: Boolean = false,
-)
+    val workspacePickerVisible: Boolean = false,
+) : ChannelListUiState
 
-// In the screen composable:
+// In the ViewModel:
+private val pendingWorkspacePicker = MutableStateFlow(false)
+// … combine(upstreams…, pendingWorkspacePicker) { …, pickerVisible -> Loaded(…, workspacePickerVisible = pickerVisible) }
+
+fun onEvent(event: ChannelListEvent) {
+    when (event) {
+        ChannelListEvent.LongPressFab -> pendingWorkspacePicker.value = true
+        is ChannelListEvent.WorkspacePicked -> {
+            pendingWorkspacePicker.value = false   // clear BEFORE the suspend
+            viewModelScope.launch {
+                val c = repository.createDiscussion(workspace = event.workspace)
+                navigationChannel.send(ChannelListNavigation.ToThread(c.id))
+            }
+        }
+        ChannelListEvent.WorkspacePickerDismissed -> pendingWorkspacePicker.value = false
+        // … other arms …
+    }
+}
+
+// In the screen composable, as a sibling of the Scaffold:
 WorkspacePicker(
-    visible = state.pendingWorkspacePicker,
-    onPicked = { path -> viewModel.onEvent(Event.WorkspacePicked(path)) },
-    onDismiss = { viewModel.onEvent(Event.WorkspacePickerDismissed) },
+    visible = pickerVisible,   // derived from an exhaustive when (state)
+    onPicked = { path -> onEvent(ChannelListEvent.WorkspacePicked(path)) },
+    onDismiss = { onEvent(ChannelListEvent.WorkspacePickerDismissed) },
 )
 ```
 
-The host is typically mounted as a sibling of the screen body inside the same `Scaffold` content slot. Mounting it permanently is cheap — when `visible = false` it does no work.
+Two important conventions established by the first consumer (#221) that future consumers should follow:
+
+- **Three event variants** — open (`LongPressFab` / equivalent gesture), confirm-with-payload (`WorkspacePicked(workspace)`), and cancel (`WorkspacePickerDismissed`). The "dismissed without picking" path is distinct from "picked a path" and must NOT trigger the side effect. Same three-variant shape as #78's `PromoteChannelRequested` / `PromoteConfirmed` / `PromoteCancelled`.
+- **Clear the visibility flag *synchronously before* the suspend** in the confirm arm — so the sheet's exit animation starts immediately instead of waiting for the repository call to complete. Same discipline as #78's `confirmPromotion`.
+
+The host is typically mounted as a sibling of the screen's `Scaffold` (not inside the Scaffold's content lambda) so the `ModalBottomSheet`'s window-level scrim doesn't conflate with the body layout. Mounting it permanently is cheap — when `visible = false` it does no work (the public composable's `if (!visible) return` runs *before* the Koin lookup, `remember`, or coroutine scope).
 
 ## Tests
 
@@ -150,16 +175,17 @@ Tests intentionally NOT included:
 
 ## Related
 
-- Ticket notes: [`../codebase/220.md`](../codebase/220.md)
+- Ticket notes: [`../codebase/220.md`](../codebase/220.md), [`../codebase/221.md`](../codebase/221.md) (first consumer — Channel List FAB long-press wires the host into [`ChannelListScreen`](./channel-list-screen.md) + [`ChannelListViewModel`](./channel-list-viewmodel.md))
 - Spec: `docs/specs/architecture/220-workspace-picker-host-composable.md`
 - Parent: split from [#207](https://github.com/pyrycode/pyrycode-mobile/issues/207) (Workspace Picker host); itself split from [#143](https://github.com/pyrycode/pyrycode-mobile/issues/143).
 - Children: [`WorkspacePickerSheet`](./workspace-picker-sheet.md) (#212), [`CreateFolderDialog`](./create-folder-dialog.md) (#213).
 - Upstream data surfaces: [`recentWorkspaces()`](./conversation-repository.md) from [#209](../codebase/209.md), [`createWorkspaceFolder(name)`](./conversation-repository.md) from [#210](../codebase/210.md).
 - Sibling stateful host (different shape — not a composable host, but the same hoisted-`visible: Boolean` UiState convention): [`DiscussionListViewModel`](./discussion-list-viewmodel.md)'s `pendingPromotion`, [`SaveAsChannelDialog`](./channel-list-screen.md) visibility from #142.
-- Downstream / open:
-  - **Channel List FAB long-press (next ticket after #220)** — edits `ChannelListScreen` + `ChannelListViewModel`, contributes a `pendingWorkspacePicker: Boolean` to the screen's `UiState`, routes `onPicked(path)` to a new-discussion seed action.
+- Consumers:
+  - **Channel List FAB long-press (#221 — shipped)** — [`ChannelListScreen`](./channel-list-screen.md) + [`ChannelListViewModel`](./channel-list-viewmodel.md). Long-press emits `LongPressFab`, sets `workspacePickerVisible = true`; `onPicked(path)` runs `repository.createDiscussion(workspace = path)` then navigates to the new thread.
   - **Empty-thread workspace chip ([#137](https://github.com/pyrycode/pyrycode-mobile/issues/137))** — the chip's tap opens this host.
   - **Thread overflow "Change workspace…" ([#208](https://github.com/pyrycode/pyrycode-mobile/issues/208))** — the menu item's tap opens this host.
+- Downstream / open:
   - **Phase 4 error UI** — snackbar / error-state slot for `createWorkspaceFolder` network or server-side failures, landed when the real backend ships.
   - **Animated-close coordination** — a `LaunchedEffect` driving `sheetState.hide()` before `onDismiss` if a future ticket demands the exit-animation completion before the consumer's state flip.
   - **Literal-strings localisation** — out of scope; deferred to the first `strings.xml` pass alongside the children's literals.
