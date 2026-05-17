@@ -155,7 +155,11 @@ private fun PyryNavHost(
                             navController.navigate(Routes.SETTINGS)
                         ChannelListEvent.RecentDiscussionsTapped ->
                             navController.navigate(Routes.DISCUSSION_LIST)
-                        ChannelListEvent.CreateDiscussionTapped ->
+                        ChannelListEvent.CreateDiscussionTapped,
+                        ChannelListEvent.LongPressFab,
+                        is ChannelListEvent.WorkspacePicked,
+                        ChannelListEvent.WorkspacePickerDismissed,
+                        ->
                             vm.onEvent(event)
                     }
                 },

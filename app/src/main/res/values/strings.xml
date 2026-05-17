@@ -2,6 +2,7 @@
     <string name="app_name">Pyrycode Mobile</string>
     <string name="cd_open_settings">Open settings</string>
     <string name="cd_new_discussion">New discussion</string>
+    <string name="cd_long_press_fab_pick_workspace">Pick a workspace for the new discussion</string>
     <string name="channel_list_empty">Tap + to start a conversation</string>
     <string name="discussion_list_title">Recent discussions</string>
     <string name="discussion_list_empty">No discussions yet</string>

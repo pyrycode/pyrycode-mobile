@@ -6,9 +6,9 @@ Package: `de.pyryco.mobile.ui.conversations.list` (`app/src/main/java/de/pyryco/
 
 ## What it does
 
-Observes the persistent-channel slice + the unpromoted-discussions list from the conversation repository, folds them together via `combine`, and exposes the result as a `StateFlow<ChannelListUiState>`. Emits `Loading` initially (before *any* upstream produces a value — `combine` gates first emit on all three sources), then `Empty(recentDiscussions, recentDiscussionsCount, recentDiscussionLastMessages)` or `Loaded(channels, recentDiscussions, recentDiscussionsCount, recentDiscussionLastMessages)` depending on the channels list, and `Error(message)` if any upstream flow throws. Since #69 the Discussions upstream lands as both `recentDiscussions = discussions.take(3)` (the top-3 surface consumed by the inline section's preview rows) and `recentDiscussionsCount = discussions.size` (the total used by the "See all discussions (N) →" link); both values come from a single `combine` emission. Since #161 a third combined input carries `recentDiscussionLastMessages: Map<String, Message>` keyed by recent-discussion id (default `emptyMap()`) — sourced via a per-row `observeLastMessage` subscription derived from the recent slice through `flatMapLatest`.
+Observes the persistent-channel slice + the unpromoted-discussions list from the conversation repository, folds them together via `combine`, and exposes the result as a `StateFlow<ChannelListUiState>`. Emits `Loading` initially (before *any* upstream produces a value — `combine` gates first emit on all four data sources today), then `Empty(recentDiscussions, recentDiscussionsCount, recentDiscussionLastMessages, workspacePickerVisible)` or `Loaded(channels, recentDiscussions, recentDiscussionsCount, recentDiscussionLastMessages, workspacePickerVisible)` depending on the channels list, and `Error(message)` if any upstream flow throws. Since #69 the Discussions upstream lands as both `recentDiscussions = discussions.take(3)` (the top-3 surface consumed by the inline section's preview rows) and `recentDiscussionsCount = discussions.size` (the total used by the "See all discussions (N) →" link); both values come from a single `combine` emission. Since #161 a third combined input carries `recentDiscussionLastMessages: Map<String, Message>` keyed by recent-discussion id (default `emptyMap()`) — sourced via a per-row `observeLastMessage` subscription derived from the recent slice through `flatMapLatest`. Since #221 a fourth combined input — a private `MutableStateFlow<Boolean>` (`pendingWorkspacePicker`) — projects onto a `workspacePickerVisible: Boolean = false` field on `Loaded`/`Empty`; same shape as `DiscussionListViewModel.pendingPromotion` (#78) and the `SaveAsChannelDialog` visibility arm (#142). `Error` and `Loading` do not carry the field — the FAB renders only in `Loaded`/`Empty`, so the picker cannot be reached from those states.
 
-Also exposes a `fun onEvent(event: ChannelListEvent)` reducer (#22) for events whose side effect requires the VM (currently only `CreateDiscussionTapped` — calls `repository.createDiscussion()` and emits a one-shot `ChannelListNavigation.ToThread` event via a `Channel<ChannelListNavigation>(BUFFERED)` surfaced as `val navigationEvents: Flow<ChannelListNavigation>`). The other `ChannelListEvent` variants (`RowTapped`, `SettingsTapped`, `RecentDiscussionsTapped`) are routed to `navController.navigate(...)` directly at the destination block and never enter `onEvent`; the VM's `when` includes a `Unit` arm for them purely for compiler exhaustiveness.
+Also exposes a `fun onEvent(event: ChannelListEvent)` reducer (#22, widened in #221) for events whose side effect requires the VM. Four variants today: `CreateDiscussionTapped` (calls `repository.createDiscussion()` and emits `ChannelListNavigation.ToThread(id)`); `LongPressFab` (flips `pendingWorkspacePicker` to true); `WorkspacePicked(workspace)` (clears the flag *synchronously before* `repository.createDiscussion(workspace = path)`, then emits `ToThread(id)` on the same channel); `WorkspacePickerDismissed` (flips the flag back to false). All four navigation paths ride the same `Channel<ChannelListNavigation>(BUFFERED)` surfaced as `val navigationEvents: Flow<ChannelListNavigation>`. The other `ChannelListEvent` variants (`RowTapped`, `SettingsTapped`, `RecentDiscussionsTapped`) are routed to `navController.navigate(...)` directly at the destination block and never enter `onEvent`; the VM's `when` includes a `Unit` arm for them purely for compiler exhaustiveness.
 
 ## Shape
 
@@ -19,12 +19,14 @@ sealed interface ChannelListUiState {
         val recentDiscussions: List<Conversation>,
         val recentDiscussionsCount: Int,
         val recentDiscussionLastMessages: Map<String, Message> = emptyMap(),
+        val workspacePickerVisible: Boolean = false,           // #221
     ) : ChannelListUiState
     data class Loaded(
         val channels: List<Conversation>,
         val recentDiscussions: List<Conversation>,
         val recentDiscussionsCount: Int,
         val recentDiscussionLastMessages: Map<String, Message> = emptyMap(),
+        val workspacePickerVisible: Boolean = false,           // #221
     ) : ChannelListUiState
     data class Error(val message: String) : ChannelListUiState
 }
@@ -36,6 +38,8 @@ sealed interface ChannelListNavigation {
 class ChannelListViewModel(
     private val repository: ConversationRepository,
 ) : ViewModel() {
+    private val pendingWorkspacePicker = MutableStateFlow(false) // #221
+
     @OptIn(ExperimentalCoroutinesApi::class)
     val state: StateFlow<ChannelListUiState> = run {
         val channelsFlow = repository.observeConversations(ConversationFilter.Channels)
@@ -51,11 +55,26 @@ class ChannelListViewModel(
                 pairs.mapNotNull { (id, msg) -> msg?.let { id to it } }.toMap()
             }
         }
-        combine(channelsFlow, discussionsFlow, lastMessagesFlow) { channels, discussions, lastMessages ->
+        combine(
+            channelsFlow,
+            discussionsFlow,
+            lastMessagesFlow,
+            pendingWorkspacePicker,                            // #221: 4-way combine
+        ) { channels, discussions, lastMessages, pickerVisible ->
             val recent = discussions.take(RECENT_DISCUSSIONS_LIMIT)
             val count = discussions.size
-            if (channels.isEmpty()) ChannelListUiState.Empty(recent, count, lastMessages)
-            else ChannelListUiState.Loaded(channels, recent, count, lastMessages)
+            if (channels.isEmpty()) ChannelListUiState.Empty(
+                recentDiscussions = recent,
+                recentDiscussionsCount = count,
+                recentDiscussionLastMessages = lastMessages,
+                workspacePickerVisible = pickerVisible,
+            ) else ChannelListUiState.Loaded(
+                channels = channels,
+                recentDiscussions = recent,
+                recentDiscussionsCount = count,
+                recentDiscussionLastMessages = lastMessages,
+                workspacePickerVisible = pickerVisible,
+            )
         }
             .catch { e ->
                 val raw = e.message
@@ -79,6 +98,17 @@ class ChannelListViewModel(
                 val conversation = repository.createDiscussion()
                 navigationChannel.send(ChannelListNavigation.ToThread(conversation.id))
             }
+            ChannelListEvent.LongPressFab ->                    // #221
+                pendingWorkspacePicker.value = true
+            is ChannelListEvent.WorkspacePicked -> {           // #221
+                pendingWorkspacePicker.value = false           // clear BEFORE the suspend
+                viewModelScope.launch {
+                    val c = repository.createDiscussion(workspace = event.workspace)
+                    navigationChannel.send(ChannelListNavigation.ToThread(c.id))
+                }
+            }
+            ChannelListEvent.WorkspacePickerDismissed ->        // #221
+                pendingWorkspacePicker.value = false
             is ChannelListEvent.RowTapped,
             ChannelListEvent.SettingsTapped,
             ChannelListEvent.RecentDiscussionsTapped,
@@ -96,6 +126,8 @@ class ChannelListViewModel(
 `recentDiscussions` is bounded at `RECENT_DISCUSSIONS_LIMIT = 3` (the count of preview rows the section can host). `recentDiscussionsCount` is the full (uncapped) `discussions.size` — what the See-all label renders. Behavioural invariant: `recentDiscussions.size <= 3`, `recentDiscussions.size <= recentDiscussionsCount`, and when `recentDiscussionsCount == 0` both fields are empty/zero (so the section's "render only when non-empty" predicate is `recentDiscussions.isEmpty()`).
 
 `recentDiscussionLastMessages` (#161) is a parallel map keyed by the conversation id of an entry in `recentDiscussions`. **Absent key = no last message for that conversation** — `null` is filtered out via `mapNotNull` in the projection, so call sites that read `state.recentDiscussionLastMessages[conversation.id]` get unambiguous `Message?` semantics by construction (no `null`-vs-missing ambiguity). The default value `= emptyMap()` on both `Empty` and `Loaded` is load-bearing: it lets every existing `Empty(...)` / `Loaded(...)` construction site (previews, screen tests, VM tests, future callers) omit the new argument without a 14-site mechanical cascade. Architect picked the parallel-map shape over a composite `RecentDiscussion(conversation, lastMessage)` because the AC explicitly forbids consumer-signature changes — `RecentDiscussionsSection(discussions: List<Conversation>, …)` stays as-is; sibling #162 reads per-row from the map without touching `recentDiscussions`. Map invariant: `recentDiscussionLastMessages.keys ⊆ recentDiscussions.map { it.id }` (the `flatMapLatest` over `recentIdsFlow` guarantees no stale entries leak through when the recent slice shifts).
+
+`workspacePickerVisible: Boolean = false` (#221) is the [`WorkspacePicker`](./workspace-picker.md) host's hoisted `visible` prop, projected from the private `pendingWorkspacePicker: MutableStateFlow<Boolean>`. Bare `Boolean`, not a nullable-payload wrapper like #78's `pendingPromotion: PendingPromotion?` — the picker is a one-off "create a discussion" trigger from the FAB with no per-target payload (no "which discussion are we promoting" equivalent). Default `= false` on both `Empty` and `Loaded` preserves the existing 26 construction sites (previews, screen tests, VM tests, the VM's own combine body); same affordance pattern as #161's `recentDiscussionLastMessages` widening. `Error` and `Loading` do not carry the field — the FAB renders only in `Loaded`/`Empty` (see [`ChannelListScreen.kt:100`](./channel-list-screen.md)), so the picker can only be reached from those states; collapsing to `Error` mid-pick removes the field entirely from the state stream, but the VM's internal `pendingWorkspacePicker.value` retains its prior `true` and the projection re-applies it whenever a legitimate `Loaded`/`Empty` emission lands again.
 
 `ChannelListUiState` and `ChannelListNavigation` are top-level (siblings of the VM), not nested inside the VM — call sites import `ChannelListUiState.Loaded` / `ChannelListNavigation.ToThread` directly rather than `ChannelListViewModel.UiState.Loaded`. The screen-name prefix carries enough disambiguation.
 
@@ -124,16 +156,20 @@ discussionsFlow ──┬─► recentIdsFlow = discussions.take(3).map(::id).di
                   │           │
                   └───────────┤
                               │
-   combine(channels, discussions, lastMessages) ──► derive ─┬─ recent = discussions.take(3)
-                                                            ├─ count  = discussions.size
-                                                            └─ lastMessages (as-is)
-                                                  ──► Empty(recent, count, lastMessages)       (channels.isEmpty())
-                                                  └─► Loaded(ch, recent, count, lastMessages)  (otherwise)
+pendingWorkspacePicker ───────┤   (private MutableStateFlow<Boolean>, #221)
+                              │
+   combine(channels, discussions, lastMessages, pickerVisible)
+                              ──► derive ─┬─ recent = discussions.take(3)
+                                          ├─ count  = discussions.size
+                                          ├─ lastMessages (as-is)
+                                          └─ pickerVisible (as-is)
+                              ──► Empty(recent, count, lastMessages, pickerVisible)   (channels.isEmpty())
+                              └─► Loaded(ch, recent, count, lastMessages, pickerVisible)
                  ─── catch ─► Error(message)
                  ─── stateIn ─► initial = Loading
 ```
 
-`combine` (#26) replaced the single-flow `map` shape; #161 widened the combine arity from 2 to 3 by adding `lastMessagesFlow` (derived from `discussionsFlow`, not from `ConversationRepository` directly). The three upstreams are independent subscriptions on the same `ConversationRepository`; all are cold flows, all inherit the `WhileSubscribed(5_000)` shared lifetime. `combine` waits for *every* side to emit before the first downstream emission — this is what keeps the `Loading` initial frame observable until the data layer has fully answered (see "Edge cases / limitations"). `.catch { }` sits between `combine { }` and `.stateIn(...)` because `stateIn` is a terminal operator (returns `StateFlow`, not `Flow`) — `.catch` after it doesn't compile. One `catch` block covers all three upstream throwables; a throw on *any* side (channels, discussions, or any per-row `observeLastMessage`) collapses the whole pipeline to `Error`.
+`combine` (#26) replaced the single-flow `map` shape; #161 widened the combine arity from 2 to 3 by adding `lastMessagesFlow` (derived from `discussionsFlow`, not from `ConversationRepository` directly); #221 widened it again from 3 to 4 by adding `pendingWorkspacePicker` (a private `MutableStateFlow<Boolean>` written only by the VM's `onEvent` handler). The four upstreams are independent subscriptions; the three repository-backed ones are cold flows inheriting the `WhileSubscribed(5_000)` shared lifetime, and `pendingWorkspacePicker` is a hot `MutableStateFlow` whose lifetime is the VM's. The 4-arity `combine` overload ships with kotlinx-coroutines (up to 5 args). `combine` waits for *every* side to emit before the first downstream emission — `pendingWorkspacePicker` has an initial value (`false`) so combine doesn't suspend on it; the `Loading` initial frame remains observable until the three data flows produce their first values (same loading semantics as #161). `.catch { }` sits between `combine { }` and `.stateIn(...)` because `stateIn` is a terminal operator (returns `StateFlow`, not `Flow`) — `.catch` after it doesn't compile. One `catch` block covers all three repository-backed throwable sources; a throw on *any* of them (channels, discussions, or any per-row `observeLastMessage`) collapses the whole pipeline to `Error`. `pendingWorkspacePicker` cannot throw (it's a `MutableStateFlow` with no upstream).
 
 #69 collapsed the previous `.map { it.size }` projection on the discussions flow: both `recent` and `count` now derive from a single emission inside the `combine` body. Re-introducing a `.map` would force either a third upstream subscription (two collections of the same cold flow, two `WhileSubscribed` lifetimes) or a `combine`-of-`combine`. Single-emission `combine` body → multiple derived values is the right shape; reach for the un-mapped form whenever a second derived value lands.
 
@@ -167,9 +203,14 @@ Message extraction: `e.message` verbatim when non-null and non-blank, else the l
 
 Consumer is `MainActivity`'s `composable(Routes.CHANNEL_LIST)` block, which runs `LaunchedEffect(vm) { vm.navigationEvents.collect { … } }` to translate `ChannelListNavigation.ToThread` into `navController.navigate("conversation_thread/${event.conversationId}")`. The `vm` key restarts the collector exactly when the VM identity changes (per `NavBackStackEntry` scope). Cancellation is atomic with the launching coroutine: if the user navigates away mid-`createDiscussion`, `viewModelScope` cancels both the suspend and the pending `send`.
 
-### `onEvent` reducer (#22)
+### `onEvent` reducer (#22, widened in #221)
 
-Single dispatched arm: `CreateDiscussionTapped -> viewModelScope.launch { … }`. Calls `repository.createDiscussion()` with no argument (workspace defaults to `null`), then `navigationChannel.send(ToThread(conversation.id))`. No `try/catch` — the fake never throws; speculative defense forbidden by project principles. Phase 4's `RemoteConversationRepository` adds the catch and the error UI together.
+Four dispatched arms today:
+
+- **`CreateDiscussionTapped -> viewModelScope.launch { … }`** (#22). Calls `repository.createDiscussion()` with no argument (workspace defaults to `null`), then `navigationChannel.send(ToThread(conversation.id))`. No `try/catch` — the fake never throws; speculative defense forbidden by project principles. Phase 4's `RemoteConversationRepository` adds the catch and the error UI together.
+- **`LongPressFab -> pendingWorkspacePicker.value = true`** (#221). One line; flips the visibility flag, the combine projects, the screen re-renders with `workspacePickerVisible = true`, the host opens its sheet.
+- **`is WorkspacePicked -> { pendingWorkspacePicker.value = false; viewModelScope.launch { … } }`** (#221). Same shape as `CreateDiscussionTapped` but with `repository.createDiscussion(workspace = event.workspace)` instead of the no-arg default, and with the **synchronous flag-clear before the suspend**. Two reasons for clearing first: (a) the sheet's exit animation starts immediately as `workspacePickerVisible` flips false, instead of waiting for `createDiscussion` to complete (visibly laggy on a Phase 4 backend); (b) a hypothetical second `onPicked` invocation from a not-yet-dismissed sheet cannot launch a second `createDiscussion` because the host's sheet has already been told to dismiss. Same discipline as #78's `confirmPromotion` arm.
+- **`WorkspacePickerDismissed -> pendingWorkspacePicker.value = false`** (#221). One line; the host's `onDismiss` callback fires when the user dismisses the sheet (close icon, scrim tap, drag-down, back-press), the screen forwards to this arm, the flag flips, the projection emits, the host re-composes with `visible = false`, the `ModalBottomSheet` runs its exit animation as it leaves composition.
 
 The `is RowTapped, SettingsTapped, RecentDiscussionsTapped -> Unit` arm exists for compiler exhaustiveness; `MainActivity` never forwards those into `onEvent`, but if the dispatch convention shifts later the VM tolerates them defensively (no-op). `RecentDiscussionsTapped` joined the arm in #26 — same rationale (pure navigation, no VM-side side effect).
 
@@ -199,7 +240,7 @@ val state by vm.state.collectAsStateWithLifecycle()
 
 ## Testing
 
-`app/src/test/java/de/pyryco/mobile/ui/conversations/list/ChannelListViewModelTest.kt`. JUnit 4, matching the existing test-class style. Seventeen tests (six existing reshaped + two added in #69 to pin the `recentDiscussions` surface + one added in #161 to pin the `recentDiscussionLastMessages` end-to-end path through the real fake):
+`app/src/test/java/de/pyryco/mobile/ui/conversations/list/ChannelListViewModelTest.kt`. JUnit 4, matching the existing test-class style. Nineteen tests (six existing reshaped + two added in #69 to pin the `recentDiscussions` surface + one added in #161 to pin the `recentDiscussionLastMessages` end-to-end path through the real fake + two added in #221 to pin the `LongPressFab` flag-flip and the `WorkspacePicked` create-discussion-with-workspace + navigation + visibility-clear path):
 
 1. `initialState_isLoading` — reads `vm.state.value` before any subscriber attaches; relies on `stateIn`'s `initialValue` being immediately visible without a hot collector.
 2. `loaded_whenSourceEmitsNonEmpty` — launched collector, channels source emits `listOf(sampleChannel)`, asserts `Loaded(listOf(sampleChannel), recentDiscussions = emptyList(), recentDiscussionsCount = 0)` (#69 widened the assertion).
@@ -217,6 +258,8 @@ val state by vm.state.collectAsStateWithLifecycle()
 14. `createDiscussionTapped_createsOneUnpromotedConversation` (#22) — uses `FakeConversationRepository()` directly; snapshots `observeConversations(Discussions).first()` before and after `vm.onEvent(CreateDiscussionTapped)`; asserts the new list size increased by one and the new element has `isPromoted == false`.
 15. `createDiscussionTapped_emitsToThreadNavigationWithCreatedId` (#22) — launches an `async { vm.navigationEvents.first() }` *before* the triggering `onEvent` call so the collector is attached when the channel sends; `advanceUntilIdle()`; asserts the captured event is `ChannelListNavigation.ToThread` whose `conversationId` equals the id of the newly-created discussion (looked up via the diff between pre- and post-snapshots).
 16. `recentDiscussionLastMessages_populatedFromFake_endToEnd` (#161) — drives the real `FakeConversationRepository` through the real VM (no stub). Constructs `ChannelListViewModel(FakeConversationRepository())`, launches a collector, `advanceUntilIdle()`, asserts the resulting state is `Loaded`, then asserts `loaded.recentDiscussionLastMessages["seed-discussion-a"]` is non-null with `timestamp == Instant.parse("2026-05-11T14:00:00Z")` (the AC's "last message present" case) and `"seed-discussion-b" !in loaded.recentDiscussionLastMessages` (the "no messages → absent from the map" case, not "present with null value"). The single test covers both AC clauses through the real fake — the data-shape edits (`observeLastMessage` projection + `seed-discussion-a` history + `recentDiscussionLastMessages` field + `flatMapLatest` derivation) are all exercised on the integration path, not just at unit boundaries.
+17. `longPressFab_setsWorkspacePickerVisibleToTrue` (#221) — `stubRepo(channels, discussions)` with `MutableSharedFlow`s drives a `Loaded` projection (one channel, zero discussions). Launches `vm.state.collect { }` to keep `WhileSubscribed` hot, calls `vm.onEvent(LongPressFab)`, `advanceUntilIdle()`, asserts `(state.value as Loaded).workspacePickerVisible == true`. Stub-shaped (not the real fake) because `LongPressFab` does no repository work — the stub keeps the test focused on the flag-flip + combine-arm projection.
+18. `workspacePicked_createsDiscussionWithPickedWorkspace_emitsNavigation_andClearsVisibility` (#221) — `FakeConversationRepository()` (production fake; we need `createDiscussion` to actually run). Snapshots `observeConversations(Discussions).first()` as `before`. Launches `vm.state.collect { }`, pre-arranges `vm.onEvent(LongPressFab)` so the clear-visibility assertion is meaningful, then `val deferredEvent = async { vm.navigationEvents.first() }`; `vm.onEvent(WorkspacePicked("pyry-workspace/my-folder"))`; `advanceUntilIdle()`. Asserts: (a) the new discussion (computed as `(after - before)` and looked up by id) has `cwd == "pyry-workspace/my-folder"` (the fake sets `cwd = workspace ?: ""` at `FakeConversationRepository.kt:108`); (b) `deferredEvent.await()` is `ToThread(created.id)`; (c) `(state.value as Loaded).workspacePickerVisible == false`. End-to-end coverage of the four invariants the `WorkspacePicked` arm has to maintain.
 
 Test infrastructure conventions established here (carry forward to future ViewModel tests):
 
@@ -230,7 +273,8 @@ Test infrastructure conventions established here (carry forward to future ViewMo
 
 - **`Loading` is observable only because the test uses `replay = 0`.** The actual `FakeConversationRepository` projects synchronously from a populated `MutableStateFlow`, so production runtime never observes a real `Loading` frame — the seed records arrive in the same dispatch turn that `stateIn` emits the `initialValue`. The screen will still see `Loading` initially because `collectAsStateWithLifecycle()` snapshots `state.value` at composition time before the next emission lands; the architectural commitment to a `Loading` variant remains correct for the Phase 4 remote impl, where the round-trip is observably non-zero.
 - **No `init { }` block, no `refresh()`, no `retry()` method.** Cold-flow re-collection on resubscription is the existing retry surface. Explicit retry lands with the UI control that needs it.
-- **`onEvent` is opt-in per variant.** `CreateDiscussionTapped` (#22) is the only variant the VM consumes today; `RowTapped` / `SettingsTapped` route at the destination because they have no VM-side side effect. The decision rule: events with no VM-side side effect stay routed at the destination; events that need a suspend or VM state mutation forward into `onEvent`. Don't preemptively funnel every event through the VM "for consistency".
+- **`onEvent` is opt-in per variant.** Four variants the VM consumes today: `CreateDiscussionTapped` (#22), `LongPressFab` / `WorkspacePicked` / `WorkspacePickerDismissed` (#221). `RowTapped` / `SettingsTapped` / `RecentDiscussionsTapped` route at the destination because they have no VM-side side effect. The decision rule: events with no VM-side side effect stay routed at the destination; events that need a suspend or VM state mutation forward into `onEvent`. Don't preemptively funnel every event through the VM "for consistency".
+- **`pendingWorkspacePicker.value` survives across an `Error` transition** (#221). If a flow throws while the picker is open, `combine` collapses to `Error` (no `workspacePickerVisible` field on that variant); the VM's internal `pendingWorkspacePicker.value` retains `true` but is unobservable. When upstream recovers (`Loaded` emits again), the projection reads the retained value and the picker reappears. Acceptable Phase 0 behaviour. If `Error` becomes a routine transient state and auto-reappearance reads as surprising, fix with a `LaunchedEffect(state is Error) { pendingWorkspacePicker.value = false }` — not a projection-shape redesign.
 - **One-shot navigation is `Channel`-backed, not `StateFlow<Navigation?>`.** `MutableSharedFlow` was considered and rejected: replay-1 would re-fire on rotation, replay-0 would drop in-flight taps. `Channel(BUFFERED)` + `receiveAsFlow()` is the right shape — survives the recomposition window between tap and consume, cancels atomically with `viewModelScope`.
 - **Two rapid FAB taps create two discussions.** No debounce / single-flight on `CreateDiscussionTapped`. AC reads "single tap creates exactly one new discussion" — per-tap, not "duplicate-prevent". The fake's `createDiscussion` is fast; if real-world races appear they get their own ticket.
 - **No `flowOn(Dispatchers.IO)`.** Upstream `observeConversations` inherits the collector's dispatcher (`Dispatchers.Main.immediate` from `viewModelScope`). The fake's projection is pure CPU map manipulation; Phase 4's remote impl decides its own dispatcher internally. The VM stays dispatcher-agnostic.
@@ -238,7 +282,8 @@ Test infrastructure conventions established here (carry forward to future ViewMo
 
 ## Related
 
-- Ticket notes: [`../codebase/45.md`](../codebase/45.md), [`../codebase/22.md`](../codebase/22.md) (FAB → `onEvent` reducer + one-shot nav channel), [`../codebase/26.md`](../codebase/26.md) (`combine` of Channels + Discussions flows, widened `Loaded` / `Empty` to carry `recentDiscussionsCount`, `RecentDiscussionsTapped` event, `stubRepo` helper reshape), [`../codebase/69.md`](../codebase/69.md) (widened `Loaded` / `Empty` with `recentDiscussions: List<Conversation>`; collapsed the `.map { it.size }` projection into a single `combine` emission; two new tests pin `.take(3)` slicing and upstream-ordering contract), [`../codebase/161.md`](../codebase/161.md) (third combined input `lastMessagesFlow` derived via `flatMapLatest(distinctUntilChanged(recentIdsFlow))` + per-row `observeLastMessage` `combine`; `recentDiscussionLastMessages: Map<String, Message> = emptyMap()` default-arg affordance lets every existing construction site stay untouched)
-- Specs: `docs/specs/architecture/45-channel-list-viewmodel-uistate-data-path.md`, `docs/specs/architecture/22-channel-list-fab-new-discussion.md`, `docs/specs/architecture/26-recent-discussions-pill.md`, `docs/specs/architecture/69-channel-list-recent-discussions-section.md`, `docs/specs/architecture/161-recent-discussion-last-message-uistate.md`
-- Upstream: [Conversation repository](./conversation-repository.md) (data-layer seam — `createDiscussion(workspace = null)` is the call the `onEvent` reducer makes; `observeConversations(Discussions)` is the second subscription added in #26 and the same emission #69 re-uses for both `recent` and `count`; `observeLastMessage(id)` from #161 is the per-row subscription the `flatMapLatest` derivation rides), [data model](./data-model.md) (`Conversation` payload, `Message` payload for `recentDiscussionLastMessages`), [dependency injection](./dependency-injection.md) (Koin wiring)
-- Downstream: [ChannelListScreen](channel-list-screen.md) (#46 — first UI consumer; introduced `ChannelListEvent`, `collectAsStateWithLifecycle()`, and the screen-level loading/empty/error/loaded composables; #22 added the FAB and `LaunchedEffect(vm) { vm.navigationEvents.collect { … } }` at the destination; #26 added the pill and consumed `recentDiscussionsCount` off `UiState`; #69 replaced the pill with the inline section and now consumes both `recentDiscussions` and `recentDiscussionsCount`; #161 added the third UiState field but no UI consumer — sibling #162 is the consumer slice that reads `state.recentDiscussionLastMessages[conversation.id]` inside `RecentDiscussionsSection`), follow-up Retry ticket (adds `ChannelListEvent.RetryClicked` + reducer arm), Phase 4 (`ConversationRepositoryImpl` replaces `FakeConversationRepository` behind the same `bind ConversationRepository::class`; adds error handling around `createDiscussion()` and the loading affordance deferred in #22).
+- Ticket notes: [`../codebase/45.md`](../codebase/45.md), [`../codebase/22.md`](../codebase/22.md) (FAB → `onEvent` reducer + one-shot nav channel), [`../codebase/26.md`](../codebase/26.md) (`combine` of Channels + Discussions flows, widened `Loaded` / `Empty` to carry `recentDiscussionsCount`, `RecentDiscussionsTapped` event, `stubRepo` helper reshape), [`../codebase/69.md`](../codebase/69.md) (widened `Loaded` / `Empty` with `recentDiscussions: List<Conversation>`; collapsed the `.map { it.size }` projection into a single `combine` emission; two new tests pin `.take(3)` slicing and upstream-ordering contract), [`../codebase/161.md`](../codebase/161.md) (third combined input `lastMessagesFlow` derived via `flatMapLatest(distinctUntilChanged(recentIdsFlow))` + per-row `observeLastMessage` `combine`; `recentDiscussionLastMessages: Map<String, Message> = emptyMap()` default-arg affordance lets every existing construction site stay untouched), [`../codebase/221.md`](../codebase/221.md) (fourth combined input `pendingWorkspacePicker: MutableStateFlow<Boolean>` projects onto `workspacePickerVisible: Boolean = false` on `Loaded`/`Empty`; three new `onEvent` arms for `LongPressFab` / `WorkspacePicked(workspace)` / `WorkspacePickerDismissed`; `WorkspacePicked` clears the flag *synchronously before* the suspend launches — same shape as #78's `confirmPromotion`)
+- Specs: `docs/specs/architecture/45-channel-list-viewmodel-uistate-data-path.md`, `docs/specs/architecture/22-channel-list-fab-new-discussion.md`, `docs/specs/architecture/26-recent-discussions-pill.md`, `docs/specs/architecture/69-channel-list-recent-discussions-section.md`, `docs/specs/architecture/161-recent-discussion-last-message-uistate.md`, `docs/specs/architecture/221-channel-list-fab-long-press-workspace-picker.md`
+- Upstream: [Conversation repository](./conversation-repository.md) (data-layer seam — `createDiscussion(workspace = null)` is the call the `onEvent` reducer makes; `createDiscussion(workspace = path)` is the #221 call from the `WorkspacePicked` arm; `observeConversations(Discussions)` is the second subscription added in #26 and the same emission #69 re-uses for both `recent` and `count`; `observeLastMessage(id)` from #161 is the per-row subscription the `flatMapLatest` derivation rides), [data model](./data-model.md) (`Conversation` payload, `Message` payload for `recentDiscussionLastMessages`), [dependency injection](./dependency-injection.md) (Koin wiring)
+- Sibling combine-arm pattern: [DiscussionListViewModel](./discussion-list-viewmodel.md) `pendingPromotion` (#78) — the first instance of `combine(upstream, MutableStateFlow<…>)` visibility arm; this VM's `pendingWorkspacePicker` (#221) is the second. The `SaveAsChannelDialog` visibility arm (#142) is the third in the codebase.
+- Downstream: [ChannelListScreen](channel-list-screen.md) (#46 — first UI consumer; introduced `ChannelListEvent`, `collectAsStateWithLifecycle()`, and the screen-level loading/empty/error/loaded composables; #22 added the FAB and `LaunchedEffect(vm) { vm.navigationEvents.collect { … } }` at the destination; #26 added the pill and consumed `recentDiscussionsCount` off `UiState`; #69 replaced the pill with the inline section and now consumes both `recentDiscussions` and `recentDiscussionsCount`; #161 added the third UiState field but no UI consumer — sibling #162 is the consumer slice that reads `state.recentDiscussionLastMessages[conversation.id]` inside `RecentDiscussionsSection`; #221 consumes the new `workspacePickerVisible` field via a `WorkspacePicker` host composed as a Scaffold sibling), [WorkspacePicker](./workspace-picker.md) (the host the VM's `workspacePickerVisible` field drives), follow-up Retry ticket (adds `ChannelListEvent.RetryClicked` + reducer arm), Phase 4 (`ConversationRepositoryImpl` replaces `FakeConversationRepository` behind the same `bind ConversationRepository::class`; adds error handling around both no-arg and workspace-arg `createDiscussion` calls + the loading affordance deferred in #22 / #221).

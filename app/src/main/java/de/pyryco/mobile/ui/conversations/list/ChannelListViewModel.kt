@@ -9,6 +9,7 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
@@ -28,6 +29,7 @@ sealed interface ChannelListUiState {
         val recentDiscussions: List<Conversation>,
         val recentDiscussionsCount: Int,
         val recentDiscussionLastMessages: Map<String, Message> = emptyMap(),
+        val workspacePickerVisible: Boolean = false,
     ) : ChannelListUiState
 
     data class Loaded(
@@ -35,6 +37,7 @@ sealed interface ChannelListUiState {
         val recentDiscussions: List<Conversation>,
         val recentDiscussionsCount: Int,
         val recentDiscussionLastMessages: Map<String, Message> = emptyMap(),
+        val workspacePickerVisible: Boolean = false,
     ) : ChannelListUiState
 
     data class Error(
@@ -51,6 +54,8 @@ sealed interface ChannelListNavigation {
 class ChannelListViewModel(
     private val repository: ConversationRepository,
 ) : ViewModel() {
+    private val pendingWorkspacePicker = MutableStateFlow(false)
+
     @OptIn(ExperimentalCoroutinesApi::class)
     val state: StateFlow<ChannelListUiState> =
         run {
@@ -80,7 +85,8 @@ class ChannelListViewModel(
                 channelsFlow,
                 discussionsFlow,
                 lastMessagesFlow,
-            ) { channels, discussions, lastMessages ->
+                pendingWorkspacePicker,
+            ) { channels, discussions, lastMessages, pickerVisible ->
                 val recent = discussions.take(RECENT_DISCUSSIONS_LIMIT)
                 val count = discussions.size
                 if (channels.isEmpty()) {
@@ -88,6 +94,7 @@ class ChannelListViewModel(
                         recentDiscussions = recent,
                         recentDiscussionsCount = count,
                         recentDiscussionLastMessages = lastMessages,
+                        workspacePickerVisible = pickerVisible,
                     )
                 } else {
                     ChannelListUiState.Loaded(
@@ -95,6 +102,7 @@ class ChannelListViewModel(
                         recentDiscussions = recent,
                         recentDiscussionsCount = count,
                         recentDiscussionLastMessages = lastMessages,
+                        workspacePickerVisible = pickerVisible,
                     )
                 }
             }.catch { e ->
@@ -121,6 +129,17 @@ class ChannelListViewModel(
                     val conversation = repository.createDiscussion()
                     navigationChannel.send(ChannelListNavigation.ToThread(conversation.id))
                 }
+            ChannelListEvent.LongPressFab ->
+                pendingWorkspacePicker.value = true
+            is ChannelListEvent.WorkspacePicked -> {
+                pendingWorkspacePicker.value = false
+                viewModelScope.launch {
+                    val conversation = repository.createDiscussion(workspace = event.workspace)
+                    navigationChannel.send(ChannelListNavigation.ToThread(conversation.id))
+                }
+            }
+            ChannelListEvent.WorkspacePickerDismissed ->
+                pendingWorkspacePicker.value = false
             is ChannelListEvent.RowTapped,
             ChannelListEvent.SettingsTapped,
             ChannelListEvent.RecentDiscussionsTapped,
