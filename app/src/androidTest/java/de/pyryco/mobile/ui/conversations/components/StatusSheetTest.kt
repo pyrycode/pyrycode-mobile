@@ -271,4 +271,75 @@ class StatusSheetTest {
 
         assertEquals(listOf(false), toggles)
     }
+
+    @Test
+    fun renders_context_window_section_with_header_label_and_caption() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                StatusSheetContent(
+                    selectedModel = Model.OPUS_4_7,
+                    onModelSelected = {},
+                    selectedEffort = Effort.HIGH,
+                    onEffortSelected = {},
+                    yoloEnabled = false,
+                    onYoloToggled = {},
+                    onDismiss = {},
+                    tokenPercent = 73,
+                    tokensUsed = 146_000,
+                    tokensTotal = 200_000,
+                )
+            }
+        }
+
+        composeTestRule.onNode(hasText("Context window")).assertIsDisplayed()
+        composeTestRule.onNode(hasText("73% used (146K of 200K tokens)")).assertIsDisplayed()
+        composeTestRule
+            .onNode(
+                hasText(
+                    "When full, oldest messages get dropped from claude's view " +
+                        "(delimiter still shows; old messages stay in your scroll).",
+                ),
+            ).assertIsDisplayed()
+    }
+
+    @Test
+    fun label_format_uses_integer_K_division() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                StatusSheetContent(
+                    selectedModel = Model.OPUS_4_7,
+                    onModelSelected = {},
+                    selectedEffort = Effort.HIGH,
+                    onEffortSelected = {},
+                    yoloEnabled = false,
+                    onYoloToggled = {},
+                    onDismiss = {},
+                    tokenPercent = 5,
+                    tokensUsed = 12_345,
+                    tokensTotal = 200_000,
+                )
+            }
+        }
+
+        composeTestRule.onNode(hasText("5% used (12K of 200K tokens)")).assertIsDisplayed()
+    }
+
+    @Test
+    fun label_format_handles_zero_values_gracefully() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                StatusSheetContent(
+                    selectedModel = Model.OPUS_4_7,
+                    onModelSelected = {},
+                    selectedEffort = Effort.HIGH,
+                    onEffortSelected = {},
+                    yoloEnabled = false,
+                    onYoloToggled = {},
+                    onDismiss = {},
+                )
+            }
+        }
+
+        composeTestRule.onNode(hasText("0% used (0K of 0K tokens)")).assertIsDisplayed()
+    }
 }

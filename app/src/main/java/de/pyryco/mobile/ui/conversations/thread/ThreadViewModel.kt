@@ -64,6 +64,8 @@ data class ThreadUiState(
     val selectedEffort: Effort = Effort.HIGH,
     val yoloEnabled: Boolean = false,
     val tokenPercent: Int = 0,
+    val tokensUsed: Int = 0,
+    val tokensTotal: Int = 0,
 )
 
 data class SaveAsChannelDialogState(
@@ -132,6 +134,8 @@ class ThreadViewModel(
                 selectedEffort = runConfig.effort,
                 yoloEnabled = runConfig.yoloEnabled,
                 tokenPercent = STUB_TOKEN_PERCENT,
+                tokensUsed = STUB_TOKENS_USED,
+                tokensTotal = STUB_TOKENS_TOTAL,
             )
         }.stateIn(
             scope = viewModelScope,
@@ -239,6 +243,8 @@ class ThreadViewModel(
     companion object {
         // Phase 4 swap point: replace with backend AgentStatus flow.
         private const val STUB_TOKEN_PERCENT = 73
+        private const val STUB_TOKENS_USED = 146_000
+        private const val STUB_TOKENS_TOTAL = 200_000
     }
 }
 
