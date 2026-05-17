@@ -10,7 +10,11 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.tooling.preview.Preview
@@ -19,6 +23,7 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
+import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.preferences.label
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -26,6 +31,7 @@ import de.pyryco.mobile.ui.conversations.components.ConnectionBanner
 import de.pyryco.mobile.ui.conversations.components.EmptyThreadState
 import de.pyryco.mobile.ui.conversations.components.MessageBubble
 import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
+import de.pyryco.mobile.ui.conversations.components.StatusSheet
 import de.pyryco.mobile.ui.conversations.components.WorkspaceChip
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -44,11 +50,12 @@ fun ThreadScreen(
     modifier: Modifier = Modifier,
     onTitleClick: () -> Unit = {},
     onOverflowClick: () -> Unit = {},
-    onExpandClick: () -> Unit = {},
+    onModelSelected: (Model) -> Unit = {},
     onWorkspaceChipTapped: () -> Unit = {},
     onWorkspacePicked: (String) -> Unit = {},
     onWorkspacePickerDismissed: () -> Unit = {},
 ) {
+    var sheetVisible by rememberSaveable { mutableStateOf(false) }
     Scaffold(
         modifier = modifier,
         topBar = {
@@ -65,7 +72,7 @@ fun ThreadScreen(
                     model = state.selectedModel.label(),
                     effort = state.effort,
                     tokenPercent = state.tokenPercent,
-                    onExpandClick = onExpandClick,
+                    onExpandClick = { sheetVisible = true },
                 )
                 ThreadInputBar(onSend = onSendMessage)
             }
@@ -141,6 +148,16 @@ fun ThreadScreen(
         onPicked = onWorkspacePicked,
         onDismiss = onWorkspacePickerDismissed,
     )
+    if (sheetVisible) {
+        StatusSheet(
+            selectedModel = state.selectedModel,
+            onModelSelected = { model ->
+                onModelSelected(model)
+                sheetVisible = false
+            },
+            onDismiss = { sheetVisible = false },
+        )
+    }
 }
 
 internal fun mostRecentSessionBoundaryIndex(items: List<ThreadItem>): Int = items.indexOfLast { it is ThreadItem.SessionBoundary }
