@@ -1,6 +1,6 @@
 # Thread status row
 
-Always-visible single-row status surface at the bottom of [`ThreadScreen`](thread-screen.md), stacked above the [`ThreadInputBar`](thread-input-bar.md) inside the same `Scaffold.bottomBar` slot. Landed in [#145](../codebase/145.md). Shows `Model · effort · NN% used ▴` with threshold-driven coloring on the trailing `NN% used` segment; tapping anywhere on the row invokes a hoisted `onExpandClick` callback. The Status Sheet that this row taps into lives in [#146](https://github.com/pyrycode/pyrycode-mobile/issues/146) — until that lands, `MainActivity` binds `onExpandClick = {}`.
+Always-visible single-row status surface at the bottom of [`ThreadScreen`](thread-screen.md), stacked above the [`ThreadInputBar`](thread-input-bar.md) inside the same `Scaffold.bottomBar` slot. Landed in [#145](../codebase/145.md). Shows `Model · effort · NN% used ▴` with threshold-driven coloring on the trailing `NN% used` segment; tapping anywhere on the row invokes a hoisted `onExpandClick` callback. Post-[#254](../codebase/254.md) the row's `onExpandClick` is bound by `ThreadScreen` to a screen-internal `{ sheetVisible = true }` lambda that opens the [`StatusSheet`](status-sheet.md) — the public `onExpandClick: () -> Unit` parameter on `ThreadScreen` was deleted at the same time (no remaining external consumer; the four previews never passed it).
 
 Package: `de.pyryco.mobile.ui.conversations.thread` (`app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadStatusRow.kt`). Figma reference: subframe [`16:58`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-58) of the [thread screen node](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8).
 
@@ -111,29 +111,35 @@ The 14.dp size was tuned to read at the same baseline as the 12.sp text without 
 bottomBar = {
     Column(modifier = Modifier.fillMaxWidth()) {
         ThreadStatusRow(
-            model = state.selectedModel.label(),   // String → enum-derived in #253
+            model = state.selectedModel.label(),       // String → enum-derived in #253
             effort = state.effort,
             tokenPercent = state.tokenPercent,
-            onExpandClick = onExpandClick,
+            onExpandClick = { sheetVisible = true },   // wired internally in #254
         )
         ThreadInputBar(onSend = onSendMessage)
     }
 },
 ```
 
-Pre-#145 the `bottomBar` slot held only `ThreadInputBar(onSend = onSendMessage)`. Post-#145 a `Column` wraps both children inside the same `bottomBar` slot. Post-[#253](../codebase/253.md) the `model =` argument is sourced from the typed `state.selectedModel: Model` via a new [`Model.label()`](app-preferences.md#design-decision-defer-label-extensions-on-data-layer-enums) extension at `data/preferences/Model.kt` — the row's own `model: String` parameter is unchanged. Crucially, `Modifier.imePadding()` already lives **inside** `ThreadInputBar` on its own outer `Column` (since [#188](../codebase/188.md)), not on the `Scaffold` bottomBar — so only the input bar lifts when the soft keyboard opens, and the status row stays visually anchored above it. No new `imePadding` is added on the outer wrapper.
+Pre-#145 the `bottomBar` slot held only `ThreadInputBar(onSend = onSendMessage)`. Post-#145 a `Column` wraps both children inside the same `bottomBar` slot. Post-[#253](../codebase/253.md) the `model =` argument is sourced from the typed `state.selectedModel: Model` via a new [`Model.label()`](app-preferences.md#design-decision-defer-label-extensions-on-data-layer-enums) extension at `data/preferences/Model.kt` — the row's own `model: String` parameter is unchanged. Post-[#254](../codebase/254.md) the `onExpandClick` argument inside `bottomBar` is wired to an internal `{ sheetVisible = true }` lambda that flips a `var sheetVisible by rememberSaveable { mutableStateOf(false) }` flag hoisted at the top of the `ThreadScreen` body — the row stays a stateless surface; the screen owns sheet visibility. Crucially, `Modifier.imePadding()` already lives **inside** `ThreadInputBar` on its own outer `Column` (since [#188](../codebase/188.md)), not on the `Scaffold` bottomBar — so only the input bar lifts when the soft keyboard opens, and the status row stays visually anchored above it. No new `imePadding` is added on the outer wrapper.
 
-`ThreadScreen` grows one new defaulted parameter `onExpandClick: () -> Unit = {}` matching the existing optional-callback style. The signature stays flat-callback rather than folding into a sealed `ThreadEvent` — see the [thread-screen shape note](thread-screen.md#shape) for the deferred fold.
+In #145, `ThreadScreen` grew one new defaulted parameter `onExpandClick: () -> Unit = {}` to plumb the row's tap up to the host. In [#254](../codebase/254.md), that parameter was **deleted** — `ThreadScreen` owns the trigger via an internal lambda passed straight to the row, and a new `onModelSelected: (Model) -> Unit = {}` parameter took its slot to forward the sheet's radio-row taps. The signature stays flat-callback rather than folding into a sealed `ThreadEvent` — see the [thread-screen shape note](thread-screen.md#shape) for the deferred fold.
 
 ### `MainActivity` destination
 
+The row's tap behaviour is fully internal to `ThreadScreen` post-[#254](../codebase/254.md). `MainActivity` does **not** pass anything for the row's `onExpandClick`; instead it binds `onModelSelected = vm::onModelSelected` so the sheet's radio-row taps reach [`ThreadViewModel.onModelSelected`](thread-screen.md#viewmodel) ([#253](../codebase/253.md)):
+
 ```kotlin
-// MainActivity.kt:209-210 (post-#145)
-// TODO(#146): open Status Sheet
-onExpandClick = {},
+// MainActivity.kt:204-215 (post-#254)
+ThreadScreen(
+    state = state,
+    // ...
+    onModelSelected = vm::onModelSelected,
+    // ...
+)
 ```
 
-Placeholder until [#146](https://github.com/pyrycode/pyrycode-mobile/issues/146) wires the Status Sheet. The `TODO(#146)` marker is grep-able.
+The `// TODO(#146): open Status Sheet` placeholder + the `onExpandClick = {}` line that #145 introduced were both deleted in #254. The grep-able breadcrumb for the wiring is now the `if (sheetVisible) { StatusSheet(...) }` block inside `ThreadScreen` itself.
 
 ### `ThreadUiState` fields
 
@@ -235,7 +241,7 @@ Naming convention `<Component> — <Theme>, <Variant>` matches the [thread-input
 
 ## Edge cases / limitations
 
-- **`onExpandClick = {}` is a placeholder at the destination.** The Status Sheet itself is the sibling [#146](https://github.com/pyrycode/pyrycode-mobile/issues/146); until that ticket lands, tapping the row fires the ripple and does nothing observable. The `TODO(#146)` marker in `MainActivity.kt:209` is the wiring breadcrumb.
+- **Tapping the row opens the [`StatusSheet`](status-sheet.md)** (since [#254](../codebase/254.md)). `ThreadScreen` owns a `rememberSaveable`-hoisted `sheetVisible` flag and binds the row's `onExpandClick = { sheetVisible = true }` internally; the Model section's radio-row taps flow back via the new `onModelSelected: (Model) -> Unit` parameter bound to `vm::onModelSelected` at `MainActivity`. Pre-#254 the row's tap was a no-op (`onExpandClick = {}` placeholder with a `TODO(#146)` marker); that placeholder is now gone.
 - **`effort` and `tokenPercent` are still stub-populated in the VM.** Phase 4 replaces the remaining two `STUB_*` companion-object constants with reads off a backend `AgentStatus` flow. The row's own parameter shape (`String`, `String`, `Int`) is the stable contract — no `enum class Effort` or `value class TokenPercent` wrapper here. Validation of out-of-range or empty values is Phase 4's responsibility. As of [#253](../codebase/253.md), `model` is no longer in this bucket — `ThreadUiState.selectedModel: Model` is sourced from `appPreferences.defaultModel` with an in-memory per-conversation override, and the screen derives the label string at the boundary.
 - **One-frame visual asymmetry between initial frame and post-subscription frame.** `tokenPercent` defaults to `0` on `ThreadUiState` (rendered in the under-50% neutral color) and flips to `73` (warning band) on the `combine`'s first emission. The fake's `combine` upstream emits synchronously on first subscription, so the initial frame is invisible in the running app — but the asymmetry is pinned by the two test methods on purpose, so a reviewer doesn't accidentally "fix" the data-class default to `73`. As of [#253](../codebase/253.md) the `selectedModel` axis is symmetric — both frames render `Model.OPUS_4_7` (data-class default) which `Model.label()` maps to `"Opus 4.7"`, identical to the pre-#253 stub.
 - **No animation on threshold transitions.** When `tokenPercent` crosses 50 or 95, the percent-segment color swaps instantly. An `animateColorAsState` per-color fade is a follow-up if designer signs off on a duration.
@@ -244,10 +250,10 @@ Naming convention `<Component> — <Theme>, <Variant>` matches the [thread-input
 
 ## Related
 
-- Ticket notes: [`../codebase/145.md`](../codebase/145.md) (this implementation), [`../codebase/253.md`](../codebase/253.md) (model rewired from `STUB_MODEL` constant to typed `Model` enum sourced from `AppPreferences.defaultModel` with per-conversation override; row's `model: String` parameter shape preserved)
+- Ticket notes: [`../codebase/145.md`](../codebase/145.md) (this implementation), [`../codebase/253.md`](../codebase/253.md) (model rewired from `STUB_MODEL` constant to typed `Model` enum sourced from `AppPreferences.defaultModel` with per-conversation override; row's `model: String` parameter shape preserved), [`../codebase/254.md`](../codebase/254.md) (row's `onExpandClick` now opens the [`StatusSheet`](status-sheet.md) — sheet visibility hoisted into `ThreadScreen` via `rememberSaveable`; `ThreadScreen.onExpandClick` parameter deleted, replaced by `onModelSelected: (Model) -> Unit`)
 - Spec: `docs/specs/architecture/145-thread-status-row.md`
 - Parent: [Thread screen](thread-screen.md) (the screen this mounts into; pre-#145 had only `ThreadInputBar` in `bottomBar`)
 - Sibling: [Thread input bar](thread-input-bar.md) (the composer this row stacks above, inside the same `Column` in `bottomBar`)
 - Upstream: [Warning color slot](warning-color.md) (the `colorScheme.warning` slot the 50–94% band consumes, landed in [#119](../codebase/119.md))
-- Downstream: [#146](https://github.com/pyrycode/pyrycode-mobile/issues/146) wires the Status Sheet that `onExpandClick` will eventually open
+- Downstream: [`StatusSheet`](status-sheet.md) ([#254](../codebase/254.md)) — the sheet that `onExpandClick` now opens. Sibling sections [#229](https://github.com/pyrycode/pyrycode-mobile/issues/229) (Effort + YOLO) and [#230](https://github.com/pyrycode/pyrycode-mobile/issues/230) (Context window) append into the same `StatusSheetContent` `Column` without further row-side changes.
 - Figma: [`16:58`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-58) (the status row specifically); parent [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8)
