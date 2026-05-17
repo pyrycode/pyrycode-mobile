@@ -8,6 +8,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.BuildConfig
+import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Rule
@@ -27,8 +28,10 @@ class SettingsScreenTest {
                     themeMode = ThemeMode.SYSTEM,
                     useWallpaperColors = false,
                     archivedDiscussionCount = 0,
+                    defaultEffort = Effort.HIGH,
                     onSelectTheme = {},
                     onToggleUseWallpaperColors = {},
+                    onSelectDefaultEffort = {},
                     onBack = {},
                     onOpenArchivedDiscussions = {},
                 )
@@ -49,8 +52,10 @@ class SettingsScreenTest {
                     themeMode = ThemeMode.SYSTEM,
                     useWallpaperColors = false,
                     archivedDiscussionCount = 0,
+                    defaultEffort = Effort.HIGH,
                     onSelectTheme = {},
                     onToggleUseWallpaperColors = {},
+                    onSelectDefaultEffort = {},
                     onBack = {},
                     onOpenArchivedDiscussions = {},
                 )
@@ -71,8 +76,10 @@ class SettingsScreenTest {
                     themeMode = ThemeMode.SYSTEM,
                     useWallpaperColors = false,
                     archivedDiscussionCount = 0,
+                    defaultEffort = Effort.HIGH,
                     onSelectTheme = {},
                     onToggleUseWallpaperColors = {},
+                    onSelectDefaultEffort = {},
                     onBack = {},
                     onOpenArchivedDiscussions = {},
                 )
@@ -93,8 +100,10 @@ class SettingsScreenTest {
                     themeMode = ThemeMode.SYSTEM,
                     useWallpaperColors = false,
                     archivedDiscussionCount = 0,
+                    defaultEffort = Effort.HIGH,
                     onSelectTheme = {},
                     onToggleUseWallpaperColors = {},
+                    onSelectDefaultEffort = {},
                     onBack = {},
                     onOpenArchivedDiscussions = {},
                 )
@@ -115,8 +124,10 @@ class SettingsScreenTest {
                     themeMode = ThemeMode.SYSTEM,
                     useWallpaperColors = false,
                     archivedDiscussionCount = 0,
+                    defaultEffort = Effort.HIGH,
                     onSelectTheme = {},
                     onToggleUseWallpaperColors = {},
+                    onSelectDefaultEffort = {},
                     onBack = {},
                     onOpenArchivedDiscussions = {},
                 )
@@ -137,8 +148,10 @@ class SettingsScreenTest {
                     themeMode = ThemeMode.SYSTEM,
                     useWallpaperColors = false,
                     archivedDiscussionCount = 11,
+                    defaultEffort = Effort.HIGH,
                     onSelectTheme = {},
                     onToggleUseWallpaperColors = {},
+                    onSelectDefaultEffort = {},
                     onBack = {},
                     onOpenArchivedDiscussions = {},
                 )
