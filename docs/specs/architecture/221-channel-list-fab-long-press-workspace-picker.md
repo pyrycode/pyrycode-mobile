@@ -3,7 +3,7 @@
 ## Files to read first
 
 - `app/src/main/java/de/pyryco/mobile/ui/conversations/list/ChannelListScreen.kt:52-62` — current `ChannelListEvent` sealed interface; add two new variants here (`LongPressFab`, `WorkspacePicked(path)`, `WorkspacePickerDismissed`).
-- `app/src/main/java/de/pyryco/mobile/ui/conversations/list/ChannelListScreen.kt:99-110` — current `floatingActionButton` slot; wrap the existing `FloatingActionButton` in a `Box` with `Modifier.combinedClickable(onClick, onLongClick)` (see § FAB long-press wiring for the precise shape and why the inner FAB's `onClick` must be neutralised).
+- `app/src/main/java/de/pyryco/mobile/ui/conversations/list/ChannelListScreen.kt:99-110` — current `floatingActionButton` slot; replace the M3 `FloatingActionButton` with a manually-composed non-clickable `Surface` carrying the `combinedClickable` (see § FAB long-press wiring for the precise shape and why wrapping the M3 FAB in an outer `Box.combinedClickable` does not work).
 - `app/src/main/java/de/pyryco/mobile/ui/conversations/list/ChannelListScreen.kt:111-161` — current Scaffold body; the `WorkspacePicker` host call goes here at the bottom of the lambda (after the `when (state)` block), reading the visibility flag off whichever non-`Loading`/`Error` state is active.
 - `app/src/main/java/de/pyryco/mobile/ui/conversations/list/ChannelListViewModel.kt:24-49` — current `ChannelListUiState` sealed interface + `ChannelListNavigation`. Add the new `workspacePickerVisible: Boolean = false` field to `Loaded` and `Empty` with default `false` so the existing 26 `Loaded(...)`/`Empty(...)` call sites (previews, tests, the VM's own combine) keep working unchanged.
 - `app/src/main/java/de/pyryco/mobile/ui/conversations/list/ChannelListViewModel.kt:54-112` — current `state` assembly: a 3-way `combine(channelsFlow, discussionsFlow, lastMessagesFlow)`. Replace with the 4-way variant adding a private `pendingWorkspacePicker: MutableStateFlow<Boolean>` arm — same shape as `pendingPromotion` in `DiscussionListViewModel` (see `docs/specs/architecture/78-promote-discussion-confirmation-dialog.md`).
@@ -13,7 +13,8 @@
 - `app/src/main/java/de/pyryco/mobile/data/repository/ConversationRepository.kt:32` — `suspend fun createDiscussion(workspace: String? = null): Conversation`. We call this with the picked path: `repository.createDiscussion(workspace = path)`. No interface change.
 - `app/src/main/java/de/pyryco/mobile/data/repository/FakeConversationRepository.kt:91-118` — fake `createDiscussion` sets `cwd = workspace ?: ""`. Tests assert on `cwd == "/some/path"` for the picked-workspace test.
 - `app/src/test/java/de/pyryco/mobile/ui/conversations/list/ChannelListViewModelTest.kt:300-361` — the two prior create-flow tests (`createDiscussionTapped_createsOneUnpromotedConversation`, `createDiscussionTapped_emitsToThreadNavigationWithCreatedId`). Mirror their shape exactly for the new `WorkspacePicked` test — `FakeConversationRepository()` (not the `stubRepo` helper, which returns `TODO("not used")` for `createDiscussion`), `async { vm.navigationEvents.first() }`, `advanceUntilIdle()`.
-- `app/src/main/java/de/pyryco/mobile/ui/conversations/components/ConversationRow.kt:30-45` — project precedent for `combinedClickable`. The pattern here applies the modifier on the outer `ListItem`; we use the same shape on the outer `Box` wrapping the FAB.
+- `app/src/main/java/de/pyryco/mobile/ui/conversations/components/ChannelInfoSheet.kt:325-358` — the load-bearing precedent for this ticket: `private fun Footer(...)` uses `Box.combinedClickable { Text(...) }` and it works *because* the inner `Text` has no `clickable` modifier of its own. Our FAB must reproduce the same shape — a single composable that both renders the visual AND owns the gesture, with no inner clickable competing.
+- `docs/knowledge/codebase/25.md` (lesson) — documents the failure mode: a screen-level `Box { combinedClickable(...); Primitive(...) }` wrapper does NOT work when `Primitive` has its own inner `Modifier.clickable` (or `Surface(onClick = ...)`). The inner clickable consumes pointer events before the outer modifier sees them. This applies directly to M3's `FloatingActionButton`, whose internal `Surface(onClick = ...)` is the swallower. Read the "Lessons learned" section in full before § 5 — the same reasoning forced the FAB redesign in this ticket.
 - `docs/specs/architecture/22-channel-list-fab-new-discussion.md` — the parent ticket. § 4 (FAB design), § 5 (MainActivity wiring), and § "State + concurrency model" are the load-bearing references; we extend the same Channel/`navigationEvents` plumbing.
 - `docs/specs/architecture/78-promote-discussion-confirmation-dialog.md` — the `combine(upstream, MutableStateFlow<Visibility>)` arm pattern this ticket re-uses, including the "clear visibility BEFORE the suspend point" discipline (§ "ViewModel — combine upstream with a private `pendingPromotion` flow", confirmPromotion bullet).
 - `app/src/main/res/values/strings.xml` — add the long-press accessibility hint string here (see § Strings).
@@ -22,7 +23,7 @@
 
 **Figma:** https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=15-8
 
-The Channel List FAB's visual treatment is unchanged from #22 — the same M3 `FloatingActionButton` with `Icons.Default.Add` lives bottom-right at 16dp margins, primary-container fill, the standard 56dp surface (Figma node `15:106`). Long-press is a gesture, not a separate visual surface; the picker that opens on long-press is the `WorkspacePicker` host's bottom sheet (Figma `20:2`, already implemented by #212/#220), which this ticket consumes unchanged. No pixel work in this ticket.
+The Channel List FAB's visual treatment is unchanged from #22 — `Icons.Default.Add` over a 56dp primary-container surface at the bottom-right with 16dp margins (Figma node `15:106`). The pixel result is identical to #22; only the underlying composable changes — we substitute a manually-composed `Surface` for the M3 `FloatingActionButton` widget so that `combinedClickable` (the long-press surface) has no inner clickable competing for pointer events (see § 5 and lesson `docs/knowledge/codebase/25.md`). Long-press is a gesture, not a separate visual surface; the picker that opens on long-press is the `WorkspacePicker` host's bottom sheet (Figma `20:2`, already implemented by #212/#220), which this ticket consumes unchanged. No pixel work in this ticket.
 
 ## Context
 
@@ -108,7 +109,7 @@ Three design decisions to call out:
 
 ### 5. `ChannelListScreen` — FAB long-press wiring
 
-The current FAB:
+The current (#22) FAB:
 
 ```kotlin
 FloatingActionButton(onClick = { onEvent(ChannelListEvent.CreateDiscussionTapped) }) {
@@ -116,33 +117,68 @@ FloatingActionButton(onClick = { onEvent(ChannelListEvent.CreateDiscussionTapped
 }
 ```
 
-Replace with an outer `Box` that owns the gesture, and a `FloatingActionButton` inside whose own `onClick` is neutralised:
+**Why we can't wrap it in `Box.combinedClickable { FloatingActionButton(onClick = {}) { ... } }`.** M3's `FloatingActionButton` internally composes a `Surface(onClick = ...)`. That overload installs its own `Modifier.clickable` on a leaf composable, which consumes tap events before they can propagate up to an outer `combinedClickable`'s `onClick` arm — meaning the outer's `onClick = { CreateDiscussionTapped }` would never fire and #22's tap path would silently regress. This is the failure mode documented in `docs/knowledge/codebase/25.md` ("Modifier.clickable on the inner ListItem of ConversationRow shadows any outer pointer-input wrapper"), and it applies identically here: the inner `Surface.clickable` is the swallower regardless of whether its handler is a no-op. Passing `onClick = {}` to the inner FAB does **not** detach the inner clickable — the modifier is installed unconditionally.
+
+**The fix: replace the M3 `FloatingActionButton` widget with a manually-composed `Surface` (the non-clickable overload) carrying the `combinedClickable` on its modifier.** The Surface reproduces the FAB's visual treatment but has no inner click handler, so the `combinedClickable` is the sole pointer-input subscriber — same shape as `ChannelInfoSheet.Footer` (#217), where `Box.combinedClickable { Text(...) }` works because the inner `Text` has no `clickable` of its own.
+
+Extract the FAB to a private composable in `ChannelListScreen.kt` for readability:
 
 ```kotlin
-val longPressLabel = stringResource(R.string.cd_long_press_fab_pick_workspace)
-Box(
-    modifier = Modifier.combinedClickable(
-        onClick = { onEvent(ChannelListEvent.CreateDiscussionTapped) },
-        onLongClick = { onEvent(ChannelListEvent.LongPressFab) },
-        onClickLabel = stringResource(R.string.cd_new_discussion),
-        onLongClickLabel = longPressLabel,
-        role = Role.Button,
-    ),
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ChannelListFab(
+    onTap: () -> Unit,
+    onLongPress: () -> Unit,
+    onTapLabel: String,
+    onLongPressLabel: String,
 ) {
-    FloatingActionButton(onClick = {}) {                            // gesture handled by Box
-        Icon(Icons.Default.Add, contentDescription = null)          // label moved to outer Box
+    Surface(
+        modifier = Modifier
+            .size(56.dp)
+            .combinedClickable(
+                onClick = onTap,
+                onLongClick = onLongPress,
+                onClickLabel = onTapLabel,
+                onLongClickLabel = onLongPressLabel,
+                role = Role.Button,
+            ),
+        shape = FloatingActionButtonDefaults.shape,
+        color = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        tonalElevation = 6.dp,
+        shadowElevation = 6.dp,
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(imageVector = Icons.Default.Add, contentDescription = null)
+        }
     }
 }
 ```
 
-Why the outer-`Box` shape (not `combinedClickable` directly on the FAB):
+Wire it from the Scaffold's `floatingActionButton` slot, replacing the existing #22 composition:
 
-- **M3's `FloatingActionButton` already attaches a `Surface(onClick = ...)` internally.** That Surface installs its own `clickable` modifier on a leaf composable. Wiring a second `combinedClickable` onto the FAB's outer `modifier` parameter sets up two pointer-input regions competing for the same gestures — the outer modifier captures first, but the inner Surface's `clickable` is still attached and can announce a duplicate accessibility role. The outer `Box` shape isolates the gesture surface entirely: the inner FAB's `onClick = {}` is a no-op that never fires (the outer Box consumes both tap and long-press before propagation reaches the inner Surface).
-- **The inner FAB still renders its visual treatment** — same colors, same elevation, same 56dp surface, same ripple on press. The outer `Box` does not request its own `indication`; press feedback comes from the inner Surface's own indication chain via `LocalIndication.current`, which still plays because the press is *also* observed at the FAB's hit region.
-- **Accessibility:** the outer `Box` owns the semantic role (`Role.Button`), the tap label (`onClickLabel`), and the long-press label (`onLongClickLabel`). The inner `Icon`'s `contentDescription = null` prevents TalkBack from announcing the icon a second time. TalkBack reads the FAB as "New discussion, button, double-tap to activate, long-press to pick workspace" — the long-press hint comes from `onLongClickLabel`.
-- **Codebase precedent:** `ConversationRow.kt:40-45` applies `combinedClickable` on the outer container modifier rather than on an inner M3 component, for the same reason. We mirror that pattern.
+```kotlin
+floatingActionButton = {
+    if (state is ChannelListUiState.Loaded || state is ChannelListUiState.Empty) {
+        ChannelListFab(
+            onTap = { onEvent(ChannelListEvent.CreateDiscussionTapped) },
+            onLongPress = { onEvent(ChannelListEvent.LongPressFab) },
+            onTapLabel = stringResource(R.string.cd_new_discussion),
+            onLongPressLabel = stringResource(R.string.cd_long_press_fab_pick_workspace),
+        )
+    }
+},
+```
 
-The FAB's surrounding `if (state is ChannelListUiState.Loaded || state is ChannelListUiState.Empty)` guard from #22 (line 100) is unchanged — long-press is still gated on the FAB being visible.
+Five notes on the design:
+
+- **`Surface { content }` is the non-clickable overload.** It accepts `shape`, `color`, `contentColor`, `tonalElevation`, `shadowElevation` and renders the visual, but does NOT take `onClick` and does NOT install an inner clickable. The `combinedClickable` we apply via `modifier` is therefore the only gesture subscriber on this node.
+- **`size(56.dp)` + `FloatingActionButtonDefaults.shape` + `primaryContainer` + `6.dp` elevation = the M3 standard FAB visual.** The 56dp size matches `FabPrimaryTokens.ContainerWidth/Height` (internal). The 6.dp tonal+shadow elevation matches `FabPrimaryTokens.ContainerElevation`. `FloatingActionButtonDefaults.shape` is public and forwards the same M3 shape token. The tradeoff: we lose the inner FAB's elevation-on-press animation (lower elevation while held). That animation is cosmetic; the ripple from `combinedClickable`'s default indication (`LocalIndication.current`, M3 ripple) still plays. Acceptable for Phase 0.
+- **Accessibility:** `combinedClickable(role = Role.Button, onClickLabel, onLongClickLabel)` makes TalkBack announce "New discussion, button, double-tap to activate, long-press to pick workspace." The inner `Icon`'s `contentDescription = null` prevents a duplicate icon announcement. No outer `semantics { }` is needed; `combinedClickable` already attaches `Role.Button`.
+- **Why not the lesson #25 canonical fix (`onLongClick: (() -> Unit)? = null` on the primitive itself)?** That pattern works when we own the primitive (`ConversationRow`). We don't own M3's `FloatingActionButton`, so we can't add the parameter. The next-best shape is to ditch the M3 widget and reproduce the visual ourselves on a surface where `combinedClickable` is unobstructed — i.e., the `ChannelInfoSheet.Footer` pattern (#217). Two equivalent patterns now established in the codebase; pick whichever applies based on whether you own the primitive.
+- **`@OptIn(ExperimentalFoundationApi::class)` placement.** Annotate the new `ChannelListFab` composable. The existing `@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)` on `ChannelListScreen` remains as-is.
+
+The `floatingActionButton` slot's surrounding `if (state is ChannelListUiState.Loaded || state is ChannelListUiState.Empty)` guard from #22 is unchanged — long-press is still gated on the FAB being visible.
 
 ### 6. `ChannelListScreen` — host the `WorkspacePicker`
 
@@ -262,7 +298,7 @@ None. All five AC items map to concrete decisions above.
 
 Two design decisions worth flagging for code-review attention:
 
-1. **Outer-`Box` FAB wrapper for `combinedClickable`** (§ 5). The "right" shape in Compose for "long-press a Material 3 component" is non-obvious; the alternative (applying `combinedClickable` directly to the FAB's `modifier`) has accessibility-duplication risk. Reviewer is invited to challenge if a Material 3 1.x release has since introduced a native `onLongClick` parameter on `FloatingActionButton` — current Compose BOM (per `gradle/libs.versions.toml`) does not expose one.
+1. **Manually-composed `Surface` replacing the M3 `FloatingActionButton`** (§ 5). Forced by the pointer-input-shadowing failure mode documented in lesson #25 — the M3 FAB's inner `Surface(onClick = ...)` swallows tap events before they reach any outer `combinedClickable`. The replacement reproduces the FAB's visual (56dp, M3 shape token, primary-container fill, 6dp tonal+shadow elevation) but loses the inner FAB's elevation-on-press animation; the ripple is preserved via `combinedClickable`'s default M3 indication. Reviewer is invited to challenge if a Material 3 1.x release has since introduced a native `onLongClick` parameter on `FloatingActionButton` — current Compose BOM (per `gradle/libs.versions.toml`) does not expose one. If a future BOM ships one, revert to the native FAB and delete `ChannelListFab`.
 2. **No `rememberSaveable` on the visibility flag** (§ "State + concurrency model"). VM-owned state survives configuration change by default; introducing `rememberSaveable` would be redundant and contradicts the "single source of state per ViewModel" principle in `CLAUDE.md`. Flagging only to forestall the "shouldn't we persist it" review comment.
 
 ## Out of scope
