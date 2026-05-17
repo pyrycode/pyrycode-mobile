@@ -469,6 +469,78 @@ class FakeConversationRepositoryTest {
         }
 
     @Test
+    fun delete_removesConversation_from_observeConversations_All() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val created = repo.createDiscussion()
+
+            assertTrue(
+                "newly created discussion must appear in All before delete",
+                repo.observeConversations(ConversationFilter.All).first().any { it.id == created.id },
+            )
+
+            repo.delete(created.id)
+
+            assertTrue(
+                "deleted conversation must not appear in All",
+                repo.observeConversations(ConversationFilter.All).first().none { it.id == created.id },
+            )
+        }
+
+    @Test
+    fun delete_onUnknownId_doesNotThrow() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            repo.delete("nope")
+        }
+
+    @Test
+    fun delete_isIdempotent() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val created = repo.createDiscussion()
+            repo.delete(created.id)
+            repo.delete(created.id)
+            assertTrue(
+                "twice-deleted conversation must be absent from All",
+                repo.observeConversations(ConversationFilter.All).first().none { it.id == created.id },
+            )
+        }
+
+    @Test
+    fun delete_causes_observeMessages_toReEmitEmpty() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val seedId = "seed-channel-pyrycode-mobile"
+            assertTrue(
+                "seed channel must have messages before delete",
+                repo.observeMessages(seedId).first().isNotEmpty(),
+            )
+
+            repo.delete(seedId)
+
+            assertEquals(
+                emptyList<ThreadItem>(),
+                repo.observeMessages(seedId).first(),
+            )
+        }
+
+    @Test
+    fun delete_causes_observeLastMessage_toReEmitNull() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val seedId = "seed-channel-pyrycode-mobile"
+            assertNotNull(
+                "seed channel must have a last message before delete",
+                repo.observeLastMessage(seedId).first(),
+            )
+
+            repo.delete(seedId)
+
+            assertNull(repo.observeLastMessage(seedId).first())
+        }
+
+    @Test
     fun rename_updates_name_and_reEmits() =
         runBlocking {
             val repo = FakeConversationRepository()
@@ -618,6 +690,112 @@ class FakeConversationRepositoryTest {
         val repo = FakeConversationRepository()
         try {
             runBlocking { repo.sendMessage("nope", "hi") }
+            assertTrue("expected IllegalArgumentException", false)
+        } catch (_: IllegalArgumentException) {
+            // expected
+        }
+    }
+
+    @Test
+    fun recentWorkspaces_dedupes_repeatedCwds() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val initialSize = repo.recentWorkspaces().first().size
+
+            repo.promote("seed-discussion-a", name = "a", workspace = "~/Workspace/foo")
+            repo.changeWorkspace("seed-channel-personal", "~/Workspace/foo")
+
+            val recents = repo.recentWorkspaces().first()
+            assertEquals(
+                "expected ~/Workspace/foo exactly once",
+                1,
+                recents.count { it == "~/Workspace/foo" },
+            )
+            assertEquals("~/Workspace/foo", recents.first())
+            assertEquals(
+                "list size grew by exactly one (foo added, not duplicated)",
+                initialSize + 1,
+                recents.size,
+            )
+        }
+
+    @Test
+    fun recentWorkspaces_ordersByMostRecentWrite() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+
+            assertEquals(
+                listOf(
+                    "~/Workspace/pyrycode-mobile",
+                    "~/Workspace/joi-pilates",
+                    "~/Workspace/personal",
+                ),
+                repo.recentWorkspaces().first(),
+            )
+
+            repo.changeWorkspace("seed-channel-personal", "~/Workspace/personal")
+            assertEquals(
+                "~/Workspace/personal",
+                repo.recentWorkspaces().first().first(),
+            )
+
+            repo.createDiscussion(workspace = "~/Workspace/new")
+            val afterCreate = repo.recentWorkspaces().first()
+            assertEquals("~/Workspace/new", afterCreate[0])
+            assertEquals("~/Workspace/personal", afterCreate[1])
+        }
+
+    @Test
+    fun recentWorkspaces_excludesEmptyStringAndDefaultScratch() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+
+            assertTrue(
+                "initial recents must not contain empty string",
+                repo.recentWorkspaces().first().none { it.isEmpty() },
+            )
+            assertTrue(
+                "initial recents must not contain DEFAULT_SCRATCH_CWD",
+                repo.recentWorkspaces().first().none { it == DEFAULT_SCRATCH_CWD },
+            )
+
+            repo.createDiscussion(workspace = null)
+            repo.createDiscussion(workspace = DEFAULT_SCRATCH_CWD)
+
+            val recents = repo.recentWorkspaces().first()
+            assertTrue(
+                "recents must not contain empty string after null-workspace createDiscussion",
+                recents.none { it.isEmpty() },
+            )
+            assertTrue(
+                "recents must not contain DEFAULT_SCRATCH_CWD after scratch-workspace createDiscussion",
+                recents.none { it == DEFAULT_SCRATCH_CWD },
+            )
+        }
+
+    @Test
+    fun createWorkspaceFolder_appearsAtPositionZeroOfRecents() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val initial = repo.recentWorkspaces().first()
+
+            val path = repo.createWorkspaceFolder("scratch-1")
+
+            assertEquals("pyry-workspace/scratch-1", path)
+            val updated = repo.recentWorkspaces().first()
+            assertEquals("pyry-workspace/scratch-1", updated.first())
+            assertEquals(
+                "list size grew by exactly one (path is new — no dedup collapse)",
+                initial.size + 1,
+                updated.size,
+            )
+        }
+
+    @Test
+    fun createWorkspaceFolder_blankName_throwsIllegalArgumentException() {
+        val repo = FakeConversationRepository()
+        try {
+            runBlocking { repo.createWorkspaceFolder("  ") }
             assertTrue("expected IllegalArgumentException", false)
         } catch (_: IllegalArgumentException) {
             // expected

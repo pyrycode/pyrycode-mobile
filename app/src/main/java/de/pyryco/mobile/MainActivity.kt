@@ -155,7 +155,11 @@ private fun PyryNavHost(
                             navController.navigate(Routes.SETTINGS)
                         ChannelListEvent.RecentDiscussionsTapped ->
                             navController.navigate(Routes.DISCUSSION_LIST)
-                        ChannelListEvent.CreateDiscussionTapped ->
+                        ChannelListEvent.CreateDiscussionTapped,
+                        ChannelListEvent.LongPressFab,
+                        is ChannelListEvent.WorkspacePicked,
+                        ChannelListEvent.WorkspacePickerDismissed,
+                        ->
                             vm.onEvent(event)
                     }
                 },
@@ -207,12 +211,15 @@ private fun PyryNavHost(
             val themeMode by vm.themeMode.collectAsStateWithLifecycle()
             val useWallpaperColors by vm.useWallpaperColors.collectAsStateWithLifecycle()
             val archivedDiscussionCount by vm.archivedDiscussionCount.collectAsStateWithLifecycle()
+            val defaultEffort by vm.defaultEffort.collectAsStateWithLifecycle()
             SettingsScreen(
                 themeMode = themeMode,
                 useWallpaperColors = useWallpaperColors,
                 archivedDiscussionCount = archivedDiscussionCount,
+                defaultEffort = defaultEffort,
                 onSelectTheme = vm::onSelectTheme,
                 onToggleUseWallpaperColors = vm::onToggleUseWallpaperColors,
+                onSelectDefaultEffort = vm::onSelectDefaultEffort,
                 onBack = { navController.popBackStack() },
                 onOpenArchivedDiscussions = { navController.navigate(Routes.ARCHIVED_DISCUSSIONS) },
             )

@@ -58,6 +58,6 @@ The transient pending-consumers comment from #32 has been fully consumed (#11 + 
 
 ## Related
 
-- Ticket notes: `../codebase/32.md` (scaffold), `../codebase/11.md` (first real binding — `AppPreferences`), `../codebase/45.md` (first interface-bound singleton + first `viewModel { }` line)
+- Ticket notes: `../codebase/32.md` (scaffold), `../codebase/11.md` (first real binding — `AppPreferences`), `../codebase/45.md` (first interface-bound singleton + first `viewModel { }` line), `../codebase/196.md` (`FakeConnectionStateSource` ↔ `ConnectionStateSource`)
 - Spec: `docs/specs/architecture/32-koin-di-scaffold.md`
-- Bindings landed so far: #11 (`AppPreferences`), #45 (`FakeConversationRepository` ↔ `ConversationRepository`, `ChannelListViewModel`).
+- Bindings landed so far: #11 (`AppPreferences`), #45 (`FakeConversationRepository` ↔ `ConversationRepository`, `ChannelListViewModel`), #196 (`FakeConnectionStateSource` ↔ `ConnectionStateSource` — see [Connection state](connection-state.md)).

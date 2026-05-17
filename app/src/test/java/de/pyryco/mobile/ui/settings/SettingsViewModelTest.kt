@@ -8,6 +8,7 @@ import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -171,6 +172,66 @@ class SettingsViewModelTest {
             advanceUntilIdle()
             assertEquals(false, prefs.useWallpaperColors.first())
             assertEquals(false, vm.useWallpaperColors.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun defaultEffort_initialState_emitsHigh_whenNoStoredValue() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs)
+            val collector = launch { vm.defaultEffort.collect { } }
+            advanceUntilIdle()
+            assertEquals(Effort.HIGH, vm.defaultEffort.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun defaultEffort_initialState_mirrorsPersistedValue() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            prefs.setDefaultEffort(Effort.LOW)
+            advanceUntilIdle()
+            val vm = makeVm(prefs)
+            val collector = launch { vm.defaultEffort.collect { } }
+            advanceUntilIdle()
+            assertEquals(Effort.LOW, vm.defaultEffort.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun onSelectDefaultEffort_persistsLow() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs)
+            vm.onSelectDefaultEffort(Effort.LOW)
+            advanceUntilIdle()
+            assertEquals(Effort.LOW, prefs.defaultEffort.first())
+        }
+
+    @Test
+    fun onSelectDefaultEffort_persistsMax() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs)
+            vm.onSelectDefaultEffort(Effort.MAX)
+            advanceUntilIdle()
+            assertEquals(Effort.MAX, prefs.defaultEffort.first())
+        }
+
+    @Test
+    fun defaultEffort_flowReEmits_afterOnSelectDefaultEffort() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs)
+            val collector = launch { vm.defaultEffort.collect { } }
+            advanceUntilIdle()
+            vm.onSelectDefaultEffort(Effort.LOW)
+            advanceUntilIdle()
+            assertEquals(Effort.LOW, vm.defaultEffort.value)
+            vm.onSelectDefaultEffort(Effort.XHIGH)
+            advanceUntilIdle()
+            assertEquals(Effort.XHIGH, vm.defaultEffort.value)
             collector.cancel()
         }
 

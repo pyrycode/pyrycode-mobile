@@ -5,7 +5,9 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
@@ -26,7 +28,8 @@ val appModule =
         }
         single { AppPreferences(get()) }
         single { FakeConversationRepository() } bind ConversationRepository::class
-        viewModel { ChannelListViewModel(get()) }
+        single { FakeConnectionStateSource() } bind ConnectionStateSource::class
+        viewModel { ChannelListViewModel(get(), get()) }
         viewModel { DiscussionListViewModel(get()) }
         viewModel { SettingsViewModel(get(), get()) }
         viewModel { ArchivedDiscussionsViewModel(get()) }

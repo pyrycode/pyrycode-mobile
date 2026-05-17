@@ -4,16 +4,19 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -28,6 +31,7 @@ sealed interface ChannelListUiState {
         val recentDiscussions: List<Conversation>,
         val recentDiscussionsCount: Int,
         val recentDiscussionLastMessages: Map<String, Message> = emptyMap(),
+        val workspacePickerVisible: Boolean = false,
     ) : ChannelListUiState
 
     data class Loaded(
@@ -35,6 +39,7 @@ sealed interface ChannelListUiState {
         val recentDiscussions: List<Conversation>,
         val recentDiscussionsCount: Int,
         val recentDiscussionLastMessages: Map<String, Message> = emptyMap(),
+        val workspacePickerVisible: Boolean = false,
     ) : ChannelListUiState
 
     data class Error(
@@ -50,7 +55,10 @@ sealed interface ChannelListNavigation {
 
 class ChannelListViewModel(
     private val repository: ConversationRepository,
+    private val appPreferences: AppPreferences,
 ) : ViewModel() {
+    private val pendingWorkspacePicker = MutableStateFlow(false)
+
     @OptIn(ExperimentalCoroutinesApi::class)
     val state: StateFlow<ChannelListUiState> =
         run {
@@ -80,7 +88,8 @@ class ChannelListViewModel(
                 channelsFlow,
                 discussionsFlow,
                 lastMessagesFlow,
-            ) { channels, discussions, lastMessages ->
+                pendingWorkspacePicker,
+            ) { channels, discussions, lastMessages, pickerVisible ->
                 val recent = discussions.take(RECENT_DISCUSSIONS_LIMIT)
                 val count = discussions.size
                 if (channels.isEmpty()) {
@@ -88,6 +97,7 @@ class ChannelListViewModel(
                         recentDiscussions = recent,
                         recentDiscussionsCount = count,
                         recentDiscussionLastMessages = lastMessages,
+                        workspacePickerVisible = pickerVisible,
                     )
                 } else {
                     ChannelListUiState.Loaded(
@@ -95,6 +105,7 @@ class ChannelListViewModel(
                         recentDiscussions = recent,
                         recentDiscussionsCount = count,
                         recentDiscussionLastMessages = lastMessages,
+                        workspacePickerVisible = pickerVisible,
                     )
                 }
             }.catch { e ->
@@ -118,9 +129,21 @@ class ChannelListViewModel(
         when (event) {
             ChannelListEvent.CreateDiscussionTapped ->
                 viewModelScope.launch {
-                    val conversation = repository.createDiscussion()
+                    val workspace = appPreferences.defaultWorkspace.first()
+                    val conversation = repository.createDiscussion(workspace = workspace)
                     navigationChannel.send(ChannelListNavigation.ToThread(conversation.id))
                 }
+            ChannelListEvent.LongPressFab ->
+                pendingWorkspacePicker.value = true
+            is ChannelListEvent.WorkspacePicked -> {
+                pendingWorkspacePicker.value = false
+                viewModelScope.launch {
+                    val conversation = repository.createDiscussion(workspace = event.workspace)
+                    navigationChannel.send(ChannelListNavigation.ToThread(conversation.id))
+                }
+            }
+            ChannelListEvent.WorkspacePickerDismissed ->
+                pendingWorkspacePicker.value = false
             is ChannelListEvent.RowTapped,
             ChannelListEvent.SettingsTapped,
             ChannelListEvent.RecentDiscussionsTapped,

@@ -1,7 +1,9 @@
 package de.pyryco.mobile.ui.conversations.list
 
 import android.content.res.Configuration
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,12 +19,13 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -42,6 +45,7 @@ import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.ui.conversations.components.ConversationRow
 import de.pyryco.mobile.ui.conversations.components.DiscussionPreviewRow
+import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
@@ -59,15 +63,25 @@ sealed interface ChannelListEvent {
     data object CreateDiscussionTapped : ChannelListEvent
 
     data object RecentDiscussionsTapped : ChannelListEvent
+
+    data object LongPressFab : ChannelListEvent
+
+    data class WorkspacePicked(
+        val workspace: String,
+    ) : ChannelListEvent
+
+    data object WorkspacePickerDismissed : ChannelListEvent
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ChannelListScreen(
     state: ChannelListUiState,
     onEvent: (ChannelListEvent) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val newDiscussionLabel = stringResource(R.string.cd_new_discussion)
+    val longPressLabel = stringResource(R.string.cd_long_press_fab_pick_workspace)
     Scaffold(
         modifier = modifier,
         topBar = {
@@ -98,14 +112,12 @@ fun ChannelListScreen(
         },
         floatingActionButton = {
             if (state is ChannelListUiState.Loaded || state is ChannelListUiState.Empty) {
-                FloatingActionButton(
-                    onClick = { onEvent(ChannelListEvent.CreateDiscussionTapped) },
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = stringResource(R.string.cd_new_discussion),
-                    )
-                }
+                ChannelListFab(
+                    onTap = { onEvent(ChannelListEvent.CreateDiscussionTapped) },
+                    onLongPress = { onEvent(ChannelListEvent.LongPressFab) },
+                    onTapLabel = newDiscussionLabel,
+                    onLongPressLabel = longPressLabel,
+                )
             }
         },
     ) { inner ->
@@ -159,6 +171,17 @@ fun ChannelListScreen(
                 }
         }
     }
+    val pickerVisible =
+        when (state) {
+            is ChannelListUiState.Loaded -> state.workspacePickerVisible
+            is ChannelListUiState.Empty -> state.workspacePickerVisible
+            ChannelListUiState.Loading, is ChannelListUiState.Error -> false
+        }
+    WorkspacePicker(
+        visible = pickerVisible,
+        onPicked = { path -> onEvent(ChannelListEvent.WorkspacePicked(path)) },
+        onDismiss = { onEvent(ChannelListEvent.WorkspacePickerDismissed) },
+    )
 }
 
 @Composable
@@ -168,6 +191,37 @@ private fun CenteredText(
 ) {
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(text)
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ChannelListFab(
+    onTap: () -> Unit,
+    onLongPress: () -> Unit,
+    onTapLabel: String,
+    onLongPressLabel: String,
+) {
+    Surface(
+        modifier =
+            Modifier
+                .size(56.dp)
+                .combinedClickable(
+                    onClick = onTap,
+                    onLongClick = onLongPress,
+                    onClickLabel = onTapLabel,
+                    onLongClickLabel = onLongPressLabel,
+                    role = Role.Button,
+                ),
+        shape = FloatingActionButtonDefaults.shape,
+        color = MaterialTheme.colorScheme.primaryContainer,
+        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        tonalElevation = 6.dp,
+        shadowElevation = 6.dp,
+    ) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Icon(imageVector = Icons.Default.Add, contentDescription = null)
+        }
     }
 }
 
