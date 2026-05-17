@@ -41,6 +41,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
@@ -50,8 +51,10 @@ fun SettingsScreen(
     themeMode: ThemeMode,
     useWallpaperColors: Boolean,
     archivedDiscussionCount: Int,
+    defaultEffort: Effort,
     onSelectTheme: (ThemeMode) -> Unit,
     onToggleUseWallpaperColors: (Boolean) -> Unit,
+    onSelectDefaultEffort: (Effort) -> Unit,
     onBack: () -> Unit,
     onOpenArchivedDiscussions: () -> Unit,
     modifier: Modifier = Modifier,
@@ -77,6 +80,7 @@ fun SettingsScreen(
         var defaultYolo by remember { mutableStateOf(false) }
         var pushNotifications by remember { mutableStateOf(true) }
         var showThemeDialog by remember { mutableStateOf(false) }
+        var showEffortDialog by remember { mutableStateOf(false) }
 
         if (showThemeDialog) {
             ThemePickerDialog(
@@ -86,6 +90,17 @@ fun SettingsScreen(
                     showThemeDialog = false
                 },
                 onDismiss = { showThemeDialog = false },
+            )
+        }
+
+        if (showEffortDialog) {
+            EffortPickerDialog(
+                selected = defaultEffort,
+                onConfirm = { effort ->
+                    onSelectDefaultEffort(effort)
+                    showEffortDialog = false
+                },
+                onDismiss = { showEffortDialog = false },
             )
         }
 
@@ -143,9 +158,9 @@ fun SettingsScreen(
             )
             SettingsRow(
                 headline = "Default effort",
-                supporting = "high",
+                supporting = defaultEffort.label(),
                 trailing = { ChevronIcon() },
-                onClick = {},
+                onClick = { showEffortDialog = true },
             )
             SettingsRow(
                 headline = "Default YOLO",
@@ -309,8 +324,10 @@ private fun SettingsScreenLightPreview() {
             themeMode = ThemeMode.SYSTEM,
             useWallpaperColors = false,
             archivedDiscussionCount = 11,
+            defaultEffort = Effort.HIGH,
             onSelectTheme = {},
             onToggleUseWallpaperColors = {},
+            onSelectDefaultEffort = {},
             onBack = {},
             onOpenArchivedDiscussions = {},
         )
@@ -325,8 +342,10 @@ private fun SettingsScreenDarkPreview() {
             themeMode = ThemeMode.SYSTEM,
             useWallpaperColors = false,
             archivedDiscussionCount = 11,
+            defaultEffort = Effort.HIGH,
             onSelectTheme = {},
             onToggleUseWallpaperColors = {},
+            onSelectDefaultEffort = {},
             onBack = {},
             onOpenArchivedDiscussions = {},
         )

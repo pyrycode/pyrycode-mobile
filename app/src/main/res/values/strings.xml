@@ -22,6 +22,7 @@
     <string name="promote_dialog_confirm">Save as channel</string>
     <string name="promote_dialog_cancel">Cancel</string>
     <string name="settings_theme_dialog_title">Theme</string>
+    <string name="settings_effort_dialog_title">Default effort</string>
     <string name="settings_use_wallpaper_colors">Use Material You dynamic color</string>
     <string name="settings_use_wallpaper_colors_unsupported">Requires Android 12 or newer</string>
     <string name="archived_title">Archived</string>
