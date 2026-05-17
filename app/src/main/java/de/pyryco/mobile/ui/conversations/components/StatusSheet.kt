@@ -18,6 +18,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
@@ -29,6 +30,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -37,6 +39,7 @@ import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.preferences.label
 import de.pyryco.mobile.ui.settings.label
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.theme.warning
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -50,6 +53,9 @@ fun StatusSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    tokenPercent: Int = 0,
+    tokensUsed: Int = 0,
+    tokensTotal: Int = 0,
 ) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -64,6 +70,9 @@ fun StatusSheet(
             yoloEnabled = yoloEnabled,
             onYoloToggled = onYoloToggled,
             onDismiss = onDismiss,
+            tokenPercent = tokenPercent,
+            tokensUsed = tokensUsed,
+            tokensTotal = tokensTotal,
         )
     }
 }
@@ -77,6 +86,9 @@ internal fun StatusSheetContent(
     yoloEnabled: Boolean,
     onYoloToggled: (Boolean) -> Unit,
     onDismiss: () -> Unit,
+    tokenPercent: Int = 0,
+    tokensUsed: Int = 0,
+    tokensTotal: Int = 0,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         TitleRow(title = "Run configuration", onClose = onDismiss)
@@ -94,6 +106,12 @@ internal fun StatusSheetContent(
         EffortChipRow(selectedEffort = selectedEffort, onEffortSelected = onEffortSelected)
         SectionHeader(text = "YOLO mode")
         YoloRow(enabled = yoloEnabled, onToggled = onYoloToggled)
+        SectionHeader(text = "Context window")
+        ContextWindowSection(
+            tokenPercent = tokenPercent,
+            tokensUsed = tokensUsed,
+            tokensTotal = tokensTotal,
+        )
         Spacer(modifier = Modifier.height(24.dp))
     }
 }
@@ -237,6 +255,57 @@ private fun YoloRow(
     }
 }
 
+@Composable
+private fun ContextWindowSection(
+    tokenPercent: Int,
+    tokensUsed: Int,
+    tokensTotal: Int,
+) {
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = "$tokenPercent% used (${formatTokens(tokensUsed)} of ${formatTokens(tokensTotal)} tokens)",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        LinearProgressIndicator(
+            progress = { tokenPercent.coerceIn(0, 100) / 100f },
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .height(8.dp),
+            color = progressColor(tokenPercent),
+            trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+            gapSize = 0.dp,
+            drawStopIndicator = {},
+        )
+        Text(
+            text =
+                "When full, oldest messages get dropped from claude's view " +
+                    "(delimiter still shows; old messages stay in your scroll).",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+private fun formatTokens(n: Int): String = "${n / 1000}K"
+
+@Composable
+private fun progressColor(percent: Int): Color {
+    val clamped = percent.coerceIn(0, 100)
+    return when {
+        clamped < 50 -> MaterialTheme.colorScheme.primary
+        clamped < 95 -> MaterialTheme.colorScheme.warning
+        else -> MaterialTheme.colorScheme.error
+    }
+}
+
 @Preview(name = "StatusSheet — Opus", showBackground = true, widthDp = 412)
 @Composable
 private fun StatusSheetOpusPreview() {
@@ -346,6 +415,110 @@ private fun StatusSheetEffortMaxYoloOnPreview() {
                     yoloEnabled = true,
                     onYoloToggled = {},
                     onDismiss = {},
+                )
+            }
+        }
+    }
+}
+
+@Preview(name = "StatusSheet — Context window 20%", showBackground = true, widthDp = 412)
+@Composable
+private fun StatusSheetContextWindow20Preview() {
+    PyrycodeMobileTheme(darkTheme = false) {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+        ) {
+            Column(modifier = Modifier.padding(PaddingValues(top = 12.dp))) {
+                StatusSheetContent(
+                    selectedModel = Model.OPUS_4_7,
+                    onModelSelected = {},
+                    selectedEffort = Effort.HIGH,
+                    onEffortSelected = {},
+                    yoloEnabled = false,
+                    onYoloToggled = {},
+                    onDismiss = {},
+                    tokenPercent = 20,
+                    tokensUsed = 40_000,
+                    tokensTotal = 200_000,
+                )
+            }
+        }
+    }
+}
+
+@Preview(name = "StatusSheet — Context window 60%", showBackground = true, widthDp = 412)
+@Composable
+private fun StatusSheetContextWindow60Preview() {
+    PyrycodeMobileTheme(darkTheme = false) {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+        ) {
+            Column(modifier = Modifier.padding(PaddingValues(top = 12.dp))) {
+                StatusSheetContent(
+                    selectedModel = Model.OPUS_4_7,
+                    onModelSelected = {},
+                    selectedEffort = Effort.HIGH,
+                    onEffortSelected = {},
+                    yoloEnabled = false,
+                    onYoloToggled = {},
+                    onDismiss = {},
+                    tokenPercent = 60,
+                    tokensUsed = 120_000,
+                    tokensTotal = 200_000,
+                )
+            }
+        }
+    }
+}
+
+@Preview(name = "StatusSheet — Context window 88%", showBackground = true, widthDp = 412)
+@Composable
+private fun StatusSheetContextWindow88Preview() {
+    PyrycodeMobileTheme(darkTheme = false) {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+        ) {
+            Column(modifier = Modifier.padding(PaddingValues(top = 12.dp))) {
+                StatusSheetContent(
+                    selectedModel = Model.OPUS_4_7,
+                    onModelSelected = {},
+                    selectedEffort = Effort.HIGH,
+                    onEffortSelected = {},
+                    yoloEnabled = false,
+                    onYoloToggled = {},
+                    onDismiss = {},
+                    tokenPercent = 88,
+                    tokensUsed = 176_000,
+                    tokensTotal = 200_000,
+                )
+            }
+        }
+    }
+}
+
+@Preview(name = "StatusSheet — Context window 97%", showBackground = true, widthDp = 412)
+@Composable
+private fun StatusSheetContextWindow97Preview() {
+    PyrycodeMobileTheme(darkTheme = false) {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+        ) {
+            Column(modifier = Modifier.padding(PaddingValues(top = 12.dp))) {
+                StatusSheetContent(
+                    selectedModel = Model.OPUS_4_7,
+                    onModelSelected = {},
+                    selectedEffort = Effort.HIGH,
+                    onEffortSelected = {},
+                    yoloEnabled = false,
+                    onYoloToggled = {},
+                    onDismiss = {},
+                    tokenPercent = 97,
+                    tokensUsed = 194_000,
+                    tokensTotal = 200_000,
                 )
             }
         }

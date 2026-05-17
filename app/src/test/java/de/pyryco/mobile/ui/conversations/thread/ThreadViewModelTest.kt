@@ -202,6 +202,8 @@ class ThreadViewModelTest {
             assertEquals(Effort.HIGH, vm.state.value.selectedEffort)
             assertFalse(vm.state.value.yoloEnabled)
             assertEquals(0, vm.state.value.tokenPercent)
+            assertEquals(0, vm.state.value.tokensUsed)
+            assertEquals(0, vm.state.value.tokensTotal)
         }
 
     @Test
@@ -215,6 +217,8 @@ class ThreadViewModelTest {
             assertEquals(Effort.HIGH, vm.state.value.selectedEffort)
             assertFalse(vm.state.value.yoloEnabled)
             assertEquals(73, vm.state.value.tokenPercent)
+            assertEquals(146_000, vm.state.value.tokensUsed)
+            assertEquals(200_000, vm.state.value.tokensTotal)
             collector.cancel()
         }
 
