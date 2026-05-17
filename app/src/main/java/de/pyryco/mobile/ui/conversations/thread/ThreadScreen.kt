@@ -1,6 +1,8 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -9,6 +11,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
+import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.ui.conversations.components.ConnectionBanner
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -17,6 +21,8 @@ fun ThreadScreen(
     state: ThreadUiState,
     onBack: () -> Unit,
     onSendMessage: (String) -> Unit,
+    connectionState: ConnectionState,
+    onRetry: () -> Unit,
     modifier: Modifier = Modifier,
     onTitleClick: () -> Unit = {},
     onOverflowClick: () -> Unit = {},
@@ -35,14 +41,22 @@ fun ThreadScreen(
             ThreadInputBar(onSend = onSendMessage)
         },
     ) { inner ->
-        LazyColumn(
+        Column(
             modifier =
                 Modifier
                     .padding(inner)
                     .fillMaxSize(),
-            reverseLayout = true,
         ) {
-            items(items = emptyList<Unit>()) { }
+            ConnectionBanner(state = connectionState, onRetry = onRetry)
+            LazyColumn(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                reverseLayout = true,
+            ) {
+                items(items = emptyList<Unit>()) { }
+            }
         }
     }
 }
@@ -59,6 +73,8 @@ private fun ThreadScreenLightPreview() {
                 ),
             onBack = {},
             onSendMessage = {},
+            connectionState = ConnectionState.Connected,
+            onRetry = {},
         )
     }
 }
@@ -75,6 +91,8 @@ private fun ThreadScreenDarkPreview() {
                 ),
             onBack = {},
             onSendMessage = {},
+            connectionState = ConnectionState.Connected,
+            onRetry = {},
         )
     }
 }

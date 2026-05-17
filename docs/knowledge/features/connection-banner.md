@@ -2,7 +2,7 @@
 
 Stateless row primitive (#200) that renders the four-case [`ConnectionState`](./connection-state.md) as a banner with the agreed product copy. Drop-in for any screen that needs to surface connection status — invoked as `ConnectionBanner(state, onRetry)`. The `Connected` case returns early with no composition (zero height); the three visible cases render a single line of text inside a tonal `Surface` row that's always `clickable` but only invokes `onRetry` in the `Offline` case.
 
-Pure UI — no DI, no ViewModel, no flow collection. The consumer that places the banner inside `ThreadScreen` and connects it to `ConnectionStateSource.observe()` / `retry()` lands in the follow-up wiring slice split from #197.
+Pure UI — no DI, no ViewModel, no flow collection. The consumer that places the banner inside [`ThreadScreen`](./thread-screen.md) and connects it to `ConnectionStateSource.observe()` / `retry()` landed in #201 (split from #197) — `ThreadViewModel` exposes `connectionState: StateFlow<ConnectionState>` and a non-suspend `retry()`; the destination block collects via `collectAsStateWithLifecycle()` and binds `onRetry = vm::retry`. The banner sits between the TopAppBar and the message `LazyColumn`, structurally (in a `Column`), not as an overlay.
 
 Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). File: `ConnectionBanner.kt`.
 
@@ -90,13 +90,14 @@ Each entry invokes the **public** `ConnectionBanner(state, onRetry = {})` (not `
 
 ## Related
 
-- Ticket notes: [`../codebase/200.md`](../codebase/200.md)
-- Spec: `docs/specs/architecture/200-connectionbanner-composable.md`
+- Ticket notes: [`../codebase/200.md`](../codebase/200.md) (composable), [`../codebase/201.md`](../codebase/201.md) (wiring into `ThreadScreen` + `ThreadViewModel`)
+- Specs: `docs/specs/architecture/200-connectionbanner-composable.md`, `docs/specs/architecture/201-thread-screen-wire-connectionbanner.md`
 - Parent: split from [#197](https://github.com/pyrycode/pyrycode-mobile/issues/197) (itself split from #134).
 - Upstream: [Connection state](./connection-state.md) — the sealed model + source contract the banner consumes (#196).
+- Consumer: [Thread screen](./thread-screen.md) — the only mount today (#201). The banner sits between `ThreadTopAppBar` and the message `LazyColumn` inside a `Column` wrapper; under the steady-state `Connected` from `FakeConnectionStateSource` the banner short-circuits to zero height. `ThreadViewModel.connectionState: StateFlow<ConnectionState>` (separate flow, not folded into `ThreadUiState`) and `fun retry()` (non-suspend; launches `source.retry()` on `viewModelScope`).
 - Sibling component patterns: [`ToolCallRow`](./tool-call-row.md) (stateful-wrapper / stateless-content split, always-`clickable` `Surface`, file-private spacing `val`s), [`MessageBubble`](./message-bubble.md) (file-private spacing constants posture, role-dispatch via `when`), [`MarkdownText`](./markdown-text.md) (`LocalContentColor` inheritance via `Surface.contentColor`).
 - Downstream / follow-ups:
-  - Follow-up wiring slice (open, split from #197): place the banner at the top of `ThreadScreen`, collect `ConnectionStateSource.observe()` via `collectAsStateWithLifecycle()` in `ThreadViewModel`, pipe `onRetry = vm::onRetryRequested` through to `source.retry()`. Spec name pending.
-  - Open: animate the show/hide transition with `AnimatedVisibility` on the consumer side once the wiring lands and a designer signs off on the cross-fade duration.
+  - Open: animate the show/hide transition with `AnimatedVisibility` on the consumer side once a designer signs off on the cross-fade duration. Deferred from #201.
   - Open: localise the three copy strings. Out of scope for #200; deferred until the codebase grows its first `<plurals>` / non-English resource pass.
   - Open: a11y review on the `Offline` retry affordance — `clickable(role = Role.Button, onClickLabel = "Retry connection")` is the obvious hook; not in AC.
+  - Open: Phase 4 swap of `FakeConnectionStateSource` to a real Ktor-backed implementation. The binding edit is one line in `AppModule.kt`; the VM + screen + test contracts stay byte-identical.
