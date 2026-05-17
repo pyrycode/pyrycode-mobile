@@ -1,8 +1,12 @@
 package de.pyryco.mobile.ui.conversations.list
 
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.Preferences
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Session
+import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
@@ -16,6 +20,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -27,13 +32,20 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChannelListViewModelTest {
+    @get:Rule
+    val tmp = TemporaryFolder()
+
+    private val dispatcher = UnconfinedTestDispatcher()
+
     @Before
     fun setUpMainDispatcher() {
-        Dispatchers.setMain(UnconfinedTestDispatcher())
+        Dispatchers.setMain(dispatcher)
     }
 
     @After
@@ -41,21 +53,32 @@ class ChannelListViewModelTest {
         Dispatchers.resetMain()
     }
 
+    private fun TestScope.newDataStore(): DataStore<Preferences> =
+        PreferenceDataStoreFactory.create(
+            scope = backgroundScope,
+            produceFile = { tmp.newFile("app_prefs.preferences_pb") },
+        )
+
+    private fun TestScope.makeVm(
+        repository: ConversationRepository,
+        @Suppress("UNUSED_PARAMETER") prefs: AppPreferences = AppPreferences(newDataStore()),
+    ): ChannelListViewModel = ChannelListViewModel(repository)
+
     @Test
     fun initialState_isLoading() =
-        runTest {
+        runTest(dispatcher) {
             val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
             val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
-            val vm = ChannelListViewModel(stubRepo(channels, discussions))
+            val vm = makeVm(stubRepo(channels, discussions))
             assertEquals(ChannelListUiState.Loading, vm.state.value)
         }
 
     @Test
     fun loaded_whenSourceEmitsNonEmpty() =
-        runTest {
+        runTest(dispatcher) {
             val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
             val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
-            val vm = ChannelListViewModel(stubRepo(channels, discussions))
+            val vm = makeVm(stubRepo(channels, discussions))
             val collector = launch { vm.state.collect { } }
             advanceUntilIdle()
             channels.emit(listOf(sampleChannel))
@@ -74,10 +97,10 @@ class ChannelListViewModelTest {
 
     @Test
     fun empty_whenSourceEmitsEmptyList() =
-        runTest {
+        runTest(dispatcher) {
             val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
             val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
-            val vm = ChannelListViewModel(stubRepo(channels, discussions))
+            val vm = makeVm(stubRepo(channels, discussions))
             val collector = launch { vm.state.collect { } }
             advanceUntilIdle()
             channels.emit(emptyList())
@@ -95,10 +118,10 @@ class ChannelListViewModelTest {
 
     @Test
     fun loaded_carriesDiscussionsCount() =
-        runTest {
+        runTest(dispatcher) {
             val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
             val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
-            val vm = ChannelListViewModel(stubRepo(channels, discussions))
+            val vm = makeVm(stubRepo(channels, discussions))
             val collector = launch { vm.state.collect { } }
             advanceUntilIdle()
             val d1 = sampleDiscussion("d1", Instant.parse("2026-05-12T03:00:00Z"))
@@ -120,10 +143,10 @@ class ChannelListViewModelTest {
 
     @Test
     fun empty_carriesDiscussionsCount() =
-        runTest {
+        runTest(dispatcher) {
             val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
             val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
-            val vm = ChannelListViewModel(stubRepo(channels, discussions))
+            val vm = makeVm(stubRepo(channels, discussions))
             val collector = launch { vm.state.collect { } }
             advanceUntilIdle()
             val d1 = sampleDiscussion("d1", Instant.parse("2026-05-12T02:00:00Z"))
@@ -143,10 +166,10 @@ class ChannelListViewModelTest {
 
     @Test
     fun discussionsCount_updatesReactively() =
-        runTest {
+        runTest(dispatcher) {
             val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
             val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
-            val vm = ChannelListViewModel(stubRepo(channels, discussions))
+            val vm = makeVm(stubRepo(channels, discussions))
             val collector = launch { vm.state.collect { } }
             advanceUntilIdle()
             channels.emit(listOf(sampleChannel))
@@ -172,10 +195,10 @@ class ChannelListViewModelTest {
 
     @Test
     fun loadingPersists_untilBothFlowsEmit() =
-        runTest {
+        runTest(dispatcher) {
             val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
             val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
-            val vm = ChannelListViewModel(stubRepo(channels, discussions))
+            val vm = makeVm(stubRepo(channels, discussions))
             val collector = launch { vm.state.collect { } }
             advanceUntilIdle()
             assertEquals(ChannelListUiState.Loading, vm.state.value)
@@ -197,10 +220,10 @@ class ChannelListViewModelTest {
 
     @Test
     fun recentDiscussions_isCappedAtThree() =
-        runTest {
+        runTest(dispatcher) {
             val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
             val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
-            val vm = ChannelListViewModel(stubRepo(channels, discussions))
+            val vm = makeVm(stubRepo(channels, discussions))
             val collector = launch { vm.state.collect { } }
             advanceUntilIdle()
             val d1 = sampleDiscussion("d1", Instant.parse("2026-05-12T04:00:00Z"))
@@ -221,10 +244,10 @@ class ChannelListViewModelTest {
 
     @Test
     fun recentDiscussions_orderingFollowsUpstream() =
-        runTest {
+        runTest(dispatcher) {
             val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
             val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
-            val vm = ChannelListViewModel(stubRepo(channels, discussions))
+            val vm = makeVm(stubRepo(channels, discussions))
             val collector = launch { vm.state.collect { } }
             advanceUntilIdle()
             // Upstream emits in a deliberately non-time-sorted order; the VM must not re-sort.
@@ -242,8 +265,8 @@ class ChannelListViewModelTest {
 
     @Test
     fun error_whenChannelsFlowThrows() =
-        runTest {
-            val vm = ChannelListViewModel(erroringRepo("network down", throwOn = ConversationFilter.Channels))
+        runTest(dispatcher) {
+            val vm = makeVm(erroringRepo("network down", throwOn = ConversationFilter.Channels))
             val collector = launch { vm.state.collect { } }
             advanceUntilIdle()
             val state = vm.state.value
@@ -254,8 +277,8 @@ class ChannelListViewModelTest {
 
     @Test
     fun error_whenDiscussionsFlowThrows() =
-        runTest {
-            val vm = ChannelListViewModel(erroringRepo("discussions broke", throwOn = ConversationFilter.Discussions))
+        runTest(dispatcher) {
+            val vm = makeVm(erroringRepo("discussions broke", throwOn = ConversationFilter.Discussions))
             val collector = launch { vm.state.collect { } }
             advanceUntilIdle()
             val state = vm.state.value
@@ -266,8 +289,8 @@ class ChannelListViewModelTest {
 
     @Test
     fun error_messageIsNonBlank_whenExceptionMessageIsNull() =
-        runTest {
-            val vm = ChannelListViewModel(erroringRepo(null, throwOn = ConversationFilter.Channels))
+        runTest(dispatcher) {
+            val vm = makeVm(erroringRepo(null, throwOn = ConversationFilter.Channels))
             val collector = launch { vm.state.collect { } }
             advanceUntilIdle()
             val state = vm.state.value
@@ -281,10 +304,10 @@ class ChannelListViewModelTest {
 
     @Test
     fun recentDiscussionsTapped_isNoOp() =
-        runTest {
+        runTest(dispatcher) {
             val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
             val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
-            val vm = ChannelListViewModel(stubRepo(channels, discussions))
+            val vm = makeVm(stubRepo(channels, discussions))
             val collector = launch { vm.state.collect { } }
             advanceUntilIdle()
             channels.emit(listOf(sampleChannel))
@@ -299,10 +322,10 @@ class ChannelListViewModelTest {
 
     @Test
     fun createDiscussionTapped_createsOneUnpromotedConversation() =
-        runTest {
+        runTest(dispatcher) {
             val repository = FakeConversationRepository()
             val before = repository.observeConversations(ConversationFilter.Discussions).first()
-            val vm = ChannelListViewModel(repository)
+            val vm = makeVm(repository)
 
             vm.onEvent(ChannelListEvent.CreateDiscussionTapped)
             advanceUntilIdle()
@@ -315,8 +338,8 @@ class ChannelListViewModelTest {
 
     @Test
     fun recentDiscussionLastMessages_populatedFromFake_endToEnd() =
-        runTest {
-            val vm = ChannelListViewModel(FakeConversationRepository())
+        runTest(dispatcher) {
+            val vm = makeVm(FakeConversationRepository())
             val collector = launch { vm.state.collect { } }
             advanceUntilIdle()
             val state = vm.state.value
@@ -337,10 +360,10 @@ class ChannelListViewModelTest {
 
     @Test
     fun createDiscussionTapped_emitsToThreadNavigationWithCreatedId() =
-        runTest {
+        runTest(dispatcher) {
             val repository = FakeConversationRepository()
             val before = repository.observeConversations(ConversationFilter.Discussions).first()
-            val vm = ChannelListViewModel(repository)
+            val vm = makeVm(repository)
 
             val deferredEvent = async { vm.navigationEvents.first() }
             vm.onEvent(ChannelListEvent.CreateDiscussionTapped)
@@ -362,10 +385,10 @@ class ChannelListViewModelTest {
 
     @Test
     fun longPressFab_setsWorkspacePickerVisibleToTrue() =
-        runTest {
+        runTest(dispatcher) {
             val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
             val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
-            val vm = ChannelListViewModel(stubRepo(channels, discussions))
+            val vm = makeVm(stubRepo(channels, discussions))
             val collector = launch { vm.state.collect { } }
             advanceUntilIdle()
             channels.emit(listOf(sampleChannel))
@@ -383,10 +406,10 @@ class ChannelListViewModelTest {
 
     @Test
     fun workspacePicked_createsDiscussionWithPickedWorkspace_emitsNavigation_andClearsVisibility() =
-        runTest {
+        runTest(dispatcher) {
             val repository = FakeConversationRepository()
             val before = repository.observeConversations(ConversationFilter.Discussions).first()
-            val vm = ChannelListViewModel(repository)
+            val vm = makeVm(repository)
             val collector = launch { vm.state.collect { } }
             advanceUntilIdle()
 
