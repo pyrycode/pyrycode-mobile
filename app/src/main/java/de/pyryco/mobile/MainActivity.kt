@@ -207,6 +207,7 @@ private fun PyryNavHost(
                 onSendMessage = vm::sendMessage,
                 connectionState = connectionState,
                 onRetry = vm::retry,
+                onOverflowEvent = vm::onOverflowEvent,
                 onModelSelected = vm::onModelSelected,
                 onWorkspaceChipTapped = vm::onWorkspaceChipTapped,
                 onWorkspacePicked = vm::onWorkspacePicked,
