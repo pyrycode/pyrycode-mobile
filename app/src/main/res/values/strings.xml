@@ -51,4 +51,10 @@
     <string name="rename_dialog_field_label">Name</string>
     <string name="rename_dialog_save">Save</string>
     <string name="rename_dialog_cancel">Cancel</string>
+    <string name="save_as_channel_dialog_title">Save as channel</string>
+    <string name="save_as_channel_dialog_field_label">Name</string>
+    <string name="save_as_channel_dialog_workspace_dedicated">Move to dedicated channel folder</string>
+    <string name="save_as_channel_dialog_workspace_scratch">Keep in scratch</string>
+    <string name="save_as_channel_dialog_save">Save</string>
+    <string name="save_as_channel_dialog_cancel">Cancel</string>
 </resources>

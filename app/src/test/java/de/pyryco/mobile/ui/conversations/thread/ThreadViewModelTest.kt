@@ -587,6 +587,114 @@ class ThreadViewModelTest {
             collector.cancel()
         }
 
+    @Test
+    fun onOverflowEvent_saveAsChannel_setsDialogStateWithSeededName() =
+        runTest {
+            val repo = RecordingRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannel)
+            advanceUntilIdle()
+
+            assertEquals(
+                SaveAsChannelDialogState(initialName = "New channel"),
+                vm.state.value.saveAsChannelDialog,
+            )
+            assertTrue(repo.promoteCalls.isEmpty())
+            collector.cancel()
+        }
+
+    @Test
+    fun onOverflowEvent_saveAsChannelSubmit_dedicated_callsPromoteWithSlugPath() =
+        runTest {
+            val repo = RecordingRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannel)
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(
+                ThreadEvent.SaveAsChannelSubmit(
+                    name = "Investment Strategy Review",
+                    workspace = WorkspaceChoice.DEDICATED,
+                ),
+            )
+            advanceUntilIdle()
+
+            assertEquals(null, vm.state.value.saveAsChannelDialog)
+            assertEquals(
+                listOf(
+                    Triple(
+                        "seed-channel-personal",
+                        "Investment Strategy Review",
+                        "pyry-workspace/channels/investment-strategy-review",
+                    ),
+                ),
+                repo.promoteCalls,
+            )
+            collector.cancel()
+        }
+
+    @Test
+    fun onOverflowEvent_saveAsChannelSubmit_scratch_callsPromoteWithNullWorkspace() =
+        runTest {
+            val repo = RecordingRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannel)
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(
+                ThreadEvent.SaveAsChannelSubmit(
+                    name = "kitchenclaw refactor",
+                    workspace = WorkspaceChoice.SCRATCH,
+                ),
+            )
+            advanceUntilIdle()
+
+            assertEquals(null, vm.state.value.saveAsChannelDialog)
+            assertEquals(
+                listOf(
+                    Triple("seed-channel-personal", "kitchenclaw refactor", null),
+                ),
+                repo.promoteCalls,
+            )
+            collector.cancel()
+        }
+
+    @Test
+    fun onOverflowEvent_saveAsChannelDismiss_clearsDialogWithoutPromote() =
+        runTest {
+            val repo = RecordingRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannel)
+            advanceUntilIdle()
+            assertEquals(
+                SaveAsChannelDialogState(initialName = "New channel"),
+                vm.state.value.saveAsChannelDialog,
+            )
+
+            vm.onOverflowEvent(ThreadEvent.SaveAsChannelDismiss)
+            advanceUntilIdle()
+
+            assertEquals(null, vm.state.value.saveAsChannelDialog)
+            assertTrue(repo.promoteCalls.isEmpty())
+            collector.cancel()
+        }
+
     // --- helpers ---
 
     private fun TestScope.makeVm(
@@ -599,6 +707,7 @@ class ThreadViewModelTest {
     private class RecordingRepo : ConversationRepository {
         val archiveCalls = mutableListOf<String>()
         val renameCalls = mutableListOf<Pair<String, String>>()
+        val promoteCalls = mutableListOf<Triple<String, String, String?>>()
 
         override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = flowOf(emptyList())
 
@@ -612,7 +721,18 @@ class ThreadViewModelTest {
             conversationId: String,
             name: String,
             workspace: String?,
-        ): Conversation = TODO("not used")
+        ): Conversation {
+            promoteCalls += Triple(conversationId, name, workspace)
+            return Conversation(
+                id = conversationId,
+                name = name,
+                cwd = workspace ?: "",
+                currentSessionId = "$conversationId-s1",
+                sessionHistory = listOf("$conversationId-s1"),
+                isPromoted = true,
+                lastUsedAt = Instant.parse("2026-05-17T00:00:00Z"),
+            )
+        }
 
         override suspend fun archive(conversationId: String) {
             archiveCalls += conversationId
