@@ -36,6 +36,8 @@ import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.preferences.label
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.conversations.components.ChannelInfoSheet
+import de.pyryco.mobile.ui.conversations.components.ChannelInfoUiModel
 import de.pyryco.mobile.ui.conversations.components.ConnectionBanner
 import de.pyryco.mobile.ui.conversations.components.EmptyThreadState
 import de.pyryco.mobile.ui.conversations.components.MessageBubble
@@ -45,9 +47,11 @@ import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
 import de.pyryco.mobile.ui.conversations.components.StatusSheet
 import de.pyryco.mobile.ui.conversations.components.WorkspaceChip
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
+import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
 import de.pyryco.mobile.ui.settings.label
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 
 private const val ABOVE_DELIMITER_ALPHA = 0.55f
@@ -250,9 +254,46 @@ fun ThreadScreen(
             tokensTotal = state.tokensTotal,
         )
     }
+    if (state.channelInfoOpen) {
+        ChannelInfoSheet(
+            model = state.toChannelInfoUiModel(),
+            onRename = {
+                onOverflowEvent(ThreadEvent.Rename)
+                onOverflowEvent(ThreadEvent.ChannelInfoDismiss)
+            },
+            onChangeWorkspace = {
+                onOverflowEvent(ThreadEvent.ChangeWorkspace)
+                onOverflowEvent(ThreadEvent.ChannelInfoDismiss)
+            },
+            // Archive/Delete from the sheet need pop-back nav + a confirm dialog (sibling #227);
+            // until then they only dismiss — emitting ThreadEvent.Archive here would half-archive.
+            onArchive = { onOverflowEvent(ThreadEvent.ChannelInfoDismiss) },
+            onDelete = { onOverflowEvent(ThreadEvent.ChannelInfoDismiss) },
+            onInstallMemoryPlugin = { /* TODO: Phase 3+ */ },
+            onDismiss = { onOverflowEvent(ThreadEvent.ChannelInfoDismiss) },
+        )
+    }
 }
 
 internal fun mostRecentSessionBoundaryIndex(items: List<ThreadItem>): Int = items.indexOfLast { it is ThreadItem.SessionBoundary }
+
+private fun ThreadItem.timestamp(): Instant =
+    when (this) {
+        is ThreadItem.MessageItem -> message.timestamp
+        is ThreadItem.SessionBoundary -> occurredAt
+    }
+
+internal fun ThreadUiState.toChannelInfoUiModel(now: Instant = Clock.System.now()): ChannelInfoUiModel =
+    ChannelInfoUiModel(
+        conversationName = displayName,
+        workspacePath = workspacePath,
+        createdLabel = items.firstOrNull()?.let { formatRelativeTime(it.timestamp(), now) } ?: "—",
+        lastActivityLabel = lastUsedAt?.let { formatRelativeTime(it, now) } ?: "—",
+        sessionCount = sessionCount,
+        messageCount = items.count { it is ThreadItem.MessageItem },
+        memoryPlugins = emptyList(),
+        channelId = conversationId,
+    )
 
 private fun previewItems(): List<ThreadItem> {
     val t0 = Instant.parse("2026-05-17T14:32:00Z")
