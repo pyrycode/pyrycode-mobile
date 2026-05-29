@@ -224,6 +224,8 @@ private fun PyryNavHost(
             val defaultModel by vm.defaultModel.collectAsStateWithLifecycle()
             val defaultEffort by vm.defaultEffort.collectAsStateWithLifecycle()
             val defaultYolo by vm.defaultYolo.collectAsStateWithLifecycle()
+            val defaultWorkspace by vm.defaultWorkspace.collectAsStateWithLifecycle()
+            val workspacePickerVisible by vm.workspacePickerVisible.collectAsStateWithLifecycle()
             SettingsScreen(
                 themeMode = themeMode,
                 useWallpaperColors = useWallpaperColors,
@@ -231,11 +233,16 @@ private fun PyryNavHost(
                 defaultModel = defaultModel,
                 defaultEffort = defaultEffort,
                 defaultYolo = defaultYolo,
+                defaultWorkspace = defaultWorkspace,
+                workspacePickerVisible = workspacePickerVisible,
                 onSelectTheme = vm::onSelectTheme,
                 onToggleUseWallpaperColors = vm::onToggleUseWallpaperColors,
                 onSelectDefaultModel = vm::onSelectDefaultModel,
                 onSelectDefaultEffort = vm::onSelectDefaultEffort,
                 onToggleDefaultYolo = vm::onToggleDefaultYolo,
+                onDefaultWorkspaceTapped = vm::onDefaultWorkspaceTapped,
+                onSelectDefaultWorkspace = vm::onSelectDefaultWorkspace,
+                onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
                 onBack = { navController.popBackStack() },
                 onOpenArchivedDiscussions = { navController.navigate(Routes.ARCHIVED_DISCUSSIONS) },
             )

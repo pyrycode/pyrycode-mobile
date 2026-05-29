@@ -436,6 +436,98 @@ class SettingsViewModelTest {
             collector.cancel()
         }
 
+    @Test
+    fun defaultWorkspace_initialState_emitsScratchSentinel_whenNoStoredValue() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs)
+            val collector = launch { vm.defaultWorkspace.collect { } }
+            advanceUntilIdle()
+            assertEquals(DEFAULT_SCRATCH_CWD, vm.defaultWorkspace.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun defaultWorkspace_initialState_mirrorsPersistedValue() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            prefs.setDefaultWorkspace("~/Workspace/Projects/foo")
+            advanceUntilIdle()
+            val vm = makeVm(prefs)
+            val collector = launch { vm.defaultWorkspace.collect { } }
+            advanceUntilIdle()
+            assertEquals("~/Workspace/Projects/foo", vm.defaultWorkspace.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun onSelectDefaultWorkspace_persistsPath_andHidesPicker() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs)
+            vm.onDefaultWorkspaceTapped()
+            vm.onSelectDefaultWorkspace("~/Workspace/Projects/foo")
+            advanceUntilIdle()
+            assertEquals("~/Workspace/Projects/foo", prefs.defaultWorkspace.first())
+            assertEquals(false, vm.workspacePickerVisible.value)
+        }
+
+    @Test
+    fun defaultWorkspace_flowReEmits_afterOnSelectDefaultWorkspace() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs)
+            val collector = launch { vm.defaultWorkspace.collect { } }
+            advanceUntilIdle()
+            vm.onSelectDefaultWorkspace("~/Workspace/Projects/foo")
+            advanceUntilIdle()
+            assertEquals("~/Workspace/Projects/foo", vm.defaultWorkspace.value)
+            vm.onSelectDefaultWorkspace("~/Workspace/Projects/bar")
+            advanceUntilIdle()
+            assertEquals("~/Workspace/Projects/bar", vm.defaultWorkspace.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun onDefaultWorkspaceTapped_setsPickerVisible() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs)
+            assertEquals(false, vm.workspacePickerVisible.value)
+            vm.onDefaultWorkspaceTapped()
+            assertEquals(true, vm.workspacePickerVisible.value)
+        }
+
+    @Test
+    fun onWorkspacePickerDismissed_hidesPicker_andLeavesPersistedDefaultUnchanged() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs)
+            val collector = launch { vm.defaultWorkspace.collect { } }
+            advanceUntilIdle()
+            vm.onSelectDefaultWorkspace("~/Workspace/Projects/foo")
+            advanceUntilIdle()
+            vm.onDefaultWorkspaceTapped()
+            assertEquals(true, vm.workspacePickerVisible.value)
+            vm.onWorkspacePickerDismissed()
+            advanceUntilIdle()
+            assertEquals(false, vm.workspacePickerVisible.value)
+            assertEquals("~/Workspace/Projects/foo", prefs.defaultWorkspace.first())
+            collector.cancel()
+        }
+
+    @Test
+    fun onWorkspacePickerDismissed_fromDefaultState_neverPersistsNonSentinel() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs)
+            vm.onDefaultWorkspaceTapped()
+            vm.onWorkspacePickerDismissed()
+            advanceUntilIdle()
+            assertEquals(false, vm.workspacePickerVisible.value)
+            assertEquals(DEFAULT_SCRATCH_CWD, prefs.defaultWorkspace.first())
+        }
+
     private fun stubRepo(
         source: MutableSharedFlow<List<Conversation>> = MutableSharedFlow(replay = 0),
         captureFiltersInto: MutableList<ConversationFilter>? = null,

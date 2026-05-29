@@ -41,10 +41,12 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.data.preferences.label
+import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -56,11 +58,16 @@ fun SettingsScreen(
     defaultModel: Model,
     defaultEffort: Effort,
     defaultYolo: Boolean,
+    defaultWorkspace: String,
+    workspacePickerVisible: Boolean,
     onSelectTheme: (ThemeMode) -> Unit,
     onToggleUseWallpaperColors: (Boolean) -> Unit,
     onSelectDefaultModel: (Model) -> Unit,
     onSelectDefaultEffort: (Effort) -> Unit,
     onToggleDefaultYolo: (Boolean) -> Unit,
+    onDefaultWorkspaceTapped: () -> Unit,
+    onSelectDefaultWorkspace: (String) -> Unit,
+    onWorkspacePickerDismissed: () -> Unit,
     onBack: () -> Unit,
     onOpenArchivedDiscussions: () -> Unit,
     modifier: Modifier = Modifier,
@@ -120,6 +127,12 @@ fun SettingsScreen(
                 onDismiss = { showEffortDialog = false },
             )
         }
+
+        WorkspacePicker(
+            visible = workspacePickerVisible,
+            onPicked = onSelectDefaultWorkspace,
+            onDismiss = onWorkspacePickerDismissed,
+        )
 
         Column(
             modifier =
@@ -188,9 +201,9 @@ fun SettingsScreen(
             )
             SettingsRow(
                 headline = "Default workspace",
-                supporting = "scratch",
+                supporting = workspaceLabel(defaultWorkspace),
                 trailing = { ChevronIcon() },
-                onClick = {},
+                onClick = onDefaultWorkspaceTapped,
             )
 
             SettingsSectionHeader("Notifications")
@@ -331,6 +344,13 @@ internal fun ThemeMode.label(): String =
         ThemeMode.DARK -> "Dark"
     }
 
+private fun workspaceLabel(cwd: String): String =
+    if (cwd.isEmpty() || cwd == DEFAULT_SCRATCH_CWD) {
+        "scratch"
+    } else {
+        cwd.substringAfterLast('/').ifEmpty { cwd }
+    }
+
 private const val SOURCE_REPO_URL = "https://github.com/pyrycode/pyrycode-mobile"
 
 @Preview(name = "Settings — Light", showBackground = true, widthDp = 412)
@@ -344,11 +364,16 @@ private fun SettingsScreenLightPreview() {
             defaultModel = Model.OPUS_4_7,
             defaultEffort = Effort.HIGH,
             defaultYolo = false,
+            defaultWorkspace = DEFAULT_SCRATCH_CWD,
+            workspacePickerVisible = false,
             onSelectTheme = {},
             onToggleUseWallpaperColors = {},
             onSelectDefaultModel = {},
             onSelectDefaultEffort = {},
             onToggleDefaultYolo = {},
+            onDefaultWorkspaceTapped = {},
+            onSelectDefaultWorkspace = {},
+            onWorkspacePickerDismissed = {},
             onBack = {},
             onOpenArchivedDiscussions = {},
         )
@@ -366,11 +391,16 @@ private fun SettingsScreenDarkPreview() {
             defaultModel = Model.OPUS_4_7,
             defaultEffort = Effort.HIGH,
             defaultYolo = false,
+            defaultWorkspace = DEFAULT_SCRATCH_CWD,
+            workspacePickerVisible = false,
             onSelectTheme = {},
             onToggleUseWallpaperColors = {},
             onSelectDefaultModel = {},
             onSelectDefaultEffort = {},
             onToggleDefaultYolo = {},
+            onDefaultWorkspaceTapped = {},
+            onSelectDefaultWorkspace = {},
+            onWorkspacePickerDismissed = {},
             onBack = {},
             onOpenArchivedDiscussions = {},
         )
