@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.datetime.Instant
 
 sealed interface ThreadEvent {
     data object NewSession : ThreadEvent
@@ -37,6 +38,8 @@ sealed interface ThreadEvent {
     data object Archive : ThreadEvent
 
     data object ChannelInfo : ThreadEvent
+
+    data object ChannelInfoDismiss : ThreadEvent
 
     data object SaveAsChannel : ThreadEvent
 
@@ -60,6 +63,10 @@ data class ThreadUiState(
     val showRenameDialog: Boolean = false,
     val saveAsChannelDialog: SaveAsChannelDialogState? = null,
     val items: List<ThreadItem> = emptyList(),
+    val channelInfoOpen: Boolean = false,
+    val workspacePath: String = "",
+    val lastUsedAt: Instant? = null,
+    val sessionCount: Int = 0,
     val selectedModel: Model = Model.OPUS_4_7,
     val selectedEffort: Effort = Effort.HIGH,
     val yoloEnabled: Boolean = false,
@@ -87,6 +94,8 @@ class ThreadViewModel(
 
     private val pendingSaveAsChannelDialog = MutableStateFlow<SaveAsChannelDialogState?>(null)
 
+    private val pendingChannelInfo = MutableStateFlow(false)
+
     private val modelOverride = MutableStateFlow<Model?>(null)
 
     private val selectedModelFlow: Flow<Model> =
@@ -107,8 +116,12 @@ class ThreadViewModel(
         ) { model, effort, yolo -> RunConfig(model, effort, yolo) }
 
     private val transientDialogs: Flow<TransientDialogs> =
-        combine(pendingRenameDialog, pendingSaveAsChannelDialog) { rename, save ->
-            TransientDialogs(renameVisible = rename, saveAsChannel = save)
+        combine(
+            pendingRenameDialog,
+            pendingSaveAsChannelDialog,
+            pendingChannelInfo,
+        ) { rename, save, channelInfo ->
+            TransientDialogs(renameVisible = rename, saveAsChannel = save, channelInfoOpen = channelInfo)
         }
 
     val state: StateFlow<ThreadUiState> =
@@ -130,6 +143,10 @@ class ThreadViewModel(
                 showRenameDialog = dialogs.renameVisible,
                 saveAsChannelDialog = dialogs.saveAsChannel,
                 items = items,
+                channelInfoOpen = dialogs.channelInfoOpen,
+                workspacePath = conv?.cwd ?: "",
+                lastUsedAt = conv?.lastUsedAt,
+                sessionCount = conv?.sessionHistory?.size ?: 0,
                 selectedModel = runConfig.model,
                 selectedEffort = runConfig.effort,
                 yoloEnabled = runConfig.yoloEnabled,
@@ -222,9 +239,10 @@ class ThreadViewModel(
                 }
             }
             ThreadEvent.SaveAsChannelDismiss -> pendingSaveAsChannelDialog.value = null
+            ThreadEvent.ChannelInfo -> pendingChannelInfo.value = true
+            ThreadEvent.ChannelInfoDismiss -> pendingChannelInfo.value = false
             ThreadEvent.NewSession,
             ThreadEvent.ChangeWorkspace,
-            ThreadEvent.ChannelInfo,
             -> Unit
         }
     }
@@ -238,6 +256,7 @@ class ThreadViewModel(
     private data class TransientDialogs(
         val renameVisible: Boolean,
         val saveAsChannel: SaveAsChannelDialogState?,
+        val channelInfoOpen: Boolean,
     )
 
     companion object {

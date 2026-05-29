@@ -651,10 +651,70 @@ class ThreadViewModelTest {
 
             vm.onOverflowEvent(ThreadEvent.NewSession)
             vm.onOverflowEvent(ThreadEvent.ChangeWorkspace)
-            vm.onOverflowEvent(ThreadEvent.ChannelInfo)
             advanceUntilIdle()
 
             assertTrue(repo.archiveCalls.isEmpty())
+            collector.cancel()
+        }
+
+    @Test
+    fun onOverflowEvent_channelInfo_opensSheetWithoutArchiving() =
+        runTest {
+            val repo = RecordingRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.ChannelInfo)
+            advanceUntilIdle()
+
+            assertTrue(vm.state.value.channelInfoOpen)
+            assertTrue(repo.archiveCalls.isEmpty())
+            collector.cancel()
+        }
+
+    @Test
+    fun onOverflowEvent_channelInfoDismiss_closesSheet() =
+        runTest {
+            val repo = RecordingRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.ChannelInfo)
+            advanceUntilIdle()
+            assertTrue(vm.state.value.channelInfoOpen)
+
+            vm.onOverflowEvent(ThreadEvent.ChannelInfoDismiss)
+            advanceUntilIdle()
+
+            assertFalse(vm.state.value.channelInfoOpen)
+            collector.cancel()
+        }
+
+    @Test
+    fun state_populatesChannelInfoIngredients_fromSeededConversation() =
+        runTest {
+            val channel =
+                Conversation(
+                    id = "c-info",
+                    name = "Infra",
+                    cwd = "pyry-workspace/channels/infra",
+                    currentSessionId = "c-info-s3",
+                    sessionHistory = listOf("c-info-s1", "c-info-s2", "c-info-s3"),
+                    isPromoted = true,
+                    lastUsedAt = Instant.parse("2026-05-20T08:00:00Z"),
+                )
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "c-info"))
+            val vm = makeVm(handle, fixedRepo(listOf(channel)))
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            assertEquals("pyry-workspace/channels/infra", vm.state.value.workspacePath)
+            assertEquals(Instant.parse("2026-05-20T08:00:00Z"), vm.state.value.lastUsedAt)
+            assertEquals(3, vm.state.value.sessionCount)
             collector.cancel()
         }
 
