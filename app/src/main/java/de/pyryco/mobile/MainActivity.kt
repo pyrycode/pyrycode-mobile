@@ -39,6 +39,7 @@ import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerScreen
 import de.pyryco.mobile.ui.onboarding.WelcomeScreen
+import de.pyryco.mobile.ui.settings.AboutScreen
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsEvent
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsScreen
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
@@ -245,6 +246,7 @@ private fun PyryNavHost(
                 onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
                 onBack = { navController.popBackStack() },
                 onOpenArchivedDiscussions = { navController.navigate(Routes.ARCHIVED_DISCUSSIONS) },
+                onOpenAbout = { navController.navigate(Routes.ABOUT) },
             )
         }
         composable(Routes.ARCHIVED_DISCUSSIONS) {
@@ -265,6 +267,9 @@ private fun PyryNavHost(
                 effects = vm.effects,
             )
         }
+        composable(Routes.ABOUT) {
+            AboutScreen(onBack = { navController.popBackStack() })
+        }
     }
 }
 
@@ -278,4 +283,5 @@ private object Routes {
     const val CONVERSATION_THREAD = "conversation_thread/{conversationId}"
     const val SETTINGS = "settings"
     const val ARCHIVED_DISCUSSIONS = "archived_discussions"
+    const val ABOUT = "about"
 }
