@@ -2,14 +2,17 @@ package de.pyryco.mobile.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -54,6 +57,16 @@ class SettingsViewModel(
             initialValue = false,
         )
 
+    val defaultWorkspace: StateFlow<String> =
+        appPreferences.defaultWorkspace.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = DEFAULT_SCRATCH_CWD,
+        )
+
+    private val pendingWorkspacePicker = MutableStateFlow(false)
+    val workspacePickerVisible: StateFlow<Boolean> = pendingWorkspacePicker.asStateFlow()
+
     val archivedDiscussionCount: StateFlow<Int> =
         conversationRepository
             .observeConversations(ConversationFilter.Archived)
@@ -83,6 +96,19 @@ class SettingsViewModel(
 
     fun onToggleDefaultYolo(enabled: Boolean) {
         viewModelScope.launch { appPreferences.setDefaultYolo(enabled) }
+    }
+
+    fun onDefaultWorkspaceTapped() {
+        pendingWorkspacePicker.value = true
+    }
+
+    fun onSelectDefaultWorkspace(path: String) {
+        pendingWorkspacePicker.value = false
+        viewModelScope.launch { appPreferences.setDefaultWorkspace(path) }
+    }
+
+    fun onWorkspacePickerDismissed() {
+        pendingWorkspacePicker.value = false
     }
 
     private companion object {
