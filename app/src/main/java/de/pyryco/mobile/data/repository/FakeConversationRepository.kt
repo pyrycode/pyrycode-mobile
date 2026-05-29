@@ -13,6 +13,31 @@ import kotlinx.coroutines.flow.update
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import java.util.UUID
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
+
+/**
+ * Idle threshold after which an unpromoted discussion is auto-archived by
+ * [FakeConversationRepository.sweep]. `internal` so the rule and its boundary
+ * test share one source of truth. A `val` (not `const`) because [Duration]
+ * cannot be a compile-time constant.
+ */
+internal val ARCHIVE_IDLE_THRESHOLD: Duration = 30.days
+
+/**
+ * Pure idle-archive predicate, port of the canonical pyrycode `ShouldArchive`.
+ * Promoted channels never auto-archive; an unpromoted discussion archives once
+ * it has been idle for at least [ARCHIVE_IDLE_THRESHOLD] at [referenceTime].
+ * The boundary is inclusive (`>=`): idle for exactly the threshold archives.
+ * [referenceTime] is caller-supplied — the rule never reads the system clock —
+ * which keeps the boundary tests deterministic with literal instants.
+ */
+internal fun shouldArchive(
+    conversation: Conversation,
+    referenceTime: Instant,
+): Boolean =
+    !conversation.isPromoted &&
+        referenceTime - conversation.lastUsedAt >= ARCHIVE_IDLE_THRESHOLD
 
 /**
  * Phase 1 in-memory implementation. Storage is a single [MutableStateFlow]
@@ -157,6 +182,37 @@ class FakeConversationRepository(
                     record.copy(conversation = record.conversation.copy(archived = false))
             )
         }
+    }
+
+    /**
+     * Applies [shouldArchive] across the whole store at [referenceTime], flipping
+     * `archived = true` on every unpromoted, not-already-archived match so that
+     * auto-archived discussions converge on the same observable state as manually
+     * archived ones (reachable under [ConversationFilter.Archived] and
+     * [ConversationFilter.All], still [unarchive]-able). Returns the count newly
+     * archived. Idempotent: re-running with the same reference time archives
+     * nothing, returns 0, and does not re-emit (the rebuilt map is value-equal).
+     *
+     * Fake-only — not on [ConversationRepository]. In Phase 4 the real backend
+     * sweeps server-side on its own schedule; a client-triggered sweep would be
+     * meaningless on the remote impl. The live trigger (a scheduler calling this
+     * with `Clock.System.now()`) lands with the backend.
+     */
+    suspend fun sweep(referenceTime: Instant): Int {
+        var newlyArchived = 0
+        state.update { records ->
+            newlyArchived = 0
+            records.mapValues { (_, record) ->
+                val conv = record.conversation
+                if (!conv.archived && shouldArchive(conv, referenceTime)) {
+                    newlyArchived++
+                    record.copy(conversation = conv.copy(archived = true))
+                } else {
+                    record
+                }
+            }
+        }
+        return newlyArchived
     }
 
     // See ConversationRepository.delete contract: tolerant of unknown ids

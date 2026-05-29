@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
@@ -7,11 +8,15 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 
 class FakeConversationRepositoryTest {
     @Test
@@ -801,4 +806,107 @@ class FakeConversationRepositoryTest {
             // expected
         }
     }
+
+    // --- Auto-archive idle discussions (#267) ---
+
+    @Test
+    fun shouldArchive_boundaryMatrix_respectsInclusive30DayThreshold() {
+        val now = Instant.parse("2026-06-01T12:00:00Z")
+
+        assertFalse(
+            "promoted channel idle 365 days must never auto-archive",
+            shouldArchive(conv(promoted = true, lastUsedAt = now - 365.days), now),
+        )
+        assertTrue(
+            "discussion idle exactly the threshold must archive (inclusive >=)",
+            shouldArchive(conv(promoted = false, lastUsedAt = now - ARCHIVE_IDLE_THRESHOLD), now),
+        )
+        assertFalse(
+            "discussion idle 29d23h (just under) must stay",
+            shouldArchive(conv(promoted = false, lastUsedAt = now - (29.days + 23.hours)), now),
+        )
+        assertTrue(
+            "discussion idle just over the threshold must archive (locks the >= direction)",
+            shouldArchive(conv(promoted = false, lastUsedAt = now - (ARCHIVE_IDLE_THRESHOLD + 1.minutes)), now),
+        )
+    }
+
+    @Test
+    fun sweep_autoArchivesIdleDiscussions_convergingOnArchivedFilter() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            assertEquals(2, repo.observeConversations(ConversationFilter.Discussions).first().size)
+            assertEquals(1, repo.observeConversations(ConversationFilter.Archived).first().size)
+            assertEquals(3, repo.observeConversations(ConversationFilter.Channels).first().size)
+            assertEquals(6, repo.observeConversations(ConversationFilter.All).first().size)
+
+            val n = repo.sweep(Instant.parse("2026-07-01T00:00:00Z"))
+            assertEquals("only the two live discussions are newly archived", 2, n)
+
+            val discussions = repo.observeConversations(ConversationFilter.Discussions).first()
+            assertEquals("all idle discussions left Discussions", 0, discussions.size)
+
+            val archived = repo.observeConversations(ConversationFilter.Archived).first()
+            assertEquals(3, archived.size)
+            assertTrue("seed-discussion-a is now archived", archived.any { it.id == "seed-discussion-a" })
+            assertTrue("seed-discussion-b is now archived", archived.any { it.id == "seed-discussion-b" })
+
+            assertEquals(
+                "promoted channels untouched despite being >30 days idle",
+                3,
+                repo.observeConversations(ConversationFilter.Channels).first().size,
+            )
+
+            val all = repo.observeConversations(ConversationFilter.All).first()
+            assertEquals("retention — nothing deleted", 6, all.size)
+            assertTrue(all.any { it.id == "seed-discussion-a" })
+            assertTrue(all.any { it.id == "seed-discussion-b" })
+        }
+
+    @Test
+    fun sweep_isIdempotent_secondSweepArchivesNothing() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val referenceTime = Instant.parse("2026-07-01T00:00:00Z")
+
+            assertEquals(2, repo.sweep(referenceTime))
+            assertEquals("a second sweep at the same reference time archives nothing", 0, repo.sweep(referenceTime))
+            assertEquals(
+                "Archived stays at 3 after a redundant sweep (no duplicate membership)",
+                3,
+                repo.observeConversations(ConversationFilter.Archived).first().size,
+            )
+        }
+
+    @Test
+    fun sweep_autoArchivedDiscussion_isRestorableViaUnarchive() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            repo.sweep(Instant.parse("2026-07-01T00:00:00Z"))
+
+            repo.unarchive("seed-discussion-a")
+
+            assertTrue(
+                "auto-archived discussion must be restorable to Discussions",
+                repo.observeConversations(ConversationFilter.Discussions).first().any { it.id == "seed-discussion-a" },
+            )
+            assertTrue(
+                "restored discussion must leave Archived",
+                repo.observeConversations(ConversationFilter.Archived).first().none { it.id == "seed-discussion-a" },
+            )
+        }
+
+    private fun conv(
+        promoted: Boolean,
+        lastUsedAt: Instant,
+    ): Conversation =
+        Conversation(
+            id = "test-conv",
+            name = null,
+            cwd = DEFAULT_SCRATCH_CWD,
+            currentSessionId = "test-session",
+            sessionHistory = listOf("test-session"),
+            isPromoted = promoted,
+            lastUsedAt = lastUsedAt,
+        )
 }
