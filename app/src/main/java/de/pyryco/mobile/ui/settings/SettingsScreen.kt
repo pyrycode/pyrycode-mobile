@@ -1,7 +1,5 @@
 package de.pyryco.mobile.ui.settings
 
-import android.content.Intent
-import android.net.Uri
 import android.os.Build
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -34,12 +32,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.preferences.Effort
@@ -70,6 +65,7 @@ fun SettingsScreen(
     onWorkspacePickerDismissed: () -> Unit,
     onBack: () -> Unit,
     onOpenArchivedDiscussions: () -> Unit,
+    onOpenAbout: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val dynamicColorSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
@@ -89,7 +85,6 @@ fun SettingsScreen(
             )
         },
     ) { inner ->
-        val context = LocalContext.current
         var pushNotifications by remember { mutableStateOf(true) }
         var showThemeDialog by remember { mutableStateOf(false) }
         var showModelDialog by remember { mutableStateOf(false) }
@@ -254,23 +249,9 @@ fun SettingsScreen(
 
             SettingsSectionHeader("About")
             SettingsRow(
-                headline = "Version ${BuildConfig.VERSION_NAME}",
-                supporting = "build ${BuildConfig.GIT_SHA}",
-            )
-            SettingsRow(
-                headline = "Open source · github.com/pyrycode/pyrycode-mobile",
-                trailing = { ExternalLinkIcon() },
-                onClick = {
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(SOURCE_REPO_URL)))
-                },
-            )
-            SettingsRow(
-                headline = "Privacy policy",
-                trailing = { ExternalLinkIcon() },
-                onClick = {},
-            )
-            SettingsRow(
-                headline = "License: MIT",
+                headline = stringResource(R.string.about_settings_row),
+                trailing = { ChevronIcon() },
+                onClick = onOpenAbout,
             )
         }
     }
@@ -287,7 +268,7 @@ private fun SettingsSectionHeader(text: String) {
 }
 
 @Composable
-private fun SettingsRow(
+internal fun SettingsRow(
     headline: String,
     supporting: String? = null,
     trailing: (@Composable () -> Unit)? = null,
@@ -309,15 +290,6 @@ private fun ChevronIcon() {
         imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
         contentDescription = null,
         modifier = Modifier.size(20.dp),
-    )
-}
-
-@Composable
-private fun ExternalLinkIcon() {
-    Icon(
-        painter = painterResource(R.drawable.ic_open_in_new),
-        contentDescription = null,
-        modifier = Modifier.size(18.dp),
     )
 }
 
@@ -351,8 +323,6 @@ private fun workspaceLabel(cwd: String): String =
         cwd.substringAfterLast('/').ifEmpty { cwd }
     }
 
-private const val SOURCE_REPO_URL = "https://github.com/pyrycode/pyrycode-mobile"
-
 @Preview(name = "Settings — Light", showBackground = true, widthDp = 412)
 @Composable
 private fun SettingsScreenLightPreview() {
@@ -376,6 +346,7 @@ private fun SettingsScreenLightPreview() {
             onWorkspacePickerDismissed = {},
             onBack = {},
             onOpenArchivedDiscussions = {},
+            onOpenAbout = {},
         )
     }
 }
@@ -403,6 +374,7 @@ private fun SettingsScreenDarkPreview() {
             onWorkspacePickerDismissed = {},
             onBack = {},
             onOpenArchivedDiscussions = {},
+            onOpenAbout = {},
         )
     }
 }
