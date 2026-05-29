@@ -47,6 +47,13 @@ class SettingsViewModel(
             initialValue = Effort.HIGH,
         )
 
+    val defaultYolo: StateFlow<Boolean> =
+        appPreferences.defaultYolo.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = false,
+        )
+
     val archivedDiscussionCount: StateFlow<Int> =
         conversationRepository
             .observeConversations(ConversationFilter.Archived)
@@ -72,6 +79,10 @@ class SettingsViewModel(
 
     fun onSelectDefaultEffort(effort: Effort) {
         viewModelScope.launch { appPreferences.setDefaultEffort(effort) }
+    }
+
+    fun onToggleDefaultYolo(enabled: Boolean) {
+        viewModelScope.launch { appPreferences.setDefaultYolo(enabled) }
     }
 
     private companion object {
