@@ -16,9 +16,15 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -37,11 +43,24 @@ fun ConversationRow(
         conversation.name?.takeIf { it.isNotBlank() }
             ?: if (conversation.isPromoted) "Untitled channel" else "Untitled discussion"
 
-    val gestureModifier =
+    val relativeTime = formatRelativeTime(conversation.lastUsedAt)
+    val rowDescription =
+        if (conversation.isSleeping) {
+            stringResource(R.string.cd_conversation_row_idle, displayName, relativeTime)
+        } else {
+            stringResource(R.string.cd_conversation_row, displayName, relativeTime)
+        }
+
+    val clickableModifier =
         if (onLongClick == null) {
             modifier.clickable(onClick = onClick)
         } else {
             modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+        }
+    val gestureModifier =
+        clickableModifier.semantics(mergeDescendants = true) {
+            contentDescription = rowDescription
+            role = Role.Button
         }
 
     ListItem(
@@ -72,7 +91,7 @@ fun ConversationRow(
             }
         },
         trailingContent = {
-            Text(text = formatRelativeTime(conversation.lastUsedAt))
+            Text(text = relativeTime)
         },
     )
 }

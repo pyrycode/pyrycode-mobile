@@ -12,6 +12,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -36,11 +38,15 @@ fun DiscussionPreviewRow(
         conversation.name?.takeIf { it.isNotBlank() }
             ?: stringResource(R.string.untitled_discussion)
 
+    val relativeTime = formatRelativeTime(conversation.lastUsedAt)
+    val rowDescription = stringResource(R.string.cd_discussion_preview_row, displayName, relativeTime)
+
     Column(
         modifier =
             modifier
                 .fillMaxWidth()
                 .clickable(role = Role.Button, onClick = onClick)
+                .semantics(mergeDescendants = true) { contentDescription = rowDescription }
                 .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
@@ -61,7 +67,7 @@ fun DiscussionPreviewRow(
             )
         }
         Text(
-            text = formatRelativeTime(conversation.lastUsedAt),
+            text = relativeTime,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.70f),
             maxLines = 1,
