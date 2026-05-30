@@ -32,15 +32,21 @@ fun DiscussionPreviewRow(
 
 ### Meta line is the bare timestamp (since #158)
 
-The third `Text`'s argument is a direct `formatRelativeTime(conversation.lastUsedAt)` call — no `AnnotatedString`, no `SpanStyle`, no `Row` of sibling `Text`s. Both walked-back precedents — the workspace prefix from #69 and the helper that produced it — were removed in #158 to match Figma node `15:8` exactly. If a future ticket reintroduces a workspace label (or any mixed-font fragment) on this row against an updated Figma node, the `SpanStyle`-inside-one-`Text` pattern is the right shape (it keeps the `labelSmall` baseline coherent in a way a `Row(Arrangement.spacedBy(...))` of sibling `Text`s would not); don't reach for a sibling-`Row` rewrite. The `discussionPreviewWorkspaceLabel` helper is gone — if a label rule comes back, write it inline at the call site first; only extract a helper if a second caller materialises.
+The third `Text`'s argument is `relativeTime` — a single `val relativeTime = formatRelativeTime(conversation.lastUsedAt)` hoisted to the top of the composable since #270 so the visible meta and the merged `contentDescription` share one computed value (they cannot drift). No `AnnotatedString`, no `SpanStyle`, no `Row` of sibling `Text`s. Both walked-back precedents — the workspace prefix from #69 and the helper that produced it — were removed in #158 to match Figma node `15:8` exactly. If a future ticket reintroduces a workspace label (or any mixed-font fragment) on this row against an updated Figma node, the `SpanStyle`-inside-one-`Text` pattern is the right shape (it keeps the `labelSmall` baseline coherent in a way a `Row(Arrangement.spacedBy(...))` of sibling `Text`s would not); don't reach for a sibling-`Row` rewrite. The `discussionPreviewWorkspaceLabel` helper is gone — if a label rule comes back, write it inline at the call site first; only extract a helper if a second caller materialises.
 
 ### Time bucketing — shared helper
 
 `formatRelativeTime(conversation.lastUsedAt)` resolves to the internal top-level function in [`RelativeTime.kt`](#shared-relativetime-helper) (same package). Output strings (`"just now"`, `"3m ago"`, `"4h ago"`, `"Yesterday"`, `"3d ago"`, abbreviated dates) are Kotlin literals inside the helper; localisation of those strings is a deliberate future-ticket scope per #69's open-questions.
 
-### A11y semantics
+### A11y semantics (merged label since #270)
 
-`clickable(role = Role.Button, ...)` is the only semantics override. TalkBack reads the merged subtree of title + body + meta plus the role announcement — the natural reading order for the three lines reads cleanly without an explicit `contentDescription`. No `Modifier.semantics(mergeDescendants = true)` because there's only one click target on the `Column` and the children are pure-text leaves.
+The `Column`'s modifier chain is `.clickable(role = Role.Button, onClick).semantics(mergeDescendants = true) { contentDescription = rowDescription }.padding(...)` — semantics **between** `clickable` and `padding`, matching `SeeAllDiscussionsRow`'s ordering. `rowDescription = stringResource(R.string.cd_discussion_preview_row, displayName, relativeTime)` → `"<name>, <time>"`. `mergeDescendants = true` collapses title + (optional) body + meta into one focusable node, and the explicit `contentDescription` becomes the authoritative TalkBack announcement (the child `Text`s still contribute their `text`, so `hasText`-based finders keep matching).
+
+**The message preview is intentionally excluded from the announced label** (AC #3 of #270 makes it optional). The preview `Text` stays visible and still merges into the node's `text`; only the *spoken* `contentDescription` is name + time — the deterministic, testable signal that lets a screen-reader user tell rows apart. `role` is not repeated in the semantics block; it already comes from `clickable`.
+
+Before #270 this row carried no `contentDescription` and relied on the natural reading order of the three text leaves. That was replaced because (a) fragmented multi-`Text` rows do not always read as one focusable node, and (b) the project now standardises on the explicit merged-label pattern for list rows (see [`../codebase/270.md`](../codebase/270.md)). **Use `semantics`, not `clearAndSetSemantics`** — the latter would drop the child `text` and break `hasText` finders.
+
+Instrumented coverage: `DiscussionPreviewRowTest` (androidTest, #270) asserts the single merged label for both the with-message and no-message cases and a ≥48dp touch target. Compile-verified only (no device CI); see [`../codebase/270.md`](../codebase/270.md) § Lessons learned.
 
 ## Shared `RelativeTime` helper
 
@@ -69,7 +75,7 @@ The two `LocalDate.Format` builders are file-`private` vals at the top of `Relat
 ## Configuration
 
 - **No new dependencies.** `kotlinx.datetime` is already on the classpath since the data layer landed.
-- **Strings:** `R.string.untitled_discussion` ("Untitled discussion"). The `R.string.discussion_preview_placeholder_body` ("Tap to resume — message preview coming soon.") resource from #69 was deleted in #162 once the body slot started reading `lastMessage.content` directly. `R.string.discussion_preview_workspace_scratch` ("scratch") also landed in #69 but was deleted in #158 along with the workspace prefix that consumed it.
+- **Strings:** `R.string.untitled_discussion` ("Untitled discussion") and, since #270, `R.string.cd_discussion_preview_row` (`"%1$s, %2$s"` → the merged TalkBack label, args `displayName, relativeTime`). The `R.string.discussion_preview_placeholder_body` ("Tap to resume — message preview coming soon.") resource from #69 was deleted in #162 once the body slot started reading `lastMessage.content` directly. `R.string.discussion_preview_workspace_scratch` ("scratch") also landed in #69 but was deleted in #158 along with the workspace prefix that consumed it.
 
 ## Preview
 
@@ -91,8 +97,8 @@ No dark + null preview — color slots don't change between null and non-null st
 
 ## Related
 
-- Ticket notes: [`../codebase/69.md`](../codebase/69.md) (introduction), [`../codebase/158.md`](../codebase/158.md) (meta-line walked back to timestamp-only against Figma `15:8`), [`../codebase/161.md`](../codebase/161.md) (data path — `ChannelListUiState.recentDiscussionLastMessages` + `ConversationRepository.observeLastMessage` + seed-discussion-a history), [`../codebase/162.md`](../codebase/162.md) (this consumer slice — signature gains `lastMessage`, body is conditional, placeholder string retired)
+- Ticket notes: [`../codebase/69.md`](../codebase/69.md) (introduction), [`../codebase/158.md`](../codebase/158.md) (meta-line walked back to timestamp-only against Figma `15:8`), [`../codebase/161.md`](../codebase/161.md) (data path — `ChannelListUiState.recentDiscussionLastMessages` + `ConversationRepository.observeLastMessage` + seed-discussion-a history), [`../codebase/162.md`](../codebase/162.md) (this consumer slice — signature gains `lastMessage`, body is conditional, placeholder string retired), [`../codebase/270.md`](../codebase/270.md) (merged TalkBack label `contentDescription` + first instrumented tests)
 - Specs: `docs/specs/architecture/69-channel-list-recent-discussions-section.md`, `docs/specs/architecture/158-discussion-preview-row-meta-timestamp-only.md`, `docs/specs/architecture/161-recent-discussion-last-message-uistate.md`, `docs/specs/architecture/162-channel-list-discussion-preview-row-last-message.md`
 - Upstream: [data model](./data-model.md) (`Conversation`, `Message`, `DEFAULT_SCRATCH_CWD` — still seeds previews here), [ConversationRow](./conversation-row.md) (`formatRelativeTime` originated here; lost its own workspace label in #154 — the close sibling-walked-back precedent for #158), [Conversation repository](./conversation-repository.md) (`observeLastMessage` projection feeds the VM's per-row last-message map)
 - Consumer: [ChannelListScreen](./channel-list-screen.md) — `RecentDiscussionsSection` private composable iterates the VM's top-3 `recentDiscussions` and calls `DiscussionPreviewRow` for each, passing `lastMessages[conversation.id]` per row
-- Downstream / follow-ups: relative-time localisation, accessibility audit on the row hit area, Phase 4 wire-data content shapes (long/code-fence/attachment messages — may need richer body handling once observed)
+- Downstream / follow-ups: relative-time localisation, Phase 4 wire-data content shapes (long/code-fence/attachment messages — may need richer body handling once observed). The accessibility audit on the row (merged TalkBack label + 48dp touch target) was closed by #270.

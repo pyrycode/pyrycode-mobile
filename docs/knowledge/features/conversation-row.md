@@ -72,6 +72,26 @@ The 8.dp spacing between name and dot matches Figma node `15:68`'s inner-frame s
 
 The `Conversation.isSleeping` field is derived at projection in `FakeConversationRepository.observeConversations` (`current?.endedAt != null` on the conversation's current session). Phase 4's real backend will parse the field directly from the conversations endpoint response — the UI contract (`conversation.isSleeping: Boolean`) survives the migration; the Phase 1 derivation is throwaway. See [`data-model.md`](data-model.md) for the field shape and [`conversation-repository.md`](conversation-repository.md) for the projection.
 
+### A11y semantics — merged label + idle announcement (since #270)
+
+The gesture modifier carries `.semantics(mergeDescendants = true) { contentDescription = rowDescription; role = Role.Button }`, appended after the `clickable`/`combinedClickable` branch (mirroring `SeeAllDiscussionsRow`). `mergeDescendants = true` collapses the avatar initials, name, sleeping dot, and trailing time into **one** focusable TalkBack node, and the explicit `contentDescription` is the authoritative spoken announcement. The child `Text`s still contribute their `text` property to the merged node — so `hasText`-based finders (`ChannelListScreenTest`, `DiscussionListScreenTest`) keep resolving — but TalkBack reads the `contentDescription`, not the fragments. **Use `semantics`, not `clearAndSetSemantics`**: the latter would strip the child `text` and break those finders.
+
+`rowDescription` branches on `isSleeping`, sourcing a positional-arg format string so the spoken label mirrors the visible content (no runtime concatenation, locale-safe):
+
+```kotlin
+val relativeTime = formatRelativeTime(conversation.lastUsedAt)   // hoisted, shared with trailingContent
+val rowDescription =
+    if (conversation.isSleeping) {
+        stringResource(R.string.cd_conversation_row_idle, displayName, relativeTime)   // "<name>, idle, <time>"
+    } else {
+        stringResource(R.string.cd_conversation_row, displayName, relativeTime)         // "<name>, <time>"
+    }
+```
+
+The dot at `isSleeping == true` is a silent visual; the **`cd_conversation_row_idle`** label is its spoken equivalent — before #270 a screen-reader user could not distinguish an idle channel from an active one (the AC #2 gap). The spoken term is **"idle"** (clearer in audio, matches the user-story) even though the flag is `isSleeping` and the visible decoration is described as the "sleeping dot" elsewhere in this doc. `relativeTime` is hoisted to a single `val` so the announced label and the visible `trailingContent` can never drift.
+
+Because the merge lives on `ConversationRow` itself (not at a call site), **all three consumers inherit it** — `ChannelListScreen`, `DiscussionListScreen` (the long-press "Save as channel" row, where the sleeping dot also renders), and `ArchivedDiscussionsScreen`. The wider radius is correct parity; see [`../codebase/270.md`](../codebase/270.md) (the #270 spec mistakenly described `ConversationRow` as single-consumer).
+
 ### Relative time bucketing
 
 Since #69 `formatRelativeTime(instant, now, timeZone)` lives at `internal` visibility in a peer file `ui/conversations/components/RelativeTime.kt` (same package) — extracted from `ConversationRow.kt` so the new [`DiscussionPreviewRow`](./discussion-preview-row.md) can call it without duplication. Default `now = Clock.System.now()` and `timeZone = TimeZone.currentSystemDefault()` so previews and any future test can inject deterministic values without exposing the parameter publicly. The two `LocalDate.Format` builders (`sameYearFormat`, `crossYearFormat`) moved with it; `ConversationRow.kt` no longer owns either. First-match wins:
@@ -133,16 +153,16 @@ ConversationRow(
 - `lastUsedAt` in the future (clock skew, bad seed data) → `"just now"`.
 - Very long `displayName` → ellipsizes at 1 line via the explicit `maxLines = 1` on the name `Text` inside the headline `Row` (sleep-dot-aware: `Modifier.weight(1f, fill = false)` yields to a fitting dot first).
 - `isSleeping = true` → trailing 8.dp dot in the headline (between name and timestamp); row stays tappable, no opacity change. `isSleeping = false` (default) → no dot, headline reads as a bare name.
-- Strings are English literals. Localization is **out of scope** for Phase 0 — no `stringResource(...)`.
+- Visible strings (name, placeholder, relative time) are English literals; localization of those is **out of scope** for Phase 0. The exception since #270 is the **a11y `contentDescription`**, which *is* a `stringResource` (`cd_conversation_row` / `cd_conversation_row_idle`) — accessibility labels use the resource system even while the visible copy stays inline. When the visible copy is eventually localised, the a11y format strings are already in `strings.xml`.
 
 ## Out of scope (deliberate)
 
 - Per-row workspace label, supporting-content message preview, leading sleep dot — all walked back in #154 against Figma node `15:8`. Don't re-introduce as parameters or "feature flag"-style decorations; the row's job is the single-line spec.
 - Real session-eviction loop / wake-up affordance — #20 surfaces a sleeping flag; flipping it on idle and the re-attach UX are Phase 4 backend territory.
 - Surfacing the eviction `BoundaryReason` (Clear / IdleEvict / WorkspaceChange) in the row — explicit non-goal in #20's "Technical Notes".
-- Tooltip / long-press to explain "sleeping" — accessibility-affordances polish, follow-up ticket if filed.
+- Tooltip / long-press to *explain* what "idle/sleeping" means — still out of scope. #270 made the idle state **announced** to TalkBack (the `cd_conversation_row_idle` label), which closes the announcement half of #20's deferred "accessibility-affordances polish"; an explanatory tooltip/affordance remains a follow-up if filed.
 - Role-based name decoration (e.g. `"You: …"`) — `ConversationRow` shows the conversation name only.
-- `ComposeTestRule` tests — `androidx-compose-ui-test-junit4` is in the catalog but the row itself has no instrumented tests; its visual contract is exercised through the screens that render it (`ChannelListScreenTest` since #99, `DiscussionListScreenTest` since #78).
+- `ComposeTestRule` tests — until #270 the row had no instrumented tests of its own; its visual contract was exercised only through the screens that render it (`ChannelListScreenTest` since #99, `DiscussionListScreenTest` since #78). Since #270 the row has a dedicated `ConversationRowTest` (androidTest) asserting the merged TalkBack label, the idle announcement (and the absence of the active label when idle), and the ≥48dp touch target — compile-verified only, no device CI (see [`../codebase/270.md`](../codebase/270.md)).
 
 ## Previews
 
@@ -156,7 +176,7 @@ The two together cover the matrix AC #5 of #154 asks for. Adding a third "named 
 ## Related
 
 - Specs: `docs/specs/architecture/17-conversation-row-composable.md`, `docs/specs/architecture/68-channel-list-figma-polish.md` (adds the leading avatar slot), `docs/specs/architecture/154-channel-row-figma-15-8.md` (locks the row to Figma `15:8`). Predecessor specs that #154 walked back: `docs/specs/architecture/19-conversation-row-workspace-label.md`, `docs/specs/architecture/20-conversation-row-sleeping-indicator.md`.
-- Ticket notes: [`../codebase/17.md`](../codebase/17.md), [`../codebase/25.md`](../codebase/25.md) (optional `onLongClick`), [`../codebase/68.md`](../codebase/68.md) (leading avatar), [`../codebase/154.md`](../codebase/154.md) (current shape). Walked-back: [`../codebase/19.md`](../codebase/19.md), [`../codebase/20.md`](../codebase/20.md).
+- Ticket notes: [`../codebase/17.md`](../codebase/17.md), [`../codebase/25.md`](../codebase/25.md) (optional `onLongClick`), [`../codebase/68.md`](../codebase/68.md) (leading avatar), [`../codebase/154.md`](../codebase/154.md) (current shape), [`../codebase/270.md`](../codebase/270.md) (merged TalkBack label + idle announcement + first instrumented tests). Walked-back: [`../codebase/19.md`](../codebase/19.md), [`../codebase/20.md`](../codebase/20.md).
 - Leading avatar primitive: [`ConversationAvatar`](./conversation-avatar.md) (#68)
 - Upstream: #2 ([`Conversation`](data-model.md)), [ADR 0001](../decisions/0001-kotlinx-datetime-for-data-layer.md) (`kotlinx-datetime`)
 - Consumers: [`ChannelListScreen`](channel-list-screen.md) (#46/#68), [`DiscussionListScreen`](discussion-list-screen.md) (#24 — wraps with `Modifier.alpha(0.65f)`; #25 — passes `onLongClick` for "Save as channel"; #78 — same gesture seam fed by the promotion-dialog state machine), [`ArchivedDiscussionsScreen`](archived-discussions-screen.md) (#94 — same alpha + `onLongClick` for "Restore")
