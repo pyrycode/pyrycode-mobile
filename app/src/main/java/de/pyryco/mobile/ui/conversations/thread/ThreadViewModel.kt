@@ -13,11 +13,13 @@ import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Instant
@@ -37,6 +39,12 @@ sealed interface ThreadEvent {
 
     data object Archive : ThreadEvent
 
+    data object Delete : ThreadEvent
+
+    data object DeleteConfirm : ThreadEvent
+
+    data object DeleteDismiss : ThreadEvent
+
     data object ChannelInfo : ThreadEvent
 
     data object ChannelInfoDismiss : ThreadEvent
@@ -53,6 +61,10 @@ sealed interface ThreadEvent {
 
 enum class WorkspaceChoice { DEDICATED, SCRATCH }
 
+sealed interface ThreadNavigation {
+    data object PopBack : ThreadNavigation
+}
+
 data class ThreadUiState(
     val conversationId: String,
     val displayName: String,
@@ -64,6 +76,7 @@ data class ThreadUiState(
     val saveAsChannelDialog: SaveAsChannelDialogState? = null,
     val items: List<ThreadItem> = emptyList(),
     val channelInfoOpen: Boolean = false,
+    val deleteConfirmVisible: Boolean = false,
     val workspacePath: String = "",
     val lastUsedAt: Instant? = null,
     val sessionCount: Int = 0,
@@ -96,6 +109,11 @@ class ThreadViewModel(
 
     private val pendingChannelInfo = MutableStateFlow(false)
 
+    private val pendingDeleteConfirm = MutableStateFlow(false)
+
+    private val navigationChannel = Channel<ThreadNavigation>(capacity = Channel.BUFFERED)
+    val navigationEvents: Flow<ThreadNavigation> = navigationChannel.receiveAsFlow()
+
     private val modelOverride = MutableStateFlow<Model?>(null)
 
     private val selectedModelFlow: Flow<Model> =
@@ -120,8 +138,14 @@ class ThreadViewModel(
             pendingRenameDialog,
             pendingSaveAsChannelDialog,
             pendingChannelInfo,
-        ) { rename, save, channelInfo ->
-            TransientDialogs(renameVisible = rename, saveAsChannel = save, channelInfoOpen = channelInfo)
+            pendingDeleteConfirm,
+        ) { rename, save, channelInfo, deleteConfirm ->
+            TransientDialogs(
+                renameVisible = rename,
+                saveAsChannel = save,
+                channelInfoOpen = channelInfo,
+                deleteConfirmVisible = deleteConfirm,
+            )
         }
 
     val state: StateFlow<ThreadUiState> =
@@ -144,6 +168,7 @@ class ThreadViewModel(
                 saveAsChannelDialog = dialogs.saveAsChannel,
                 items = items,
                 channelInfoOpen = dialogs.channelInfoOpen,
+                deleteConfirmVisible = dialogs.deleteConfirmVisible,
                 workspacePath = conv?.cwd ?: "",
                 lastUsedAt = conv?.lastUsedAt,
                 sessionCount = conv?.sessionHistory?.size ?: 0,
@@ -213,10 +238,23 @@ class ThreadViewModel(
 
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
-            ThreadEvent.Archive ->
+            ThreadEvent.Archive -> {
+                pendingChannelInfo.value = false
                 viewModelScope.launch {
                     repository.archive(state.value.conversationId)
+                    navigationChannel.send(ThreadNavigation.PopBack)
                 }
+            }
+            ThreadEvent.Delete -> pendingDeleteConfirm.value = true
+            ThreadEvent.DeleteConfirm -> {
+                pendingDeleteConfirm.value = false
+                pendingChannelInfo.value = false
+                viewModelScope.launch {
+                    repository.delete(state.value.conversationId)
+                    navigationChannel.send(ThreadNavigation.PopBack)
+                }
+            }
+            ThreadEvent.DeleteDismiss -> pendingDeleteConfirm.value = false
             ThreadEvent.Rename -> pendingRenameDialog.value = true
             is ThreadEvent.RenameSubmit -> {
                 pendingRenameDialog.value = false
@@ -257,6 +295,7 @@ class ThreadViewModel(
         val renameVisible: Boolean,
         val saveAsChannel: SaveAsChannelDialogState?,
         val channelInfoOpen: Boolean,
+        val deleteConfirmVisible: Boolean,
     )
 
     companion object {

@@ -21,6 +21,10 @@
     <string name="promote_dialog_body">Save \"%1$s\" as a channel?</string>
     <string name="promote_dialog_confirm">Save as channel</string>
     <string name="promote_dialog_cancel">Cancel</string>
+    <string name="delete_dialog_title">Delete conversation?</string>
+    <string name="delete_dialog_body">This permanently deletes \"%1$s\" and all its sessions and messages. This can’t be undone.</string>
+    <string name="delete_dialog_confirm">Delete</string>
+    <string name="delete_dialog_cancel">Cancel</string>
     <string name="settings_theme_dialog_title">Theme</string>
     <string name="settings_effort_dialog_title">Default effort</string>
     <string name="settings_model_dialog_title">Default model</string>

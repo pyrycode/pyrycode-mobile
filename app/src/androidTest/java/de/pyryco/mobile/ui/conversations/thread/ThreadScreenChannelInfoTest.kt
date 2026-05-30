@@ -47,11 +47,16 @@ class ThreadScreenChannelInfoTest {
             items = listOf(message("m0"), message("m1")),
         )
 
-    private fun setContent(events: MutableList<ThreadEvent>) {
+    private fun deleteConfirmState(): ThreadUiState = channelInfoState().copy(channelInfoOpen = false, deleteConfirmVisible = true)
+
+    private fun setContent(
+        events: MutableList<ThreadEvent>,
+        state: ThreadUiState = channelInfoState(),
+    ) {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
                 ThreadScreen(
-                    state = channelInfoState(),
+                    state = state,
                     onBack = {},
                     onSendMessage = {},
                     connectionState = ConnectionState.Connected,
@@ -96,23 +101,51 @@ class ThreadScreenChannelInfoTest {
     }
 
     @Test
-    fun tapping_archive_emits_only_dismiss() {
+    fun tapping_archive_emits_archive() {
         val events = mutableListOf<ThreadEvent>()
         setContent(events)
 
         composeTestRule.onNodeWithText("Archive").performClick()
 
-        assertEquals(listOf(ThreadEvent.ChannelInfoDismiss), events)
+        assertEquals(listOf(ThreadEvent.Archive), events)
     }
 
     @Test
-    fun tapping_delete_emits_only_dismiss() {
+    fun tapping_delete_emits_delete() {
         val events = mutableListOf<ThreadEvent>()
         setContent(events)
 
         composeTestRule.onNodeWithText("Delete").performClick()
 
-        assertEquals(listOf(ThreadEvent.ChannelInfoDismiss), events)
+        assertEquals(listOf(ThreadEvent.Delete), events)
+    }
+
+    @Test
+    fun delete_confirm_dialog_displays_title_and_body() {
+        setContent(mutableListOf(), state = deleteConfirmState())
+
+        composeTestRule.onNodeWithText("Delete conversation?").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Test channel", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun tapping_dialog_delete_emits_delete_confirm() {
+        val events = mutableListOf<ThreadEvent>()
+        setContent(events, state = deleteConfirmState())
+
+        composeTestRule.onNodeWithText("Delete").performClick()
+
+        assertEquals(listOf(ThreadEvent.DeleteConfirm), events)
+    }
+
+    @Test
+    fun tapping_dialog_cancel_emits_delete_dismiss() {
+        val events = mutableListOf<ThreadEvent>()
+        setContent(events, state = deleteConfirmState())
+
+        composeTestRule.onNodeWithText("Cancel").performClick()
+
+        assertEquals(listOf(ThreadEvent.DeleteDismiss), events)
     }
 
     @Test

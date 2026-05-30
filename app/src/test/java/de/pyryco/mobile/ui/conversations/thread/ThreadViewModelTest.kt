@@ -625,7 +625,55 @@ class ThreadViewModelTest {
         }
 
     @Test
-    fun onOverflowEvent_archive_callsRepositoryArchiveOnceWithCurrentConversationId() =
+    fun onOverflowEvent_archive_archivesClosesSheetAndPopsBack() =
+        runTest {
+            val repo = RecordingRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            val navEvents = mutableListOf<ThreadNavigation>()
+            val navCollector = launch { vm.navigationEvents.collect { navEvents += it } }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.ChannelInfo)
+            advanceUntilIdle()
+            assertTrue(vm.state.value.channelInfoOpen)
+
+            vm.onOverflowEvent(ThreadEvent.Archive)
+            advanceUntilIdle()
+
+            assertEquals(listOf("seed-channel-personal"), repo.archiveCalls)
+            assertFalse(vm.state.value.channelInfoOpen)
+            assertEquals(listOf(ThreadNavigation.PopBack), navEvents)
+            collector.cancel()
+            navCollector.cancel()
+        }
+
+    @Test
+    fun onOverflowEvent_delete_opensConfirmDialogWithoutDeletingOrNavigating() =
+        runTest {
+            val repo = RecordingRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            val navEvents = mutableListOf<ThreadNavigation>()
+            val navCollector = launch { vm.navigationEvents.collect { navEvents += it } }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.ChannelInfo)
+            vm.onOverflowEvent(ThreadEvent.Delete)
+            advanceUntilIdle()
+
+            assertTrue(vm.state.value.deleteConfirmVisible)
+            assertTrue(vm.state.value.channelInfoOpen)
+            assertTrue(repo.deleteCalls.isEmpty())
+            assertTrue(navEvents.isEmpty())
+            collector.cancel()
+            navCollector.cancel()
+        }
+
+    @Test
+    fun onOverflowEvent_deleteDismiss_closesConfirmKeepsSheetWithoutDeleting() =
         runTest {
             val repo = RecordingRepo()
             val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
@@ -633,11 +681,71 @@ class ThreadViewModelTest {
             val collector = launch { vm.state.collect {} }
             advanceUntilIdle()
 
-            vm.onOverflowEvent(ThreadEvent.Archive)
+            vm.onOverflowEvent(ThreadEvent.ChannelInfo)
+            vm.onOverflowEvent(ThreadEvent.Delete)
+            advanceUntilIdle()
+            assertTrue(vm.state.value.deleteConfirmVisible)
+
+            vm.onOverflowEvent(ThreadEvent.DeleteDismiss)
             advanceUntilIdle()
 
-            assertEquals(listOf("seed-channel-personal"), repo.archiveCalls)
+            assertFalse(vm.state.value.deleteConfirmVisible)
+            assertTrue(vm.state.value.channelInfoOpen)
+            assertTrue(repo.deleteCalls.isEmpty())
             collector.cancel()
+        }
+
+    @Test
+    fun onOverflowEvent_deleteConfirm_deletesClosesAllAndPopsBack() =
+        runTest {
+            val repo = RecordingRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            val navEvents = mutableListOf<ThreadNavigation>()
+            val navCollector = launch { vm.navigationEvents.collect { navEvents += it } }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.ChannelInfo)
+            vm.onOverflowEvent(ThreadEvent.Delete)
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.DeleteConfirm)
+            advanceUntilIdle()
+
+            assertEquals(listOf("seed-channel-personal"), repo.deleteCalls)
+            assertFalse(vm.state.value.deleteConfirmVisible)
+            assertFalse(vm.state.value.channelInfoOpen)
+            assertEquals(listOf(ThreadNavigation.PopBack), navEvents)
+            collector.cancel()
+            navCollector.cancel()
+        }
+
+    @Test
+    fun navigationEvents_eachPopBackDeliveredExactlyOnce_notReplayed() =
+        runTest {
+            val repo = RecordingRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            val navEvents = mutableListOf<ThreadNavigation>()
+            val navCollector = launch { vm.navigationEvents.collect { navEvents += it } }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.Archive)
+            advanceUntilIdle()
+            assertEquals(1, navEvents.size)
+
+            // Continued collection does not replay the consumed PopBack (one-shot).
+            advanceUntilIdle()
+            assertEquals(1, navEvents.size)
+
+            // A second trigger produces its own single event.
+            vm.onOverflowEvent(ThreadEvent.Archive)
+            advanceUntilIdle()
+            assertEquals(2, navEvents.size)
+            collector.cancel()
+            navCollector.cancel()
         }
 
     @Test
@@ -896,6 +1004,7 @@ class ThreadViewModelTest {
 
     private class RecordingRepo : ConversationRepository {
         val archiveCalls = mutableListOf<String>()
+        val deleteCalls = mutableListOf<String>()
         val renameCalls = mutableListOf<Pair<String, String>>()
         val promoteCalls = mutableListOf<Triple<String, String, String?>>()
 
@@ -929,6 +1038,10 @@ class ThreadViewModelTest {
         }
 
         override suspend fun unarchive(conversationId: String): Unit = TODO("not used")
+
+        override suspend fun delete(conversationId: String) {
+            deleteCalls += conversationId
+        }
 
         override suspend fun rename(
             conversationId: String,
