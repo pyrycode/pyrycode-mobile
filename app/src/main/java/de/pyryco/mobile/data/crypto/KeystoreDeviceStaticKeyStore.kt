@@ -45,8 +45,8 @@ class KeystoreDeviceStaticKeyStore(
             mutex.withLock {
                 runCatchingKeystore {
                     val prefs = dataStore.data.first()
-                    val privateBlob = prefs[privateKey(serverId)]
-                    val publicMirror = prefs[publicKey(serverId)]
+                    val privateBlob = prefs[privateBlobKey(serverId)]
+                    val publicMirror = prefs[publicMirrorKey(serverId)]
                     when {
                         privateBlob != null && publicMirror != null ->
                             DeviceStaticKeyPair(decodePublic(publicMirror), unwrap(decode(privateBlob)))
@@ -63,7 +63,7 @@ class KeystoreDeviceStaticKeyStore(
 
     override suspend fun publicKey(serverId: String): ByteArray? =
         withContext(Dispatchers.IO) {
-            val mirror = dataStore.data.first()[publicKey(serverId)] ?: return@withContext null
+            val mirror = dataStore.data.first()[publicMirrorKey(serverId)] ?: return@withContext null
             runCatchingKeystore { decodePublic(mirror) }
         }
 
@@ -72,8 +72,8 @@ class KeystoreDeviceStaticKeyStore(
         val derivedPublic = derivePublicKey(scalar)
         val wrapped = wrap(scalar)
         dataStore.edit { prefs ->
-            prefs[privateKey(serverId)] = encode(wrapped)
-            prefs[publicKey(serverId)] = encode(derivedPublic)
+            prefs[privateBlobKey(serverId)] = encode(wrapped)
+            prefs[publicMirrorKey(serverId)] = encode(derivedPublic)
         }
         return DeviceStaticKeyPair(derivedPublic, scalar)
     }
@@ -137,9 +137,9 @@ class KeystoreDeviceStaticKeyStore(
         return decoded
     }
 
-    private fun privateKey(serverId: String) = stringPreferencesKey(PRIVATE_PREFIX + serverId)
+    private fun privateBlobKey(serverId: String) = stringPreferencesKey(PRIVATE_PREFIX + serverId)
 
-    private fun publicKey(serverId: String) = stringPreferencesKey(PUBLIC_PREFIX + serverId)
+    private fun publicMirrorKey(serverId: String) = stringPreferencesKey(PUBLIC_PREFIX + serverId)
 
     private fun encode(bytes: ByteArray): String = Base64.encodeToString(bytes, Base64.NO_WRAP)
 
