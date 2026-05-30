@@ -7,6 +7,7 @@ import javax.inject.Inject
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 abstract class GitShaValueSource : ValueSource<String, ValueSourceParameters.None> {
@@ -95,7 +96,9 @@ dependencies {
     implementation(libs.koin.androidx.compose)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.datetime)
+    implementation(libs.kotlinx.serialization.json)
     implementation(libs.jetbrains.markdown)
+    implementation(libs.okhttp)
     implementation(libs.snipme.highlights)
     lintChecks(libs.compose.lint.checks)
     testImplementation(libs.junit)

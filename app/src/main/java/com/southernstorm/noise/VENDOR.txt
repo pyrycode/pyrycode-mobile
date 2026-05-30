@@ -1,0 +1,19 @@
+Vendored third-party source — DO NOT EDIT.
+
+Upstream:  https://github.com/rweather/noise-java
+Commit:    49377b6
+License:   MIT (Southern Storm Software, Pty Ltd — per-file headers intact)
+Package:   com.southernstorm.noise.*
+
+These 29 .java files are copied verbatim from the upstream commit above. They
+provide the Noise Protocol implementation (ChaCha20-Poly1305 + BLAKE2s +
+Curve25519, pure Java, no JCE provider / BouncyCastle) used by the Phase 4
+mobile<->daemon Noise_IK handshake.
+
+Vendored rather than pulled as an artifact (ticket #272, security-sensitive):
+the exact bytes are reviewable in the PR diff, the pin is immutable, and the
+build keeps google() + mavenCentral() only (no JitPack, no repository widening).
+
+To update: re-vendor the whole tree from a new upstream commit and bump the
+Commit line above. Never hand-edit these files — the point of vendoring is that
+they match upstream byte-for-byte.

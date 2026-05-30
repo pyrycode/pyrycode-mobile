@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!--
+      Vendored noise-java (#272) is copied verbatim from upstream
+      rweather/noise-java @49377b6 — see com/southernstorm/noise/VENDOR.txt.
+      Upstream's brace-less multi-line `if` guards trip SuspiciousIndentation.
+      We must not edit vendored bytes (the pin is the content), so scope this
+      one issue out for that package only — abortOnError stays on, every other
+      file is still linted.
+    -->
+    <issue id="SuspiciousIndentation">
+        <ignore path="src/main/java/com/southernstorm/noise/**" />
+    </issue>
+</lint>
