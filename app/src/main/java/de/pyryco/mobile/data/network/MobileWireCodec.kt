@@ -4,19 +4,14 @@ import kotlinx.serialization.json.Json
 import java.util.Base64
 
 /**
- * Wire-layer codec for Mobile Protocol v2 (#273): a single configured [MobileJson]
- * plus base64 (standard alphabet, with padding) helpers and the 32-byte
- * server-static-pubkey decoder. Top-level by design — the wire layer's exported
- * surface is the five models in MobileWireModels.kt; this file adds no new type.
+ * The single configured [Json] for all Mobile Protocol v2 (de)serialization (#273),
+ * the root of the wire-layer codec (base64-std helpers + the 32-byte pubkey decoder
+ * follow below). Top-level by design — the wire layer's exported surface is the five
+ * models in MobileWireModels.kt; this file adds no new type. Consumers (de)serialize
+ * directly: `MobileJson.encodeToString(value)` / `MobileJson.decodeFromString<T>(text)`;
+ * there are deliberately no per-model wrappers, which would only inflate the surface.
  *
- * Consumers (de)serialize directly: `MobileJson.encodeToString(value)` /
- * `MobileJson.decodeFromString<T>(text)`. There are deliberately no per-model
- * wrappers — that would only inflate the surface the ticket asks to keep minimal.
- */
-
-/**
- * The single configured [Json] for all Mobile Protocol v2 (de)serialization. The
- * configuration is load-bearing, not cosmetic — a default [Json] would break the
+ * The configuration is load-bearing, not cosmetic — a default [Json] would break the
  * wire contract:
  *
  *  - `encodeDefaults = true`   emits `v:2`, `role:"client"`, `protocol_versions:["v2"]`

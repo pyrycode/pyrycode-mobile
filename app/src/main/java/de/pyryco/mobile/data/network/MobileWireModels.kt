@@ -12,14 +12,13 @@ import kotlinx.serialization.json.JsonElement
  *
  * Wire field names are snake_case; Kotlin properties are camelCase, with
  * [SerialName] carrying the mapping where they differ — this mapping IS the wire
- * contract for Go interop, not cosmetic.
+ * contract for Go interop, not cosmetic. Always (de)serialize via [MobileJson]; a
+ * default `Json` instance would drop the defaulted fields (`v`, `role`,
+ * `protocol_versions`) and emit `null` for absent `in_reply_to` — both
+ * wire-breaking (see MobileWireCodec.kt).
  *
- * Always (de)serialize via [MobileJson]; a default `Json` instance would drop the
- * defaulted fields (`v`, `role`, `protocol_versions`) and emit `null` for absent
- * `in_reply_to` — both wire-breaking (see MobileWireCodec.kt).
+ * [InnerFrameV2] is the bare WS text payload the phone sends/receives.
  */
-
-/** The bare WS text payload the phone sends/receives. */
 @Serializable
 data class InnerFrameV2(
     val v: Int = 2,
@@ -89,6 +88,5 @@ data class QrPayload(
     val token: String,
     @SerialName("server_static_pubkey") val serverStaticPubkey: String,
 ) {
-    override fun toString(): String =
-        "QrPayload(server=$server, relay=$relay, token=***, serverStaticPubkey=$serverStaticPubkey)"
+    override fun toString(): String = "QrPayload(server=$server, relay=$relay, token=***, serverStaticPubkey=$serverStaticPubkey)"
 }
