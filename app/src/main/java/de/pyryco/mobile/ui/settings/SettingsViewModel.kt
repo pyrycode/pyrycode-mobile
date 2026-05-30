@@ -57,6 +57,13 @@ class SettingsViewModel(
             initialValue = false,
         )
 
+    val pushNotifications: StateFlow<Boolean> =
+        appPreferences.notificationsEnabled.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = true,
+        )
+
     val defaultWorkspace: StateFlow<String> =
         appPreferences.defaultWorkspace.stateIn(
             scope = viewModelScope,
@@ -96,6 +103,10 @@ class SettingsViewModel(
 
     fun onToggleDefaultYolo(enabled: Boolean) {
         viewModelScope.launch { appPreferences.setDefaultYolo(enabled) }
+    }
+
+    fun onTogglePushNotifications(enabled: Boolean) {
+        viewModelScope.launch { appPreferences.setNotificationsEnabled(enabled) }
     }
 
     fun onDefaultWorkspaceTapped() {

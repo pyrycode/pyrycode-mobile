@@ -157,6 +157,23 @@ class AppPreferencesTest {
         }
 
     @Test
+    fun notificationsEnabled_defaultsToTrue() =
+        runBlocking {
+            assertEquals(true, prefs.notificationsEnabled.first())
+        }
+
+    @Test
+    fun setNotificationsEnabled_roundTripsBothValues() =
+        runBlocking {
+            prefs.setNotificationsEnabled(false)
+            assertEquals(false, prefs.notificationsEnabled.first())
+            prefs.setNotificationsEnabled(true)
+            assertEquals(true, prefs.notificationsEnabled.first())
+            prefs.setNotificationsEnabled(false)
+            assertEquals(false, prefs.notificationsEnabled.first())
+        }
+
+    @Test
     fun defaultWorkspace_defaultsToScratchCwd() =
         runBlocking {
             assertEquals(DEFAULT_SCRATCH_CWD, prefs.defaultWorkspace.first())
