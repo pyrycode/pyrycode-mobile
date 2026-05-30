@@ -16,6 +16,8 @@ Everything else is already in place. #137 wired the `WorkspacePicker` host (deli
 
 The only remaining work is to route `ThreadEvent.ChangeWorkspace` into `pendingWorkspacePicker.value = true`, exactly as `onWorkspaceChipTapped()` already does. The overflow item then opens the same picker the chip opens. No new state, no new flow, no new picker call, no new handler.
 
+> **Two triggers, one arm.** `ThreadEvent.ChangeWorkspace` is fired from **two** UI sites today, both currently no-op: the overflow menu item (`ThreadOverflowMenu.kt:50-56`) and the Channel Info sheet's "Change workspace" row (`ThreadScreen.kt:269-272`, which fires `ChangeWorkspace` then `ChannelInfoDismiss`). The single new `when` arm serves both — after this change, both entry points open the picker. This is intended (no extra work), but call it out so code-review isn't surprised that the Channel Info row also "lights up."
+
 > **Reality vs. ticket AC — read this.** The ticket AC describes the surviving no-op arm as `NewSession, ChannelInfo -> Unit`. That is stale: on current `main`, `ThreadEvent.ChannelInfo` already has its own arm (`ThreadEvent.ChannelInfo -> pendingChannelInfo.value = true`). The actual no-op arm today is `NewSession, ChangeWorkspace -> Unit` (two cases only). After this change the surviving no-op arm is **`ThreadEvent.NewSession -> Unit`** (one case). The routing intent is identical to the AC; only the residual case list differs. Do not re-add a `ChannelInfo` no-op branch.
 
 ## Design source
@@ -23,9 +25,7 @@ The only remaining work is to route `ThreadEvent.ChangeWorkspace` into `pendingW
 **Figma (picker sheet):** https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=20-2
 **Figma (overflow menu, trigger location):** https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8
 
-Node `20:2` is the Workspace Picker — an M3 modal bottom sheet listing recent workspace paths with a "create new folder" affordance; node `16:8` is the thread overflow menu that hosts the **Change workspace…** item. **This ticket renders no new UI.** The picker is the existing #220 component and the menu item is the existing #204 item; both were design-reviewed when they landed. This change only connects the existing item to the existing picker via the ViewModel — there is nothing new to lay out, style, or token. The visual-fidelity check is therefore covered upstream by #220 (picker) and #204 (menu item).
-
-> Authoring note: the Figma MCP was unavailable during this spec run (repeated empty responses). The summary above is derived from the ticket body and the shipped `WorkspacePicker`/`ThreadOverflowMenu` components. Because the deliverable adds zero UI, no live design read is load-bearing for implementation. If code-review wants a pixel check, it falls on the unchanged #220 component.
+Node `20:2` ("Workspace Picker Sheet") is an M3 modal bottom sheet: a drag handle, a "Choose workspace" title (`title-large`) with a trailing close (×) icon, a "Recent" section listing monospace workspace paths each with a "last used …" subtitle (and a `secondary-container` "default" chip on the scratch entry), then an "Other" section whose single row is "Create new folder under pyry-workspace". Node `16:8` is the thread screen whose overflow (`more_vert`) menu hosts the **Change workspace…** item. **This ticket renders no new UI.** The picker is the existing #220 component (`WorkspacePicker` → `WorkspacePickerSheet` → `CreateFolderDialog`) and the menu item is the existing #204 item; both were design-reviewed when they landed. This change only connects the existing item to the existing picker via the ViewModel — there is nothing new to lay out, style, or token. The visual-fidelity check is therefore covered upstream by #220 (picker) and #204 (menu item).
 
 ## Files to read first
 
