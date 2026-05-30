@@ -1,0 +1,214 @@
+package de.pyryco.mobile.data.network
+
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.JsonObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * Round-trip, wire-vector, and rejection tests for the Mobile Protocol v2 wire
+ * models + codec (#273). JUnit4, mirroring NoiseSuiteSmokeTest.kt. Each model is
+ * decoded from its exact byte-contract fixture and re-encoded; both directions
+ * must recover the value. Base64 fields are pinned against known vectors to prove
+ * the standard (NOT url-safe) alphabet with padding.
+ */
+class MobileWireCodecTest {
+    // ---- Per-model round-trip --------------------------------------------------
+
+    @Test
+    fun innerFrameV2_roundTrips() {
+        val fixture = """{"v":2,"type":"noise_init","data":"aGk="}"""
+        val decoded = MobileJson.decodeFromString<InnerFrameV2>(fixture)
+
+        assertEquals(2, decoded.v)
+        assertEquals("noise_init", decoded.type)
+        assertEquals("aGk=", decoded.data)
+
+        val encoded = MobileJson.encodeToString(decoded)
+        assertTrue("v must be emitted", encoded.contains("\"v\":2"))
+        assertEquals(decoded, MobileJson.decodeFromString<InnerFrameV2>(encoded))
+    }
+
+    @Test
+    fun envelope_withInReplyTo_roundTrips() {
+        val fixture =
+            """{"id":1,"type":"hello","ts":"2026-05-29T12:00:00Z",""" +
+                """"payload":{"hello":"world"},"in_reply_to":2}"""
+        val decoded = MobileJson.decodeFromString<Envelope>(fixture)
+
+        assertEquals(1L, decoded.id)
+        assertEquals("hello", decoded.type)
+        assertEquals("2026-05-29T12:00:00Z", decoded.ts)
+        assertEquals(2L, decoded.inReplyTo)
+        assertTrue(decoded.payload is JsonObject)
+
+        val encoded = MobileJson.encodeToString(decoded)
+        assertTrue(encoded.contains("\"in_reply_to\":2"))
+        assertEquals(decoded, MobileJson.decodeFromString<Envelope>(encoded))
+    }
+
+    @Test
+    fun envelope_withoutInReplyTo_decodesToAbsent() {
+        val fixture =
+            """{"id":7,"type":"hello","ts":"2026-05-29T12:00:00Z","payload":{"k":"v"}}"""
+        val decoded = MobileJson.decodeFromString<Envelope>(fixture)
+
+        assertNull(decoded.inReplyTo)
+        assertEquals(7L, decoded.id)
+    }
+
+    @Test
+    fun helloClientPayload_roundTrips() {
+        val fixture =
+            """{"role":"client","device_name":"Pixel 8","client_version":"1.0.0",""" +
+                """"protocol_versions":["v2"],"token":"tok-123"}"""
+        val decoded = MobileJson.decodeFromString<HelloClientPayload>(fixture)
+
+        assertEquals("client", decoded.role)
+        assertEquals("Pixel 8", decoded.deviceName)
+        assertEquals("1.0.0", decoded.clientVersion)
+        assertEquals(listOf("v2"), decoded.protocolVersions)
+        assertEquals("tok-123", decoded.token)
+
+        val encoded = MobileJson.encodeToString(decoded)
+        assertTrue(encoded.contains("\"device_name\":\"Pixel 8\""))
+        assertTrue(encoded.contains("\"client_version\":\"1.0.0\""))
+        assertTrue(encoded.contains("\"protocol_versions\":[\"v2\"]"))
+        assertEquals(decoded, MobileJson.decodeFromString<HelloClientPayload>(encoded))
+    }
+
+    @Test
+    fun helloAckPayload_roundTrips() {
+        val fixture = """{"protocol_version":"v2","server_id":"srv-1","conn_id":"conn-9"}"""
+        val decoded = MobileJson.decodeFromString<HelloAckPayload>(fixture)
+
+        assertEquals("v2", decoded.protocolVersion)
+        assertEquals("srv-1", decoded.serverId)
+        assertEquals("conn-9", decoded.connId)
+
+        val encoded = MobileJson.encodeToString(decoded)
+        assertEquals(decoded, MobileJson.decodeFromString<HelloAckPayload>(encoded))
+    }
+
+    @Test
+    fun qrPayload_roundTrips() {
+        val pubkey = base64StdEncode(ByteArray(32))
+        val fixture =
+            """{"server":"https://s","relay":"wss://r","token":"tok",""" +
+                """"server_static_pubkey":"$pubkey"}"""
+        val decoded = MobileJson.decodeFromString<QrPayload>(fixture)
+
+        assertEquals("https://s", decoded.server)
+        assertEquals("wss://r", decoded.relay)
+        assertEquals("tok", decoded.token)
+        assertEquals(pubkey, decoded.serverStaticPubkey)
+
+        val encoded = MobileJson.encodeToString(decoded)
+        assertTrue(encoded.contains("\"server_static_pubkey\":\"$pubkey\""))
+        assertEquals(decoded, MobileJson.decodeFromString<QrPayload>(encoded))
+    }
+
+    // ---- Defaults emitted (guards encodeDefaults = true) -----------------------
+
+    @Test
+    fun defaults_areEmittedOnEncode() {
+        val frame = InnerFrameV2(type = "noise_init", data = "aGk=")
+        assertTrue(MobileJson.encodeToString(frame).contains("\"v\":2"))
+
+        val hello = HelloClientPayload(deviceName = "d", clientVersion = "1.0", token = "t")
+        val encoded = MobileJson.encodeToString(hello)
+        assertTrue(encoded.contains("\"role\":\"client\""))
+        assertTrue(encoded.contains("\"protocol_versions\":[\"v2\"]"))
+    }
+
+    // ---- in_reply_to omitted when absent (AC #5) -------------------------------
+
+    @Test
+    fun inReplyTo_isOmittedWhenNull() {
+        val envelope =
+            Envelope(
+                id = 1L,
+                type = "hello",
+                ts = "2026-05-29T12:00:00Z",
+                payload = MobileJson.parseToJsonElement("""{"k":"v"}"""),
+                inReplyTo = null,
+            )
+        val encoded = MobileJson.encodeToString(envelope)
+
+        assertFalse(encoded.contains("in_reply_to"))
+        assertNull(MobileJson.decodeFromString<Envelope>(encoded).inReplyTo)
+    }
+
+    // ---- Base64 standard alphabet WITH padding (AC #3) -------------------------
+
+    @Test
+    fun base64_usesStandardAlphabetWithPadding() {
+        // 0xFF 0xFF -> "//8=" proves the standard alphabet ('/', not url-safe '_')
+        // AND padding ('='). Pinned literal, independent of the impl.
+        val twoBytes = base64StdEncode(byteArrayOf(0xFF.toByte(), 0xFF.toByte()))
+        assertEquals("//8=", twoBytes)
+        assertFalse(twoBytes == "__8")
+
+        // 0xFF -> "/w==" pins the two-char padding case.
+        assertEquals("/w==", base64StdEncode(byteArrayOf(0xFF.toByte())))
+
+        val v = ByteArray(32) { it.toByte() }
+        assertTrue(base64StdDecode(base64StdEncode(v)).contentEquals(v))
+    }
+
+    // ---- server_static_pubkey -> 32 bytes + rejection (AC #4) ------------------
+
+    @Test
+    fun decodeServerStaticPubkey_acceptsExactly32Bytes() {
+        val qr = qrWithPubkey(base64StdEncode(ByteArray(32)))
+        assertEquals(32, decodeServerStaticPubkey(qr).size)
+    }
+
+    @Test
+    fun decodeServerStaticPubkey_rejectsWrongLength() {
+        assertThrows(IllegalArgumentException::class.java) {
+            decodeServerStaticPubkey(qrWithPubkey(base64StdEncode(ByteArray(31))))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            decodeServerStaticPubkey(qrWithPubkey(base64StdEncode(ByteArray(33))))
+        }
+    }
+
+    @Test
+    fun decodeServerStaticPubkey_rejectsInvalidBase64() {
+        assertThrows(IllegalArgumentException::class.java) {
+            decodeServerStaticPubkey(qrWithPubkey("!!!"))
+        }
+    }
+
+    // ---- Secret redaction (security-sensitive) ---------------------------------
+
+    @Test
+    fun token_isRedactedInToStringButNotOnTheWire() {
+        val hello =
+            HelloClientPayload(deviceName = "d", clientVersion = "1.0", token = "SECRET_TOKEN")
+        assertFalse(hello.toString().contains("SECRET_TOKEN"))
+        assertTrue(hello.toString().contains("***"))
+        assertTrue(MobileJson.encodeToString(hello).contains("SECRET_TOKEN"))
+
+        val qr = qrWithPubkey(base64StdEncode(ByteArray(32)), token = "SECRET_TOKEN")
+        assertFalse(qr.toString().contains("SECRET_TOKEN"))
+        assertTrue(qr.toString().contains("***"))
+        assertTrue(MobileJson.encodeToString(qr).contains("SECRET_TOKEN"))
+    }
+
+    private fun qrWithPubkey(
+        pubkey: String,
+        token: String = "tok",
+    ) = QrPayload(
+        server = "https://s",
+        relay = "wss://r",
+        token = token,
+        serverStaticPubkey = pubkey,
+    )
+}
