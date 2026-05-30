@@ -339,6 +339,48 @@ class SettingsViewModelTest {
         }
 
     @Test
+    fun pushNotifications_initialState_emitsTrue_whenNoStoredValue() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs)
+            val collector = launch { vm.pushNotifications.collect { } }
+            advanceUntilIdle()
+            assertEquals(true, vm.pushNotifications.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun pushNotifications_initialState_mirrorsPersistedFalse() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            prefs.setNotificationsEnabled(false)
+            advanceUntilIdle()
+            val vm = makeVm(prefs)
+            val collector = launch { vm.pushNotifications.collect { } }
+            advanceUntilIdle()
+            assertEquals(false, vm.pushNotifications.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun onTogglePushNotifications_persistsAndFlowReEmits() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs)
+            val collector = launch { vm.pushNotifications.collect { } }
+            advanceUntilIdle()
+            vm.onTogglePushNotifications(false)
+            advanceUntilIdle()
+            assertEquals(false, prefs.notificationsEnabled.first())
+            assertEquals(false, vm.pushNotifications.value)
+            vm.onTogglePushNotifications(true)
+            advanceUntilIdle()
+            assertEquals(true, prefs.notificationsEnabled.first())
+            assertEquals(true, vm.pushNotifications.value)
+            collector.cancel()
+        }
+
+    @Test
     fun archivedDiscussionCount_initialValue_isZero() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())

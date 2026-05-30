@@ -53,6 +53,7 @@ fun SettingsScreen(
     defaultModel: Model,
     defaultEffort: Effort,
     defaultYolo: Boolean,
+    pushNotifications: Boolean,
     defaultWorkspace: String,
     workspacePickerVisible: Boolean,
     onSelectTheme: (ThemeMode) -> Unit,
@@ -60,6 +61,7 @@ fun SettingsScreen(
     onSelectDefaultModel: (Model) -> Unit,
     onSelectDefaultEffort: (Effort) -> Unit,
     onToggleDefaultYolo: (Boolean) -> Unit,
+    onTogglePushNotifications: (Boolean) -> Unit,
     onDefaultWorkspaceTapped: () -> Unit,
     onSelectDefaultWorkspace: (String) -> Unit,
     onWorkspacePickerDismissed: () -> Unit,
@@ -85,7 +87,6 @@ fun SettingsScreen(
             )
         },
     ) { inner ->
-        var pushNotifications by remember { mutableStateOf(true) }
         var showThemeDialog by remember { mutableStateOf(false) }
         var showModelDialog by remember { mutableStateOf(false) }
         var showEffortDialog by remember { mutableStateOf(false) }
@@ -207,7 +208,7 @@ fun SettingsScreen(
                 trailing = {
                     Switch(
                         checked = pushNotifications,
-                        onCheckedChange = { pushNotifications = it },
+                        onCheckedChange = onTogglePushNotifications,
                     )
                 },
             )
@@ -334,6 +335,7 @@ private fun SettingsScreenLightPreview() {
             defaultModel = Model.OPUS_4_7,
             defaultEffort = Effort.HIGH,
             defaultYolo = false,
+            pushNotifications = true,
             defaultWorkspace = DEFAULT_SCRATCH_CWD,
             workspacePickerVisible = false,
             onSelectTheme = {},
@@ -341,6 +343,7 @@ private fun SettingsScreenLightPreview() {
             onSelectDefaultModel = {},
             onSelectDefaultEffort = {},
             onToggleDefaultYolo = {},
+            onTogglePushNotifications = {},
             onDefaultWorkspaceTapped = {},
             onSelectDefaultWorkspace = {},
             onWorkspacePickerDismissed = {},
@@ -362,6 +365,7 @@ private fun SettingsScreenDarkPreview() {
             defaultModel = Model.OPUS_4_7,
             defaultEffort = Effort.HIGH,
             defaultYolo = false,
+            pushNotifications = true,
             defaultWorkspace = DEFAULT_SCRATCH_CWD,
             workspacePickerVisible = false,
             onSelectTheme = {},
@@ -369,6 +373,7 @@ private fun SettingsScreenDarkPreview() {
             onSelectDefaultModel = {},
             onSelectDefaultEffort = {},
             onToggleDefaultYolo = {},
+            onTogglePushNotifications = {},
             onDefaultWorkspaceTapped = {},
             onSelectDefaultWorkspace = {},
             onWorkspacePickerDismissed = {},
