@@ -8,8 +8,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -25,8 +28,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
@@ -265,14 +270,42 @@ fun ThreadScreen(
                 onOverflowEvent(ThreadEvent.ChangeWorkspace)
                 onOverflowEvent(ThreadEvent.ChannelInfoDismiss)
             },
-            // Archive/Delete from the sheet need pop-back nav + a confirm dialog (sibling #227);
-            // until then they only dismiss — emitting ThreadEvent.Archive here would half-archive.
-            onArchive = { onOverflowEvent(ThreadEvent.ChannelInfoDismiss) },
-            onDelete = { onOverflowEvent(ThreadEvent.ChannelInfoDismiss) },
+            onArchive = { onOverflowEvent(ThreadEvent.Archive) },
+            onDelete = { onOverflowEvent(ThreadEvent.Delete) },
             onInstallMemoryPlugin = { /* TODO: Phase 3+ */ },
             onDismiss = { onOverflowEvent(ThreadEvent.ChannelInfoDismiss) },
         )
     }
+    if (state.deleteConfirmVisible) {
+        DeleteConfirmationDialog(
+            displayName = state.displayName,
+            onConfirm = { onOverflowEvent(ThreadEvent.DeleteConfirm) },
+            onDismiss = { onOverflowEvent(ThreadEvent.DeleteDismiss) },
+        )
+    }
+}
+
+@Composable
+private fun DeleteConfirmationDialog(
+    displayName: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.delete_dialog_title)) },
+        text = { Text(stringResource(R.string.delete_dialog_body, displayName)) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(stringResource(R.string.delete_dialog_confirm))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.delete_dialog_cancel))
+            }
+        },
+    )
 }
 
 internal fun mostRecentSessionBoundaryIndex(items: List<ThreadItem>): Int = items.indexOfLast { it is ThreadItem.SessionBoundary }

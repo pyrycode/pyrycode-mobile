@@ -35,6 +35,7 @@ import de.pyryco.mobile.ui.conversations.list.DiscussionListEvent
 import de.pyryco.mobile.ui.conversations.list.DiscussionListNavigation
 import de.pyryco.mobile.ui.conversations.list.DiscussionListScreen
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
+import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerScreen
@@ -202,6 +203,13 @@ private fun PyryNavHost(
             val vm = koinViewModel<ThreadViewModel>()
             val state by vm.state.collectAsStateWithLifecycle()
             val connectionState by vm.connectionState.collectAsStateWithLifecycle()
+            LaunchedEffect(vm) {
+                vm.navigationEvents.collect { event ->
+                    when (event) {
+                        ThreadNavigation.PopBack -> navController.popBackStack()
+                    }
+                }
+            }
             ThreadScreen(
                 state = state,
                 onBack = { navController.popBackStack() },
