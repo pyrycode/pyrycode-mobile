@@ -31,6 +31,8 @@
     <string name="archived_tab_discussions">Discussions (%1$d)</string>
     <string name="archived_empty_channels">No archived channels</string>
     <string name="archived_empty_discussions">No archived discussions</string>
+    <string name="about_title">About</string>
+    <string name="about_settings_row">About</string>
     <string name="archived_discussions_settings_row">Archived discussions</string>
     <string name="archived_discussions_count_supporting">%1$d archived</string>
     <string name="archived_relative_subtitle">Archived %1$s</string>
