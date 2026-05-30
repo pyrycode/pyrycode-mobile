@@ -63,6 +63,13 @@ class AppPreferences(
         dataStore.edit { prefs -> prefs[DEFAULT_YOLO] = enabled }
     }
 
+    val notificationsEnabled: Flow<Boolean> =
+        dataStore.data.map { prefs -> prefs[NOTIFICATIONS_ENABLED] ?: true }
+
+    suspend fun setNotificationsEnabled(enabled: Boolean) {
+        dataStore.edit { prefs -> prefs[NOTIFICATIONS_ENABLED] = enabled }
+    }
+
     val defaultWorkspace: Flow<String> =
         dataStore.data.map { prefs -> prefs[DEFAULT_WORKSPACE] ?: DEFAULT_SCRATCH_CWD }
 
@@ -77,6 +84,7 @@ class AppPreferences(
         val DEFAULT_MODEL = stringPreferencesKey("default_model")
         val DEFAULT_EFFORT = stringPreferencesKey("default_effort")
         val DEFAULT_YOLO = booleanPreferencesKey("default_yolo")
+        val NOTIFICATIONS_ENABLED = booleanPreferencesKey("notifications_enabled")
         val DEFAULT_WORKSPACE = stringPreferencesKey("default_workspace")
     }
 }

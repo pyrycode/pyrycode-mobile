@@ -233,6 +233,7 @@ private fun PyryNavHost(
             val defaultModel by vm.defaultModel.collectAsStateWithLifecycle()
             val defaultEffort by vm.defaultEffort.collectAsStateWithLifecycle()
             val defaultYolo by vm.defaultYolo.collectAsStateWithLifecycle()
+            val pushNotifications by vm.pushNotifications.collectAsStateWithLifecycle()
             val defaultWorkspace by vm.defaultWorkspace.collectAsStateWithLifecycle()
             val workspacePickerVisible by vm.workspacePickerVisible.collectAsStateWithLifecycle()
             SettingsScreen(
@@ -242,6 +243,7 @@ private fun PyryNavHost(
                 defaultModel = defaultModel,
                 defaultEffort = defaultEffort,
                 defaultYolo = defaultYolo,
+                pushNotifications = pushNotifications,
                 defaultWorkspace = defaultWorkspace,
                 workspacePickerVisible = workspacePickerVisible,
                 onSelectTheme = vm::onSelectTheme,
@@ -249,6 +251,7 @@ private fun PyryNavHost(
                 onSelectDefaultModel = vm::onSelectDefaultModel,
                 onSelectDefaultEffort = vm::onSelectDefaultEffort,
                 onToggleDefaultYolo = vm::onToggleDefaultYolo,
+                onTogglePushNotifications = vm::onTogglePushNotifications,
                 onDefaultWorkspaceTapped = vm::onDefaultWorkspaceTapped,
                 onSelectDefaultWorkspace = vm::onSelectDefaultWorkspace,
                 onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
