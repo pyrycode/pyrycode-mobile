@@ -758,9 +758,25 @@ class ThreadViewModelTest {
             advanceUntilIdle()
 
             vm.onOverflowEvent(ThreadEvent.NewSession)
+            advanceUntilIdle()
+
+            assertTrue(repo.archiveCalls.isEmpty())
+            collector.cancel()
+        }
+
+    @Test
+    fun onOverflowEvent_changeWorkspace_opensWorkspacePicker() =
+        runTest {
+            val repo = RecordingRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
             vm.onOverflowEvent(ThreadEvent.ChangeWorkspace)
             advanceUntilIdle()
 
+            assertTrue(vm.state.value.workspacePickerVisible)
             assertTrue(repo.archiveCalls.isEmpty())
             collector.cancel()
         }

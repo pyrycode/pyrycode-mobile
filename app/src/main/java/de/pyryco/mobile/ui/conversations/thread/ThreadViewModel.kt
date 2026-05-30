@@ -279,9 +279,8 @@ class ThreadViewModel(
             ThreadEvent.SaveAsChannelDismiss -> pendingSaveAsChannelDialog.value = null
             ThreadEvent.ChannelInfo -> pendingChannelInfo.value = true
             ThreadEvent.ChannelInfoDismiss -> pendingChannelInfo.value = false
-            ThreadEvent.NewSession,
-            ThreadEvent.ChangeWorkspace,
-            -> Unit
+            ThreadEvent.ChangeWorkspace -> pendingWorkspacePicker.value = true
+            ThreadEvent.NewSession -> Unit
         }
     }
 
