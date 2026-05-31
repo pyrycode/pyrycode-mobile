@@ -140,10 +140,21 @@ Two invariants the override preserves:
 
 `java.util.Base64` (API 26+, available in plain JVM unit tests with no Robolectric) is the one JVM-only dependency in an otherwise-portable data layer. It was chosen over `kotlin.io.encoding.Base64` for a 1:1 byte-correspondence with Go's `base64.StdEncoding` and to avoid the `@ExperimentalEncodingApi` opt-in. CLAUDE.md flags Compose Multiplatform as a walk-back trigger and asks `data/` to stay portable — this is a contained `expect/actual` *if/when* iOS lands, isolated to the two codec helpers. **The five models stay fully portable.** Conscious, documented trade-off.
 
+## Application payloads (decoded on top of `Envelope`)
+
+`Envelope.payload` stays a generic `JsonElement` until a consumer decodes it into a typed payload DTO. Those application-payload DTOs — and the pure functions that map them to domain types — live in `data/network/` alongside the wire models, **one file per payload `type`**, with **decode as the single validate boundary**: a malformed/field-incomplete payload throws at `MobileJson.decodeFromJsonElement` rather than producing a partial domain object.
+
+The first one landed in [#316](../codebase/316.md): `ConversationsPayload` / `ConversationSummaryDto` (`ConversationsPayload.kt`) for the `conversations` reply, plus a pure `ConversationsPayload.toConversations(): List<Conversation>` mapper to the domain [`Conversation`](data-model.md). Two precedents it sets for the payloads that follow (#317 `message`, #318 write-responses):
+
+- **Object-wrapped, not a bare array.** The `conversations` payload is `{ "conversations": [ … ] }` (server SSOT `conversations_read.go`, #273), so it decodes to a wrapper DTO whose one field is the row list — **not** a top-level `List<…>`.
+- **Timestamps decode to `kotlinx.datetime.Instant` at the DTO** (via an explicit `InstantIso8601Serializer`) — a deliberate departure from `Envelope.ts` staying a `String`: here a domain field (`lastUsedAt`) consumes the instant, so validating the RFC 3339 string at decode keeps the mapper total. One consequence: a malformed timestamp surfaces as **`IllegalArgumentException`** (kotlinx-datetime's `DateTimeFormatException`), **not** a `SerializationException` — a consumer catching decode failures must handle both families (or `Exception`).
+
+Wire-absent domain fields are filled with documented list-tier defaults at the mapping site, never `null`-punned (for `conversations`: `currentSessionId=""`, `sessionHistory=emptyList()`, `isSleeping=false`, `archived=false` — full session/sleep/archive state arrives via the detail + message read paths). These payloads are **decode-only** (server → phone), so they get no encode round-trip test.
+
 ## What's deliberately absent
 
 - **No per-model encode/decode wrappers.** The configured `MobileJson` + the base64 helpers *are* the codec. Ten trivial typed wrappers would only inflate the surface.
-- **No payload type-zoo.** Only the two Hello payloads are typed models this phase. Other application payloads (`send_message`, `conversations`, …) are added by their consumer tickets; `Envelope.payload` stays a generic `JsonElement` until then.
+- **No payload type-zoo.** #273 typed only the two Hello payloads; other application payloads are modeled **one per live consumer**, never speculatively (see [Application payloads](#application-payloads-decoded-on-top-of-envelope) — `conversations` (#316) is the first). `Envelope.payload` stays a generic `JsonElement` until a consumer decodes it.
 - **No `payload_encrypted` field.** The Go envelope carries an optional `payload_encrypted` (omitempty); it's dropped on decode today via `ignoreUnknownKeys`. The open question "which consumer adds it as a typed field" was **resolved by [#298](../codebase/298.md): not the Noise session** — its transport surface is raw byte arrays, so it never constructs an application `noise_msg` envelope. The field belongs with the **application message set ([#278](https://github.com/pyrycode/pyrycode-mobile/issues/278))** that builds those envelopes; adding it before then would be speculative and untested.
 - **No typed instant for `ts`.** Kept a `String` (RFC3339) this phase; promote when a consumer needs to compare/sort timestamps.
 - **No Noise handshake, WS transport, real crypto, or QR scanning.** All downstream (#275/#276/#277).
@@ -158,5 +169,6 @@ Two invariants the override preserves:
   - **#276** relay WS client — frames bytes as `InnerFrameV2`; the Phase 4 `RemoteConnectionStateSource` (see [Connection state](connection-state.md)) will own the WebSocket this transport runs over.
   - **#277** QR scan + fingerprint — owns the QR-**string** transport wrapper around `QrPayload`, and calls `decodeServerStaticPubkey` before the fingerprint-confirm step.
   - **#278** application message set — builds the `noise_msg` envelopes and owns the typed `payload_encrypted` field.
+  - **[#316](../codebase/316.md)** `conversations` payload → domain `Conversation`-list mapping — the first typed application payload decoded on top of `Envelope` (see [Application payloads](#application-payloads-decoded-on-top-of-envelope)); consumed by #312. Siblings: #317 (`message`), #318 (write-responses).
 - Sibling data-layer doc: [Data model](data-model.md) (the non-wire `Conversation`/`Session`/`Message` schema, which deliberately carries **no** serialization annotations — those belong to this Phase 4 wire layer).
 - Spike: vault doc *"Phase 4 — Noise Client Spike Findings"* (`second-brain`, `2026-05-02-pyrycode-mobile/phase-4-noise-client-spike-findings.md`), § "Proven wire contract (byte-accurate)".
