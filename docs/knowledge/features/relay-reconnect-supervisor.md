@@ -15,8 +15,10 @@ via #306.
 
 > **No UI change.** The [`ConnectionBanner`](connection-banner.md) (#200) and its `ThreadViewModel`
 > wiring (#201) already consume `ConnectionStateSource.observe()` / `retry()`. This layer only changes
-> **which implementation** feeds them. The binding is **app-wired but dormant** — it sits at `Connected`
-> (banner hidden) until [#302](https://github.com/pyrycode/pyrycode-mobile/issues/302) (process-lifecycle) calls `connect()`.
+> **which implementation** feeds them. The binding is **app-wired**; the
+> [lifecycle connection driver](lifecycle-connection-driver.md) ([#302](../codebase/302.md), landed) calls
+> `connect()` on foreground / push-wake and `close()` on background — until the first foreground the
+> supervisor sits dormant at `Connected` (banner hidden).
 
 ## Where it sits in the Phase 4 stack
 
@@ -237,8 +239,10 @@ reset vs <60 s escalation; benign-unpaired (no dial, tap-to-retry stays idle); `
 - Consumer (UI): [`ConnectionBanner`](connection-banner.md) (#200) via `ThreadViewModel` (#201) —
   unchanged; only the bound `ConnectionStateSource` impl changed.
 - Siblings: **#309** (Noise session pump — collects the same connection's `inbound` via `currentConnection`;
-  no blocker), **#302** (process-lifecycle reconnect — drives `connect()`/`close()`), **#308** (relay
-  auth-gate — will consume `Down.code == 4401`), **#278** (`RemoteConversationRepository`).
+  no blocker), **[#302](../codebase/302.md)** ([lifecycle connection driver](lifecycle-connection-driver.md),
+  **landed** — drives `connect()`/`close()` across foreground/background edges via the new
+  `RelayConnectionController` seam), **#308** (relay auth-gate — will consume `Down.code == 4401`), **#278**
+  (`RemoteConversationRepository`).
 - Engine: [ADR 0005 — OkHttp WebSocket engine](../decisions/0005-okhttp-websocket-engine.md). Aligns with
   pyrycode-side ADR 024 (relay untrusted; E2E auth is Noise).
 </content>
