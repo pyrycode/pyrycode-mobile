@@ -22,6 +22,22 @@ import kotlin.math.ceil
 import kotlin.random.Random
 
 /**
+ * The narrow lifecycle-control seam the process-lifecycle driver (#302) drives. Two methods, no data
+ * parameters — a deliberately minimal surface so the driver (and a future FCM push-wake caller) can
+ * only start or stop the supervision loop, never inject relay- or push-controlled data through it.
+ *
+ * Implemented by [RelayConnectionSupervisor]; declared here in the portable `data/network` package so
+ * the platform `lifecycle` package depends inward on this contract, never the reverse.
+ */
+interface RelayConnectionController {
+    /** Idempotent supervision-loop start (app foreground / push-wake). */
+    fun connect()
+
+    /** Full teardown → idle [ConnectionState.Connected] (app background) — an intentional disconnect. */
+    fun close()
+}
+
+/**
  * The Phase 4 reconnect-policy layer on top of the single-connection relay WS transport (#306). It
  * owns the loop that re-dials on drop with capped-exponential backoff and maps live socket state onto
  * the existing [ConnectionStateSource] surface, so the connection banner reflects real connectivity.
@@ -50,7 +66,8 @@ class RelayConnectionSupervisor(
     private val pairedServerStore: PairedServerStore,
     dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val random: Random = Random.Default,
-) : ConnectionStateSource {
+) : ConnectionStateSource,
+    RelayConnectionController {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val state = MutableStateFlow<ConnectionState>(ConnectionState.Connected)
 
@@ -70,7 +87,7 @@ class RelayConnectionSupervisor(
     /** Starts the supervision loop. Idempotent — a repeated call (e.g. an over-eager #302) cannot
      *  spawn a second loop, which would mean two concurrent dials on one transport surface. */
     @Synchronized
-    fun connect() {
+    override fun connect() {
         if (loopJob?.isActive == true) return
         loopJob = scope.launch { runLoop() }
     }
@@ -78,7 +95,7 @@ class RelayConnectionSupervisor(
     /** Stops the loop, tears down the live socket, and goes idle (back to [ConnectionState.Connected]
      *  — an intentional disconnect, not an error, so the banner stays hidden). */
     @Synchronized
-    fun close() {
+    override fun close() {
         loopJob?.cancel()
         loopJob = null
         liveConnection.value?.close()

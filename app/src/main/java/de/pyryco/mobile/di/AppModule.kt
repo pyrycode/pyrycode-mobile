@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
+import androidx.lifecycle.ProcessLifecycleOwner
 import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.KeystoreDeviceStaticKeyStore
@@ -19,6 +20,7 @@ import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
@@ -49,8 +51,17 @@ val appModule =
             RelayTransportFactory { paired -> OkHttpRelayTransport(paired, info, client) }
         }
         single { FakeConversationRepository() } bind ConversationRepository::class
-        // #307: real WS-backed source. Bound but dormant — #302 drives the first connect().
+        // #307: real WS-backed source. Bound but dormant — #302's driver drives the first connect().
         single { RelayConnectionSupervisor(get(), get()) } bind ConnectionStateSource::class
+        // #302: process-lifecycle driver. Eagerly created at startKoin (Application.onCreate, main
+        // thread) so it registers as a ProcessLifecycleOwner observer immediately; resolvable so a
+        // future FCM service can get() it for onPushWake(). Reuses the dormant supervisor singleton.
+        single(createdAtStart = true) {
+            LifecycleConnectionDriver(
+                controller = get<RelayConnectionSupervisor>(),
+                lifecycle = ProcessLifecycleOwner.get().lifecycle,
+            ).also { it.start() }
+        }
         viewModel { ChannelListViewModel(get(), get()) }
         viewModel { DiscussionListViewModel(get()) }
         viewModel { SettingsViewModel(get(), get()) }
