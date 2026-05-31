@@ -151,6 +151,12 @@ The first one landed in [#316](../codebase/316.md): `ConversationsPayload` / `Co
 
 Wire-absent domain fields are filled with documented list-tier defaults at the mapping site, never `null`-punned (for `conversations`: `currentSessionId=""`, `sessionHistory=emptyList()`, `isSleeping=false`, `archived=false` — full session/sleep/archive state arrives via the detail + message read paths). These payloads are **decode-only** (server → phone), so they get no encode round-trip test.
 
+The second landed in [#317](../codebase/317.md): `MessagePayloadDto` + a closed `WireRole` enum (`MessagePayload.kt`) for the `message` payload (also the `send_message` response echo), mapped to a domain [`Message`](data-model.md) by `MessagePayloadDto.toMessage(envelope, sessionId)`. It follows #316's per-payload shape with three wrinkles worth folding into the pattern:
+
+- **The payload IS the object, not object-wrapped.** No wrapper DTO — `Envelope.payload` decodes straight to `MessagePayloadDto` (server SSOT `internal/protocol/messaging.go`, #272). Object-wrap vs bare is per-payload; check the Go struct, don't assume #316's wrapper.
+- **Two validate sites, split across decode and map.** `WireRole` models only the *domain-mappable* roles (`user`/`assistant`), so an unmappable `system` or unknown role is a free `SerializationException` at decode — the technique to reuse whenever a wire enum carries values with no domain target. Meanwhile the message timestamp is the **envelope `ts`** parsed by `Instant.parse` **in the mapper**, so a malformed `ts` throws `IllegalArgumentException` *there*. (Same "a consumer must catch both `SerializationException` and `IllegalArgumentException`" consequence for #312 as #316 — but here the second throw is at *map*, not decode.)
+- **A non-wire domain field can be caller-supplied rather than defaulted.** `sessionId` isn't on the `message` payload, so the mapper takes it as a parameter (#312 injects the active session id) instead of giving it a placeholder default like #316's list-tier fields — the value genuinely exists at the call site.
+
 ## What's deliberately absent
 
 - **No per-model encode/decode wrappers.** The configured `MobileJson` + the base64 helpers *are* the codec. Ten trivial typed wrappers would only inflate the surface.
@@ -169,6 +175,6 @@ Wire-absent domain fields are filled with documented list-tier defaults at the m
   - **#276** relay WS client — frames bytes as `InnerFrameV2`; the Phase 4 `RemoteConnectionStateSource` (see [Connection state](connection-state.md)) will own the WebSocket this transport runs over.
   - **#277** QR scan + fingerprint — owns the QR-**string** transport wrapper around `QrPayload`, and calls `decodeServerStaticPubkey` before the fingerprint-confirm step.
   - **#278** application message set — builds the `noise_msg` envelopes and owns the typed `payload_encrypted` field.
-  - **[#316](../codebase/316.md)** `conversations` payload → domain `Conversation`-list mapping — the first typed application payload decoded on top of `Envelope` (see [Application payloads](#application-payloads-decoded-on-top-of-envelope)); consumed by #312. Siblings: #317 (`message`), #318 (write-responses).
+  - **[#316](../codebase/316.md)** `conversations` → domain `Conversation`-list + **[#317](../codebase/317.md)** `message` → domain `Message` — the first two typed application payloads decoded on top of `Envelope` (see [Application payloads](#application-payloads-decoded-on-top-of-envelope)); both consumed by #312. Remaining sibling: #318 (write-responses).
 - Sibling data-layer doc: [Data model](data-model.md) (the non-wire `Conversation`/`Session`/`Message` schema, which deliberately carries **no** serialization annotations — those belong to this Phase 4 wire layer).
 - Spike: vault doc *"Phase 4 — Noise Client Spike Findings"* (`second-brain`, `2026-05-02-pyrycode-mobile/phase-4-noise-client-spike-findings.md`), § "Proven wire contract (byte-accurate)".
