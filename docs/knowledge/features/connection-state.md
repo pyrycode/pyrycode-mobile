@@ -2,7 +2,7 @@
 
 The data-layer seam for "is the client connected to the pyrycode server?". Backs the [`ConnectionBanner`](./connection-banner.md) UI shipped in #200 (`Connecting…` / `Reconnecting in Ns` / `Offline — tap to retry` / hidden when `Connected`); the follow-up wiring slice (split from #197) places the banner inside `ThreadScreen` and connects it to `ConnectionStateSource.observe()` / `retry()` via `ThreadViewModel`.
 
-Phase 2 ships a fake that always reports `Connected` and exposes a test/preview seam for driving the other three states; Phase 4 swaps the binding to a Ktor/WebSocket-backed implementation behind the same interface.
+Phase 2 ships a fake that always reports `Connected` and exposes a test/preview seam for driving the other three states; Phase 4 swapped the binding to the OkHttp-WS-backed [`RelayConnectionSupervisor`](relay-reconnect-supervisor.md) ([#307](../codebase/307.md)) behind the same interface.
 
 Packages: `de.pyryco.mobile.data.model` (model) and `de.pyryco.mobile.data.repository` (interface + fake).
 
@@ -84,13 +84,15 @@ Singleton scope (Phase 4 will hold a long-lived WebSocket; binding shape stays t
 - **No `StateFlow<ConnectionState>` in the interface return type.** Keeping the interface at `Flow<ConnectionState>` lets Phase 4 pick any flow shape internally (cold `flow { … }` over WebSocket events, etc.) without breaking callers.
 - **No validation, no error handling, no logging.** Pure in-memory state in Phase 2; `retry()` does not throw.
 
-## Phase 4 walk-back
+## Phase 4 walk-back (landed in [#307](../codebase/307.md))
 
-1. Add `data/network/` (or similar) with a Ktor-backed `RemoteConnectionStateSource : ConnectionStateSource` that owns the WebSocket and maps connection events to `ConnectionState`.
-2. Swap the Koin binding in `AppModule.kt`: `single { RemoteConnectionStateSource(get()) } bind ConnectionStateSource::class`.
-3. Delete `FakeConnectionStateSource.kt` (or keep it as a test fixture under `app/src/test/java/...` — the `emit()` seam is genuinely useful for VM tests).
+The real source is [`RelayConnectionSupervisor`](relay-reconnect-supervisor.md) under `data/network/` — **OkHttp-WS-backed** (over the [#306](relay-ws-transport.md) transport), **not Ktor** as this plan originally guessed. What actually changed:
 
-No other call site changes; the wiring slice's `ThreadViewModel` consumes the interface.
+1. `RelayConnectionSupervisor : ConnectionStateSource` was added in `data/network/` (co-located with the transport it supervises), owning the reconnect loop over the single-use #306 transport and mapping its `Up`/`Down` events to `ConnectionState` with capped-exponential backoff.
+2. The Koin binding in `AppModule.kt` was swapped: `single { RelayConnectionSupervisor(get(), get()) } bind ConnectionStateSource::class` replaced the `FakeConnectionStateSource` binding. The supervisor is bound as its concrete type too, so the [lifecycle connection driver](lifecycle-connection-driver.md) ([#302](../codebase/302.md), landed) can resolve it and drive `connect()`/`close()` across foreground/background edges. It is **app-wired**, sitting dormant at `Connected` (banner hidden) until the driver's first foreground `connect()`.
+3. **`FakeConnectionStateSource` was kept** (only its binding was removed) — the `emit()` seam is still used by `ThreadViewModelTest` / `FakeConnectionStateSourceTest`.
+
+No other call site changed; `ThreadViewModel` consumes the unchanged interface. The interface itself did **not** change (no `StateFlow` leak, no new methods) — exactly the stability the Phase-2 doc promised.
 
 ## Related
 
@@ -98,7 +100,8 @@ No other call site changes; the wiring slice's `ThreadViewModel` consumes the in
 - Specs: `docs/specs/architecture/196-connectionstate-model-stub-source.md`, `docs/specs/architecture/200-connectionbanner-composable.md`
 - Parent: #134 → #197 (the UI slice, split into #200 + the follow-up wiring slice).
 - Downstream:
-  - [`ConnectionBanner`](./connection-banner.md) (#200, landed) — pure-UI consumer that renders this model with the four product copy strings; no source dependency yet.
-  - Follow-up wiring slice (open, split from #197) — places the banner inside `ThreadScreen`, injects `ConnectionStateSource` into `ThreadViewModel`, and routes `observe()` / `retry()` through.
+  - [`ConnectionBanner`](./connection-banner.md) (#200, landed) — pure-UI consumer that renders this model with the four product copy strings.
+  - Follow-up wiring slice (split from #197, landed) — places the banner inside `ThreadScreen`, injects `ConnectionStateSource` into `ThreadViewModel`, and routes `observe()` / `retry()` through.
+  - [Relay reconnect supervisor](relay-reconnect-supervisor.md) ([#307](../codebase/307.md), landed) — the **real** `ConnectionStateSource` over the [#306](relay-ws-transport.md) WS transport; swapped the Koin binding away from the fake and drives the four states from live socket events + backoff.
 - Sibling pattern: [`FakeConversationRepository`](conversation-repository.md) (`MutableStateFlow` + `state.map { … }` exposure shape, scaled down to one flow).
 - DI: [Dependency injection](dependency-injection.md).

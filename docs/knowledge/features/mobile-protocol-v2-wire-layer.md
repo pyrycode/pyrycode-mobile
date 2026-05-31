@@ -4,7 +4,7 @@ The **root of the Phase 4 wire layer**: typed, serializable Kotlin models for th
 
 Package: `de.pyryco.mobile.data.network` (`app/src/main/java/de/pyryco/mobile/data/network/`), seeded by [#272](../codebase/272.md). Two production files — `MobileWireModels.kt` (the five models) and `MobileWireCodec.kt` (the codec). Landed in [#273](../codebase/273.md); reuses #272's `kotlinx-serialization-json` 1.8.1 substrate (no new dependency).
 
-> **Greenfield.** Nothing references these yet. The consumers are split out: #275 (Noise session), #276 (relay WS client), #277 (QR scan + fingerprint).
+> **First live consumer landed.** The [Noise_IK session](noise-ik-session.md) ([#298](../codebase/298.md), split from #275) consumes `Envelope` + the two Hello payloads as handshake early-data via `MobileJson`. Remaining consumers are still split out: #276 (relay WS client), #277 (QR scan + fingerprint).
 
 ## The wire ↔ Kotlin mapping is the contract
 
@@ -144,7 +144,7 @@ Two invariants the override preserves:
 
 - **No per-model encode/decode wrappers.** The configured `MobileJson` + the base64 helpers *are* the codec. Ten trivial typed wrappers would only inflate the surface.
 - **No payload type-zoo.** Only the two Hello payloads are typed models this phase. Other application payloads (`send_message`, `conversations`, …) are added by their consumer tickets; `Envelope.payload` stays a generic `JsonElement` until then.
-- **No `payload_encrypted` field.** The Go envelope carries an optional `payload_encrypted` (omitempty); it's dropped on decode today via `ignoreUnknownKeys`. **#275 should add it as a typed field** rather than assume it round-trips.
+- **No `payload_encrypted` field.** The Go envelope carries an optional `payload_encrypted` (omitempty); it's dropped on decode today via `ignoreUnknownKeys`. The open question "which consumer adds it as a typed field" was **resolved by [#298](../codebase/298.md): not the Noise session** — its transport surface is raw byte arrays, so it never constructs an application `noise_msg` envelope. The field belongs with the **application message set ([#278](https://github.com/pyrycode/pyrycode-mobile/issues/278))** that builds those envelopes; adding it before then would be speculative and untested.
 - **No typed instant for `ts`.** Kept a `String` (RFC3339) this phase; promote when a consumer needs to compare/sort timestamps.
 - **No Noise handshake, WS transport, real crypto, or QR scanning.** All downstream (#275/#276/#277).
 
@@ -153,9 +153,10 @@ Two invariants the override preserves:
 - Ticket notes: [`../codebase/273.md`](../codebase/273.md) (this layer), [`../codebase/272.md`](../codebase/272.md) (the serialization substrate it reuses).
 - Spec: `docs/specs/architecture/273-mobile-protocol-v2-wire-models-codec.md`.
 - Upstream contract: pyrycode `docs/protocol-mobile.md` (§ Message envelope, § Pairing flow) + the server's `internal/protocol` package (mirror of these shapes on the Go side).
-- Downstream consumers (all open):
-  - **#275** Noise session — consumes `Envelope` early-data, adds the `payload_encrypted` field.
+- Downstream consumers:
+  - **[#298](../codebase/298.md)** [Noise_IK session](noise-ik-session.md) (landed; split from #275) — consumes `Envelope` + the two Hello payloads as handshake early-data via `MobileJson`. Does **not** add `payload_encrypted` (raw-bytes transport surface) — that moved to #278.
   - **#276** relay WS client — frames bytes as `InnerFrameV2`; the Phase 4 `RemoteConnectionStateSource` (see [Connection state](connection-state.md)) will own the WebSocket this transport runs over.
   - **#277** QR scan + fingerprint — owns the QR-**string** transport wrapper around `QrPayload`, and calls `decodeServerStaticPubkey` before the fingerprint-confirm step.
+  - **#278** application message set — builds the `noise_msg` envelopes and owns the typed `payload_encrypted` field.
 - Sibling data-layer doc: [Data model](data-model.md) (the non-wire `Conversation`/`Session`/`Message` schema, which deliberately carries **no** serialization annotations — those belong to this Phase 4 wire layer).
 - Spike: vault doc *"Phase 4 — Noise Client Spike Findings"* (`second-brain`, `2026-05-02-pyrycode-mobile/phase-4-noise-client-spike-findings.md`), § "Proven wire contract (byte-accurate)".
