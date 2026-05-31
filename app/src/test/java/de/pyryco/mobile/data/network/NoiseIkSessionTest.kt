@@ -184,6 +184,109 @@ class NoiseIkSessionTest {
         assertThrows(NoiseSessionException::class.java) { session.readResp(msg2) }
     }
 
+    // ---- AC #1/#2/#4: re-key happy path + atomic swap --------------------------
+
+    @Test
+    fun rekey_roundTripsUnderNewKeysAfterAtomicSwap() {
+        val established = establish()
+        val leg = established.responder.rekey(established.session.writeRekeyInit(newPrivateKey()))
+        established.session.readRekeyResp(leg.resp)
+
+        // Outbound under the NEW pair: session.sender -> responder.receiver (correct assignment;
+        // a crossed swap MAC-fails here). Ciphertext is still plaintext + 16-byte tag.
+        val plaintext = "after_rekey".toByteArray(Charsets.UTF_8)
+        val ciphertext = established.session.encrypt(plaintext)
+        assertEquals(plaintext.size + 16, ciphertext.size)
+        val recovered = ByteArray(ciphertext.size)
+        val recoveredLen = leg.pair.receiver.decryptWithAd(null, ciphertext, 0, recovered, 0, ciphertext.size)
+        assertArrayEquals(plaintext, recovered.copyOf(recoveredLen))
+
+        // Inbound under the NEW pair: responder.sender -> session.receiver.
+        val reply = "ok".toByteArray(Charsets.UTF_8)
+        val replyCt = ByteArray(reply.size + 16)
+        val replyCtLen = leg.pair.sender.encryptWithAd(null, reply, 0, replyCt, 0, reply.size)
+        assertArrayEquals(reply, established.session.decrypt(replyCt.copyOf(replyCtLen)))
+    }
+
+    @Test
+    fun rekey_frameSealedUnderOldKeysFailsAfterSwap() {
+        val established = establish()
+        // Seal a frame with the pre-re-key responder sender, before the swap.
+        val stale = "stale".toByteArray(Charsets.UTF_8)
+        val staleCt = ByteArray(stale.size + 16)
+        val staleLen = established.responderPair.sender.encryptWithAd(null, stale, 0, staleCt, 0, stale.size)
+
+        val leg = established.responder.rekey(established.session.writeRekeyInit(newPrivateKey()))
+        established.session.readRekeyResp(leg.resp)
+
+        // The old keys were wiped on swap: the new receiver MAC-fails the stale frame (AC #2/#4).
+        assertThrows(NoiseSessionException::class.java) { established.session.decrypt(staleCt.copyOf(staleLen)) }
+    }
+
+    @Test
+    fun rekey_noiseInitCarriesEmptyEarlyData() {
+        val established = establish()
+        // The re-key noise_init re-sends no hello/token — only the bare handshake is the signal.
+        val leg = established.responder.rekey(established.session.writeRekeyInit(newPrivateKey()))
+        assertEquals(0, leg.earlyData.size)
+    }
+
+    // ---- AC #3: peer-static continuity — a different server static fails + retains
+
+    @Test
+    fun rekey_responseFromDifferentServerStaticIsRejectedAndRetainsOldKeys() {
+        val established = establish()
+        established.session.writeRekeyInit(newPrivateKey()) // re-key now in flight
+
+        // A noise_resp produced by a server holding a DIFFERENT static (rotated key / MITM)
+        // cannot satisfy the pinned-rs handshake state, so readRekeyResp MAC-fails.
+        assertThrows(NoiseSessionException::class.java) { established.session.readRekeyResp(foreignRekeyResp()) }
+
+        // The live pair is RETAINED: a round-trip against the ORIGINAL responder pair still works.
+        val plaintext = "still_here".toByteArray(Charsets.UTF_8)
+        val ciphertext = established.session.encrypt(plaintext)
+        val recovered = ByteArray(ciphertext.size)
+        val recoveredLen = established.responderPair.receiver.decryptWithAd(null, ciphertext, 0, recovered, 0, ciphertext.size)
+        assertArrayEquals(plaintext, recovered.copyOf(recoveredLen))
+
+        // pendingRekey was cleared on failure: a re-key is retryable (unlike the initial handshake).
+        established.session.writeRekeyInit(newPrivateKey())
+    }
+
+    // ---- Re-key state guards (caller bugs -> IllegalStateException) -------------
+
+    @Test
+    fun readRekeyResp_withNoRekeyInFlightThrowsIllegalState() {
+        val established = establish()
+        assertThrows(IllegalStateException::class.java) { established.session.readRekeyResp(ByteArray(48)) }
+    }
+
+    @Test
+    fun writeRekeyInit_calledTwiceWithoutRespThrowsIllegalState() {
+        val established = establish()
+        established.session.writeRekeyInit(newPrivateKey())
+        assertThrows(IllegalStateException::class.java) { established.session.writeRekeyInit(newPrivateKey()) }
+    }
+
+    @Test
+    fun writeRekeyInit_beforeEstablishedThrowsIllegalState() {
+        assertThrows(IllegalStateException::class.java) { freshSession().writeRekeyInit(newPrivateKey()) }
+    }
+
+    @Test
+    fun writeRekeyInit_nonThirtyTwoByteKeyThrowsIllegalArgument() {
+        val established = establish()
+        assertThrows(IllegalArgumentException::class.java) { established.session.writeRekeyInit(ByteArray(31)) }
+    }
+
+    @Test
+    fun rekeyOps_afterCloseThrowIllegalState() {
+        val established = establish()
+        established.session.close()
+        assertThrows(IllegalStateException::class.java) { established.session.writeRekeyInit(newPrivateKey()) }
+        assertThrows(IllegalStateException::class.java) { established.session.readRekeyResp(ByteArray(48)) }
+    }
+
     // ---- State guards (caller bugs -> IllegalStateException) --------------------
 
     @Test
@@ -224,6 +327,7 @@ class NoiseIkSessionTest {
 
     private data class Established(
         val session: NoiseIkSession,
+        val responder: TestResponder,
         val responderPair: CipherStatePair,
         val connId: String,
     )
@@ -233,7 +337,20 @@ class NoiseIkSessionTest {
         val session = NoiseIkSession(newPrivateKey(), responder.staticPublicKey, "tok", clientInfo)
         responder.readInit(session.writeInit())
         val returned = session.readResp(responder.writeResp(ackEnvelope(connId)))
-        return Established(session, responder.split(), returned)
+        return Established(session, responder, responder.split(), returned)
+    }
+
+    /**
+     * A well-formed re-key `noise_resp` produced by an INDEPENDENT server with a DIFFERENT static
+     * key — the on-the-wire shape of a rotated server static or a relay-operator MITM. Fed to a
+     * session pinned to the original `rs`, it MAC-fails (the pinned-rs handshake state diverges).
+     */
+    private fun foreignRekeyResp(): ByteArray {
+        val foreignResponder = TestResponder()
+        val foreignSession = NoiseIkSession(newPrivateKey(), foreignResponder.staticPublicKey, "tok", clientInfo)
+        foreignResponder.readInit(foreignSession.writeInit())
+        foreignSession.readResp(foreignResponder.writeResp(ackEnvelope("conn-foreign")))
+        return foreignResponder.rekey(foreignSession.writeRekeyInit(newPrivateKey())).resp
     }
 
     private fun ackEnvelope(
@@ -259,10 +376,15 @@ class NoiseIkSessionTest {
         private val handshake = HandshakeState(PROTO, HandshakeState.RESPONDER)
         val staticPublicKey: ByteArray
 
+        /** The responder's own raw static private key, retained to key the fresh re-key handshake. */
+        private val staticPrivateKey: ByteArray
+
         init {
             handshake.localKeyPair.generateKeyPair()
             staticPublicKey = ByteArray(handshake.localKeyPair.publicKeyLength)
             handshake.localKeyPair.getPublicKey(staticPublicKey, 0)
+            staticPrivateKey = ByteArray(handshake.localKeyPair.privateKeyLength)
+            handshake.localKeyPair.getPrivateKey(staticPrivateKey, 0)
             handshake.start()
         }
 
@@ -283,7 +405,33 @@ class NoiseIkSessionTest {
 
         /** Splits into transport ciphers (responder mirror-swaps, like flynn/noise). */
         fun split(): CipherStatePair = handshake.split()
+
+        /**
+         * Drives the responder leg of a re-key: a FRESH responder handshake re-using this
+         * responder's own static key (so the initiator's pinned `rs` continuity holds), reads the
+         * re-key noise_init (recovering its empty early-data), writes a noise_resp with empty
+         * early-data, and splits (responder mirror-swap) into the fresh transport pair.
+         */
+        fun rekey(init: ByteArray): RekeyLeg {
+            val hs = HandshakeState(PROTO, HandshakeState.RESPONDER)
+            hs.localKeyPair.setPrivateKey(staticPrivateKey, 0)
+            hs.start()
+            val earlyBuf = ByteArray(init.size)
+            val earlyLen = hs.readMessage(init, 0, init.size, earlyBuf, 0)
+            val out = ByteArray(96)
+            val n = hs.writeMessage(out, 0, ByteArray(0), 0, 0)
+            val pair = hs.split()
+            hs.destroy()
+            return RekeyLeg(resp = out.copyOf(n), pair = pair, earlyData = earlyBuf.copyOf(earlyLen))
+        }
     }
+
+    /** The artefacts of one responder re-key leg: the noise_resp bytes, the fresh transport pair, and the recovered early-data. */
+    private class RekeyLeg(
+        val resp: ByteArray,
+        val pair: CipherStatePair,
+        val earlyData: ByteArray,
+    )
 
     private companion object {
         const val PROTO = "Noise_IK_25519_ChaChaPoly_BLAKE2s"
