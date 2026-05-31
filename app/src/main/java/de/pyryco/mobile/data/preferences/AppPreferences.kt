@@ -12,13 +12,6 @@ import kotlinx.coroutines.flow.map
 class AppPreferences(
     private val dataStore: DataStore<Preferences>,
 ) {
-    val pairedServerExists: Flow<Boolean> =
-        dataStore.data.map { prefs -> prefs[PAIRED_SERVER_EXISTS] ?: false }
-
-    suspend fun setPairedServerExists(value: Boolean) {
-        dataStore.edit { prefs -> prefs[PAIRED_SERVER_EXISTS] = value }
-    }
-
     val themeMode: Flow<ThemeMode> =
         dataStore.data.map { prefs ->
             val stored = prefs[THEME_MODE]
@@ -78,7 +71,6 @@ class AppPreferences(
     }
 
     private companion object {
-        val PAIRED_SERVER_EXISTS = booleanPreferencesKey("paired_server_exists")
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val USE_WALLPAPER_COLORS = booleanPreferencesKey("use_wallpaper_colors")
         val DEFAULT_MODEL = stringPreferencesKey("default_model")

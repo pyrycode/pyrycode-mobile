@@ -44,19 +44,6 @@ class AppPreferencesTest {
     }
 
     @Test
-    fun pairedServerExists_defaultsToFalse() =
-        runBlocking {
-            assertEquals(false, prefs.pairedServerExists.first())
-        }
-
-    @Test
-    fun setPairedServerExists_true_isReflectedInNextEmit() =
-        runBlocking {
-            prefs.setPairedServerExists(true)
-            assertEquals(true, prefs.pairedServerExists.first())
-        }
-
-    @Test
     fun themeMode_defaultsToSystem() =
         runBlocking {
             assertEquals(ThemeMode.SYSTEM, prefs.themeMode.first())
