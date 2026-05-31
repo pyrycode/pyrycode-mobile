@@ -4,9 +4,11 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,6 +17,8 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -47,6 +51,7 @@ class NoiseSessionPump(
     private val sessionFactory: NoiseSessionFactory,
     dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val handshakeTimeoutMs: Long = HANDSHAKE_TIMEOUT_MS,
+    private val rekeyIntervalMs: Long = REKEY_INTERVAL_MS,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
 
@@ -69,6 +74,16 @@ class NoiseSessionPump(
 
     /** Guards the outbound encrypt→enqueue pair so wire order == AEAD nonce order (see [send]). */
     private val outboundLock = Any()
+
+    /** Serialises the two re-key initiation paths (timer vs inbound `rekey_request`) so they coalesce. */
+    private val rekeyMutex = Mutex()
+
+    /** Set true under [rekeyMutex] before the re-key `noise_init` is sent; cleared when its resp completes. */
+    @Volatile
+    private var rekeyInFlight = false
+
+    /** The one-shot 1-hour timer; only the drive coroutine assigns it (arm-on-Open, re-arm-on-swap). */
+    private var rekeyTimerJob: Job? = null
 
     /** Launches the single session-drive coroutine. Single-use: a second call is a caller bug. */
     fun start() {
@@ -146,6 +161,7 @@ class NoiseSessionPump(
                 return
             }
         mutableState.value = PumpState.Open(connId)
+        rebaseRekeyTimer() // arm the 1-hour re-key cadence at handshake completion (#304)
 
         // Steps 5–6: the single inbound collector decrypts each open-state noise_msg. Completes when
         // the transport goes Down (inbound completes) → clean teardown.
@@ -160,7 +176,7 @@ class NoiseSessionPump(
         teardown(null)
     }
 
-    /** Open-state frame dispatch — the clean `when (type)` seam #304 later extends for re-key. */
+    /** Open-state frame dispatch — `noise_msg` app/control traffic + the #304 re-key `noise_resp` seam. */
     private suspend fun onOpenFrame(frame: InnerFrameV2) {
         when (frame.type) {
             TYPE_NOISE_MSG -> {
@@ -168,11 +184,71 @@ class NoiseSessionPump(
                 // Emit only after a successful decrypt + parse — never surface an unauthenticated frame.
                 val plaintext = session.decrypt(base64StdDecode(frame.data))
                 val envelope = MobileJson.decodeFromString<Envelope>(plaintext.decodeToString())
-                inboundChannel.send(envelope)
+                if (envelope.type == TYPE_REKEY_REQUEST) {
+                    // A control message (the server nudging a re-key). Initiate it; never forward to the
+                    // single inbound consumer (#278). Launched so the keystore re-load can't stall the
+                    // collector. The payload (`reason`) is intentionally not decoded — discriminating on
+                    // `type` alone makes an unknown/absent/extra `reason` impossible to crash on (AC 2).
+                    scope.launch { initiateRekey() }
+                } else {
+                    inboundChannel.send(envelope)
+                }
             }
-            // The ordered encrypted stream cannot skip a frame: an unknown type tears the session down
-            // rather than dropping it. This else is the #304 seam (a re-key noise_resp branch goes here).
+            TYPE_NOISE_RESP -> {
+                // The re-key handshake reply (a raw frame, not a noise_msg): complete the in-flight swap
+                // instead of tearing down. A resp with no re-key in flight is a protocol violation.
+                val session = this.session ?: throw NoiseSessionException("session is not available")
+                if (!rekeyInFlight) throw NoiseSessionException("unexpected noise_resp with no re-key in flight")
+                session.readRekeyResp(base64StdDecode(frame.data)) // MAC failure → NoiseSessionException → teardown
+                rekeyInFlight = false
+                rebaseRekeyTimer() // re-base the cadence from the swap moment
+            }
+            // The ordered encrypted stream cannot skip a frame: a genuinely unknown type tears the
+            // session down rather than dropping it.
             else -> throw NoiseSessionException("unexpected open-state frame type")
+        }
+    }
+
+    /** Cancels any armed re-key timer and arms a fresh one-shot delay. Drive-coroutine-only (no race). */
+    private fun rebaseRekeyTimer() {
+        rekeyTimerJob?.cancel()
+        rekeyTimerJob =
+            scope.launch {
+                delay(rekeyIntervalMs)
+                initiateRekey()
+            }
+    }
+
+    /**
+     * Drives a single re-key: re-loads the device static `s`, builds + sends a fresh `noise_init`, and
+     * arms [rekeyInFlight] so the matching `noise_resp` completes the swap in [onOpenFrame]. The two
+     * initiation paths (timer + `rekey_request`) are serialised by [rekeyMutex] and coalesce on
+     * [rekeyInFlight]; the second caller skips (the mobile analog of the Go initiator's
+     * `skipped_already_awaiting`). Skips silently — transport stays live on the current keys — if the
+     * pump is no longer Open or the device key can't be re-loaded. No `rekey_ack` is sent on completion.
+     */
+    private suspend fun initiateRekey() {
+        if (mutableState.value !is PumpState.Open) return
+        rekeyMutex.withLock {
+            if (rekeyInFlight || mutableState.value !is PumpState.Open) return@withLock
+            val session = this.session ?: return@withLock
+            val s =
+                try {
+                    sessionFactory.reloadDeviceStaticKey()
+                } catch (e: NoiseSessionException) {
+                    return@withLock // can't re-load the key → skip; transport unaffected
+                }
+            // No suspension point between the re-load returning and the finally, so cancellation/teardown
+            // cannot skip zeroing `s`; session.close() independently wipes the session's copy in pendingRekey.
+            try {
+                val initBytes = session.writeRekeyInit(s) // session.pendingRekey now holds the only live copy of s
+                rekeyInFlight = true // set BEFORE the send: the resp can only arrive after the server reads init
+                transport.send(InnerFrameV2(type = TYPE_NOISE_INIT, data = base64StdEncode(initBytes)))
+            } catch (e: IllegalStateException) {
+                // Racing teardown closed the session, or a session-level re-key is already in flight — skip.
+            } finally {
+                s.fill(0) // zero the device-static copy regardless of outcome (mirrors create())
+            }
         }
     }
 
@@ -195,9 +271,15 @@ class NoiseSessionPump(
         /** Protocol step 4: await `noise_resp` within 10 seconds. */
         const val HANDSHAKE_TIMEOUT_MS = 10_000L
 
+        /** `protocol-mobile.md` § Re-key: time-based re-key fires every 1 hour of session uptime. */
+        const val REKEY_INTERVAL_MS = 3_600_000L
+
         const val TYPE_NOISE_INIT = "noise_init"
         const val TYPE_NOISE_RESP = "noise_resp"
         const val TYPE_NOISE_MSG = "noise_msg"
+
+        /** The inbound control envelope by which the server nudges a re-key (`Envelope.type`). */
+        const val TYPE_REKEY_REQUEST = "rekey_request"
     }
 }
 

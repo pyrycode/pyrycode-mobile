@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestCoroutineScheduler
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -192,8 +193,8 @@ class NoiseSessionPumpTest {
             val f = fixture()
             val os = openSession(f)
 
-            // A bare noise_resp mid-stream is the #304 re-key seam; today the else branch tears down.
-            f.transport.pushInbound(InnerFrameV2(type = "noise_resp", data = base64StdEncode(byteArrayOf(0))))
+            // A genuinely unknown frame type hits the `else`; the ordered stream cannot skip a frame.
+            f.transport.pushInbound(InnerFrameV2(type = "bogus_type", data = base64StdEncode(byteArrayOf(0))))
             runCurrent()
 
             assertTrue(os.pump.state.value is PumpState.Closed)
@@ -285,6 +286,236 @@ class NoiseSessionPumpTest {
             pump.close()
         }
 
+    // ---- #304: re-key triggers — 1-hour timer + inbound rekey_request ---------------------------
+
+    @Test
+    fun timer_firesRekeyInitOnlyAfterTheInterval() =
+        runTest {
+            val f = fixture()
+            val os = openSession(f, rekeyIntervalMs = REKEY_MS)
+
+            // Before the interval elapses, no re-key (only the initial noise_init was ever sent).
+            advanceTimeBy(REKEY_MS / 2)
+            runCurrent()
+            assertEquals(1, f.transport.sentFrames.size)
+
+            // On fire: exactly one fresh noise_init the responder accepts (recovering empty early-data).
+            advanceUntilIdle()
+            assertEquals(2, f.transport.sentFrames.size)
+            val init = f.transport.sentFrames[1]
+            assertEquals("noise_init", init.type)
+            assertEquals(
+                0,
+                f.responder
+                    .rekey(base64StdDecode(init.data))
+                    .earlyData.size,
+            )
+            assertEquals(PumpState.Open("conn-xyz"), os.pump.state.value) // transport not paused
+
+            os.pump.close()
+        }
+
+    @Test
+    fun timerRekey_completesAndTrafficContinuesOnNewKeys() =
+        runTest {
+            val f = fixture()
+            val os = openSession(f, rekeyIntervalMs = REKEY_MS)
+
+            advanceUntilIdle() // timer fires → re-key noise_init
+            val leg = f.responder.rekey(base64StdDecode(f.transport.sentFrames[1].data))
+            f.transport.pushInbound(InnerFrameV2(type = "noise_resp", data = base64StdEncode(leg.resp)))
+            runCurrent()
+            assertTrue(os.pump.state.value is PumpState.Open) // swap completed, no drop
+
+            // Inbound on the NEW keys decrypts to an Envelope.
+            f.transport.pushInbound(noiseMsg(leg.pair, envelope(id = 11L, type = "message", payload = """{"t":1}""")))
+            runCurrent()
+            assertEquals(1, os.received.size)
+            assertEquals(11L, os.received.single().id)
+
+            // Outbound on the NEW keys decrypts under the new responder receiver.
+            assertTrue(os.pump.send(envelope(id = 12L, type = "send_message")))
+            assertEquals(12L, decryptOutbound(leg.pair, f.transport.sentFrames.last()).id)
+
+            os.pump.close()
+        }
+
+    @Test
+    fun timer_isRebasedByEachCompletedRekey() =
+        runTest {
+            val f = fixture()
+            val os = openSession(f, rekeyIntervalMs = REKEY_MS)
+
+            advanceUntilIdle() // re-key #1 noise_init
+            val leg = f.responder.rekey(base64StdDecode(f.transport.sentFrames[1].data))
+            f.transport.pushInbound(InnerFrameV2(type = "noise_resp", data = base64StdEncode(leg.resp)))
+            runCurrent()
+            assertEquals(2, f.transport.sentFrames.size)
+
+            // Less than the re-based interval: no further re-key.
+            advanceTimeBy(REKEY_MS / 2)
+            runCurrent()
+            assertEquals(2, f.transport.sentFrames.size)
+
+            // Past the re-based interval: re-key #2 fires.
+            advanceUntilIdle()
+            assertEquals(3, f.transport.sentFrames.size)
+            assertEquals("noise_init", f.transport.sentFrames[2].type)
+
+            os.pump.close()
+        }
+
+    @Test
+    fun rekeyComplete_sendsNoAckAndStaysOpen() =
+        runTest {
+            val f = fixture()
+            val os = openSession(f, rekeyIntervalMs = REKEY_MS)
+
+            advanceUntilIdle()
+            val leg = f.responder.rekey(base64StdDecode(f.transport.sentFrames[1].data))
+            f.transport.pushInbound(InnerFrameV2(type = "noise_resp", data = base64StdEncode(leg.resp)))
+            runCurrent() // process the resp without advancing the clock past the re-based timer
+
+            // No rekey_ack / no outbound envelope in response — sentFrames unchanged past the noise_init.
+            assertEquals(2, f.transport.sentFrames.size)
+            assertTrue(os.pump.state.value is PumpState.Open)
+
+            os.pump.close()
+        }
+
+    @Test
+    fun inboundRekeyRequest_triggersRekeyNotForwardedRoundTripsOnNewKeys() =
+        runTest {
+            val f = fixture()
+            val os = openSession(f) // server-initiated nudge, not the timer
+
+            val req = envelope(id = 9L, type = "rekey_request", payload = """{"reason":"scheduled"}""")
+            f.transport.pushInbound(noiseMsg(os.responderPair, req))
+            advanceUntilIdle()
+
+            // The control envelope is intercepted at the producer — never surfaced to the inbound consumer.
+            assertTrue(os.received.isEmpty())
+            assertEquals(2, f.transport.sentFrames.size)
+            assertEquals(
+                "noise_init",
+                f.transport.sentFrames
+                    .last()
+                    .type,
+            )
+
+            // Complete the re-key and prove traffic continues on the new keys.
+            val leg =
+                f.responder.rekey(
+                    base64StdDecode(
+                        f.transport.sentFrames
+                            .last()
+                            .data,
+                    ),
+                )
+            f.transport.pushInbound(InnerFrameV2(type = "noise_resp", data = base64StdEncode(leg.resp)))
+            runCurrent()
+            f.transport.pushInbound(noiseMsg(leg.pair, envelope(id = 10L, type = "message")))
+            runCurrent()
+            assertEquals(1, os.received.size)
+            assertEquals(10L, os.received.single().id)
+
+            os.pump.close()
+        }
+
+    @Test
+    fun inboundRekeyRequest_absentReasonTriggersRekey() = runTest { assertRekeyRequestTriggersRekey("{}") }
+
+    @Test
+    fun inboundRekeyRequest_unknownReasonTriggersRekey() = runTest { assertRekeyRequestTriggersRekey("""{"reason":"future"}""") }
+
+    @Test
+    fun inboundRekeyRequest_extraFieldsTriggerRekey() = runTest { assertRekeyRequestTriggersRekey("""{"reason":"scheduled","x":1}""") }
+
+    @Test
+    fun rekeyResp_fromDifferentStaticTearsDownWithoutHalfSwap() =
+        runTest {
+            val f = fixture()
+            val os = openSession(f, rekeyIntervalMs = REKEY_MS)
+
+            advanceUntilIdle() // re-key in flight
+            assertEquals(2, f.transport.sentFrames.size)
+
+            // A well-formed re-key noise_resp from an INDEPENDENT static (rotated rs / relay MITM).
+            f.transport.pushInbound(InnerFrameV2(type = "noise_resp", data = base64StdEncode(foreignRekeyResp())))
+            runCurrent()
+
+            val state = os.pump.state.value
+            assertTrue(state is PumpState.Closed)
+            assertTrue((state as PumpState.Closed).cause is NoiseSessionException)
+            assertTrue(f.transport.closeCalls >= 1)
+        }
+
+    @Test
+    fun open_strayNoiseRespWithNoRekeyInFlightTearsDown() =
+        runTest {
+            val f = fixture()
+            val os = openSession(f) // default interval; the timer never fires
+
+            // A noise_resp with no re-key initiated is a protocol violation → teardown.
+            f.transport.pushInbound(InnerFrameV2(type = "noise_resp", data = base64StdEncode(byteArrayOf(0))))
+            runCurrent()
+
+            assertTrue(os.pump.state.value is PumpState.Closed)
+            assertTrue(f.transport.closeCalls >= 1)
+        }
+
+    @Test
+    fun closeMidRekey_cancelsTimerWipesSessionLeavesNoLeak() =
+        runTest {
+            val f = fixture()
+            val os = openSession(f, rekeyIntervalMs = REKEY_MS)
+
+            advanceUntilIdle() // re-key in flight (noise_init sent, awaiting noise_resp)
+            assertEquals(2, f.transport.sentFrames.size)
+
+            os.pump.close()
+            advanceUntilIdle()
+
+            assertTrue(os.pump.state.value is PumpState.Closed)
+            assertTrue(os.collector.isCompleted) // inbound completed → no leaked collector
+            assertFalse(os.pump.send(envelope())) // session wiped
+        }
+
+    /** A `rekey_request` with [payloadJson] triggers exactly one re-key and is never forwarded. */
+    private fun TestScope.assertRekeyRequestTriggersRekey(payloadJson: String) {
+        val f = fixture()
+        val os = openSession(f)
+        f.transport.pushInbound(noiseMsg(os.responderPair, envelope(id = 5L, type = "rekey_request", payload = payloadJson)))
+        advanceUntilIdle()
+
+        assertEquals(2, f.transport.sentFrames.size)
+        assertEquals(
+            "noise_init",
+            f.transport.sentFrames
+                .last()
+                .type,
+        )
+        assertTrue(os.pump.state.value is PumpState.Open) // unknown/absent reason is not fatal
+        assertTrue(os.received.isEmpty())
+
+        os.pump.close()
+        advanceUntilIdle()
+    }
+
+    /**
+     * A well-formed re-key `noise_resp` from an INDEPENDENT server static — the on-the-wire shape of a
+     * rotated `rs` / relay MITM. Fed to a session pinned to the original `rs`, it MAC-fails. Mirrors
+     * `NoiseIkSessionTest.foreignRekeyResp()`.
+     */
+    private fun foreignRekeyResp(): ByteArray {
+        val foreignResponder = TestResponder()
+        val clientInfo = NoiseClientInfo("Pixel-Test", "1.0.0-test")
+        val foreignSession = NoiseIkSession(newPrivateKey(), foreignResponder.staticPublicKey, "tok", clientInfo)
+        foreignResponder.readInit(foreignSession.writeInit())
+        foreignSession.readResp(foreignResponder.writeResp(ackEnvelope("conn-foreign")))
+        return foreignResponder.rekey(foreignSession.writeRekeyInit(newPrivateKey())).resp
+    }
+
     // ---- Fixture + helpers ---------------------------------------------------------------------
 
     private fun TestScope.fixture(): Fixture = Fixture(testScheduler)
@@ -304,7 +535,13 @@ class NoiseSessionPumpTest {
                 ioDispatcher = dispatcher,
             )
 
-        fun newPump() = NoiseSessionPump(transport, factory, dispatcher = dispatcher)
+        /** [rekeyIntervalMs] `null` keeps the pump's real 1-hour default; tests inject a small value. */
+        fun newPump(rekeyIntervalMs: Long? = null) =
+            if (rekeyIntervalMs == null) {
+                NoiseSessionPump(transport, factory, dispatcher = dispatcher)
+            } else {
+                NoiseSessionPump(transport, factory, dispatcher = dispatcher, rekeyIntervalMs = rekeyIntervalMs)
+            }
     }
 
     private class OpenSession(
@@ -318,8 +555,9 @@ class NoiseSessionPumpTest {
     private fun TestScope.openSession(
         f: Fixture,
         connId: String = "conn-xyz",
+        rekeyIntervalMs: Long? = null,
     ): OpenSession {
-        val pump = f.newPump()
+        val pump = f.newPump(rekeyIntervalMs)
         val received = mutableListOf<Envelope>()
         // A foreground child of the test scope (not backgroundScope): advanceUntilIdle() fully drains
         // it and runTest's structured concurrency enforces it completes — both real leak checks. Every
@@ -411,10 +649,15 @@ class NoiseSessionPumpTest {
         private val handshake = HandshakeState(PROTO, HandshakeState.RESPONDER)
         val staticPublicKey: ByteArray
 
+        /** The responder's own raw static private key, retained to key the fresh re-key handshake. */
+        private val staticPrivateKey: ByteArray
+
         init {
             handshake.localKeyPair.generateKeyPair()
             staticPublicKey = ByteArray(handshake.localKeyPair.publicKeyLength)
             handshake.localKeyPair.getPublicKey(staticPublicKey, 0)
+            staticPrivateKey = ByteArray(handshake.localKeyPair.privateKeyLength)
+            handshake.localKeyPair.getPrivateKey(staticPrivateKey, 0)
             handshake.start()
         }
 
@@ -435,14 +678,44 @@ class NoiseSessionPumpTest {
 
         /** Splits into transport ciphers (responder mirror-swaps, like flynn/noise). */
         fun split(): CipherStatePair = handshake.split()
+
+        /**
+         * Drives the responder leg of a re-key: a FRESH responder handshake re-using this responder's
+         * own static key (so the initiator's pinned `rs` continuity holds), reads the re-key noise_init
+         * (recovering its empty early-data), writes a noise_resp with empty early-data, and splits
+         * (responder mirror-swap) into the fresh transport pair. Mirrors `NoiseIkSessionTest`.
+         */
+        fun rekey(init: ByteArray): RekeyLeg {
+            val hs = HandshakeState(PROTO, HandshakeState.RESPONDER)
+            hs.localKeyPair.setPrivateKey(staticPrivateKey, 0)
+            hs.start()
+            val earlyBuf = ByteArray(init.size)
+            val earlyLen = hs.readMessage(init, 0, init.size, earlyBuf, 0)
+            val out = ByteArray(96)
+            val n = hs.writeMessage(out, 0, ByteArray(0), 0, 0)
+            val pair = hs.split()
+            hs.destroy()
+            return RekeyLeg(resp = out.copyOf(n), pair = pair, earlyData = earlyBuf.copyOf(earlyLen))
+        }
     }
+
+    /** The artefacts of one responder re-key leg: the noise_resp bytes, the fresh transport pair, the early-data. */
+    private class RekeyLeg(
+        val resp: ByteArray,
+        val pair: CipherStatePair,
+        val earlyData: ByteArray,
+    )
 
     private class FakeDeviceStaticKeyStore(
         private val keyPair: DeviceStaticKeyPair,
     ) : DeviceStaticKeyStore {
-        override suspend fun loadOrCreate(serverId: String): DeviceStaticKeyPair = keyPair
+        // Mirror the real store: hand out a FRESH caller-owned copy each call, so a caller zeroing its
+        // copy (NoiseSessionFactory.create() / reloadDeviceStaticKey()) never corrupts the stored key —
+        // load-bearing once #304 re-loads the key per re-key after create() already zeroed its copy.
+        override suspend fun loadOrCreate(serverId: String): DeviceStaticKeyPair =
+            DeviceStaticKeyPair(publicKey = keyPair.publicKey.copyOf(), privateKey = keyPair.privateKey.copyOf())
 
-        override suspend fun publicKey(serverId: String): ByteArray = keyPair.publicKey
+        override suspend fun publicKey(serverId: String): ByteArray = keyPair.publicKey.copyOf()
     }
 
     private class FakePairedServerStore(
@@ -455,6 +728,16 @@ class NoiseSessionPumpTest {
 
     private companion object {
         const val PROTO = "Noise_IK_25519_ChaChaPoly_BLAKE2s"
+
+        /** A small re-key interval so the virtual clock drives the timer in a single `advanceUntilIdle`. */
+        const val REKEY_MS = 20L
+
+        /** Mints a raw 32-byte X25519 private key (as the device keystore hands out), for the foreign re-key. */
+        fun newPrivateKey(): ByteArray {
+            val dh = Noise.createDH("25519")
+            dh.generateKeyPair()
+            return ByteArray(dh.privateKeyLength).also { dh.getPrivateKey(it, 0) }
+        }
 
         fun envelope(
             id: Long = 1L,
