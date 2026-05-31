@@ -108,7 +108,7 @@ MainActivity.onCreate
 First Compose frame
    ↓ platform dismisses splash window
 [Surface { } placeholder]                            (paired === null, ~1–2 frames)
-   ↓ appPreferences.pairedServerExists.first() resolves
+   ↓ pairedServerStore.load() resolves
 [NavHost @ welcome | channel_list]                   (#13 conditional start destination)
 ```
 

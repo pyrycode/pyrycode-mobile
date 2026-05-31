@@ -227,7 +227,7 @@ Pass the enum's neutral default (the same value the cold flow would emit first o
 
 ## State + concurrency
 
-- **Cold-to-hot Flow.** `pairedServerExists` is cold; on collection it emits the current persisted value first, then a new value on each subsequent `edit { }`.
+- **Cold-to-hot Flow.** Each preference flow (e.g. `themeMode`) is cold; on collection it emits the current persisted value first, then a new value on each subsequent `edit { }`.
 - **Dispatcher.** DataStore's internal scope runs on `Dispatchers.IO`. Collectors don't need to switch — collecting from `Main` is idiomatic.
 - **Writes serialise.** Concurrent `edit { }` calls from multiple coroutines are serialised by DataStore. The wrapper does not add its own mutex.
 - **Lifecycle.** DataStore's scope outlives any individual collector or `viewModelScope`. Process death is the only teardown.
