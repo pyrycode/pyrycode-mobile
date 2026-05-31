@@ -116,7 +116,7 @@ class OkHttpRelayTransportTest {
         val expected = InnerFrameV2(type = "noise_resp", data = "BBBB")
         server.enqueue(
             MockResponse().withWebSocketUpgrade(
-                object : WebSocketListener() {
+                object : ClosingServerListener() {
                     override fun onOpen(
                         webSocket: WebSocket,
                         response: Response,
@@ -201,7 +201,7 @@ class OkHttpRelayTransportTest {
     fun inbound_malformedJsonTearsDownWithDown() {
         server.enqueue(
             MockResponse().withWebSocketUpgrade(
-                object : WebSocketListener() {
+                object : ClosingServerListener() {
                     override fun onOpen(
                         webSocket: WebSocket,
                         response: Response,
@@ -291,8 +291,24 @@ class OkHttpRelayTransportTest {
         transport.close()
     }
 
+    /**
+     * Base server-side listener that echoes the peer's close so the closing handshake completes from
+     * the server side. Without it, a client-initiated close leaves the server socket half-open in
+     * MockWebServer's `openClientSockets`, and `server.shutdown()` blocks on its drain timeout ("Gave
+     * up waiting for queue to shut down"). Every server listener in these tests extends this.
+     */
+    private open class ClosingServerListener : WebSocketListener() {
+        override fun onClosing(
+            webSocket: WebSocket,
+            code: Int,
+            reason: String,
+        ) {
+            webSocket.close(code, null)
+        }
+    }
+
     /** Server-side WS listener that captures inbound text frames for assertion. */
-    private class RecordingServerListener : WebSocketListener() {
+    private class RecordingServerListener : ClosingServerListener() {
         val received = LinkedBlockingQueue<String>()
 
         override fun onMessage(

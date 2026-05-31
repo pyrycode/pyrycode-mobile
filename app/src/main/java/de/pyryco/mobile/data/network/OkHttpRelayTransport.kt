@@ -86,7 +86,7 @@ class OkHttpRelayTransport(
      *
      * URL: scheme-convert for OkHttp's `HttpUrl` (which rejects `ws`/`wss`), then append `/v1/client`
      * as a literal path on the URL **string** so the slash is never percent-encoded. Never `/v2/client`
-     * — the relay serves `/v1/*` only; `v2` is the inner-frame `"v":2`.
+     * — the relay serves the `/v1/` namespace only; `v2` is the inner-frame `"v":2`.
      */
     private fun buildRequest(): Request {
         val httpUrl =
@@ -96,7 +96,8 @@ class OkHttpRelayTransport(
         val dialUrl = httpUrl.trimEnd('/') + "/v1/client"
 
         val builder =
-            Request.Builder()
+            Request
+                .Builder()
                 .url(dialUrl)
                 .header("X-Pyrycode-Server", pairedServer.serverId)
                 .header("X-Pyrycode-Token", pairedServer.token) // relay requires non-empty; ignored under v2
@@ -236,7 +237,8 @@ class OkHttpRelayTransport(
          * `OkHttpClient` per reconnect would leak thread pools.
          */
         fun defaultClient(): OkHttpClient =
-            OkHttpClient.Builder()
+            OkHttpClient
+                .Builder()
                 .connectTimeout(15, TimeUnit.SECONDS)
                 .writeTimeout(15, TimeUnit.SECONDS)
                 .readTimeout(0, TimeUnit.MILLISECONDS)
