@@ -1,12 +1,17 @@
 package de.pyryco.mobile
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -15,10 +20,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavType
@@ -42,7 +51,9 @@ import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
+import de.pyryco.mobile.ui.onboarding.ScannerEvent
 import de.pyryco.mobile.ui.onboarding.ScannerScreen
+import de.pyryco.mobile.ui.onboarding.ScannerViewModel
 import de.pyryco.mobile.ui.onboarding.WelcomeScreen
 import de.pyryco.mobile.ui.settings.AboutScreen
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsEvent
@@ -126,25 +137,66 @@ private fun PyryNavHost(
             )
         }
         composable(Routes.SCANNER) {
+            val context = LocalContext.current
             val pairedServerStore = koinInject<PairedServerStore>()
             val scope = rememberCoroutineScope()
-            ScannerScreen(
-                onTap = {
-                    scope.launch {
-                        try {
-                            pairedServerStore.save(STUB_PAIRED_SERVER)
-                            navController.navigate(Routes.CHANNEL_LIST) {
-                                popUpTo(Routes.SCANNER) { inclusive = true }
-                                launchSingleTop = true
-                            }
-                        } catch (e: PairedServerStoreException) {
-                            // Placeholder tap: persisting the stub failed (Keystore/IO). No error
-                            // surface exists here yet (the QR-scanning ticket owns that) — stay on
-                            // the placeholder so the user can re-tap to retry.
-                            Log.w(TAG, "stub paired-server save failed: ${e.javaClass.simpleName}")
+            val vm = koinViewModel<ScannerViewModel>()
+            val state by vm.state.collectAsStateWithLifecycle()
+
+            // Stub-pair-and-navigate, unchanged from the Phase-0 stub: persist the throwaway
+            // PairedServer and advance to the channel list; on store failure stay put so the user
+            // can re-tap. Not routed through the VM Error state (preserves #295 behavior; the
+            // QR-scanning ticket owns real PairedServer handling).
+            val stubPairAndNavigate: () -> Unit = {
+                scope.launch {
+                    try {
+                        pairedServerStore.save(STUB_PAIRED_SERVER)
+                        navController.navigate(Routes.CHANNEL_LIST) {
+                            popUpTo(Routes.SCANNER) { inclusive = true }
+                            launchSingleTop = true
                         }
+                    } catch (e: PairedServerStoreException) {
+                        Log.w(TAG, "stub paired-server save failed: ${e.javaClass.simpleName}")
                     }
+                }
+            }
+
+            val permissionLauncher =
+                rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestPermission(),
+                ) { granted ->
+                    vm.onEvent(
+                        if (granted) ScannerEvent.PermissionGranted else ScannerEvent.PermissionDenied,
+                    )
+                }
+            // Guard against re-prompting after a config change while Denied; the VM (survives
+            // rotation) already retains the resolved ReadyToScan/Denied state.
+            var requested by rememberSaveable { mutableStateOf(false) }
+            LaunchedEffect(Unit) {
+                val alreadyGranted =
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                        PackageManager.PERMISSION_GRANTED
+                when {
+                    alreadyGranted -> vm.onEvent(ScannerEvent.PermissionGranted)
+                    !requested -> {
+                        requested = true
+                        permissionLauncher.launch(Manifest.permission.CAMERA)
+                    }
+                }
+            }
+
+            ScannerScreen(
+                state = state,
+                onTap = stubPairAndNavigate,
+                onOpenSettings = {
+                    context.startActivity(
+                        Intent(
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.fromParts("package", context.packageName, null),
+                        ),
+                    )
                 },
+                onPasteCode = stubPairAndNavigate,
             )
         }
         composable(Routes.CHANNEL_LIST) {
