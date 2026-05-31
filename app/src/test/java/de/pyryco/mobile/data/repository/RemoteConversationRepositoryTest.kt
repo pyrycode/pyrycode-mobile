@@ -1,6 +1,8 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -11,6 +13,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -228,11 +231,8 @@ class RemoteConversationRepositoryTest {
         runTest {
             val repo = RemoteConversationRepository(FakeSessionPump(), backgroundScope)
 
-            // Flow-returning stubs throw eagerly on call.
+            // observeLastMessage is now implemented (#329); observeMessages remains an eager stub.
             assertThrows(UnsupportedOperationException::class.java) { repo.observeMessages("c") }
-            val lastMessageEx =
-                assertThrows(UnsupportedOperationException::class.java) { repo.observeLastMessage("c") }
-            assertTrue(lastMessageEx.message!!.contains("#329"))
 
             // Suspend stubs throw when invoked.
             assertUnsupported { repo.createDiscussion() }
@@ -246,6 +246,164 @@ class RemoteConversationRepositoryTest {
             assertUnsupported { repo.changeWorkspace("c", "/p") }
         }
 
+    // ---- observeLastMessage (#329): live `message` stream → most-recent per conversation ---------
+
+    // AC #2: a never-seen conversation has no entry, so the first emission is null.
+    @Test
+    fun lastMessage_unknownConversation_emitsNull() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val emissions = collectLastMessage(repo, "c1")
+            runCurrent()
+
+            assertEquals(listOf<Message?>(null), emissions)
+        }
+
+    // AC #1, #5: one live `message` surfaces as the mapped most-recent Message.
+    @Test
+    fun lastMessage_seedOne_surfacesMappedMessage() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val emissions = collectLastMessage(repo, "c1")
+            runCurrent()
+
+            pump.push(messageEnvelope("c1", "m1", "user", "hello", "2026-05-31T10:00:00Z"))
+            runCurrent()
+
+            val latest = emissions.last()!!
+            assertEquals("m1", latest.id)
+            assertEquals(Role.User, latest.role)
+            assertEquals("hello", latest.content)
+            assertEquals(Instant.parse("2026-05-31T10:00:00Z"), latest.timestamp)
+            // The `message` payload carries no session id; the preview never reads it (list-tier "").
+            assertEquals("", latest.sessionId)
+        }
+
+    // AC #3, #5: a later-ts message for the same conversation re-emits.
+    @Test
+    fun lastMessage_newerMessage_reEmits() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val emissions = collectLastMessage(repo, "c1")
+            runCurrent()
+
+            pump.push(messageEnvelope("c1", "m1", "user", "first", "2026-05-31T10:00:00Z"))
+            runCurrent()
+            pump.push(messageEnvelope("c1", "m2", "assistant", "second", "2026-05-31T11:00:00Z"))
+            runCurrent()
+
+            assertEquals(listOf(null, "m1", "m2"), emissions.map { it?.id })
+        }
+
+    // AC #1 (most-recent invariant): an earlier-ts arrival is ignored — strictly-greater replaces.
+    @Test
+    fun lastMessage_olderMessage_doesNotReplace() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val emissions = collectLastMessage(repo, "c1")
+            runCurrent()
+
+            pump.push(messageEnvelope("c1", "newer", "user", "x", "2026-05-31T11:00:00Z"))
+            runCurrent()
+            pump.push(messageEnvelope("c1", "older", "user", "y", "2026-05-31T10:00:00Z"))
+            runCurrent()
+
+            assertEquals(listOf(null, "newer"), emissions.map { it?.id })
+        }
+
+    // Per-conversation keying: each observer reflects only its own conversation's latest.
+    @Test
+    fun lastMessage_keyedPerConversation() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val c1 = collectLastMessage(repo, "c1")
+            val c2 = collectLastMessage(repo, "c2")
+            runCurrent()
+
+            pump.push(messageEnvelope("c1", "c1-msg", "user", "in c1", "2026-05-31T10:00:00Z"))
+            pump.push(messageEnvelope("c2", "c2-msg", "user", "in c2", "2026-05-31T11:00:00Z"))
+            runCurrent()
+
+            assertEquals("c1-msg", c1.last()!!.id)
+            assertEquals("c2-msg", c2.last()!!.id)
+        }
+
+    // AC #4: a collector subscribing after the message arrived receives the current value first.
+    @Test
+    fun lastMessage_lateSubscriber_receivesCurrentValue() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            pump.push(messageEnvelope("c1", "m1", "user", "hello", "2026-05-31T10:00:00Z"))
+            runCurrent()
+
+            val emissions = collectLastMessage(repo, "c1")
+            runCurrent()
+
+            assertEquals("m1", emissions.single()!!.id)
+        }
+
+    // AC #4: concurrent collectors of one conversation both receive off the single inbound consumer.
+    @Test
+    fun lastMessage_multipleCollectors_eachReceive() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val a = collectLastMessage(repo, "c1")
+            val b = collectLastMessage(repo, "c1")
+            runCurrent()
+
+            pump.push(messageEnvelope("c1", "m1", "user", "hello", "2026-05-31T10:00:00Z"))
+            runCurrent()
+
+            assertEquals("m1", a.last()!!.id)
+            assertEquals("m1", b.last()!!.id)
+        }
+
+    // Error handling: an unmappable role is rejected at decode → dropped; the collector survives.
+    @Test
+    fun lastMessage_malformedPayload_isDroppedAndCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val emissions = collectLastMessage(repo, "c1")
+            runCurrent()
+
+            // `system` is outside the mappable WireRole set → SerializationException → envelope dropped.
+            pump.push(messageEnvelope("c1", "bad", "system", "x", "2026-05-31T10:00:00Z"))
+            runCurrent()
+            assertEquals(listOf<Message?>(null), emissions)
+
+            // A subsequent valid message proves the single inbound collector did not die.
+            pump.push(messageEnvelope("c1", "ok", "user", "y", "2026-05-31T11:00:00Z"))
+            runCurrent()
+            assertEquals("ok", emissions.last()!!.id)
+        }
+
+    // Error handling: a non-parseable envelope ts fails Instant.parse in toMessage → dropped.
+    @Test
+    fun lastMessage_badTimestamp_isDroppedAndCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val emissions = collectLastMessage(repo, "c1")
+            runCurrent()
+
+            pump.push(messageEnvelope("c1", "bad", "user", "x", "not-a-timestamp"))
+            runCurrent()
+            assertEquals(listOf<Message?>(null), emissions)
+
+            pump.push(messageEnvelope("c1", "ok", "user", "y", "2026-05-31T11:00:00Z"))
+            runCurrent()
+            assertEquals("ok", emissions.last()!!.id)
+        }
+
     // ---- Helpers --------------------------------------------------------------------------------
 
     private fun TestScope.collectConversations(
@@ -256,6 +414,33 @@ class RemoteConversationRepositoryTest {
         backgroundScope.launch { repo.observeConversations(filter).collect { emissions += it } }
         return emissions
     }
+
+    private fun TestScope.collectLastMessage(
+        repo: RemoteConversationRepository,
+        conversationId: String,
+    ): MutableList<Message?> {
+        val emissions = mutableListOf<Message?>()
+        backgroundScope.launch { repo.observeLastMessage(conversationId).collect { emissions += it } }
+        return emissions
+    }
+
+    private fun messageEnvelope(
+        conversationId: String,
+        messageId: String,
+        role: String,
+        text: String,
+        ts: String,
+        id: Long = 1L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "message",
+            ts = ts,
+            payload =
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"$conversationId","message_id":"$messageId","role":"$role","text":"$text"}""",
+                ),
+        )
 
     private suspend inline fun assertUnsupported(block: () -> Unit): UnsupportedOperationException {
         val thrown =

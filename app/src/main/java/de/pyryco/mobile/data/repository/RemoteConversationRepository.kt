@@ -5,15 +5,19 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.network.ConversationsPayload
 import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.toConversations
+import de.pyryco.mobile.data.network.toMessage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.serialization.json.JsonObject
@@ -54,6 +58,16 @@ class RemoteConversationRepository(
      */
     private val projection = MutableStateFlow<List<Conversation>?>(null)
 
+    /**
+     * `conversationId -> most-recent` [Message] seen on this connection's live `message` stream
+     * (#329). Written **only** by the single [init] inbound collector (sequential single writer);
+     * [observeLastMessage] fans out from it. Connection-scoped in-memory state — lost on process
+     * death and re-derived from the live stream on reconnect (the cold-start gap is the #313
+     * backfill hand-off). The fold is strictly-greater-by-timestamp, mirroring the fake's
+     * `maxByOrNull { it.timestamp }`.
+     */
+    private val lastMessages = MutableStateFlow<Map<String, Message>>(emptyMap())
+
     private val requestId = AtomicLong(0)
 
     init {
@@ -81,8 +95,34 @@ class RemoteConversationRepository(
                     }
                 projection.value = decoded.toConversations()
             }
-            // Any other type is a no-op here: single-row conversation deltas (#318 → #314), `messages`
-            // (#313), and last-message (#329) extend this `when` in their own slices.
+            TYPE_MESSAGE -> {
+                // A live (or send_message-echo) `message` envelope. Decode + map through the single
+                // #317 boundary; a malformed payload (missing field / unmappable role →
+                // SerializationException, bad envelope ts → IllegalArgumentException via Instant.parse;
+                // the former is a subtype of the latter) is dropped so the single inbound consumer
+                // survives. `sessionId = ""` — the payload carries none and the last-message preview
+                // never reads it (list-tier placeholder, as #312 uses for currentSessionId). Drop
+                // silently: message content may be sensitive, so nothing here logs the payload.
+                val (conversationId, message) =
+                    try {
+                        val dto = MobileJson.decodeFromJsonElement<MessagePayloadDto>(envelope.payload)
+                        dto.conversationId to dto.toMessage(envelope, sessionId = "")
+                    } catch (e: IllegalArgumentException) {
+                        return
+                    }
+                // Atomic check-then-replace: keep the most-recent by timestamp. Strictly-greater means
+                // out-of-order older arrivals and re-delivered duplicates are no-ops (no re-emit).
+                lastMessages.update { current ->
+                    val existing = current[conversationId]
+                    if (existing != null && message.timestamp <= existing.timestamp) {
+                        current
+                    } else {
+                        current + (conversationId to message)
+                    }
+                }
+            }
+            // Any other type is a no-op here: single-row conversation deltas (#318 → #314) and the
+            // `messages` thread-read response (#313) extend this `when` in their own slices.
             else -> Unit
         }
     }
@@ -124,8 +164,14 @@ class RemoteConversationRepository(
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
         throw UnsupportedOperationException("observeMessages: thread read path not yet wired (#313)")
 
-    override fun observeLastMessage(conversationId: String): Flow<Message?> =
-        throw UnsupportedOperationException("observeLastMessage: last-message via message read path (#329)")
+    /**
+     * Most-recent live [Message] for [conversationId] (#329), a pure cold projection of the shared
+     * [lastMessages] `StateFlow`. Issues no request — rides the live `message` stream. A `StateFlow`
+     * always has a current value, so every collector (including a `flatMapLatest` re-subscription)
+     * receives the current most-recent (or `null` when the conversation is absent) on subscription
+     * and re-emits only on change; the one inbound consumer fans out to unlimited collectors.
+     */
+    override fun observeLastMessage(conversationId: String): Flow<Message?> = lastMessages.map { it[conversationId] }.distinctUntilChanged()
 
     override suspend fun createDiscussion(workspace: String?): Conversation =
         throw UnsupportedOperationException("createDiscussion: mutation path not yet wired (#314)")
@@ -168,5 +214,11 @@ class RemoteConversationRepository(
 
         /** Response/push: a full-list `{conversations:[…]}` snapshot — also unsolicited on change. */
         const val TYPE_CONVERSATIONS = "conversations"
+
+        /**
+         * Live/echo single-`message` payload (#317). Distinct from the plural `messages` thread-read
+         * response owned by #313, which this `when` still ignores.
+         */
+        const val TYPE_MESSAGE = "message"
     }
 }
