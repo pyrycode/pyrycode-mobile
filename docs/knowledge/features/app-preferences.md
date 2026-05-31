@@ -1,12 +1,11 @@
 # App preferences
 
-Typed wrapper around a single shared `DataStore<Preferences>` for app-level key-value state. The home for non-secret app settings that survive process death (pairing-completed flag today; theme, notifications later in Phase 3).
+Typed wrapper around a single shared `DataStore<Preferences>` for app-level key-value state. The home for non-secret app settings that survive process death (appearance + per-conversation defaults today; more in Phase 3). Paired-server state moved out to the encrypted PairedServerStore in #295.
 
 ## What it does
 
-Exposes app-level preferences as typed `Flow<T>` reads + `suspend fun` writes. Eight preferences today, in three groups — the three foundational keys (pairing + appearance), the four "Defaults for new conversations" keys added in #231, and the first Notifications key (`notificationsEnabled`, added in #268):
+Exposes app-level preferences as typed `Flow<T>` reads + `suspend fun` writes. Seven preferences today, in three groups — the two foundational appearance keys, the four "Defaults for new conversations" keys added in #231, and the first Notifications key (`notificationsEnabled`, added in #268):
 
-- `pairedServerExists: Flow<Boolean>` — `false` by default; flips to `true` once the Scanner screen records a successful server pairing (#12). Read by `MainActivity`'s composition root to decide the `NavHost` start destination between `welcome` and `channel_list` (#13), and reserved for `Settings` (Phase 3) to surface pairing state.
 - `themeMode: Flow<ThemeMode>` — `ThemeMode.SYSTEM` by default (#86); persisted as the enum's `name` under `stringPreferencesKey("theme_mode")`. Both "key absent" and "stored string not in `ThemeMode.entries`" fall through to `SYSTEM` via `ThemeMode.entries.firstOrNull { it.name == stored } ?: ThemeMode.SYSTEM` — no throw, no `runCatching`. Read at two surfaces: at `MainActivity.setContent`'s root, an `appPreferences.themeMode.collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)` resolves `darkTheme: Boolean` for `PyrycodeMobileTheme(...)` (preserving `isSystemInDarkTheme()` on `SYSTEM`); since #87 the Settings route reads it via `koinViewModel<SettingsViewModel>().themeMode.collectAsStateWithLifecycle()` (a `StateFlow` projection over the same upstream — see [Settings ViewModel](settings-viewmodel.md)). The matching `suspend fun setThemeMode(mode: ThemeMode)` is wired in #87 by `SettingsViewModel.onSelectTheme(...)`, called from the Settings → Theme picker dialog's confirm button; one write fans out to both collectors above.
 - `useWallpaperColors: Flow<Boolean>` — `false` by default (#88); `booleanPreferencesKey("use_wallpaper_colors")`. Read at two surfaces: at `MainActivity.setContent`'s root as a sibling to the `themeMode` collector, then forwarded into `PyrycodeMobileTheme(darkTheme = …, dynamicColor = useWallpaperColors)`; and since #89 inside `composable(Routes.SETTINGS)` via `koinViewModel<SettingsViewModel>().useWallpaperColors.collectAsStateWithLifecycle()` (a `StateFlow` projection over the same upstream — see [Settings ViewModel](settings-viewmodel.md)). The theme's pre-existing SDK gate (`dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S` at `Theme.kt:275`) handles the "Android < 12 OR preference false → brand palette" branch internally, so no composition-root version check is needed. Matching `suspend fun setUseWallpaperColors(enabled: Boolean)` is wired in #89 by `SettingsViewModel.onToggleUseWallpaperColors(...)`, called from the Settings → Appearance "Use Material You dynamic color" switch row's `onCheckedChange` (headline updated from the prior "Use wallpaper colors" in #163 to match Figma `17:2`); one write fans out to both collectors above.
 
@@ -14,12 +13,12 @@ Exposes app-level preferences as typed `Flow<T>` reads + `suspend fun` writes. E
 
 - `defaultModel: Flow<Model>` — `Model.OPUS_4_7` by default; `stringPreferencesKey("default_model")` holding `.name`. Tolerant-unknown fallback via `Model.entries.firstOrNull { it.name == stored } ?: Model.OPUS_4_7` — same shape as `themeMode`. Matching `suspend fun setDefaultModel(model: Model)` was wired by [#232](../codebase/232.md)'s Settings model-picker slice via `SettingsViewModel.onSelectDefaultModel(...)`. The first **read** consumer landed earlier in [#253](../codebase/253.md) — [`ThreadViewModel.selectedModelFlow`](thread-screen.md) pre-combines this flow with an in-memory `MutableStateFlow<Model?>` per-conversation override before folding into the main `combine` — so a Settings-side write from [#232](../codebase/232.md) now fans out to both the Settings row's own subtitle and the StatusSheet model section on every open conversation. `Model` (`{ OPUS_4_7, SONNET_4_6, HAIKU_4_5 }`) in `data/preferences/Model.kt` gained a top-level `fun Model.label(): String` extension in [#253](../codebase/253.md) — see [the (partially walked-back) `.label()` decision below](#design-decision-defer-label-extensions-on-data-layer-enums).
 - `defaultEffort: Flow<Effort>` — `Effort.HIGH` by default; `stringPreferencesKey("default_effort")` holding `.name`. Same tolerant-unknown fallback shape. Matching `suspend fun setDefaultEffort(effort: Effort)`. `Effort` (`{ LOW, MEDIUM, HIGH, XHIGH, MAX }`) lives in `data/preferences/Effort.kt`; the `fun Effort.label(): String` extension lives one package over at `ui/settings/EffortPickerDialog.kt:77` (originally `internal` per [#233](../codebase/233.md); widened to top-level public in [#229](../codebase/229.md) when the StatusSheet `FilterChip` row became the second consumer — see [the design decision below](#design-decision-defer-label-extensions-on-data-layer-enums) for the per-enum walk-back rule).
-- `defaultYolo: Flow<Boolean>` — `false` by default; `booleanPreferencesKey("default_yolo")`. Mirrors `pairedServerExists` / `useWallpaperColors`. Matching `suspend fun setDefaultYolo(enabled: Boolean)`.
+- `defaultYolo: Flow<Boolean>` — `false` by default; `booleanPreferencesKey("default_yolo")`. Mirrors `useWallpaperColors`. Matching `suspend fun setDefaultYolo(enabled: Boolean)`.
 - `defaultWorkspace: Flow<String>` — `DEFAULT_SCRATCH_CWD` by default (imported from `de.pyryco.mobile.data.model`, **not** re-declared here); `stringPreferencesKey("default_workspace")`. Holds either the scratch-cwd sentinel or a bound-folder cwd as a plain `String` — reuses the same convention `Conversation.cwd` already encodes, deliberately not a `sealed Workspace { Scratch; Bound(cwd) }` (would be premature abstraction for one slice of work; downstream consumers all work in `String` terms). Matching `suspend fun setDefaultWorkspace(cwd: String)`. **First *read* consumer landed in #240** — [`ChannelListViewModel.CreateDiscussionTapped`](./channel-list-viewmodel.md) reads it via `appPreferences.defaultWorkspace.first()` inside the existing `viewModelScope.launch { … }` and passes it to `repository.createDiscussion(workspace = …)`. **First *write* consumer landed in [#235](../codebase/235.md)** — the Settings "Default workspace" row opens the reused [`WorkspacePicker`](./workspace-picker.md) host and persists the pick via `SettingsViewModel.onSelectDefaultWorkspace(path)` → `setDefaultWorkspace(path)`. With both ends wired the round-trip is closed end-to-end: a path picked in Settings now changes where the next FAB short-press discussion is created (distinguishing `defaultWorkspace` from `defaultYolo`, which stays write-live / read-dead after #234). The long-press FAB (`ChannelListEvent.WorkspacePicked`) intentionally bypasses the read — an explicit per-conversation pick always overrides the default.
 
 Notifications key ([#268](../codebase/268.md)):
 
-- `notificationsEnabled: Flow<Boolean>` — **`true` by default** (`booleanPreferencesKey("notifications_enabled")`); the getter is `prefs[NOTIFICATIONS_ENABLED] ?: true`. **The only boolean in this file that defaults to `true`** — every sibling (`pairedServerExists`, `useWallpaperColors`, `defaultYolo`) defaults `false`. The `true` is Figma-sourced: node `17:2` renders the "Push notifications when claude responds" toggle ON (contrasting the OFF Default-YOLO toggle directly above), so persistence must preserve ON-by-default. Matching `suspend fun setNotificationsEnabled(enabled: Boolean)`. Mirrors the `defaultYolo` getter/setter shape exactly *except* the default value — the lesson the [#268](../codebase/268.md) `notificationsEnabled_defaultsToTrue` guard test pins is "copy the sibling's *shape*, source the default from Figma, not from the sibling you cloned." **Write-live but read-dead** (like `defaultYolo`): the Settings switch persists it end-to-end, but nothing reads it to act on — actual notification *delivery* is Phase 4. The first preference outside the pairing/theme + defaults bundle, and the trigger the splitting note below names (see § Adding a preference).
+- `notificationsEnabled: Flow<Boolean>` — **`true` by default** (`booleanPreferencesKey("notifications_enabled")`); the getter is `prefs[NOTIFICATIONS_ENABLED] ?: true`. **The only boolean in this file that defaults to `true`** — every sibling (`useWallpaperColors`, `defaultYolo`) defaults `false`. The `true` is Figma-sourced: node `17:2` renders the "Push notifications when claude responds" toggle ON (contrasting the OFF Default-YOLO toggle directly above), so persistence must preserve ON-by-default. Matching `suspend fun setNotificationsEnabled(enabled: Boolean)`. Mirrors the `defaultYolo` getter/setter shape exactly *except* the default value — the lesson the [#268](../codebase/268.md) `notificationsEnabled_defaultsToTrue` guard test pins is "copy the sibling's *shape*, source the default from Figma, not from the sibling you cloned." **Write-live but read-dead** (like `defaultYolo`): the Settings switch persists it end-to-end, but nothing reads it to act on — actual notification *delivery* is Phase 4. The first preference outside the pairing/theme + defaults bundle, and the trigger the splitting note below names (see § Adding a preference).
 
 Secrets (the pairing token itself) are explicitly **not** stored here — that's a separate security-sensitive ticket using EncryptedSharedPreferences / the Keystore. `AppPreferences` is only for non-secret booleans/strings/ints.
 
@@ -33,13 +32,6 @@ Two Koin singletons:
 ```kotlin
 // de/pyryco/mobile/data/preferences/AppPreferences.kt
 class AppPreferences(private val dataStore: DataStore<Preferences>) {
-
-    val pairedServerExists: Flow<Boolean> =
-        dataStore.data.map { prefs -> prefs[PAIRED_SERVER_EXISTS] ?: false }
-
-    suspend fun setPairedServerExists(value: Boolean) {
-        dataStore.edit { prefs -> prefs[PAIRED_SERVER_EXISTS] = value }
-    }
 
     val themeMode: Flow<ThemeMode> =
         dataStore.data.map { prefs ->
@@ -100,7 +92,6 @@ class AppPreferences(private val dataStore: DataStore<Preferences>) {
     }
 
     private companion object {
-        val PAIRED_SERVER_EXISTS = booleanPreferencesKey("paired_server_exists")
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val USE_WALLPAPER_COLORS = booleanPreferencesKey("use_wallpaper_colors")
         val DEFAULT_MODEL = stringPreferencesKey("default_model")
@@ -194,10 +185,10 @@ Once `AppPreferences` accumulates ~5 keys, consider splitting by domain (`AppPre
 ## Usage
 
 ```kotlin
-// In MainActivity's composition root (#13's NavHost-start-destination gate — one-shot read)
-val appPreferences = koinInject<AppPreferences>()
-val paired: Boolean? by produceState<Boolean?>(initialValue = null, appPreferences) {
-    value = appPreferences.pairedServerExists.first()
+// In MainActivity's composition root (#13's NavHost start-destination gate; #295 moved this read to PairedServerStore)
+val pairedServerStore = koinInject<PairedServerStore>()
+val paired: Boolean? by produceState<Boolean?>(initialValue = null, pairedServerStore) {
+    value = pairedServerStore.load() != null
 }
 when (val v = paired) {
     null -> Surface(Modifier.fillMaxSize()) {}                  // neutral placeholder during first emit
