@@ -52,6 +52,22 @@ class NoiseSessionFactory(
             }
         }
 
+    /**
+     * Re-loads the device static private key for the paired server, for a re-key (#304/#303 decision (B):
+     * `s` is re-supplied per re-key, never retained on the session). Returns a fresh, caller-owned 32-byte
+     * scalar the caller MUST zero after use (mirrors [create]'s zero-after-copy); the public key is unused.
+     * Throws [NoiseSessionException] if not paired or the device static key is unavailable.
+     */
+    suspend fun reloadDeviceStaticKey(): ByteArray =
+        withContext(ioDispatcher) {
+            val paired = pairedServerStore.load() ?: throw NoiseSessionException("not paired")
+            try {
+                deviceStaticKeyStore.loadOrCreate(paired.serverId).privateKey
+            } catch (e: DeviceStaticKeyException) {
+                throw NoiseSessionException("device static key unavailable", e)
+            }
+        }
+
     private companion object {
         const val REMOTE_STATIC_KEY_SIZE = 32
     }
