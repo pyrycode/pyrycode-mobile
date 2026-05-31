@@ -4,7 +4,7 @@ Android client for [Pyrycode](https://github.com/pyrycode/pyrycode) — talk to 
 
 ## Status
 
-**Phase 0: UI scaffolding.** Built against a fake data layer; real backend integration is deferred to Phase 4 (after pyrycode ships its mobile API in Phase 3).
+UI complete (Phases 0-2 shipped); **Phase 4 backend integration in progress** — Noise_IK encrypted transport over WebSocket to pyrycode-relay (live 2026-05-29); UI still runs against `FakeConversationRepository`, real backend is a Koin module swap.
 
 This is a personal project under active development. Not yet on Play Store.
 
