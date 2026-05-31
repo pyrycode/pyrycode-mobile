@@ -1,13 +1,17 @@
 package de.pyryco.mobile.di
 
+import android.os.Build
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
+import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.KeystoreDeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.KeystorePairedServerStore
 import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.network.NoiseClientInfo
+import de.pyryco.mobile.data.network.NoiseSessionFactory
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -33,6 +37,8 @@ val appModule =
         single { AppPreferences(get()) }
         single { KeystoreDeviceStaticKeyStore(get()) } bind DeviceStaticKeyStore::class
         single { KeystorePairedServerStore(get()) } bind PairedServerStore::class
+        single { NoiseClientInfo(deviceName = Build.MODEL, clientVersion = BuildConfig.VERSION_NAME) }
+        single { NoiseSessionFactory(get(), get(), get()) }
         single { FakeConversationRepository() } bind ConversationRepository::class
         single { FakeConnectionStateSource() } bind ConnectionStateSource::class
         viewModel { ChannelListViewModel(get(), get()) }
