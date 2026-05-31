@@ -8,9 +8,9 @@ backend swap is architectural — replace the binding, don't special-case the UI
 
 Package: `de.pyryco.mobile.data.repository` (`RemoteConversationRepository` + the consumer-defined
 `SessionPump` interface), same package as the contract and the Fake. Built **slice by slice**: the
-conversation-list read path landed in [#312](../codebase/312.md); the thread read path (#313), the
-mutation path (#314), and the last-message preview (#329) extend the **same class** as they land. Portable,
-`android.*`-free.
+conversation-list read path landed in [#312](../codebase/312.md) and the last-message preview in
+[#329](../codebase/329.md); the thread read path (#313) and the mutation path (#314) extend the **same
+class** as they land. Portable, `android.*`-free.
 
 > **Ships dormant (no live binding yet).** #312 lands `RemoteConversationRepository` with **no Koin
 > binding and no consumers** — the UI still binds to `FakeConversationRepository`. Wiring the live binding
@@ -84,7 +84,8 @@ demultiplexes each envelope by `Envelope.type`:
 | `Envelope.type` | Handling |
 |---|---|
 | `"conversations"` | Decode `MobileJson.decodeFromJsonElement<ConversationsPayload>(payload).toConversations()` (#316) → assign to `projection`. A **full-list snapshot** — both the reply to our request and any unsolicited server change-push arrive this way, so re-emission needs **no `in_reply_to` correlation**. Decode is wrapped in a per-envelope `try/catch` (a malformed snapshot is dropped, the collector survives). |
-| anything else | **No-op in this slice** (intentional `else`, not a bug). `messages` (#313), single-row `conversation_updated`/`conversation_created` deltas (#318 → #314), and last-message (#329) extend this `when` in their own slices. |
+| `"message"` | Decode `MobileJson.decodeFromJsonElement<MessagePayloadDto>(payload)` (#317) → key by `conversation_id` (**read off the DTO before mapping** — the domain `Message` carries none) → `toMessage(envelope, sessionId = "")` → fold the strictly-greater-by-`timestamp` message into the `lastMessages` projection ([#329](../codebase/329.md)). Same per-envelope `try/catch` drop; **silent** (no payload logged, content may be sensitive). The singular live/echo `message`; the plural `messages` thread-read response is a different type. See the [`observeLastMessage`](#observelastmessageconversationid--the-live-last-message-preview-329) section below. |
+| anything else | **No-op** (intentional `else`, not a bug). The plural `messages` thread-read response (#313) and single-row `conversation_updated`/`conversation_created` deltas (#318 → #314) extend this `when` in their own slices. |
 
 > **Why single-row deltas are not handled here.** `conversation_updated` / `conversation_created` are
 > single-`Conversation` payloads mapped by [#318](mobile-protocol-v2-wire-layer.md#application-payloads-decoded-on-top-of-envelope)'s
@@ -130,19 +131,54 @@ four domain fields with documented list-tier defaults — `currentSessionId = ""
 emptyList()`, `isSleeping = false`, `archived = false` — never `null`-punned. Full enrichment arrives via
 the detail/message read paths (#313+), not here. (This is why `Archived` is empty under the pure list
 path until a richer source lands: the list snapshot never carries `archived = true`.) The wire's
-`last_message_ts` maps to **no** domain field — the last-message preview is #329's job over the message
-read path, not derivable from this payload. See [[v2-app-payload-shapes-ssot]].
+`last_message_ts` maps to **no** domain field — so the last-message preview is **not** derivable from
+this payload; it comes from the message read path ([#329](../codebase/329.md), now live — see the
+[`observeLastMessage`](#observelastmessageconversationid--the-live-last-message-preview-329) section
+below). See [[v2-app-payload-shapes-ssot]].
+
+## `observeLastMessage(conversationId)` — the live last-message preview (#329)
+
+The channel list's last-message preview. Because the `conversations` wire summary carries no message
+content (only `last_message_ts`, which maps to no domain field), the preview is sourced from the
+**message read path**, not the list read. [#329](../codebase/329.md) implements it by **riding the live
+`message` stream** (Design A — no `backfill_since` request, no `message_chunk` parsing):
+
+- A second projection, `private val lastMessages = MutableStateFlow<Map<String, Message>>(emptyMap())`,
+  is fed **only** by the same single `init` inbound collector via the `"message"` demux branch above —
+  decode through the [#317](mobile-protocol-v2-wire-layer.md) `MessagePayloadDto.toMessage` boundary
+  (`sessionId = ""`, a list-tier placeholder the preview never reads), key by the DTO's
+  `conversation_id`, and fold the **strictly-greater-by-`timestamp`** message via
+  `MutableStateFlow.update { }`. Strictly-greater means out-of-order older arrivals and re-delivered
+  duplicates are no-ops — matching the Fake's `maxByOrNull { it.timestamp }` most-recent semantics.
+
+- The method itself is a **pure cold projection**, issuing **no request** (it rides the stream):
+
+  ```kotlin
+  override fun observeLastMessage(conversationId: String): Flow<Message?> =
+      lastMessages.map { it[conversationId] }.distinctUntilChanged()
+  ```
+
+  A `StateFlow` always has a current value, so every collector — including a `flatMapLatest`
+  re-subscription from `ChannelListViewModel` — receives the current most-recent (or `null` when the
+  conversation is absent/never-seen) on subscription, re-emits only on change, and supports unlimited
+  concurrent collectors off the one inbound consumer.
+
+> **Cold-start gap (deferred to #313).** With Design A a quiescent conversation's preview stays empty
+> until a live `message` arrives on **this** connection; it does not back-fill from history. Populating
+> previews on connect is deferred to #313's backfill plumbing (`backfill_since` → `message_chunk` →
+> `backfill_done`); a later follow-up can fold `message_chunk` rows into `lastMessages` using #313's
+> per-row-`ts` reconciliation. #329 deliberately does not pre-build that. It is a strict improvement:
+> before it the preview showed nothing; after it, real content for any conversation with live traffic.
 
 ## Stubs — the full interface compiles; later slices replace what they own
 
-Every method other than `observeConversations` throws `UnsupportedOperationException` with a message
-naming the owning follow-up, so the class compiles the full interface today and each slice replaces only
-the methods it owns:
+Every method other than `observeConversations` and `observeLastMessage` (#329) throws
+`UnsupportedOperationException` with a message naming the owning follow-up, so the class compiles the
+full interface today and each slice replaces only the methods it owns:
 
 | Method(s) | Owner |
 |---|---|
 | `observeMessages` | #313 (thread read path) |
-| `observeLastMessage` | #329 (last-message via the message read path) |
 | `sendMessage`, `createDiscussion`, `promote` | #314 (mutation path) |
 | `archive`, `unarchive`, `rename`, `startNewSession`, `changeWorkspace` | follow-up (no v2 wire message defined yet) |
 
@@ -150,28 +186,34 @@ the methods it owns:
 defaults (error / empty flow per the [contract](conversation-repository.md)) and are intentionally outside
 this implementation's surface.
 
-> **Stub shape caveat (for #313/#329).** The two `Flow`-returning stubs use an expression-body `throw`, so
-> they throw **eagerly on call** rather than returning a `flow { throw … }` that throws on collection. This
-> is a deliberate, test-asserted stub (no production consumer reaches them before #313/#329 land), but the
-> owning slices should wire **real cold flows** that defer work to collection.
+> **Stub shape caveat (for #313).** The remaining `Flow`-returning stub (`observeMessages`) uses an
+> expression-body `throw`, so it throws **eagerly on call** rather than returning a `flow { throw … }`
+> that throws on collection. This is a deliberate, test-asserted stub (no production consumer reaches it
+> before #313 lands), but #313 should wire a **real cold flow** that defers work to collection — as
+> [#329](../codebase/329.md) did for `observeLastMessage` (a cold `lastMessages.map { … }.distinctUntilChanged()`).
 
 ## State & concurrency model
 
-- **One `StateFlow<List<Conversation>?>` projection; one inbound collector** launched on the injected
-  connection `scope`. The scope (and thus the collector) is cancelled by its owner (#279/#302) when the
-  connection ends; the pump completing `inbound` on teardown also ends the collector naturally.
+- **Two `StateFlow` projections — `projection` (the conversation list) and `lastMessages` (#329's
+  per-conversation most-recent `Message`) — fed by one inbound collector** launched on the injected
+  connection `scope`. No second collector or scope is added per slice. The scope (and thus the collector)
+  is cancelled by its owner (#279/#302) when the connection ends; the pump completing `inbound` on
+  teardown also ends the collector naturally. Both projections are in-memory and connection-scoped —
+  lost on process death and re-derived from the live stream on reconnect.
 - **Dispatcher inherited from the injected scope** (DI uses `Dispatchers.Default`; this is pure CPU/JSON
   work — the socket I/O is the transport's, below the pump). Not hard-coded.
-- `observeConversations` is cold; N concurrent collectors share the one projection (fan-out).
+- `observeConversations` and `observeLastMessage` are cold; N concurrent collectors share the
+  projections (fan-out off the single inbound consumer).
 
 ## Error handling
 
 | Failure mode | Result |
 |---|---|
 | Malformed `conversations` payload | `IllegalArgumentException` caught per-envelope (covers both #316 families — `MissingFieldException` ⊂ `SerializationException`, and the kotlinx-datetime bad-timestamp throw); envelope **dropped**; collector survives; projection unchanged |
+| Malformed `message` payload (missing field / unmappable role e.g. `system` / bad `ts`) | `IllegalArgumentException` caught per-envelope (covers the #317 `SerializationException` decode failure and the `Instant.parse(ts)` throw); envelope **dropped silently** (no payload logged — content may be sensitive); collector survives; `lastMessages` unchanged ([#329](../codebase/329.md)) |
 | `pump.send` returns `false` (session not `Open`) | request silently not sent (no throw); projection stays `null` until a later subscribe succeeds or a push arrives |
-| `pump.inbound` completes (teardown) | collector completes; last projection retained; live `StateFlow` collectors simply stop receiving updates (do not complete) |
-| Unknown `Envelope.type` | no-op (owned by #313/#314/#329) |
+| `pump.inbound` completes (teardown) | collector completes; last projections retained; live `StateFlow` collectors simply stop receiving updates (do not complete) |
+| Unknown `Envelope.type` | no-op (`messages` thread-read owned by #313, single-row deltas by #314) |
 | Stubbed method called | `UnsupportedOperationException` naming the owning follow-up |
 
 **Why catch-and-drop:** the `ConversationRepository` flow type has no error channel and the Fake never
@@ -228,12 +270,15 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   decode-and-validate boundary. [Data model](data-model.md) — the domain `Conversation` it produces.
 - Precedent: [Connection state](connection-state.md) — the consumer-defined-interface-in-`data/repository/`
   pattern `SessionPump` follows.
-- Ticket notes: [`../codebase/312.md`](../codebase/312.md) (the list read path — files/line refs,
-  patterns, lessons, verification).
-- Spec: `docs/specs/architecture/312-remote-conversation-repository-observe-list.md`.
-- Siblings (extend the same class + `onInbound` `when`): #313 (`observeMessages`, consumes
-  [#317](../codebase/317.md)), #314 (mutations, consumes [#318](../codebase/318.md)), #329
-  (`observeLastMessage`, consumes #317 + a per-conversation read).
+- Ticket notes: [`../codebase/312.md`](../codebase/312.md) (the list read path) ·
+  [`../codebase/329.md`](../codebase/329.md) (the last-message preview) — files/line refs, patterns,
+  lessons, verification.
+- Specs: `docs/specs/architecture/312-remote-conversation-repository-observe-list.md` ·
+  `docs/specs/architecture/329-remote-conversation-repository-observe-last-message.md`.
+- Siblings (extend the same class + `onInbound` `when`): [#329](../codebase/329.md)
+  (`observeLastMessage`, **landed** — consumes [#317](../codebase/317.md), rides the live `message`
+  stream), #313 (`observeMessages`, also consumes #317 + establishes the `backfill_since` plumbing #329
+  defers its cold-start to), #314 (mutations, consumes [#318](../codebase/318.md)).
 - Hand-off: [#279](https://github.com/pyrycode/pyrycode-mobile/issues/279) / [#302](../codebase/302.md)
   (`NoiseSessionPump : SessionPump`, the connection scope, the paired-state Koin swap).
 </content>
