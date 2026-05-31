@@ -12,8 +12,9 @@ import kotlinx.serialization.Serializable
  * and the relay WS client (#276, relay URL + token + server id); both see only the typed
  * [PairedServer] and stay decoupled from the Keystore mechanism.
  *
- * Ships dormant — no consumer is wired yet; the `pairedServerExists` boolean stays the live source
- * of paired-state truth until the sibling switch-over ticket.
+ * Live source of paired-state truth: `MainActivity` picks the start destination from [load] (record
+ * present → channel list, absent → welcome) and the Scanner placeholder persists a stub via [save];
+ * the QR-pairing consumers (#275/#276) remain dormant.
  */
 interface PairedServerStore {
     /**

@@ -3,6 +3,7 @@ package de.pyryco.mobile
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -25,6 +26,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import de.pyryco.mobile.data.crypto.PairedServer
+import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.crypto.PairedServerStoreException
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.ui.conversations.list.ChannelListEvent
@@ -47,7 +51,6 @@ import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
 import de.pyryco.mobile.ui.settings.SettingsScreen
 import de.pyryco.mobile.ui.settings.SettingsViewModel
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
@@ -59,6 +62,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val appPreferences = koinInject<AppPreferences>()
+            val pairedServerStore = koinInject<PairedServerStore>()
             val themeMode by appPreferences.themeMode
                 .collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
             val useWallpaperColors by appPreferences.useWallpaperColors
@@ -73,9 +77,9 @@ class MainActivity : ComponentActivity() {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     val paired: Boolean? by produceState<Boolean?>(
                         initialValue = null,
-                        appPreferences,
+                        pairedServerStore,
                     ) {
-                        value = appPreferences.pairedServerExists.first()
+                        value = pairedServerStore.load() != null
                     }
                     when (val v = paired) {
                         null ->
@@ -122,15 +126,22 @@ private fun PyryNavHost(
             )
         }
         composable(Routes.SCANNER) {
-            val appPreferences = koinInject<AppPreferences>()
+            val pairedServerStore = koinInject<PairedServerStore>()
             val scope = rememberCoroutineScope()
             ScannerScreen(
                 onTap = {
                     scope.launch {
-                        appPreferences.setPairedServerExists(true)
-                        navController.navigate(Routes.CHANNEL_LIST) {
-                            popUpTo(Routes.SCANNER) { inclusive = true }
-                            launchSingleTop = true
+                        try {
+                            pairedServerStore.save(STUB_PAIRED_SERVER)
+                            navController.navigate(Routes.CHANNEL_LIST) {
+                                popUpTo(Routes.SCANNER) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        } catch (e: PairedServerStoreException) {
+                            // Placeholder tap: persisting the stub failed (Keystore/IO). No error
+                            // surface exists here yet (the QR-scanning ticket owns that) — stay on
+                            // the placeholder so the user can re-tap to retry.
+                            Log.w(TAG, "stub paired-server save failed: ${e.javaClass.simpleName}")
                         }
                     }
                 },
@@ -285,6 +296,22 @@ private fun PyryNavHost(
 }
 
 private const val SETUP_URL = "https://pyryco.de/setup"
+
+private const val TAG = "MainActivity"
+
+// Placeholder paired-server record persisted by the Scanner stub tap until QR pairing lands; the
+// downstream QR-scanning ticket overwrites it with the scanned record (last-writer-wins). These are
+// wire-shaped throwaways, not real credentials: the relay is non-routable (`.invalid`, RFC 2606)
+// and the token / static pubkey are public constants that grant no access. The store does no
+// field-shape validation, so the exact bytes are non-load-bearing — they only keep the persisted
+// record structurally indistinguishable from a real one for the dormant #275/#276 consumers.
+private val STUB_PAIRED_SERVER =
+    PairedServer(
+        serverId = "placeholder-server",
+        token = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        relayUrl = "wss://relay.invalid/v1/client",
+        serverStaticPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    )
 
 private object Routes {
     const val WELCOME = "welcome"

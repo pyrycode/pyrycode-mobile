@@ -4,11 +4,11 @@ Single-activity Compose Navigation host. `MainActivity` is the only Activity; al
 
 ## What it does
 
-Boots the app into the route that matches the persisted pairing state (`welcome` on a fresh install, `channel_list` once `AppPreferences.pairedServerExists` is `true`) and provides the route graph that subsequent screens plug into. Currently eight routes (#271 added `about`, restoring the count to its pre-#163 level — #163 had dropped it to seven by deleting the `license` route along with the now-orphaned `LicenseScreen`; `conversation_thread/{conversationId}` flipped from placeholder `Text(...)` body to real `ThreadScreen` + `ThreadViewModel` in #126):
+Boots the app into the route that matches the persisted pairing state (`welcome` on a fresh install, `channel_list` once a `PairedServerStore` record exists (since #295)) and provides the route graph that subsequent screens plug into. Currently eight routes (#271 added `about`, restoring the count to its pre-#163 level — #163 had dropped it to seven by deleting the `license` route along with the now-orphaned `LicenseScreen`; `conversation_thread/{conversationId}` flipped from placeholder `Text(...)` body to real `ThreadScreen` + `ThreadViewModel` in #126):
 
-- **`welcome`** (start destination when `pairedServerExists == false`) — renders `WelcomeScreen` (#7).
-- **`scanner`** — renders `ScannerScreen` (#12); a tap-anywhere stub that flips `AppPreferences.setPairedServerExists(true)` and navigates to `channel_list` with the scanner popped from the back stack. Phase 4 replaces the body with real CameraX + ML Kit QR pairing. See [Scanner screen](scanner-screen.md).
-- **`channel_list`** (start destination when `pairedServerExists == true`) — renders `ChannelListScreen` (#46) backed by `ChannelListViewModel` (#45); destination block resolves the VM via `koinViewModel<…>()`, collects state via `collectAsStateWithLifecycle()`, and translates `ChannelListEvent.RowTapped` inline into `navController.navigate("conversation_thread/$id")`. See [ChannelListScreen](channel-list-screen.md).
+- **`welcome`** (start destination when no paired-server record exists) — renders `WelcomeScreen` (#7).
+- **`scanner`** — renders `ScannerScreen` (#12); a tap-anywhere stub that persists a stub `PairedServer` via `PairedServerStore.save(...)` (#295) and navigates to `channel_list` with the scanner popped from the back stack. Phase 4 replaces the body with real CameraX + ML Kit QR pairing. See [Scanner screen](scanner-screen.md).
+- **`channel_list`** (start destination when a paired-server record exists) — renders `ChannelListScreen` (#46) backed by `ChannelListViewModel` (#45); destination block resolves the VM via `koinViewModel<…>()`, collects state via `collectAsStateWithLifecycle()`, and translates `ChannelListEvent.RowTapped` inline into `navController.navigate("conversation_thread/$id")`. See [ChannelListScreen](channel-list-screen.md).
 - **`discussions`** — renders `DiscussionListScreen` (#24) backed by `DiscussionListViewModel`; sibling of `channel_list` for the unpromoted tier. Destination block follows the same `koinViewModel<…>()` + `collectAsStateWithLifecycle()` shape and translates `RowTapped` into `navController.navigate("conversation_thread/$id")` *and* collects `vm.navigationEvents` in a `LaunchedEffect(vm)` for the same nav target (dual wiring — the VM-side path exists so a unit test can assert the nav target; see [DiscussionListViewModel](discussion-list-viewmodel.md)). `BackTapped → navController.popBackStack()`. Reached from the channel list's inline Recent-discussions section's "See all discussions (N) →" link (#69; previously the #26 pill) via `ChannelListEvent.RecentDiscussionsTapped → navController.navigate(Routes.DISCUSSION_LIST)`. See [DiscussionListScreen](discussion-list-screen.md).
 - **`conversation_thread/{conversationId}`** — renders [`ThreadScreen`](thread-screen.md) (#126) backed by `ThreadViewModel`; first replacement slice for the #15 placeholder `Text(...)` body. Destination block follows the `koinViewModel<…>()` + `collectAsStateWithLifecycle()` shape with `onBack = { navController.popBackStack() }` passed in directly (no `onEvent` lambda yet — the VM owns no events in this slice). The path-argument extraction shape `backStackEntry.arguments?.getString("conversationId").orEmpty()` is gone from the destination — `SavedStateHandle` injected into the Koin `viewModel { ThreadViewModel(get()) }` block owns the parse now. Body is intentionally minimal (back-arrow `TopAppBar` + empty `LazyColumn(reverseLayout = true)`); downstream `feat(ui/thread):` work (#128–#140, #145) lands additively. The `Routes.CONVERSATION_THREAD` constant and `navArgument("conversationId") { type = NavType.StringType }` are unchanged from #15; all four call sites that build `"conversation_thread/$id"` continue to work without modification.
 - **`settings`** — renders `SettingsScreen` (#64; About-row wiring #90; Storage-row wiring #94; About-row copy + License-row treatment #163; About section → single navigable entry #271). Reached by the channel-list TopAppBar's gear `IconButton` (#21) via `ChannelListEvent.SettingsTapped → navController.navigate(Routes.SETTINGS)`. Destination block passes three navigation lambdas: `onBack = { navController.popBackStack() }`, `onOpenArchivedDiscussions = { navController.navigate(Routes.ARCHIVED_DISCUSSIONS) }` (#94), and `onOpenAbout = { navController.navigate(Routes.ABOUT) }` (#271). An earlier third lambda `onOpenLicense = { navController.navigate(Routes.LICENSE) }` from #91 was dropped in #163 along with the `LicenseScreen` parameter; #271's `onOpenAbout` is its structural successor — the whole About section is now a single navigable entry into [`AboutScreen`](about-screen.md). See [Settings screen](settings-screen.md).
@@ -17,17 +17,17 @@ Boots the app into the route that matches the persisted pairing state (`welcome`
 
 ## How it works
 
-The NavHost lives in a private `PyryNavHost` Composable inside `MainActivity.kt`. `setContent` gates `NavHost` composition on a one-shot read of `AppPreferences.pairedServerExists` (#13), painting a neutral `Surface` while DataStore's first emit is in flight:
+The NavHost lives in a private `PyryNavHost` Composable inside `MainActivity.kt`. `setContent` gates `NavHost` composition on a one-shot read of `PairedServerStore.load()` (#13; #295 swapped it off the now-removed `AppPreferences.pairedServerExists` boolean), painting a neutral `Surface` while DataStore's first emit is in flight:
 
 ```kotlin
 PyrycodeMobileTheme {
     Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-        val appPreferences = koinInject<AppPreferences>()
+        val pairedServerStore = koinInject<PairedServerStore>()
         val paired: Boolean? by produceState<Boolean?>(
             initialValue = null,
-            appPreferences,
+            pairedServerStore,
         ) {
-            value = appPreferences.pairedServerExists.first()
+            value = pairedServerStore.load() != null
         }
         when (val v = paired) {
             null -> Surface(
@@ -60,12 +60,12 @@ NavHost(navController, startDestination = startDestination) {
         )
     }
     composable(Routes.SCANNER) {
-        val appPreferences = koinInject<AppPreferences>()
+        val pairedServerStore = koinInject<PairedServerStore>()
         val scope = rememberCoroutineScope()
         ScannerScreen(
             onTap = {
                 scope.launch {
-                    appPreferences.setPairedServerExists(true)
+                    pairedServerStore.save(STUB_PAIRED_SERVER)
                     navController.navigate(Routes.CHANNEL_LIST) {
                         popUpTo(Routes.SCANNER) { inclusive = true }
                         launchSingleTop = true
@@ -110,7 +110,7 @@ NavHost(navController, startDestination = startDestination) {
 }
 ```
 
-The `scanner` block is the first destination that resolves a Koin singleton (`koinInject<AppPreferences>()`) and remembers a `CoroutineScope` directly inside the `composable(...)` lambda — a deliberate one-shot shape for stub destinations that need a `suspend` side-effect without an observable state machine. Phase 4 will replace the whole block with a real `ScannerViewModel`-driven screen, so don't lift this pattern into a helper.
+The `scanner` block is the first destination that resolves a Koin singleton (`koinInject<PairedServerStore>()`) and remembers a `CoroutineScope` directly inside the `composable(...)` lambda — a deliberate one-shot shape for stub destinations that need a `suspend` side-effect without an observable state machine. Phase 4 will replace the whole block with a real `ScannerViewModel`-driven screen, so don't lift this pattern into a helper.
 
 Route strings are pinned in a colocated `private object Routes` (see `MainActivity.kt:180-189`). Call sites use `Routes.WELCOME` / `Routes.SCANNER` / `Routes.CHANNEL_LIST` / `Routes.CONVERSATION_THREAD` / `Routes.SETTINGS`, never inline strings — `SCREAMING_SNAKE_CASE` since #83 (Kotlin official style for top-level `const val`, enforced by ktlint's `property-naming` default). Concrete navigation targets for parameterized routes are built inline at the call site (e.g. `navController.navigate("conversation_thread/$id")`); lift to a helper when a second caller appears.
 
@@ -129,7 +129,7 @@ Screens take navigation as `() -> Unit` callbacks, not a `NavController`. This i
 
 - **Dependency:** `androidx.navigation:navigation-compose`, pinned via `navigationCompose` in `gradle/libs.versions.toml`. Compose BOM does **not** cover this artifact group — it needs its own version pin.
 - **Back-stack policy:** default `navigate(route)` for most transitions. The `scanner` → `channel_list` transition is the lone exception: it uses `popUpTo(Routes.SCANNER) { inclusive = true }` + `launchSingleTop = true` to drop the stub scanner from the back stack on success (so back-press from `channel_list` doesn't return to a fake camera). Combined with #13's conditional start destination, the returning-paired-user path also sidesteps Welcome entirely — back-press from `channel_list` exits the app in both entry paths (post-Scanner *and* cold launch on a paired install).
-- **Start-destination gating:** `NavHost` composition itself is gated on `AppPreferences.pairedServerExists.first()` via `produceState` (#13). The `startDestination` parameter is captured at first composition and is *not* reactive — later flips of the flag (Scanner writing `true` mid-session) do not rewrite the back stack. Mid-session navigation continues through `navController.navigate(...)`, which is correct.
+- **Start-destination gating:** `NavHost` composition itself is gated on `PairedServerStore.load() != null` via `produceState` (#13; #295). The `startDestination` parameter is captured at first composition and is *not* reactive — later changes (the Scanner persisting a record mid-session) do not rewrite the back stack. Mid-session navigation continues through `navController.navigate(...)`, which is correct.
 - **Insets:** the outer `Scaffold` in `MainActivity` owns system-bar insets and passes them down via the NavHost's `Modifier.padding(innerPadding)`. Screens may apply their own `systemBarsPadding()` on top (harmless double-padding); don't refactor existing screens to drop it.
 
 ## Edge cases / limitations
@@ -142,5 +142,5 @@ Screens take navigation as `() -> Unit` callbacks, not a `NavController`. This i
 
 - Ticket notes: `../codebase/8.md` (NavHost setup), `../codebase/12.md` (Scanner stub + first destination-block Koin/coroutine wiring), `../codebase/13.md` (conditional start destination + `produceState` gating), `../codebase/14.md` (Welcome `onSetup` → `Intent.ACTION_VIEW` + `LocalContext.current` capture in a `composable` block), `../codebase/15.md` (first parameterized route), `../codebase/16.md` (Settings placeholder + interactive-placeholder factoring rule), `../codebase/46.md` (first VM-backed destination — `koinViewModel<…>()` + `collectAsStateWithLifecycle()` shape, inline `when (event)` → `navigate` translation), `../codebase/21.md` (channel-list `SettingsTapped` → `Routes.SETTINGS` wiring + `material-icons-core` on the classpath), `../codebase/24.md` (`discussions` route — first destination with dual nav wiring + a back-arrow `navigationIcon` reusing `R.string.cd_back`), `../codebase/26.md` (`discussions` route wired into the live graph — `ChannelListEvent.RecentDiscussionsTapped → navController.navigate(Routes.DISCUSSION_LIST)`), `../codebase/126.md` (`conversation_thread/{conversationId}` body flipped from placeholder `Text(...)` to real `ThreadScreen` + `ThreadViewModel`; path-argument extraction moves from `backStackEntry.arguments?.getString(...)` into the VM's `SavedStateHandle` via Koin's `viewModel { ThreadViewModel(get()) }` block), `../codebase/271.md` (`about` route — first static sub-screen added with no VM, mirroring the `archived_discussions` block minus the state-collection machinery)
 - Specs: `docs/specs/architecture/8-navigation-compose-setup.md`, `docs/specs/architecture/12-stub-scanner-screen.md`, `docs/specs/architecture/13-conditional-navhost-start-destination.md`, `docs/specs/architecture/15-conversation-thread-placeholder-route.md`, `docs/specs/architecture/16-settings-placeholder-route.md`, `docs/specs/architecture/21-channel-list-top-app-bar.md`, `docs/specs/architecture/126-thread-screen-skeleton.md`, `docs/specs/architecture/271-dedicated-about-screen.md`
-- Consumers: [Welcome screen](welcome-screen.md), [Scanner screen](scanner-screen.md), [App preferences](app-preferences.md) (read by the start-destination gate), [Thread screen](thread-screen.md) (VM-backed destination since #126), [Settings screen](settings-screen.md) + [About screen](about-screen.md) (the `settings` → `about` sub-screen pair, #271), [Archived Discussions screen](archived-discussions-screen.md)
+- Consumers: [Welcome screen](welcome-screen.md), [Scanner screen](scanner-screen.md), [Paired server store](paired-server-store.md) (read by the start-destination gate + written by the Scanner placeholder, #295), [Thread screen](thread-screen.md) (VM-backed destination since #126), [Settings screen](settings-screen.md) + [About screen](about-screen.md) (the `settings` → `about` sub-screen pair, #271), [Archived Discussions screen](archived-discussions-screen.md)
 - Follow-ups: Phase 2 thread UI (the outer shell at `conversation_thread/{conversationId}` shipped in #126; downstream slices #128–#140 / #145 fill the message list, input bar, status row, connection banner, session-boundary delimiter, empty states, and TopAppBar overflow), Phase 3 Settings sections (data-layer wiring for remaining no-op rows; `SettingsScreen` shell + About-section Version/Open-source rows already wired since #64 / #90; License row is text-only since #163), Phase 4 (replaces `scanner` body with real CameraX + ML Kit)

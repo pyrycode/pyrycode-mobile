@@ -4,7 +4,7 @@ The phone's **persisted pairing identity** in Mobile Protocol v2. After QR pairi
 
 Package: `de.pyryco.mobile.data.crypto` (`app/src/main/java/de/pyryco/mobile/data/crypto/`), co-located with the [device static keystore](device-static-keystore.md). Two files — `PairedServerStore.kt` (the portable contract) and `KeystorePairedServerStore.kt` (the Android-bound impl). Landed in [#294](../codebase/294.md); reuses the existing `app_prefs` DataStore — **no new file, no new dependency**. It is a **second consumer of [ADR 0006](../decisions/0006-keystore-wrap-at-rest-device-static-key.md)** (wrap-at-rest), not a new mechanism.
 
-> **Dormant.** Nothing references this yet. The consumers are [#275](https://github.com/pyrycode/pyrycode-mobile/issues/275) (the Noise_IK session, which reads `serverStaticPublicKey`) and [#276](https://github.com/pyrycode/pyrycode-mobile/issues/276) (the relay WS client, which reads `relayUrl` + `token` + `serverId`). The `pairedServerExists` boolean stays the live source of paired-state truth until the sibling switch-over ticket swaps the start destination and removes the boolean.
+> **Live as of #295.** `MainActivity` reads this store (`load() != null`) to pick the NavHost start destination, and the Scanner placeholder writes a stub record through `save()`; #295 removed the old `pairedServerExists` boolean, so this store is now the sole live paired-state source. Still dormant: the credential consumers [#275](https://github.com/pyrycode/pyrycode-mobile/issues/275) (the Noise_IK session, which reads `serverStaticPublicKey`) and [#276](https://github.com/pyrycode/pyrycode-mobile/issues/276) (the relay WS client, which reads `relayUrl` + `token` + `serverId`).
 
 ## The contract
 

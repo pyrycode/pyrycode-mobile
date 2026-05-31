@@ -6,7 +6,7 @@ QR-pairing screen — visually a "premium developer-tool" scanning moment (Figma
 
 - Renders a 412×892 dark-surface pairing screen with a M3 top app bar (`"Pair with pyrycode"` + back-arrow), a full-height rounded camera-viewport panel, and a `"Trouble scanning? Paste the pairing code instead"` `TextButton` below.
 - The viewport stacks (back-to-front): a `surfaceContainerLowest` base, dual radial gradients (cool-blue at 30% w / 40% h, soft-coral at 70% w / 70% h) painted via a single `Modifier.drawBehind`, a 1-px-every-7-dp horizontal atmospheric stripe overlay drawn in a single `Canvas`, a 248dp four-corner reticle with a glowing horizontal scan line through its middle, and a translucent hint card pinned to the viewport's bottom that reads `Run pyry pair on your pyrycode server to generate a QR code.` (the `pyry pair` token in `FontFamily.Monospace` + `colorScheme.tertiary` coral).
-- Tap **anywhere** on the screen → flips `AppPreferences.setPairedServerExists(true)` → navigates to `channel_list` with the scanner popped from the back stack. The visible back-arrow `IconButton` and `TextButton` both fire the same `onTap` (Phase 1.5 contradiction; see below).
+- Tap **anywhere** on the screen → persists a stub `PairedServer` via `PairedServerStore.save(...)` (#295) → navigates to `channel_list` with the scanner popped from the back stack. The visible back-arrow `IconButton` and `TextButton` both fire the same `onTap` (Phase 1.5 contradiction; see below).
 - No camera, no permissions, no ML Kit. Any tap is success.
 
 ## How it works
@@ -47,12 +47,12 @@ Mounted at the `scanner` route in `PyryNavHost` (see `MainActivity.kt`):
 
 ```kotlin
 composable(Routes.SCANNER) {
-    val appPreferences = koinInject<AppPreferences>()
+    val pairedServerStore = koinInject<PairedServerStore>()
     val scope = rememberCoroutineScope()
     ScannerScreen(
         onTap = {
             scope.launch {
-                appPreferences.setPairedServerExists(true)
+                pairedServerStore.save(STUB_PAIRED_SERVER)
                 navController.navigate(Routes.CHANNEL_LIST) {
                     popUpTo(Routes.SCANNER) { inclusive = true }
                     launchSingleTop = true
@@ -66,7 +66,7 @@ composable(Routes.SCANNER) {
 Notes:
 
 - **`koinInject<AppPreferences>()` from `org.koin.compose`**, not a `ScannerViewModel`. Phase 4 will replace this whole `composable(...)` block wholesale; a ViewModel here is over-engineering for a stub that exists to be deleted. The pattern is "destination-block-scoped Koin + `rememberCoroutineScope`" for stub destinations that need a one-shot suspend side-effect.
-- **`scope.launch { setPairedServerExists(true); navigate(...) }` is sequential.** Awaiting the DataStore write before navigating matters once #13 lands its `pairedServerExists` collector as the start-destination predicate — fire-and-forget would race the next composition.
+- **`scope.launch { save(record); navigate(...) }` is sequential.** Awaiting the DataStore write before navigating matters because #13's start-destination gate reads it (`PairedServerStore.load()`, #295) — fire-and-forget would race the next composition.
 - **`popUpTo(Routes.SCANNER) { inclusive = true }` + `launchSingleTop = true`.** The `inclusive = true` is what satisfies "scanner is removed from the back stack" (without `inclusive`, `popUpTo(Routes.SCANNER)` is a no-op since Scanner is the top). `launchSingleTop` guards against double-tap stacking duplicate ChannelList entries during the in-flight coroutine.
 
 ## Why no ViewModel
@@ -101,5 +101,5 @@ Stub destinations with no observable state, no `UiState` to expose, and no lifec
 - Ticket notes: `../codebase/12.md`, `../codebase/60.md`
 - Figma node: `13:2`
 - Upstream: #8 (NavHost), #11 (`AppPreferences.setPairedServerExists`)
-- Downstream: #13 (conditional start destination based on `pairedServerExists`), Phase 4 (CameraX + ML Kit replaces this whole block)
+- Downstream: #13 (conditional start destination, now `PairedServerStore.load()` since #295), Phase 4 (CameraX + ML Kit replaces this whole block)
 - Sibling docs: [Navigation](navigation.md), [Welcome screen](welcome-screen.md), [App preferences](app-preferences.md)
