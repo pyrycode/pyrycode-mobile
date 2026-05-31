@@ -1,6 +1,6 @@
 # Scanner Denied screen
 
-State surface for the camera-permission-denied branch of the pairing flow. Pre-built ahead of CameraX integration so visual fidelity to Figma node `32:2` is settled before runtime permission routing arrives in Phase 4.
+State surface for the camera-permission-denied branch of the pairing flow. Pre-built (#61) ahead of integration so visual fidelity to Figma node `32:2` was settled first; **wired live in #326** as the `Denied` render of the stateful [Scanner screen](scanner-screen.md)'s `when(state)` — reused as-is, no top bar added.
 
 ## What it does
 
@@ -53,7 +53,7 @@ No `Color(0x…)` literals anywhere in the file. Typography binds to M3 roles (`
 
 ## Configuration / usage
 
-Not yet wired into `MainActivity`'s `NavHost`. The composable is in place for Phase 4: when CameraX integration lands and the runtime permission flow needs a denied-state destination, the wiring is a `composable(Routes.ScannerDenied) { ScannerDeniedScreen(onOpenSettings = { ... }, onPasteCode = { ... }) }` block where the caller resolves a `Context` (e.g. `LocalContext.current`) for the `ACTION_APPLICATION_DETAILS_SETTINGS` intent and a `NavController` for the paste-code hop.
+Rendered **in-route**, not at its own route. Since #326 the stateful `ScannerScreen`'s `when(state)` dispatches `ScannerUiState.Denied → ScannerDeniedScreen(onOpenSettings, onPasteCode, modifier)` inside `composable(Routes.SCANNER)` — there is no `Routes.ScannerDenied` (AC2: "no new denied screen is invented"). The route owns both lambdas: `onOpenSettings` fires the `ACTION_APPLICATION_DETAILS_SETTINGS` intent (`context.startActivity` with `Uri.fromParts("package", packageName, null)`), and `onPasteCode` is the shared `stubPairAndNavigate` (the #295 stub-pair persist + navigate), so onboarding still completes from the denied state.
 
 `modifier` is forwarded to the root `Surface` so a host can constrain the screen in tests.
 
@@ -71,15 +71,15 @@ N/A. The screen *is* the camera-permission-denied error state; there is no I/O, 
 
 ## Edge cases / limitations
 
-- **Phase 4 walk-back.** The screen survives Phase 4 wholesale — its sole role is the visual surface for the denied state, which CameraX integration consumes as-is. The only future addition is the `TopAppBar` / `onBack` lambda once the screen is hosted inside the pairing nav graph.
+- **Hosted as-is, still no top bar.** #326 wired the screen into the runtime permission flow without modifying it — no `TopAppBar` / `onBack` was added (the denied state has no back affordance in the Figma frame either). Its sole role remains the visual surface for the denied state; the camera-engine slice consumes it unchanged. Process-death caveat lives on the host: after process death while `Denied`, the route falls back to the viewport shell (the resolved state lives only in the VM) — see [Scanner screen](scanner-screen.md) Edge cases.
 - **Pixel-perfect not required.** Canvas coordinates are tuned by visual side-by-side against the Figma screenshot, not measured. The silhouette must read as "camera with a strike through it"; sub-pixel fidelity is explicitly out of scope.
 - **Two `@Preview` composables plus a three-method instrumented test class since #101.** `app/src/androidTest/.../onboarding/ScannerDeniedScreenTest.kt` covers `heading_rendersCameraPermissionRequired` (exact match), `openSettingsButton_hasClickAction` (`"Open settings"` carries a click action), and `pasteCodeButton_hasClickAction` (`"Paste code instead"` carries a click action). Structure only — callback wiring intentionally unasserted; the screen's two lambdas are passed as `{}` no-ops at the test site.
 
 ## Related
 
-- Issue: https://github.com/pyrycode/pyrycode-mobile/issues/61
-- Spec: `docs/specs/architecture/61-scanner-denied-screen.md`
-- Ticket notes: `../codebase/61.md`
+- Issues: https://github.com/pyrycode/pyrycode-mobile/issues/61 (this screen), https://github.com/pyrycode/pyrycode-mobile/issues/326 (wired into the permission flow)
+- Specs: `docs/specs/architecture/61-scanner-denied-screen.md`, `docs/specs/architecture/326-stateful-scanner-permission-flow.md`
+- Ticket notes: `../codebase/61.md`, `../codebase/326.md`
 - Figma node: `32:2`
 - Sibling docs: [Scanner screen](scanner-screen.md), [Welcome screen](welcome-screen.md)
-- Downstream: Phase 4 CameraX integration wires this into the runtime permission flow and adds the `TopAppBar`.
+- Consumer: #326 renders this as the `Denied` state inside `composable(Routes.SCANNER)`; the camera-engine slice consumes it unchanged.

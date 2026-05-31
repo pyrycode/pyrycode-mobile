@@ -1,28 +1,43 @@
 # Scanner screen
 
-QR-pairing screen — visually a "premium developer-tool" scanning moment (Figma node `13:2`, locked since #60); functionally still a Phase 0 stub that fake-pairs on any tap. Closes the onboarding navigation loop between Welcome and the Channel List by giving Welcome's "I already have pyrycode" CTA a real intermediate destination.
+QR-pairing screen — visually a "premium developer-tool" scanning moment (Figma node `13:2`, locked since #60). **Stateful since #326**: a `ScannerViewModel` + sealed `ScannerUiState` drive a runtime camera-permission flow, but there is **still no live camera** — the granted/`ReadyToScan` state renders the locked viewport unchanged and any tap fake-pairs. Closes the onboarding navigation loop between Welcome and the Channel List by giving Welcome's "I already have pyrycode" CTA a real intermediate destination. The CameraX preview + ML Kit decode that fills `ReadyToScan` is the immediately-following sibling slice and consumes this state machine.
 
 ## What it does
 
-- Renders a 412×892 dark-surface pairing screen with a M3 top app bar (`"Pair with pyrycode"` + back-arrow), a full-height rounded camera-viewport panel, and a `"Trouble scanning? Paste the pairing code instead"` `TextButton` below.
+- Requests the `CAMERA` runtime permission **on entry** (#326). Granted → the locked viewport; denied → the existing [Scanner Denied screen](scanner-denied-screen.md) (#61), rendered in-route (no new route). A `ScannerErrorContent` recovery surface exists for an `Error` state whose live producer arrives with the camera slice.
+- In the granted (`ReadyToScan`) and `PermissionRequesting` states, renders a 412×892 dark-surface pairing screen with a M3 top app bar (`"Pair with pyrycode"` + back-arrow), a full-height rounded camera-viewport panel, and a `"Trouble scanning? Paste the pairing code instead"` `TextButton` below.
 - The viewport stacks (back-to-front): a `surfaceContainerLowest` base, dual radial gradients (cool-blue at 30% w / 40% h, soft-coral at 70% w / 70% h) painted via a single `Modifier.drawBehind`, a 1-px-every-7-dp horizontal atmospheric stripe overlay drawn in a single `Canvas`, a 248dp four-corner reticle with a glowing horizontal scan line through its middle, and a translucent hint card pinned to the viewport's bottom that reads `Run pyry pair on your pyrycode server to generate a QR code.` (the `pyry pair` token in `FontFamily.Monospace` + `colorScheme.tertiary` coral).
-- Tap **anywhere** on the screen → persists a stub `PairedServer` via `PairedServerStore.save(...)` (#295) → navigates to `channel_list` with the scanner popped from the back stack. The visible back-arrow `IconButton` and `TextButton` both fire the same `onTap` (Phase 1.5 contradiction; see below).
-- No camera, no permissions, no ML Kit. Any tap is success.
+- Tap **anywhere** on the viewport (or "Paste the pairing code instead") → persists a stub `PairedServer` via `PairedServerStore.save(...)` (#295) → navigates to `channel_list` with the scanner popped from the back stack. The visible back-arrow `IconButton` and `TextButton` both fire the same `onTap` (Phase 1.5 contradiction; see below).
+- Permission is now requested, but there is still no camera preview and no ML Kit. In the granted state, any tap is success.
 
 ## How it works
 
-Pure stateless Composable. No `ViewModel`, no `UiState` / `Event` sealed types — a fire-and-forget tap is the entire interaction model. The `modifier: Modifier = Modifier` parameter exists solely to satisfy compose-lints' `ComposeModifierMissing` rule (added in #84); the NavHost call site passes nothing and the default keeps positioning unchanged.
+`ScannerScreen` is now a **stateless `when(state)` renderer** over `ScannerUiState` (#326) — it holds no state itself; the route owns the `ScannerViewModel` and the Android permission API and feeds resolved state in. The composable stays keyed purely on `ScannerUiState` so the Compose tests can drive each state directly without touching real runtime permissions.
 
 ```kotlin
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScannerScreen(
-    onTap: () -> Unit,
+    state: ScannerUiState,
+    onTap: () -> Unit,            // viewport tap + "paste" → stub-pair + navigate (#295)
+    onOpenSettings: () -> Unit,   // denied screen → app settings
+    onPasteCode: () -> Unit,      // denied/error "paste code" → stub-pair + navigate
     modifier: Modifier = Modifier,
 )
 ```
 
-Composition shape: outer `Surface(color = colorScheme.surface, modifier = modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { onTap() } })` over an inner `Column(systemBarsPadding)` containing the `TopAppBar`, a `weight(1f)` viewport `Box`, and the `"Trouble scanning?"` `TextButton`. All colors come from `MaterialTheme.colorScheme.*`, all type from `MaterialTheme.typography.*`. `Color.Transparent` is the only non-token `Color` used (top-app-bar container + radial-gradient terminal stops).
+Dispatch (`ScannerScreen.kt:61`):
+
+- `PermissionRequesting`, `ReadyToScan` → `private fun ScannerViewport(onTap, modifier)` — the **existing** locked viewport body (extracted verbatim in #326; a pure refactor, no visual change). Both states render identically now; the camera slice diverges them (live preview in `ReadyToScan`, shell behind the system permission dialog in `PermissionRequesting`).
+- `Denied` → `ScannerDeniedScreen(onOpenSettings, onPasteCode, modifier)` — the existing #61 screen, reused as-is.
+- `Error(message)` → `private fun ScannerErrorContent(message, onPasteCode, modifier)` — a minimal centered `Surface`: the message in `onSurfaceVariant` (`bodyLarge`, centered) over a "Paste the pairing code instead" `TextButton` so onboarding stays completable. No Figma exists for this state; the camera-engine slice is its live producer.
+
+### State model — `ScannerViewModel`
+
+A pure synchronous state machine: a single `MutableStateFlow<ScannerUiState>(PermissionRequesting)` exposed via `asStateFlow()`, with `fun onEvent(ScannerEvent)` mapping `PermissionGranted → ReadyToScan`, `PermissionDenied → Denied`, `CameraError(m) → Error(m)`. No `viewModelScope`, no flows beyond the single holder, no Android types — that Android-freeness is what makes the transitions unit-testable as plain JUnit. Mirrors the `ChannelListViewModel.pendingWorkspacePicker` `MutableStateFlow` + `asStateFlow()` idiom. The only async edge — the runtime permission callback — lives in the composable (`MainActivity`) and feeds the VM via `onEvent`. The VM survives configuration changes, so a resolved `ReadyToScan`/`Denied` is retained across rotation. See [`codebase/326.md`](../codebase/326.md) for the full state/event table.
+
+### `ScannerViewport` — the locked viewport body
+
+Composition shape: outer `Surface(color = colorScheme.surface, modifier = modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { onTap() } })` over an inner `Column(systemBarsPadding)` containing the `TopAppBar`, a `weight(1f)` viewport `Box`, and the `"Trouble scanning?"` `TextButton`. All colors come from `MaterialTheme.colorScheme.*`, all type from `MaterialTheme.typography.*`. `Color.Transparent` is the only non-token `Color` used (top-app-bar container + radial-gradient terminal stops). This whole body was `ScannerScreen`'s body before #326; the `modifier: Modifier = Modifier` parameter still satisfies compose-lints' `ComposeModifierMissing` rule (added in #84).
 
 The viewport `Box` is the visual centrepiece:
 
@@ -43,63 +58,93 @@ Three deliberate design points worth knowing:
 
 ## Configuration / usage
 
-Mounted at the `scanner` route in `PyryNavHost` (see `MainActivity.kt`):
+Mounted at the `scanner` route in `PyryNavHost` (see `MainActivity.kt:139`). Since #326 the route owns the VM + Android permission API and feeds the stateless `ScannerScreen` its state:
 
 ```kotlin
 composable(Routes.SCANNER) {
+    val context = LocalContext.current
     val pairedServerStore = koinInject<PairedServerStore>()
     val scope = rememberCoroutineScope()
-    ScannerScreen(
-        onTap = {
-            scope.launch {
+    val vm = koinViewModel<ScannerViewModel>()
+    val state by vm.state.collectAsStateWithLifecycle()
+
+    // #295 stub-pair-and-navigate, factored unchanged into one lambda (note the `: () -> Unit`).
+    val stubPairAndNavigate: () -> Unit = {
+        scope.launch {
+            try {
                 pairedServerStore.save(STUB_PAIRED_SERVER)
                 navController.navigate(Routes.CHANNEL_LIST) {
                     popUpTo(Routes.SCANNER) { inclusive = true }
                     launchSingleTop = true
                 }
+            } catch (e: PairedServerStoreException) {
+                Log.w(TAG, "stub paired-server save failed: ${e.javaClass.simpleName}")
             }
-        },
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        vm.onEvent(if (granted) ScannerEvent.PermissionGranted else ScannerEvent.PermissionDenied)
+    }
+    var requested by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        val alreadyGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        when {
+            alreadyGranted -> vm.onEvent(ScannerEvent.PermissionGranted)
+            !requested -> { requested = true; permissionLauncher.launch(Manifest.permission.CAMERA) }
+        }
+    }
+
+    ScannerScreen(
+        state = state,
+        onTap = stubPairAndNavigate,
+        onOpenSettings = { /* ACTION_APPLICATION_DETAILS_SETTINGS intent */ },
+        onPasteCode = stubPairAndNavigate,
     )
 }
 ```
 
 Notes:
 
-- **`koinInject<AppPreferences>()` from `org.koin.compose`**, not a `ScannerViewModel`. Phase 4 will replace this whole `composable(...)` block wholesale; a ViewModel here is over-engineering for a stub that exists to be deleted. The pattern is "destination-block-scoped Koin + `rememberCoroutineScope`" for stub destinations that need a one-shot suspend side-effect.
-- **`scope.launch { save(record); navigate(...) }` is sequential.** Awaiting the DataStore write before navigating matters because #13's start-destination gate reads it (`PairedServerStore.load()`, #295) — fire-and-forget would race the next composition.
+- **Route owns the VM + the permission API; the screen is stateless.** `koinViewModel<ScannerViewModel>()` + `collectAsStateWithLifecycle()`, consistent with every other destination. The runtime permission launcher and `checkSelfPermission` live here — the VM stays Android-free (and unit-testable). The #295-era "destination-block-scoped Koin + `rememberCoroutineScope`" stub pattern is retained *for the persist side-effect only*; the screen's state now comes from the VM.
+- **`stubPairAndNavigate` is annotated `: () -> Unit`.** A `val` lambda whose last expression is `scope.launch { … }` infers `() -> Job` and won't satisfy a `() -> Unit` parameter — the explicit annotation coerces it. (Lesson from #326; see [`codebase/326.md`](../codebase/326.md).)
+- **`scope.launch { save(record); navigate(...) }` is sequential.** Awaiting the DataStore write before navigating matters because the start-destination gate reads it (`PairedServerStore.load()`, #295) — fire-and-forget would race the next composition. The `PairedServerStoreException` catch (added in #295) is preserved; the failure stays a `Log.w` + stay-put, **not** routed through the VM `Error` state.
 - **`popUpTo(Routes.SCANNER) { inclusive = true }` + `launchSingleTop = true`.** The `inclusive = true` is what satisfies "scanner is removed from the back stack" (without `inclusive`, `popUpTo(Routes.SCANNER)` is a no-op since Scanner is the top). `launchSingleTop` guards against double-tap stacking duplicate ChannelList entries during the in-flight coroutine.
-
-## Why no ViewModel
-
-Stub destinations with no observable state, no `UiState` to expose, and no lifecycle past a single `suspend` write don't need a ViewModel. The MVI conventions in `CLAUDE.md` apply to screens that *have* state to manage — they aren't a mandate to wrap every destination in scaffolding. Phase 4 (real CameraX preview, scanning state machine, error UI) will introduce a `ScannerViewModel` when there is actual state to manage.
+- **`requested` is `rememberSaveable`** to guard against re-prompting the runtime permission after a config change while `Denied` (the VM, which survives rotation, already retains the resolved state).
 
 ## State + concurrency
 
-- **Scope.** `rememberCoroutineScope()` inside the `composable(Routes.SCANNER)` block, tied to the destination's composition. Cancels if the destination leaves the back stack mid-write — acceptable for a millisecond-scale DataStore write.
-- **Dispatcher.** `Dispatchers.Main.immediate` from `rememberCoroutineScope`; `DataStore.edit` internally hops to IO for the disk write, then resumes back on Main for `navController.navigate(...)`. No manual `withContext` needed.
-- **Cancellation race.** If cancellation occurs after the write returns but before `navigate(...)` runs, the preference is set but no navigation happens — and cancellation only happens via the destination leaving the back stack (user already navigated away). Acceptable.
+- **State holder.** A single `MutableStateFlow<ScannerUiState>(PermissionRequesting)` on `ScannerViewModel`, exposed via `asStateFlow()` and collected with `collectAsStateWithLifecycle()` in the route. No `viewModelScope`, no coroutines in the VM — the mapping is synchronous (`onEvent`). The only async edge is the Android permission callback, which lives in the composable and feeds the VM via `onEvent`.
+- **Persist scope.** `rememberCoroutineScope()` inside the `composable(Routes.SCANNER)` block drives the stub-pair `save()`/`navigate()` side-effect only (unchanged from #295). Cancels if the destination leaves the back stack mid-write — acceptable for a millisecond-scale DataStore write. Dispatcher is `Dispatchers.Main.immediate`; `DataStore.edit` hops to IO internally then resumes on Main for `navigate(...)`.
+- **Rotation.** The VM survives configuration changes, so a resolved `ReadyToScan`/`Denied` is retained across rotation; the `rememberSaveable` `requested` flag prevents a re-prompt while `Denied`. (One process-death gap — see Edge cases.)
 
 ## Error handling
 
-- **DataStore write failures** propagate as `IOException` to the (unregistered) `CoroutineExceptionHandler` → crash. For a Phase 0 stub on a fresh first-run install, a DataStore failure is a real bug that should be loud. No try/catch around the write; #13 / Phase 4 will revisit error UX once pairing has a real failure surface.
+- **Permission denied** (incl. "don't ask again") → `onEvent(PermissionDenied)` → `Denied` → the #61 screen. "Open settings" handles permanent denial; "Paste code" completes onboarding. #326 deliberately does **not** distinguish transient vs permanent denial (would need `shouldShowRequestPermissionRationale` + the Activity — "Open settings" covers both).
+- **Stub-pair persist failure** (`PairedServerStoreException`, e.g. Keystore/IO) → narrow `catch` → `Log.w` + stay on screen so the user can re-tap (the #295 contract). **Not** routed through the VM `Error` state — `PairedServer` handling is out of scope for #326.
+- **Camera bind / decode failure** → the `Error` state exists and `ScannerErrorContent` renders it, but there is **no live producer this slice**; the camera-engine slice drives `onEvent(CameraError(...))`.
 - **Unknown routes** can't happen at runtime — `Routes.CHANNEL_LIST` is registered in the same `NavHost` in the same file.
 
 ## Edge cases / limitations
 
-- **Tap-handler keyed on `Unit`, not `onTap`.** The `onTap` callback is bound to a stable `scope.launch { ... }` closure for the destination's lifetime, so re-keying on every recomposition is unnecessary churn. If the surrounding NavHost block ever grows mutable state that the callback needs to read, re-key on `onTap` (or a more specific dependency).
-- **No Welcome-pop on success.** Only `Scanner` is popped, not `Welcome` — that's #13's call (conditional start destination). Until #13 lands, a back-press from ChannelList returns to Welcome; tapping "I already have pyrycode" again re-routes through Scanner (the stub ignores already-paired state). Documented intermediate state, not a bug.
-- **Static scan-line.** No `rememberInfiniteTransition` animation. Animation polish is explicitly Phase 4's job (see the ticket's "Out of scope"). A motionless line reads as "scan area indicator" well enough for the stub.
+- **Back arrow pairs-and-advances, not pops.** The `TopAppBar` back `IconButton` and the `"Trouble scanning?"` `TextButton` are both wired to `onTap` (→ stub-pair-and-navigate) — pre-existing Phase-0 behaviour ("every interactive element fires `onTap`"), preserved verbatim in #326 per AC4. Not correct nav wiring; the real back affordance lands when per-affordance lambdas split out.
+- **Process-death drops the resolved `Denied`/`ReadyToScan` state.** `requested` is `rememberSaveable` (survives process death) but the resolved state lives only in the VM (does **not**). After process death on the scanner with permission previously denied, `LaunchedEffect(Unit)` sees not-granted + `requested == true` → no branch fires → the viewport shell renders instead of `Denied`. Benign — the viewport is tappable, so onboarding still completes — and the camera-engine slice (which owns CameraX lifecycle + on-resume re-check) is the natural home for the fix. (Non-blocking NIT from #326's code review.)
+- **No Welcome-pop on success.** Only `Scanner` is popped, not `Welcome` — handled by the conditional start destination (`PairedServerStore.load()`, #295). A back-press from ChannelList returns to Welcome; tapping "I already have pyrycode" again re-routes through Scanner (the stub ignores already-paired state). Documented intermediate state, not a bug.
+- **Static scan-line.** No `rememberInfiniteTransition` animation. Animation polish is deferred. A motionless line reads as "scan area indicator" well enough for the stub.
 - **Radial gradients are circular, not elliptical.** Figma's SVG payload uses a `gradientTransform` matrix that produces an *elliptical* radial. Compose's `Brush.radialGradient` is circular only; matching the ellipse exactly requires a wrapping `Modifier.scale(...)` Box. The circular approximation reads identically as atmospheric haze and is what shipped — parity-of-intent, not pixel-identity of the SVG matrix.
-- **Light-theme appearance is auto-derived.** No Figma light mockup exists for this screen. The dark scheme is Phase 1.5's target; the light scheme is derived from theme tokens and the preview verifies it composes. Stripe alpha (`onSurface.copy(alpha = 0.04f)`) reads washed-out on a light surface — acceptable; do not branch on `isSystemInDarkTheme()`.
-- **Phase 4 walk-back.** The `Routes.SCANNER` route constant survives the Phase 4 rewrite. Everything inside `composable(Routes.SCANNER) { ... }` and the entire `ScannerScreen.kt` file do not. Don't add abstractions here anticipating the Phase 4 shape.
-- **Three-method instrumented test class since #101.** `app/src/androidTest/.../onboarding/ScannerScreenTest.kt` covers `topAppBar_rendersPairWithPyrycodeTitle` (exact match on `"Pair with pyrycode"`), `hintCard_rendersPyryPairInstruction` (substring match on `"pyry pair"` — covers the `buildAnnotatedString` body without depending on the full sentence), and `pasteCodeFallback_hasClickAction` (substring `"Trouble scanning?"` carries a click action). Structure only — neither the back-`IconButton` nor the `TextButton` wires-to-`onTap` contradiction is exercised; click-callback coverage is deferred until the Phase 4 rewrite splits `onTap` into per-affordance lambdas.
+- **Light-theme appearance is auto-derived.** No Figma light mockup exists for this screen. The dark scheme is the design target; the light scheme is derived from theme tokens and the preview verifies it composes. Stripe alpha (`onSurface.copy(alpha = 0.04f)`) reads washed-out on a light surface — acceptable; do not branch on `isSystemInDarkTheme()`.
+- **The file is no longer fully disposable.** Pre-#326 this doc warned the entire `ScannerScreen.kt` file would be discarded by the camera slice. That changed: the `ScannerViewModel` state machine, the `when(state)` renderer, and `ScannerViewport` are the foundation the camera-engine slice **consumes**, not replaces — it fills `ReadyToScan` with a live CameraX preview and wires `onEvent(CameraError(...))`. `Routes.SCANNER` stays a single destination.
+- **Instrumented test class — six methods since #326** (`app/src/androidTest/.../onboarding/ScannerScreenTest.kt`). The three original tests (`topAppBar_rendersPairWithPyrycodeTitle` exact `"Pair with pyrycode"`, `hintCard_rendersPyryPairInstruction` substring `"pyry pair"`, `pasteCodeFallback_hasClickAction` substring `"Trouble scanning?"`) now pass `state = ScannerUiState.ReadyToScan` — their unchanged assertions prove AC3 no-regression. Three new: `permissionRequesting_rendersViewportShell` (`"Pair with pyrycode"` present), `denied_rendersScannerDeniedScreen` (`"Camera permission required"` → the #61 route, Compose-tested), `error_rendersMessageAndClickablePasteFallback` (message + clickable "Paste the pairing code instead"). VM transitions are covered separately by `test/.../ScannerViewModelTest.kt` (plain JUnit, 4 cases). The back-arrow / paste wires-to-`onTap` contradiction is still unasserted.
 
 ## Related
 
-- Issues: https://github.com/pyrycode/pyrycode-mobile/issues/12 (stub), https://github.com/pyrycode/pyrycode-mobile/issues/60 (Figma polish)
-- Specs: `docs/specs/architecture/12-stub-scanner-screen.md`, `docs/specs/architecture/60-scanner-screen-figma-polish.md`
-- Ticket notes: `../codebase/12.md`, `../codebase/60.md`
+- Issues: https://github.com/pyrycode/pyrycode-mobile/issues/12 (stub), https://github.com/pyrycode/pyrycode-mobile/issues/60 (Figma polish), https://github.com/pyrycode/pyrycode-mobile/issues/326 (stateful + permission flow)
+- Specs: `docs/specs/architecture/12-stub-scanner-screen.md`, `docs/specs/architecture/60-scanner-screen-figma-polish.md`, `docs/specs/architecture/326-stateful-scanner-permission-flow.md`
+- Ticket notes: `../codebase/12.md`, `../codebase/60.md`, `../codebase/326.md`
 - Figma node: `13:2`
-- Upstream: #8 (NavHost), #11 (`AppPreferences.setPairedServerExists`)
-- Downstream: #13 (conditional start destination, now `PairedServerStore.load()` since #295), Phase 4 (CameraX + ML Kit replaces this whole block)
-- Sibling docs: [Navigation](navigation.md), [Welcome screen](welcome-screen.md), [App preferences](app-preferences.md)
+- Upstream: #8 (NavHost), #295 (stub-pair persist + start-destination gate this screen preserves), #60/#121 (locked viewport visual reused verbatim), #61 (denied screen reused as the `Denied` state)
+- Downstream: the camera-engine slice (CameraX preview + ML Kit decoder fills `ReadyToScan` and drives `onEvent(CameraError(...))`), #320/#321 (payload parse, real `PairedServer`, fingerprint, handshake)
+- Sibling docs: [Scanner Denied screen](scanner-denied-screen.md), [Navigation](navigation.md), [Welcome screen](welcome-screen.md), [App preferences](app-preferences.md)
