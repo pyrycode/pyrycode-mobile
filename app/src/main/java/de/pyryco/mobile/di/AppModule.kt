@@ -12,16 +12,19 @@ import de.pyryco.mobile.data.crypto.KeystorePairedServerStore
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.NoiseSessionFactory
+import de.pyryco.mobile.data.network.OkHttpRelayTransport
+import de.pyryco.mobile.data.network.RelayConnectionSupervisor
+import de.pyryco.mobile.data.network.RelayTransportFactory
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationRepository
-import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
 import de.pyryco.mobile.ui.settings.SettingsViewModel
+import okhttp3.WebSocket
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.bind
@@ -39,8 +42,15 @@ val appModule =
         single { KeystorePairedServerStore(get()) } bind PairedServerStore::class
         single { NoiseClientInfo(deviceName = Build.MODEL, clientVersion = BuildConfig.VERSION_NAME) }
         single { NoiseSessionFactory(get(), get(), get()) }
+        single<WebSocket.Factory> { OkHttpRelayTransport.defaultClient() }
+        single<RelayTransportFactory> {
+            val client = get<WebSocket.Factory>()
+            val info = get<NoiseClientInfo>()
+            RelayTransportFactory { paired -> OkHttpRelayTransport(paired, info, client) }
+        }
         single { FakeConversationRepository() } bind ConversationRepository::class
-        single { FakeConnectionStateSource() } bind ConnectionStateSource::class
+        // #307: real WS-backed source. Bound but dormant — #302 drives the first connect().
+        single { RelayConnectionSupervisor(get(), get()) } bind ConnectionStateSource::class
         viewModel { ChannelListViewModel(get(), get()) }
         viewModel { DiscussionListViewModel(get()) }
         viewModel { SettingsViewModel(get(), get()) }
