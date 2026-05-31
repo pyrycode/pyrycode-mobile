@@ -47,5 +47,6 @@ The abstraction (`DeviceStaticKeyStore`) returns **raw bytes**, so #275 calls `C
 - Spec: `docs/specs/architecture/291-device-x25519-static-keypair-keystore.md` (§ Mechanism decision table, § Security review — Verdict PASS)
 - Forces this decision: [ADR 0004 — vendor `noise-java`](./0004-vendor-noise-java-crypto.md) (software DH on raw bytes in-process)
 - Consumed by: [#275](https://github.com/pyrycode/pyrycode-mobile/issues/275) (Noise_IK session — `setPrivateKey` on the existing `Curve25519DHState`)
+- Also consumed by: [#294](../codebase/294.md) ([paired server store](../features/paired-server-store.md)) — a **second consumer of this mechanism**, wrapping a JSON credential record under a *dedicated* wrap key (`pyrycode.paired_server_wrap`), with a graceful `null`-returning load (the record is QR-re-fetchable, so no identity-drift risk → no throw). Not a new decision.
 - Spike: vault doc *"Phase 4 — Noise Client Spike Findings"* (`second-brain`, `2026-05-02-pyrycode-mobile/`), § "noise-java IK initiator call sequence".
 - Threat model: upstream pyrycode `docs/protocol-mobile.md` § Security model / ADR 024.
