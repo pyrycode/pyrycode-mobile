@@ -72,7 +72,12 @@ class NoiseSessionPumpTest {
 
             pump.start()
             runCurrent()
-            assertEquals("noise_init", f.transport.sentFrames.single().type)
+            assertEquals(
+                "noise_init",
+                f.transport.sentFrames
+                    .single()
+                    .type,
+            )
             assertEquals(PumpState.Handshaking, pump.state.value)
 
             advanceUntilIdle() // the 10 s noise_resp deadline elapses with no resp
@@ -88,7 +93,13 @@ class NoiseSessionPumpTest {
 
             pump.start()
             runCurrent()
-            f.responder.readInit(base64StdDecode(f.transport.sentFrames.single().data))
+            f.responder.readInit(
+                base64StdDecode(
+                    f.transport.sentFrames
+                        .single()
+                        .data,
+                ),
+            )
             val resp = f.responder.writeResp(ackEnvelope("conn-1"))
             resp[resp.size - 1] = (resp[resp.size - 1].toInt() xor 0x01).toByte() // corrupt the MAC tag
 
@@ -109,7 +120,13 @@ class NoiseSessionPumpTest {
 
             pump.start()
             runCurrent()
-            f.responder.readInit(base64StdDecode(f.transport.sentFrames.single().data))
+            f.responder.readInit(
+                base64StdDecode(
+                    f.transport.sentFrames
+                        .single()
+                        .data,
+                ),
+            )
 
             // First inbound frame is a noise_msg, not the expected noise_resp.
             f.transport.pushInbound(InnerFrameV2(type = "noise_msg", data = base64StdEncode(byteArrayOf(1, 2, 3))))
@@ -273,7 +290,9 @@ class NoiseSessionPumpTest {
     private fun TestScope.fixture(): Fixture = Fixture(testScheduler)
 
     /** One connection's worth of collaborators: a fake transport, a real IK responder, a factory. */
-    private class Fixture(scheduler: TestCoroutineScheduler) {
+    private class Fixture(
+        scheduler: TestCoroutineScheduler,
+    ) {
         val dispatcher = StandardTestDispatcher(scheduler)
         val responder = TestResponder()
         val transport = FakeRelayTransport()
