@@ -5,8 +5,10 @@ import android.graphics.BlurMaskFilter
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -42,14 +44,42 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScannerScreen(
+    state: ScannerUiState,
+    onTap: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onPasteCode: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    when (state) {
+        ScannerUiState.PermissionRequesting,
+        ScannerUiState.ReadyToScan,
+        -> ScannerViewport(onTap = onTap, modifier = modifier)
+        ScannerUiState.Denied ->
+            ScannerDeniedScreen(
+                onOpenSettings = onOpenSettings,
+                onPasteCode = onPasteCode,
+                modifier = modifier,
+            )
+        is ScannerUiState.Error ->
+            ScannerErrorContent(
+                message = state.message,
+                onPasteCode = onPasteCode,
+                modifier = modifier,
+            )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ScannerViewport(
     onTap: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -267,11 +297,51 @@ private fun HintCard(modifier: Modifier = Modifier) {
     }
 }
 
+// Minimal recovery surface for the Error state (camera-engine slice drives it; no Figma exists for
+// this state). The "paste" affordance keeps onboarding completable.
+@Composable
+private fun ScannerErrorContent(
+    message: String,
+    onPasteCode: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        modifier = modifier.fillMaxSize(),
+    ) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .systemBarsPadding()
+                    .padding(horizontal = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            TextButton(onClick = onPasteCode) {
+                Text(text = "Paste the pairing code instead")
+            }
+        }
+    }
+}
+
 @Preview(name = "Light", showBackground = true, widthDp = 412, heightDp = 892)
 @Composable
 private fun ScannerScreenLightPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
-        ScannerScreen(onTap = {})
+        ScannerScreen(
+            state = ScannerUiState.ReadyToScan,
+            onTap = {},
+            onOpenSettings = {},
+            onPasteCode = {},
+        )
     }
 }
 
@@ -285,6 +355,11 @@ private fun ScannerScreenLightPreview() {
 @Composable
 private fun ScannerScreenDarkPreview() {
     PyrycodeMobileTheme(darkTheme = true) {
-        ScannerScreen(onTap = {})
+        ScannerScreen(
+            state = ScannerUiState.ReadyToScan,
+            onTap = {},
+            onOpenSettings = {},
+            onPasteCode = {},
+        )
     }
 }
