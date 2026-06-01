@@ -5,6 +5,9 @@ import kotlinx.datetime.Instant
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -107,5 +110,65 @@ class MessagePayloadTest {
         assertThrows(IllegalArgumentException::class.java) {
             dto.toMessage(envelopeFor(element, ts = "not-a-date"), sessionId = "s")
         }
+    }
+
+    // ---- message_chunk (#313): a batch of `message` rows decoded as a whole ---------------------
+
+    @Test
+    fun messageChunk_decodesEveryRowInOrder() {
+        // The backfill response body: distinct roles and ids must round-trip, order preserved.
+        val element =
+            MobileJson.parseToJsonElement(
+                """
+                {"messages":[
+                  {"conversation_id":"c1","message_id":"m12","role":"assistant","text":"snow"},
+                  {"conversation_id":"c1","message_id":"m13","role":"user","text":"thanks"}
+                ]}
+                """.trimIndent(),
+            )
+
+        val chunk = MobileJson.decodeFromJsonElement<MessageChunkPayloadDto>(element)
+
+        assertEquals(2, chunk.messages.size)
+        assertEquals(listOf("m12", "m13"), chunk.messages.map { it.messageId })
+        assertEquals(listOf(WireRole.Assistant, WireRole.User), chunk.messages.map { it.role })
+    }
+
+    @Test
+    fun messageChunk_unmappableRowRole_throwsAtDecode() {
+        // A single bad row (role `system`) fails the whole-chunk decode at the structural boundary.
+        val element =
+            MobileJson.parseToJsonElement(
+                """{"messages":[{"conversation_id":"c1","message_id":"m1","role":"system","text":"x"}]}""",
+            )
+        assertThrows(SerializationException::class.java) {
+            MobileJson.decodeFromJsonElement<MessageChunkPayloadDto>(element)
+        }
+    }
+
+    // ---- backfill_since (#313): the encode-only catch-up request --------------------------------
+
+    @Test
+    fun backfillSince_encodesWireFieldNames() {
+        // Encode-only: the phone sends this. Snake_case field names + values must match the SSOT.
+        val element =
+            MobileJson
+                .encodeToJsonElement(
+                    BackfillSincePayloadDto(
+                        sinceTs = "1970-01-01T00:00:00Z",
+                        conversationId = "c1",
+                        maxMessages = 10_000,
+                    ),
+                ).jsonObject
+
+        assertEquals("1970-01-01T00:00:00Z", element.getValue("since_ts").jsonPrimitive.content)
+        assertEquals("c1", element.getValue("conversation_id").jsonPrimitive.content)
+        assertEquals(
+            10_000,
+            element
+                .getValue("max_messages")
+                .jsonPrimitive.content
+                .toInt(),
+        )
     }
 }

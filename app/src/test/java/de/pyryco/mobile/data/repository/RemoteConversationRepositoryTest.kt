@@ -15,9 +15,10 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -231,9 +232,8 @@ class RemoteConversationRepositoryTest {
         runTest {
             val repo = RemoteConversationRepository(FakeSessionPump(), backgroundScope)
 
-            // observeLastMessage is now implemented (#329); observeMessages remains an eager stub.
-            assertThrows(UnsupportedOperationException::class.java) { repo.observeMessages("c") }
-
+            // observeLastMessage (#329) and observeMessages (#313) are now both implemented; only
+            // the mutation / no-wire methods remain stubs.
             // Suspend stubs throw when invoked.
             assertUnsupported { repo.createDiscussion() }
             val sendEx = assertUnsupported { repo.sendMessage("c", "hi") }
@@ -404,6 +404,178 @@ class RemoteConversationRepositoryTest {
             assertEquals("ok", emissions.last()!!.id)
         }
 
+    // ---- observeMessages (#313): backfill + live `message` stream → ordered thread -------------
+
+    // AC #2: subscribing issues a `backfill_since` request carrying the conversation id.
+    @Test
+    fun observeMessages_subscribe_issuesBackfillSinceRequestForConversation() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            collectMessages(repo, "c1")
+            runCurrent()
+
+            val sent = pump.sent.single()
+            assertEquals("backfill_since", sent.type)
+            val payload = sent.payload.jsonObject
+            assertEquals("c1", payload.getValue("conversation_id").jsonPrimitive.content)
+            // The full-history request carries the epoch cursor and an advisory cap (server SSOT #272).
+            assertEquals("1970-01-01T00:00:00Z", payload.getValue("since_ts").jsonPrimitive.content)
+            assertTrue(
+                payload
+                    .getValue("max_messages")
+                    .jsonPrimitive.content
+                    .toInt() > 0,
+            )
+        }
+
+    // AC #1, #2: backfilled history fills ahead of the live stream; the thread is ordered chunk-then-live.
+    @Test
+    fun observeMessages_backfillThenLive_emitsOrderedThread() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(
+                messageChunkEnvelope(
+                    listOf(
+                        chunkRow("c1", "m1", "user", "first"),
+                        chunkRow("c1", "m2", "assistant", "second"),
+                    ),
+                ),
+            )
+            runCurrent()
+            pump.push(messageEnvelope("c1", "m3", "user", "live", "2026-05-31T12:00:00Z"))
+            runCurrent()
+
+            assertEquals(listOf("m1", "m2", "m3"), messageIds(emissions.last()))
+            // The live row maps to a finished MessageItem with content + ts from its own envelope.
+            val live = (emissions.last()[2] as ThreadItem.MessageItem).message
+            assertEquals("live", live.content)
+            assertEquals(Instant.parse("2026-05-31T12:00:00Z"), live.timestamp)
+        }
+
+    // AC #2: a message_id present in both the chunk and a later live `message` appears once,
+    // position fixed at first occurrence; the live payload wins (last-write-in-place).
+    @Test
+    fun observeMessages_dedupesByMessageId_fixingFirstPosition() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(
+                messageChunkEnvelope(
+                    listOf(
+                        chunkRow("c1", "m1", "user", "first"),
+                        chunkRow("c1", "m2", "assistant", "from-backfill"),
+                    ),
+                ),
+            )
+            runCurrent()
+            pump.push(messageEnvelope("c1", "m2", "assistant", "from-live", "2026-05-31T12:00:00Z"))
+            runCurrent()
+
+            val thread = emissions.last()
+            assertEquals(listOf("m1", "m2"), messageIds(thread))
+            // Same id, updated in place at its original index; the live payload replaces the row.
+            assertEquals("from-live", (thread[1] as ThreadItem.MessageItem).message.content)
+        }
+
+    // AC #3: a `message` (and chunk) for a different conversation does not re-emit this flow.
+    @Test
+    fun observeMessages_otherConversation_doesNotReEmit() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(messageEnvelope("c2", "x1", "user", "elsewhere", "2026-05-31T10:00:00Z"))
+            pump.push(messageChunkEnvelope(listOf(chunkRow("c2", "x2", "user", "also-elsewhere"))))
+            runCurrent()
+
+            // Only the initial empty emission — c1's projection never changed.
+            assertEquals(listOf(emptyList<String>()), emissions.map { messageIds(it) })
+        }
+
+    // AC #1: order follows wire/arrival order, never a client-side timestamp sort. The second live
+    // message has an EARLIER ts than the first but still appends last.
+    @Test
+    fun observeMessages_preservesArrivalOrder_notTimestampSort() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(messageEnvelope("c1", "later-ts", "user", "a", "2026-05-31T11:00:00Z"))
+            runCurrent()
+            pump.push(messageEnvelope("c1", "earlier-ts", "user", "b", "2026-05-31T10:00:00Z"))
+            runCurrent()
+
+            assertEquals(listOf("later-ts", "earlier-ts"), messageIds(emissions.last()))
+        }
+
+    // AC #4 (headline): a full round-trip against the v2 server double — backfilled history plus
+    // live `message` envelopes yields the expected ordered List<ThreadItem.MessageItem>.
+    @Test
+    fun observeMessages_roundTripAgainstServerDouble_yieldsExpectedThread() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(
+                messageChunkEnvelope(
+                    listOf(
+                        chunkRow("c1", "h1", "user", "what's the weather?"),
+                        chunkRow("c1", "h2", "assistant", "4C, light snow."),
+                    ),
+                ),
+            )
+            runCurrent()
+            pump.push(messageEnvelope("c1", "l1", "user", "thanks", "2026-05-31T12:00:00Z"))
+            runCurrent()
+
+            val thread = emissions.last()
+            assertEquals(listOf("h1", "h2", "l1"), messageIds(thread))
+            assertEquals(listOf(Role.User, Role.Assistant, Role.User), thread.map { (it as ThreadItem.MessageItem).message.role })
+            assertTrue(thread.all { it is ThreadItem.MessageItem })
+        }
+
+    // Error handling: a malformed `message_chunk` (one bad row) is dropped whole; the collector survives.
+    @Test
+    fun observeMessages_malformedChunk_isDroppedAndCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            // `system` is outside the mappable WireRole set → whole-chunk decode throws → dropped.
+            pump.push(
+                messageChunkEnvelope(
+                    listOf(
+                        chunkRow("c1", "ok", "user", "fine"),
+                        chunkRow("c1", "bad", "system", "nope"),
+                    ),
+                ),
+            )
+            runCurrent()
+            assertEquals(listOf(emptyList<String>()), emissions.map { messageIds(it) })
+
+            // A subsequent valid chunk proves the single inbound collector did not die.
+            pump.push(messageChunkEnvelope(listOf(chunkRow("c1", "later", "user", "y"))))
+            runCurrent()
+            assertEquals(listOf("later"), messageIds(emissions.last()))
+        }
+
     // ---- Helpers --------------------------------------------------------------------------------
 
     private fun TestScope.collectConversations(
@@ -423,6 +595,37 @@ class RemoteConversationRepositoryTest {
         backgroundScope.launch { repo.observeLastMessage(conversationId).collect { emissions += it } }
         return emissions
     }
+
+    private fun TestScope.collectMessages(
+        repo: RemoteConversationRepository,
+        conversationId: String,
+    ): MutableList<List<ThreadItem>> {
+        val emissions = mutableListOf<List<ThreadItem>>()
+        backgroundScope.launch { repo.observeMessages(conversationId).collect { emissions += it } }
+        return emissions
+    }
+
+    private fun messageIds(thread: List<ThreadItem>): List<String> = thread.map { (it as ThreadItem.MessageItem).message.id }
+
+    /** One `message_chunk` row JSON object (same shape as a `message` payload). */
+    private fun chunkRow(
+        conversationId: String,
+        messageId: String,
+        role: String,
+        text: String,
+    ): String = """{"conversation_id":"$conversationId","message_id":"$messageId","role":"$role","text":"$text"}"""
+
+    private fun messageChunkEnvelope(
+        rows: List<String>,
+        ts: String = TS,
+        id: Long = 1L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "message_chunk",
+            ts = ts,
+            payload = MobileJson.parseToJsonElement("""{"messages":[${rows.joinToString(",")}]}"""),
+        )
 
     private fun messageEnvelope(
         conversationId: String,
