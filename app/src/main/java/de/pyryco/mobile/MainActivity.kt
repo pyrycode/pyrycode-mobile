@@ -51,8 +51,10 @@ import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
+import de.pyryco.mobile.ui.onboarding.CameraPreview
 import de.pyryco.mobile.ui.onboarding.ScannerEvent
 import de.pyryco.mobile.ui.onboarding.ScannerScreen
+import de.pyryco.mobile.ui.onboarding.ScannerUiState
 import de.pyryco.mobile.ui.onboarding.ScannerViewModel
 import de.pyryco.mobile.ui.onboarding.WelcomeScreen
 import de.pyryco.mobile.ui.settings.AboutScreen
@@ -185,9 +187,17 @@ private fun PyryNavHost(
                 }
             }
 
+            // A successful decode drives the unchanged stub-pair persist + navigation, replacing the
+            // former tap affordance. stubPairAndNavigate pops the scanner (popUpTo inclusive), so the
+            // destination leaves the back stack and this effect cannot re-fire. The payload is not
+            // read here — parsing into a real PairedServer is #320.
+            LaunchedEffect(state) {
+                if (state is ScannerUiState.Decoded) stubPairAndNavigate()
+            }
+
             ScannerScreen(
                 state = state,
-                onTap = stubPairAndNavigate,
+                onNavigateBack = { navController.popBackStack() },
                 onOpenSettings = {
                     context.startActivity(
                         Intent(
@@ -197,6 +207,14 @@ private fun PyryNavHost(
                     )
                 },
                 onPasteCode = stubPairAndNavigate,
+                cameraPreview = {
+                    if (state is ScannerUiState.ReadyToScan) {
+                        CameraPreview(
+                            onQrDecoded = { vm.onEvent(ScannerEvent.QrDecoded(it)) },
+                            onCameraError = { vm.onEvent(ScannerEvent.CameraError(it)) },
+                        )
+                    }
+                },
             )
         }
         composable(Routes.CHANNEL_LIST) {

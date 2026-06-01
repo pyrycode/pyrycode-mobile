@@ -5,10 +5,11 @@ camera frame to a QR string via ML Kit and surfaces it **exactly once per scan**
 [Scanner screen](scanner-screen.md)'s `ScannerViewModel` through a new `QrDecoded` event → `Decoded`
 state. It is the success counterpart to #326's `CameraError`/`Error` failure seam.
 
-**Dormant until #334.** Like #326's `CameraError` seam, the analyzer is built and unit-tested but
-**not instantiated in production** this slice — the live-camera wiring slice (#334) constructs it,
-binds it to a CameraX preview, and owns its lifecycle. It exists now so the decode/debounce logic is
-covered on the JVM (`./gradlew test`) before any device is involved.
+**Live since #334.** Built and unit-tested in #333 (before any device was involved, so the decode/
+debounce logic is covered on the JVM via `./gradlew test`), the analyzer is now **instantiated in
+production** by the [Camera preview](camera-preview.md) composable (#334), which constructs it once per
+scanner entry, binds it to a CameraX `ImageAnalysis` use case on a **background** executor, and owns
+its lifecycle.
 
 ## What it does
 
@@ -17,9 +18,9 @@ covered on the JVM (`./gradlew test`) before any device is involved.
 - Surfaces the decoded string **exactly once per scan**: repeated detections of the same in-flight
   scan — same payload or a different one — do not re-fire (debounced). One `QrCodeAnalyzer` instance
   surfaces one payload for its lifetime.
-- On the first successful decode, invokes its `onQrDecoded: (String) -> Unit` callback, which (in
+- On the first successful decode, invokes its `onQrDecoded: (String) -> Unit` callback, which (since
   #334) feeds `ScannerViewModel.onEvent(QrDecoded(raw))`, transitioning the scanner to
-  `ScannerUiState.Decoded(payload)`.
+  `ScannerUiState.Decoded(payload)` — which in turn drives the stub-pair persist + navigation.
 - Surfaces the decoded string but does **not** parse, validate, persist, display, or log it — it is
   **untrusted external input** (see *Security boundary*).
 
@@ -118,11 +119,16 @@ slice (scope guard). See [Scanner screen](scanner-screen.md) for the `when(state
   so the pairing scan works **offline on first run** with no runtime model fetch — and no
   model-download MITM surface. The tradeoff is APK size + a small first-call init cost (acceptable for
   offline-first pairing; revisit in #334 if the first scan feels slow).
-- **Wiring (in #334, not this slice):** construct `QrCodeAnalyzer(onQrDecoded = { vm.onEvent(QrDecoded(it)) })`
-  and bind it via `ImageAnalysis.setAnalyzer(backgroundExecutor, analyzer)`. **The executor MUST be a
+- **Wiring (live in #334):** [`CameraPreview`](camera-preview.md) constructs
+  `remember { QrCodeAnalyzer(onQrDecoded = { currentOnQrDecoded(it) }) }` and binds it via
+  `ImageAnalysis.Builder().setBackpressureStrategy(STRATEGY_KEEP_ONLY_LATEST).build().apply { setAnalyzer(analysisExecutor, analyzer) }`,
+  where `analysisExecutor = remember { Executors.newSingleThreadExecutor() }`. **The executor is a
   background executor** — `Tasks.await` in `MlKitQrFrameDecoder.decode` blocks and throws on the main
-  thread. Re-scan after a failed pair is a **fresh analyzer per scanner entry** (the latch never
-  resets); analyzer construction + CameraX lifecycle (incl. `BarcodeScanner.close()`) are #334's.
+  thread; the provider-future listener that builds/binds runs on `getMainExecutor` but never calls
+  `Tasks.await`. The analyzer is constructed **once per `CameraPreview` composition**, so re-scan after
+  a failed pair gets a **fresh analyzer per scanner entry** (the latch resets per entry). `QrCodeAnalyzer`
+  does not expose `BarcodeScanner.close()`; the scanner instance lives for the analyzer's lifetime and
+  is reclaimed with it.
 
 ## Security boundary
 
@@ -148,15 +154,16 @@ camera-decoded QR string. The boundary is named and narrow:
 
 ## Edge cases / limitations
 
-- **The latch never resets.** One `QrCodeAnalyzer` surfaces one payload for its lifetime — correct for
-  a single scan. Re-scanning (e.g. after a failed pair in #321) means a fresh analyzer per scanner
-  entry, owned by #334.
+- **The latch never resets within an analyzer's lifetime.** One `QrCodeAnalyzer` surfaces one payload
+  for its lifetime — correct for a single scan. Re-scanning (e.g. after a failed pair in #321) relies on
+  a **fresh analyzer per scanner entry**, which [`CameraPreview`](camera-preview.md) provides (#334)
+  via `remember { QrCodeAnalyzer(...) }` keyed to the composition.
 - **`MlKitQrFrameDecoder` is not unit-tested** — it needs a device-decoded frame. The decode/debounce
   *logic* is fully JVM-tested through the injected `FrameDecoder` seam; only the ML Kit bridge is
   device-only.
-- **No live camera, preview, or production instantiation** this slice — exercised through the
-  analyzer→ViewModel seam with fake frames only. First-frame decode latency with the bundled model is
-  unmeasured (no live camera to measure against); revisit in #334.
+- **First-frame decode latency** with the bundled model is now measurable against the live camera
+  (#334). If the first scan feels slow on-device, an eager `getClient` warm-up is a cheap follow-up —
+  not done this far.
 
 ## Testing
 
@@ -177,7 +184,11 @@ camera-decoded QR string. The boundary is named and narrow:
 - Ticket notes: [`codebase/333.md`](../codebase/333.md)
 - Feature: [Scanner screen](scanner-screen.md) — the screen whose `when(state)` the `Decoded` state
   joins; the `ScannerViewModel`/`CameraError` foundation this decode core extends
+- Feature: [Camera preview](camera-preview.md) — the #334 composable that instantiates and binds this
+  analyzer to the live camera (background executor, fresh-per-entry, lifecycle)
+- Ticket notes: [`codebase/334.md`](../codebase/334.md) — the live-camera wiring slice
 - Upstream: #326 (stateful scanner + the `CameraError`/`Error` dormant-seam template mirrored here)
-- Downstream: **#334** (live CameraX preview, binds this analyzer unchanged, owns executor + lifecycle
-  + re-scan reset), **#320** (parse the untrusted payload → `PairedServer`), **#321** (fingerprint /
-  safety-number confirm gate). Server-side QR payload `Encode`/`Decode` analog: pyrycode #211/#212.
+- Downstream: **#334** ✅ shipped (live CameraX preview, binds this analyzer unchanged, owns executor +
+  lifecycle + re-scan reset), **#320** (parse the untrusted payload → `PairedServer`), **#321**
+  (fingerprint / safety-number confirm gate). Server-side QR payload `Encode`/`Decode` analog: pyrycode
+  #211/#212.
