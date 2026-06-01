@@ -38,6 +38,8 @@ import androidx.navigation.navArgument
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.crypto.PairedServerStoreException
+import de.pyryco.mobile.data.network.PairingParseResult
+import de.pyryco.mobile.data.network.parsePairingPayload
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.ui.conversations.list.ChannelListEvent
@@ -187,12 +189,31 @@ private fun PyryNavHost(
                 }
             }
 
-            // A successful decode drives the unchanged stub-pair persist + navigation, replacing the
-            // former tap affordance. stubPairAndNavigate pops the scanner (popUpTo inclusive), so the
-            // destination leaves the back stack and this effect cannot re-fire. The payload is not
-            // read here — parsing into a real PairedServer is #320.
+            // A successful decode parses + validates the payload into a real PairedServer (#320),
+            // persists it, then advances to the channel list — replacing the former stub write at
+            // this binding. On Success the navigate's popUpTo(inclusive) pops the scanner, so the
+            // effect cannot re-fire; on a parse/persist failure the VM flips Decoded -> Error and
+            // this effect re-runs as a no-op (state is no longer Decoded). The parse is microsecond
+            // CPU work on a small string, so it runs inline on this Main coroutine.
             LaunchedEffect(state) {
-                if (state is ScannerUiState.Decoded) stubPairAndNavigate()
+                val decoded = state as? ScannerUiState.Decoded ?: return@LaunchedEffect
+                when (val result = parsePairingPayload(decoded.payload)) {
+                    is PairingParseResult.Success ->
+                        try {
+                            pairedServerStore.save(result.server)
+                            navController.navigate(Routes.CHANNEL_LIST) {
+                                popUpTo(Routes.SCANNER) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        } catch (e: PairedServerStoreException) {
+                            Log.w(TAG, "paired-server save failed: ${e.javaClass.simpleName}")
+                            vm.onEvent(ScannerEvent.PairingFailed(SAVE_FAILED_MSG))
+                        }
+                    is PairingParseResult.Failure -> {
+                        Log.w(TAG, "pairing parse failed: ${result.reason}")
+                        vm.onEvent(ScannerEvent.PairingFailed(PARSE_FAILED_MSG))
+                    }
+                }
             }
 
             ScannerScreen(
@@ -368,6 +389,13 @@ private fun PyryNavHost(
 private const val SETUP_URL = "https://pyryco.de/setup"
 
 private const val TAG = "MainActivity"
+
+// User-facing recovery copy for the Decoded -> Error path (#320). The UI layer owns the copy; the
+// parser only emits byte-safe category labels. Generic by design — never interpolates a field value.
+private const val PARSE_FAILED_MSG =
+    "That QR code isn't a valid pyrycode pairing code. Scan the code shown by `pyry pair`."
+
+private const val SAVE_FAILED_MSG = "Couldn't save the pairing. Please try again."
 
 // Placeholder paired-server record persisted by the Scanner stub tap until QR pairing lands; the
 // downstream QR-scanning ticket overwrites it with the scanned record (last-writer-wins). These are

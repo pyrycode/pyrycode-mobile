@@ -3,12 +3,14 @@ package de.pyryco.mobile.data.network
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.Base64
 
 /**
  * Round-trip, wire-vector, and rejection tests for the Mobile Protocol v2 wire
@@ -159,6 +161,29 @@ class MobileWireCodecTest {
 
         val v = ByteArray(32) { it.toByte() }
         assertTrue(base64StdDecode(base64StdEncode(v)).contentEquals(v))
+    }
+
+    // ---- outer wrapper: base64url, URL-safe alphabet, no padding (#320 AC #1) --
+
+    @Test
+    fun decodeBase64UrlNoPad_decodesKnownNoPadVector() {
+        // "hello" -> "aGVsbG8" (url-safe, no '=' padding).
+        assertArrayEquals("hello".toByteArray(), decodeBase64UrlNoPad("aGVsbG8"))
+    }
+
+    @Test
+    fun decodeBase64UrlNoPad_roundTripsUrlEncoderWithoutPadding() {
+        val v = ByteArray(40) { it.toByte() }
+        val encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(v)
+        assertTrue(decodeBase64UrlNoPad(encoded).contentEquals(v))
+    }
+
+    @Test
+    fun decodeBase64UrlNoPad_rejectsStandardAlphabetSpecials() {
+        // "///+" is valid base64-STD (the '/'/'+' alphabet) but NOT url-safe -> reject (the trap).
+        assertThrows(IllegalArgumentException::class.java) {
+            decodeBase64UrlNoPad("///+")
+        }
     }
 
     // ---- server_static_pubkey -> 32 bytes + rejection (AC #4) ------------------

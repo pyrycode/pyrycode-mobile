@@ -37,4 +37,11 @@ class ScannerViewModelTest {
         vm.onEvent(ScannerEvent.QrDecoded("abc"))
         assertEquals(ScannerUiState.Decoded("abc"), vm.state.value)
     }
+
+    @Test
+    fun pairingFailed_movesToErrorCarryingMessage() {
+        val vm = ScannerViewModel()
+        vm.onEvent(ScannerEvent.PairingFailed("boom"))
+        assertEquals(ScannerUiState.Error("boom"), vm.state.value)
+    }
 }
