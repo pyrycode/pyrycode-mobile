@@ -1,10 +1,15 @@
 package de.pyryco.mobile.ui.onboarding
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -23,7 +28,7 @@ class ScannerScreenTest {
             PyrycodeMobileTheme {
                 ScannerScreen(
                     state = ScannerUiState.ReadyToScan,
-                    onTap = {},
+                    onNavigateBack = {},
                     onOpenSettings = {},
                     onPasteCode = {},
                 )
@@ -41,7 +46,7 @@ class ScannerScreenTest {
             PyrycodeMobileTheme {
                 ScannerScreen(
                     state = ScannerUiState.ReadyToScan,
-                    onTap = {},
+                    onNavigateBack = {},
                     onOpenSettings = {},
                     onPasteCode = {},
                 )
@@ -59,7 +64,7 @@ class ScannerScreenTest {
             PyrycodeMobileTheme {
                 ScannerScreen(
                     state = ScannerUiState.ReadyToScan,
-                    onTap = {},
+                    onNavigateBack = {},
                     onOpenSettings = {},
                     onPasteCode = {},
                 )
@@ -77,7 +82,7 @@ class ScannerScreenTest {
             PyrycodeMobileTheme {
                 ScannerScreen(
                     state = ScannerUiState.PermissionRequesting,
-                    onTap = {},
+                    onNavigateBack = {},
                     onOpenSettings = {},
                     onPasteCode = {},
                 )
@@ -95,7 +100,7 @@ class ScannerScreenTest {
             PyrycodeMobileTheme {
                 ScannerScreen(
                     state = ScannerUiState.Denied,
-                    onTap = {},
+                    onNavigateBack = {},
                     onOpenSettings = {},
                     onPasteCode = {},
                 )
@@ -113,7 +118,7 @@ class ScannerScreenTest {
             PyrycodeMobileTheme {
                 ScannerScreen(
                     state = ScannerUiState.Decoded("ignored-payload"),
-                    onTap = {},
+                    onNavigateBack = {},
                     onOpenSettings = {},
                     onPasteCode = {},
                 )
@@ -131,12 +136,40 @@ class ScannerScreenTest {
     }
 
     @Test
+    fun cameraPreviewSlot_rendersBehindLockedOverlay() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ScannerScreen(
+                    state = ScannerUiState.ReadyToScan,
+                    onNavigateBack = {},
+                    onOpenSettings = {},
+                    onPasteCode = {},
+                    cameraPreview = {
+                        Box(modifier = Modifier.fillMaxSize().testTag("camera"))
+                    },
+                )
+            }
+        }
+
+        // AC1: the injected preview slot renders, and the locked overlay is undisturbed over it.
+        composeTestRule
+            .onNodeWithTag("camera")
+            .assertExists()
+        composeTestRule
+            .onNode(hasText("Pair with pyrycode"))
+            .assertExists()
+        composeTestRule
+            .onNode(hasText("pyry pair", substring = true))
+            .assertExists()
+    }
+
+    @Test
     fun error_rendersMessageAndClickablePasteFallback() {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
                 ScannerScreen(
                     state = ScannerUiState.Error("Camera unavailable"),
-                    onTap = {},
+                    onNavigateBack = {},
                     onOpenSettings = {},
                     onPasteCode = {},
                 )

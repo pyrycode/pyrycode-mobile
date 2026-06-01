@@ -4,7 +4,6 @@ import android.content.res.Configuration
 import android.graphics.BlurMaskFilter
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,7 +39,6 @@ import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -53,16 +51,23 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 @Composable
 fun ScannerScreen(
     state: ScannerUiState,
-    onTap: () -> Unit,
+    onNavigateBack: () -> Unit,
     onOpenSettings: () -> Unit,
     onPasteCode: () -> Unit,
     modifier: Modifier = Modifier,
+    cameraPreview: @Composable () -> Unit = {},
 ) {
     when (state) {
         ScannerUiState.PermissionRequesting,
         ScannerUiState.ReadyToScan,
         is ScannerUiState.Decoded,
-        -> ScannerViewport(onTap = onTap, modifier = modifier)
+        ->
+            ScannerViewport(
+                onNavigateBack = onNavigateBack,
+                onPasteCode = onPasteCode,
+                cameraPreview = cameraPreview,
+                modifier = modifier,
+            )
         ScannerUiState.Denied ->
             ScannerDeniedScreen(
                 onOpenSettings = onOpenSettings,
@@ -81,21 +86,17 @@ fun ScannerScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ScannerViewport(
-    onTap: () -> Unit,
+    onNavigateBack: () -> Unit,
+    onPasteCode: () -> Unit,
+    cameraPreview: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // Phase 1.5: every interactive element fires onTap (AC6)
     val blueStop = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
     val coralStop = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.06f)
     val stripeColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f)
     Surface(
         color = MaterialTheme.colorScheme.surface,
-        modifier =
-            modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTapGestures(onTap = { onTap() })
-                },
+        modifier = modifier.fillMaxSize(),
     ) {
         Column(
             modifier =
@@ -111,7 +112,7 @@ private fun ScannerViewport(
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onTap) {
+                    IconButton(onClick = onNavigateBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
@@ -132,31 +133,41 @@ private fun ScannerViewport(
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp)
                         .clip(RoundedCornerShape(24.dp))
-                        .background(MaterialTheme.colorScheme.surfaceContainerLowest)
-                        .drawBehind {
-                            val radius = maxOf(size.width, size.height) * 0.7f
-                            drawRect(
-                                brush =
-                                    Brush.radialGradient(
-                                        0f to blueStop,
-                                        0.6f to blueStop.copy(alpha = 0f),
-                                        1f to Color.Transparent,
-                                        center = Offset(size.width * 0.30f, size.height * 0.40f),
-                                        radius = radius,
-                                    ),
-                            )
-                            drawRect(
-                                brush =
-                                    Brush.radialGradient(
-                                        0f to coralStop,
-                                        0.6f to coralStop.copy(alpha = 0f),
-                                        1f to Color.Transparent,
-                                        center = Offset(size.width * 0.70f, size.height * 0.70f),
-                                        radius = radius,
-                                    ),
-                            )
-                        },
+                        .background(MaterialTheme.colorScheme.surfaceContainerLowest),
             ) {
+                // Back-most layer: the live camera feed (route injects it for ReadyToScan; renders
+                // nothing otherwise). The atmosphere/reticle/hint overlay below composites over it.
+                cameraPreview()
+                // Atmosphere gradients, moved off the Box's own drawBehind (which paints behind ALL
+                // children incl. the camera) into a matchParentSize child so they layer over the feed.
+                Box(
+                    modifier =
+                        Modifier
+                            .matchParentSize()
+                            .drawBehind {
+                                val radius = maxOf(size.width, size.height) * 0.7f
+                                drawRect(
+                                    brush =
+                                        Brush.radialGradient(
+                                            0f to blueStop,
+                                            0.6f to blueStop.copy(alpha = 0f),
+                                            1f to Color.Transparent,
+                                            center = Offset(size.width * 0.30f, size.height * 0.40f),
+                                            radius = radius,
+                                        ),
+                                )
+                                drawRect(
+                                    brush =
+                                        Brush.radialGradient(
+                                            0f to coralStop,
+                                            0.6f to coralStop.copy(alpha = 0f),
+                                            1f to Color.Transparent,
+                                            center = Offset(size.width * 0.70f, size.height * 0.70f),
+                                            radius = radius,
+                                        ),
+                                )
+                            },
+                )
                 Canvas(modifier = Modifier.matchParentSize()) {
                     val spacing = 7.dp.toPx()
                     val thickness = 1.dp.toPx()
@@ -186,7 +197,7 @@ private fun ScannerViewport(
                         .padding(8.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                TextButton(onClick = onTap) {
+                TextButton(onClick = onPasteCode) {
                     Text(
                         text = "Trouble scanning? Paste the pairing code instead",
                         style = MaterialTheme.typography.labelLarge,
@@ -339,7 +350,7 @@ private fun ScannerScreenLightPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
         ScannerScreen(
             state = ScannerUiState.ReadyToScan,
-            onTap = {},
+            onNavigateBack = {},
             onOpenSettings = {},
             onPasteCode = {},
         )
@@ -358,7 +369,7 @@ private fun ScannerScreenDarkPreview() {
     PyrycodeMobileTheme(darkTheme = true) {
         ScannerScreen(
             state = ScannerUiState.ReadyToScan,
-            onTap = {},
+            onNavigateBack = {},
             onOpenSettings = {},
             onPasteCode = {},
         )
