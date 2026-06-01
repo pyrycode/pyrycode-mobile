@@ -89,7 +89,7 @@ data class QrPayload(
 )
 ```
 
-The **decoded** pairing JSON object. The outer QR-string transport wrapper (the scanned string may itself be base64url-encoded) is **#277's** concern — this models only the decoded object and its base64-**std** `server_static_pubkey`. The 32-byte invariant is enforced by the codec, not the model (a `String` here; validated on decode).
+The **decoded** pairing JSON object. This models only the decoded object and its base64-**std** `server_static_pubkey`; the 32-byte invariant is enforced by the codec, not the model (a `String` here; validated on decode). The **outer QR-string transport wrapper** — the scanned string is base64**url**-no-pad (Go `RawURLEncoding`) around this JSON — is decoded by `decodeBase64UrlNoPad` (below) and parsed into a `PairedServer` by the [Pairing payload parser](pairing-payload-parser.md) (#320, split from #277).
 
 ## Codec (`MobileWireCodec.kt`)
 
@@ -112,10 +112,13 @@ val MobileJson: Json = Json {
 ```kotlin
 fun base64StdEncode(bytes: ByteArray): String   // java.util.Base64, standard alphabet WITH padding
 fun base64StdDecode(data: String): ByteArray
+fun decodeBase64UrlNoPad(data: String): ByteArray  // java.util.Base64, URL-safe alphabet, NO padding
 fun decodeServerStaticPubkey(qr: QrPayload): ByteArray  // -> raw 32 bytes, or throws
 ```
 
 `decodeServerStaticPubkey` base64-std-decodes `qr.serverStaticPubkey` then requires exactly 32 bytes, throwing `IllegalArgumentException` (field-named message, **no echoed key bytes**, reports an observed length count) on bad base64 **or** length ≠ 32. It **never silently truncates** — this stops a malformed/truncated X25519 key from reaching #275's `Noise_IK` handshake, where a wrong-length key would corrupt or weaken it.
+
+**The two-alphabet trap (#320).** Two different base64 alphabets coexist in one pairing payload: the **outer** QR-string wrapper is base64**url**-no-pad (Go `base64.RawURLEncoding`) — `decodeBase64UrlNoPad` (`Base64.getUrlDecoder()`); the **inner** `server_static_pubkey` is base64-**std**-with-padding — `base64StdDecode` / `decodeServerStaticPubkey`. The two decoders are deliberately co-located here so the trap stays visible. `decodeBase64UrlNoPad`'s load-bearing behavior is **rejecting** the std alphabet's `+`/`/` (throws `IllegalArgumentException`); it tolerates optional `=` padding (real `RawURLEncoding` is unpadded, so it round-trips). Using `base64StdDecode` on the outer wrapper — or `decodeBase64UrlNoPad` on the inner key — is a silent bug. The outer-wrapper consumer is the [Pairing payload parser](pairing-payload-parser.md).
 
 ## Error handling
 
@@ -178,7 +181,7 @@ The third landed in [#318](../codebase/318.md): `ConversationResponseDto` (`Conv
 - Downstream consumers:
   - **[#298](../codebase/298.md)** [Noise_IK session](noise-ik-session.md) (landed; split from #275) — consumes `Envelope` + the two Hello payloads as handshake early-data via `MobileJson`. Does **not** add `payload_encrypted` (raw-bytes transport surface) — that moved to #278.
   - **#276** relay WS client — frames bytes as `InnerFrameV2`; the Phase 4 `RemoteConnectionStateSource` (see [Connection state](connection-state.md)) will own the WebSocket this transport runs over.
-  - **#277** QR scan + fingerprint — owns the QR-**string** transport wrapper around `QrPayload`, and calls `decodeServerStaticPubkey` before the fingerprint-confirm step.
+  - **[#320](../codebase/320.md)** [Pairing payload parser](pairing-payload-parser.md) (landed; split from #277) — owns the QR-**string** transport wrapper around `QrPayload` (`decodeBase64UrlNoPad` + the parse/validate/map to `PairedServer`), and calls `decodeServerStaticPubkey` for the 32-byte check. The **#277/#321** fingerprint-confirm gate still sits between the parse and the persist.
   - **#278** application message set — builds the `noise_msg` envelopes and owns the typed `payload_encrypted` field.
   - **[#316](../codebase/316.md)** `conversations` → domain `Conversation`-list + **[#317](../codebase/317.md)** `message` → domain `Message` + **[#318](../codebase/318.md)** `conversation_created` / `conversation_updated` → domain `Conversation` — the three typed application payloads decoded on top of `Envelope` (see [Application payloads](#application-payloads-decoded-on-top-of-envelope)). #316/#317 are consumed by #312's read flow; #318 by the future create/promote mutation slices of `RemoteConversationRepository`.
 - Sibling data-layer doc: [Data model](data-model.md) (the non-wire `Conversation`/`Session`/`Message` schema, which deliberately carries **no** serialization annotations — those belong to this Phase 4 wire layer).
