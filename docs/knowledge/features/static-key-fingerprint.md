@@ -92,9 +92,10 @@ produce a meaningless fingerprint that defeats the security purpose.
 
 ## Configuration / usage
 
-There is **no live call site yet** — this slice is the pure derivation only. The downstream
-**confirm-UI slice** (the fingerprint confirm gate, the rest of the #321 split this ticket came from)
-owns the call:
+**Live since [#343](../codebase/343.md)** — the [Pairing confirm gate](pairing-confirm-gate.md) is the
+first (and currently only) live consumer. It owns the base64→bytes boundary via the new
+`serverKeyFingerprint` wrapper (in [`PairingPayloadParser.kt`](pairing-payload-parser.md)), which
+decodes + re-validates 32 bytes before calling this function:
 
 ```
 PairedServer.serverStaticPublicKey : String (base64-std)
@@ -121,14 +122,17 @@ interposes between the parser's `Success` and `PairedServerStore.save(...)`.
 - **The display / screenshot surface is not here.** Rendering the fingerprint on screen (and any
   screenshot/overlay concern) belongs to the confirm-UI slice. The value is a public-key digest,
   deliberately displayed and also printed by the desktop — not a secret.
-- **No live consumer until the confirm-UI slice lands.** The function is built and tested but dormant
-  until the confirm gate wires it between parse and persist.
+- **Live consumer since #343.** The [Pairing confirm gate](pairing-confirm-gate.md) wires this between
+  parse and persist (via `serverKeyFingerprint`, which decodes + re-validates first). The derivation
+  itself is unchanged — #343 consumes it, never re-derives.
 
 ## Related
 
+- [Pairing confirm gate](pairing-confirm-gate.md) — the #343 security checkpoint, this function's first
+  live consumer; renders the derived fingerprint and gates the persist on a human confirm
 - [Pairing payload parser](pairing-payload-parser.md) — produces the persisted `PairedServer` whose
-  `serverStaticPublicKey` the confirm-UI slice decodes and feeds here; the parse/persist split was
-  built to make the confirm gate a clean interpose
+  `serverStaticPublicKey` the confirm gate decodes (via `serverKeyFingerprint`) and feeds here; the
+  parse/persist split was built to make the confirm gate a clean interpose
 - [Paired server store](paired-server-store.md) — holds `serverStaticPublicKey` (base64-std string);
   the source of the bytes this function hashes
 - [Mobile Protocol v2 wire layer](mobile-protocol-v2-wire-layer.md) — owns `base64StdDecode` /

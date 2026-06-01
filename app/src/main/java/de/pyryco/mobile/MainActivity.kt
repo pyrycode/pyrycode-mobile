@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -40,6 +41,7 @@ import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.crypto.PairedServerStoreException
 import de.pyryco.mobile.data.network.PairingParseResult
 import de.pyryco.mobile.data.network.parsePairingPayload
+import de.pyryco.mobile.data.network.serverKeyFingerprint
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.ui.conversations.list.ChannelListEvent
@@ -165,6 +167,26 @@ private fun PyryNavHost(
                 }
             }
 
+            // The ONLY scan-path persist (#343): runs solely behind the Confirm button, after the
+            // user has compared the fingerprint. The rewired Decoded effect below no longer saves —
+            // it derives the fingerprint and parks in AwaitingConfirm. Same try/save/navigate/catch
+            // shape as stubPairAndNavigate; a store failure routes to the Error surface so nothing
+            // half-persists. The save reuses the lifecycle-scoped `scope` (cancelled on screen exit).
+            val confirmPairAndNavigate: (PairedServer) -> Unit = { server ->
+                scope.launch {
+                    try {
+                        pairedServerStore.save(server)
+                        navController.navigate(Routes.CHANNEL_LIST) {
+                            popUpTo(Routes.SCANNER) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    } catch (e: PairedServerStoreException) {
+                        Log.w(TAG, "paired-server save failed: ${e.javaClass.simpleName}")
+                        vm.onEvent(ScannerEvent.PairingFailed(SAVE_FAILED_MSG))
+                    }
+                }
+            }
+
             val permissionLauncher =
                 rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestPermission(),
@@ -189,31 +211,39 @@ private fun PyryNavHost(
                 }
             }
 
-            // A successful decode parses + validates the payload into a real PairedServer (#320),
-            // persists it, then advances to the channel list — replacing the former stub write at
-            // this binding. On Success the navigate's popUpTo(inclusive) pops the scanner, so the
-            // effect cannot re-fire; on a parse/persist failure the VM flips Decoded -> Error and
-            // this effect re-runs as a no-op (state is no longer Decoded). The parse is microsecond
-            // CPU work on a small string, so it runs inline on this Main coroutine.
+            // The security gate (#343): a successful decode parses + validates the payload into a
+            // real PairedServer (#320) and derives its static-key fingerprint (#342), then parks in
+            // AwaitingConfirm — it does NOT persist. The persist moves behind the Confirm button
+            // (confirmPairAndNavigate); this effect never touches the store. A parse failure, or a
+            // derive that returns null (structurally unreachable for a Success — the stored key was
+            // already proven base64-std-of-32-bytes — but handled so staticKeyFingerprint's require
+            // can't throw into this coroutine), routes to the Error surface. On the AwaitingConfirm
+            // transition the state is no longer Decoded, so this effect re-runs as a no-op. The
+            // parse + derive are microsecond CPU work, so they run inline on this Main coroutine.
             LaunchedEffect(state) {
                 val decoded = state as? ScannerUiState.Decoded ?: return@LaunchedEffect
                 when (val result = parsePairingPayload(decoded.payload)) {
-                    is PairingParseResult.Success ->
-                        try {
-                            pairedServerStore.save(result.server)
-                            navController.navigate(Routes.CHANNEL_LIST) {
-                                popUpTo(Routes.SCANNER) { inclusive = true }
-                                launchSingleTop = true
-                            }
-                        } catch (e: PairedServerStoreException) {
-                            Log.w(TAG, "paired-server save failed: ${e.javaClass.simpleName}")
-                            vm.onEvent(ScannerEvent.PairingFailed(SAVE_FAILED_MSG))
+                    is PairingParseResult.Success -> {
+                        val fingerprint = serverKeyFingerprint(result.server.serverStaticPublicKey)
+                        if (fingerprint == null) {
+                            Log.w(TAG, "fingerprint derive failed: bad-stored-key")
+                            vm.onEvent(ScannerEvent.PairingFailed(PARSE_FAILED_MSG))
+                        } else {
+                            vm.onEvent(ScannerEvent.PairingPrepared(fingerprint, result.server))
                         }
+                    }
                     is PairingParseResult.Failure -> {
                         Log.w(TAG, "pairing parse failed: ${result.reason}")
                         vm.onEvent(ScannerEvent.PairingFailed(PARSE_FAILED_MSG))
                     }
                 }
+            }
+
+            // While confirming, system Back behaves as Decline (return to scanner, persist nothing)
+            // rather than popping the whole scanner route back to Welcome (AC #3). Disabled
+            // otherwise, so Back pops normally.
+            BackHandler(enabled = state is ScannerUiState.AwaitingConfirm) {
+                vm.onEvent(ScannerEvent.DeclinePairing)
             }
 
             ScannerScreen(
@@ -228,6 +258,14 @@ private fun PyryNavHost(
                     )
                 },
                 onPasteCode = stubPairAndNavigate,
+                // Confirm reads the CURRENT collected state: if back/decline already moved it off
+                // AwaitingConfirm, the cast is null and confirm is a no-op — a save cannot fire after
+                // the gate closed. Persists exactly the parsed record the displayed fingerprint was
+                // derived from (no re-parse / re-derive).
+                onConfirmPairing = {
+                    (state as? ScannerUiState.AwaitingConfirm)?.let { confirmPairAndNavigate(it.server) }
+                },
+                onDeclinePairing = { vm.onEvent(ScannerEvent.DeclinePairing) },
                 cameraPreview = {
                     if (state is ScannerUiState.ReadyToScan) {
                         CameraPreview(

@@ -6,13 +6,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHasClickAction
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -182,5 +188,111 @@ class ScannerScreenTest {
         composeTestRule
             .onNodeWithText("Paste the pairing code instead")
             .assertHasClickAction()
+    }
+
+    // ---- AwaitingConfirm: the fingerprint confirm gate (#343) ------------------
+
+    @Test
+    fun awaitingConfirm_rendersFingerprintVerbatimAndCompareCopy() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ScannerScreen(
+                    state = ScannerUiState.AwaitingConfirm(FINGERPRINT, pairedServer()),
+                    onNavigateBack = {},
+                    onOpenSettings = {},
+                    onPasteCode = {},
+                )
+            }
+        }
+
+        // Rendered byte-for-byte as the #342 colon-lowercase-hex form (AC #4).
+        composeTestRule.onNode(hasText(FINGERPRINT)).assertExists()
+        // Compare copy points at the other device's Static-key fp line (AC #4).
+        composeTestRule.onNode(hasText("other device", substring = true)).assertExists()
+    }
+
+    @Test
+    fun awaitingConfirm_fingerprint_exposesContentDescription() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ScannerScreen(
+                    state = ScannerUiState.AwaitingConfirm(FINGERPRINT, pairedServer()),
+                    onNavigateBack = {},
+                    onOpenSettings = {},
+                    onPasteCode = {},
+                )
+            }
+        }
+
+        composeTestRule
+            .onNode(hasContentDescription("Server fingerprint $FINGERPRINT"))
+            .assertExists()
+    }
+
+    @Test
+    fun awaitingConfirm_confirmButton_invokesOnConfirm() {
+        var confirmed = false
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ScannerScreen(
+                    state = ScannerUiState.AwaitingConfirm(FINGERPRINT, pairedServer()),
+                    onNavigateBack = {},
+                    onOpenSettings = {},
+                    onPasteCode = {},
+                    onConfirmPairing = { confirmed = true },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Confirm pairing").assertHasClickAction().performClick()
+        assertTrue(confirmed)
+    }
+
+    @Test
+    fun awaitingConfirm_declineButton_invokesOnDecline() {
+        var declined = false
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ScannerScreen(
+                    state = ScannerUiState.AwaitingConfirm(FINGERPRINT, pairedServer()),
+                    onNavigateBack = {},
+                    onOpenSettings = {},
+                    onPasteCode = {},
+                    onDeclinePairing = { declined = true },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Don't pair").assertHasClickAction().performClick()
+        assertTrue(declined)
+    }
+
+    @Test
+    fun awaitingConfirm_confirmAndDecline_meetMinimumTouchTargetHeight() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ScannerScreen(
+                    state = ScannerUiState.AwaitingConfirm(FINGERPRINT, pairedServer()),
+                    onNavigateBack = {},
+                    onOpenSettings = {},
+                    onPasteCode = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Confirm pairing").assertHeightIsAtLeast(48.dp)
+        composeTestRule.onNodeWithText("Don't pair").assertHeightIsAtLeast(48.dp)
+    }
+
+    private companion object {
+        const val FINGERPRINT = "32:0b:5e:a9:9e:65:3b:c2"
+
+        fun pairedServer() =
+            PairedServer(
+                serverId = "srv-1",
+                token = "tok-123",
+                relayUrl = "wss://relay.example.com",
+                serverStaticPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            )
     }
 }

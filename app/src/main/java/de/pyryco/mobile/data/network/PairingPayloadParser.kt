@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.network
 
 import de.pyryco.mobile.data.crypto.PairedServer
+import de.pyryco.mobile.data.crypto.staticKeyFingerprint
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromString
 import java.net.URI
@@ -16,6 +17,9 @@ private object PairingParseFailure {
 }
 
 private val RELAY_SCHEMES = setOf("ws", "wss")
+
+/** The X25519 server static public key is exactly 32 bytes (mirrors NoiseSessionFactory.REMOTE_STATIC_KEY_SIZE). */
+private const val SERVER_STATIC_KEY_SIZE = 32
 
 /**
  * Decode the scanned outer QR-string wrapper → [QrPayload] → validate → [PairedServer].
@@ -88,4 +92,28 @@ private fun isValidRelayOrigin(relay: String): Boolean {
         }
     val scheme = uri.scheme?.lowercase()
     return scheme != null && scheme in RELAY_SCHEMES && !uri.host.isNullOrEmpty()
+}
+
+/**
+ * Derive the human-comparable static-key fingerprint (#342) for the confirm gate (#343) from the
+ * base64-std-encoded server static public key carried in a parsed [PairedServer].
+ *
+ * Decode [staticKeyBase64] (base64-std) → re-validate exactly 32 bytes → [staticKeyFingerprint].
+ * Returns `null` if the stored key can't be decoded to a 32-byte value. Pure, synchronous, no I/O,
+ * **no logging, and never throws** — the re-validate keeps [staticKeyFingerprint]'s `require(size ==
+ * 32)` structurally unreachable, so a malformed stored key routes to a typed `null` (the caller maps
+ * it to the same recovery path as a parse failure) instead of crashing the confirm-flow coroutine.
+ * For a freshly-parsed [PairingParseResult.Success] the `null` branch is unreachable (the parser
+ * already proved base64-std-of-32-bytes), but this is deterministic belt-and-suspenders over that
+ * guarantee. Mirrors `NoiseSessionFactory.create`'s decode-then-revalidate; never echoes key bytes.
+ */
+fun serverKeyFingerprint(staticKeyBase64: String): String? {
+    val bytes =
+        try {
+            base64StdDecode(staticKeyBase64)
+        } catch (_: IllegalArgumentException) {
+            return null
+        }
+    if (bytes.size != SERVER_STATIC_KEY_SIZE) return null
+    return staticKeyFingerprint(bytes)
 }
