@@ -85,25 +85,44 @@ path/port is **not** rejected, staying close to the Go emitter's opaque-origin t
 false rejections. Both `ws://` and `wss://` are accepted: confidentiality comes from the `Noise_IK`
 layer over the socket, not relay TLS.
 
+## `serverKeyFingerprint` — the confirm gate's derive seam (#343)
+
+A sibling top-level fn lives in the same file, consumed by the
+[Pairing confirm gate](pairing-confirm-gate.md):
+
+```kotlin
+fun serverKeyFingerprint(staticKeyBase64: String): String?
+```
+
+It decodes a parsed `PairedServer.serverStaticPublicKey` (base64-std) → re-validates exactly 32 bytes →
+derives the [static-key fingerprint](static-key-fingerprint.md) (#342). Returns `null` (never throws)
+if the stored key can't be decoded to a 32-byte value — the re-validate keeps
+`staticKeyFingerprint`'s `require(size == 32)` structurally unreachable so it can't crash the confirm-
+flow coroutine. **Mirrors `NoiseSessionFactory.create()`'s decode-then-revalidate**; does no logging,
+never echoes key bytes. It lives here (not `data/crypto`) because it needs `base64StdDecode`
+(`data/network`), and `data/network → data/crypto` already holds. For a freshly-parsed `Success` the
+`null` branch is unreachable (the parser already proved base64-std-of-32-bytes) — it is deterministic
+belt-and-suspenders over that guarantee.
+
 ## Configuration / usage
 
-The only call site is the scanner's `Decoded` binding in `MainActivity`'s `Routes.SCANNER` composable
-(rewired from the #334 stub-pair `LaunchedEffect`):
+The only call site is the scanner's `Decoded` binding in `MainActivity`'s `Routes.SCANNER` composable.
+**Since #343 the parser no longer persists on `Success`** — it derives the fingerprint and parks in
+`AwaitingConfirm`, gating the persist behind a human confirm (the [Pairing confirm gate](pairing-confirm-gate.md)):
 
 ```kotlin
 LaunchedEffect(state) {
     val decoded = state as? ScannerUiState.Decoded ?: return@LaunchedEffect
     when (val result = parsePairingPayload(decoded.payload)) {
-        is PairingParseResult.Success ->
-            try {
-                pairedServerStore.save(result.server)
-                navController.navigate(Routes.CHANNEL_LIST) {
-                    popUpTo(Routes.SCANNER) { inclusive = true }; launchSingleTop = true
-                }
-            } catch (e: PairedServerStoreException) {
-                Log.w(TAG, "paired-server save failed: ${e.javaClass.simpleName}")
-                vm.onEvent(ScannerEvent.PairingFailed(SAVE_FAILED_MSG))
+        is PairingParseResult.Success -> {
+            val fingerprint = serverKeyFingerprint(result.server.serverStaticPublicKey)
+            if (fingerprint == null) {
+                Log.w(TAG, "fingerprint derive failed: bad-stored-key")
+                vm.onEvent(ScannerEvent.PairingFailed(PARSE_FAILED_MSG))
+            } else {
+                vm.onEvent(ScannerEvent.PairingPrepared(fingerprint, result.server))
             }
+        }
         is PairingParseResult.Failure -> {
             Log.w(TAG, "pairing parse failed: ${result.reason}")
             vm.onEvent(ScannerEvent.PairingFailed(PARSE_FAILED_MSG))
@@ -112,13 +131,13 @@ LaunchedEffect(state) {
 }
 ```
 
-The parse is microsecond CPU work on a small string, so it runs inline on the `LaunchedEffect`'s Main
-coroutine. The new `ScannerEvent.PairingFailed(message)` routes both parse and persist failures into
-the existing `ScannerUiState.Error` surface (mirrors `CameraError → Error`); the two user-facing
-strings (`PARSE_FAILED_MSG`, `SAVE_FAILED_MSG`) are UI-owned constants in `MainActivity`. On `Success`
-the `popUpTo(SCANNER){inclusive}` pops the scanner so the keyed effect can't re-fire; on failure the
-state flips `Decoded → Error`, the effect re-runs but `state is Decoded` is now false → no-op. No loop,
-no double-save.
+The parse + derive are microsecond CPU work on a small string, so they run inline on the
+`LaunchedEffect`'s Main coroutine. **This effect never touches the store** — the only scan-path `save`
+moved behind the Confirm button (`confirmPairAndNavigate`, gated on `AwaitingConfirm`). `PairingFailed`
+routes parse failures (and the structurally-unreachable derive-`null`) into `ScannerUiState.Error`
+(mirrors `CameraError → Error`); save failures route there too from the confirm lambda. On the
+`AwaitingConfirm` transition the state is no longer `Decoded`, so the keyed effect re-runs as a no-op.
+No loop, no double-save.
 
 ## No-leak discipline
 
@@ -135,14 +154,15 @@ log or the screen:
 
 ## Edge cases and limitations
 
-- **Structural validity ≠ authenticity.** A *well-formed hostile QR* parses and persists exactly like
-  a legitimate one — `parsePairingPayload` proves the QR is well-formed, not that it came from the
-  user's own server. The control against a pairing MITM is the fingerprint / safety-number confirm
-  gate, **explicitly #321**, which will interpose between `Success` and
-  `pairedServerStore.save(...)` (the pure-parse / composable-persist split makes that a clean
-  insertion, no restructuring). #320 is not a new exposure: it replaces an already-unguarded stub
-  persist, and the persisted record isn't trust-bearing in a live flow yet (the UI runs against
-  `FakeConversationRepository`; the dialling handshake is #302/#309).
+- **Structural validity ≠ authenticity.** A *well-formed hostile QR* parses exactly like a legitimate
+  one — `parsePairingPayload` proves the QR is well-formed, not that it came from the user's own server.
+  The control against a pairing MITM is the [Pairing confirm gate](pairing-confirm-gate.md), landed as
+  **#343**, which interposes between `Success` and `pairedServerStore.save(...)` (the pure-parse /
+  composable-persist split made that a clean insertion, no restructuring): it derives the fingerprint
+  via `serverKeyFingerprint` and requires a human confirm before any persist. #320 was not itself a new
+  exposure (it replaced an already-unguarded stub persist), and the persisted record isn't trust-bearing
+  in a live flow yet (the UI runs against `FakeConversationRepository`; the dialling handshake is
+  #302/#309).
 - **Recovery from `Error` has no in-screen rescan.** A parse/persist failure lands on
   `ScannerErrorContent` (message + the out-of-scope "Paste the pairing code instead" button); the
   camera is torn down in non-`ReadyToScan` states. This matches the existing `CameraError → Error`
@@ -158,6 +178,10 @@ log or the screen:
 
 ## Related
 
+- [Pairing confirm gate](pairing-confirm-gate.md) — the #343 security checkpoint that sits behind this
+  parser's `Success`; owns `serverKeyFingerprint` (this file) and gates the persist on a human confirm
+- [Static-key fingerprint](static-key-fingerprint.md) — the #342 derivation `serverKeyFingerprint`
+  decodes the parsed pubkey into and calls
 - [Mobile Protocol v2 wire layer](mobile-protocol-v2-wire-layer.md) — `QrPayload`, `MobileJson`,
   `base64StdDecode`/`decodeServerStaticPubkey`, and the new `decodeBase64UrlNoPad`
 - [Paired server store](paired-server-store.md) — the encrypted-at-rest mapping target
