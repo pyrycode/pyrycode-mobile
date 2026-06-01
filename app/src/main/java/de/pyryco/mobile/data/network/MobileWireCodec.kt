@@ -40,6 +40,18 @@ fun base64StdEncode(bytes: ByteArray): String = Base64.getEncoder().encodeToStri
 fun base64StdDecode(data: String): ByteArray = Base64.getDecoder().decode(data)
 
 /**
+ * Base64-decode [data] with the URL-safe alphabet, no padding (Go `base64.RawURLEncoding`).
+ *
+ * This is for the OUTER QR-string pairing wrapper ONLY — NOT for `server_static_pubkey`, which is
+ * base64-std (use [base64StdDecode] / [decodeServerStaticPubkey]). The two alphabet decoders are
+ * co-located so the trap stays visible to the next reader: the URL-safe decoder rejects the
+ * standard alphabet's `+`/`/`, which is the load-bearing rejection. Tolerates optional `=` padding
+ * (real `RawURLEncoding` output is unpadded, so it round-trips). Throws [IllegalArgumentException]
+ * on a non-base64url character.
+ */
+fun decodeBase64UrlNoPad(data: String): ByteArray = Base64.getUrlDecoder().decode(data)
+
+/**
  * Decode [qr]'s `server_static_pubkey` (base64-std) to its raw 32 bytes, rejecting
  * any value that is not valid base64 or does not decode to exactly 32 bytes. Throws
  * [IllegalArgumentException] with a field-named message — the error names the failure

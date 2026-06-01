@@ -53,6 +53,13 @@ sealed interface ScannerEvent {
         // AC5 deterministic net — see ScannerUiState.Decoded.toString.
         override fun toString(): String = "QrDecoded(payload=<redacted ${payload.length} chars>)"
     }
+
+    // A scanned payload failed to parse/validate into a PairedServer, or persisting it failed (#320).
+    // [message] is an app constant supplied by the caller — never a payload byte — so no redacting
+    // toString() is needed; it routes to the existing Error surface (mirrors CameraError).
+    data class PairingFailed(
+        val message: String,
+    ) : ScannerEvent
 }
 
 // Pure synchronous state machine: no viewModelScope, no flows beyond the single state holder, no
@@ -69,6 +76,7 @@ class ScannerViewModel : ViewModel() {
                 ScannerEvent.PermissionDenied -> ScannerUiState.Denied
                 is ScannerEvent.CameraError -> ScannerUiState.Error(event.message)
                 is ScannerEvent.QrDecoded -> ScannerUiState.Decoded(event.payload)
+                is ScannerEvent.PairingFailed -> ScannerUiState.Error(event.message)
             }
     }
 }
