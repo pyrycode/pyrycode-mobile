@@ -108,6 +108,29 @@ class ScannerScreenTest {
     }
 
     @Test
+    fun decoded_rendersViewportUnchanged() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ScannerScreen(
+                    state = ScannerUiState.Decoded("ignored-payload"),
+                    onTap = {},
+                    onOpenSettings = {},
+                    onPasteCode = {},
+                )
+            }
+        }
+
+        // Scope guard: the Decoded state renders the existing locked viewport — no new visible
+        // surface, the payload is never displayed.
+        composeTestRule
+            .onNode(hasText("Pair with pyrycode"))
+            .assertExists()
+        composeTestRule
+            .onNode(hasText("pyry pair", substring = true))
+            .assertExists()
+    }
+
+    @Test
     fun error_rendersMessageAndClickablePasteFallback() {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
