@@ -61,6 +61,7 @@ fun ScannerScreen(
     when (state) {
         ScannerUiState.PermissionRequesting,
         ScannerUiState.ReadyToScan,
+        is ScannerUiState.Decoded,
         -> ScannerViewport(onTap = onTap, modifier = modifier)
         ScannerUiState.Denied ->
             ScannerDeniedScreen(
