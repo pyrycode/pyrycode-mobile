@@ -3,8 +3,10 @@ package de.pyryco.mobile.data.repository
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Session
+import de.pyryco.mobile.data.network.BackfillSincePayloadDto
 import de.pyryco.mobile.data.network.ConversationsPayload
 import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.MessageChunkPayloadDto
 import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.toConversations
@@ -22,6 +24,7 @@ import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.encodeToJsonElement
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -67,6 +70,16 @@ class RemoteConversationRepository(
      * `maxByOrNull { it.timestamp }`.
      */
     private val lastMessages = MutableStateFlow<Map<String, Message>>(emptyMap())
+
+    /**
+     * `conversationId -> ordered, message_id-deduped thread` of every [Message] seen for the
+     * conversation — backfilled history (`message_chunk`) plus live `message`s, in wire/arrival
+     * order (#313). Written **only** by the single [init] inbound collector (sequential single
+     * writer); [observeMessages] fans out from it. Each value is order-preserving: first insertion
+     * fixes a message's position, a repeat `message_id` updates it in place (the dedup rule), so the
+     * thread is complete-on-first-emission once backfill arrives and live messages append after.
+     */
+    private val messagesByConversation = MutableStateFlow<Map<String, List<Message>>>(emptyMap())
 
     private val requestId = AtomicLong(0)
 
@@ -120,10 +133,56 @@ class RemoteConversationRepository(
                         current + (conversationId to message)
                     }
                 }
+                // The live message is also a thread row (#313): append it to the conversation thread
+                // in arrival order, deduped by message_id (a backfill row with the same id is updated
+                // in place). The thread is a distinct projection from the last-message preview above.
+                appendMessages(listOf(conversationId to message))
             }
-            // Any other type is a no-op here: single-row conversation deltas (#318 → #314) and the
-            // `messages` thread-read response (#313) extend this `when` in their own slices.
+            TYPE_MESSAGE_CHUNK -> {
+                // The `backfill_since` response (#313): a batch of finished messages, each carrying
+                // the chunk's one envelope `ts`. Decode + map the whole chunk in one try/catch — a
+                // single bad row (unmappable role / missing field → SerializationException, bad ts →
+                // IllegalArgumentException via Instant.parse; the former is a subtype) drops the
+                // entire chunk so the single inbound consumer survives. Drop silently: message
+                // content may be sensitive. Each row self-routes via its own `conversation_id`.
+                val rows =
+                    try {
+                        val chunk = MobileJson.decodeFromJsonElement<MessageChunkPayloadDto>(envelope.payload)
+                        chunk.messages.map { dto -> dto.conversationId to dto.toMessage(envelope, sessionId = "") }
+                    } catch (e: IllegalArgumentException) {
+                        return
+                    }
+                appendMessages(rows)
+            }
+            // Any other type is a no-op here: single-row conversation deltas (#318 → #314) extend
+            // this `when` in their own slice. `backfill_done` ({delivered}) needs no action — the
+            // `message_chunk` already delivered the full history; the count is informational only.
             else -> Unit
+        }
+    }
+
+    /**
+     * Append [rows] (`conversationId -> Message`) into [messagesByConversation] in one atomic
+     * [MutableStateFlow.update], preserving order and deduping by `message_id`: a first-seen id is
+     * appended at the end, a repeat id replaces the existing row **in place** (position fixed at
+     * first occurrence, last write wins). Batching a whole chunk into one update avoids emitting an
+     * intermediate list per row. No-op on an empty batch so a malformed/empty chunk never re-emits.
+     */
+    private fun appendMessages(rows: List<Pair<String, Message>>) {
+        if (rows.isEmpty()) return
+        messagesByConversation.update { current ->
+            val updated = current.toMutableMap()
+            for ((conversationId, message) in rows) {
+                val existing = updated[conversationId].orEmpty()
+                val index = existing.indexOfFirst { it.id == message.id }
+                updated[conversationId] =
+                    if (index >= 0) {
+                        existing.toMutableList().apply { this[index] = message }
+                    } else {
+                        existing + message
+                    }
+            }
+            updated
         }
     }
 
@@ -159,10 +218,56 @@ class RemoteConversationRepository(
             payload = JsonObject(emptyMap()),
         )
 
+    /**
+     * The `backfill_since` request for [conversationId]'s full thread (#313). Wire shape per server
+     * SSOT `internal/protocol/messaging.go` `BackfillSincePayload` (#272): full history is requested
+     * from the Unix epoch ([BACKFILL_ALL_HISTORY_SINCE]) with an advisory cap
+     * ([BACKFILL_MAX_MESSAGES]). The server replies with `message_chunk` (+ `backfill_done`)
+     * correlated via `inReplyTo`; the chunk self-routes by its rows' `conversation_id`, so this
+     * slice does not track the request id against the conversation.
+     */
+    private fun backfillSinceRequest(conversationId: String): Envelope =
+        Envelope(
+            id = requestId.incrementAndGet(),
+            type = TYPE_BACKFILL_SINCE,
+            ts = Clock.System.now().toString(),
+            payload =
+                MobileJson.encodeToJsonElement(
+                    BackfillSincePayloadDto(
+                        sinceTs = BACKFILL_ALL_HISTORY_SINCE,
+                        conversationId = conversationId,
+                        maxMessages = BACKFILL_MAX_MESSAGES,
+                    ),
+                ),
+        )
+
     // ---- Stubs: each later slice replaces the methods it owns -----------------------------------
 
+    /**
+     * Full thread for [conversationId] (#313): historical messages backfilled ahead of the live
+     * `message` stream, merged into one chronological [ThreadItem.MessageItem] list, deduped by
+     * `message_id`, in wire/arrival order. Cold, mirroring [observeConversations]: every
+     * subscription issues a `backfill_since` request (re-delivered history is absorbed by the
+     * `message_id` dedup, so no idempotency guard is needed); a pre-Open send returns false and is
+     * dropped — the live stream still fills the thread and the next subscription re-backfills.
+     */
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
-        throw UnsupportedOperationException("observeMessages: thread read path not yet wired (#313)")
+        flow {
+            pump.send(backfillSinceRequest(conversationId))
+            emitAll(threadProjection(conversationId))
+        }
+
+    /**
+     * Cold per-conversation thread view: the ordered, deduped [ThreadItem.MessageItem] list for
+     * [conversationId]. [distinctUntilChanged] means a change to **another** conversation's slot
+     * does not re-emit this flow (AC #3). A `StateFlow` always has a value, so a fresh collector
+     * receives the current thread (empty until backfill/live arrives) on subscription.
+     */
+    private fun threadProjection(conversationId: String): Flow<List<ThreadItem>> =
+        messagesByConversation
+            .map { byConversation ->
+                byConversation[conversationId].orEmpty().map { message -> ThreadItem.MessageItem(message) }
+            }.distinctUntilChanged()
 
     /**
      * Most-recent live [Message] for [conversationId] (#329), a pure cold projection of the shared
@@ -216,9 +321,29 @@ class RemoteConversationRepository(
         const val TYPE_CONVERSATIONS = "conversations"
 
         /**
-         * Live/echo single-`message` payload (#317). Distinct from the plural `messages` thread-read
-         * response owned by #313, which this `when` still ignores.
+         * Live/echo single-`message` payload (#317) — feeds both the last-message preview (#329) and
+         * the conversation thread (#313). The batched backfill response is [TYPE_MESSAGE_CHUNK].
          */
         const val TYPE_MESSAGE = "message"
+
+        /** Request: full thread backfill for one conversation (#313, #272 `BackfillSincePayload`). */
+        const val TYPE_BACKFILL_SINCE = "backfill_since"
+
+        /** Response: a batch of finished `message` rows answering a `backfill_since` (#313, #272). */
+        const val TYPE_MESSAGE_CHUNK = "message_chunk"
+
+        /**
+         * RFC-3339 epoch cursor for "all history on first load" — `backfill_since.since_ts` is a
+         * required `time.Time` on the wire (#272), so full history is the epoch, not an absent field.
+         */
+        const val BACKFILL_ALL_HISTORY_SINCE = "1970-01-01T00:00:00Z"
+
+        /**
+         * Advisory cap on the backfilled-message count (`backfill_since.max_messages`, #272). Sized
+         * to cover a full thread without truncation; the server chunks the response and may deliver
+         * fewer. The backfill dispatcher is not yet live, so this value is not yet exercised against
+         * real server behaviour.
+         */
+        const val BACKFILL_MAX_MESSAGES = 10_000
     }
 }

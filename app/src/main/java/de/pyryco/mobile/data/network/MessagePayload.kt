@@ -101,3 +101,39 @@ private fun WireRole.toDomain(): Role =
         WireRole.User -> Role.User
         WireRole.Assistant -> Role.Assistant
     }
+
+/**
+ * Mobile Protocol v2 `message_chunk` application payload (#313): the binary→phone backfill
+ * response body. Carries a batch of *finished* [MessagePayloadDto] rows ("same shape as
+ * `message.payload`, multiple" — server SSOT `internal/protocol/messaging.go`
+ * `MessageChunkPayload`, #272). A single envelope `ts` covers every row, so the repository maps
+ * each via [toMessage] against the chunk's own [Envelope] and preserves wire/arrival order — there
+ * is no per-row timestamp to sort on. Decode through [MobileJson] only; the phone never sends one.
+ */
+@Serializable
+data class MessageChunkPayloadDto(
+    val messages: List<MessagePayloadDto>,
+)
+
+/**
+ * Mobile Protocol v2 `backfill_since` request payload (#313): the phone→binary catch-up request
+ * for a conversation's historical messages. **Encode-only** — the phone sends it; the server
+ * replies with `message_chunk` (+ `backfill_done`) correlated via [Envelope.inReplyTo].
+ *
+ * Wire SSOT: server `internal/protocol/messaging.go` `BackfillSincePayload` (#272). Field
+ * declaration order matches the Go struct (`since_ts`, `conversation_id`, `max_messages`).
+ *
+ *  - [conversationId] is modeled non-null because this repository only ever backfills one specific
+ *    conversation. The wire field is `*string` where `null` means "all conversations"; this slice
+ *    has no use for that, so the simpler non-null shape is used (always a concrete id on the wire).
+ *  - [sinceTs] is an RFC-3339 timestamp; this slice always requests the full thread from the Unix
+ *    epoch ("all history on first load").
+ *  - [maxMessages] is the server's advisory cap on the returned-message count (the server chunks
+ *    the response; this is the total it will deliver).
+ */
+@Serializable
+data class BackfillSincePayloadDto(
+    @SerialName("since_ts") val sinceTs: String,
+    @SerialName("conversation_id") val conversationId: String,
+    @SerialName("max_messages") val maxMessages: Int,
+)

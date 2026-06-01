@@ -8,9 +8,9 @@ backend swap is architectural — replace the binding, don't special-case the UI
 
 Package: `de.pyryco.mobile.data.repository` (`RemoteConversationRepository` + the consumer-defined
 `SessionPump` interface), same package as the contract and the Fake. Built **slice by slice**: the
-conversation-list read path landed in [#312](../codebase/312.md) and the last-message preview in
-[#329](../codebase/329.md); the thread read path (#313) and the mutation path (#314) extend the **same
-class** as they land. Portable, `android.*`-free.
+conversation-list read path landed in [#312](../codebase/312.md), the last-message preview in
+[#329](../codebase/329.md), and the thread read path in [#313](../codebase/313.md); the mutation path
+(#314) extends the **same class** as it lands. Portable, `android.*`-free.
 
 > **Ships dormant (no live binding yet).** #312 lands `RemoteConversationRepository` with **no Koin
 > binding and no consumers** — the UI still binds to `FakeConversationRepository`. Wiring the live binding
@@ -84,8 +84,9 @@ demultiplexes each envelope by `Envelope.type`:
 | `Envelope.type` | Handling |
 |---|---|
 | `"conversations"` | Decode `MobileJson.decodeFromJsonElement<ConversationsPayload>(payload).toConversations()` (#316) → assign to `projection`. A **full-list snapshot** — both the reply to our request and any unsolicited server change-push arrive this way, so re-emission needs **no `in_reply_to` correlation**. Decode is wrapped in a per-envelope `try/catch` (a malformed snapshot is dropped, the collector survives). |
-| `"message"` | Decode `MobileJson.decodeFromJsonElement<MessagePayloadDto>(payload)` (#317) → key by `conversation_id` (**read off the DTO before mapping** — the domain `Message` carries none) → `toMessage(envelope, sessionId = "")` → fold the strictly-greater-by-`timestamp` message into the `lastMessages` projection ([#329](../codebase/329.md)). Same per-envelope `try/catch` drop; **silent** (no payload logged, content may be sensitive). The singular live/echo `message`; the plural `messages` thread-read response is a different type. See the [`observeLastMessage`](#observelastmessageconversationid--the-live-last-message-preview-329) section below. |
-| anything else | **No-op** (intentional `else`, not a bug). The plural `messages` thread-read response (#313) and single-row `conversation_updated`/`conversation_created` deltas (#318 → #314) extend this `when` in their own slices. |
+| `"message"` | Decode `MobileJson.decodeFromJsonElement<MessagePayloadDto>(payload)` (#317) → key by `conversation_id` (**read off the DTO before mapping** — the domain `Message` carries none) → `toMessage(envelope, sessionId = "")`, then **two folds** off the one decoded DTO: (a) the strictly-greater-by-`timestamp` `lastMessages` preview fold ([#329](../codebase/329.md)); (b) an arrival-order append into the `messagesByConversation` thread ([#313](../codebase/313.md)). Same per-envelope `try/catch` drop; **silent** (no payload logged, content may be sensitive). The singular live/echo `message`. See [`observeLastMessage`](#observelastmessageconversationid--the-live-last-message-preview-329) and [`observeMessages`](#observemessagesconversationid--the-live-thread-read-313) below. |
+| `"message_chunk"` | The `backfill_since` **response** body ([#313](../codebase/313.md)): `MobileJson.decodeFromJsonElement<MessageChunkPayloadDto>(payload)` → map **each** row via the same `toMessage(envelope, sessionId = "")` (one envelope `ts` covers every row) → append the whole batch into `messagesByConversation` in one atomic `update`. Each row **self-routes** by its own `conversation_id` — no `in_reply_to` correlation. A single bad row drops the **whole chunk** in one `catch (IllegalArgumentException)`; silent. |
+| anything else | **No-op** (intentional `else`, not a bug). `backfill_done` (`{delivered}`) needs no action — the `message_chunk` already delivered the history, the count is informational. Single-row `conversation_updated`/`conversation_created` deltas (#318 → #314) extend this `when` in their own slice. |
 
 > **Why single-row deltas are not handled here.** `conversation_updated` / `conversation_created` are
 > single-`Conversation` payloads mapped by [#318](mobile-protocol-v2-wire-layer.md#application-payloads-decoded-on-top-of-envelope)'s
@@ -163,57 +164,127 @@ content (only `last_message_ts`, which maps to no domain field), the preview is 
   conversation is absent/never-seen) on subscription, re-emits only on change, and supports unlimited
   concurrent collectors off the one inbound consumer.
 
-> **Cold-start gap (deferred to #313).** With Design A a quiescent conversation's preview stays empty
-> until a live `message` arrives on **this** connection; it does not back-fill from history. Populating
-> previews on connect is deferred to #313's backfill plumbing (`backfill_since` → `message_chunk` →
-> `backfill_done`); a later follow-up can fold `message_chunk` rows into `lastMessages` using #313's
-> per-row-`ts` reconciliation. #329 deliberately does not pre-build that. It is a strict improvement:
-> before it the preview showed nothing; after it, real content for any conversation with live traffic.
+> **Cold-start gap (still open after #313).** With Design A a quiescent conversation's preview stays
+> empty until a live `message` arrives on **this** connection; it does not back-fill from history.
+> [#313](../codebase/313.md) landed the backfill plumbing (`backfill_since` → `message_chunk`) but feeds
+> it into the **thread** projection (`messagesByConversation`), **not** `lastMessages` — so the preview
+> cold-start gap is unchanged. A later follow-up can fold `message_chunk` rows into `lastMessages` (the
+> chunk's one envelope `ts` covers every row, so it needs a most-recent-row reconciliation, not a
+> per-row `ts`). Until then the preview is a strict improvement over nothing: real content for any
+> conversation with live traffic.
+
+## `observeMessages(conversationId)` — the live thread read (#313)
+
+The conversation thread: a chronological `List<ThreadItem.MessageItem>` of **backfilled history merged
+ahead of the live `message` stream**, deduped by `message_id`, in wire/arrival order.
+[#313](../codebase/313.md) implements it over a third projection fed by the **same** single inbound
+collector:
+
+- A third projection, `private val messagesByConversation = MutableStateFlow<Map<String,
+  List<Message>>>(emptyMap())`, holds each conversation's ordered, `message_id`-deduped thread. It is
+  written **only** by the one `init` collector, from **two** demux arms (see the table above): the
+  `message` arm appends each live message, and the `message_chunk` arm appends a whole backfill batch.
+  Both go through one accumulator:
+
+  ```kotlin
+  private fun appendMessages(rows: List<Pair<String, Message>>) {  // (conversationId, Message)
+      if (rows.isEmpty()) return
+      messagesByConversation.update { current -> /* per row: first-seen id appends at end;
+          repeat id replaces in place (indexOfFirst), position fixed at first occurrence */ }
+  }
+  ```
+
+  Dedup is **last-write-in-place**: a `message_id` seen in both the backfill chunk and a later live
+  `message` appears once, at its first position, with the later payload winning. Batching a whole chunk
+  into one atomic `update` avoids emitting an intermediate list per row.
+
+- The method is a **cold** flow mirroring `observeConversations` exactly — issue the request, then fan
+  out the per-conversation projection:
+
+  ```kotlin
+  override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
+      flow {
+          pump.send(backfillSinceRequest(conversationId))
+          emitAll(messagesByConversation
+              .map { it[conversationId].orEmpty().map(ThreadItem::MessageItem) }
+              .distinctUntilChanged())
+      }
+  ```
+
+  `distinctUntilChanged()` means a change to **another** conversation's slot does not re-emit this flow.
+  Re-sends `backfill_since` on every subscription; re-delivered history is absorbed by the `message_id`
+  dedup, so no idempotency guard is needed, and a pre-`Open` send (returns `false`) self-heals on the
+  next subscribe while the live stream still fills the thread.
+
+- **`backfill_since` is the one outgoing request.** `backfillSinceRequest(id)` builds `Envelope(type =
+  "backfill_since", payload = BackfillSincePayloadDto(since_ts = "1970-01-01T00:00:00Z", conversation_id
+  = id, max_messages = 10_000))` — full history from the Unix **epoch** (the wire `since_ts` is a
+  *required* RFC-3339 timestamp, so "all history" is the epoch, not an absent field) with an advisory
+  `max_messages` cap. Wire SSOT: server [#272](https://github.com/pyrycode/pyrycode/issues/272)
+  `BackfillSincePayload` (`internal/protocol/messaging.go`). The reply (`message_chunk` + a terminal
+  `backfill_done` the repo ignores) is correlated by `inReplyTo` on the wire, but the repo never reads
+  it — each chunk row self-routes by its own `conversation_id`. See [[v2-app-payload-shapes-ssot]].
+
+- **Ordering is wire/arrival order — no client-side timestamp sort.** A `message_chunk` carries **one**
+  envelope `ts` for many rows, so a timestamp sort is impossible *and* wrong; the ordered inbound stream
+  delivers the backfill chunk before the live messages the server emits afterward, so appending in
+  arrival order yields history-then-live naturally. The encrypted stream cannot skip a frame — do not
+  reorder around a gap.
+
+> **Two de-scopes, both blocked on a server-side v2 protocol addition — neither is a bug.** The thread
+> emits `ThreadItem.MessageItem`s **only**: the v2 wire has no session-transition representation, so
+> `ThreadItem.SessionBoundary` cannot be constructed ([#336](https://github.com/pyrycode/pyrycode-mobile/issues/336),
+> see [[phase4-v2-wire-no-session-boundary]]); and every message is *finished* (`isStreaming = false` via
+> #317's `toMessage`), so live token-streaming cannot be produced
+> ([#337](https://github.com/pyrycode/pyrycode-mobile/issues/337), see [[phase4-v2-wire-no-streaming]]).
+
+> **Known follow-up: `appendMessages` dedup is O(n²) over thread size** (`indexOfFirst` + `existing +
+> message` per row). Deferred by evidence — no live backfill yet (`max_messages` unexercised; the
+> backend dispatcher is pyrycode #248), no observed perf failure. Swap to a `LinkedHashMap<messageId,
+> Message>` accumulator when large-thread backfill goes live; the change is internal to `appendMessages`.
 
 ## Stubs — the full interface compiles; later slices replace what they own
 
-Every method other than `observeConversations` and `observeLastMessage` (#329) throws
-`UnsupportedOperationException` with a message naming the owning follow-up, so the class compiles the
-full interface today and each slice replaces only the methods it owns:
+Every method other than the three live read paths — `observeConversations` (#312), `observeLastMessage`
+(#329), and `observeMessages` (#313) — throws `UnsupportedOperationException` with a message naming the
+owning follow-up, so the class compiles the full interface today and each slice replaces only the methods
+it owns:
 
 | Method(s) | Owner |
 |---|---|
-| `observeMessages` | #313 (thread read path) |
 | `sendMessage`, `createDiscussion`, `promote` | #314 (mutation path) |
 | `archive`, `unarchive`, `rename`, `startNewSession`, `changeWorkspace` | follow-up (no v2 wire message defined yet) |
 
 `delete`, `recentWorkspaces`, and `createWorkspaceFolder` are **not overridden** — they have interface
 defaults (error / empty flow per the [contract](conversation-repository.md)) and are intentionally outside
-this implementation's surface.
-
-> **Stub shape caveat (for #313).** The remaining `Flow`-returning stub (`observeMessages`) uses an
-> expression-body `throw`, so it throws **eagerly on call** rather than returning a `flow { throw … }`
-> that throws on collection. This is a deliberate, test-asserted stub (no production consumer reaches it
-> before #313 lands), but #313 should wire a **real cold flow** that defers work to collection — as
-> [#329](../codebase/329.md) did for `observeLastMessage` (a cold `lastMessages.map { … }.distinctUntilChanged()`).
+this implementation's surface. All three read paths are now **cold flows that defer work to collection**
+(the eager expression-body `throw` shape #312's NIT flagged is gone with the last read stub).
 
 ## State & concurrency model
 
-- **Two `StateFlow` projections — `projection` (the conversation list) and `lastMessages` (#329's
-  per-conversation most-recent `Message`) — fed by one inbound collector** launched on the injected
-  connection `scope`. No second collector or scope is added per slice. The scope (and thus the collector)
-  is cancelled by its owner (#279/#302) when the connection ends; the pump completing `inbound` on
-  teardown also ends the collector naturally. Both projections are in-memory and connection-scoped —
-  lost on process death and re-derived from the live stream on reconnect.
+- **Three `StateFlow` projections — `projection` (the conversation list, #312), `lastMessages` (#329's
+  per-conversation most-recent `Message`), and `messagesByConversation` (#313's per-conversation ordered
+  thread) — fed by one inbound collector** launched on the injected connection `scope`. No second
+  collector or scope is added per slice; a single `message` envelope can update **two** projections
+  (`lastMessages` + `messagesByConversation`). The scope (and thus the collector) is cancelled by its
+  owner (#279/#302) when the connection ends; the pump completing `inbound` on teardown also ends the
+  collector naturally. All projections are in-memory and connection-scoped — lost on process death and
+  re-derived from the live stream (+ a re-`backfill_since`) on reconnect.
 - **Dispatcher inherited from the injected scope** (DI uses `Dispatchers.Default`; this is pure CPU/JSON
   work — the socket I/O is the transport's, below the pump). Not hard-coded.
-- `observeConversations` and `observeLastMessage` are cold; N concurrent collectors share the
-  projections (fan-out off the single inbound consumer).
+- `observeConversations`, `observeLastMessage`, and `observeMessages` are cold; N concurrent collectors
+  share the projections (fan-out off the single inbound consumer).
 
 ## Error handling
 
 | Failure mode | Result |
 |---|---|
 | Malformed `conversations` payload | `IllegalArgumentException` caught per-envelope (covers both #316 families — `MissingFieldException` ⊂ `SerializationException`, and the kotlinx-datetime bad-timestamp throw); envelope **dropped**; collector survives; projection unchanged |
-| Malformed `message` payload (missing field / unmappable role e.g. `system` / bad `ts`) | `IllegalArgumentException` caught per-envelope (covers the #317 `SerializationException` decode failure and the `Instant.parse(ts)` throw); envelope **dropped silently** (no payload logged — content may be sensitive); collector survives; `lastMessages` unchanged ([#329](../codebase/329.md)) |
-| `pump.send` returns `false` (session not `Open`) | request silently not sent (no throw); projection stays `null` until a later subscribe succeeds or a push arrives |
+| Malformed `message` payload (missing field / unmappable role e.g. `system` / bad `ts`) | `IllegalArgumentException` caught per-envelope (covers the #317 `SerializationException` decode failure and the `Instant.parse(ts)` throw); envelope **dropped silently** (no payload logged — content may be sensitive); collector survives; `lastMessages` **and** `messagesByConversation` unchanged ([#329](../codebase/329.md) / [#313](../codebase/313.md)) |
+| Malformed `message_chunk` (any one row bad) | the **whole chunk** dropped in one `catch (IllegalArgumentException)` (decode + map-all under one `try`); collector survives; thread unchanged ([#313](../codebase/313.md)) |
+| `pump.send` returns `false` (session not `Open`) | request (`list_conversations` or `backfill_since`) silently not sent (no throw); the projection stays empty until a later subscribe succeeds or a push arrives — the live stream still fills the thread, and the next subscribe re-issues |
 | `pump.inbound` completes (teardown) | collector completes; last projections retained; live `StateFlow` collectors simply stop receiving updates (do not complete) |
-| Unknown `Envelope.type` | no-op (`messages` thread-read owned by #313, single-row deltas by #314) |
+| Unknown `Envelope.type` | no-op — `backfill_done` (informational) and single-row deltas (#314) fall here; `messages` (a never-defined type) also stays ignored |
 | Stubbed method called | `UnsupportedOperationException` naming the owning follow-up |
 
 **Why catch-and-drop:** the `ConversationRepository` flow type has no error channel and the Fake never
@@ -271,14 +342,17 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
 - Precedent: [Connection state](connection-state.md) — the consumer-defined-interface-in-`data/repository/`
   pattern `SessionPump` follows.
 - Ticket notes: [`../codebase/312.md`](../codebase/312.md) (the list read path) ·
-  [`../codebase/329.md`](../codebase/329.md) (the last-message preview) — files/line refs, patterns,
+  [`../codebase/329.md`](../codebase/329.md) (the last-message preview) ·
+  [`../codebase/313.md`](../codebase/313.md) (the thread read + backfill) — files/line refs, patterns,
   lessons, verification.
 - Specs: `docs/specs/architecture/312-remote-conversation-repository-observe-list.md` ·
-  `docs/specs/architecture/329-remote-conversation-repository-observe-last-message.md`.
+  `docs/specs/architecture/329-remote-conversation-repository-observe-last-message.md` ·
+  `docs/specs/architecture/313-remote-observe-messages.md`.
 - Siblings (extend the same class + `onInbound` `when`): [#329](../codebase/329.md)
   (`observeLastMessage`, **landed** — consumes [#317](../codebase/317.md), rides the live `message`
-  stream), #313 (`observeMessages`, also consumes #317 + establishes the `backfill_since` plumbing #329
-  defers its cold-start to), #314 (mutations, consumes [#318](../codebase/318.md)).
+  stream), [#313](../codebase/313.md) (`observeMessages`, **landed** — consumes #317 + adds the
+  `backfill_since` → `message_chunk` thread plumbing; boundaries #336 / streaming #337 de-scoped, both
+  blocked on server-side v2 protocol additions), #314 (mutations, consumes [#318](../codebase/318.md)).
 - Hand-off: [#279](https://github.com/pyrycode/pyrycode-mobile/issues/279) / [#302](../codebase/302.md)
   (`NoiseSessionPump : SessionPump`, the connection scope, the paired-state Koin swap).
 </content>
