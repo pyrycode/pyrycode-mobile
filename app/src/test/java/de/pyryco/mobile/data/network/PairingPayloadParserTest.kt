@@ -3,6 +3,7 @@ package de.pyryco.mobile.data.network
 import kotlinx.serialization.encodeToString
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Base64
@@ -153,5 +154,34 @@ class PairingPayloadParserTest {
         val reason = (result as PairingParseResult.Failure).reason
         assertFalse(reason.contains(secretToken))
         assertFalse(reason.contains(distinctivePubkey))
+    }
+
+    // ---- serverKeyFingerprint: decode base64-std → 32-byte re-validate → #342 derive (#343) ----
+
+    @Test
+    fun serverKeyFingerprint_validKey_matchesPinnedVector() {
+        // Same pinned vector as StaticKeyFingerprintTest (zero 32-byte key) — hard-coded literal,
+        // pins byte-for-byte parity with #342 / pyrycode#432 through the base64-std decode seam.
+        assertEquals("32:0b:5e:a9:9e:65:3b:c2", serverKeyFingerprint(base64StdEncode(ByteArray(32))))
+    }
+
+    @Test
+    fun serverKeyFingerprint_wrongLength_returnsNull() {
+        assertNull(serverKeyFingerprint(base64StdEncode(ByteArray(31))))
+    }
+
+    @Test
+    fun serverKeyFingerprint_nonBase64_returnsNull() {
+        assertNull(serverKeyFingerprint("!!!"))
+    }
+
+    @Test
+    fun serverKeyFingerprint_endToEndFromParse_matchesPinnedVector() {
+        // Pin the parse→derive seam: a Success carries the base64-std pubkey verbatim, and deriving
+        // from that exact field reproduces the pinned vector (no re-parse, no drift).
+        val result = parsePairingPayload(wrap(json()))
+        assertTrue(result is PairingParseResult.Success)
+        val server = (result as PairingParseResult.Success).server
+        assertEquals("32:0b:5e:a9:9e:65:3b:c2", serverKeyFingerprint(server.serverStaticPublicKey))
     }
 }

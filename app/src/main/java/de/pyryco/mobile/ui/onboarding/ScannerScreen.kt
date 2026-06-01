@@ -11,16 +11,20 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -39,6 +43,8 @@ import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -46,6 +52,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 @Composable
@@ -55,6 +62,8 @@ fun ScannerScreen(
     onOpenSettings: () -> Unit,
     onPasteCode: () -> Unit,
     modifier: Modifier = Modifier,
+    onConfirmPairing: () -> Unit = {},
+    onDeclinePairing: () -> Unit = {},
     cameraPreview: @Composable () -> Unit = {},
 ) {
     when (state) {
@@ -78,6 +87,13 @@ fun ScannerScreen(
             ScannerErrorContent(
                 message = state.message,
                 onPasteCode = onPasteCode,
+                modifier = modifier,
+            )
+        is ScannerUiState.AwaitingConfirm ->
+            PairingConfirmContent(
+                fingerprint = state.fingerprint,
+                onConfirm = onConfirmPairing,
+                onDecline = onDeclinePairing,
                 modifier = modifier,
             )
     }
@@ -344,6 +360,88 @@ private fun ScannerErrorContent(
     }
 }
 
+// The pairing security checkpoint (#343). A full-screen, stateless M3 surface — a peer of the
+// Error/Denied branches above — that renders the server's static-key fingerprint and gates the
+// persist behind an explicit confirm. Deliberately clean and non-decorative: the confirm-pairing
+// view is not yet drawn in the locked Figma file (design-later), so no atmospheric styling is
+// invented here; a visual-fidelity retrofit lands when the design exists. The token never reaches
+// this composable — it receives only the public-key [fingerprint] string + two callbacks.
+@Composable
+private fun PairingConfirmContent(
+    fingerprint: String,
+    onConfirm: () -> Unit,
+    onDecline: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        modifier = modifier.fillMaxSize(),
+    ) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .systemBarsPadding()
+                    .padding(horizontal = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                text = "Confirm the server fingerprint",
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text =
+                    "Check this matches the Static-key fp: line that pyry pair shows on your " +
+                        "other device before you pair.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            // Rendered verbatim — already the #342 colon-lowercase-hex form; never uppercased,
+            // regrouped, or stripped. Selectable + long-press copy via SelectionContainer; the
+            // content description lets TalkBack announce it (AC #4, #5).
+            SelectionContainer {
+                Text(
+                    text = fingerprint,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Center,
+                    modifier =
+                        Modifier.semantics {
+                            contentDescription = "Server fingerprint $fingerprint"
+                        },
+                )
+            }
+            Spacer(modifier = Modifier.height(32.dp))
+            Button(
+                onClick = onConfirm,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp),
+            ) {
+                Text(text = "Confirm pairing")
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = onDecline,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp),
+            ) {
+                Text(text = "Don't pair")
+            }
+        }
+    }
+}
+
 @Preview(name = "Light", showBackground = true, widthDp = 412, heightDp = 892)
 @Composable
 private fun ScannerScreenLightPreview() {
@@ -372,6 +470,31 @@ private fun ScannerScreenDarkPreview() {
             onNavigateBack = {},
             onOpenSettings = {},
             onPasteCode = {},
+        )
+    }
+}
+
+@Preview(name = "Confirm", showBackground = true, widthDp = 412, heightDp = 892)
+@Composable
+private fun PairingConfirmPreview() {
+    PyrycodeMobileTheme {
+        ScannerScreen(
+            state =
+                ScannerUiState.AwaitingConfirm(
+                    fingerprint = "32:0b:5e:a9:9e:65:3b:c2",
+                    server =
+                        PairedServer(
+                            serverId = "srv-1",
+                            token = "tok-123",
+                            relayUrl = "wss://relay.example.com",
+                            serverStaticPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                        ),
+                ),
+            onNavigateBack = {},
+            onOpenSettings = {},
+            onPasteCode = {},
+            onConfirmPairing = {},
+            onDeclinePairing = {},
         )
     }
 }

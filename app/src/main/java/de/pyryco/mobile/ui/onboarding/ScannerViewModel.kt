@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.onboarding
 
 import androidx.lifecycle.ViewModel
+import de.pyryco.mobile.data.crypto.PairedServer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -31,6 +32,18 @@ sealed interface ScannerUiState {
         // assertEquals(Decoded("x"), …) still holds.
         override fun toString(): String = "Decoded(payload=<redacted ${payload.length} chars>)"
     }
+
+    // The security checkpoint (#343): a payload parsed into a real [server] (#320), with its
+    // static-key [fingerprint] derived (#342), is held here awaiting the user's explicit confirm
+    // before anything persists. [server] is carried so the confirm path saves exactly the parsed
+    // record (no re-parse / re-derive — the displayed fingerprint and the saved server are bound to
+    // one immutable value); [fingerprint] is carried so the surface renders without re-deriving. No
+    // custom toString: the only secret is server.token, already redacted by PairedServer.toString();
+    // the fingerprint is a public-key digest (shown on screen and by the desktop), so it is not.
+    data class AwaitingConfirm(
+        val fingerprint: String,
+        val server: PairedServer,
+    ) : ScannerUiState
 }
 
 sealed interface ScannerEvent {
@@ -60,6 +73,20 @@ sealed interface ScannerEvent {
     data class PairingFailed(
         val message: String,
     ) : ScannerEvent
+
+    // Fired by the composable after a successful parse (#320) AND a successful fingerprint derive
+    // (#342) — same "feed the VM the final value" pattern as PairingFailed; carries no payload byte.
+    // No redacting toString: server.token is already redacted by PairedServer.toString() and the
+    // fingerprint is a public-key digest (#343).
+    data class PairingPrepared(
+        val fingerprint: String,
+        val server: PairedServer,
+    ) : ScannerEvent
+
+    // Fired by the Decline button and by system Back while AwaitingConfirm: persist nothing, re-arm
+    // the scanner (#343). Confirm is deliberately NOT an event — the suspend save + navigate is a
+    // route-scope callback in the composable (mirrors onPasteCode), keeping this VM Android-free.
+    data object DeclinePairing : ScannerEvent
 }
 
 // Pure synchronous state machine: no viewModelScope, no flows beyond the single state holder, no
@@ -77,6 +104,12 @@ class ScannerViewModel : ViewModel() {
                 is ScannerEvent.CameraError -> ScannerUiState.Error(event.message)
                 is ScannerEvent.QrDecoded -> ScannerUiState.Decoded(event.payload)
                 is ScannerEvent.PairingFailed -> ScannerUiState.Error(event.message)
+                is ScannerEvent.PairingPrepared ->
+                    ScannerUiState.AwaitingConfirm(event.fingerprint, event.server)
+                // Unconditional → ReadyToScan: DeclinePairing is only ever wired from the confirm
+                // surface / the AwaitingConfirm-gated BackHandler. Re-arms CameraPreview (mounted
+                // only in ReadyToScan); persists nothing.
+                ScannerEvent.DeclinePairing -> ScannerUiState.ReadyToScan
             }
     }
 }
