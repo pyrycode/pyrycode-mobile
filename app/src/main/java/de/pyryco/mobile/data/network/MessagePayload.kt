@@ -137,3 +137,23 @@ data class BackfillSincePayloadDto(
     @SerialName("conversation_id") val conversationId: String,
     @SerialName("max_messages") val maxMessages: Int,
 )
+
+/**
+ * Mobile Protocol v2 `send_message` request payload (#346): the phone→binary request that posts the
+ * user's text to a conversation. **Encode-only** — the phone sends it; the only correlated reply is
+ * an empty `ack` on success or an `error` on failure (there is no persisted-`Message` echo to the
+ * sender to decode), so the sender's thread updates only via a local confirmed-insert after the ack.
+ *
+ * Wire SSOT: server `internal/protocol/messaging.go` `SendMessagePayload` (#272). Field declaration
+ * order matches the Go struct (`conversation_id`, `message_id`, `text`); all three are required.
+ *
+ *  - [messageId] is **client-generated** (a minted UUID); the repository interface passes only
+ *    `conversationId` + `text`, so the id is the sender's correlation handle for the reconstructed
+ *    [Message], distinct from the request *envelope* id used for `ack`/`error` correlation.
+ */
+@Serializable
+data class SendMessagePayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    @SerialName("message_id") val messageId: String,
+    val text: String,
+)

@@ -2,15 +2,20 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.network.BackfillSincePayloadDto
 import de.pyryco.mobile.data.network.ConversationsPayload
 import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.ErrorPayload
 import de.pyryco.mobile.data.network.MessageChunkPayloadDto
 import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.RelayErrorException
+import de.pyryco.mobile.data.network.SendMessagePayloadDto
 import de.pyryco.mobile.data.network.toConversations
 import de.pyryco.mobile.data.network.toMessage
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,9 +27,12 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -63,25 +71,39 @@ class RemoteConversationRepository(
 
     /**
      * `conversationId -> most-recent` [Message] seen on this connection's live `message` stream
-     * (#329). Written **only** by the single [init] inbound collector (sequential single writer);
-     * [observeLastMessage] fans out from it. Connection-scoped in-memory state — lost on process
-     * death and re-derived from the live stream on reconnect (the cold-start gap is the #313
-     * backfill hand-off). The fold is strictly-greater-by-timestamp, mirroring the fake's
-     * `maxByOrNull { it.timestamp }`.
+     * (#329). Written by the single [init] inbound collector **and** by [sendMessage]'s confirmed
+     * insert (#346) — two writers, but every write goes through the atomic [MutableStateFlow.update]
+     * fold below, so concurrent updates retry-merge correctly. [observeLastMessage] fans out from it.
+     * Connection-scoped in-memory state — lost on process death and re-derived from the live stream
+     * on reconnect (the cold-start gap is the #313 backfill hand-off). The fold is
+     * strictly-greater-by-timestamp, mirroring the fake's `maxByOrNull { it.timestamp }`.
      */
     private val lastMessages = MutableStateFlow<Map<String, Message>>(emptyMap())
 
     /**
      * `conversationId -> ordered, message_id-deduped thread` of every [Message] seen for the
      * conversation — backfilled history (`message_chunk`) plus live `message`s, in wire/arrival
-     * order (#313). Written **only** by the single [init] inbound collector (sequential single
-     * writer); [observeMessages] fans out from it. Each value is order-preserving: first insertion
-     * fixes a message's position, a repeat `message_id` updates it in place (the dedup rule), so the
-     * thread is complete-on-first-emission once backfill arrives and live messages append after.
+     * order (#313). Written by the single [init] inbound collector **and** by [sendMessage]'s
+     * confirmed insert (#346) — two writers, but every write goes through the atomic
+     * [appendMessages] / [MutableStateFlow.update] fold, so concurrent updates retry-merge correctly.
+     * [observeMessages] fans out from it. Each value is order-preserving: first insertion fixes a
+     * message's position, a repeat `message_id` updates it in place (the dedup rule), so the thread
+     * is complete-on-first-emission once backfill arrives and live messages append after.
      */
     private val messagesByConversation = MutableStateFlow<Map<String, List<Message>>>(emptyMap())
 
     private val requestId = AtomicLong(0)
+
+    /**
+     * Request *envelope* id (`requestId.incrementAndGet()`, **not** the payload `message_id`) ->
+     * the deferred awaiting that request's correlated reply (#346). A request registers its deferred
+     * here before sending; the single [init] collector completes it on the matching `ack` (success)
+     * or `error` (failure) by [Envelope.inReplyTo]; the awaiting caller removes its own entry in a
+     * `finally`. Touched from the collector coroutine and arbitrary caller coroutines, so
+     * [ConcurrentHashMap] — the same `java.util.concurrent` posture as [requestId]. This is the
+     * shared request↔reply correlation primitive #347/#348 reuse.
+     */
+    private val pendingRequests = ConcurrentHashMap<Long, CompletableDeferred<JsonElement>>()
 
     init {
         // The single consumer of the hot, single-consumer inbound stream. Cancelled by its owner
@@ -123,19 +145,11 @@ class RemoteConversationRepository(
                     } catch (e: IllegalArgumentException) {
                         return
                     }
-                // Atomic check-then-replace: keep the most-recent by timestamp. Strictly-greater means
-                // out-of-order older arrivals and re-delivered duplicates are no-ops (no re-emit).
-                lastMessages.update { current ->
-                    val existing = current[conversationId]
-                    if (existing != null && message.timestamp <= existing.timestamp) {
-                        current
-                    } else {
-                        current + (conversationId to message)
-                    }
-                }
-                // The live message is also a thread row (#313): append it to the conversation thread
-                // in arrival order, deduped by message_id (a backfill row with the same id is updated
-                // in place). The thread is a distinct projection from the last-message preview above.
+                // Keep the most-recent by timestamp (the strictly-greater fold below). The live
+                // message is also a thread row (#313): append it to the conversation thread in
+                // arrival order, deduped by message_id. The thread is a distinct projection from
+                // the last-message preview.
+                recordLastMessage(conversationId, message)
                 appendMessages(listOf(conversationId to message))
             }
             TYPE_MESSAGE_CHUNK -> {
@@ -154,10 +168,85 @@ class RemoteConversationRepository(
                     }
                 appendMessages(rows)
             }
+            TYPE_ACK ->
+                // Success reply to a correlated request (#346): the payload is the empty `{}` an
+                // `ack` carries — handed verbatim to the waiter, which ignores it for a bare ack and
+                // (later, #347/#348) decodes it for a typed reply. An `inReplyTo` matching no pending
+                // entry (or null) is a no-op: `list_conversations`/`backfill_since` draw no `ack`.
+                // `complete` is idempotent, so a duplicate ack is harmless.
+                envelope.inReplyTo?.let { id -> pendingRequests[id]?.complete(envelope.payload) }
+            TYPE_ERROR ->
+                // Failure reply to a correlated request (#346): unblock the waiter exceptionally with
+                // the mapped domain error. `mapError` never throws (a malformed payload yields a
+                // fallback exception), so the lone collector survives; `completeExceptionally` is
+                // idempotent and a no-op when no entry matches.
+                envelope.inReplyTo?.let { id -> pendingRequests[id]?.completeExceptionally(mapError(envelope.payload)) }
             // Any other type is a no-op here: single-row conversation deltas (#318 → #314) extend
             // this `when` in their own slice. `backfill_done` ({delivered}) needs no action — the
             // `message_chunk` already delivered the full history; the count is informational only.
             else -> Unit
+        }
+    }
+
+    /**
+     * Map a server `error` reply payload (#346) to the domain exception the awaiting suspend throws.
+     * Decodes [ErrorPayload] through [MobileJson]; `conversation.not_found` becomes the
+     * [IllegalArgumentException] the [ConversationRepository] contract pins for an unknown
+     * conversation (AC #3, mirroring the fake's type), and every other code becomes a
+     * [RelayErrorException] carrying the structured `code`/`retryable`/`message` (AC #4). A
+     * malformed/undecodable payload yields a fallback [RelayErrorException] so the waiter is always
+     * unblocked rather than left hanging. Never logs the payload (message content stays off the log).
+     */
+    private fun mapError(payload: JsonElement): Throwable {
+        val error =
+            try {
+                MobileJson.decodeFromJsonElement<ErrorPayload>(payload)
+            } catch (e: IllegalArgumentException) {
+                return RelayErrorException(code = ERROR_MALFORMED_REPLY, retryable = false, message = "Malformed error reply")
+            }
+        return if (error.code == ERROR_CONVERSATION_NOT_FOUND) {
+            IllegalArgumentException("Unknown conversation: ${error.message}")
+        } else {
+            RelayErrorException(code = error.code, retryable = error.retryable, message = error.message)
+        }
+    }
+
+    /**
+     * Most-recent-by-timestamp fold for [conversationId]'s last-message preview ([lastMessages]).
+     * Atomic check-then-replace: replace the stored entry **iff** [message]'s timestamp is strictly
+     * greater, so out-of-order older arrivals and re-delivered duplicates are no-ops (no re-emit).
+     * Called by both the live `message` collector arm and [sendMessage]'s confirmed insert.
+     */
+    private fun recordLastMessage(
+        conversationId: String,
+        message: Message,
+    ) {
+        lastMessages.update { current ->
+            val existing = current[conversationId]
+            if (existing != null && message.timestamp <= existing.timestamp) {
+                current
+            } else {
+                current + (conversationId to message)
+            }
+        }
+    }
+
+    /**
+     * Register a deferred for [request]'s reply, send the request, and await the correlated
+     * `ack`/`error` (#346) — the reusable request↔reply primitive #347/#348 inherit. Registers
+     * **before** sending (no lost-reply race), throws [IllegalStateException] without awaiting if the
+     * pump is not `Open` ([SessionPump.send] returns `false`, AC #4), and removes the entry in a
+     * `finally` covering success, error, and caller cancellation. Returns the reply payload (the
+     * empty `{}` for an `ack`); rethrows the collector's exceptional completion on an `error`.
+     */
+    private suspend fun sendAndAwaitReply(request: Envelope): JsonElement {
+        val deferred = CompletableDeferred<JsonElement>()
+        pendingRequests[request.id] = deferred
+        return try {
+            check(pump.send(request)) { "${request.type} not sent: session not connected" }
+            deferred.await()
+        } finally {
+            pendingRequests.remove(request.id)
         }
     }
 
@@ -287,10 +376,52 @@ class RemoteConversationRepository(
         workspace: String?,
     ): Conversation = throw UnsupportedOperationException("promote: mutation path not yet wired (#314)")
 
+    /**
+     * Post [text] to [conversationId] over v2 `send_message` (#346). Mints a client-side
+     * `message_id`, sends the request, and awaits its correlated reply: an empty `ack` (success) or
+     * an `error` (failure). Mirrors [FakeConversationRepository.sendMessage]'s observable contract —
+     * returns a `role=User` [Message] reconstructed from the input. There is no server `message` echo
+     * to the sender, so the sender's thread updates only via the **confirmed insert** below, run
+     * **only after** the `ack`: both read-path projections re-emit, never on a failure path.
+     *
+     * Throws [IllegalArgumentException] for an unknown conversation (server `conversation.not_found`,
+     * mirroring the fake's type), [RelayErrorException] for any other server `error`, and
+     * [IllegalStateException] when the session is not connected — none of which mutate a projection.
+     */
     override suspend fun sendMessage(
         conversationId: String,
         text: String,
-    ): Message = throw UnsupportedOperationException("sendMessage: mutation path not yet wired (#314)")
+    ): Message {
+        val messageId = UUID.randomUUID().toString()
+        val sentAt = Clock.System.now()
+        val request =
+            Envelope(
+                id = requestId.incrementAndGet(),
+                type = TYPE_SEND_MESSAGE,
+                ts = sentAt.toString(),
+                payload =
+                    MobileJson.encodeToJsonElement(
+                        SendMessagePayloadDto(conversationId = conversationId, messageId = messageId, text = text),
+                    ),
+            )
+        // Throws on a server `error` / not-Open session; the confirmed insert below is unreachable
+        // on any failure path. The empty `{}` ack payload carries nothing to map.
+        sendAndAwaitReply(request)
+        val message =
+            Message(
+                id = messageId,
+                // The v2 wire carries no session_id (boundaries are #336); list/thread tiers use the
+                // "" placeholder, never a resolved currentSessionId — matching the inbound mappers.
+                sessionId = "",
+                role = Role.User,
+                content = text,
+                timestamp = sentAt,
+                isStreaming = false,
+            )
+        recordLastMessage(conversationId, message)
+        appendMessages(listOf(conversationId to message))
+        return message
+    }
 
     override suspend fun archive(conversationId: String): Unit =
         throw UnsupportedOperationException("archive: no v2 wire message defined (follow-up specs the wire contract)")
@@ -331,6 +462,21 @@ class RemoteConversationRepository(
 
         /** Response: a batch of finished `message` rows answering a `backfill_since` (#313, #272). */
         const val TYPE_MESSAGE_CHUNK = "message_chunk"
+
+        /** Request: post a user message to a conversation (#346, #272 `SendMessagePayload`). */
+        const val TYPE_SEND_MESSAGE = "send_message"
+
+        /** Correlated success reply (empty `{}`) to a request, matched on `in_reply_to` (#346). */
+        const val TYPE_ACK = "ack"
+
+        /** Correlated failure reply (`{code, message, retryable}`) to a request (#346, #272). */
+        const val TYPE_ERROR = "error"
+
+        /** Server `error.code` for an unknown conversation → [IllegalArgumentException] (#346, AC #3). */
+        const val ERROR_CONVERSATION_NOT_FOUND = "conversation.not_found"
+
+        /** Client-side synthetic code for an undecodable `error` payload (#346 fallback, never hangs). */
+        const val ERROR_MALFORMED_REPLY = "error.malformed_reply"
 
         /**
          * RFC-3339 epoch cursor for "all history on first load" — `backfill_since.since_ts` is a
