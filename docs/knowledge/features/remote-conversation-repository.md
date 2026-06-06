@@ -9,8 +9,11 @@ backend swap is architectural — replace the binding, don't special-case the UI
 Package: `de.pyryco.mobile.data.repository` (`RemoteConversationRepository` + the consumer-defined
 `SessionPump` interface), same package as the contract and the Fake. Built **slice by slice**: the
 conversation-list read path landed in [#312](../codebase/312.md), the last-message preview in
-[#329](../codebase/329.md), and the thread read path in [#313](../codebase/313.md); the mutation path
-(#314) extends the **same class** as it lands. Portable, `android.*`-free.
+[#329](../codebase/329.md), and the thread read path in [#313](../codebase/313.md); the **first mutation
+path — `sendMessage` — landed in [#346](../codebase/346.md)** (which also introduced the shared
+`ack`/`error` request↔reply correlation primitive the remaining mutations reuse). The mutation slice
+#314 was split on a per-method axis into #346 (`sendMessage`) / #347 (`createDiscussion`) / #348
+(`promote`), each extending the **same class** as it lands. Portable, `android.*`-free.
 
 > **Ships dormant (no live binding yet).** #312 lands `RemoteConversationRepository` with **no Koin
 > binding and no consumers** — the UI still binds to `FakeConversationRepository`. Wiring the live binding
@@ -86,7 +89,9 @@ demultiplexes each envelope by `Envelope.type`:
 | `"conversations"` | Decode `MobileJson.decodeFromJsonElement<ConversationsPayload>(payload).toConversations()` (#316) → assign to `projection`. A **full-list snapshot** — both the reply to our request and any unsolicited server change-push arrive this way, so re-emission needs **no `in_reply_to` correlation**. Decode is wrapped in a per-envelope `try/catch` (a malformed snapshot is dropped, the collector survives). |
 | `"message"` | Decode `MobileJson.decodeFromJsonElement<MessagePayloadDto>(payload)` (#317) → key by `conversation_id` (**read off the DTO before mapping** — the domain `Message` carries none) → `toMessage(envelope, sessionId = "")`, then **two folds** off the one decoded DTO: (a) the strictly-greater-by-`timestamp` `lastMessages` preview fold ([#329](../codebase/329.md)); (b) an arrival-order append into the `messagesByConversation` thread ([#313](../codebase/313.md)). Same per-envelope `try/catch` drop; **silent** (no payload logged, content may be sensitive). The singular live/echo `message`. See [`observeLastMessage`](#observelastmessageconversationid--the-live-last-message-preview-329) and [`observeMessages`](#observemessagesconversationid--the-live-thread-read-313) below. |
 | `"message_chunk"` | The `backfill_since` **response** body ([#313](../codebase/313.md)): `MobileJson.decodeFromJsonElement<MessageChunkPayloadDto>(payload)` → map **each** row via the same `toMessage(envelope, sessionId = "")` (one envelope `ts` covers every row) → append the whole batch into `messagesByConversation` in one atomic `update`. Each row **self-routes** by its own `conversation_id` — no `in_reply_to` correlation. A single bad row drops the **whole chunk** in one `catch (IllegalArgumentException)`; silent. |
-| anything else | **No-op** (intentional `else`, not a bug). `backfill_done` (`{delivered}`) needs no action — the `message_chunk` already delivered the history, the count is informational. Single-row `conversation_updated`/`conversation_created` deltas (#318 → #314) extend this `when` in their own slice. |
+| `"ack"` | Correlated **success** reply to an outgoing mutation request ([#346](../codebase/346.md)): `envelope.inReplyTo?.let { pendingRequests[it]?.complete(envelope.payload) }`. The `ack` payload is the empty `{}` — handed verbatim to the waiting suspend (a bare-`ack` caller like `sendMessage` ignores it; #347/#348 decode it). An `inReplyTo` matching no pending entry (or null) is a no-op; `complete` is idempotent (duplicate `ack` harmless). |
+| `"error"` | Correlated **failure** reply ([#346](../codebase/346.md)): `envelope.inReplyTo?.let { pendingRequests[it]?.completeExceptionally(mapError(envelope.payload)) }` — unblocks the waiter exceptionally with the mapped domain error. `mapError` **never throws** (a malformed payload yields a fallback exception), so the lone collector survives; `completeExceptionally` is idempotent and a no-op when no entry matches. |
+| anything else | **No-op** (intentional `else`, not a bug). `backfill_done` (`{delivered}`) needs no action — the `message_chunk` already delivered the history, the count is informational. Single-row `conversation_updated`/`conversation_created` deltas (#318 → #347/#348) extend this `when` in their own slice. |
 
 > **Why single-row deltas are not handled here.** `conversation_updated` / `conversation_created` are
 > single-`Conversation` payloads mapped by [#318](mobile-protocol-v2-wire-layer.md#application-payloads-decoded-on-top-of-envelope)'s
@@ -243,16 +248,114 @@ collector:
 > backend dispatcher is pyrycode #248), no observed perf failure. Swap to a `LinkedHashMap<messageId,
 > Message>` accumulator when large-thread backfill goes live; the change is internal to `appendMessages`.
 
+## `sendMessage(conversationId, text)` — the first mutation (#346)
+
+Posts the user's text over v2 `send_message` and returns the persisted `Message`.
+[#346](../codebase/346.md) implements it, and in doing so adds the **shared request↔reply correlation
+primitive** the remaining mutations (#347/#348) reuse.
+
+**The corrected wire premise is load-bearing.** `send_message` does **not** echo the sender its own
+persisted `Message`. The only sender-correlated reply is an empty **`ack`** on success
+(`in_reply_to == requestId`, payload `{}`) or an **`error`** on failure (`{code, message, retryable}`).
+A `message` envelope reaching this device is a user-echo to *other* paired devices or the assistant's
+*later, unsolicited* reply (`in_reply_to: null`), **never** a sender echo — so there is nothing to map
+for the return value, and the sender's own thread updates **only** if `sendMessage` projects the
+message locally. (The "send_message echo" phrasing still in the `TYPE_MESSAGE` code comments predates
+this correction and is harmless — that path correctly handles the other-device / assistant cases.) See
+[[phase4-send-message-acks-not-message-echo]] and [[phase4-request-encoders-live-in-mutation-tickets]].
+
+**Decision (PO-owned, `security-sensitive`): confirmed-insert, not optimistic.** The message is
+projected into the read path **only on the correlated `ack`** — never before, never on failure. There
+is no rollback path because nothing is inserted speculatively. The trust property — the thread never
+shows a message the server did not receive — holds **by construction**. (`Message` has no
+delivery-status field, so an optimistic insert could only render as a normal-looking message that might
+silently vanish; perceived send latency is a future UI-layer concern, not a data-layer one.)
+
+The flow (≤ ~15 lines):
+
+```kotlin
+override suspend fun sendMessage(conversationId: String, text: String): Message {
+    val messageId = UUID.randomUUID().toString()        // client-minted; the sender's correlation handle
+    val sentAt = Clock.System.now()
+    val request = Envelope(
+        id = requestId.incrementAndGet(),               // the ENVELOPE id — distinct from messageId
+        type = "send_message", ts = sentAt.toString(),
+        payload = MobileJson.encodeToJsonElement(
+            SendMessagePayloadDto(conversationId, messageId, text)),  // {conversation_id, message_id, text}
+    )
+    sendAndAwaitReply(request)                           // throws on error / not-Open; ignore the empty {} ack
+    val message = Message(messageId, sessionId = "", Role.User, text, sentAt, isStreaming = false)
+    recordLastMessage(conversationId, message)           // confirmed-insert into BOTH projections,
+    appendMessages(listOf(conversationId to message))    //   only after the ack
+    return message
+}
+```
+
+This **mirrors `FakeConversationRepository.sendMessage`'s observable contract** (mint id, reconstruct a
+`Role.User` message, insert, return) so the UI behaves identically under either binding. The one
+intentional divergence: `sessionId = ""` (the remote's list-tier placeholder; the v2 wire carries no
+`session_id`, boundaries are #336) vs the fake's `currentSessionId`. There is **no local cache guard**
+for an unknown conversation — the server is authoritative (the cached `projection` can be stale), so an
+unknown id surfaces through the server's `conversation.not_found` `error`. Observably identical to the
+fake's synchronous throw; the contract pins the exception *type*, not the timing.
+
+### The `ack`/`error` correlation primitive (reused by #347/#348)
+
+The class still runs **exactly one** `pump.inbound` collector — `sendMessage` does **not** open a
+second subscription. Correlation rides that single collector via a generic pending-reply registry:
+
+```kotlin
+// keyed by the request ENVELOPE id (requestId.incrementAndGet()), distinct from the payload message_id
+private val pendingRequests = ConcurrentHashMap<Long, CompletableDeferred<JsonElement>>()
+
+private suspend fun sendAndAwaitReply(request: Envelope): JsonElement {
+    val deferred = CompletableDeferred<JsonElement>()
+    pendingRequests[request.id] = deferred                       // register BEFORE send (no lost-reply race)
+    return try {
+        check(pump.send(request)) { "${request.type} not sent: session not connected" }  // → IllegalStateException
+        deferred.await()                                          // collector completes it on ack/error
+    } finally {
+        pendingRequests.remove(request.id)                        // success, error, AND caller cancellation
+    }
+}
+```
+
+- **Keyed on the envelope id, not the payload `message_id`** — two distinct ids; conflating them would
+  break correlation. The collector's `ack`/`error` arms complete the matching deferred by
+  `Envelope.inReplyTo` (see the demux table above).
+- **`ConcurrentHashMap`** matches the file's existing `java.util.concurrent` posture (`AtomicLong`);
+  it's touched from both the connection-scoped collector coroutine and arbitrary caller coroutines.
+- **Typed `<JsonElement>`** (the raw reply payload) so the one registry serves a bare-`ack` caller
+  (`sendMessage` ignores the empty `{}`) **and** future typed-reply callers (#347/#348 decode
+  `conversation_created`/`conversation_updated` from it). Those siblings add their success-type `when`
+  branch and reuse the registry + the `error` branch + `mapError` **as-is**.
+- **`sendMessage` suspends on `CompletableDeferred.await()` in the *caller's* coroutine** (a ViewModel
+  scope), not the connection scope. Caller cancellation → `CancellationException` → the `finally`
+  removes the entry (no leak). The reply is delivered by the collector coroutine;
+  `complete`/`completeExceptionally` are thread-safe and idempotent across the two coroutines.
+
+`mapError(payload): Throwable` turns a server `error` into the thrown domain exception: decode
+`ErrorPayload` through `MobileJson`; `conversation.not_found` → `IllegalArgumentException("Unknown
+conversation: …")` (fake parity), every other code → [`RelayErrorException`](mobile-protocol-v2-wire-layer.md)`(code,
+retryable, message)`. A **decode failure is caught** and returns a fallback `RelayErrorException`
+(`error.malformed_reply`) so the waiter is **never** left hanging and the lone collector survives — a
+deterministic safety net, not a re-thrown exception. `mapError` logs nothing (message content stays off
+the log).
+
+> **`recordLastMessage` extraction.** The strictly-greater-by-timestamp fold (formerly inline in the
+> `message` arm, [#329](../codebase/329.md)) was extracted to `private fun recordLastMessage(...)` so
+> both the live `message` arm and `sendMessage` share it (mirroring the pre-existing `appendMessages`).
+> Behavior-preserving; the one sanctioned edit to the collector's existing `TYPE_MESSAGE` body.
+
 ## Stubs — the full interface compiles; later slices replace what they own
 
-Every method other than the three live read paths — `observeConversations` (#312), `observeLastMessage`
-(#329), and `observeMessages` (#313) — throws `UnsupportedOperationException` with a message naming the
-owning follow-up, so the class compiles the full interface today and each slice replaces only the methods
-it owns:
+Every method other than the three live read paths and the now-live `sendMessage` (#346) throws
+`UnsupportedOperationException` with a message naming the owning follow-up, so the class compiles the
+full interface today and each slice replaces only the methods it owns:
 
 | Method(s) | Owner |
 |---|---|
-| `sendMessage`, `createDiscussion`, `promote` | #314 (mutation path) |
+| `createDiscussion`, `promote` | #347 / #348 (the remaining mutations, split from #314; both reuse #346's correlation primitive) |
 | `archive`, `unarchive`, `rename`, `startNewSession`, `changeWorkspace` | follow-up (no v2 wire message defined yet) |
 
 `delete`, `recentWorkspaces`, and `createWorkspaceFolder` are **not overridden** — they have interface
@@ -270,6 +373,19 @@ this implementation's surface. All three read paths are now **cold flows that de
   owner (#279/#302) when the connection ends; the pump completing `inbound` on teardown also ends the
   collector naturally. All projections are in-memory and connection-scoped — lost on process death and
   re-derived from the live stream (+ a re-`backfill_since`) on reconnect.
+- **Two writers per message projection, still data-safe (#346).** Since `sendMessage` landed,
+  `lastMessages` and `messagesByConversation` are written by **the collector *and* `sendMessage`'s
+  confirmed-insert** — no longer single-writer. Data-safety holds: every write goes through an atomic
+  `MutableStateFlow.update {}` (CAS) over a **pure** fold (`recordLastMessage`'s strictly-greater rule /
+  `appendMessages`'s id-dedup), so concurrent writes from the two coroutines retry-merge correctly. The
+  KDoc on both fields was updated to name the second writer.
+- **The `pendingRequests` registry (#346)** (`ConcurrentHashMap<Long, CompletableDeferred<JsonElement>>`)
+  is the only other shared mutable state: an in-flight mutation request registers a deferred keyed by its
+  envelope id, the collector completes it on the correlated `ack`/`error`, and the awaiting caller
+  removes its own entry in a `finally`. Bounded by caller concurrency (one entry per in-flight send,
+  removed on success/error/cancellation) — no unbounded growth. The one documented gap: a
+  connection-drop mid-await leaves a single stranded entry until the *caller* is cancelled (no timeout
+  added; see [Hand-off](#hand-off--the-live-binding-279--302)).
 - **Dispatcher inherited from the injected scope** (DI uses `Dispatchers.Default`; this is pure CPU/JSON
   work — the socket I/O is the transport's, below the pump). Not hard-coded.
 - `observeConversations`, `observeLastMessage`, and `observeMessages` are cold; N concurrent collectors
@@ -284,7 +400,11 @@ this implementation's surface. All three read paths are now **cold flows that de
 | Malformed `message_chunk` (any one row bad) | the **whole chunk** dropped in one `catch (IllegalArgumentException)` (decode + map-all under one `try`); collector survives; thread unchanged ([#313](../codebase/313.md)) |
 | `pump.send` returns `false` (session not `Open`) | request (`list_conversations` or `backfill_since`) silently not sent (no throw); the projection stays empty until a later subscribe succeeds or a push arrives — the live stream still fills the thread, and the next subscribe re-issues |
 | `pump.inbound` completes (teardown) | collector completes; last projections retained; live `StateFlow` collectors simply stop receiving updates (do not complete) |
-| Unknown `Envelope.type` | no-op — `backfill_done` (informational) and single-row deltas (#314) fall here; `messages` (a never-defined type) also stays ignored |
+| Unknown `Envelope.type` | no-op — `backfill_done` (informational) and single-row deltas (#347/#348) fall here; `messages` (a never-defined type) also stays ignored |
+| `sendMessage` — server `error` `conversation.not_found` (#346) | `IllegalArgumentException` (fake parity); **no projection mutated** (the confirmed-insert runs only after a successful `ack`) |
+| `sendMessage` — any other server `error` (#346) | `RelayErrorException(code, retryable, message)` — structured for ViewModel branching; no projection mutated |
+| `sendMessage` — `pump.send` returns `false` (not `Open`, #346) | `IllegalStateException` from `sendAndAwaitReply`'s `check`; no request awaited, no projection mutated |
+| `sendMessage` — malformed/undecodable `error` payload (#346) | `mapError` falls back to a `RelayErrorException(error.malformed_reply)` so the waiter is unblocked and the lone collector survives; no projection mutated |
 | Stubbed method called | `UnsupportedOperationException` naming the owning follow-up |
 
 **Why catch-and-drop:** the `ConversationRepository` flow type has no error channel and the Fake never
@@ -309,8 +429,21 @@ The downstream DI / connection-coordinator slice must:
 Open hand-off items: **pre-`Open` request loss** (if a subscribe's `send` lands before the handshake
 completes, the list stays empty until the next subscribe or a server push — the fix, if observed, is a
 re-request on `PumpState.Open`, owned by #302); **`conversation_updated` delta-merge** (owned by the
-#318-dependent #314); **`isSleeping`/session enrichment** in the list (arrives via the detail/message read
-paths, not here).
+#318-dependent #347/#348); **`isSleeping`/session enrichment** in the list (arrives via the detail/message
+read paths, not here).
+
+Two more hand-offs opened by the `sendMessage` slice ([#346](../codebase/346.md)):
+
+- **ViewModel error surface (#350).** `sendMessage` now throws `RelayErrorException` /
+  `IllegalStateException` (not just `IllegalArgumentException`). The UI's `ThreadViewModel.sendMessage`
+  is currently fire-and-forget with no `try/catch` — harmless under the fake, but once the live remote
+  is bound those exceptions would escape uncaught. The #350 wiring ticket owns the error surface (and
+  documenting the widened exception set on the `ConversationRepository` interface KDoc).
+- **Connection-drop-mid-send leak.** If the connection scope is cancelled while a caller still awaits a
+  reply, the deferred never completes and the suspend hangs until the *caller* is cancelled (the
+  ViewModel scope on screen exit). No timeout is added (no observed hang; a timeout value is a product
+  call). A future slice — or the connection coordinator (#302) — may fail all `pendingRequests` on
+  disconnect.
 
 ## Testing
 
@@ -343,16 +476,21 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   pattern `SessionPump` follows.
 - Ticket notes: [`../codebase/312.md`](../codebase/312.md) (the list read path) ·
   [`../codebase/329.md`](../codebase/329.md) (the last-message preview) ·
-  [`../codebase/313.md`](../codebase/313.md) (the thread read + backfill) — files/line refs, patterns,
-  lessons, verification.
+  [`../codebase/313.md`](../codebase/313.md) (the thread read + backfill) ·
+  [`../codebase/346.md`](../codebase/346.md) (`sendMessage` + the `ack`/`error` correlation primitive) —
+  files/line refs, patterns, lessons, verification.
 - Specs: `docs/specs/architecture/312-remote-conversation-repository-observe-list.md` ·
   `docs/specs/architecture/329-remote-conversation-repository-observe-last-message.md` ·
-  `docs/specs/architecture/313-remote-observe-messages.md`.
+  `docs/specs/architecture/313-remote-observe-messages.md` ·
+  `docs/specs/architecture/346-remote-send-message.md`.
 - Siblings (extend the same class + `onInbound` `when`): [#329](../codebase/329.md)
   (`observeLastMessage`, **landed** — consumes [#317](../codebase/317.md), rides the live `message`
   stream), [#313](../codebase/313.md) (`observeMessages`, **landed** — consumes #317 + adds the
   `backfill_since` → `message_chunk` thread plumbing; boundaries #336 / streaming #337 de-scoped, both
-  blocked on server-side v2 protocol additions), #314 (mutations, consumes [#318](../codebase/318.md)).
+  blocked on server-side v2 protocol additions), [#346](../codebase/346.md) (`sendMessage`, **landed** —
+  the first mutation; added the shared `ack`/`error` correlation primitive), #347 (`createDiscussion`) /
+  #348 (`promote`) (the remaining mutations, split from #314, consume [#318](../codebase/318.md) and
+  reuse #346's correlation primitive).
 - Hand-off: [#279](https://github.com/pyrycode/pyrycode-mobile/issues/279) / [#302](../codebase/302.md)
   (`NoiseSessionPump : SessionPump`, the connection scope, the paired-state Koin swap).
 </content>
