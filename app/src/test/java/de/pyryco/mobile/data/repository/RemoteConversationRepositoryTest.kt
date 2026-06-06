@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.Envelope
@@ -20,6 +21,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -233,10 +235,9 @@ class RemoteConversationRepositoryTest {
         runTest {
             val repo = RemoteConversationRepository(FakeSessionPump(), backgroundScope)
 
-            // observeLastMessage (#329), observeMessages (#313), and sendMessage (#346) are now all
-            // implemented; only the remaining mutation / no-wire methods are still stubs.
-            // Suspend stubs throw when invoked.
-            assertUnsupported { repo.createDiscussion() }
+            // observeLastMessage (#329), observeMessages (#313), sendMessage (#346), and
+            // createDiscussion (#347) are now all implemented; only the remaining mutation / no-wire
+            // methods are still stubs. Suspend stubs throw when invoked.
             assertUnsupported { repo.promote("c", "name") }
             assertUnsupported { repo.archive("c") }
             assertUnsupported { repo.unarchive("c") }
@@ -739,6 +740,238 @@ class RemoteConversationRepositoryTest {
             assertTrue(send().exceptionOrNull() is RelayErrorException)
         }
 
+    // ---- createDiscussion (#347): create_conversation request → conversation_created reply ------
+
+    // AC #1, #4: a null workspace sends create_conversation with is_promoted=false and no cwd key
+    // (explicitNulls=false omits the null cwd — the server assigns the scratch cwd).
+    @Test
+    fun createDiscussion_nullWorkspace_sendsCreateConversationWithPromotedFalseAndNoCwd() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            startCreate(repo, null)
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "create_conversation" }
+            assertEquals(MobileJson.parseToJsonElement("""{"is_promoted":false}"""), sent.payload)
+
+            // Unblock the launched coroutine so backgroundScope completes cleanly.
+            pump.push(conversationCreatedEnvelope(inReplyTo = sent.id, id = "c-new", cwd = DEFAULT_SCRATCH_CWD))
+            runCurrent()
+        }
+
+    // AC #1, #4: an explicit workspace pins the cwd on the wire.
+    @Test
+    fun createDiscussion_explicitWorkspace_sendsCreateConversationWithCwd() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            startCreate(repo, "/work/proj")
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "create_conversation" }
+            assertEquals(
+                MobileJson.parseToJsonElement("""{"is_promoted":false,"cwd":"/work/proj"}"""),
+                sent.payload,
+            )
+
+            pump.push(conversationCreatedEnvelope(inReplyTo = sent.id, id = "c-new", cwd = "/work/proj"))
+            runCurrent()
+        }
+
+    // AC #1: the conversation_created reply decodes to an unpromoted Conversation whose cwd is the
+    // server's reply value, not the (null) workspace arg.
+    @Test
+    fun createDiscussion_onCreatedReply_returnsUnpromotedConversationWithServerCwd() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val create = startCreate(repo, null)
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "create_conversation" }.id
+            pump.push(
+                conversationCreatedEnvelope(
+                    inReplyTo = sentId,
+                    id = "c-new",
+                    isPromoted = false,
+                    name = null,
+                    cwd = DEFAULT_SCRATCH_CWD,
+                    lastUsedAt = "2026-05-08T10:34:01Z",
+                ),
+            )
+            runCurrent()
+
+            val conversation = create().getOrThrow()
+            assertEquals("c-new", conversation.id)
+            assertFalse(conversation.isPromoted)
+            assertNull(conversation.name)
+            // The server-assigned scratch cwd, not the null workspace argument.
+            assertEquals(DEFAULT_SCRATCH_CWD, conversation.cwd)
+        }
+
+    // AC #2: observeConversations re-emits to include the new conversation after a successful create.
+    @Test
+    fun createDiscussion_onSuccess_observeConversationsReEmitsIncludingNew() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+
+            val create = startCreate(repo, null)
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "create_conversation" }.id
+            pump.push(
+                conversationCreatedEnvelope(
+                    inReplyTo = sentId,
+                    id = "c-new",
+                    cwd = DEFAULT_SCRATCH_CWD,
+                    lastUsedAt = "2026-05-08T11:00:00Z",
+                ),
+            )
+            runCurrent()
+
+            create().getOrThrow()
+            // c-new (11:00) sorts ahead of chan (10:00) and disc (09:00).
+            assertEquals(listOf("c-new", "chan", "disc"), all.last().map { it.id })
+        }
+
+    // AC #2: the new (unpromoted) conversation surfaces in the Discussions tier.
+    @Test
+    fun createDiscussion_onSuccess_appearsInDiscussionsTier() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val discussions = collectConversations(repo, ConversationFilter.Discussions)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+            assertEquals(listOf("disc"), discussions.last().map { it.id })
+
+            val create = startCreate(repo, null)
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "create_conversation" }.id
+            pump.push(
+                conversationCreatedEnvelope(
+                    inReplyTo = sentId,
+                    id = "c-new",
+                    cwd = DEFAULT_SCRATCH_CWD,
+                    lastUsedAt = "2026-05-08T11:00:00Z",
+                ),
+            )
+            runCurrent()
+            create().getOrThrow()
+
+            // c-new (11:00) sorts ahead of disc (09:00); chan is promoted, so it stays out.
+            assertEquals(listOf("c-new", "disc"), discussions.last().map { it.id })
+        }
+
+    // AC #3: a server error surfaces as RelayErrorException and leaves the list uncorrupted.
+    @Test
+    fun createDiscussion_onServerError_throwsRelayErrorAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val create = startCreate(repo, null)
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "create_conversation" }.id
+            pump.push(errorEnvelope(sentId, code = "server.binary_offline", retryable = true))
+            runCurrent()
+
+            val ex = create().exceptionOrNull()
+            assertTrue("expected RelayErrorException, got $ex", ex is RelayErrorException)
+            assertEquals("server.binary_offline", (ex as RelayErrorException).code)
+            // No partial/failed conversation injected (AC #3 "uncorrupted").
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+        }
+
+    // AC #3, #4: a not-Open session (pump.send returns false) throws IllegalStateException; no fold.
+    @Test
+    fun createDiscussion_whenSendReturnsFalse_throwsIllegalStateAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val create = startCreate(repo, null)
+            runCurrent()
+
+            val ex = create().exceptionOrNull()
+            assertTrue("expected IllegalStateException, got $ex", ex is IllegalStateException)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+        }
+
+    // A malformed conversation_created success reply (missing required field) throws the #318 decode
+    // exception before the fold, so a garbage success reply cannot inject a partial conversation.
+    @Test
+    fun createDiscussion_onMalformedCreatedReply_throwsAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val create = startCreate(repo, null)
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "create_conversation" }.id
+            // Payload omits the required `cwd` → ConversationResponseDto decode throws.
+            pump.push(
+                Envelope(
+                    id = 99L,
+                    type = "conversation_created",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"id":"c-bad","name":null,"is_promoted":false,"last_used_at":"2026-05-08T10:00:00Z"}""",
+                        ),
+                    inReplyTo = sentId,
+                ),
+            )
+            runCurrent()
+
+            // SerializationException is an IllegalArgumentException subtype.
+            assertTrue(create().exceptionOrNull() is IllegalArgumentException)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+        }
+
+    // Correlation hygiene: a conversation_created matching no pending request is a no-op; the
+    // collector survives and a subsequent real create round-trips successfully.
+    @Test
+    fun createDiscussion_uncorrelatedCreatedReply_isNoOpAndCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            runCurrent()
+
+            pump.push(conversationCreatedEnvelope(inReplyTo = 999L, id = "ghost", cwd = DEFAULT_SCRATCH_CWD))
+            runCurrent()
+
+            val create = startCreate(repo, null)
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "create_conversation" }.id
+            pump.push(conversationCreatedEnvelope(inReplyTo = sentId, id = "c-new", cwd = DEFAULT_SCRATCH_CWD))
+            runCurrent()
+
+            assertEquals("c-new", create().getOrThrow().id)
+        }
+
     // ---- Helpers --------------------------------------------------------------------------------
 
     /**
@@ -754,6 +987,44 @@ class RemoteConversationRepositoryTest {
         var outcome: Result<Message>? = null
         backgroundScope.launch { outcome = runCatching { repo.sendMessage(conversationId, text) } }
         return { requireNotNull(outcome) { "sendMessage has not completed" } }
+    }
+
+    /**
+     * Launch [RemoteConversationRepository.createDiscussion] on [backgroundScope] (it suspends
+     * awaiting the conversation_created/error reply) and return a getter for its eventual [Result].
+     * Read the result only after the correlated reply has been pushed and [runCurrent] has drained
+     * the cascade.
+     */
+    private fun TestScope.startCreate(
+        repo: RemoteConversationRepository,
+        workspace: String?,
+    ): () -> Result<Conversation> {
+        var outcome: Result<Conversation>? = null
+        backgroundScope.launch { outcome = runCatching { repo.createDiscussion(workspace) } }
+        return { requireNotNull(outcome) { "createDiscussion has not completed" } }
+    }
+
+    /** A correlated `conversation_created` reply carrying a bare conversation object (#347). */
+    private fun conversationCreatedEnvelope(
+        inReplyTo: Long,
+        id: String,
+        cwd: String,
+        isPromoted: Boolean = false,
+        name: String? = null,
+        lastUsedAt: String = "2026-05-08T10:00:00Z",
+        envId: Long = 99L,
+    ): Envelope {
+        val nameJson = if (name == null) "null" else "\"$name\""
+        return Envelope(
+            id = envId,
+            type = "conversation_created",
+            ts = TS,
+            payload =
+                MobileJson.parseToJsonElement(
+                    """{"id":"$id","name":$nameJson,"is_promoted":$isPromoted,"cwd":"$cwd","last_used_at":"$lastUsedAt"}""",
+                ),
+            inReplyTo = inReplyTo,
+        )
     }
 
     private fun ackEnvelope(

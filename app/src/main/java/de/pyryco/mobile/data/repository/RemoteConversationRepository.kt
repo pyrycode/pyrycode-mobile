@@ -5,7 +5,9 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.network.BackfillSincePayloadDto
+import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.ConversationsPayload
+import de.pyryco.mobile.data.network.CreateConversationPayloadDto
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.ErrorPayload
 import de.pyryco.mobile.data.network.MessageChunkPayloadDto
@@ -13,6 +15,7 @@ import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
+import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.network.toConversations
 import de.pyryco.mobile.data.network.toMessage
 import kotlinx.coroutines.CompletableDeferred
@@ -63,9 +66,14 @@ class RemoteConversationRepository(
 ) : ConversationRepository {
     /**
      * The demuxed list projection: `null` until the first `conversations` snapshot loads, then the
-     * latest full-list snapshot. A single source of state; [observeConversations] derives every cold
-     * read from it. `StateFlow` conflation means a value-equal snapshot (e.g. a redundant reply to a
-     * second collector's request) does not re-emit.
+     * latest full-list snapshot. The primary read source; [observeConversations] derives every cold
+     * read from it. Written by the single [init] inbound collector (the authoritative full-replace on
+     * each `conversations` snapshot) **and** by [createDiscussion]'s confirmed insert (#347), which
+     * folds the newly-created [Conversation] in via [upsertConversation] — an atomic
+     * [MutableStateFlow.update] CAS upsert (dedup by id) run only after the `conversation_created`
+     * reply lands, so the two writers retry-merge rather than clobber. `StateFlow` conflation means a
+     * value-equal result does not re-emit (e.g. a redundant reply to a second collector's request, or
+     * the authoritative snapshot that later re-includes a just-folded conversation).
      */
     private val projection = MutableStateFlow<List<Conversation>?>(null)
 
@@ -168,12 +176,14 @@ class RemoteConversationRepository(
                     }
                 appendMessages(rows)
             }
-            TYPE_ACK ->
-                // Success reply to a correlated request (#346): the payload is the empty `{}` an
-                // `ack` carries — handed verbatim to the waiter, which ignores it for a bare ack and
-                // (later, #347/#348) decodes it for a typed reply. An `inReplyTo` matching no pending
-                // entry (or null) is a no-op: `list_conversations`/`backfill_since` draw no `ack`.
-                // `complete` is idempotent, so a duplicate ack is harmless.
+            TYPE_ACK, TYPE_CONVERSATION_CREATED ->
+                // Success reply to a correlated request, handed verbatim to the waiter. An `ack`
+                // (#346) carries the empty `{}` the bare-ack waiter ignores; a `conversation_created`
+                // (#347) carries the bare conversation object [createDiscussion] decodes for its typed
+                // return. An `inReplyTo` matching no pending entry (or null) is a no-op:
+                // `list_conversations`/`backfill_since` draw no reply here, and `complete` is
+                // idempotent so a duplicate reply is harmless. (#348 routes `conversation_updated`
+                // through this same arm.)
                 envelope.inReplyTo?.let { id -> pendingRequests[id]?.complete(envelope.payload) }
             TYPE_ERROR ->
                 // Failure reply to a correlated request (#346): unblock the waiter exceptionally with
@@ -275,6 +285,25 @@ class RemoteConversationRepository(
         }
     }
 
+    /**
+     * Confirmed-insert [conversation] into the list [projection] (#347): an atomic
+     * [MutableStateFlow.update] CAS upsert — replace the entry with the same `id` in place, else
+     * append — so a concurrent authoritative `conversations` snapshot retry-merges rather than being
+     * lost, and a re-delivered create is idempotent. Folding into the `null` (pre-first-snapshot)
+     * projection yields a single-element list, which [observeConversations] then emits (AC #2).
+     */
+    private fun upsertConversation(conversation: Conversation) {
+        projection.update { current ->
+            val existing = current.orEmpty()
+            val index = existing.indexOfFirst { it.id == conversation.id }
+            if (index >= 0) {
+                existing.toMutableList().apply { this[index] = conversation }
+            } else {
+                existing + conversation
+            }
+        }
+    }
+
     override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> =
         flow {
             // Request on every subscription: redundant requests are absorbed by StateFlow conflation,
@@ -367,8 +396,36 @@ class RemoteConversationRepository(
      */
     override fun observeLastMessage(conversationId: String): Flow<Message?> = lastMessages.map { it[conversationId] }.distinctUntilChanged()
 
-    override suspend fun createDiscussion(workspace: String?): Conversation =
-        throw UnsupportedOperationException("createDiscussion: mutation path not yet wired (#314)")
+    /**
+     * Create an unpromoted discussion over v2 `create_conversation` (#347). Encodes the request
+     * ([CreateConversationPayloadDto]: `is_promoted=false`, optional `cwd`), sends it, and awaits its
+     * correlated `conversation_created` reply — the **typed** bare-conversation payload (contrast
+     * [sendMessage]'s empty `ack`, which it reconstructs from input). Decodes the reply through the
+     * #318 [ConversationResponseDto] boundary, so a malformed reply throws before any state mutation,
+     * then **confirmed-inserts** the returned [Conversation] into [projection] — only after the reply
+     * decodes — so [observeConversations] re-emits with it (AC #2). The returned `cwd` is the
+     * **server-assigned** value from the reply (a null [workspace] requests a scratch cwd the server
+     * picks), never the input (AC #1).
+     *
+     * Throws [RelayErrorException] for a server `error`, [IllegalStateException] when the session is
+     * not connected, and the #318 decode exception ([kotlinx.serialization.SerializationException] /
+     * [IllegalArgumentException]) for a malformed reply — none of which mutate [projection] (AC #3).
+     */
+    override suspend fun createDiscussion(workspace: String?): Conversation {
+        val request =
+            Envelope(
+                id = requestId.incrementAndGet(),
+                type = TYPE_CREATE_CONVERSATION,
+                ts = Clock.System.now().toString(),
+                payload = MobileJson.encodeToJsonElement(CreateConversationPayloadDto(cwd = workspace)),
+            )
+        // Throws on a server `error` / not-Open session; the decode + confirmed insert below are
+        // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
+        val reply = sendAndAwaitReply(request)
+        val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
+        upsertConversation(conversation)
+        return conversation
+    }
 
     override suspend fun promote(
         conversationId: String,
@@ -465,6 +522,12 @@ class RemoteConversationRepository(
 
         /** Request: post a user message to a conversation (#346, #272 `SendMessagePayload`). */
         const val TYPE_SEND_MESSAGE = "send_message"
+
+        /** Request: create a new (unpromoted) conversation (#347, #274 `CreateConversationPayload`). */
+        const val TYPE_CREATE_CONVERSATION = "create_conversation"
+
+        /** Correlated success reply carrying the bare created conversation object (#347, #274). */
+        const val TYPE_CONVERSATION_CREATED = "conversation_created"
 
         /** Correlated success reply (empty `{}`) to a request, matched on `in_reply_to` (#346). */
         const val TYPE_ACK = "ack"
