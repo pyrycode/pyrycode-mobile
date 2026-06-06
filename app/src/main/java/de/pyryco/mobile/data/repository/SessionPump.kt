@@ -28,3 +28,21 @@ interface SessionPump {
      */
     fun send(envelope: Envelope): Boolean
 }
+
+/**
+ * The connection-coordinator's lifecycle view of the pump (#351). [SessionPump] is the *data* view
+ * the repository consumes (read [inbound], call [send]); a coordinator additionally *owns the
+ * lifecycle* — it starts the session drive and tears it down with the connection. Interface
+ * Segregation: the coordinator depends on this richer contract and hands the same instance, upcast
+ * to [SessionPump], to the repository.
+ *
+ * Satisfied by [de.pyryco.mobile.data.network.NoiseSessionPump]; the [start]/[close] members already
+ * match its `start()`/`close()` structurally, so no behavioural change is needed to declare it.
+ */
+interface ManagedSessionPump : SessionPump {
+    /** Single-use: launches the handshake + open-state dispatch drive. A second call is a caller bug. */
+    fun start()
+
+    /** Idempotent teardown: wipes session keys and tears the pump's session/scope down. */
+    fun close()
+}

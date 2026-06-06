@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.network
 
+import de.pyryco.mobile.data.repository.ManagedSessionPump
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -52,7 +53,7 @@ class NoiseSessionPump(
     dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val handshakeTimeoutMs: Long = HANDSHAKE_TIMEOUT_MS,
     private val rekeyIntervalMs: Long = REKEY_INTERVAL_MS,
-) {
+) : ManagedSessionPump {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
 
     private val mutableState = MutableStateFlow<PumpState>(PumpState.Handshaking)
@@ -64,7 +65,7 @@ class NoiseSessionPump(
 
     /** Hot, **single-consumer** stream of decrypted application envelopes. Lossless and in-order: a
      *  slow/absent consumer applies backpressure all the way down to the transport. Completes on teardown. */
-    val inbound: Flow<Envelope> = inboundChannel.receiveAsFlow()
+    override val inbound: Flow<Envelope> = inboundChannel.receiveAsFlow()
 
     @Volatile
     private var session: NoiseIkSession? = null
@@ -86,7 +87,7 @@ class NoiseSessionPump(
     private var rekeyTimerJob: Job? = null
 
     /** Launches the single session-drive coroutine. Single-use: a second call is a caller bug. */
-    fun start() {
+    override fun start() {
         check(started.compareAndSet(false, true)) { "start() is single-use" }
         scope.launch { drive() }
     }
@@ -96,7 +97,7 @@ class NoiseSessionPump(
      * session is [PumpState.Open], or if a racing teardown closed the session under us. Mirrors
      * [RelayTransport.send]'s non-throwing `Boolean` contract.
      */
-    fun send(envelope: Envelope): Boolean {
+    override fun send(envelope: Envelope): Boolean {
         if (mutableState.value !is PumpState.Open) return false
         val session = this.session ?: return false
         // The encrypt→enqueue pair is one critical section: the AEAD nonce is a per-session monotonic
@@ -115,7 +116,7 @@ class NoiseSessionPump(
     }
 
     /** Idempotent teardown: closes the session (wiping keys), the transport, and the pump scope. */
-    fun close() {
+    override fun close() {
         teardown(null)
     }
 
