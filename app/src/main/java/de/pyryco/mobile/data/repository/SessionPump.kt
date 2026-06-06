@@ -1,7 +1,9 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.PumpState
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * The Mobile Protocol v2 Noise session surface the data layer consumes (#312): a hot,
@@ -40,6 +42,10 @@ interface SessionPump {
  * match its `start()`/`close()` structurally, so no behavioural change is needed to declare it.
  */
 interface ManagedSessionPump : SessionPump {
+    /** The pump's lifecycle state; the coordinator awaits [PumpState.Open] before sending the
+     *  connect-time push-token re-registration, and aborts on a pre-Open [PumpState.Closed]. */
+    val state: StateFlow<PumpState>
+
     /** Single-use: launches the handshake + open-state dispatch drive. A second call is a caller bug. */
     fun start()
 

@@ -1,6 +1,8 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.RelayTransport
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -9,6 +11,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -37,11 +40,24 @@ import java.util.concurrent.atomic.AtomicBoolean
  * It never collects [RelayTransport.inbound]/`events` — those are single-consumer streams owned by
  * the pump and the supervisor respectively; the coordinator only moves the transport reference into
  * [createPump]. It emits **no logs**: the only outward signal is [currentRepository].
+ *
+ * **Connect-time FCM push-token re-registration (#365).** Per live connection, once the fresh Noise
+ * session reaches `Open`, it re-sends the stored push token via #359's
+ * [RemoteConversationRepository.registerPushToken] so the daemon's wake target self-heals across app
+ * restarts and drops (see [reregisterPushTokenOnOpen]). It threads the live [deviceName] into the repo
+ * — closing #359's `device_name: ""` defer — and reads the token via [pushToken]. Both are defaulted
+ * (`""` / `{ null }`), so the capability is dormant until `AppModule` wires the live values.
+ *
+ * @property deviceName the paired device's live name (`NoiseClientInfo.deviceName`, i.e. `Build.MODEL`),
+ *   threaded into the repo as `register_push_token`'s `device_name`; `""` until AppModule supplies it.
+ * @property pushToken a one-shot read of the persisted FCM token (`null` ⇒ no registration is sent).
  */
 class RelayRepositoryCoordinator(
     private val connections: StateFlow<RelayTransport?>,
     private val createPump: (RelayTransport) -> ManagedSessionPump,
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val deviceName: String = "",
+    private val pushToken: suspend () -> String? = { null },
 ) {
     private val job = SupervisorJob()
     private val scope = CoroutineScope(job + dispatcher)
@@ -79,7 +95,39 @@ class RelayRepositoryCoordinator(
         val childScope = CoroutineScope(SupervisorJob(job) + dispatcher)
         val pump = createPump(transport).also { it.start() }
         active = Connection(pump, childScope)
-        mutableRepository.value = RemoteConversationRepository(pump, childScope)
+        // Retain the concrete repo: registerPushToken is not on the ConversationRepository interface, so
+        // the hook must call it through this handle, not via the interface-typed currentRepository.
+        val repo = RemoteConversationRepository(pump, childScope, deviceName)
+        mutableRepository.value = repo
+        // launch returns immediately; the suspending re-registration runs on the child scope, off the
+        // non-suspending critical path of this collector (the :69 cancellation-atomicity invariant).
+        childScope.launch { reregisterPushTokenOnOpen(pump, repo) }
+    }
+
+    /**
+     * Connect-time FCM push-token re-registration (#365). Awaits the pump's first transition out of
+     * [PumpState.Handshaking]; if it reached [PumpState.Open] and a token is stored, re-sends the
+     * registration once via #359's sender. **Dormant** until a token is stored (Firebase #361 via
+     * #364): a `null` token is a no-op. Fires **exactly once per connection** — each connection builds
+     * a fresh pump + child scope + hook, and the state machine never revisits `Handshaking` (re-key
+     * stays `Open`). Per the daemon's contract the server de-dupes the `(platform, token, device_name)`
+     * triple, so a repeat is a cheap no-op that self-heals registry drift across restarts/drops.
+     */
+    private suspend fun reregisterPushTokenOnOpen(
+        pump: ManagedSessionPump,
+        repo: RemoteConversationRepository,
+    ) {
+        // first {} checks the current value too, so an already-Open pump fires without a missed edge.
+        val terminal = pump.state.first { it is PumpState.Open || it is PumpState.Closed }
+        if (terminal !is PumpState.Open) return // closed before Open → nothing to register
+        val token = pushToken() ?: return // dormant until a token is stored
+        try {
+            repo.registerPushToken(token)
+        } catch (e: CancellationException) {
+            throw e // connection-drop cancellation must propagate, not be absorbed (structured concurrency)
+        } catch (e: Exception) {
+            // Swallowed (the token is never logged): the daemon re-registers on the next connect.
+        }
     }
 
     /**

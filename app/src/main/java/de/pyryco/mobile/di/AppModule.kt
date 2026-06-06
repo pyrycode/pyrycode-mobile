@@ -30,6 +30,7 @@ import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerViewModel
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
 import de.pyryco.mobile.ui.settings.SettingsViewModel
+import kotlinx.coroutines.flow.first
 import okhttp3.WebSocket
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.Module
@@ -78,6 +79,9 @@ val appModule =
             RelayRepositoryCoordinator(
                 connections = get<RelayConnectionSupervisor>().currentConnection,
                 createPump = { transport -> NoiseSessionPump(transport, sessionFactory) },
+                // #365: close #359's device_name: "" defer + supply the connect-time token read.
+                deviceName = get<NoiseClientInfo>().deviceName,
+                pushToken = { get<AppPreferences>().pushToken.first() },
             ).also { it.start() }
         }
         // #352: the stable facade ViewModels hold across connection churn — delegates to whichever

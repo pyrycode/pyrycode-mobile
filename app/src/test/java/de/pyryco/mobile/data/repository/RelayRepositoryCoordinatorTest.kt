@@ -4,12 +4,15 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.InnerFrameV2
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.RelayTransport
 import de.pyryco.mobile.data.network.TransportEvent
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
@@ -244,9 +247,145 @@ class RelayRepositoryCoordinatorTest {
             assertNull(env.coordinator.currentRepository.value)
         }
 
+    // ---- #365: connect-time push-token re-registration ------------------------------------------
+
+    // AC #1: a fresh session reaching Open with a stored token sends exactly one register_push_token
+    // carrying the live device name — never an empty device_name.
+    @Test
+    fun onOpen_withStoredToken_registersOnceWithLiveDeviceName() =
+        runTest {
+            val env = newEnv(deviceName = "Pixel-8", pushToken = { "fcm-tok" })
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            val pump = env.pumps.single()
+
+            pump.open()
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "register_push_token" }
+            assertEquals(
+                MobileJson.parseToJsonElement("""{"platform":"fcm","token":"fcm-tok","device_name":"Pixel-8"}"""),
+                sent.payload,
+            )
+
+            // Resolve the awaiting coroutine cleanly before teardown.
+            pump.push(ackEnvelope(sent.id))
+            runCurrent()
+
+            env.coordinator.close()
+        }
+
+    // AC #2: no stored token → the connect-time hook is a no-op (sends nothing, does not error).
+    @Test
+    fun onOpen_withNoStoredToken_sendsNothing() =
+        runTest {
+            val env = newEnv(deviceName = "Pixel-8", pushToken = { null })
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            val pump = env.pumps.single()
+
+            pump.open()
+            runCurrent()
+
+            assertTrue(
+                "no register_push_token when no token is stored",
+                pump.sent.none { it.type == "register_push_token" },
+            )
+            assertNotNull("the repository is still published", env.coordinator.currentRepository.value)
+
+            env.coordinator.close()
+        }
+
+    // AC #3: a reconnect re-registers — exactly once per connection (fresh hook per connection, not a
+    // leaked single-fire).
+    @Test
+    fun reconnect_reRegistersOncePerConnection() =
+        runTest {
+            val env = newEnv(deviceName = "Pixel-8", pushToken = { "fcm-tok" })
+
+            // Connection 1 reaches Open → one register frame on pump 1.
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            val pump1 = env.pumps[0]
+            pump1.open()
+            runCurrent()
+            val sent1 = pump1.sent.single { it.type == "register_push_token" }
+            pump1.push(ackEnvelope(sent1.id))
+            runCurrent()
+
+            // Drop, then reconnect over a fresh transport → one register frame on pump 2.
+            env.connections.value = null
+            runCurrent()
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            val pump2 = env.pumps[1]
+            pump2.open()
+            runCurrent()
+            val sent2 = pump2.sent.single { it.type == "register_push_token" }
+            pump2.push(ackEnvelope(sent2.id))
+            runCurrent()
+
+            assertEquals(1, pump1.sent.count { it.type == "register_push_token" })
+            assertEquals(1, pump2.sent.count { it.type == "register_push_token" })
+
+            env.coordinator.close()
+        }
+
+    // AC #4: a registration failure on connect does not crash or wedge the connection.
+    @Test
+    fun registrationFailure_doesNotCrashOrWedgeTheConnection() =
+        runTest {
+            val env = newEnv(deviceName = "Pixel-8", pushToken = { "fcm-tok" })
+
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            val pump1 = env.pumps.single()
+            pump1.open()
+            runCurrent()
+
+            val sent = pump1.sent.single { it.type == "register_push_token" }
+            pump1.push(errorEnvelope(sent.id, code = "server.binary_busy", retryable = true))
+            runCurrent()
+
+            // The failure was swallowed: the repository is still live.
+            assertNotNull(env.coordinator.currentRepository.value)
+
+            // A subsequent drop/reconnect still works (the connection is not wedged).
+            env.connections.value = null
+            runCurrent()
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            assertNotNull(env.coordinator.currentRepository.value)
+
+            env.coordinator.close()
+        }
+
+    // AC #1 (boundary): a session that closes before ever reaching Open registers nothing.
+    @Test
+    fun preOpenClosed_abortsWithoutRegistering() =
+        runTest {
+            val env = newEnv(deviceName = "Pixel-8", pushToken = { "fcm-tok" })
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            val pump = env.pumps.single()
+
+            pump.closeState(null)
+            runCurrent()
+
+            assertTrue(
+                "no register_push_token when the session closed before Open",
+                pump.sent.none { it.type == "register_push_token" },
+            )
+
+            env.coordinator.close()
+        }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
-    private fun TestScope.newEnv(): Env {
+    private fun TestScope.newEnv(
+        deviceName: String = "",
+        pushToken: suspend () -> String? = { null },
+    ): Env {
         val connections = MutableStateFlow<RelayTransport?>(null)
         val pumps = mutableListOf<FakeManagedPump>()
         val coordinator =
@@ -254,6 +393,8 @@ class RelayRepositoryCoordinatorTest {
                 connections = connections,
                 createPump = { FakeManagedPump().also { pumps += it } },
                 dispatcher = StandardTestDispatcher(testScheduler),
+                deviceName = deviceName,
+                pushToken = pushToken,
             )
         coordinator.start()
         return Env(connections, pumps, coordinator)
@@ -307,11 +448,35 @@ class RelayRepositoryCoordinatorTest {
                 ),
         )
 
-    /** Channel-backed [ManagedSessionPump] fake: unlimited inbound buffer + start/close lifecycle flags. */
+    /** Empty-`ack` reply correlated to [inReplyTo] — the register_push_token success signal. */
+    private fun ackEnvelope(inReplyTo: Long): Envelope =
+        Envelope(id = 99L, type = "ack", ts = TS, payload = MobileJson.parseToJsonElement("{}"), inReplyTo = inReplyTo)
+
+    /** A server `error` reply correlated to [inReplyTo] — exercises the swallow path. */
+    private fun errorEnvelope(
+        inReplyTo: Long,
+        code: String,
+        retryable: Boolean = true,
+    ): Envelope =
+        Envelope(
+            id = 99L,
+            type = "error",
+            ts = TS,
+            payload = MobileJson.parseToJsonElement("""{"code":"$code","message":"boom","retryable":$retryable}"""),
+            inReplyTo = inReplyTo,
+        )
+
+    /** Channel-backed [ManagedSessionPump] fake: unlimited inbound buffer, a drivable lifecycle [state],
+     *  and start/close lifecycle flags. Defaults to [PumpState.Handshaking] so tests that never drive it
+     *  to Open keep the connect-time hook dormant (the register frame never appears). */
     private class FakeManagedPump : ManagedSessionPump {
         private val inboundChannel = Channel<Envelope>(Channel.UNLIMITED)
 
         override val inbound: Flow<Envelope> = inboundChannel.receiveAsFlow()
+
+        private val mutableState = MutableStateFlow<PumpState>(PumpState.Handshaking)
+
+        override val state: StateFlow<PumpState> = mutableState.asStateFlow()
 
         val sent = mutableListOf<Envelope>()
 
@@ -333,6 +498,16 @@ class RelayRepositoryCoordinatorTest {
         override fun close() {
             closed = true
             inboundChannel.close()
+        }
+
+        /** Drive the handshake to completion: the connect-time hook awaits this transition. */
+        fun open(connId: String = "c1") {
+            mutableState.value = PumpState.Open(connId)
+        }
+
+        /** Drive a terminal close without ever reaching Open (pre-Open fault). */
+        fun closeState(cause: Throwable? = null) {
+            mutableState.value = PumpState.Closed(cause)
         }
 
         fun push(envelope: Envelope) {
