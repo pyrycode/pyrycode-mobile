@@ -77,9 +77,20 @@ see [Error handling](#error-handling).
 ```kotlin
 class RemoteConversationRepository(
     private val pump: SessionPump,
-    scope: CoroutineScope,   // connection-scoped child scope (the #351 coordinator); tests pass runTest's backgroundScope
+    scope: CoroutineScope,        // connection-scoped child scope (the #351 coordinator); tests pass runTest's backgroundScope
+    private val deviceName: String = "",  // connection-level device_name for register_push_token (#359); last + defaulted
 ) : ConversationRepository
 ```
+
+The `deviceName` param ([#359](../codebase/359.md)) is the connection-level `device_name` that
+[`registerPushToken`](#registerpushtokentoken--the-device-concern-push-registration-359) sends — the same
+value [`NoiseClientInfo.deviceName`](noise-ik-session.md) puts in the `hello` payload. It is **last and
+defaulted (`""`)** so the one production construction site
+([`RelayRepositoryCoordinator.onConnection()`](relay-repository-coordinator.md)) and all existing test sites
+compile unchanged — **zero edit fan-out, `AppModule` and the coordinator untouched** (which is what keeps
+#359 off the now-merged #352 conflict path). The default `""` is **never exercised in production today**
+(the capability has no live caller); the live value is the Firebase sibling's handoff — see
+[`registerPushToken`](#registerpushtokentoken--the-device-concern-push-registration-359).
 
 **The list projection.** One `private val projection = MutableStateFlow<List<Conversation>?>(null)`
 (`null` = list not yet loaded); every cold read derives from it. It has **two writers** since
@@ -504,6 +515,65 @@ The `upsertConversation` upsert **replaces the existing unpromoted discussion en
 > #348's tests for the first time. The confirmed-upsert is the trust property (mirrors #346/#347): the
 > list never shows a promote the server did not perform, by construction.
 
+## `registerPushToken(token)` — the device-concern push registration (#359)
+
+Registers the phone's FCM push token with the paired daemon over v2 `register_push_token`, so the daemon
+knows where to send a wake notification when the phone is backgrounded. [#359](../codebase/359.md)
+implements it as a **pure request/reply** that reuses #346's correlation primitive and `mapError`
+**verbatim** — it adds no `onInbound` branch (the `ack`/`error` arms already complete the pending
+deferred) and no new error mapping.
+
+**Two load-bearing departures from the three #314 mutations:**
+
+1. **It is NOT a `ConversationRepository` interface method.** Push-token registration is a
+   device/connection concern, not a conversation operation, so `registerPushToken` is a public method on
+   the **concrete** class only — never an interface override. Per [[post-352-connection-scoped-repo-behind-facade]]
+   the repo is connection-scoped behind the process-lifetime
+   [`StableConversationRepository`](stable-conversation-repository.md) facade ViewModels hold, and that
+   facade only delegates the `ConversationRepository` interface — so a non-interface method **deliberately
+   will not reach consumers through the facade**. Reaching the dormant capability from a live caller is the
+   **Firebase sibling's** job, not this slice's; no facade exposure, new interface method, or DI
+   reachability was added.
+2. **It mutates no projection.** Unlike `sendMessage` / `createDiscussion` / `promote`, this registers a
+   token and produces **no domain object** — the success signal is simply "the call returned without
+   throwing". `projection` / `lastMessages` / `messagesByConversation` are untouched, so (unlike #346) no
+   projection KDoc needed amending.
+
+The flow (the entire method, ≤ ~12 lines):
+
+```kotlin
+suspend fun registerPushToken(token: String) {
+    val request = Envelope(
+        id = requestId.incrementAndGet(),
+        type = "register_push_token", ts = Clock.System.now().toString(),
+        payload = MobileJson.encodeToJsonElement(
+            RegisterPushTokenPayloadDto(platform = "fcm", token = token, deviceName = deviceName)),
+    )
+    sendAndAwaitReply(request)   // throws on server `error` / not-Open; the empty {} ack carries nothing → ignored
+}
+```
+
+- **`RegisterPushTokenPayloadDto`** is the fifth encode-only request DTO (`{platform, token, device_name}`,
+  all required) — see the [wire-layer doc](mobile-protocol-v2-wire-layer.md#outbound-request-encoders--the-ackerror-correlated-reply-models-346).
+  `platform` is the constant `"fcm"`; `device_name` is the connection-level constructor `deviceName`.
+- **`sendAndAwaitReply` does all the work, unchanged:** it throws `IllegalStateException` when `pump.send`
+  returns `false` (session not Open), suspends until the correlated reply lands, returns normally on the
+  empty `ack`, and rethrows the collector's exceptional completion on `error` (a `RelayErrorException`
+  carrying `code`/`retryable` via the unchanged `mapError` — `server.binary_busy` retryable /
+  `auth.invalid_token` not, so a caller can branch on `retryable`). The returned `{}` ack payload is
+  ignored — there is nothing to decode and no projection to fold.
+- **No client-side dedupe** — the server dedupes the `(platform, token, device_name)` triple, so this just
+  sends. **Never logs the `token`** (the #346 no-secrets posture).
+
+> **Device-name plumbing is a deferred cross-slice handoff (the Firebase sibling owns it).** `device_name`
+> must equal `NoiseClientInfo.deviceName`. It is threaded as the **last, defaulted** constructor param so
+> this slice touches neither `AppModule` nor the [coordinator](relay-repository-coordinator.md) (no #352
+> conflict). The default `""` is **never exercised in production today** (no live caller). The Firebase
+> sibling that adds the live caller **must also** thread the live value — a `deviceName` param on
+> `RelayRepositoryCoordinator` supplied from `NoiseClientInfo` in `AppModule`. A live caller wired *without*
+> that threading would send `device_name: ""`, polluting the server's dedup triple. Named here, in the
+> spec, and in the constructor KDoc so a future developer does not silently rely on the default.
+
 ## Stubs — the full interface compiles; later slices replace what they own
 
 Every method other than the three live read paths and the now-live `sendMessage` (#346) /
@@ -664,14 +734,16 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   [`../codebase/313.md`](../codebase/313.md) (the thread read + backfill) ·
   [`../codebase/346.md`](../codebase/346.md) (`sendMessage` + the `ack`/`error` correlation primitive) ·
   [`../codebase/347.md`](../codebase/347.md) (`createDiscussion` + the `upsertConversation` confirmed-insert) ·
-  [`../codebase/348.md`](../codebase/348.md) (`promote` + the `cwd`-resolution decision) —
-  files/line refs, patterns, lessons, verification.
+  [`../codebase/348.md`](../codebase/348.md) (`promote` + the `cwd`-resolution decision) ·
+  [`../codebase/359.md`](../codebase/359.md) (`registerPushToken` — the first non-interface device-concern
+  method + the deferred `deviceName` handoff) — files/line refs, patterns, lessons, verification.
 - Specs: `docs/specs/architecture/312-remote-conversation-repository-observe-list.md` ·
   `docs/specs/architecture/329-remote-conversation-repository-observe-last-message.md` ·
   `docs/specs/architecture/313-remote-observe-messages.md` ·
   `docs/specs/architecture/346-remote-send-message.md` ·
   `docs/specs/architecture/347-remote-create-discussion.md` ·
-  `docs/specs/architecture/348-remote-promote.md`.
+  `docs/specs/architecture/348-remote-promote.md` ·
+  `docs/specs/architecture/359-register-push-token-wire-sender.md`.
 - Siblings (extend the same class + `onInbound` `when`): [#329](../codebase/329.md)
   (`observeLastMessage`, **landed** — consumes [#317](../codebase/317.md), rides the live `message`
   stream), [#313](../codebase/313.md) (`observeMessages`, **landed** — consumes #317 + adds the
@@ -683,7 +755,11 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   `upsertConversation` confirmed-insert into the list projection), [#348](../codebase/348.md)
   (`promote`, **landed** — the last #314 mutation; consumes #318's `ConversationResponseDto`, reuses
   #346's primitive + #347's `upsertConversation` fold verbatim, adds the `promote_conversation` request
-  encoder + the null-`workspace` `cwd` resolution).
+  encoder + the null-`workspace` `cwd` resolution), [#359](../codebase/359.md) (`registerPushToken`,
+  **landed** — the **first non-interface** device-concern method; reuses #346's `sendAndAwaitReply` +
+  `mapError` verbatim with **no** `onInbound` branch and **no** projection mutation, adds the
+  `register_push_token` request encoder + the last/defaulted `deviceName` ctor param; dormant until the
+  Firebase sibling adds a live caller).
 - Connection wiring: [`RelayRepositoryCoordinator`](relay-repository-coordinator.md)
   ([#351](../codebase/351.md), **landed**) — constructs this repository per live connection against the
   pump + a child scope, made `NoiseSessionPump : ManagedSessionPump : SessionPump`, and publishes the
