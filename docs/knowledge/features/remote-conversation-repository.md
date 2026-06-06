@@ -20,9 +20,12 @@ path — `sendMessage` — landed in [#346](../codebase/346.md)** (which also in
 > [`RelayRepositoryCoordinator`](relay-repository-coordinator.md) ([#351](../codebase/351.md), **landed**)
 > now constructs one **per live connection** against the pump + a connection-scoped child scope, and made
 > the concrete pump satisfy the contract (`NoiseSessionPump : ManagedSessionPump : SessionPump`). It
-> publishes the live repository on `currentRepository` for the **#352** stable facade to consume. The
-> **UI still binds to `FakeConversationRepository`** — the flag-gated Fake↔Remote swap, gated on paired
-> state per [[phase4-no-central-flag-gate-per-piece]], is **#350**. See [Hand-off](#hand-off--the-live-binding).
+> publishes the live repository on `currentRepository` for the **#352** stable facade to consume.
+> **[#350](../codebase/350.md) (landed)** added the flag-gated `conversationRepositoryModule` selector
+> that binds `ConversationRepository` to the facade when `BuildConfig.USE_RELAY_REPOSITORY` is on — but
+> the flag **defaults OFF**, so the UI still binds `FakeConversationRepository` today. (The build flag
+> selects Fake vs. facade; paired-state still governs whether the bound facade has a *live* delegate, per
+> [[phase4-no-central-flag-gate-per-piece]] — the two are orthogonal.) See [Hand-off](#hand-off--the-live-binding).
 
 ## Where it sits in the Phase 4 stack
 
@@ -595,10 +598,12 @@ The downstream DI / connection-coordinator work, and where it landed:
 2. ✅ **Provide the connection-scoped `CoroutineScope`** the repository's inbound collector runs on — the
    [`RelayRepositoryCoordinator`](relay-repository-coordinator.md) builds a fresh child scope per live
    connection and constructs the repository against it. Landed in [#351](../codebase/351.md).
-3. ⏳ **Swap the Koin binding `ConversationRepository`** from `FakeConversationRepository` to the live
-   repository **when paired/connected** — gated on paired state per [[phase4-no-central-flag-gate-per-piece]]
-   (no central Phase-4 flag). Still owned by **#350**; the coordinator publishes `currentRepository` and
-   the **#352** stable facade delegates to it, but the bound `ConversationRepository` is still the Fake.
+3. ✅ **Flag-gate the Koin binding `ConversationRepository`** between `FakeConversationRepository` and the
+   live-backed facade. Landed in [#350](../codebase/350.md) as the `conversationRepositoryModule` selector
+   (`if (useRelay) get<StableConversationRepository>() else get<FakeConversationRepository>()`), gated by
+   the build-time `BuildConfig.USE_RELAY_REPOSITORY` flag — **default OFF**, so the bound
+   `ConversationRepository` is still the Fake until the production flip. Flipping ON additionally depends
+   on the v2 mutations (#346/#347/#348) and the server gaps #336 (boundaries) / #337 (streaming).
 
 Open hand-off items: **pre-`Open` request loss** (if a subscribe's `send` lands before the handshake
 completes, the list stays empty until the next subscribe or a server push — the fix, if observed, is a
@@ -610,13 +615,15 @@ the list refreshes on the next `conversations` snapshot; merging deltas live rem
 
 Two more hand-offs opened by the `sendMessage` slice ([#346](../codebase/346.md)):
 
-- **ViewModel error surface (#350).** All three live mutations — `sendMessage` (#346),
-  `createDiscussion` (#347), and `promote` ([#348](../codebase/348.md)) — now throw `RelayErrorException`
-  / `IllegalStateException` (not just `IllegalArgumentException`). The UI call sites (e.g.
-  `ThreadViewModel.sendMessage`, `DiscussionListViewModel.confirmPromotion`) are currently fire-and-forget
-  with no `try/catch` — harmless under the fake, but once the live remote is bound those exceptions would
-  escape uncaught. The #350 wiring ticket owns the error surface (and documenting the widened exception
-  set on the `ConversationRepository` interface KDoc).
+- **ViewModel error surface (still a follow-up — *not* #350).** All three live mutations — `sendMessage`
+  (#346), `createDiscussion` (#347), and `promote` ([#348](../codebase/348.md)) — now throw
+  `RelayErrorException` / `IllegalStateException` (not just `IllegalArgumentException`). The UI call sites
+  (e.g. `ThreadViewModel.sendMessage`, `DiscussionListViewModel.confirmPromotion`) are currently
+  fire-and-forget with no `try/catch` — harmless under the fake, but once the live remote is bound those
+  exceptions would escape uncaught. **[#350](../codebase/350.md) did *not* address this** — it was the
+  binding-selector slice only, ships with the flag OFF, and touched no ViewModel. Widening the ViewModel
+  error handling (and documenting the widened exception set on the `ConversationRepository` interface
+  KDoc) belongs to the flag-ON production flip, which remains a future follow-up.
 - **Connection-drop-mid-send leak.** If the connection scope is cancelled while a caller still awaits a
   reply, the deferred never completes and the suspend hangs until the *caller* is cancelled (the
   ViewModel scope on screen exit). No timeout is added (no observed hang; a timeout value is a product
@@ -680,6 +687,6 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
 - Connection wiring: [`RelayRepositoryCoordinator`](relay-repository-coordinator.md)
   ([#351](../codebase/351.md), **landed**) — constructs this repository per live connection against the
   pump + a child scope, made `NoiseSessionPump : ManagedSessionPump : SessionPump`, and publishes the
-  live instance on `currentRepository` (consumed by the **#352** facade). The paired-state Koin swap from
-  the Fake remains **#350**.
+  live instance on `currentRepository` (consumed by the **#352** facade). The flag-gated Koin binding
+  selector that picks the Fake or the facade is **[#350](../codebase/350.md)** (landed; default OFF → Fake).
 </content>

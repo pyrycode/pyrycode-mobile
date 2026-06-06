@@ -2,6 +2,7 @@ package de.pyryco.mobile
 
 import android.app.Application
 import de.pyryco.mobile.di.appModule
+import de.pyryco.mobile.di.conversationRepositoryModule
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.context.startKoin
 
@@ -10,7 +11,8 @@ class PyryApp : Application() {
         super.onCreate()
         startKoin {
             androidContext(this@PyryApp)
-            modules(appModule)
+            // conversationRepositoryModule reads the #350 flag via its default param (OFF → Fake).
+            modules(appModule, conversationRepositoryModule())
         }
     }
 }

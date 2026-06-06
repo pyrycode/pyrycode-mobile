@@ -49,6 +49,12 @@ android {
         val gitSha = providers.of(GitShaValueSource::class.java) {}
         buildConfigField("String", "GIT_SHA", "\"${gitSha.get()}\"")
 
+        // #350: selects the bound ConversationRepository. OFF = FakeConversationRepository (the
+        // default — previews, tests, unchanged behaviour); ON = the relay-backed StableConversationRepository
+        // facade. A compile-time constant with no runtime setter — not flippable by any untrusted input.
+        // Stays "false" until the relay backend is functional end-to-end (depends on #346/#347/#348, #336, #337).
+        buildConfigField("boolean", "USE_RELAY_REPOSITORY", "false")
+
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

@@ -32,6 +32,7 @@ import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
 import de.pyryco.mobile.ui.settings.SettingsViewModel
 import okhttp3.WebSocket
 import org.koin.android.ext.koin.androidContext
+import org.koin.core.module.Module
 import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.bind
 import org.koin.dsl.module
@@ -54,7 +55,9 @@ val appModule =
             val info = get<NoiseClientInfo>()
             RelayTransportFactory { paired -> OkHttpRelayTransport(paired, info, client) }
         }
-        single { FakeConversationRepository() } bind ConversationRepository::class
+        // Concrete-only: the ConversationRepository interface is bound by conversationRepositoryModule
+        // (#350), which flag-selects this Fake (the default) or the StableConversationRepository facade.
+        single { FakeConversationRepository() }
         // #307: real WS-backed source. Bound but dormant — #302's driver drives the first connect().
         single { RelayConnectionSupervisor(get(), get()) } bind ConnectionStateSource::class
         // #302: process-lifecycle driver. Eagerly created at startKoin (Application.onCreate, main
@@ -69,7 +72,7 @@ val appModule =
         // #351: connection-scoped coordinator. Eagerly started so it observes currentConnection for the
         // process lifetime — per live connection it starts a fresh Noise pump and builds a remote repo,
         // publishing it on currentRepository for the #352 facade. Does NOT bind ConversationRepository:
-        // the Fake stays the default until the #350 flag-gated swap.
+        // that binding lives in conversationRepositoryModule (#350), flag-gated.
         single(createdAtStart = true) {
             val sessionFactory = get<NoiseSessionFactory>()
             RelayRepositoryCoordinator(
@@ -79,8 +82,8 @@ val appModule =
         }
         // #352: the stable facade ViewModels hold across connection churn — delegates to whichever
         // connection-scoped repo the coordinator publishes on currentRepository, switching on churn.
-        // Registered as its own resolvable type only; it does NOT bind ConversationRepository — the
-        // Fake (line 56) stays the default until the #350 flag-gated swap flips the binding here.
+        // Registered as its own resolvable type only; conversationRepositoryModule (#350) flag-selects
+        // whether this facade or the Fake wins the ConversationRepository binding.
         single { StableConversationRepository(get<RelayRepositoryCoordinator>().currentRepository) }
         viewModel { ScannerViewModel() }
         viewModel { ChannelListViewModel(get(), get()) }
@@ -88,4 +91,24 @@ val appModule =
         viewModel { SettingsViewModel(get(), get()) }
         viewModel { ArchivedDiscussionsViewModel(get()) }
         viewModel { ThreadViewModel(get(), get(), get(), get()) }
+    }
+
+/**
+ * Binds the [ConversationRepository] interface, flag-selecting the implementation (#350). This is the
+ * **only** definition that binds the interface — [appModule] registers both candidates concrete-only.
+ *
+ * [useRelay] defaults to the compile-time [BuildConfig.USE_RELAY_REPOSITORY] (OFF), so the production
+ * graph binds [FakeConversationRepository] until the relay backend is functional end-to-end. The
+ * selector only resolves the two already-registered singletons by type — it never constructs either,
+ * so it carries none of their dependency weight and opens no connection.
+ *
+ * Tests and `@Preview`s force fake mode by passing `useRelay = false` explicitly, independent of the
+ * build flag. Kept as its own module (not folded into [appModule]) so the binding is unit-testable
+ * via real Koin resolution without dragging in [appModule]'s Android-bound graph.
+ */
+fun conversationRepositoryModule(useRelay: Boolean = BuildConfig.USE_RELAY_REPOSITORY): Module =
+    module {
+        single<ConversationRepository> {
+            if (useRelay) get<StableConversationRepository>() else get<FakeConversationRepository>()
+        }
     }

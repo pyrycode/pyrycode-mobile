@@ -143,8 +143,9 @@ single(createdAtStart = true) {
 ```
 
 `createdAtStart` so it observes `currentConnection` for the process lifetime. It does **not** bind
-`ConversationRepository` — the [Fake](conversation-repository.md) stays the default until the #350
-flag-gated swap. With the coordinator eager and the supervisor already dialing in a paired+foregrounded
+`ConversationRepository` — that binding lives in #350's flag-gated `conversationRepositoryModule` selector
+(the [Fake](conversation-repository.md) is the default-OFF binding; the facade is selected when
+`USE_RELAY_REPOSITORY` is on). With the coordinator eager and the supervisor already dialing in a paired+foregrounded
 app, a real `Noise_IK` handshake runs on each live connection; this is bounded — no
 `list_conversations`/`backfill_since` is sent until a subscriber calls a read path (only #352/#350 wire
 that up), so a live-but-unconsumed pump just completes the handshake and idles. #350's flag gates what
@@ -188,7 +189,9 @@ contract check in `NoiseSessionPumpTest` (`pump is SessionPump` / `is ManagedSes
   ([#312](../codebase/312.md)/[#313](../codebase/313.md)/[#329](../codebase/329.md)/[#346](../codebase/346.md)).
 - Consumed by: the [stable conversation repository](stable-conversation-repository.md) facade
   (**#352**, landed — delegates over `currentRepository` so ViewModels hold one stable reference) and
-  **#350** (the flag-gated Fake↔Remote binding swap) — both out of scope for *this* slice.
+  **[#350](../codebase/350.md)** (landed — the flag-gated `conversationRepositoryModule` selector binds
+  that facade as `ConversationRepository` when `USE_RELAY_REPOSITORY` is on) — both were out of scope for
+  *this* slice.
 - DI: [Dependency injection](dependency-injection.md) · the [lifecycle connection driver](lifecycle-connection-driver.md)
   ([#302](../codebase/302.md)) is the `createdAtStart` precedent it mirrors.
 - Decisions: [ADR 0004 — vendor noise-java](../decisions/0004-vendor-noise-java-crypto.md),
