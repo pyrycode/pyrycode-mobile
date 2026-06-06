@@ -14,6 +14,7 @@ import de.pyryco.mobile.data.network.MessageChunkPayloadDto
 import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.PromoteConversationPayloadDto
+import de.pyryco.mobile.data.network.RegisterPushTokenPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
 import de.pyryco.mobile.data.network.toConversation
@@ -64,6 +65,17 @@ import java.util.concurrent.atomic.AtomicLong
 class RemoteConversationRepository(
     private val pump: SessionPump,
     scope: CoroutineScope,
+    /**
+     * The connection-level device name sent as `register_push_token`'s `device_name` (#359) — the
+     * same value [de.pyryco.mobile.data.network.NoiseClientInfo.deviceName] puts in the `hello`
+     * payload. It is a connection constant (not a per-call argument), so it is threaded in as a
+     * constructor param. **Defaulted to `""`** so the one production construction site
+     * ([RelayRepositoryCoordinator.onConnection]) and the existing tests compile unchanged; the live
+     * value is wired by the Firebase sibling that adds the live caller (a `deviceName` param on
+     * [RelayRepositoryCoordinator] supplied from `NoiseClientInfo` in `AppModule`). The default is
+     * never exercised in production today — [registerPushToken] has no live caller yet.
+     */
+    private val deviceName: String = "",
 ) : ConversationRepository {
     /**
      * The demuxed list projection: `null` until the first `conversations` snapshot loads, then the
@@ -526,6 +538,40 @@ class RemoteConversationRepository(
         return message
     }
 
+    /**
+     * Register the phone's FCM push [token] with the paired daemon over v2 `register_push_token`
+     * (#359) — so the daemon knows where to send a wake notification when the phone is backgrounded.
+     * Encodes the request ([RegisterPushTokenPayloadDto]: `platform="fcm"`, the [token], and the
+     * connection-level [deviceName]), sends it, and awaits its correlated reply: an empty `ack`
+     * (success) or an `error` (failure). A pure request/reply with **no** projection side effect —
+     * unlike the conversation mutations, this registers a token and produces no domain object, so the
+     * success signal is simply "the call returned without throwing".
+     *
+     * The server dedupes the `(platform, token, device_name)` triple, so this does no client-side
+     * dedupe — it just sends. **Dormant** until the Firebase sibling provides a real token and a live
+     * caller; this slice only exposes the capability. Never logs the [token] or the request payload.
+     *
+     * Throws [RelayErrorException] for a server `error` (carrying the structured `code`/`retryable`,
+     * e.g. `server.binary_busy` retryable / `auth.invalid_token` not), and [IllegalStateException]
+     * when the session is not connected ([SessionPump.send] returns `false`) — neither mutates any
+     * state (there is nothing to mutate).
+     */
+    suspend fun registerPushToken(token: String) {
+        val request =
+            Envelope(
+                id = requestId.incrementAndGet(),
+                type = TYPE_REGISTER_PUSH_TOKEN,
+                ts = Clock.System.now().toString(),
+                payload =
+                    MobileJson.encodeToJsonElement(
+                        RegisterPushTokenPayloadDto(platform = PLATFORM_FCM, token = token, deviceName = deviceName),
+                    ),
+            )
+        // Throws on a server `error` / not-Open session. The empty `{}` ack payload carries nothing
+        // to map and no projection is mutated, so the returned reply is ignored.
+        sendAndAwaitReply(request)
+    }
+
     override suspend fun archive(conversationId: String): Unit =
         throw UnsupportedOperationException("archive: no v2 wire message defined (follow-up specs the wire contract)")
 
@@ -568,6 +614,12 @@ class RemoteConversationRepository(
 
         /** Request: post a user message to a conversation (#346, #272 `SendMessagePayload`). */
         const val TYPE_SEND_MESSAGE = "send_message"
+
+        /** Request: register the phone's push token (#359, #275 `RegisterPushTokenPayload`). */
+        const val TYPE_REGISTER_PUSH_TOKEN = "register_push_token"
+
+        /** The Android push platform value for `register_push_token.platform` (#359, AC #2). */
+        const val PLATFORM_FCM = "fcm"
 
         /** Request: create a new (unpromoted) conversation (#347, #274 `CreateConversationPayload`). */
         const val TYPE_CREATE_CONVERSATION = "create_conversation"

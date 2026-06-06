@@ -1239,6 +1239,102 @@ class RemoteConversationRepositoryTest {
             assertEquals("disc", promote().getOrThrow().id)
         }
 
+    // ---- registerPushToken (#359): register_push_token request → ack/error correlation ---------
+
+    // AC #1, #2: the sent envelope matches the register_push_token wire contract
+    // {platform, token, device_name}; device_name is sourced from the injected constructor param.
+    @Test
+    fun registerPushToken_sendsRequestMatchingWireContract() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+
+            val register = startRegisterPushToken(repo, "fcm-tok-123")
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "register_push_token" }
+            assertEquals(
+                MobileJson.parseToJsonElement(
+                    """{"platform":"fcm","token":"fcm-tok-123","device_name":"Pixel-8"}""",
+                ),
+                sent.payload,
+            )
+
+            // Resolve so the awaiting coroutine completes cleanly.
+            pump.push(ackEnvelope(sent.id))
+            runCurrent()
+            assertTrue(register().isSuccess)
+        }
+
+    // AC #3: the correlated empty ack completes the call successfully (no throw).
+    @Test
+    fun registerPushToken_onAck_completesSuccessfully() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+
+            val register = startRegisterPushToken(repo, "fcm-tok-123")
+            runCurrent()
+            val sent = pump.sent.single { it.type == "register_push_token" }
+            pump.push(ackEnvelope(sent.id))
+            runCurrent()
+
+            assertTrue(register().isSuccess)
+        }
+
+    // AC #4: a retryable server error surfaces as RelayErrorException exposing code + retryable.
+    @Test
+    fun registerPushToken_onRetryableServerError_throwsRelayErrorWithRetryableTrue() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+
+            val register = startRegisterPushToken(repo, "fcm-tok-123")
+            runCurrent()
+            val sent = pump.sent.single { it.type == "register_push_token" }
+            pump.push(errorEnvelope(sent.id, code = "server.binary_busy", retryable = true))
+            runCurrent()
+
+            val ex = register().exceptionOrNull()
+            assertTrue("expected RelayErrorException, got $ex", ex is RelayErrorException)
+            assertEquals("server.binary_busy", (ex as RelayErrorException).code)
+            assertTrue(ex.retryable)
+        }
+
+    // AC #4: a non-retryable server error surfaces with retryable == false, so a caller can branch.
+    @Test
+    fun registerPushToken_onNonRetryableServerError_throwsRelayErrorWithRetryableFalse() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+
+            val register = startRegisterPushToken(repo, "fcm-tok-123")
+            runCurrent()
+            val sent = pump.sent.single { it.type == "register_push_token" }
+            pump.push(errorEnvelope(sent.id, code = "auth.invalid_token", retryable = false))
+            runCurrent()
+
+            val ex = register().exceptionOrNull()
+            assertTrue("expected RelayErrorException, got $ex", ex is RelayErrorException)
+            assertEquals("auth.invalid_token", (ex as RelayErrorException).code)
+            assertFalse(ex.retryable)
+        }
+
+    // AC #5: a not-Open session (pump.send returns false) fails fast with IllegalStateException and
+    // does not hang — no reply is ever fed, yet the call has already completed exceptionally.
+    @Test
+    fun registerPushToken_whenSendReturnsFalse_throwsIllegalStateAndDoesNotHang() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+
+            val register = startRegisterPushToken(repo, "fcm-tok-123")
+            runCurrent()
+
+            assertTrue(register().exceptionOrNull() is IllegalStateException)
+        }
+
     // ---- Helpers --------------------------------------------------------------------------------
 
     /**
@@ -1285,6 +1381,21 @@ class RemoteConversationRepositoryTest {
         var outcome: Result<Conversation>? = null
         backgroundScope.launch { outcome = runCatching { repo.promote(conversationId, name, workspace) } }
         return { requireNotNull(outcome) { "promote has not completed" } }
+    }
+
+    /**
+     * Launch [RemoteConversationRepository.registerPushToken] on [backgroundScope] (it suspends
+     * awaiting the ack/error reply) and return a getter for its eventual [Result]. Read the result
+     * only after the correlated reply has been pushed and [runCurrent] has drained the cascade (the
+     * not-Open path completes synchronously, before any reply).
+     */
+    private fun TestScope.startRegisterPushToken(
+        repo: RemoteConversationRepository,
+        token: String,
+    ): () -> Result<Unit> {
+        var outcome: Result<Unit>? = null
+        backgroundScope.launch { outcome = runCatching { repo.registerPushToken(token) } }
+        return { requireNotNull(outcome) { "registerPushToken has not completed" } }
     }
 
     /** A correlated `conversation_created` reply carrying a bare conversation object (#347). */
