@@ -15,12 +15,14 @@ path — `sendMessage` — landed in [#346](../codebase/346.md)** (which also in
 #314 was split on a per-method axis into #346 (`sendMessage`) / #347 (`createDiscussion`) / #348
 (`promote`), each extending the **same class** as it lands. Portable, `android.*`-free.
 
-> **Ships dormant (no live binding yet).** #312 lands `RemoteConversationRepository` with **no Koin
-> binding and no consumers** — the UI still binds to `FakeConversationRepository`. Wiring the live binding
-> (and making the concrete pump satisfy `SessionPump`) is the DI/connection-coordinator slice's job
-> ([#279](https://github.com/pyrycode/pyrycode-mobile/issues/279) / [#302](../codebase/302.md)), gated on
-> paired state — see [Hand-off](#hand-off--the-live-binding-279--302). Adding a binding before then would
-> be dead code.
+> **Constructed per connection by #351; not yet the UI's binding.** #312 landed
+> `RemoteConversationRepository` with no consumers. The
+> [`RelayRepositoryCoordinator`](relay-repository-coordinator.md) ([#351](../codebase/351.md), **landed**)
+> now constructs one **per live connection** against the pump + a connection-scoped child scope, and made
+> the concrete pump satisfy the contract (`NoiseSessionPump : ManagedSessionPump : SessionPump`). It
+> publishes the live repository on `currentRepository` for the **#352** stable facade to consume. The
+> **UI still binds to `FakeConversationRepository`** — the flag-gated Fake↔Remote swap, gated on paired
+> state per [[phase4-no-central-flag-gate-per-piece]], is **#350**. See [Hand-off](#hand-off--the-live-binding).
 
 ## Where it sits in the Phase 4 stack
 
@@ -72,7 +74,7 @@ see [Error handling](#error-handling).
 ```kotlin
 class RemoteConversationRepository(
     private val pump: SessionPump,
-    scope: CoroutineScope,   // connection-scoped (DI, #279/#302); tests pass runTest's backgroundScope
+    scope: CoroutineScope,   // connection-scoped child scope (the #351 coordinator); tests pass runTest's backgroundScope
 ) : ConversationRepository
 ```
 
@@ -370,7 +372,7 @@ this implementation's surface. All three read paths are now **cold flows that de
   thread) — fed by one inbound collector** launched on the injected connection `scope`. No second
   collector or scope is added per slice; a single `message` envelope can update **two** projections
   (`lastMessages` + `messagesByConversation`). The scope (and thus the collector) is cancelled by its
-  owner (#279/#302) when the connection ends; the pump completing `inbound` on teardown also ends the
+  owner — the [#351 coordinator](relay-repository-coordinator.md) — when the connection ends; the pump completing `inbound` on teardown also ends the
   collector naturally. All projections are in-memory and connection-scoped — lost on process death and
   re-derived from the live stream (+ a re-`backfill_since`) on reconnect.
 - **Two writers per message projection, still data-safe (#346).** Since `sendMessage` landed,
@@ -385,7 +387,7 @@ this implementation's surface. All three read paths are now **cold flows that de
   removes its own entry in a `finally`. Bounded by caller concurrency (one entry per in-flight send,
   removed on success/error/cancellation) — no unbounded growth. The one documented gap: a
   connection-drop mid-await leaves a single stranded entry until the *caller* is cancelled (no timeout
-  added; see [Hand-off](#hand-off--the-live-binding-279--302)).
+  added; see [Hand-off](#hand-off--the-live-binding)).
 - **Dispatcher inherited from the injected scope** (DI uses `Dispatchers.Default`; this is pure CPU/JSON
   work — the socket I/O is the transport's, below the pump). Not hard-coded.
 - `observeConversations`, `observeLastMessage`, and `observeMessages` are cold; N concurrent collectors
@@ -412,25 +414,29 @@ errors, so dropping is the only interface-consistent option. An uncaught decode 
 **single** inbound consumer, silently freezing **all** future conversation updates for the connection — a
 severe failure against an untrusted (post-auth) server payload. The #316 mapper validates shape; the
 repository keeps the consumer alive. Pre-`Open` send loss is **not** defended here (no buffering /
-retry-on-`Open`): the coordinator wires the repository against an `Open` pump, and reconnect/re-request is
-out of scope (#302).
+retry-on-`Open`): the [#351 coordinator](relay-repository-coordinator.md) wires the repository against
+an `Open` pump and builds a fresh chain per reconnect, so a pre-`Open` re-request stays out of scope here
+(a future concern if a lost first request is ever observed).
 
-## Hand-off — the live binding (#279 / #302)
+## Hand-off — the live binding
 
-The downstream DI / connection-coordinator slice must:
+The downstream DI / connection-coordinator work, and where it landed:
 
-1. make the concrete pump conform — `class NoiseSessionPump(...) : SessionPump` + two `override`s (its
-   members already match);
-2. provide the connection-scoped `CoroutineScope` the repository's inbound collector runs on;
-3. swap the Koin binding `ConversationRepository` from `FakeConversationRepository` to
-   `RemoteConversationRepository` **when paired/connected** — gate the live binding on paired state per
-   [[phase4-no-central-flag-gate-per-piece]] (there is no central Phase-4 flag).
+1. ✅ **Make the concrete pump conform** — `NoiseSessionPump : ManagedSessionPump : SessionPump` (the four
+   members already matched; `override` added). Landed in [#351](../codebase/351.md).
+2. ✅ **Provide the connection-scoped `CoroutineScope`** the repository's inbound collector runs on — the
+   [`RelayRepositoryCoordinator`](relay-repository-coordinator.md) builds a fresh child scope per live
+   connection and constructs the repository against it. Landed in [#351](../codebase/351.md).
+3. ⏳ **Swap the Koin binding `ConversationRepository`** from `FakeConversationRepository` to the live
+   repository **when paired/connected** — gated on paired state per [[phase4-no-central-flag-gate-per-piece]]
+   (no central Phase-4 flag). Still owned by **#350**; the coordinator publishes `currentRepository` and
+   the **#352** stable facade delegates to it, but the bound `ConversationRepository` is still the Fake.
 
 Open hand-off items: **pre-`Open` request loss** (if a subscribe's `send` lands before the handshake
 completes, the list stays empty until the next subscribe or a server push — the fix, if observed, is a
-re-request on `PumpState.Open`, owned by #302); **`conversation_updated` delta-merge** (owned by the
-#318-dependent #347/#348); **`isSleeping`/session enrichment** in the list (arrives via the detail/message
-read paths, not here).
+re-request on `PumpState.Open`; #351 builds a fresh chain per reconnect but adds no re-request);
+**`conversation_updated` delta-merge** (owned by the #318-dependent #347/#348); **`isSleeping`/session
+enrichment** in the list (arrives via the detail/message read paths, not here).
 
 Two more hand-offs opened by the `sendMessage` slice ([#346](../codebase/346.md)):
 
@@ -442,8 +448,8 @@ Two more hand-offs opened by the `sendMessage` slice ([#346](../codebase/346.md)
 - **Connection-drop-mid-send leak.** If the connection scope is cancelled while a caller still awaits a
   reply, the deferred never completes and the suspend hangs until the *caller* is cancelled (the
   ViewModel scope on screen exit). No timeout is added (no observed hang; a timeout value is a product
-  call). A future slice — or the connection coordinator (#302) — may fail all `pendingRequests` on
-  disconnect.
+  call). A future slice — or the [#351 connection coordinator](relay-repository-coordinator.md), which
+  already cancels the connection scope on drop — may fail all `pendingRequests` on disconnect.
 
 ## Testing
 
@@ -491,6 +497,9 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   the first mutation; added the shared `ack`/`error` correlation primitive), #347 (`createDiscussion`) /
   #348 (`promote`) (the remaining mutations, split from #314, consume [#318](../codebase/318.md) and
   reuse #346's correlation primitive).
-- Hand-off: [#279](https://github.com/pyrycode/pyrycode-mobile/issues/279) / [#302](../codebase/302.md)
-  (`NoiseSessionPump : SessionPump`, the connection scope, the paired-state Koin swap).
+- Connection wiring: [`RelayRepositoryCoordinator`](relay-repository-coordinator.md)
+  ([#351](../codebase/351.md), **landed**) — constructs this repository per live connection against the
+  pump + a child scope, made `NoiseSessionPump : ManagedSessionPump : SessionPump`, and publishes the
+  live instance on `currentRepository` (consumed by the **#352** facade). The paired-state Koin swap from
+  the Fake remains **#350**.
 </content>

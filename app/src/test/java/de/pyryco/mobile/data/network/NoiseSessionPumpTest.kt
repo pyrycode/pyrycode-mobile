@@ -7,6 +7,8 @@ import de.pyryco.mobile.data.crypto.DeviceStaticKeyPair
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.repository.ManagedSessionPump
+import de.pyryco.mobile.data.repository.SessionPump
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -63,6 +65,16 @@ class NoiseSessionPumpTest {
             assertEquals(PumpState.Open("conn-xyz"), pump.state.value)
 
             pump.close()
+        }
+
+    // #351 (AC #1): the pump declares + satisfies the SessionPump / ManagedSessionPump contracts the
+    // coordinator and repository consume — a runtime check of the type relationship the wiring relies on.
+    @Test
+    fun pump_satisfiesSessionPumpAndManagedContracts() =
+        runTest {
+            val pump: Any = fixture().newPump()
+            assertTrue(pump is SessionPump)
+            assertTrue(pump is ManagedSessionPump)
         }
 
     @Test

@@ -13,6 +13,7 @@ import de.pyryco.mobile.data.crypto.KeystorePairedServerStore
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.NoiseSessionFactory
+import de.pyryco.mobile.data.network.NoiseSessionPump
 import de.pyryco.mobile.data.network.OkHttpRelayTransport
 import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.network.RelayTransportFactory
@@ -20,6 +21,7 @@ import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
@@ -61,6 +63,17 @@ val appModule =
             LifecycleConnectionDriver(
                 controller = get<RelayConnectionSupervisor>(),
                 lifecycle = ProcessLifecycleOwner.get().lifecycle,
+            ).also { it.start() }
+        }
+        // #351: connection-scoped coordinator. Eagerly started so it observes currentConnection for the
+        // process lifetime — per live connection it starts a fresh Noise pump and builds a remote repo,
+        // publishing it on currentRepository for the #352 facade. Does NOT bind ConversationRepository:
+        // the Fake stays the default until the #350 flag-gated swap.
+        single(createdAtStart = true) {
+            val sessionFactory = get<NoiseSessionFactory>()
+            RelayRepositoryCoordinator(
+                connections = get<RelayConnectionSupervisor>().currentConnection,
+                createPump = { transport -> NoiseSessionPump(transport, sessionFactory) },
             ).also { it.start() }
         }
         viewModel { ScannerViewModel() }
