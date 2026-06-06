@@ -186,8 +186,9 @@ contract check in `NoiseSessionPumpTest` (`pump is SessionPump` / `is ManagedSes
 - Built per connection: [Noise session pump](noise-session-pump.md) ([#309](../codebase/309.md), now
   `: ManagedSessionPump`) + [Remote conversation repository](remote-conversation-repository.md)
   ([#312](../codebase/312.md)/[#313](../codebase/313.md)/[#329](../codebase/329.md)/[#346](../codebase/346.md)).
-- Consumed by: **#352** (the stable `ConversationRepository` facade over `currentRepository`) and
-  **#350** (the flag-gated Fake↔Remote binding swap) — both out of scope here.
+- Consumed by: the [stable conversation repository](stable-conversation-repository.md) facade
+  (**#352**, landed — delegates over `currentRepository` so ViewModels hold one stable reference) and
+  **#350** (the flag-gated Fake↔Remote binding swap) — both out of scope for *this* slice.
 - DI: [Dependency injection](dependency-injection.md) · the [lifecycle connection driver](lifecycle-connection-driver.md)
   ([#302](../codebase/302.md)) is the `createdAtStart` precedent it mirrors.
 - Decisions: [ADR 0004 — vendor noise-java](../decisions/0004-vendor-noise-java-crypto.md),
