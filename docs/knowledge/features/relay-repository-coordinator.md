@@ -10,8 +10,10 @@ connections — is published on `currentRepository`, the seam the **stable-refer
 consumes so ViewModels never re-resolve across connection churn.
 
 This is the slice every prior Phase 4 read/mutation slice deferred to as **"the owner (#279/#302)"** of
-the connection scope and the `SessionPump` binding. It is a **wiring layer**: it adds no wire types, no
-payloads, and no behaviour to the pump or repository — it only owns their lifecycle.
+the connection scope and the `SessionPump` binding. It is largely a **wiring layer**: it adds no wire
+types and no payloads. Beyond owning the pump + repository lifecycle, it owns exactly one connect-time
+side effect — the **FCM push-token re-registration** ([#365](../codebase/365.md)), which reuses
+[#359](../codebase/359.md)'s sender unchanged (see [§ Connect-time push-token re-registration](#connect-time-fcm-push-token-re-registration-365)).
 
 Package: `de.pyryco.mobile.data.repository` (`RelayRepositoryCoordinator` + the `ManagedSessionPump`
 interface it drives, the latter appended to `SessionPump.kt`), co-located with the
@@ -41,6 +43,7 @@ code-independent — and this layer scopes the latter two to the former's lifeti
 ```kotlin
 // data/repository/SessionPump.kt — the coordinator's lifecycle view of the pump
 interface ManagedSessionPump : SessionPump {   // SessionPump = the repository's data view (inbound/send)
+    val state: StateFlow<PumpState>   // (#365) lifecycle state; the coordinator awaits Open before re-registering
     fun start()   // single-use; launches the handshake + open-state dispatch drive
     fun close()   // idempotent; wipes session keys + tears the pump's session/scope down
 }
@@ -50,6 +53,8 @@ class RelayRepositoryCoordinator(
     connections: StateFlow<RelayTransport?>,                 // = supervisor.currentConnection (the input)
     createPump: (RelayTransport) -> ManagedSessionPump,      // prod: { NoiseSessionPump(it, sessionFactory) }
     dispatcher: CoroutineDispatcher = Dispatchers.Default,   // injection seam (test clock); stored as a val
+    deviceName: String = "",                                 // (#365) live Build.MODEL; "" until AppModule wires it
+    pushToken: suspend () -> String? = { null },             // (#365) one-shot token read; null ⇒ no registration
 ) {
     val currentRepository: StateFlow<ConversationRepository?>  // live repo, or null between connections
     fun start()   // idempotent — launches the single connections collector on the coordinator scope
@@ -61,8 +66,10 @@ class RelayRepositoryCoordinator(
 Segregation): the repository reads `inbound` and calls `send` (the `SessionPump` *data* view), while the
 coordinator additionally `start()`s and `close()`s it (the *lifecycle* view). The coordinator depends on
 the richer contract and hands the **same instance, upcast to `SessionPump`**, to the repository.
-[`NoiseSessionPump`](noise-session-pump.md) declares `: ManagedSessionPump` — its four members already
-matched structurally, so this was purely additive (no behaviour change).
+[`NoiseSessionPump`](noise-session-pump.md) declares `: ManagedSessionPump` — its members already
+matched structurally, so this was purely additive (no behaviour change). [#365](../codebase/365.md) added
+`val state: StateFlow<PumpState>` to the **lifecycle** view (not the `SessionPump` data view, so the
+repository is untouched) — `NoiseSessionPump`'s already-public `state` gained only an `override`.
 
 ## How it works — the connection→repository state machine
 
@@ -73,16 +80,20 @@ emission, run by one collector launched in `start()`:
    child scope, then close the pump** — order matters (see below).
 2. **If `transport == null`**, return — this is the between-connections state.
 3. **Else build a fresh connection**: a per-connection `childScope` (child of the coordinator job),
-   `pump = createPump(transport).also { it.start() }`, retain `(pump, childScope)`, and publish
-   `RemoteConversationRepository(pump, childScope)` on `currentRepository`.
+   `pump = createPump(transport).also { it.start() }`, retain `(pump, childScope)`, publish
+   `RemoteConversationRepository(pump, childScope, deviceName)` on `currentRepository`, then
+   `childScope.launch { … }` the connect-time push-token re-registration hook (#365, below). `launch`
+   returns immediately, so `onConnection` stays non-suspending.
 
 ```
 currentConnection :  null → T1 → null → T2 → …
         ▼
 onConnection (single collector, sequential, non-suspending)
-   T1 ─▶ pump1 = create(T1).start();  repo1 = Remote(pump1, scope1);  currentRepository = repo1
+   T1 ─▶ pump1 = create(T1).start();  repo1 = Remote(pump1, scope1, name);  currentRepository = repo1
+         scope1.launch { reregisterPushTokenOnOpen(pump1, repo1) }   (#365, off the critical path)
  null ─▶ scope1.cancel(); pump1.close()  (keys wiped);               currentRepository = null
-   T2 ─▶ pump2 = create(T2).start();  repo2 = Remote(pump2, scope2);  currentRepository = repo2
+   T2 ─▶ pump2 = create(T2).start();  repo2 = Remote(pump2, scope2, name);  currentRepository = repo2
+         scope2.launch { reregisterPushTokenOnOpen(pump2, repo2) }
 ```
 
 ### Scope ownership (three distinct scopes)
@@ -101,6 +112,57 @@ The coordinator does **not** also observe `pump.state`. A pump that dies on its 
 crypto fault) always calls `transport.close()` in its teardown, which makes the supervisor observe `Down`
 and clear `currentConnection` to `null` — so the death funnels back through the supervisor and reaches
 the coordinator as a `null` emission. The transport is the single source of connection liveness.
+
+## Connect-time FCM push-token re-registration (#365)
+
+Per the daemon's contract (`docs/protocol-mobile.md` § Phone background behaviour) the phone re-registers
+its FCM push token on **every** WS connect, so the daemon's wake target self-heals across app restarts and
+connection drops; the server de-duplicates the `(platform, token, device_name)` triple, so a repeat is a
+cheap (~100 B) no-op. [#365](../codebase/365.md) adds that connect-time orchestration here — the only
+Phase 4 FCM slice that touches the connection lifecycle — reusing [#359](../codebase/359.md)'s
+`RemoteConversationRepository.registerPushToken` sender unchanged.
+
+After publishing the repo, `onConnection` launches `reregisterPushTokenOnOpen(pump, repo)` on the
+per-connection `childScope`. The hook:
+
+1. **Awaits the first transition out of `Handshaking`** — `pump.state.first { it is Open || it is Closed }`.
+   `StateFlow.first {}` checks the current value first, so an already-`Open` pump fires with no missed-edge
+   race.
+2. **Aborts on a pre-Open `Closed`** (handshake fault / transport down) — `return`, nothing to register.
+3. **Reads the token** — `val token = pushToken() ?: return`. A `null` token is a **no-op**: the capability
+   is **dormant** until a token is stored (Firebase #361 via [#364](../codebase/364.md)).
+4. **Sends once** — `repo.registerPushToken(token)`, swallowing failure.
+
+It fires **exactly once per connection**, guaranteed *structurally*: each connection builds a fresh pump +
+child scope + hook, and the `PumpState` machine never revisits `Handshaking` (re-key stays `Open`). No
+client-side dedup — the server dedupes the triple.
+
+Three load-bearing constraints shape it:
+
+- **It uses the *concrete* `repo` handle, not `currentRepository`.** `registerPushToken` is **not** on the
+  `ConversationRepository` interface (#359 — it is a device/connection concern), and `currentRepository` is
+  interface-typed, so the hook calls it through the concrete `RemoteConversationRepository` captured at
+  construction. This is the **first live caller** of the method #359 shipped dormant. It does **not** add a
+  second `currentRepository` observer or a second connection-state subscription — it reuses the one
+  `onConnection` collector + the pump's existing `state`.
+- **`onConnection` stays non-suspending.** `launch` schedules and returns; all suspending work runs on the
+  child scope, off the critical path — preserving the cancellation-atomicity / key-wipe invariant (below).
+  The hook is **never** awaited inline.
+- **Swallow, but propagate cancellation.** A narrow `catch` re-throws `CancellationException` (a drop
+  cancels `childScope` mid-call — absorbing it would break structured-concurrency teardown) and swallows any
+  other `Exception` **without logging** (the token is never logged; the daemon re-registers on the next
+  connect by contract). A server `error` (`RelayErrorException`) or not-Open `IllegalStateException` is
+  swallowed.
+
+### Closing #359's `device_name: ""` defer
+
+#359 left `RemoteConversationRepository`'s `deviceName` ctor param defaulted to `""` and flagged that
+whichever slice adds the live caller must thread the real name. #365 is that slice: it adds the
+`deviceName: String = ""` coordinator param, threads it into the repo (`RemoteConversationRepository(pump,
+childScope, deviceName)`), and `AppModule` supplies the live `NoiseClientInfo.deviceName` (`Build.MODEL`).
+This matters because pyrycode's handler (#319) acks-with-**no-registry-touch** only when
+`(Platform, Token, DeviceName)` matches the stored device — an empty `device_name` would *fork* the
+server's dedup triple into a duplicate registry entry. See [[post-352-connection-scoped-repo-behind-facade]].
 
 ## Security invariants
 
@@ -138,9 +200,17 @@ single(createdAtStart = true) {
     RelayRepositoryCoordinator(
         connections = get<RelayConnectionSupervisor>().currentConnection,
         createPump = { transport -> NoiseSessionPump(transport, sessionFactory) },
+        // #365: close #359's device_name: "" defer + supply the connect-time token read.
+        deviceName = get<NoiseClientInfo>().deviceName,                 // Build.MODEL
+        pushToken = { get<AppPreferences>().pushToken.first() },        // one-shot read of the persisted token
     ).also { it.start() }
 }
 ```
+
+The two `#365` params are **defaulted** (`""` / `{ null }`), so the connect-time re-registration is
+dormant until `AppModule` wires these live values; `AppPreferences` and `NoiseClientInfo` were already
+resolvable singletons. `pushToken.first()` is the correct one-shot read of the non-completing DataStore
+flow.
 
 `createdAtStart` so it observes `currentConnection` for the process lifetime. It does **not** bind
 `ConversationRepository` — that binding lives in #350's flag-gated `conversationRepositoryModule` selector
@@ -178,10 +248,25 @@ distinct pump + repository instances per connection with no projection carryover
 contract check in `NoiseSessionPumpTest` (`pump is SessionPump` / `is ManagedSessionPump`, typed as
 `Any`). No instrumented test — pure data-layer.
 
+[#365](../codebase/365.md) added a drivable `state` to `FakeManagedPump` (a
+`MutableStateFlow(PumpState.Handshaking)` + `open()` / `closeState()` helpers — defaulting to
+`Handshaking` keeps the pre-existing tests' hook dormant) and five connect-time tests: a stored token
+registers once with the live `device_name` (AC #1, exact-payload assertion), a null token is a no-op
+(AC #2), a reconnect re-registers once per connection (AC #3), a server `error` neither crashes nor wedges
+the connection (AC #4), and a pre-`Open` `Closed` registers nothing (boundary). The `ack`/`error`
+correlation mirrors `RemoteConversationRepositoryTest`'s #359 shape.
+
 ## Related
 
-- Ticket: [#351](../codebase/351.md) — implementation record (files, line refs, patterns, lessons).
-- Spec: `docs/specs/architecture/351-connection-scoped-repository-coordinator.md`.
+- Tickets: [#351](../codebase/351.md) — the coordinator + `ManagedSessionPump` (files, line refs,
+  patterns, lessons) · [#365](../codebase/365.md) — the connect-time FCM push-token re-registration hook,
+  the `ManagedSessionPump.state` addition, and closing #359's `device_name: ""` defer.
+- Specs: `docs/specs/architecture/351-connection-scoped-repository-coordinator.md` ·
+  `docs/specs/architecture/365-reregister-push-token-on-reconnect.md`.
+- Push stack: [`RemoteConversationRepository.registerPushToken`](remote-conversation-repository.md)
+  ([#359](../codebase/359.md), the reused sender) · [`AppPreferences.pushToken`](app-preferences.md)
+  ([#364](../codebase/364.md), the persisted token this hook reads) · Firebase #361 (the token origin via
+  `onNewToken`).
 - Input: [Relay reconnect supervisor](relay-reconnect-supervisor.md) ([#307](../codebase/307.md)) —
   publishes `currentConnection`.
 - Built per connection: [Noise session pump](noise-session-pump.md) ([#309](../codebase/309.md), now

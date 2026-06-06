@@ -59,7 +59,7 @@ class NoiseSessionPump(
     private val mutableState = MutableStateFlow<PumpState>(PumpState.Handshaking)
 
     /** Handshake-completion + lifecycle signal: `Handshaking → Open(connId) → Closed(cause)`. */
-    val state: StateFlow<PumpState> = mutableState.asStateFlow()
+    override val state: StateFlow<PumpState> = mutableState.asStateFlow()
 
     private val inboundChannel = Channel<Envelope>(Channel.BUFFERED)
 
