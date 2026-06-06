@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -173,5 +174,41 @@ class AppPreferencesTest {
             assertEquals("/home/user/code/myproj", prefs.defaultWorkspace.first())
             prefs.setDefaultWorkspace(DEFAULT_SCRATCH_CWD)
             assertEquals(DEFAULT_SCRATCH_CWD, prefs.defaultWorkspace.first())
+        }
+
+    @Test
+    fun pushToken_defaultsToNull() =
+        runBlocking {
+            assertNull(prefs.pushToken.first())
+        }
+
+    @Test
+    fun setPushToken_roundTrips() =
+        runBlocking {
+            prefs.setPushToken("fcm-token-abc")
+            assertEquals("fcm-token-abc", prefs.pushToken.first())
+            prefs.setPushToken("fcm-token-xyz")
+            assertEquals("fcm-token-xyz", prefs.pushToken.first())
+        }
+
+    @Test
+    fun pushToken_survivesProcessDeath() =
+        runBlocking {
+            val file = tmp.newFile("push_token_persist.preferences_pb")
+
+            val job1 = Job()
+            val scope1 = CoroutineScope(Dispatchers.IO + job1)
+            val store1 =
+                PreferenceDataStoreFactory.create(scope = scope1, produceFile = { file })
+            AppPreferences(store1).setPushToken("tok-A")
+            scope1.cancel()
+            job1.join()
+
+            val job2 = Job()
+            val scope2 = CoroutineScope(Dispatchers.IO + job2)
+            val store2 =
+                PreferenceDataStoreFactory.create(scope = scope2, produceFile = { file })
+            assertEquals("tok-A", AppPreferences(store2).pushToken.first())
+            scope2.cancel()
         }
 }

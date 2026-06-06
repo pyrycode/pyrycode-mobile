@@ -70,6 +70,13 @@ class AppPreferences(
         dataStore.edit { prefs -> prefs[DEFAULT_WORKSPACE] = cwd }
     }
 
+    val pushToken: Flow<String?> =
+        dataStore.data.map { prefs -> prefs[PUSH_TOKEN] }
+
+    suspend fun setPushToken(token: String) {
+        dataStore.edit { prefs -> prefs[PUSH_TOKEN] = token }
+    }
+
     private companion object {
         val THEME_MODE = stringPreferencesKey("theme_mode")
         val USE_WALLPAPER_COLORS = booleanPreferencesKey("use_wallpaper_colors")
@@ -78,5 +85,6 @@ class AppPreferences(
         val DEFAULT_YOLO = booleanPreferencesKey("default_yolo")
         val NOTIFICATIONS_ENABLED = booleanPreferencesKey("notifications_enabled")
         val DEFAULT_WORKSPACE = stringPreferencesKey("default_workspace")
+        val PUSH_TOKEN = stringPreferencesKey("push_token")
     }
 }
