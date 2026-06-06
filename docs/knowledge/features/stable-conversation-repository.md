@@ -18,8 +18,10 @@ non-crashing surface while no connection is live.
 Package: `de.pyryco.mobile.data.repository` (`StableConversationRepository.kt`), co-located with the
 [contract](conversation-repository.md) it implements and the [coordinator](relay-repository-coordinator.md)
 it reads from. Landed in [#352](../codebase/352.md) (split from #349). Portable, `android.*`-free, emits
-**no logs**. It is registered as its own resolvable DI type but does **not** yet bind
-`ConversationRepository` — the Fake stays the default until the #350 flag-gated swap.
+**no logs**. It is registered as its own resolvable DI type; as of #350 it is **flag-selected** as the
+`ConversationRepository` binding by the `conversationRepositoryModule` selector — bound when
+`BuildConfig.USE_RELAY_REPOSITORY` is on, with the Fake as the default-OFF binding (see
+[`../codebase/350.md`](../codebase/350.md)).
 
 ## Where it sits in the Phase 4 stack
 
@@ -119,7 +121,8 @@ an app crash.
 While no connection is live, **cold reads render the disconnected state as the empty projection**
 (`emptyList()` / `null`) and resume on the next connection — they never error. This conflates "no
 connection" with "connected, genuinely zero items" at this layer; a distinct connection-status UI
-surface is a follow-up (consumed by #350's ViewModels if desired), out of scope here. Note the remote
+surface is a deferred follow-up (the flag-ON production flip's concern, not #350's binding-only slice).
+Note the remote
 repo emits nothing until its first snapshot, so the empty fallback covers only the no-connection gap,
 not a connected-but-loading gap.
 
@@ -132,13 +135,25 @@ DI registration in `AppModule.kt` — a lazy `single` resolvable by its own type
 single { StableConversationRepository(get<RelayRepositoryCoordinator>().currentRepository) }
 ```
 
-Lazy (no `createdAtStart`) is correct — the facade is stateless and does no work at construction, and
-nothing resolves it yet (ViewModels still get the Fake until #350). `get<RelayRepositoryCoordinator>()`
-resolves the eager coordinator singleton; `currentRepository` is a stable `StateFlow` instance for the
-coordinator's life. **`AppModule.kt:57` (`FakeConversationRepository … bind ConversationRepository::class`)
-is untouched** (AC #5) — this slice registers the facade but does not flip the binding. That flip is
-#350's one-line change: add `bind ConversationRepository::class` here and rewire the ViewModels.
-(`AppModule.kt:57` is the untouched Fake binding; the facade registration is `AppModule.kt:84`.)
+Lazy (no `createdAtStart`) is correct — the facade is stateless and does no work at construction. This
+`single` registers the facade by its own type only; **what binds the `ConversationRepository` interface
+to it is the #350 `conversationRepositoryModule` selector**, not a `bind` on this line.
+`get<RelayRepositoryCoordinator>()` resolves the eager coordinator singleton; `currentRepository` is a
+stable `StateFlow` instance for the coordinator's life.
+
+As of #350 the selector binds this facade when `BuildConfig.USE_RELAY_REPOSITORY` is on (default OFF →
+Fake):
+
+```kotlin
+single<ConversationRepository> {
+    if (useRelay) get<StableConversationRepository>() else get<FakeConversationRepository>()
+}
+```
+
+#352 (this slice) anticipated #350 as *"add `bind ConversationRepository::class` to this `single` and
+rewire the ViewModels"* — it landed differently and more cleanly: a **separate selector module** (so the
+binding is unit-testable in isolation) and **no ViewModel rewiring** (every consumer already resolves the
+interface). See [`../codebase/350.md`](../codebase/350.md).
 
 ## Edge cases / limitations
 
@@ -190,6 +205,7 @@ pass-through. The eight tests map to the ACs, the key one being
 - Delegate: [Remote conversation repository](remote-conversation-repository.md) — the per-connection
   repo the facade switches to; the `IllegalStateException` not-connected type is matched to its
   not-`Open`-pump throw.
-- Consumed by: **#350** (the flag-gated Fake↔Remote binding swap + ViewModel rewiring — this slice
-  registers the facade but does not bind it as the default).
+- Bound by: **[#350](../codebase/350.md)** (the flag-gated Fake↔Remote binding swap — the
+  `conversationRepositoryModule` selector binds this facade when `USE_RELAY_REPOSITORY` is on; landed
+  with no ViewModel changes, since consumers already resolve the interface).
 - DI: [Dependency injection](dependency-injection.md).
