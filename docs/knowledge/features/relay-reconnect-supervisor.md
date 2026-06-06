@@ -58,7 +58,7 @@ class RelayConnectionSupervisor(
     fun close()                                    // stop the loop, tear down the socket, go idle
     override fun observe(): Flow<ConnectionState>  // the live state (a StateFlow under the hood)
     override suspend fun retry()                   // force an immediate reconnect; never throws
-    val currentConnection: StateFlow<RelayTransport?>  // live instance (Up) or null — the #309/#302 seam
+    val currentConnection: StateFlow<RelayTransport?>  // live instance (Up) or null — consumed by the #351 coordinator
 }
 ```
 
@@ -150,10 +150,10 @@ blocker relationship) and is out of scope. A future ticket may refine `Connected
 non-precluding seam.** The supervisor constructs each instance via `RelayTransportFactory`, owns its
 lifecycle, and collects **only `events`** — it **never collects `inbound`** (that single-consumer stream
 is #309's). It publishes the live instance on `currentConnection` (set on `Up`, cleared on
-`Down`/`close()`), so the layer-up coordinator ([#302](https://github.com/pyrycode/pyrycode-mobile/issues/302) / future wiring) can hand the same
-connection's `inbound` to a **fresh #309 pump per connection**. Coordinating the two over one instance
-lives a layer up, not in either sibling — this seam exists solely so the supervisor's internal
-construction doesn't preclude it.
+`Down`/`close()`), so the layer-up [`RelayRepositoryCoordinator`](relay-repository-coordinator.md)
+([#351](../codebase/351.md), **landed**) hands the same connection to a **fresh #309 pump per connection**.
+Coordinating the two over one instance lives a layer up, not in either sibling — this seam exists solely
+so the supervisor's internal construction doesn't preclude it.
 
 ## State & concurrency model
 
@@ -239,7 +239,9 @@ reset vs <60 s escalation; benign-unpaired (no dial, tap-to-retry stays idle); `
 - Consumer (UI): [`ConnectionBanner`](connection-banner.md) (#200) via `ThreadViewModel` (#201) —
   unchanged; only the bound `ConnectionStateSource` impl changed.
 - Siblings: **#309** (Noise session pump — collects the same connection's `inbound` via `currentConnection`;
-  no blocker), **[#302](../codebase/302.md)** ([lifecycle connection driver](lifecycle-connection-driver.md),
+  no blocker), **[#351](../codebase/351.md)** ([`RelayRepositoryCoordinator`](relay-repository-coordinator.md),
+  **landed** — the consumer of `currentConnection`: starts a #309 pump + builds a remote repository per
+  live connection), **[#302](../codebase/302.md)** ([lifecycle connection driver](lifecycle-connection-driver.md),
   **landed** — drives `connect()`/`close()` across foreground/background edges via the new
   `RelayConnectionController` seam), **#308** (relay auth-gate — will consume `Down.code == 4401`), **#278**
   (`RemoteConversationRepository`).

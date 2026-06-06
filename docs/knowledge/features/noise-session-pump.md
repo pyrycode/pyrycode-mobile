@@ -16,12 +16,16 @@ engine ([ADR 0005](../decisions/0005-okhttp-websocket-engine.md)) + vendored noi
 triggers** — a 1-hour timer + an inbound `rekey_request` dispatch, driving #303's in-place re-key —
 landed on top of this pump in [#304](../codebase/304.md) (see § Re-key triggers).
 
-> **Ships dormant.** The pump lands with **no Koin binding** and **no consumers** — it is a
-> **per-connection** object, not a singleton. A layer-up coordinator ([#302](../codebase/302.md)) is to
-> observe [`RelayConnectionSupervisor.currentConnection`](relay-reconnect-supervisor.md) and, on a
-> non-null transport, construct `NoiseSessionPump(transport, koin.get<NoiseSessionFactory>()).also {
-> it.start() }`. That wiring is **#302's job, not #309's** (and is not yet done). The pump receives a
-> transport that is **already `Up`**; it never calls `transport.connect()`.
+> **Lands per-connection, not a singleton.** #309 shipped the pump with **no Koin binding** and **no
+> consumers** — it is a **per-connection** object. The
+> [`RelayRepositoryCoordinator`](relay-repository-coordinator.md) ([#351](../codebase/351.md), **landed**)
+> now observes [`RelayConnectionSupervisor.currentConnection`](relay-reconnect-supervisor.md) and, on a
+> non-null transport, constructs `NoiseSessionPump(transport, koin.get<NoiseSessionFactory>()).also {
+> it.start() }` per connection, tearing it down (`close()`, wiping keys) when the connection drops. To
+> let the coordinator own that lifecycle without the repository seeing it, #351 made the pump declare
+> **`: ManagedSessionPump`** (the `start()`/`close()` lifecycle view layered over `SessionPump`'s
+> `inbound`/`send` data view) — purely additive, no behaviour change. The pump receives a transport that
+> is **already `Up`**; it never calls `transport.connect()`.
 
 ## Where it sits in the Phase 4 stack
 
@@ -52,8 +56,8 @@ class NoiseSessionPump(
     dispatcher: CoroutineDispatcher = Dispatchers.Default,  // crypto is CPU-bound; create() switches to IO itself
     handshakeTimeoutMs: Long = 10_000,                      // protocol step 4: the noise_resp deadline
     rekeyIntervalMs: Long = 3_600_000,                      // #304: the 1-hour re-key cadence; injected small in tests
-) {
-    val state: StateFlow<PumpState>          // handshake-completion + lifecycle signal
+) : ManagedSessionPump {                     // #351: inbound/send (SessionPump) + start/close (the lifecycle view)
+    val state: StateFlow<PumpState>          // handshake-completion + lifecycle signal (pump-specific, not in the contract)
     val inbound: Flow<Envelope>              // hot, single-consumer, decrypted app frames
     fun start()                              // single-use; launches the one session-drive coroutine
     fun send(envelope: Envelope): Boolean    // encrypt+frame+send; false unless Open (or racing teardown)
@@ -329,8 +333,10 @@ a `noise_resp` when asserting "no extra frame" (an over-advance re-fires the re-
   — `Envelope`, `InnerFrameV2`, `MobileJson`, `base64StdEncode`/`base64StdDecode`.
 - Siblings / consumers: [reconnect supervisor](relay-reconnect-supervisor.md) ([#307](../codebase/307.md))
   — the same connection's `events`; publishes `currentConnection` (the per-connection seam); **no
-  blocker**. **#302** (lifecycle coordinator — builds a pump per connection; the **unwired** seam).
-  **#278** (`RemoteConversationRepository` — the one external `inbound`/`send` consumer; see the send
+  blocker**. [`RelayRepositoryCoordinator`](relay-repository-coordinator.md) ([#351](../codebase/351.md),
+  **landed**) — builds + `start()`s a pump per connection and `close()`s it on drop; owns the
+  `: ManagedSessionPump` declaration. **#278** (`RemoteConversationRepository` — the one external
+  `inbound`/`send` consumer; see the send
   awareness note; never sees `rekey_request`, intercepted at the producer). **[#304](../codebase/304.md)**
   (re-key triggers — **landed** on this pump: arms a 1-hour timer off `Open`, intercepts `rekey_request`
   in `onOpenFrame`, routes the re-key `noise_resp` via the new `noise_resp` branch).
