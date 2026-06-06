@@ -73,6 +73,42 @@ data class HelloAckPayload(
 )
 
 /**
+ * Payload of an `error` envelope — the failure reply correlated to a request via
+ * [Envelope.inReplyTo] (#346). Wire SSOT: server `internal/protocol/handshake.go`
+ * `ErrorPayload`. [code] is the machine-readable failure category (e.g.
+ * `protocol.malformed`, `conversation.not_found`, `server.binary_offline`); [message]
+ * is server-authored human-facing text; [retryable] tells the caller whether a retry
+ * may succeed. **Decode-only** — the phone never sends an `error`.
+ *
+ * The server also emits `retry_after_s`; it is **intentionally not modeled** — decode
+ * through [MobileJson] (`ignoreUnknownKeys = true`) tolerates it. There is deliberately
+ * no `AckPayload`: a success `ack` payload is empty `{}` and is never decoded —
+ * correlation is purely on [Envelope.inReplyTo].
+ */
+@Serializable
+data class ErrorPayload(
+    val code: String,
+    val message: String,
+    val retryable: Boolean,
+)
+
+/**
+ * The thrown form of a server [ErrorPayload] whose [code] is not a contract-mapped
+ * domain error (#346). Carries the structured fields so a ViewModel can branch on
+ * [retryable] and surface [code] / [message]. The `conversation.not_found` code is
+ * mapped to [IllegalArgumentException] instead (mirroring the repository contract);
+ * every other code — and a malformed/undecodable error payload — surfaces as this.
+ *
+ * [message] is the server's human-facing text only; it never carries the user's message
+ * content (which is never logged or echoed back through the error path).
+ */
+class RelayErrorException(
+    val code: String,
+    val retryable: Boolean,
+    message: String,
+) : Exception(message)
+
+/**
  * Decoded pairing payload. The outer QR-string transport wrapper (which may itself
  * be base64url-encoded) is #277's concern; this models the decoded JSON object only.
  *

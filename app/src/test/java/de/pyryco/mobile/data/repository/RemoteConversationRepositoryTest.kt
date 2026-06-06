@@ -5,6 +5,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.RelayErrorException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -232,12 +233,10 @@ class RemoteConversationRepositoryTest {
         runTest {
             val repo = RemoteConversationRepository(FakeSessionPump(), backgroundScope)
 
-            // observeLastMessage (#329) and observeMessages (#313) are now both implemented; only
-            // the mutation / no-wire methods remain stubs.
+            // observeLastMessage (#329), observeMessages (#313), and sendMessage (#346) are now all
+            // implemented; only the remaining mutation / no-wire methods are still stubs.
             // Suspend stubs throw when invoked.
             assertUnsupported { repo.createDiscussion() }
-            val sendEx = assertUnsupported { repo.sendMessage("c", "hi") }
-            assertTrue(sendEx.message!!.contains("#314"))
             assertUnsupported { repo.promote("c", "name") }
             assertUnsupported { repo.archive("c") }
             assertUnsupported { repo.unarchive("c") }
@@ -576,7 +575,206 @@ class RemoteConversationRepositoryTest {
             assertEquals(listOf("later"), messageIds(emissions.last()))
         }
 
+    // ---- sendMessage (#346): send_message request → ack/error correlation → confirmed-insert ----
+
+    // AC #5, #1: the sent envelope matches the send_message wire contract {conversation_id, message_id, text}.
+    @Test
+    fun sendMessage_sendsRequestMatchingWireContract() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val send = startSend(repo, "c1", "hi")
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "send_message" }
+            val payload = sent.payload.jsonObject
+            assertEquals("c1", payload.getValue("conversation_id").jsonPrimitive.content)
+            assertEquals("hi", payload.getValue("text").jsonPrimitive.content)
+            assertTrue(
+                payload
+                    .getValue("message_id")
+                    .jsonPrimitive.content
+                    .isNotBlank(),
+            )
+
+            // Resolve so the awaiting coroutine completes cleanly.
+            pump.push(ackEnvelope(sent.id))
+            runCurrent()
+            assertEquals(payload.getValue("message_id").jsonPrimitive.content, send().getOrThrow().id)
+        }
+
+    // AC #1, #2: the correlated ack resolves to a reconstructed Role.User Message and both read
+    // streams re-emit with it (confirmed-insert into observeMessages AND observeLastMessage).
+    @Test
+    fun sendMessage_onAck_returnsUserMessageAndReEmitsBothStreams() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val thread = collectMessages(repo, "c1")
+            val last = collectLastMessage(repo, "c1")
+            runCurrent()
+
+            val send = startSend(repo, "c1", "hi")
+            runCurrent()
+            val sent = pump.sent.single { it.type == "send_message" }
+            pump.push(ackEnvelope(sent.id))
+            runCurrent()
+
+            val message = send().getOrThrow()
+            assertEquals(Role.User, message.role)
+            assertEquals("hi", message.content)
+            assertEquals("", message.sessionId)
+            assertTrue(message.id.isNotBlank())
+
+            // Both projections now carry the confirmed-inserted message.
+            assertEquals(listOf(message.id), messageIds(thread.last()))
+            assertEquals(message.id, last.last()!!.id)
+        }
+
+    // AC #4: a correlated server error surfaces as RelayErrorException (exposing code); no projection.
+    @Test
+    fun sendMessage_onServerError_throwsRelayErrorAndLeavesProjectionsUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val thread = collectMessages(repo, "c1")
+            val last = collectLastMessage(repo, "c1")
+            runCurrent()
+
+            val send = startSend(repo, "c1", "hi")
+            runCurrent()
+            val sent = pump.sent.single { it.type == "send_message" }
+            pump.push(errorEnvelope(sent.id, code = "server.binary_offline", retryable = true))
+            runCurrent()
+
+            val ex = send().exceptionOrNull()
+            assertTrue("expected RelayErrorException, got $ex", ex is RelayErrorException)
+            assertEquals("server.binary_offline", (ex as RelayErrorException).code)
+            assertTrue(ex.retryable)
+
+            // Nothing inserted on the failure path.
+            assertEquals(listOf(emptyList<String>()), thread.map { messageIds(it) })
+            assertEquals(listOf<Message?>(null), last)
+        }
+
+    // AC #3: an unknown conversation (server error conversation.not_found) throws IllegalArgumentException.
+    @Test
+    fun sendMessage_onConversationNotFound_throwsIllegalArgument() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val thread = collectMessages(repo, "c1")
+            runCurrent()
+
+            val send = startSend(repo, "c1", "hi")
+            runCurrent()
+            val sent = pump.sent.single { it.type == "send_message" }
+            pump.push(errorEnvelope(sent.id, code = "conversation.not_found", message = "no such conversation"))
+            runCurrent()
+
+            val ex = send().exceptionOrNull()
+            assertTrue("expected IllegalArgumentException, got $ex", ex is IllegalArgumentException)
+            assertEquals(listOf(emptyList<String>()), thread.map { messageIds(it) })
+        }
+
+    // AC #4: a not-Open session (pump.send returns false) throws IllegalStateException; no projection.
+    @Test
+    fun sendMessage_whenSendReturnsFalse_throwsIllegalStateAndLeavesProjectionsUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val thread = collectMessages(repo, "c1")
+            val last = collectLastMessage(repo, "c1")
+            runCurrent()
+
+            val send = startSend(repo, "c1", "hi")
+            runCurrent()
+
+            val ex = send().exceptionOrNull()
+            assertTrue("expected IllegalStateException, got $ex", ex is IllegalStateException)
+            assertEquals(listOf(emptyList<String>()), thread.map { messageIds(it) })
+            assertEquals(listOf<Message?>(null), last)
+        }
+
+    // Correlation hygiene: an ack matching no pending request is a no-op; the collector survives and
+    // a subsequent real send round-trips successfully.
+    @Test
+    fun sendMessage_uncorrelatedAck_isNoOpAndCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            runCurrent()
+
+            pump.push(ackEnvelope(inReplyTo = 999L))
+            runCurrent()
+
+            val send = startSend(repo, "c1", "hi")
+            runCurrent()
+            val sent = pump.sent.single { it.type == "send_message" }
+            pump.push(ackEnvelope(sent.id))
+            runCurrent()
+
+            assertEquals("hi", send().getOrThrow().content)
+        }
+
+    // A malformed (undecodable) error payload still unblocks the waiter as a RelayErrorException —
+    // the collector never hangs the pending request.
+    @Test
+    fun sendMessage_onMalformedError_unblocksWaiterAndCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val send = startSend(repo, "c1", "hi")
+            runCurrent()
+            val sent = pump.sent.single { it.type == "send_message" }
+            // Empty payload omits the required error fields → mapError falls back rather than hanging.
+            pump.push(
+                Envelope(id = 99L, type = "error", ts = TS, payload = JsonObject(emptyMap()), inReplyTo = sent.id),
+            )
+            runCurrent()
+
+            assertTrue(send().exceptionOrNull() is RelayErrorException)
+        }
+
     // ---- Helpers --------------------------------------------------------------------------------
+
+    /**
+     * Launch [RemoteConversationRepository.sendMessage] on [backgroundScope] (it suspends awaiting the
+     * ack/error reply) and return a getter for its eventual [Result]. Read the result only after the
+     * correlated reply has been pushed and [runCurrent] has drained the cascade.
+     */
+    private fun TestScope.startSend(
+        repo: RemoteConversationRepository,
+        conversationId: String,
+        text: String,
+    ): () -> Result<Message> {
+        var outcome: Result<Message>? = null
+        backgroundScope.launch { outcome = runCatching { repo.sendMessage(conversationId, text) } }
+        return { requireNotNull(outcome) { "sendMessage has not completed" } }
+    }
+
+    private fun ackEnvelope(
+        inReplyTo: Long,
+        id: Long = 99L,
+    ): Envelope = Envelope(id = id, type = "ack", ts = TS, payload = JsonObject(emptyMap()), inReplyTo = inReplyTo)
+
+    private fun errorEnvelope(
+        inReplyTo: Long,
+        code: String,
+        message: String = "boom",
+        retryable: Boolean = false,
+        id: Long = 99L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "error",
+            ts = TS,
+            payload = MobileJson.parseToJsonElement("""{"code":"$code","message":"$message","retryable":$retryable}"""),
+            inReplyTo = inReplyTo,
+        )
 
     private fun TestScope.collectConversations(
         repo: RemoteConversationRepository,
@@ -676,9 +874,12 @@ class RemoteConversationRepositoryTest {
 
         val sent = mutableListOf<Envelope>()
 
+        /** Togglable to simulate a not-`Open` session (`send` returns `false`, no frame sent). */
+        var sendResult = true
+
         override fun send(envelope: Envelope): Boolean {
             sent += envelope
-            return true
+            return sendResult
         }
 
         fun push(envelope: Envelope) {
