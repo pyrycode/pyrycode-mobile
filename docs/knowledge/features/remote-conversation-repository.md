@@ -85,11 +85,13 @@ class RemoteConversationRepository(
 The `deviceName` param ([#359](../codebase/359.md)) is the connection-level `device_name` that
 [`registerPushToken`](#registerpushtokentoken--the-device-concern-push-registration-359) sends — the same
 value [`NoiseClientInfo.deviceName`](noise-ik-session.md) puts in the `hello` payload. It is **last and
-defaulted (`""`)** so the one production construction site
+defaulted (`""`)** so that, when [#359](../codebase/359.md) shipped it, the one production construction site
 ([`RelayRepositoryCoordinator.onConnection()`](relay-repository-coordinator.md)) and all existing test sites
-compile unchanged — **zero edit fan-out, `AppModule` and the coordinator untouched** (which is what keeps
-#359 off the now-merged #352 conflict path). The default `""` is **never exercised in production today**
-(the capability has no live caller); the live value is the Firebase sibling's handoff — see
+compiled unchanged — **zero edit fan-out** (which kept #359 off the now-merged #352 conflict path).
+[#365](../codebase/365.md) then **closed that defer**: the coordinator passes the live value here
+(`RemoteConversationRepository(pump, childScope, deviceName)`), sourced from
+[`NoiseClientInfo.deviceName`](noise-ik-session.md) (`Build.MODEL`) in `AppModule`, and its connect-time
+hook is the first live caller of `registerPushToken`. So `""` is **no longer the production value** — see
 [`registerPushToken`](#registerpushtokentoken--the-device-concern-push-registration-359).
 
 **The list projection.** One `private val projection = MutableStateFlow<List<Conversation>?>(null)`
@@ -531,9 +533,10 @@ deferred) and no new error mapping.
    the repo is connection-scoped behind the process-lifetime
    [`StableConversationRepository`](stable-conversation-repository.md) facade ViewModels hold, and that
    facade only delegates the `ConversationRepository` interface — so a non-interface method **deliberately
-   will not reach consumers through the facade**. Reaching the dormant capability from a live caller is the
-   **Firebase sibling's** job, not this slice's; no facade exposure, new interface method, or DI
-   reachability was added.
+   will not reach consumers through the facade**. The live caller therefore holds the **concrete** handle:
+   [#365](../codebase/365.md)'s connect-time hook in the coordinator (which retains the concrete
+   `RemoteConversationRepository` it constructs) calls this directly — no facade exposure, new interface
+   method, or DI reachability was added.
 2. **It mutates no projection.** Unlike `sendMessage` / `createDiscussion` / `promote`, this registers a
    token and produces **no domain object** — the success signal is simply "the call returned without
    throwing". `projection` / `lastMessages` / `messagesByConversation` are untouched, so (unlike #346) no
@@ -565,14 +568,20 @@ suspend fun registerPushToken(token: String) {
 - **No client-side dedupe** — the server dedupes the `(platform, token, device_name)` triple, so this just
   sends. **Never logs the `token`** (the #346 no-secrets posture).
 
-> **Device-name plumbing is a deferred cross-slice handoff (the Firebase sibling owns it).** `device_name`
-> must equal `NoiseClientInfo.deviceName`. It is threaded as the **last, defaulted** constructor param so
-> this slice touches neither `AppModule` nor the [coordinator](relay-repository-coordinator.md) (no #352
-> conflict). The default `""` is **never exercised in production today** (no live caller). The Firebase
-> sibling that adds the live caller **must also** thread the live value — a `deviceName` param on
-> `RelayRepositoryCoordinator` supplied from `NoiseClientInfo` in `AppModule`. A live caller wired *without*
-> that threading would send `device_name: ""`, polluting the server's dedup triple. Named here, in the
-> spec, and in the constructor KDoc so a future developer does not silently rely on the default.
+> **Device-name plumbing — the cross-slice handoff #359 deferred, closed by [#365](../codebase/365.md).**
+> `device_name` must equal `NoiseClientInfo.deviceName`. #359 threaded it as the **last, defaulted**
+> constructor param so that slice touched neither `AppModule` nor the
+> [coordinator](relay-repository-coordinator.md) (no #352 conflict), leaving `""` as a placeholder with no
+> live caller. #365 then added the live caller and threaded the real value: a `deviceName` param on
+> `RelayRepositoryCoordinator` supplied from `NoiseClientInfo` in `AppModule`, passed through to this
+> constructor. So `""` is **no longer the production value** — a live caller wired *without* that threading
+> would have sent `device_name: ""`, polluting the server's `(platform, token, device_name)` dedup triple
+> (pyrycode #319 acks with no registry touch only on a matching triple). The capability now stays dormant
+> only until Firebase #361 *stores* a token for the hook to read.
+>
+> _(The #359 `deviceName` param KDoc at `RemoteConversationRepository.kt:72-76` still describes this as
+> the Firebase sibling's pending handoff — a known-stale comment #365's code review flagged as an optional
+> NIT and deferred, since the file is outside that PR's surface.)_
 
 ## Stubs — the full interface compiles; later slices replace what they own
 
@@ -758,8 +767,10 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   encoder + the null-`workspace` `cwd` resolution), [#359](../codebase/359.md) (`registerPushToken`,
   **landed** — the **first non-interface** device-concern method; reuses #346's `sendAndAwaitReply` +
   `mapError` verbatim with **no** `onInbound` branch and **no** projection mutation, adds the
-  `register_push_token` request encoder + the last/defaulted `deviceName` ctor param; dormant until the
-  Firebase sibling adds a live caller).
+  `register_push_token` request encoder + the last/defaulted `deviceName` ctor param), [#365](../codebase/365.md)
+  (`registerPushToken`'s **first live caller**, **landed** — the coordinator's connect-time hook re-sends it
+  once per connection and threads the live `deviceName`, closing #359's `device_name: ""` defer; still
+  dormant until Firebase #361 stores a token).
 - Connection wiring: [`RelayRepositoryCoordinator`](relay-repository-coordinator.md)
   ([#351](../codebase/351.md), **landed**) — constructs this repository per live connection against the
   pump + a child scope, made `NoiseSessionPump : ManagedSessionPump : SessionPump`, and publishes the
