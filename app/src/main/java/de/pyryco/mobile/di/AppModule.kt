@@ -22,6 +22,7 @@ import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
+import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
@@ -76,6 +77,11 @@ val appModule =
                 createPump = { transport -> NoiseSessionPump(transport, sessionFactory) },
             ).also { it.start() }
         }
+        // #352: the stable facade ViewModels hold across connection churn — delegates to whichever
+        // connection-scoped repo the coordinator publishes on currentRepository, switching on churn.
+        // Registered as its own resolvable type only; it does NOT bind ConversationRepository — the
+        // Fake (line 56) stays the default until the #350 flag-gated swap flips the binding here.
+        single { StableConversationRepository(get<RelayRepositoryCoordinator>().currentRepository) }
         viewModel { ScannerViewModel() }
         viewModel { ChannelListViewModel(get(), get()) }
         viewModel { DiscussionListViewModel(get()) }
