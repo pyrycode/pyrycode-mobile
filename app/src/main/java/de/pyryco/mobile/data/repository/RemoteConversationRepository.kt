@@ -13,6 +13,7 @@ import de.pyryco.mobile.data.network.ErrorPayload
 import de.pyryco.mobile.data.network.MessageChunkPayloadDto
 import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.PromoteConversationPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
 import de.pyryco.mobile.data.network.toConversation
@@ -68,12 +69,15 @@ class RemoteConversationRepository(
      * The demuxed list projection: `null` until the first `conversations` snapshot loads, then the
      * latest full-list snapshot. The primary read source; [observeConversations] derives every cold
      * read from it. Written by the single [init] inbound collector (the authoritative full-replace on
-     * each `conversations` snapshot) **and** by [createDiscussion]'s confirmed insert (#347), which
-     * folds the newly-created [Conversation] in via [upsertConversation] — an atomic
-     * [MutableStateFlow.update] CAS upsert (dedup by id) run only after the `conversation_created`
-     * reply lands, so the two writers retry-merge rather than clobber. `StateFlow` conflation means a
-     * value-equal result does not re-emit (e.g. a redundant reply to a second collector's request, or
-     * the authoritative snapshot that later re-includes a just-folded conversation).
+     * each `conversations` snapshot), by [createDiscussion]'s confirmed insert (#347), **and** by
+     * [promote]'s confirmed upsert (#348) — both mutations fold a [Conversation] in via
+     * [upsertConversation], an atomic [MutableStateFlow.update] CAS upsert (dedup by id) run only after
+     * the correlated reply (`conversation_created` / `conversation_updated`) lands, so the writers
+     * retry-merge rather than clobber. [promote] additionally **reads** [projection]`.value` (a
+     * lock-free snapshot) to resolve the conversation's existing cwd when its `workspace` argument is
+     * null. `StateFlow` conflation means a value-equal result does not re-emit (e.g. a redundant reply
+     * to a second collector's request, or the authoritative snapshot that later re-includes a
+     * just-folded conversation).
      */
     private val projection = MutableStateFlow<List<Conversation>?>(null)
 
@@ -176,14 +180,16 @@ class RemoteConversationRepository(
                     }
                 appendMessages(rows)
             }
-            TYPE_ACK, TYPE_CONVERSATION_CREATED ->
+            TYPE_ACK, TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_UPDATED ->
                 // Success reply to a correlated request, handed verbatim to the waiter. An `ack`
                 // (#346) carries the empty `{}` the bare-ack waiter ignores; a `conversation_created`
-                // (#347) carries the bare conversation object [createDiscussion] decodes for its typed
-                // return. An `inReplyTo` matching no pending entry (or null) is a no-op:
-                // `list_conversations`/`backfill_since` draw no reply here, and `complete` is
-                // idempotent so a duplicate reply is harmless. (#348 routes `conversation_updated`
-                // through this same arm.)
+                // (#347) / `conversation_updated` (#348) carries the bare conversation object the
+                // mutation ([createDiscussion] / [promote]) decodes for its typed return. An
+                // `inReplyTo` matching no pending entry (or null) is a no-op: `list_conversations` /
+                // `backfill_since` draw no reply here; `conversation_updated` is also the server's
+                // unsolicited broadcast on change (no `inReplyTo`), which must stay a harmless no-op
+                // (the authoritative `conversations` snapshot drives an unsolicited list refresh, not
+                // this delta); and `complete` is idempotent so a duplicate reply is harmless.
                 envelope.inReplyTo?.let { id -> pendingRequests[id]?.complete(envelope.payload) }
             TYPE_ERROR ->
                 // Failure reply to a correlated request (#346): unblock the waiter exceptionally with
@@ -427,11 +433,51 @@ class RemoteConversationRepository(
         return conversation
     }
 
+    /**
+     * Promote an existing (scratch) conversation into a named, persistent channel over v2
+     * `promote_conversation` (#348). Resolves the required wire `cwd` from [workspace] or — when null
+     * ("promote in place") — the conversation's existing cwd in [projection], encodes the request
+     * ([PromoteConversationPayloadDto], all three fields required), sends it, and awaits its correlated
+     * `conversation_updated` reply — the **typed** bare-conversation payload (contrast [sendMessage]'s
+     * empty `ack`). Decodes the reply through the #318 [ConversationResponseDto] boundary, so a
+     * malformed reply throws before any state mutation, then **confirmed-upserts** the returned
+     * [Conversation] into [projection] — only after the reply decodes — so [observeConversations]
+     * re-emits with it now in the Channels tier (AC #2). The returned `name`/`cwd`/`isPromoted` are the
+     * **server-authoritative** reply values (AC #1), never the request's resolved cwd.
+     *
+     * Throws [IllegalArgumentException] for an unknown conversation (server `conversation.not_found`,
+     * mirroring the fake's type), [RelayErrorException] for any other server `error`,
+     * [IllegalStateException] when the session is not connected, and the #318 decode exception
+     * ([kotlinx.serialization.SerializationException] / [IllegalArgumentException]) for a malformed
+     * reply — none of which mutate [projection] (AC #3).
+     */
     override suspend fun promote(
         conversationId: String,
         name: String,
         workspace: String?,
-    ): Conversation = throw UnsupportedOperationException("promote: mutation path not yet wired (#314)")
+    ): Conversation {
+        // Null workspace ("promote in place") resolves to the conversation's existing cwd from the read
+        // projection — the remote analog of the fake's `workspace ?: record.conversation.cwd`. The
+        // `?: ""` fallback is only reachable when the conversation is absent from the projection (not
+        // reachable from the shipped UI, which only promotes a visible, hence loaded, conversation).
+        val cwd = workspace ?: projection.value?.firstOrNull { it.id == conversationId }?.cwd ?: ""
+        val request =
+            Envelope(
+                id = requestId.incrementAndGet(),
+                type = TYPE_PROMOTE_CONVERSATION,
+                ts = Clock.System.now().toString(),
+                payload =
+                    MobileJson.encodeToJsonElement(
+                        PromoteConversationPayloadDto(conversationId = conversationId, name = name, cwd = cwd),
+                    ),
+            )
+        // Throws on a server `error` / not-Open session; the decode + confirmed upsert below are
+        // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
+        val reply = sendAndAwaitReply(request)
+        val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
+        upsertConversation(conversation)
+        return conversation
+    }
 
     /**
      * Post [text] to [conversationId] over v2 `send_message` (#346). Mints a client-side
@@ -528,6 +574,15 @@ class RemoteConversationRepository(
 
         /** Correlated success reply carrying the bare created conversation object (#347, #274). */
         const val TYPE_CONVERSATION_CREATED = "conversation_created"
+
+        /** Request: promote an existing conversation to a named channel (#348, #274 `PromoteConversationPayload`). */
+        const val TYPE_PROMOTE_CONVERSATION = "promote_conversation"
+
+        /**
+         * Correlated success reply carrying the bare promoted conversation object (#348, #274) — also
+         * the server's unsolicited broadcast to all phones on a conversation change.
+         */
+        const val TYPE_CONVERSATION_UPDATED = "conversation_updated"
 
         /** Correlated success reply (empty `{}`) to a request, matched on `in_reply_to` (#346). */
         const val TYPE_ACK = "ack"

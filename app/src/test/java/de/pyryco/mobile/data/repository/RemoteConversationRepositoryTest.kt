@@ -235,10 +235,9 @@ class RemoteConversationRepositoryTest {
         runTest {
             val repo = RemoteConversationRepository(FakeSessionPump(), backgroundScope)
 
-            // observeLastMessage (#329), observeMessages (#313), sendMessage (#346), and
-            // createDiscussion (#347) are now all implemented; only the remaining mutation / no-wire
-            // methods are still stubs. Suspend stubs throw when invoked.
-            assertUnsupported { repo.promote("c", "name") }
+            // observeLastMessage (#329), observeMessages (#313), sendMessage (#346),
+            // createDiscussion (#347), and promote (#348) are now all implemented; only the remaining
+            // mutation / no-wire methods are still stubs. Suspend stubs throw when invoked.
             assertUnsupported { repo.archive("c") }
             assertUnsupported { repo.unarchive("c") }
             assertUnsupported { repo.rename("c", "name") }
@@ -972,6 +971,274 @@ class RemoteConversationRepositoryTest {
             assertEquals("c-new", create().getOrThrow().id)
         }
 
+    // ---- promote (#348): promote_conversation request → conversation_updated reply --------------
+
+    // AC #1, #4: an explicit workspace pins the cwd; the request carries all three required fields.
+    @Test
+    fun promote_explicitWorkspace_sendsPromoteConversationWithAllThreeFields() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            startPromote(repo, "disc", "weekly-planning", "/work/wp")
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "promote_conversation" }
+            assertEquals(
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"disc","name":"weekly-planning","cwd":"/work/wp"}""",
+                ),
+                sent.payload,
+            )
+
+            // Unblock the launched coroutine so backgroundScope completes cleanly.
+            pump.push(conversationUpdatedEnvelope(inReplyTo = sent.id, id = "disc", name = "weekly-planning", cwd = "/work/wp"))
+            runCurrent()
+        }
+
+    // AC #1, #4: a null workspace resolves the conversation's existing cwd from the projection.
+    @Test
+    fun promote_nullWorkspace_resolvesExistingCwdFromProjection() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            startPromote(repo, "disc", "weekly-planning", null)
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "promote_conversation" }
+            // cwd resolved from disc's projection entry (the scratch cwd), not "".
+            assertEquals(
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"disc","name":"weekly-planning","cwd":"$DEFAULT_SCRATCH_CWD"}""",
+                ),
+                sent.payload,
+            )
+
+            pump.push(conversationUpdatedEnvelope(inReplyTo = sent.id, id = "disc", name = "weekly-planning", cwd = DEFAULT_SCRATCH_CWD))
+            runCurrent()
+        }
+
+    // AC #1, #4: a null workspace with no projection entry falls back to "" (unreachable-from-UI).
+    @Test
+    fun promote_nullWorkspaceNoProjectionEntry_fallsBackToEmptyCwd() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            startPromote(repo, "ghost", "n", null)
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "promote_conversation" }
+            assertEquals(
+                MobileJson.parseToJsonElement("""{"conversation_id":"ghost","name":"n","cwd":""}"""),
+                sent.payload,
+            )
+
+            pump.push(conversationUpdatedEnvelope(inReplyTo = sent.id, id = "ghost", name = "n", cwd = ""))
+            runCurrent()
+        }
+
+    // AC #1: the conversation_updated reply decodes to a promoted Conversation whose cwd is the
+    // server's reply value, not the request's resolved cwd.
+    @Test
+    fun promote_onUpdatedReply_returnsPromotedConversationWithServerCwd() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val promote = startPromote(repo, "disc", "weekly-planning", null)
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "promote_conversation" }.id
+            pump.push(
+                conversationUpdatedEnvelope(
+                    inReplyTo = sentId,
+                    id = "disc",
+                    isPromoted = true,
+                    name = "weekly-planning",
+                    cwd = "/work/wp",
+                    lastUsedAt = "2026-05-08T10:34:30Z",
+                ),
+            )
+            runCurrent()
+
+            val conversation = promote().getOrThrow()
+            assertEquals("disc", conversation.id)
+            assertTrue(conversation.isPromoted)
+            assertEquals("weekly-planning", conversation.name)
+            // The server-assigned cwd from the reply, not the request's resolved cwd.
+            assertEquals("/work/wp", conversation.cwd)
+        }
+
+    // AC #2: a successful promote flips disc into the Channels tier (present in Channels, absent from
+    // Discussions), replaced in place (no duplicate, list count unchanged).
+    @Test
+    fun promote_onSuccess_flipsConversationToChannelsTier() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            val channels = collectConversations(repo, ConversationFilter.Channels)
+            val discussions = collectConversations(repo, ConversationFilter.Discussions)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+            assertEquals(listOf("chan"), channels.last().map { it.id })
+            assertEquals(listOf("disc"), discussions.last().map { it.id })
+
+            val promote = startPromote(repo, "disc", "weekly-planning", null)
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "promote_conversation" }.id
+            pump.push(
+                conversationUpdatedEnvelope(
+                    inReplyTo = sentId,
+                    id = "disc",
+                    isPromoted = true,
+                    name = "weekly-planning",
+                    cwd = DEFAULT_SCRATCH_CWD,
+                    lastUsedAt = "2026-05-08T11:00:00Z",
+                ),
+            )
+            runCurrent()
+            promote().getOrThrow()
+
+            // Folded in place: still two entries; disc now promoted and (at 11:00) sorts ahead of chan.
+            assertEquals(listOf("disc", "chan"), all.last().map { it.id })
+            assertEquals(listOf("disc", "chan"), channels.last().map { it.id })
+            assertEquals(emptyList<String>(), discussions.last().map { it.id })
+        }
+
+    // AC #3: a conversation.not_found error surfaces as IllegalArgumentException; list unchanged.
+    @Test
+    fun promote_onConversationNotFound_throwsIllegalArgumentAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val promote = startPromote(repo, "missing", "n", "/p")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "promote_conversation" }.id
+            pump.push(errorEnvelope(sentId, code = "conversation.not_found"))
+            runCurrent()
+
+            val ex = promote().exceptionOrNull()
+            assertTrue("expected IllegalArgumentException, got $ex", ex is IllegalArgumentException)
+            assertFalse("conversation.not_found must not be a RelayErrorException", ex is RelayErrorException)
+            // No partial promote injected (AC #3 "uncorrupted").
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+        }
+
+    // AC #3: any other server error surfaces as RelayErrorException; list unchanged.
+    @Test
+    fun promote_onOtherServerError_throwsRelayErrorAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val promote = startPromote(repo, "disc", "n", "/p")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "promote_conversation" }.id
+            pump.push(errorEnvelope(sentId, code = "server.binary_offline", retryable = true))
+            runCurrent()
+
+            val ex = promote().exceptionOrNull()
+            assertTrue("expected RelayErrorException, got $ex", ex is RelayErrorException)
+            assertEquals("server.binary_offline", (ex as RelayErrorException).code)
+            // disc is still unpromoted in the list.
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+            assertFalse(all.last().single { it.id == "disc" }.isPromoted)
+        }
+
+    // AC #3, #4: a not-Open session (pump.send returns false) throws IllegalStateException; no fold.
+    @Test
+    fun promote_whenSendReturnsFalse_throwsIllegalStateAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val promote = startPromote(repo, "disc", "n", "/p")
+            runCurrent()
+
+            assertTrue(promote().exceptionOrNull() is IllegalStateException)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+            assertFalse(all.last().single { it.id == "disc" }.isPromoted)
+        }
+
+    // A malformed conversation_updated success reply (missing required field) throws the #318 decode
+    // exception before the fold, so a garbage success reply cannot inject a partial promote.
+    @Test
+    fun promote_onMalformedUpdatedReply_throwsAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val promote = startPromote(repo, "disc", "n", "/p")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "promote_conversation" }.id
+            // Payload omits the required `cwd` → ConversationResponseDto decode throws.
+            pump.push(
+                Envelope(
+                    id = 99L,
+                    type = "conversation_updated",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"id":"disc","name":"n","is_promoted":true,"last_used_at":"2026-05-08T10:00:00Z"}""",
+                        ),
+                    inReplyTo = sentId,
+                ),
+            )
+            runCurrent()
+
+            // SerializationException is an IllegalArgumentException subtype.
+            assertTrue(promote().exceptionOrNull() is IllegalArgumentException)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+            assertFalse(all.last().single { it.id == "disc" }.isPromoted)
+        }
+
+    // Correlation hygiene: a conversation_updated matching no pending request (the unsolicited
+    // broadcast shape) is a no-op; the collector survives and a subsequent real promote round-trips.
+    @Test
+    fun promote_uncorrelatedUpdatedReply_isNoOpAndCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            runCurrent()
+
+            pump.push(conversationUpdatedEnvelope(inReplyTo = 999L, id = "ghost", name = "g", cwd = "/p"))
+            runCurrent()
+
+            val promote = startPromote(repo, "disc", "weekly-planning", "/work/wp")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "promote_conversation" }.id
+            pump.push(conversationUpdatedEnvelope(inReplyTo = sentId, id = "disc", name = "weekly-planning", cwd = "/work/wp"))
+            runCurrent()
+
+            assertEquals("disc", promote().getOrThrow().id)
+        }
+
     // ---- Helpers --------------------------------------------------------------------------------
 
     /**
@@ -1004,6 +1271,22 @@ class RemoteConversationRepositoryTest {
         return { requireNotNull(outcome) { "createDiscussion has not completed" } }
     }
 
+    /**
+     * Launch [RemoteConversationRepository.promote] on [backgroundScope] (it suspends awaiting the
+     * conversation_updated/error reply) and return a getter for its eventual [Result]. Read the result
+     * only after the correlated reply has been pushed and [runCurrent] has drained the cascade.
+     */
+    private fun TestScope.startPromote(
+        repo: RemoteConversationRepository,
+        conversationId: String,
+        name: String,
+        workspace: String?,
+    ): () -> Result<Conversation> {
+        var outcome: Result<Conversation>? = null
+        backgroundScope.launch { outcome = runCatching { repo.promote(conversationId, name, workspace) } }
+        return { requireNotNull(outcome) { "promote has not completed" } }
+    }
+
     /** A correlated `conversation_created` reply carrying a bare conversation object (#347). */
     private fun conversationCreatedEnvelope(
         inReplyTo: Long,
@@ -1018,6 +1301,29 @@ class RemoteConversationRepositoryTest {
         return Envelope(
             id = envId,
             type = "conversation_created",
+            ts = TS,
+            payload =
+                MobileJson.parseToJsonElement(
+                    """{"id":"$id","name":$nameJson,"is_promoted":$isPromoted,"cwd":"$cwd","last_used_at":"$lastUsedAt"}""",
+                ),
+            inReplyTo = inReplyTo,
+        )
+    }
+
+    /** A correlated `conversation_updated` reply carrying a bare conversation object (#348). */
+    private fun conversationUpdatedEnvelope(
+        inReplyTo: Long,
+        id: String,
+        cwd: String,
+        isPromoted: Boolean = true,
+        name: String? = null,
+        lastUsedAt: String = "2026-05-08T10:00:00Z",
+        envId: Long = 99L,
+    ): Envelope {
+        val nameJson = if (name == null) "null" else "\"$name\""
+        return Envelope(
+            id = envId,
+            type = "conversation_updated",
             ts = TS,
             payload =
                 MobileJson.parseToJsonElement(
