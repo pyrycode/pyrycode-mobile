@@ -193,6 +193,50 @@ The corrected wire premise that motivates all of this — `send_message` returns
 `Message` echo — is documented above (the #346 premise-correction callout) and in
 [[phase4-send-message-acks-not-message-echo]].
 
+### The screen-snapshot exchange ([#374](../codebase/374.md))
+
+The first wire **exchange modeled as a co-located request + event pair in one file** —
+`SnapshotPayload.kt` holds both halves because they are one logical round-trip (the in-file precedent is
+`BackfillSincePayloadDto` + `MessageChunkPayloadDto` sharing `MessagePayload.kt`). It is the
+parser-independent **floor** of ADR 025's safe-degradation strategy: the phone asks the daemon for a
+one-shot **text** picture of the current claude screen, and the daemon renders it via tui-driver inside
+the substrate seal — depending on no screen parser, so it survives any parser break. Wire SSOT: server
+`internal/protocol/snapshot.go` (pyrycode#617, merged; daemon handler #618). This slice is the
+**wire-vocabulary half only** — no repository method, no dispatch, no trust decision; those land in the
+consumer #375.
+
+- **`RequestSnapshotPayloadDto` (`SnapshotPayload.kt`)** — the sixth **encode-only request DTO**:
+  `request_snapshot` `{conversation_id}` (phone → daemon control), a single `@SerialName("conversation_id")`
+  field, narrowed from `RegisterPushTokenPayloadDto`'s shape. Built and `encodeToJsonElement`'d straight
+  into the request `Envelope.payload` by the consumer (#375); no domain mapper, no round-trip test.
+- **`ScreenSnapshotPayloadDto` (`SnapshotPayload.kt`)** — the **first decode-only payload with NO domain
+  mapper**. `screen_snapshot` `{conversation_id, text, ts}` (daemon → phone event), all three required +
+  non-null `String` in Go-struct order (a malformed frame fails closed with `SerializationException`,
+  never a partial value). Unlike every prior decode-only payload (#316 → `Conversation`-list, #317 →
+  `Message`, #318 → `Conversation`), this DTO is **terminal display data**, not a wire→domain edge — the
+  consumer reads `.text` directly, so there is no `toX()` mapper and no domain target. Two modeling
+  decisions are load-bearing:
+  - **`text` is modeled verbatim — no trim/normalize/sanitize.** Decode fidelity is the *entire point* of
+    the parser-independent floor; the DTO must reproduce the literal screen. The no-raw-bytes guarantee
+    (ADR 025: rendered text only, never raw control codes) is enforced **server-side** by the daemon
+    renderer (the trusted authenticated peer), not re-litigated client-side. A test pins a multi-line /
+    leading-whitespace value round-tripping byte-for-byte.
+  - **`ts` is a plain `String`, deliberately unparsed.** A departure from #316/#318, where a payload
+    timestamp decodes to `Instant` via `InstantIso8601Serializer` *because* a domain field consumes it.
+    Here nothing consumes `ts` (the consumer returns `text` only), so parsing it would defend nothing.
+    **Refined rule:** parse-at-decode a payload timestamp only when a domain field consumes the instant;
+    otherwise keep it a `String` like `Envelope.ts`.
+
+The envelope `type` strings `"request_snapshot"` / `"screen_snapshot"` are **inline literals at the
+consumer's call site** — there is no mobile-side type-constants registry mirroring the server's
+`codes.go` `TypeRequestSnapshot` / `TypeScreenSnapshot` (same as `"send_message"` / `"list_conversations"`
+today). Because `SnapshotPayload.kt` holds **two** public types, ktlint `standard:filename` does not fire,
+so it keeps the spec's `SnapshotPayload.kt` name — unlike #318's single-class rename ([[ktlint-filename-rule-single-class]]).
+`ScreenSnapshotPayloadDto` keeps the `data class` auto-`toString()` (which includes `text`) — matching the
+content-bearing `MessagePayloadDto`; `toString`-redaction is reserved for the `token` credential. The
+no-content-logging obligation (the #346 posture) is a **code-level invariant on the consumer #375**, not
+this zero-log-call slice.
+
 ## What's deliberately absent
 
 - **No per-model encode/decode wrappers.** The configured `MobileJson` + the base64 helpers *are* the codec. Ten trivial typed wrappers would only inflate the surface.
@@ -216,5 +260,6 @@ The corrected wire premise that motivates all of this — `send_message` returns
   - **[#347](../codebase/347.md)** the second outbound request encoder: `CreateConversationPayloadDto` (encode-only `create_conversation` request — `is_promoted` + optional `cwd`, `name` unmodeled), in its own file. Reuses #346's `ErrorPayload` / `RelayErrorException` correlated-reply types and routes the typed `conversation_created` success reply through #318's `ConversationResponseDto`. Consumed by `RemoteConversationRepository.createDiscussion`.
   - **[#348](../codebase/348.md)** the third (and last #314) outbound request encoder: `PromoteConversationPayloadDto` (encode-only `promote_conversation` request — all **three** fields `conversation_id`/`name`/`cwd` required/non-null, contrast #347's optional `cwd`), in its own file. Reuses #346's correlated-reply types and routes the typed `conversation_updated` success reply through the **same** #318 `ConversationResponseDto`. Consumed by `RemoteConversationRepository.promote`.
   - **[#359](../codebase/359.md)** the fifth (and first **device-concern**) outbound request encoder: `RegisterPushTokenPayloadDto` (encode-only `register_push_token` request — all three fields `platform`/`token`/`device_name` required/non-null; `platform` a plain `String "fcm"`, `token` never logged, #275 SSOT), in its own file. Reuses #346's `sendAndAwaitReply` + `ErrorPayload`/`RelayErrorException` correlated-reply types verbatim; the reply is a bare `ack` (no response DTO). Consumed by `RemoteConversationRepository.registerPushToken` (a non-`ConversationRepository`-interface device-concern method, dormant until the Firebase sibling adds a live caller).
+  - **[#374](../codebase/374.md)** the screen-snapshot exchange (see [The screen-snapshot exchange](#the-screen-snapshot-exchange-374)): `RequestSnapshotPayloadDto` (sixth encode-only request, `request_snapshot` `{conversation_id}`) + `ScreenSnapshotPayloadDto` (decode-only `screen_snapshot` `{conversation_id, text, ts}` — the **first decode-only payload with no domain mapper**; `text` verbatim, `ts` an unparsed `String`), co-located in `SnapshotPayload.kt`. Wire SSOT pyrycode#617/#618; ADR 025 safe-degradation floor. Consumed by #375 (repository read), which owns the dispatch + trust decision + no-content-logging invariant.
 - Sibling data-layer doc: [Data model](data-model.md) (the non-wire `Conversation`/`Session`/`Message` schema, which deliberately carries **no** serialization annotations — those belong to this Phase 4 wire layer).
 - Spike: vault doc *"Phase 4 — Noise Client Spike Findings"* (`second-brain`, `2026-05-02-pyrycode-mobile/phase-4-noise-client-spike-findings.md`), § "Proven wire contract (byte-accurate)".
