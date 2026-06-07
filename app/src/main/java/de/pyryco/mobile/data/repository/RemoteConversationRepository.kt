@@ -16,6 +16,8 @@ import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.PromoteConversationPayloadDto
 import de.pyryco.mobile.data.network.RegisterPushTokenPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
+import de.pyryco.mobile.data.network.RequestSnapshotPayloadDto
+import de.pyryco.mobile.data.network.ScreenSnapshotPayloadDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
 import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.network.toConversations
@@ -192,16 +194,19 @@ class RemoteConversationRepository(
                     }
                 appendMessages(rows)
             }
-            TYPE_ACK, TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_UPDATED ->
+            TYPE_ACK, TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_UPDATED, TYPE_SCREEN_SNAPSHOT ->
                 // Success reply to a correlated request, handed verbatim to the waiter. An `ack`
                 // (#346) carries the empty `{}` the bare-ack waiter ignores; a `conversation_created`
                 // (#347) / `conversation_updated` (#348) carries the bare conversation object the
-                // mutation ([createDiscussion] / [promote]) decodes for its typed return. An
-                // `inReplyTo` matching no pending entry (or null) is a no-op: `list_conversations` /
-                // `backfill_since` draw no reply here; `conversation_updated` is also the server's
-                // unsolicited broadcast on change (no `inReplyTo`), which must stay a harmless no-op
-                // (the authoritative `conversations` snapshot drives an unsolicited list refresh, not
-                // this delta); and `complete` is idempotent so a duplicate reply is harmless.
+                // mutation ([createDiscussion] / [promote]) decodes for its typed return; a
+                // `screen_snapshot` (#375) carries the rendered-screen payload [requestScreenSnapshot]
+                // decodes for its `text`. An `inReplyTo` matching no pending entry (or null) is a
+                // no-op: `list_conversations` / `backfill_since` draw no reply here; `screen_snapshot`
+                // is always a correlated reply (no unsolicited push), so an unmatched one is harmless;
+                // `conversation_updated` is also the server's unsolicited broadcast on change (no
+                // `inReplyTo`), which must stay a harmless no-op (the authoritative `conversations`
+                // snapshot drives an unsolicited list refresh, not this delta); and `complete` is
+                // idempotent so a duplicate reply is harmless.
                 envelope.inReplyTo?.let { id -> pendingRequests[id]?.complete(envelope.payload) }
             TYPE_ERROR ->
                 // Failure reply to a correlated request (#346): unblock the waiter exceptionally with
@@ -539,6 +544,39 @@ class RemoteConversationRepository(
     }
 
     /**
+     * Request the current claude screen for [conversationId] over v2 `request_snapshot` (#375) and
+     * return the correlated `screen_snapshot` reply's rendered [ScreenSnapshotPayloadDto.text] — the
+     * always-available, parser-independent snapshot floor (pyrycode#618). A pure read: it mutates no
+     * projection.
+     *
+     * Encodes the request ([RequestSnapshotPayloadDto]: `{conversation_id}`), sends it, and awaits the
+     * correlated reply through the shared single inbound collector + [sendAndAwaitReply] (the #346
+     * primitive — no second pump subscription), then decodes the reply through the #374
+     * [ScreenSnapshotPayloadDto] boundary and returns its [text][ScreenSnapshotPayloadDto.text]
+     * **verbatim** — never parsed, trimmed, or sanitized; `ts` is never read; nothing here is logged
+     * (the snapshot text may be sensitive screen content).
+     *
+     * Throws [IllegalArgumentException] for an unknown conversation (server `conversation.not_found`,
+     * mirroring the fake's type), [RelayErrorException] for any other server `error`, and
+     * [IllegalStateException] when the session is not connected. A malformed reply throws the #374
+     * decode exception ([kotlinx.serialization.SerializationException] / [IllegalArgumentException])
+     * caller-side, **after** [sendAndAwaitReply] returns, so it never threatens the single inbound
+     * collector.
+     */
+    override suspend fun requestScreenSnapshot(conversationId: String): String {
+        val request =
+            Envelope(
+                id = requestId.incrementAndGet(),
+                type = TYPE_REQUEST_SNAPSHOT,
+                ts = Clock.System.now().toString(),
+                payload = MobileJson.encodeToJsonElement(RequestSnapshotPayloadDto(conversationId = conversationId)),
+            )
+        // Throws on a server `error` / not-Open session; the decode below is unreachable on failure.
+        val reply = sendAndAwaitReply(request)
+        return MobileJson.decodeFromJsonElement<ScreenSnapshotPayloadDto>(reply).text
+    }
+
+    /**
      * Register the phone's FCM push [token] with the paired daemon over v2 `register_push_token`
      * (#359) — so the daemon knows where to send a wake notification when the phone is backgrounded.
      * Encodes the request ([RegisterPushTokenPayloadDto]: `platform="fcm"`, the [token], and the
@@ -635,6 +673,12 @@ class RemoteConversationRepository(
          * the server's unsolicited broadcast to all phones on a conversation change.
          */
         const val TYPE_CONVERSATION_UPDATED = "conversation_updated"
+
+        /** Request: one-shot text snapshot of the current claude screen (#375, #617 `RequestSnapshot`). */
+        const val TYPE_REQUEST_SNAPSHOT = "request_snapshot"
+
+        /** Correlated success reply carrying the rendered screen text (#375, #617 `ScreenSnapshot`). */
+        const val TYPE_SCREEN_SNAPSHOT = "screen_snapshot"
 
         /** Correlated success reply (empty `{}`) to a request, matched on `in_reply_to` (#346). */
         const val TYPE_ACK = "ack"

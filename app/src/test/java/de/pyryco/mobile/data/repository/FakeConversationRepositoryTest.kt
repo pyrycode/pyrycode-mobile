@@ -702,6 +702,24 @@ class FakeConversationRepositoryTest {
     }
 
     @Test
+    fun requestScreenSnapshot_knownId_returnsCannedTextVerbatim() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            assertEquals(FAKE_SCREEN_SNAPSHOT_TEXT, repo.requestScreenSnapshot("seed-discussion-a"))
+        }
+
+    @Test
+    fun requestScreenSnapshot_onUnknownId_throws() {
+        val repo = FakeConversationRepository()
+        try {
+            runBlocking { repo.requestScreenSnapshot("nope") }
+            assertTrue("expected IllegalArgumentException", false)
+        } catch (_: IllegalArgumentException) {
+            // expected
+        }
+    }
+
+    @Test
     fun recentWorkspaces_dedupes_repeatedCwds() =
         runBlocking {
             val repo = FakeConversationRepository()

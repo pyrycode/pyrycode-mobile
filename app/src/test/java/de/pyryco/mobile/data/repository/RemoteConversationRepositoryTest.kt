@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayErrorException
+import de.pyryco.mobile.data.network.ScreenSnapshotPayloadDto
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -17,6 +18,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
@@ -1335,7 +1337,167 @@ class RemoteConversationRepositoryTest {
             assertTrue(register().exceptionOrNull() is IllegalStateException)
         }
 
+    // ---- requestScreenSnapshot (#375): request_snapshot request → screen_snapshot correlation ----
+
+    // AC #2 + happy path: the sent envelope matches the request_snapshot wire contract
+    // {conversation_id}, and the correlated screen_snapshot reply's text is returned VERBATIM (a
+    // whitespace-laden, multi-line value proves the consumer never trims or sanitizes it).
+    @Test
+    fun requestScreenSnapshot_sendsRequestSnapshotAndReturnsTextVerbatim() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val snapshot = startSnapshot(repo, "c1")
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "request_snapshot" }
+            assertEquals(MobileJson.parseToJsonElement("""{"conversation_id":"c1"}"""), sent.payload)
+
+            val screen = "  top line\n    indented body  \n"
+            pump.push(screenSnapshotEnvelope(inReplyTo = sent.id, conversationId = "c1", text = screen))
+            runCurrent()
+
+            assertEquals(screen, snapshot().getOrThrow())
+        }
+
+    // AC #3: a correlated server error surfaces as RelayErrorException exposing the structured code.
+    @Test
+    fun requestScreenSnapshot_onServerError_throwsRelayError() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val snapshot = startSnapshot(repo, "c1")
+            runCurrent()
+            val sent = pump.sent.single { it.type == "request_snapshot" }
+            pump.push(errorEnvelope(sent.id, code = "server.binary_offline", retryable = true))
+            runCurrent()
+
+            val ex = snapshot().exceptionOrNull()
+            assertTrue("expected RelayErrorException, got $ex", ex is RelayErrorException)
+            assertEquals("server.binary_offline", (ex as RelayErrorException).code)
+            assertTrue(ex.retryable)
+        }
+
+    // AC #3: an unknown conversation (server conversation.not_found) throws IllegalArgumentException.
+    @Test
+    fun requestScreenSnapshot_onConversationNotFound_throwsIllegalArgument() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val snapshot = startSnapshot(repo, "ghost")
+            runCurrent()
+            val sent = pump.sent.single { it.type == "request_snapshot" }
+            pump.push(errorEnvelope(sent.id, code = "conversation.not_found", message = "no such conversation"))
+            runCurrent()
+
+            assertTrue(snapshot().exceptionOrNull() is IllegalArgumentException)
+        }
+
+    // AC #3: a not-Open session (pump.send returns false) throws IllegalStateException; no reply ever
+    // arrives, yet the call has already completed exceptionally (it does not hang).
+    @Test
+    fun requestScreenSnapshot_whenSendReturnsFalse_throwsIllegalState() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val snapshot = startSnapshot(repo, "c1")
+            runCurrent()
+
+            assertTrue(snapshot().exceptionOrNull() is IllegalStateException)
+        }
+
+    // Correlation hygiene: a screen_snapshot matching no pending request is a harmless no-op; the
+    // single inbound collector survives and a subsequent real round-trip succeeds.
+    @Test
+    fun requestScreenSnapshot_uncorrelatedSnapshot_isNoOpAndCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            runCurrent()
+
+            pump.push(screenSnapshotEnvelope(inReplyTo = 999L, conversationId = "c1", text = "stray"))
+            runCurrent()
+
+            val snapshot = startSnapshot(repo, "c1")
+            runCurrent()
+            val sent = pump.sent.single { it.type == "request_snapshot" }
+            pump.push(screenSnapshotEnvelope(inReplyTo = sent.id, conversationId = "c1", text = "real"))
+            runCurrent()
+
+            assertEquals("real", snapshot().getOrThrow())
+        }
+
+    // A malformed screen_snapshot (missing required `text`) fails the strict decode caller-side; the
+    // throw is an IllegalArgumentException (SerializationException is a subtype) and the collector
+    // survives, proven by a following valid round-trip.
+    @Test
+    fun requestScreenSnapshot_onMalformedSnapshot_throwsAndCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val first = startSnapshot(repo, "c1")
+            runCurrent()
+            val sent1 = pump.sent.single { it.type == "request_snapshot" }
+            pump.push(
+                Envelope(
+                    id = 99L,
+                    type = "screen_snapshot",
+                    ts = TS,
+                    payload = MobileJson.parseToJsonElement("""{"conversation_id":"c1","ts":"$TS"}"""),
+                    inReplyTo = sent1.id,
+                ),
+            )
+            runCurrent()
+            assertTrue(first().exceptionOrNull() is IllegalArgumentException)
+
+            val second = startSnapshot(repo, "c1")
+            runCurrent()
+            val sent2 = pump.sent.last { it.type == "request_snapshot" }
+            pump.push(screenSnapshotEnvelope(inReplyTo = sent2.id, conversationId = "c1", text = "ok"))
+            runCurrent()
+            assertEquals("ok", second().getOrThrow())
+        }
+
     // ---- Helpers --------------------------------------------------------------------------------
+
+    /**
+     * Launch [RemoteConversationRepository.requestScreenSnapshot] on [backgroundScope] (it suspends
+     * awaiting the screen_snapshot/error reply) and return a getter for its eventual [Result]. Read the
+     * result only after the correlated reply has been pushed and [runCurrent] has drained the cascade.
+     */
+    private fun TestScope.startSnapshot(
+        repo: RemoteConversationRepository,
+        conversationId: String,
+    ): () -> Result<String> {
+        var outcome: Result<String>? = null
+        backgroundScope.launch { outcome = runCatching { repo.requestScreenSnapshot(conversationId) } }
+        return { requireNotNull(outcome) { "requestScreenSnapshot has not completed" } }
+    }
+
+    /** A correlated `screen_snapshot` reply carrying the rendered screen [text] (#375). */
+    private fun screenSnapshotEnvelope(
+        inReplyTo: Long,
+        conversationId: String,
+        text: String,
+        ts: String = TS,
+        envId: Long = 99L,
+    ): Envelope =
+        Envelope(
+            id = envId,
+            type = "screen_snapshot",
+            ts = TS,
+            payload =
+                MobileJson.encodeToJsonElement(
+                    ScreenSnapshotPayloadDto(conversationId = conversationId, text = text, ts = ts),
+                ),
+            inReplyTo = inReplyTo,
+        )
 
     /**
      * Launch [RemoteConversationRepository.sendMessage] on [backgroundScope] (it suspends awaiting the

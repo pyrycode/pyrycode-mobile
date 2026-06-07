@@ -40,6 +40,16 @@ internal fun shouldArchive(
         referenceTime - conversation.lastUsedAt >= ARCHIVE_IDLE_THRESHOLD
 
 /**
+ * Deterministic canned screen text the [FakeConversationRepository] returns from
+ * [FakeConversationRepository.requestScreenSnapshot] for a known conversation (#375), giving UI/tests
+ * an observable, verbatim contract. Non-blank and whitespace-laden on purpose: the leading and
+ * trailing spaces let a test prove the consumer returns the text untrimmed. The fake performs no
+ * network and no mutation — a snapshot is a pure read.
+ */
+internal const val FAKE_SCREEN_SNAPSHOT_TEXT =
+    "  claude screen snapshot (fake)\n  > Ready for input.\n  "
+
+/**
  * Phase 1 in-memory implementation. Storage is a single [MutableStateFlow]
  * of `conversationId -> ConversationRecord`; mutators update it atomically
  * and observers re-emit on every change. Phase 4 replaces this with a
@@ -278,6 +288,16 @@ class FakeConversationRepository(
             )
         }
         return appended
+    }
+
+    /**
+     * Return the deterministic canned [FAKE_SCREEN_SNAPSHOT_TEXT] for a known [conversationId], or
+     * throw [IllegalArgumentException] for an unknown one (#375). A pure read: no network, no
+     * mutation — it only checks membership against the current [state].
+     */
+    override suspend fun requestScreenSnapshot(conversationId: String): String {
+        state.value[conversationId] ?: throw unknown(conversationId)
+        return FAKE_SCREEN_SNAPSHOT_TEXT
     }
 
     private fun mintNewSession(

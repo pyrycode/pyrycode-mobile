@@ -109,6 +109,8 @@ class StableConversationRepository(
 
     override suspend fun createWorkspaceFolder(name: String): String = live.createWorkspaceFolder(name)
 
+    override suspend fun requestScreenSnapshot(conversationId: String): String = live.requestScreenSnapshot(conversationId)
+
     private companion object {
         const val NOT_CONNECTED = "No live relay connection"
     }
