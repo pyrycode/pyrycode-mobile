@@ -1,0 +1,82 @@
+package de.pyryco.mobile.ui.conversations.components
+
+import de.pyryco.mobile.data.model.PyrycodeLinkStatus
+import de.pyryco.mobile.data.model.RelayLinkStatus
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+/**
+ * Pure-mapper tests for the two-part connection-status presentation (#397). Each case asserts the
+ * full (category, label, contentDescription) triple so a copy change is caught and moved
+ * deliberately rather than drifting silently.
+ */
+class ConnectionStatusLineTest {
+    // --- Relay leg (RelayLinkStatus) ---
+
+    @Test
+    fun relayConnected_mapsToUp() {
+        assertEquals(
+            ConnectionLegVisual(ConnectionLegCategory.Up, "Connected", "Relay: connected"),
+            RelayLinkStatus.Connected.toLegVisual(),
+        )
+    }
+
+    @Test
+    fun relayConnecting_mapsToInProgress() {
+        assertEquals(
+            ConnectionLegVisual(ConnectionLegCategory.InProgress, "Connecting…", "Relay: connecting"),
+            RelayLinkStatus.Connecting.toLegVisual(),
+        )
+    }
+
+    @Test
+    fun relayReconnecting_mapsToInProgress() {
+        assertEquals(
+            ConnectionLegVisual(ConnectionLegCategory.InProgress, "Reconnecting", "Relay: reconnecting"),
+            RelayLinkStatus.Reconnecting(secondsRemaining = 12).toLegVisual(),
+        )
+    }
+
+    /** AC#2: relay reachable with no daemon behind it is an UP (green) state — never red. */
+    @Test
+    fun relayDaemonAbsent_mapsToUp_neverDown() {
+        assertEquals(
+            ConnectionLegVisual(ConnectionLegCategory.Up, "Reachable", "Relay: reachable, no daemon"),
+            RelayLinkStatus.DaemonAbsent.toLegVisual(),
+        )
+    }
+
+    @Test
+    fun relayOffline_mapsToDown() {
+        assertEquals(
+            ConnectionLegVisual(ConnectionLegCategory.Down, "Offline", "Relay: offline"),
+            RelayLinkStatus.Offline.toLegVisual(),
+        )
+    }
+
+    // --- Pyrycode leg (PyrycodeLinkStatus) ---
+
+    @Test
+    fun pyrycodeHandshaking_mapsToInProgress() {
+        assertEquals(
+            ConnectionLegVisual(ConnectionLegCategory.InProgress, "Handshaking…", "Pyrycode: handshaking"),
+            PyrycodeLinkStatus.Handshaking.toLegVisual(),
+        )
+    }
+
+    @Test
+    fun pyrycodeConnected_mapsToUp() {
+        assertEquals(
+            ConnectionLegVisual(ConnectionLegCategory.Up, "Connected", "Pyrycode: connected"),
+            PyrycodeLinkStatus.Connected.toLegVisual(),
+        )
+    }
+
+    @Test
+    fun pyrycodeDown_mapsToDown() {
+        assertEquals(
+            ConnectionLegVisual(ConnectionLegCategory.Down, "Down", "Pyrycode: down"),
+            PyrycodeLinkStatus.Down.toLegVisual(),
+        )
+    }
+}
