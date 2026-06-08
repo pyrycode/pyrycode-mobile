@@ -67,6 +67,33 @@ class NoiseSessionPumpTest {
             pump.close()
         }
 
+    // #401 (AC #2/#4): a hello_ack echoing the interactive capability surfaces the negotiated set on
+    // PumpState.Open, readable through the already-observed state flow without re-parsing wire bytes.
+    @Test
+    fun open_surfacesNegotiatedInteractiveCapabilityOnOpenState() =
+        runTest {
+            val f = fixture()
+            val pump = f.newPump()
+
+            pump.start()
+            runCurrent()
+            f.responder.readInit(
+                base64StdDecode(
+                    f.transport.sentFrames
+                        .single()
+                        .data,
+                ),
+            )
+            f.transport.pushInbound(noiseResp(f.responder, connId = "conn-xyz", capabilities = listOf("interactive")))
+            runCurrent()
+
+            val state = pump.state.value
+            assertEquals(PumpState.Open("conn-xyz", setOf("interactive")), state)
+            assertTrue(state is PumpState.Open && CAPABILITY_INTERACTIVE in state.capabilities)
+
+            pump.close()
+        }
+
     // #351 (AC #1): the pump declares + satisfies the SessionPump / ManagedSessionPump contracts the
     // coordinator and repository consume — a runtime check of the type relationship the wiring relies on.
     @Test
@@ -588,11 +615,13 @@ class NoiseSessionPumpTest {
         return OpenSession(pump, f.responder.split(), received, collector)
     }
 
-    /** A responder-produced `noise_resp` frame carrying [connId] in its `hello_ack` early-data. */
+    /** A responder-produced `noise_resp` frame carrying [connId] (and any echoed [capabilities]) in its
+     *  `hello_ack` early-data. */
     private fun noiseResp(
         responder: TestResponder,
         connId: String,
-    ): InnerFrameV2 = InnerFrameV2(type = "noise_resp", data = base64StdEncode(responder.writeResp(ackEnvelope(connId))))
+        capabilities: List<String> = emptyList(),
+    ): InnerFrameV2 = InnerFrameV2(type = "noise_resp", data = base64StdEncode(responder.writeResp(ackEnvelope(connId, capabilities))))
 
     /** A responder-encrypted `noise_msg` frame whose plaintext is [env] (responder.sender → pump.decrypt). */
     private fun noiseMsg(
@@ -757,8 +786,11 @@ class NoiseSessionPumpTest {
             payload: String = """{"text":"x"}""",
         ) = Envelope(id = id, type = type, ts = "2026-05-31T00:00:00Z", payload = MobileJson.parseToJsonElement(payload))
 
-        fun ackEnvelope(connId: String): String {
-            val payload = HelloAckPayload(protocolVersion = "v2", serverId = "srv-1", connId = connId)
+        fun ackEnvelope(
+            connId: String,
+            capabilities: List<String> = emptyList(),
+        ): String {
+            val payload = HelloAckPayload(protocolVersion = "v2", serverId = "srv-1", connId = connId, capabilities = capabilities)
             return MobileJson.encodeToString(
                 Envelope(
                     id = 2L,

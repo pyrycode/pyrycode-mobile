@@ -10,6 +10,7 @@ import kotlinx.serialization.json.encodeToJsonElement
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import javax.crypto.BadPaddingException
 
@@ -184,6 +185,70 @@ class NoiseIkSessionTest {
         assertThrows(NoiseSessionException::class.java) { session.readResp(msg2) }
     }
 
+    // ---- #401: advertise + surface the negotiated interactive capability -------
+
+    @Test
+    fun handshake_advertisesInteractiveCapabilityInHello() {
+        val responder = TestResponder()
+        val session = NoiseIkSession(newPrivateKey(), responder.staticPublicKey, "tok", clientInfo)
+
+        val helloJson = responder.readInit(session.writeInit())
+
+        val envelope = MobileJson.decodeFromString<Envelope>(helloJson)
+        val hello = MobileJson.decodeFromJsonElement<HelloClientPayload>(envelope.payload)
+        assertTrue(hello.capabilities.contains(CAPABILITY_INTERACTIVE))
+    }
+
+    @Test
+    fun readResp_helloAckEchoingInteractiveSurfacesGrantedSet() {
+        val responder = TestResponder()
+        val session = NoiseIkSession(newPrivateKey(), responder.staticPublicKey, "tok", clientInfo)
+        responder.readInit(session.writeInit())
+        val msg2 = responder.writeResp(ackEnvelope("conn-1", capabilities = listOf("interactive")))
+
+        assertEquals("conn-1", session.readResp(msg2))
+        assertEquals(setOf("interactive"), session.negotiatedCapabilities)
+    }
+
+    @Test
+    fun readResp_helloAckOmittingCapabilitiesSurfacesEmptySetAndKeepsConnId() {
+        val responder = TestResponder()
+        val session = NoiseIkSession(newPrivateKey(), responder.staticPublicKey, "tok", clientInfo)
+        responder.readInit(session.writeInit())
+        val msg2 = responder.writeResp(ackEnvelope("conn-1")) // daemon echoes no capabilities
+
+        assertEquals("conn-1", session.readResp(msg2))
+        assertTrue(session.negotiatedCapabilities.isEmpty())
+    }
+
+    @Test
+    fun readResp_helloAckWithNonArrayCapabilitiesThrowsNoiseSessionException() {
+        val responder = TestResponder()
+        val session = NoiseIkSession(newPrivateKey(), responder.staticPublicKey, "tok", clientInfo)
+        responder.readInit(session.writeInit())
+        // capabilities as a JSON string (not an array) is malformed at the untrusted-parse boundary.
+        val malformed =
+            MobileJson.encodeToString(
+                Envelope(
+                    id = 2L,
+                    type = "hello_ack",
+                    ts = "2026-05-31T00:00:00Z",
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"protocol_version":"v2","server_id":"s","conn_id":"c","capabilities":"interactive"}""",
+                        ),
+                ),
+            )
+        val msg2 = responder.writeResp(malformed)
+
+        assertThrows(NoiseSessionException::class.java) { session.readResp(msg2) }
+    }
+
+    @Test
+    fun negotiatedCapabilities_beforeHandshakeThrowsIllegalState() {
+        assertThrows(IllegalStateException::class.java) { freshSession().negotiatedCapabilities }
+    }
+
     // ---- AC #1/#2/#4: re-key happy path + atomic swap --------------------------
 
     @Test
@@ -356,8 +421,9 @@ class NoiseIkSessionTest {
     private fun ackEnvelope(
         connId: String,
         type: String = "hello_ack",
+        capabilities: List<String> = emptyList(),
     ): String {
-        val payload = HelloAckPayload(protocolVersion = "v2", serverId = "srv-1", connId = connId)
+        val payload = HelloAckPayload(protocolVersion = "v2", serverId = "srv-1", connId = connId, capabilities = capabilities)
         return MobileJson.encodeToString(
             Envelope(
                 id = 2L,

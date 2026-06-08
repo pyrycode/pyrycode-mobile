@@ -66,13 +66,24 @@ class NoiseSessionPump(
 
 sealed interface PumpState {
     data object Handshaking : PumpState                  // initial; noise_init sent, awaiting noise_resp
-    data class Open(val connId: String) : PumpState      // the handshake-completion signal
+    data class Open(                                     // the handshake-completion signal
+        val connId: String,
+        val capabilities: Set<String> = emptySet(),     // #401: negotiated set from hello_ack (defaulted → existing sites green)
+    ) : PumpState
     data class Closed(val cause: Throwable?) : PumpState // terminal; cause == null ⟺ clean Down/close()
 }
 ```
 
 `state` is the **handshake-completion signal**: a consumer observes for `Open`
 (`state.filterIsInstance<PumpState.Open>().first()`) before it begins sending; `Closed` is terminal.
+`Open.capabilities` ([#401](../codebase/401.md)) carries the negotiated capability set the session
+surfaced from `hello_ack` (the daemon's intersection of advertised ∩ supported), so a consumer of the
+already-exposed `state` flow reads grant with `CAPABILITY_INTERACTIVE in open.capabilities` **without
+re-parsing wire bytes**. It is a **defaulted** field — the four existing `Open(connId)`
+construction/assertion sites (3 in `NoiseSessionPumpTest`, 1 in `RelayRepositoryCoordinatorTest`) stay
+green untouched, and `RelayRepositoryCoordinator.toPyrycodeLinkStatus()`'s `is PumpState.Open` match is
+unaffected (it doesn't destructure). **Surfacing-only** — the pump gates nothing on the set; the decode
+gate (#385) and stall gate (#395) consume it.
 
 ## The handshake drive — `protocol-mobile.md` Phone steps 3–6
 
@@ -88,8 +99,9 @@ the pump scope that:
    `withTimeoutOrNull(handshakeTimeoutMs) { transport.inbound.first() }`. A timeout (`null`) or an early
    `Down` (`inbound` completes empty → `NoSuchElementException`) → teardown.
 4. Require `type == "noise_resp"` → `connId = session.readResp(base64StdDecode(data))` →
-   `state = Open(connId)`. A wrong type, a bad base64, or `readResp` throwing `NoiseSessionException`
-   (MAC failure / malformed `hello_ack`) → teardown.
+   `state = Open(connId, session.negotiatedCapabilities)` (the negotiated set surfaced from `hello_ack`,
+   [#401](../codebase/401.md)). A wrong type, a bad base64, or `readResp` throwing `NoiseSessionException`
+   (MAC failure / malformed `hello_ack`, including a non-array `capabilities`) → teardown.
 5. Run the open-state loop over the **remaining** frames: `transport.inbound.collect { onOpenFrame(it) }`.
 
 > **One sequential collector for the connection's lifetime.** Steps 3 and 5 are the *same* logical
@@ -296,11 +308,13 @@ as [`NoiseIkSessionTest`](noise-ik-session.md) / [`RelayConnectionSupervisorTest
 Test doubles live in-file: a `Channel`-backed `FakeRelayTransport` (`pushInbound` / `completeInbound` /
 captured `sentFrames`; **`connect()` `error()`s** — the pump must never dial), a real IK `TestResponder`
 (copied from `NoiseIkSessionTest`) so the session is exercised against a real peer, and a
-`NoiseSessionFactory` over fake stores pinned to the responder's static key. **25 `@Test`** — 14 from
+`NoiseSessionFactory` over fake stores pinned to the responder's static key. **26 `@Test`** — 14 from
 #309 (handshake→`Open` with the encrypted `hello` asserted, timeout, MAC failure, wrong/unknown frame
 type, inbound decrypt→`Envelope`, fail-closed teardown on every bad frame, outbound round-trip, `Down` /
-idempotent-`close()` lifecycle + no-leak, `start()`-twice throws) plus **11 re-key scenarios from
-[#304](../codebase/304.md)**: timer fires only after the interval, re-key completes + traffic continues on
+idempotent-`close()` lifecycle + no-leak, `start()`-twice throws), **1 from [#401](../codebase/401.md)**
+(a `hello_ack` echoing `["interactive"]` surfaces `setOf("interactive")` on `PumpState.Open` — asserted
+via the `noiseResp`/`ackEnvelope` helpers, which gained a `capabilities` parameter), plus **11 re-key
+scenarios from [#304](../codebase/304.md)**: timer fires only after the interval, re-key completes + traffic continues on
 new keys, timer re-based by a completed re-key, completion sends no ack + stays `Open`, inbound
 `rekey_request` triggers re-key + not forwarded, forward-compat `reason` ×3, rotated-`rs`/MITM teardown
 without half-swap, stray `noise_resp` teardown, close-mid-re-key no-leak. The `TestResponder` gained a
@@ -319,7 +333,8 @@ a `noise_resp` when asserting "no extra frame" (an over-advance re-fires the re-
 
 ## Related
 
-- Ticket notes: [`../codebase/309.md`](../codebase/309.md) (the pump itself) +
+- Ticket notes: [`../codebase/401.md`](../codebase/401.md) (the `PumpState.Open.capabilities` surfacing) +
+  [`../codebase/309.md`](../codebase/309.md) (the pump itself) +
   [`../codebase/304.md`](../codebase/304.md) (the re-key triggers built on it) — files/line refs,
   patterns, lessons, verification.
 - Specs: `docs/specs/architecture/309-noise-session-pump.md` + `docs/specs/architecture/304-noise-ik-rekey-triggers.md`

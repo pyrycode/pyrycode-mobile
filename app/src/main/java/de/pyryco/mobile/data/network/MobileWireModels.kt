@@ -44,12 +44,24 @@ data class Envelope(
 )
 
 /**
+ * The wire token for the v2 structured-live-session capability (#401). Advertised in
+ * [HelloClientPayload.capabilities] and echoed back (the daemon's intersection) in
+ * [HelloAckPayload.capabilities]. Wire SSOT: pyrycode `docs/protocol-mobile.md`
+ * § "Capability negotiation (v2)".
+ */
+internal const val CAPABILITY_INTERACTIVE = "interactive"
+
+/**
  * Payload of the `hello` envelope, sent as `noise_init` early-data.
  *
  * [token] is the device-pairing secret. [toString] is overridden to redact it so
  * a stray `Log.d("hello: $payload")` or crash-reporter frame cannot leak it to
  * Logcat. Redaction affects [toString] only — serialization emits the real token
  * (the wire needs it). `equals`/`hashCode` are intentionally NOT overridden.
+ *
+ * [capabilities] advertises the v2 features the phone understands; it defaults to
+ * `["interactive"]` and rides every `hello` via `MobileJson`'s `encodeDefaults = true`
+ * (same mechanism as [protocolVersions]). It is non-secret, so [toString] surfaces it.
  */
 @Serializable
 data class HelloClientPayload(
@@ -58,18 +70,27 @@ data class HelloClientPayload(
     @SerialName("client_version") val clientVersion: String,
     @SerialName("protocol_versions") val protocolVersions: List<String> = listOf("v2"),
     val token: String,
+    val capabilities: List<String> = listOf(CAPABILITY_INTERACTIVE),
 ) {
     override fun toString(): String =
         "HelloClientPayload(role=$role, deviceName=$deviceName, " +
-            "clientVersion=$clientVersion, protocolVersions=$protocolVersions, token=***)"
+            "clientVersion=$clientVersion, protocolVersions=$protocolVersions, " +
+            "capabilities=$capabilities, token=***)"
 }
 
-/** Payload of the `hello_ack` envelope, received as `noise_resp` early-data. */
+/**
+ * Payload of the `hello_ack` envelope, received as `noise_resp` early-data.
+ *
+ * [capabilities] is the negotiated set the daemon grants — the intersection of the phone's
+ * advertised [HelloClientPayload.capabilities] with the daemon's own. Emitted `omitempty`, so
+ * a daemon that grants none omits the field and it decodes to the `emptyList()` default (#401).
+ */
 @Serializable
 data class HelloAckPayload(
     @SerialName("protocol_version") val protocolVersion: String,
     @SerialName("server_id") val serverId: String,
     @SerialName("conn_id") val connId: String,
+    val capabilities: List<String> = emptyList(),
 )
 
 /**

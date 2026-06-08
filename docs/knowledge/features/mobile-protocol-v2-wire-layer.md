@@ -59,10 +59,11 @@ data class HelloClientPayload(
     @SerialName("client_version") val clientVersion: String,
     @SerialName("protocol_versions") val protocolVersions: List<String> = listOf("v2"),
     val token: String,                                  // device-pairing SECRET — toString() redacts
+    val capabilities: List<String> = listOf(CAPABILITY_INTERACTIVE),  // #401: advertised feature set
 )
 ```
 
-`role="client"` and `protocol_versions=["v2"]` default but are always emitted. `token` is the device-pairing secret (see [Secret handling](#secret-handling)).
+`role="client"`, `protocol_versions=["v2"]`, and `capabilities=["interactive"]` default but are always emitted. `token` is the device-pairing secret (see [Secret handling](#secret-handling)). `capabilities` (added [#401](../codebase/401.md)) advertises the v2 features the phone understands — see [Capability negotiation](#capability-negotiation-401); it is **non-secret**, so the `toString` override surfaces it (only `token` stays `***`).
 
 ### `HelloAckPayload` — the `hello_ack` payload (in `noise_resp` early-data)
 
@@ -72,10 +73,24 @@ data class HelloAckPayload(
     @SerialName("protocol_version") val protocolVersion: String,
     @SerialName("server_id") val serverId: String,
     @SerialName("conn_id") val connId: String,
+    val capabilities: List<String> = emptyList(),      // #401: the daemon's granted (intersected) set
 )
 ```
 
-Server-supplied; decoded only, no defaults.
+Server-supplied; decoded only. `capabilities` (added [#401](../codebase/401.md)) is the **negotiated** set the daemon grants — the intersection of the phone's advertised set with its own — emitted `omitempty`, so a daemon that grants none omits the key and it decodes to the `emptyList()` default. See [Capability negotiation](#capability-negotiation-401).
+
+### Capability negotiation (#401)
+
+Both Hello payloads carry an optional `capabilities: []string` (wire key `capabilities`, no `@SerialName` — a single lowercase word, like `role`/`token`). The phone **advertises** the features it understands on `hello`; the daemon echoes the **intersection** of that set with its own on `hello_ack` (never a blind mirror). A phone that does not advertise `interactive` — or whose `interactive` is not echoed back — keeps receiving only the coarse v1 `message` fan-out and never sees the structured live-session stream. Wire SSOT: pyrycode `protocol-mobile.md` § "Capability negotiation (v2)"; ADR 025 (Phase 2 structured-streaming exit gate).
+
+```kotlin
+internal const val CAPABILITY_INTERACTIVE = "interactive"   // the wire token (#401)
+```
+
+- **Advertise** rides for free on `HelloClientPayload.capabilities`'s `listOf(CAPABILITY_INTERACTIVE)` default + `encodeDefaults = true` — exactly the `protocol_versions` mechanism, **confirmed by a wire test** (`"capabilities":["interactive"]` asserted literally, per the ticket's "don't assume it serialises" note), not trusted from the precedent.
+- **Surface** is the [Noise_IK session](noise-ik-session.md)'s job: `readResp` decodes `HelloAckPayload.capabilities` (a `List`), `.toSet()`s it (capabilities are a **membership set** — "is `interactive` granted?" — and a `Set` dedups a daemon that repeats an entry), and exposes it as `NoiseIkSession.negotiatedCapabilities`, which the [Noise session pump](noise-session-pump.md) carries onto `PumpState.Open.capabilities`.
+- **Surfacing-only.** [#401](../codebase/401.md) makes the negotiated set *readable*; it gates no decoding. The decode gate (#385) and the stall gate (#395) consume it. The daemon's echo is surfaced **verbatim** — a consuming gate treats it as *server-asserted* and is the place to re-derive the intersection before conferring authority.
+- `CAPABILITY_INTERACTIVE` is `internal` (single-module app; #385 imports it for its membership check). It is a constant, not a type — no `@SerialName`, no ktlint single-class-filename concern (`MobileWireModels.kt` already holds many top-level declarations).
 
 ### `QrPayload` — decoded pairing payload
 
