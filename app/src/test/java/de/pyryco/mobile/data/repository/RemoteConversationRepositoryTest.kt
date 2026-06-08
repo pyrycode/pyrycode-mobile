@@ -1710,6 +1710,194 @@ class RemoteConversationRepositoryTest {
             assertEquals(1, b.size)
         }
 
+    // ---- #395: observe the `stall` v2 control event as a thread-observable stall state -----------
+
+    // AC #1, #5: an inbound `stall` envelope flips the observable stall state on for its conversation.
+    @Test
+    fun stall_onset_flipsOn() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val stalls = collectStall(repo, "c1")
+            runCurrent()
+            assertEquals(listOf(false), stalls)
+
+            pump.push(stallEnvelope("c1"))
+            runCurrent()
+            assertEquals(listOf(false, true), stalls)
+        }
+
+    // AC #2, #5: the explicit on-then-off round-trip — a stall, then a forward-progress event clears it.
+    @Test
+    fun stall_roundTrip_onThenOffOnForwardProgress() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val stalls = collectStall(repo, "c1")
+            runCurrent()
+
+            pump.push(stallEnvelope("c1"))
+            runCurrent()
+            assertEquals(listOf(false, true), stalls)
+
+            pump.push(turnStateEnvelope("c1", "thinking"))
+            runCurrent()
+            assertEquals(listOf(false, true, false), stalls)
+        }
+
+    // AC #2: every forward-progress event type clears the stall — including `idle` and `turn_end`,
+    // the deliberate contract (the quiet-while-not-idle condition no longer holds).
+    @Test
+    fun stall_clearedByEachForwardProgressEvent() =
+        runTest {
+            assertClearsStall(turnStateEnvelope("c1", "responding"))
+            assertClearsStall(turnStateEnvelope("c1", "idle"))
+            assertClearsStall(turnStateEnvelope("c1", "thinking"))
+            assertClearsStall(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "x"))
+            assertClearsStall(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
+            assertClearsStall(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "ok"))
+            assertClearsStall(turnEndEnvelope("c1", "t1", "end_turn"))
+        }
+
+    // AC #3: a malformed `stall` payload is dropped without tearing down the inbound consumer — a later
+    // valid `stall` still flips the state, proving the single inbound collector survived.
+    @Test
+    fun stall_malformed_droppedCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val stalls = collectStall(repo, "c1")
+            runCurrent()
+
+            // Missing the required `conversation_id` → SerializationException → envelope dropped.
+            pump.push(Envelope(id = 1L, type = "stall", ts = TS, payload = MobileJson.parseToJsonElement("""{}""")))
+            // Wrong-typed `conversation_id` (number, not string) → SerializationException → dropped.
+            pump.push(Envelope(id = 2L, type = "stall", ts = TS, payload = MobileJson.parseToJsonElement("""{"conversation_id":123}""")))
+            runCurrent()
+            assertEquals(listOf(false), stalls)
+
+            pump.push(stallEnvelope("c1"))
+            runCurrent()
+            assertEquals(listOf(false, true), stalls)
+        }
+
+    // AC #2 (fail-closed): without `interactive` negotiated, a well-formed `stall` never surfaces.
+    @Test
+    fun stall_capabilityGateClosed_blocksOnset() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { emptySet() })
+            val stalls = collectStall(repo, "c1")
+            runCurrent()
+
+            pump.push(stallEnvelope("c1"))
+            runCurrent()
+            assertEquals(listOf(false), stalls)
+        }
+
+    // AC #2 (fail-closed): a negotiated set with another token but NOT `interactive` still blocks.
+    @Test
+    fun stall_capabilityGateOtherTokenOnly_blocksOnset() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("something_else") })
+            val stalls = collectStall(repo, "c1")
+            runCurrent()
+
+            pump.push(stallEnvelope("c1"))
+            runCurrent()
+            assertEquals(listOf(false), stalls)
+        }
+
+    // AC #1: stall state is per-conversation; a forward event for one clears only that one.
+    @Test
+    fun stall_perConversationIsolation() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val c1 = collectStall(repo, "c1")
+            val c2 = collectStall(repo, "c2")
+            runCurrent()
+
+            pump.push(stallEnvelope("c1"))
+            pump.push(stallEnvelope("c2"))
+            runCurrent()
+            assertEquals(listOf(false, true), c1)
+            assertEquals(listOf(false, true), c2)
+
+            pump.push(turnStateEnvelope("c1", "idle"))
+            runCurrent()
+            assertEquals(listOf(false, true, false), c1)
+            assertEquals(listOf(false, true), c2)
+        }
+
+    // observeStall is distinctUntilChanged: stalling another conversation does not re-emit this flow.
+    @Test
+    fun stall_distinctUntilChanged_otherConversationDoesNotReemit() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val c1 = collectStall(repo, "c1")
+            runCurrent()
+            assertEquals(listOf(false), c1)
+
+            pump.push(stallEnvelope("c2"))
+            runCurrent()
+            assertEquals(listOf(false), c1)
+        }
+
+    // Re-receipt of `stall` for an already-stalled conversation is an idempotent Set add — no re-emit.
+    @Test
+    fun stall_repeatedOnset_isIdempotent() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val c1 = collectStall(repo, "c1")
+            runCurrent()
+
+            pump.push(stallEnvelope("c1"))
+            pump.push(stallEnvelope("c1"))
+            runCurrent()
+            assertEquals(listOf(false, true), c1)
+        }
+
+    // The precise-clearing contract: only a *successfully decoded* forward-progress event clears. An
+    // unrecognized turn_state and a malformed live envelope both decode to null → the stall persists.
+    @Test
+    fun stall_notClearedByUnrecognizedOrMalformedLiveEvent() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val c1 = collectStall(repo, "c1")
+            runCurrent()
+
+            pump.push(stallEnvelope("c1"))
+            runCurrent()
+            assertEquals(listOf(false, true), c1)
+
+            // Unrecognized turn_state → mapper returns null → not forward progress → does not clear.
+            pump.push(turnStateEnvelope("c1", "compacting"))
+            // Malformed live-session envelope (tool_use missing tool_use_id) → decodes to null → no clear.
+            pump.push(
+                Envelope(
+                    id = 2L,
+                    type = "tool_use",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"c1","turn_id":"t1","name":"Bash","input_summary":"ls"}""",
+                        ),
+                ),
+            )
+            runCurrent()
+            assertEquals(listOf(false, true), c1)
+
+            // A recognized forward-progress event does clear.
+            pump.push(turnStateEnvelope("c1", "idle"))
+            runCurrent()
+            assertEquals(listOf(false, true, false), c1)
+        }
+
     // ---- Helpers --------------------------------------------------------------------------------
 
     /**
@@ -1938,6 +2126,41 @@ class RemoteConversationRepositoryTest {
                     """{"conversation_id":"$conversationId","message_id":"$messageId","role":"$role","text":"$text"}""",
                 ),
         )
+
+    private fun TestScope.collectStall(
+        repo: RemoteConversationRepository,
+        conversationId: String,
+    ): MutableList<Boolean> {
+        val emissions = mutableListOf<Boolean>()
+        backgroundScope.launch { repo.observeStall(conversationId).collect { emissions += it } }
+        return emissions
+    }
+
+    /** A `stall` control envelope `{conversation_id}` (#395) — onset-only, no clearing edge on the wire. */
+    private fun stallEnvelope(
+        conversationId: String,
+        id: Long = 1L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "stall",
+            ts = TS,
+            payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId"}"""),
+        )
+
+    /** Stall `"c1"`, assert it flipped on, push [forwardEvent], assert it cleared. Fresh repo per call. */
+    private fun TestScope.assertClearsStall(forwardEvent: Envelope) {
+        val pump = FakeSessionPump()
+        val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+        val stalls = collectStall(repo, "c1")
+        runCurrent()
+        pump.push(stallEnvelope("c1"))
+        runCurrent()
+        assertEquals(listOf(false, true), stalls)
+        pump.push(forwardEvent)
+        runCurrent()
+        assertEquals(listOf(false, true, false), stalls)
+    }
 
     private fun TestScope.collectLiveEvents(repo: RemoteConversationRepository): MutableList<LiveSessionEvent> {
         // liveSessionEvents is a replay=0 SharedFlow, so the collector must subscribe before any push;
