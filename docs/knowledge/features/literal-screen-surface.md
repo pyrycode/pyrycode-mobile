@@ -3,8 +3,11 @@
 The **render half** of the manual "show the literal screen" feature ([#381](../codebase/381.md)). A
 stateless Compose surface that renders the merged [`LiteralScreenViewModel`](literal-screen-viewmodel.md)'s
 hoisted three-state `LiteralScreenUiState` and dispatches its two `LiteralScreenEvent`s. The thread
-entry-point action + navigation destination that *open* this surface for a conversation are the sibling
-slice **#382** (`blockedBy #381`); this surface is tested + DI-wired before it is reachable.
+entry-point action + navigation destination that *open* this surface for a conversation shipped in the
+sibling slice **#382** ([codebase note](../codebase/382.md)) — an always-available "Show the literal
+screen" overflow item that routes to a dedicated `literal_screen/{conversationId}` destination rendering
+this surface. (#381 shipped this surface tested + DI-wired before any UI reached it; #382 wires that
+path.)
 
 `security-sensitive`: the snapshot text is server-originated and may carry sensitive on-screen content,
 so it is rendered **verbatim** as plain monospace, **never logged**, **never persisted**, and screen
@@ -37,7 +40,8 @@ fun LiteralScreenSurface(
 
 Stateless — holds **no** state of its own beyond the `rememberScrollState()` for the scroll container
 (UI-only scroll position, non-sensitive, intentionally *not* saveable). The stateful wrapper
-(`koinViewModel()` + `collectAsStateWithLifecycle()`) is **#382's**, not here.
+(`koinViewModel()` + `collectAsStateWithLifecycle()`) lives in the `literal_screen/{conversationId}`
+destination ([#382](../codebase/382.md)), not here.
 
 A shared `Surface` → `Column` → `TopAppBar` scaffold wraps all three states, so `FLAG_SECURE` and the
 once-only `Request` apply for the whole surface lifecycle, not just `Content`:
@@ -154,11 +158,14 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
   provides it, as for [`ThreadViewModel`](thread-screen.md)) + the flag-selected
   [`ConversationRepository`](conversation-repository.md) ([#350](../codebase/350.md)). This makes the VM
   **resolvable**; it does **not** touch navigation or `MainActivity`.
-- **Obtaining + scoping (deferred to #382):** the nav destination obtains the VM via `koinViewModel()`
-  within the thread route's back-stack-entry scope so (a) `SavedStateHandle` carries `conversationId` and
-  (b) a **fresh VM exists per open with no cross-conversation `text` bleed**. A process/activity-singleton
-  scope would leak one conversation's snapshot into the next — must not happen. #382 is itself
-  `security-sensitive` and runs its own pass.
+- **Obtaining + scoping (shipped in [#382](../codebase/382.md)):** the `literal_screen/{conversationId}`
+  destination obtains the VM via `koinViewModel<LiteralScreenViewModel>()` **inside the destination
+  composable**, binding it to that back-stack entry's `ViewModelStoreOwner` so (a) `SavedStateHandle`
+  carries `conversationId` and (b) a **fresh VM exists per open with no cross-conversation `text` bleed**
+  (the fresh VM starts in `Loading`; this surface's `LaunchedEffect(Unit) { Request }` re-fetches). A
+  process/activity-singleton scope (or a Koin `single`) would leak one conversation's snapshot into the
+  next — it is deliberately a `viewModel { }` factory and the `koinViewModel()` call is never hoisted
+  above the destination. #382 ran its own `security-sensitive` review (PASS).
 
 ## Edge cases / limitations
 
@@ -195,5 +202,5 @@ via the test API); the verbatim assertion + code review cover it. CI gate: `./gr
 - [Conversation repository](conversation-repository.md) — `requestScreenSnapshot`, the consumed read ([#375](../codebase/375.md))
 - [Scanner screen](scanner-screen.md) — the `(state, …)` surface + verbatim-render pattern mirrored; [Thread overflow menu](thread-overflow-menu.md) — the compose-test idiom mirrored
 - [MarkdownText](markdown-text.md) ([ADR 0002](../decisions/0002-markdown-renderer-library.md)) — the renderer this surface deliberately bypasses
-- Sibling **#382** — thread entry-point action + navigation destination (obtains + per-conversation-scopes this VM); `blockedBy #381`
+- Sibling **[#382](../codebase/382.md)** (shipped) — thread entry-point action + `literal_screen/{conversationId}` destination that obtains + per-conversation-scopes this VM and renders this surface; the only path here
 - pyrycode ADR 025 § Safe degradation / Security model · pyrycode#596 (Phase 2 structured streaming) · pyrycode#618 (daemon snapshot handler)

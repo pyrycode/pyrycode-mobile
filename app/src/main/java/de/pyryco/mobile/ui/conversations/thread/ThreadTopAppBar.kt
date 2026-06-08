@@ -28,6 +28,7 @@ fun ThreadTopAppBar(
     overflowExpanded: Boolean,
     onOverflowDismiss: () -> Unit,
     onOverflowEvent: (ThreadEvent) -> Unit,
+    onShowLiteralScreen: () -> Unit,
     isPromoted: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -63,6 +64,7 @@ fun ThreadTopAppBar(
                     isPromoted = isPromoted,
                     onDismiss = onOverflowDismiss,
                     onEvent = onOverflowEvent,
+                    onShowLiteralScreen = onShowLiteralScreen,
                 )
             }
         },

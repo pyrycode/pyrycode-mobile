@@ -48,11 +48,12 @@ class ThreadScreenOverflowTest {
     }
 
     @Test
-    fun tapping_overflow_icon_renders_all_five_menu_items() {
+    fun tapping_overflow_icon_renders_all_six_menu_items() {
         setContent(mutableListOf())
 
         composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performClick()
 
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_show_literal_screen)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_new_session)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_rename)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).assertIsDisplayed()

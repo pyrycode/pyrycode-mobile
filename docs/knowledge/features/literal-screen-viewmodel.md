@@ -4,8 +4,9 @@ The **state-management half** of the manual "show the literal screen" feature ([
 A thread-scoped ViewModel that orchestrates one [`ConversationRepository.requestScreenSnapshot`](conversation-repository.md)
 read and hoists the result as MVI state. The render surface + Koin registration shipped in
 [#381](../codebase/381.md) (the [`LiteralScreenSurface`](literal-screen-surface.md)); the thread
-entry-point action + navigation destination are its sibling **#382** (`blockedBy #381`). (#379 — the
-original surface + entry-point slice — split on the surface-vs-entry seam into #381/#382.)
+entry-point action + navigation destination that obtain + per-conversation-scope this VM shipped in
+**[#382](../codebase/382.md)**. (#379 — the original surface + entry-point slice — split on the
+surface-vs-entry seam into #381/#382.)
 
 `security-sensitive`: the snapshot text is server-originated and may carry sensitive on-screen content,
 so it is held **verbatim** and **never logged** — see [Confidentiality](#confidentiality-the-whole-point).
@@ -121,13 +122,17 @@ open, never restored across process death.
 - **Constructed directly in unit tests** for #378. **Koin registration shipped in [#381](../codebase/381.md)**:
   `viewModel { LiteralScreenViewModel(get(), get()) }` in `AppModule` (`get()` resolves `SavedStateHandle` +
   `ConversationRepository`). #378 deliberately did not touch `AppModule`, avoiding cross-branch overlap.
-  **Obtaining** it via `koinViewModel()` within the thread back-stack-entry scope (where `SavedStateHandle`
-  carries `conversationId`) is **#382's** job.
+  **Obtaining** it via `koinViewModel()` within the destination back-stack-entry scope (where
+  `SavedStateHandle` carries `conversationId`) shipped in **[#382](../codebase/382.md)** — the
+  `literal_screen/{conversationId}` destination calls `koinViewModel<LiteralScreenViewModel>()` inside the
+  destination composable.
 - **Security obligations propagated downstream, partly realized:** (b) verbatim render without logging and
   **without `rememberSaveable`** + (c) `FLAG_SECURE` screen-capture block landed in
-  [#381's surface](literal-screen-surface.md); (a) scope the VM **per-conversation** — to the thread's nav
-  back-stack entry, never a process/activity singleton, or one conversation's `Content.text` bleeds into
-  the next — is deferred one more slice to **#382** (itself `security-sensitive`), which obtains the VM.
+  [#381's surface](literal-screen-surface.md); (a) scope the VM **per-conversation** — to the destination's
+  nav back-stack entry, never a process/activity singleton, or one conversation's `Content.text` bleeds
+  into the next — landed in **[#382](../codebase/382.md)** (itself `security-sensitive`, PASS): a
+  `viewModel { }` factory obtained via `koinViewModel()` inside the `literal_screen/{conversationId}`
+  destination ⇒ a fresh VM per open.
 
 ## Testing
 
@@ -157,5 +162,5 @@ transition gated on a `CompletableDeferred` (`calls == 2`).
 - [#378 implementation notes](../codebase/378.md) · spec `docs/specs/architecture/378-literal-screen-snapshot-viewmodel.md`
 - [Conversation repository](conversation-repository.md) / [Remote conversation repository](remote-conversation-repository.md) — `requestScreenSnapshot`, the consumed read ([#375](../codebase/375.md))
 - [Scanner screen](scanner-screen.md) — `ScannerViewModel` / `ScannerUiState.Decoded.toString` redaction precedent
-- Surface slice [#381](../codebase/381.md) ([`literal-screen-surface.md`](literal-screen-surface.md)) — renders this state + owns Koin registration; sibling **#382** adds the thread entry-point action + nav destination (`blockedBy #381`)
+- Surface slice [#381](../codebase/381.md) ([`literal-screen-surface.md`](literal-screen-surface.md)) — renders this state + owns Koin registration; sibling **[#382](../codebase/382.md)** (shipped) adds the thread entry-point action + `literal_screen/{conversationId}` destination that obtains + per-conversation-scopes this VM
 - pyrycode ADR 025 § Safe degradation / Security model · pyrycode#596 (Phase 2 structured streaming) · pyrycode#618 (daemon snapshot handler)

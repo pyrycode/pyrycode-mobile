@@ -52,6 +52,8 @@ import de.pyryco.mobile.ui.conversations.list.DiscussionListEvent
 import de.pyryco.mobile.ui.conversations.list.DiscussionListNavigation
 import de.pyryco.mobile.ui.conversations.list.DiscussionListScreen
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
+import de.pyryco.mobile.ui.conversations.thread.LiteralScreenSurface
+import de.pyryco.mobile.ui.conversations.thread.LiteralScreenViewModel
 import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
@@ -339,7 +341,8 @@ private fun PyryNavHost(
         composable(
             route = Routes.CONVERSATION_THREAD,
             arguments = listOf(navArgument("conversationId") { type = NavType.StringType }),
-        ) {
+        ) { backStackEntry ->
+            val conversationId = backStackEntry.arguments?.getString("conversationId").orEmpty()
             val vm = koinViewModel<ThreadViewModel>()
             val state by vm.state.collectAsStateWithLifecycle()
             val connectionState by vm.connectionState.collectAsStateWithLifecycle()
@@ -357,12 +360,30 @@ private fun PyryNavHost(
                 connectionState = connectionState,
                 onRetry = vm::retry,
                 onOverflowEvent = vm::onOverflowEvent,
+                onShowLiteralScreen = { navController.navigate("literal_screen/$conversationId") },
                 onModelSelected = vm::onModelSelected,
                 onEffortSelected = vm::onEffortSelected,
                 onYoloToggled = vm::onYoloToggled,
                 onWorkspaceChipTapped = vm::onWorkspaceChipTapped,
                 onWorkspacePicked = vm::onWorkspacePicked,
                 onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
+            )
+        }
+        composable(
+            route = Routes.LITERAL_SCREEN,
+            arguments = listOf(navArgument("conversationId") { type = NavType.StringType }),
+        ) {
+            // A fresh back-stack entry per open ⇒ a fresh ViewModelStoreOwner ⇒ koinViewModel() here
+            // yields a per-conversation LiteralScreenViewModel (its SavedStateHandle seeded from this
+            // entry's conversationId arg). Never hoist this above the destination / register as a Koin
+            // single — that would let one conversation's screen text bleed into the next (AC#3). The
+            // surface's LaunchedEffect(Unit) re-fetches on each fresh open.
+            val vm = koinViewModel<LiteralScreenViewModel>()
+            val state by vm.state.collectAsStateWithLifecycle()
+            LiteralScreenSurface(
+                state = state,
+                onEvent = vm::onEvent,
+                onBack = { navController.popBackStack() },
             )
         }
         composable(Routes.SETTINGS) {
@@ -455,6 +476,7 @@ private object Routes {
     const val CHANNEL_LIST = "channel_list"
     const val DISCUSSION_LIST = "discussions"
     const val CONVERSATION_THREAD = "conversation_thread/{conversationId}"
+    const val LITERAL_SCREEN = "literal_screen/{conversationId}"
     const val SETTINGS = "settings"
     const val ARCHIVED_DISCUSSIONS = "archived_discussions"
     const val ABOUT = "about"
