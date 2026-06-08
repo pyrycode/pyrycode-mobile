@@ -240,6 +240,50 @@ class ThreadViewModelTest {
             collector.cancel()
         }
 
+    // ---- #396: isStalled projection over repository.observeStall ------------------------------
+
+    @Test
+    fun isStalled_initialValue_isFalseWithNonStallingRepo() =
+        runTest {
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            // A plain fake inherits observeStall's flowOf(false) default — the flag stays inert.
+            val vm = makeVm(handle, FakeConversationRepository())
+            assertFalse(vm.isStalled.value)
+        }
+
+    @Test
+    fun isStalled_reflectsOnsetThenClear() =
+        runTest {
+            val repo = StallControllableRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.isStalled.collect {} }
+            advanceUntilIdle()
+
+            repo.stall.value = true
+            advanceUntilIdle()
+            assertTrue(vm.isStalled.value) // AC #1 — onset promotes.
+
+            repo.stall.value = false
+            advanceUntilIdle()
+            assertFalse(vm.isStalled.value) // AC #3 — clears when the stall resolves.
+            collector.cancel()
+        }
+
+    @Test
+    fun isStalled_observesOnlyOwnConversationId() =
+        runTest {
+            val repo = StallControllableRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.isStalled.collect {} }
+            advanceUntilIdle()
+
+            assertTrue(repo.observedIds.isNotEmpty())
+            assertTrue(repo.observedIds.all { it == ACTIVE_CONV })
+            collector.cancel()
+        }
+
     @Test
     fun state_resolvedTitle_isChannelNameForSeededChannel() =
         runTest {
@@ -1230,6 +1274,23 @@ class ThreadViewModelTest {
             conversationId: String,
             text: String,
         ): Message = TODO("not used")
+    }
+
+    /**
+     * Delegates the whole [ConversationRepository] surface to a seeded [FakeConversationRepository]
+     * (so the VM's `state` pipeline stays populated) and overrides only [observeStall] with a
+     * controllable [MutableStateFlow], recording each observed id for the routing assertion.
+     */
+    private class StallControllableRepo(
+        private val delegate: FakeConversationRepository = FakeConversationRepository(),
+    ) : ConversationRepository by delegate {
+        val stall = MutableStateFlow(false)
+        val observedIds = mutableListOf<String>()
+
+        override fun observeStall(conversationId: String): Flow<Boolean> {
+            observedIds += conversationId
+            return stall
+        }
     }
 
     private class RecordingConnectionStateSource : ConnectionStateSource {

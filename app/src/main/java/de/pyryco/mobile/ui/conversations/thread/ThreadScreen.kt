@@ -49,6 +49,7 @@ import de.pyryco.mobile.ui.conversations.components.MessageBubble
 import de.pyryco.mobile.ui.conversations.components.RenameDialog
 import de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog
 import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
+import de.pyryco.mobile.ui.conversations.components.StallPromotionBanner
 import de.pyryco.mobile.ui.conversations.components.StatusSheet
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
 import de.pyryco.mobile.ui.conversations.components.WorkspaceChip
@@ -72,6 +73,7 @@ fun ThreadScreen(
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
     isThinking: Boolean = false,
+    isStalled: Boolean = false,
     onTitleClick: () -> Unit = {},
     onOverflowEvent: (ThreadEvent) -> Unit = {},
     onShowLiteralScreen: () -> Unit = {},
@@ -118,6 +120,7 @@ fun ThreadScreen(
                     .fillMaxSize(),
         ) {
             ConnectionBanner(state = connectionState, onRetry = onRetry)
+            StallPromotionBanner(isStalled = isStalled, onShowLiteralScreen = onShowLiteralScreen)
             if (!state.isPromoted && !state.hasMessages) {
                 WorkspaceChip(
                     workspaceLabel = state.workspaceLabel,

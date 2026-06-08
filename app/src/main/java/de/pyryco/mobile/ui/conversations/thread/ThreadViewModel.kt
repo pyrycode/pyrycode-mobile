@@ -223,6 +223,23 @@ class ThreadViewModel(
             )
 
     /**
+     * Whether this conversation is currently stalled (#395) — drives the prominent screen-snapshot CTA
+     * (#396). A sibling [StateFlow] beside [connectionState] / [isThinking] (not a [ThreadUiState]
+     * field): like them it is a transient, connection-scoped cross-cutting signal the stateless screen
+     * takes as a separate parameter. Sourced from the already-injected [repository]; `observeStall`
+     * already applies `distinctUntilChanged` in the remote impl and defaults to `false` in the facade,
+     * so no extra operator is needed. `false` covers "no live connection" and "not stalled".
+     */
+    val isStalled: StateFlow<Boolean> =
+        repository
+            .observeStall(conversationId)
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = false,
+            )
+
+    /**
      * Folds one live event to the next [isThinking] value, or `null` to leave the flag unchanged. Routes
      * by [conversationId] first (AC #3 — other conversations never move the flag), then maps the turn
      * phase: `thinking` ⇒ `true`; `responding` / `idle` / `turn_end` ⇒ `false`; the non-phase events
