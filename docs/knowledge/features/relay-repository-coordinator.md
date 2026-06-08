@@ -14,6 +14,9 @@ the connection scope and the `SessionPump` binding. It is largely a **wiring lay
 types and no payloads. Beyond owning the pump + repository lifecycle, it owns exactly one connect-time
 side effect — the **FCM push-token re-registration** ([#365](../codebase/365.md)), which reuses
 [#359](../codebase/359.md)'s sender unchanged (see [§ Connect-time push-token re-registration](#connect-time-fcm-push-token-re-registration-365)).
+Because it owns the connection-scoped pump, it is also where the **pyrycode-leg session readiness** is
+derived and the combined [`ConnectionStatus`](connection-status.md) `{relay, pyrycode}` status
+published ([#392](../codebase/392.md)) — see [§ Two-part connection status](#two-part-connection-status-392).
 
 Package: `de.pyryco.mobile.data.repository` (`RelayRepositoryCoordinator` + the `ManagedSessionPump`
 interface it drives, the latter appended to `SessionPump.kt`), co-located with the
@@ -51,12 +54,14 @@ interface ManagedSessionPump : SessionPump {   // SessionPump = the repository's
 // data/repository/RelayRepositoryCoordinator.kt
 class RelayRepositoryCoordinator(
     connections: StateFlow<RelayTransport?>,                 // = supervisor.currentConnection (the input)
+    relayStatus: StateFlow<RelayLinkStatus>,                 // (#392) = supervisor.relayStatus (the relay leg)
     createPump: (RelayTransport) -> ManagedSessionPump,      // prod: { NoiseSessionPump(it, sessionFactory) }
     dispatcher: CoroutineDispatcher = Dispatchers.Default,   // injection seam (test clock); stored as a val
     deviceName: String = "",                                 // (#365) live Build.MODEL; "" until AppModule wires it
     pushToken: suspend () -> String? = { null },             // (#365) one-shot token read; null ⇒ no registration
 ) {
     val currentRepository: StateFlow<ConversationRepository?>  // live repo, or null between connections
+    val connectionStatus: StateFlow<ConnectionStatus>         // (#392) combined {relay, pyrycode} two-part status
     fun start()   // idempotent — launches the single connections collector on the coordinator scope
     fun close()   // tears down the active connection (wiping pump keys) + cancels the coordinator scope
 }
@@ -164,6 +169,45 @@ This matters because pyrycode's handler (#319) acks-with-**no-registry-touch** o
 `(Platform, Token, DeviceName)` matches the stored device — an empty `device_name` would *fork* the
 server's dedup triple into a duplicate registry entry. See [[post-352-connection-scoped-repo-behind-facade]].
 
+## Two-part connection status (#392)
+
+The coordinator publishes [`connectionStatus`](connection-status.md), the combined
+`ConnectionStatus { relay, pyrycode }` model the Settings status line (**#390**, `blockedBy #392`)
+consumes. It owns the connection-scoped pump, so it is where the **pyrycode-leg readiness** (the
+honest `relay → daemon` end-to-end signal) is derived — the relay leg's `Connected` only means
+*socket-open*, not Noise-session-open. The leg reaches `PyrycodeLinkStatus.Connected` **only** once the
+pump reaches `Open` (handshake complete) — never on bare socket-up, never between connections —
+closing the false green that bit live testing on 2026-06-08. See
+[connection status](connection-status.md) for the model and the leg semantics.
+
+It is **pure derivation** — no new mutable status state:
+
+- A private `activePumpFlow: MutableStateFlow<ManagedSessionPump?>` mirrors the live pump, written in
+  **lock-step with `mutableRepository`** inside the non-suspending `onConnection`/`teardownActive`
+  critical section (set to the fresh pump on connect, `null` on teardown). It stays **private** — only
+  the *derived* readiness is exposed, never the pump reference (the pump is single-owner).
+- A private `pyrycodeStatus: Flow<PyrycodeLinkStatus>` = `activePumpFlow.flatMapLatest { it?.state ?:
+  flowOf(null) }.map { it.toPyrycodeLinkStatus() }` — the same `flatMapLatest`-over-a-live-child idiom
+  [`StableConversationRepository`](stable-conversation-repository.md) uses for `currentRepository`. It
+  tracks the **current** pump across reconnects with no carryover (`flatMapLatest` cancels the prior
+  pump's `state` collection); "no pump" maps through `null` to the `Down` floor.
+- The public `connectionStatus: StateFlow<ConnectionStatus>` = `combine(relayStatus, pyrycodeStatus) {
+  relay, pyrycode -> ConnectionStatus(relay, pyrycode) }.stateIn(scope, SharingStarted.Eagerly, …)` on
+  the coordinator's **existing** `scope` (cancelled by `close()`, so it doesn't hang `runTest`).
+
+The mapping `internal fun PumpState?.toPyrycodeLinkStatus()` (bottom of the file, sibling to #391's
+`RelayLinkStatus.toConnectionState()`) is total over `PumpState` + `null`: `null`/`Closed → Down`,
+`Handshaking → Handshaking`, `Open → Connected`. It **discards `Open.connId` and `Closed.cause`** —
+the no-log / no-leak contract is structurally enforced (no relay/crypto-derived string reaches the
+status surface). `relayStatus` is fetched off the concrete supervisor (`get<RelayConnectionSupervisor>().relayStatus`)
+exactly like `connections`, with **no new Koin binding** — #390 obtains the combined model via
+`get<RelayRepositoryCoordinator>().connectionStatus`.
+
+> **Init-order gotcha.** `stateIn(scope, Eagerly, …)` runs at *property initialization*, so
+> `connectionStatus`/`pyrycodeStatus` must be declared **after** `scope` and `activePumpFlow` in the
+> class body — referencing an earlier-declared field is a construction-time NPE (not a compile error).
+> Placing them beside `mutableRepository` (already below `scope`) satisfies this.
+
 ## Security invariants
 
 The coordinator sits *above* the authenticated Noise channel — it only moves object references and never
@@ -199,6 +243,7 @@ single(createdAtStart = true) {
     val sessionFactory = get<NoiseSessionFactory>()
     RelayRepositoryCoordinator(
         connections = get<RelayConnectionSupervisor>().currentConnection,
+        relayStatus = get<RelayConnectionSupervisor>().relayStatus,     // #392: the relay leg of connectionStatus
         createPump = { transport -> NoiseSessionPump(transport, sessionFactory) },
         // #365: close #359's device_name: "" defer + supply the connect-time token read.
         deviceName = get<NoiseClientInfo>().deviceName,                 // Build.MODEL
@@ -260,7 +305,12 @@ correlation mirrors `RemoteConversationRepositoryTest`'s #359 shape.
 
 - Tickets: [#351](../codebase/351.md) — the coordinator + `ManagedSessionPump` (files, line refs,
   patterns, lessons) · [#365](../codebase/365.md) — the connect-time FCM push-token re-registration hook,
-  the `ManagedSessionPump.state` addition, and closing #359's `device_name: ""` defer.
+  the `ManagedSessionPump.state` addition, and closing #359's `device_name: ""` defer ·
+  [#392](../codebase/392.md) — the derived pyrycode-leg readiness + the combined `connectionStatus`.
+- Two-part status: [Connection status](connection-status.md) (`ConnectionStatus` + `PyrycodeLinkStatus`,
+  [#392](../codebase/392.md)) — derived/published here; relay leg from
+  [`relayStatus`](relay-link-status.md) ([#391](../codebase/391.md)); consumed by the Settings status
+  line (**#390**, `blockedBy #392`).
 - Specs: `docs/specs/architecture/351-connection-scoped-repository-coordinator.md` ·
   `docs/specs/architecture/365-reregister-push-token-on-reconnect.md`.
 - Push stack: [`RemoteConversationRepository.registerPushToken`](remote-conversation-repository.md)
