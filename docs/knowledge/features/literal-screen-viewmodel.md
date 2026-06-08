@@ -2,8 +2,10 @@
 
 The **state-management half** of the manual "show the literal screen" feature ([#378](../codebase/378.md)).
 A thread-scoped ViewModel that orchestrates one [`ConversationRepository.requestScreenSnapshot`](conversation-repository.md)
-read and hoists the result as MVI state. The render surface and the thread entry-point action are the
-sibling slice **#379** (`blockedBy #378`), which consumes this state and owns Koin registration.
+read and hoists the result as MVI state. The render surface + Koin registration shipped in
+[#381](../codebase/381.md) (the [`LiteralScreenSurface`](literal-screen-surface.md)); the thread
+entry-point action + navigation destination are its sibling **#382** (`blockedBy #381`). (#379 — the
+original surface + entry-point slice — split on the surface-vs-entry seam into #381/#382.)
 
 `security-sensitive`: the snapshot text is server-originated and may carry sensitive on-screen content,
 so it is held **verbatim** and **never logged** — see [Confidentiality](#confidentiality-the-whole-point).
@@ -16,8 +18,8 @@ server-side, depending on no screen parser. The data path shipped in [#375](../c
 (`requestScreenSnapshot(conversationId): String` on the [repository](remote-conversation-repository.md)).
 
 `LiteralScreenViewModel` issues that read for the current conversation, tracks the in-flight state, and
-surfaces success or a retryable failure — so #379's surface can present the literal screen as hoisted
-`state: StateFlow<LiteralScreenUiState>` + `onEvent(LiteralScreenEvent)`.
+surfaces success or a retryable failure — so [#381's surface](literal-screen-surface.md) can present the
+literal screen as hoisted `state: StateFlow<LiteralScreenUiState>` + `onEvent(LiteralScreenEvent)`.
 
 File: `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/LiteralScreenViewModel.kt`. Four public
 top-level types co-located in one file (mirrors [`ThreadViewModel`](thread-screen.md) /
@@ -116,15 +118,16 @@ open, never restored across process death.
 
 ## Wiring
 
-- **Constructed directly in unit tests** for #378. **Koin registration is #379's job** — it will
-  `viewModelOf(::LiteralScreenViewModel)` in `AppModule` and obtain it via `koinViewModel()` within the
-  thread back-stack-entry scope (where `SavedStateHandle` carries `conversationId`). #378 deliberately does
-  not touch `AppModule`, avoiding cross-branch file overlap with #379.
-- **Security obligations propagated to #379** (itself `security-sensitive`): (a) scope the VM
-  **per-conversation** — to the thread's nav back-stack entry, never a process/activity singleton — or one
-  conversation's `Content.text` bleeds into the next; (b) render `Content.text` without logging it and
-  **without `rememberSaveable`**; (c) set `FLAG_SECURE` on the snapshot window to block
-  screenshot / screen-recording / overlay capture.
+- **Constructed directly in unit tests** for #378. **Koin registration shipped in [#381](../codebase/381.md)**:
+  `viewModel { LiteralScreenViewModel(get(), get()) }` in `AppModule` (`get()` resolves `SavedStateHandle` +
+  `ConversationRepository`). #378 deliberately did not touch `AppModule`, avoiding cross-branch overlap.
+  **Obtaining** it via `koinViewModel()` within the thread back-stack-entry scope (where `SavedStateHandle`
+  carries `conversationId`) is **#382's** job.
+- **Security obligations propagated downstream, partly realized:** (b) verbatim render without logging and
+  **without `rememberSaveable`** + (c) `FLAG_SECURE` screen-capture block landed in
+  [#381's surface](literal-screen-surface.md); (a) scope the VM **per-conversation** — to the thread's nav
+  back-stack entry, never a process/activity singleton, or one conversation's `Content.text` bleeds into
+  the next — is deferred one more slice to **#382** (itself `security-sensitive`), which obtains the VM.
 
 ## Testing
 
@@ -154,5 +157,5 @@ transition gated on a `CompletableDeferred` (`calls == 2`).
 - [#378 implementation notes](../codebase/378.md) · spec `docs/specs/architecture/378-literal-screen-snapshot-viewmodel.md`
 - [Conversation repository](conversation-repository.md) / [Remote conversation repository](remote-conversation-repository.md) — `requestScreenSnapshot`, the consumed read ([#375](../codebase/375.md))
 - [Scanner screen](scanner-screen.md) — `ScannerViewModel` / `ScannerUiState.Decoded.toString` redaction precedent
-- Sibling surface slice **#379** — renders this state + the thread entry-point action (blocked on #378)
+- Surface slice [#381](../codebase/381.md) ([`literal-screen-surface.md`](literal-screen-surface.md)) — renders this state + owns Koin registration; sibling **#382** adds the thread entry-point action + nav destination (`blockedBy #381`)
 - pyrycode ADR 025 § Safe degradation / Security model · pyrycode#596 (Phase 2 structured streaming) · pyrycode#618 (daemon snapshot handler)
