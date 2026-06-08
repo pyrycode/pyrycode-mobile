@@ -83,7 +83,9 @@ re-parsing wire bytes**. It is a **defaulted** field — the four existing `Open
 construction/assertion sites (3 in `NoiseSessionPumpTest`, 1 in `RelayRepositoryCoordinatorTest`) stay
 green untouched, and `RelayRepositoryCoordinator.toPyrycodeLinkStatus()`'s `is PumpState.Open` match is
 unaffected (it doesn't destructure). **Surfacing-only** — the pump gates nothing on the set; the decode
-gate (#385) and stall gate (#395) consume it.
+gate ([#385](../codebase/385.md), **landed** — the [live-session-events](live-session-events.md) seam
+reads `CAPABILITY_INTERACTIVE in (pump.state.value as? Open)?.capabilities` per structured envelope)
+and the stall gate (#395) consume it.
 
 ## The handshake drive — `protocol-mobile.md` Phone steps 3–6
 

@@ -583,6 +583,45 @@ suspend fun registerPushToken(token: String) {
 > the Firebase sibling's pending handoff — a known-stale comment #365's code review flagged as an optional
 > NIT and deferred, since the file is outside that PR's surface.)_
 
+## `liveSessionEvents` — the v2 structured-stream decode seam (#385)
+
+A hot **`val liveSessionEvents: SharedFlow<LiveSessionEvent>`** (`RemoteConversationRepository.kt:174-180`)
+that surfaces the five v2 **binary → phone** structured-stream envelopes — `turn_state`,
+`assistant_delta`, `tool_use`, `tool_result`, `turn_end` — decoded into one typed
+[`LiveSessionEvent`](live-session-events.md) family. The decode boundary itself (DTOs + mappers +
+the gate + drop semantics) is documented in [Live-session events](live-session-events.md); this
+section records only how it attaches to the repository.
+
+- **Rides the single existing `pump.inbound` collector.** One new grouped arm joins the `onInbound`
+  `when (envelope.type)` demux (`:265-275`) — **no second subscription** (ticket constraint). The
+  arm gates on the negotiated `interactive` capability, then calls the private
+  `decodeLiveSessionEvent(envelope): LiveSessionEvent?` helper (`:296`) and `tryEmit`s the result.
+  Five `TYPE_*` constants join the companion (`:770`+).
+- **`SharedFlow`, not `StateFlow`** (`replay = 0`, `extraBufferCapacity = 64`, `DROP_OLDEST`): these
+  are *events*, not current-value state. The bounded buffer + `DROP_OLDEST` make `tryEmit`
+  **infallible and non-blocking** — load-bearing, so a slow live-event consumer never back-pressures
+  the shared inbound collector and stalls `conversations`/`message`/`ack` processing.
+- **Gated by a lazy capability supplier.** A new defaulted ctor param
+  `negotiatedCapabilities: () -> Set<String> = { emptySet() }` (`:103`), read **per envelope**
+  (`CAPABILITY_INTERACTIVE in negotiatedCapabilities()`, before decode, AC#2). It is a supplier, not
+  a captured value: the repo is built while the pump is still `Handshaking`, but structured
+  envelopes only arrive post-`Open`, so the lazy read always sees the final negotiated set. The
+  [coordinator](relay-repository-coordinator.md) wires it from `(pump.state.value as?
+  PumpState.Open)?.capabilities` — a non-suspending read that preserves `onConnection`
+  cancellation-atomicity. The default `{ emptySet() }` ("gate closed") keeps the two-/three-arg
+  constructions (tests, pre-wiring) compiling and surfacing no events — **zero edit fan-out**, the
+  same defaulted-param discipline `deviceName` (#359) used.
+- **On the concrete repo, not the interface** — the accepted `registerPushToken` (#359) pattern (see
+  above): adding it to [`ConversationRepository`](conversation-repository.md) would force the
+  [Fake](conversation-repository.md) + [facade](stable-conversation-repository.md) to plumb a flow
+  this decode slice doesn't use. Facade/coordinator reachability for the UI consumers
+  (#386/#387/#337) is downstream consumer-slice work.
+
+`security-sensitive`, but the repository stays plain orchestration: the decode runs behind the
+already-authenticated Noise channel, and **nothing in the new arm or the drop branch logs the
+payload** (the text / tool-summary fields may carry sensitive session content). See
+[Live-session events § Trust boundary](live-session-events.md#trust-boundary--no-payload-logging).
+
 ## `requestScreenSnapshot(conversationId)` — the parser-independent screen-snapshot read (#375)
 
 Requests a one-shot text picture of the current claude screen and returns its rendered `text` — the

@@ -1,0 +1,210 @@
+# Live-session events — the v2 structured-stream decode seam
+
+The **decode boundary** that turns the five v2 **binary → phone** structured-stream wire envelopes
+into one typed, in-process Kotlin event family the thread UI can consume without ever touching wire
+bytes. Landed in [#385](../codebase/385.md) (split from #368), part of the Phase 2
+structured-streaming exit-gate (pyrycode#596, ADR 025).
+
+This is **decode only** — wire → typed events. Everything semantic is downstream and out of scope:
+correlating `tool_use`↔`tool_result`, accumulating `assistant_delta` text, the turn-lifecycle state
+machine, and rendering all belong to the consumer slices (#386 thinking indicator, #387 tool-use
+timeline, [#337] live assistant text).
+
+## What the daemon sends
+
+Once a phone advertises `interactive` and the daemon echoes it in `hello_ack` (see
+[#401](../codebase/401.md) and the [Noise session pump](noise-session-pump.md)), the daemon delivers
+five structured envelopes **only to that phone** (pyrycode#607 wire types, #616 capability-gated
+fan-out). A non-`interactive` phone never receives them and keeps getting the coarse `message`
+fan-out. The five:
+
+| Wire `type` | Payload fields (all required, no `omitempty`) | Meaning |
+|---|---|---|
+| `turn_state` | `conversation_id`, `state` | coarse turn lifecycle (`thinking`/`responding`/`idle`); **no `turn_id`** |
+| `assistant_delta` | `conversation_id`, `turn_id`, `seq`(int), `text` | incremental, coalesced assistant text |
+| `tool_use` | `conversation_id`, `turn_id`, `tool_use_id`, `name`, `input_summary` | a tool invocation |
+| `tool_result` | `conversation_id`, `turn_id`, `tool_use_id`, `is_error`(bool), `result_summary` | its result (matched to the call by `tool_use_id`) |
+| `turn_end` | `conversation_id`, `turn_id`, `stop_reason` | end of a turn |
+
+Field shapes are the server SSOT (`pyrycode internal/protocol` interactive structs +
+`docs/protocol-mobile.md § Interactive events (v2, capability-gated)`). Code review verified every
+DTO `@SerialName` and type against it byte-for-byte.
+
+## The three layers
+
+```
+Envelope.payload: JsonElement   (untrusted, post-Noise-decrypt)
+        │  MobileJson.decodeFromJsonElement<…PayloadDto>
+        ▼
+…PayloadDto    (data/network/InteractivePayloads.kt — @Serializable, internal, strict non-null)
+        │  .toEvent()
+        ▼
+LiveSessionEvent    (data/model/LiveSessionEvent.kt — public, portable, no Android imports)
+        │  liveSessionEvents.tryEmit(it)
+        ▼
+val liveSessionEvents: SharedFlow<LiveSessionEvent>   (RemoteConversationRepository, concrete)
+        ▼
+consumer slices (#386 / #387 / #337)
+```
+
+### 1. DTOs — `data/network/InteractivePayloads.kt` (`internal`)
+
+Five `@Serializable internal data class` DTOs, one per envelope, every field a **required non-null**
+`String`/`Int`/`Boolean`, snake_case wire names mapped to camelCase via `@SerialName` (load-bearing
+Go-interop, not cosmetic). Decode always through the single configured
+[`MobileJson`](mobile-protocol-v2-wire-layer.md), never a default `Json`. The strict non-null shape
+is the **fail-closed** posture for an untrusted boundary: a missing/wrong-typed field fails the
+structural decode with a `SerializationException` rather than `null`-punning, so the caller drops
+the one malformed envelope and keeps the stream alive. The DTOs stay `internal` to `data/network`
+(only `LiveSessionEvent` crosses the package boundary). The file carries multiple top-level types,
+so the [[ktlint-filename-rule-single-class]] does not constrain its name (cf. `MobileWireModels.kt`).
+
+### 2. Event family — `data/model/LiveSessionEvent.kt` (public, portable)
+
+One `sealed interface LiveSessionEvent` with a common `val conversationId: String` (every payload
+carries it, so a consumer routes per-conversation without a `when`) and five `data class` subtypes
+named **1:1** for the wire `type` strings — `TurnState`, `AssistantDelta`, `ToolUse`, `ToolResult`,
+`TurnEnd`. The three-value phase enum is **nested** under `TurnState`:
+
+```kotlin
+data class TurnState(override val conversationId: String, val phase: Phase) : LiveSessionEvent {
+    enum class Phase { Thinking, Responding, Idle }   // exactly the three documented states
+}
+```
+
+Nesting the enum keeps the file at exactly **one** public top-level type
+([[ktlint-filename-rule-single-class]]). Pure data, **zero imports**, no Android types — `data/`
+stays portable per CLAUDE.md (Compose Multiplatform walk-back surface). The free-form strings
+(`text`, `inputSummary`, `resultSummary`, `stopReason`) are carried **verbatim** — the seam never
+trims, parses, or sanitizes them (see [Trust boundary](#trust-boundary--no-payload-logging)).
+
+### 3. Mappers — `…PayloadDto.toEvent()` (in `InteractivePayloads.kt`)
+
+One `internal fun XxxDto.toEvent()` per DTO, the same `data/network → data/model` direction as
+`MessagePayloadDto.toMessage()`. Four are total field copies returning a non-null event.
+`TurnStatePayloadDto.toEvent()` is **nullable**: it maps `state → Phase` via a private
+`String.toPhase()` and returns `null` for an unrecognized value. That nullability is the whole
+reason `state` is a plain `String` in the DTO instead of a strict serialized enum — see below.
+
+## How it surfaces — the gate, the flow, the drop
+
+The seam rides the **single existing** `pump.inbound` collector in
+[`RemoteConversationRepository`](remote-conversation-repository.md) — no second subscription (ticket
+constraint). One grouped arm joins the `onInbound` `when (envelope.type)` demux, before `else`:
+
+```kotlin
+TYPE_TURN_STATE, TYPE_ASSISTANT_DELTA, TYPE_TOOL_USE, TYPE_TOOL_RESULT, TYPE_TURN_END -> {
+    if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {            // AC#2 gate, before decode
+        decodeLiveSessionEvent(envelope)?.let { mutableLiveSessionEvents.tryEmit(it) }
+    }
+}
+```
+
+- **Capability gate (AC#2).** `negotiatedCapabilities: () -> Set<String>` is a **supplier**
+  defaulted to `{ emptySet() }`, read **per envelope**. Wired by the
+  [coordinator](relay-repository-coordinator.md) from the live pump:
+  `{ (pump.state.value as? PumpState.Open)?.capabilities.orEmpty() }`. It is a supplier, not a
+  captured value, because the repo is constructed while the pump is still `Handshaking` (set empty),
+  but structured envelopes only arrive **post-`Open`** — so the lazy per-envelope read always sees
+  the final, connection-constant negotiated set. The read is `pump.state.value`, a **non-suspending**
+  `StateFlow.value` access, so the coordinator's `onConnection` cancellation-atomicity invariant is
+  preserved (no suspension added to its critical section). The gate is checked **before** decode, so
+  a non-`interactive` phone never even decodes the payload — defense-in-depth against a daemon that
+  ignores the negotiated set.
+- **The flow.** `val liveSessionEvents: SharedFlow<LiveSessionEvent>` —
+  `MutableSharedFlow(replay = 0, extraBufferCapacity = 64, onBufferOverflow = DROP_OLDEST)`. A
+  `SharedFlow` not a `StateFlow` because these are *events*, not current-value state: late
+  subscribers get no history (holding "latest" is a consumer concern). The bounded buffer +
+  `DROP_OLDEST` make `tryEmit` **infallible and non-blocking** — the load-bearing invariant is that
+  a slow live-event consumer must never back-pressure the shared inbound collector and stall the
+  connection's `conversations`/`message`/`ack` processing. Delivery is therefore best-effort under
+  extreme backpressure; a consumer needing lossless accumulation ([#337]) owns its own buffering.
+- **The drop (AC#3 + AC#4).** `decodeLiveSessionEvent()` selects the DTO by `envelope.type`, decodes
+  through `MobileJson`, calls `toEvent()`, all wrapped in one `try/catch (IllegalArgumentException)`.
+  `SerializationException ⊂ IllegalArgumentException`, so a malformed/partially-decodable payload
+  (missing or wrong-typed field) yields `null` and the one envelope is dropped — the lone collector
+  survives, the next envelope is processed normally ("one bad envelope does not drop the next").
+
+### Unknown / absent `turn_state.state` (AC#3)
+
+`turn_state.state` has a closed value set (`thinking`/`responding`/`idle`) the seam must map, but AC
+requires **tolerating** unrecognized/absent values rather than failing the stream. Two paths, both
+converging on drop-without-crash:
+
+- **Unrecognized** value (e.g. `"compacting"`): the DTO field is a plain `String`, decode succeeds,
+  `toEvent()`'s `String.toPhase()` returns `null` → the mapper returns `null` → that one envelope is
+  dropped.
+- **Absent** `state`: the required `String` field makes *decode itself* throw → caught as AC#4 →
+  dropped.
+
+There is deliberately **no `Phase.Unknown`** member — surfacing one would push a "what does Unknown
+mean" decision onto consumers and widen the type surface. If a consumer later needs to distinguish
+"server sent a state I don't grok" from "no event", add `Unknown` then (open question, out of scope
+here). This is why `state` is a `String` in the DTO and not a strict serialized enum: a strict enum
+([`WireRole`](mobile-protocol-v2-wire-layer.md) style) would make an unknown value a *decode*
+failure, conflating "unknown state" with "malformed envelope" — correct when an unknown value *is* a
+protocol error, wrong here. See the pattern note in [#385](../codebase/385.md).
+
+## Trust boundary & no-payload-logging
+
+`security-sensitive`. The single explicit boundary is `decodeLiveSessionEvent()`: untrusted
+`Envelope.payload` JSON → strict `internal` DTOs → typed `LiveSessionEvent`. Consumers only ever
+hold typed events, never un-decoded payload. The boundary runs **behind** the already-authenticated,
+AEAD-encrypted Noise channel ([#298](../codebase/298.md)/[#303](../codebase/303.md)) — bytes are
+integrity-protected and from the paired daemon — but the decode is still strict (fail-closed) as
+defense-in-depth against a buggy/compromised daemon.
+
+- **No payload logging — load-bearing.** `assistant_delta.text`, `tool_use.input_summary`, and
+  `tool_result.result_summary` can carry sensitive user/session content (code, paths, command
+  output). **Nothing in this seam logs decoded fields or raw payloads**, including the malformed-drop
+  branch (a bare `catch { null }`). Grep-confirmed zero `Log`/`println`/`print`/`Timber` on
+  payload-derived data, mirroring the existing `TYPE_MESSAGE`/`screen_snapshot` no-log posture. Any
+  future change here must preserve this.
+- **Rendering consumers own output-encoding.** The strings are carried verbatim and uninterpreted —
+  the rendering slices (#386/#387/#337/#388) **must treat them as inert data, not
+  markup/HTML/markdown-with-active-content**, and own sanitization at render time. This slice renders
+  nothing.
+- **DoS posture.** The `SharedFlow` buffer is **bounded** (`DROP_OLDEST`, capacity 64) and `tryEmit`
+  never blocks — a hostile/buggy daemon flooding `assistant_delta` can neither grow unbounded memory
+  at the seam nor stall the shared inbound collector. `seq: Int` is decoded but **never sizes an
+  allocation or indexes an array** at this seam (it's an opaque ordering hint for consumers).
+- **No cross-connection leak.** The flow is connection-scoped (the repo is rebuilt per connection by
+  the [coordinator](relay-repository-coordinator.md), #351); a new connection gets a fresh repo +
+  fresh flow, so prior-connection events cannot reach a new connection's collectors.
+
+Architect self-review verdict **PASS**; code review **PASS** with zero findings.
+
+## Why on the concrete repo, not the interface
+
+`liveSessionEvents` is on `RemoteConversationRepository` only — **not** on the
+[`ConversationRepository`](conversation-repository.md) interface. Adding it there would force
+`FakeConversationRepository` to implement it and
+[`StableConversationRepository`](stable-conversation-repository.md) to delegate it (+2 prod files,
+tripping the ≥5 split gate) for plumbing this decode slice doesn't use. This is the accepted
+[`registerPushToken`](remote-conversation-repository.md) ([#359](../codebase/359.md)) pattern: a
+non-interface capability on the concrete repo, reached by the consumer through a concrete handle (the
+coordinator holds the repo). Surfacing it through the facade / a coordinator seam for the UI
+ViewModels is **consumer-slice wiring**, deferred to #386/#387/#337. See
+[[post-352-connection-scoped-repo-behind-facade]].
+
+## Scope boundary
+
+In scope: wire → typed events, the capability gate, fail-closed strict decode. Out of scope (named
+for consumers): `tool_use`↔`tool_result` correlation, `assistant_delta` accumulation, the
+turn-lifecycle state machine, rendering/sanitization, lossless delivery (consumer adds its own
+`buffer()`/`stateIn`), and an `event_id` replay cursor (reconnect-replay #402) / the sixth `stall`
+type (#395) — both correctly excluded here.
+
+## Related
+
+- [#385 implementation notes](../codebase/385.md) — files, line refs, lessons.
+- [Remote conversation repository](remote-conversation-repository.md) — hosts the flow + the demux.
+- [Relay repository coordinator](relay-repository-coordinator.md) — wires the capability supplier.
+- [Noise session pump](noise-session-pump.md) — surfaces `PumpState.Open.capabilities` (#401), the
+  gate source.
+- [Mobile Protocol v2 wire layer](mobile-protocol-v2-wire-layer.md) — `MobileJson`, `Envelope`,
+  `@SerialName` Go-interop, the `WireRole` strict-enum contrast.
+- Server SSOT: pyrycode#607 (wire types + capabilities), #616 (capability-gated fan-out), ADR 025
+  § Phase 2 structured streaming, EPIC pyrycode#596.
+
+[#337]: https://github.com/pyrycode/pyrycode-mobile/issues/337

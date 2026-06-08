@@ -141,7 +141,17 @@ class RelayRepositoryCoordinator(
         activePumpFlow.value = pump
         // Retain the concrete repo: registerPushToken is not on the ConversationRepository interface, so
         // the hook must call it through this handle, not via the interface-typed currentRepository.
-        val repo = RemoteConversationRepository(pump, childScope, deviceName)
+        // The capability supplier (#385) snapshots the live negotiated set lazily on each structured
+        // envelope; `.value` is a non-suspending read, preserving this collector's cancellation
+        // atomicity (:128). Once Open the set is connection-constant, and structured envelopes only
+        // arrive post-Open, so every one sees the final negotiated capabilities.
+        val repo =
+            RemoteConversationRepository(
+                pump,
+                childScope,
+                deviceName,
+                negotiatedCapabilities = { (pump.state.value as? PumpState.Open)?.capabilities.orEmpty() },
+            )
         mutableRepository.value = repo
         // launch returns immediately; the suspending re-registration runs on the child scope, off the
         // non-suspending critical path of this collector (the :69 cancellation-atomicity invariant).

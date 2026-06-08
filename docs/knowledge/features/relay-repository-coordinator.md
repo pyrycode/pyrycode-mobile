@@ -86,9 +86,18 @@ emission, run by one collector launched in `start()`:
 2. **If `transport == null`**, return — this is the between-connections state.
 3. **Else build a fresh connection**: a per-connection `childScope` (child of the coordinator job),
    `pump = createPump(transport).also { it.start() }`, retain `(pump, childScope)`, publish
-   `RemoteConversationRepository(pump, childScope, deviceName)` on `currentRepository`, then
-   `childScope.launch { … }` the connect-time push-token re-registration hook (#365, below). `launch`
-   returns immediately, so `onConnection` stays non-suspending.
+   `RemoteConversationRepository(pump, childScope, deviceName, negotiatedCapabilities = { … })` on
+   `currentRepository`, then `childScope.launch { … }` the connect-time push-token re-registration
+   hook (#365, below). `launch` returns immediately, so `onConnection` stays non-suspending.
+
+   The fourth argument is the **capability supplier** [#385](../codebase/385.md) wired to gate the
+   repo's [`liveSessionEvents`](remote-conversation-repository.md) decode seam on the negotiated
+   `interactive` set: `negotiatedCapabilities = { (pump.state.value as? PumpState.Open)?.capabilities.orEmpty() }`.
+   A **supplier**, not a value, read lazily per structured envelope (the set is empty while the pump
+   is `Handshaking`; structured envelopes only arrive post-`Open`). `pump.state.value` is a
+   **non-suspending** read, so this adds no suspension point to the non-suspending critical section.
+   No interface change — the `SessionPump` the repo consumes is untouched (this reads the live
+   `ManagedSessionPump.state` the coordinator already owns).
 
 ```
 currentConnection :  null → T1 → null → T2 → …

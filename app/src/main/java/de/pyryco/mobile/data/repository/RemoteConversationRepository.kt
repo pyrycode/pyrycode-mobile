@@ -1,10 +1,13 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
+import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.BackfillSincePayloadDto
+import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.ConversationsPayload
 import de.pyryco.mobile.data.network.CreateConversationPayloadDto
@@ -19,13 +22,22 @@ import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RequestSnapshotPayloadDto
 import de.pyryco.mobile.data.network.ScreenSnapshotPayloadDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
+import de.pyryco.mobile.data.network.ToolResultPayloadDto
+import de.pyryco.mobile.data.network.ToolUsePayloadDto
+import de.pyryco.mobile.data.network.TurnEndPayloadDto
+import de.pyryco.mobile.data.network.TurnStatePayloadDto
 import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.network.toConversations
+import de.pyryco.mobile.data.network.toEvent
 import de.pyryco.mobile.data.network.toMessage
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filterNotNull
@@ -78,6 +90,17 @@ class RemoteConversationRepository(
      * never exercised in production today — [registerPushToken] has no live caller yet.
      */
     private val deviceName: String = "",
+    /**
+     * Snapshots the connection's negotiated capability set (#385/#401), read lazily **per structured
+     * envelope** to gate [liveSessionEvents] on `interactive` (AC #2). A **supplier**, not a value:
+     * the repository is built while the pump is still `Handshaking`, but structured envelopes only
+     * arrive after `Open`, so the gate must read the set at arrival time — by then the negotiated set
+     * is connection-constant. [RelayRepositoryCoordinator.onConnection] wires it from the live
+     * [de.pyryco.mobile.data.network.PumpState.Open.capabilities]. **Defaulted to `{ emptySet() }`**
+     * ("gate closed") so existing two-/three-arg constructions (tests, pre-wiring) compile and surface
+     * no structured events until the supplier is wired.
+     */
+    private val negotiatedCapabilities: () -> Set<String> = { emptySet() },
 ) : ConversationRepository {
     /**
      * The demuxed list projection: `null` until the first `conversations` snapshot loads, then the
@@ -130,6 +153,31 @@ class RemoteConversationRepository(
      * shared request↔reply correlation primitive #347/#348 reuse.
      */
     private val pendingRequests = ConcurrentHashMap<Long, CompletableDeferred<JsonElement>>()
+
+    /**
+     * Hot stream of decoded v2 structured live-session events (#385) — the typed `turn_state` /
+     * `assistant_delta` / `tool_use` / `tool_result` / `turn_end` family, surfaced off the single
+     * [init] inbound collector (no second subscription). A `SharedFlow`, not a `StateFlow`: these are
+     * *events*, not current-value state, so `replay = 0` (late subscribers get no history — holding
+     * "latest" is a consumer projection concern). A bounded [extraBufferCapacity] with
+     * [BufferOverflow.DROP_OLDEST] makes [MutableSharedFlow.tryEmit] **infallible and non-blocking**:
+     * the load-bearing invariant is that a slow live-event consumer must never back-pressure the
+     * shared inbound collector and stall the connection's `conversations`/`message`/`ack` processing.
+     * Delivery is therefore best-effort under extreme backpressure (a flooding daemon cannot grow
+     * memory here); a consumer needing lossless accumulation owns its own buffering (#337).
+     *
+     * Exposed on the **concrete** repository only — deliberately **not** on the [ConversationRepository]
+     * interface, mirroring [registerPushToken] (#359): adding it to the interface would force the fake
+     * + facade to plumb a flow this decode slice does not use. Facade/coordinator reachability for the
+     * UI consumers (#386/#387/#337) is downstream consumer-slice work.
+     */
+    private val mutableLiveSessionEvents =
+        MutableSharedFlow<LiveSessionEvent>(
+            replay = 0,
+            extraBufferCapacity = 64,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+    val liveSessionEvents: SharedFlow<LiveSessionEvent> = mutableLiveSessionEvents.asSharedFlow()
 
     init {
         // The single consumer of the hot, single-consumer inbound stream. Cancelled by its owner
@@ -214,12 +262,50 @@ class RemoteConversationRepository(
                 // fallback exception), so the lone collector survives; `completeExceptionally` is
                 // idempotent and a no-op when no entry matches.
                 envelope.inReplyTo?.let { id -> pendingRequests[id]?.completeExceptionally(mapError(envelope.payload)) }
+            TYPE_TURN_STATE, TYPE_ASSISTANT_DELTA, TYPE_TOOL_USE, TYPE_TOOL_RESULT, TYPE_TURN_END -> {
+                // A v2 structured live-session envelope (#385). AC #2: gate on the negotiated
+                // capability — without `interactive` we never decode and never surface it (a buggy/
+                // hostile daemon ignoring the negotiated set cannot push structured events to a
+                // non-interactive phone). Decoding is best-effort: a malformed envelope or an
+                // unrecognized turn_state yields null and is dropped (AC #3/#4); tryEmit is
+                // non-blocking (DROP_OLDEST) so the shared inbound collector is never stalled.
+                // Drop silently: the payloads carry message/tool content — nothing here logs them.
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    decodeLiveSessionEvent(envelope)?.let { mutableLiveSessionEvents.tryEmit(it) }
+                }
+            }
             // Any other type is a no-op here: single-row conversation deltas (#318 → #314) extend
             // this `when` in their own slice. `backfill_done` ({delivered}) needs no action — the
             // `message_chunk` already delivered the full history; the count is informational only.
             else -> Unit
         }
     }
+
+    /**
+     * Decode one v2 structured live-session envelope (#385) to its typed [LiveSessionEvent], or
+     * **null** when it cannot be surfaced. Selects the DTO by [Envelope.type], decodes the untrusted
+     * [Envelope.payload] through the single configured [MobileJson], and maps via `toEvent()`. The
+     * whole body is wrapped in one `try`/`catch (IllegalArgumentException)`:
+     * [kotlinx.serialization.SerializationException] ⊂ [IllegalArgumentException], so a malformed /
+     * partially-decodable payload (missing or wrong-typed field, AC #4) yields `null`. A `turn_state`
+     * whose `state` is unrecognized also yields `null` (its mapper returns null, AC #3). Both drop the
+     * one envelope; the lone inbound collector survives and the next envelope is processed normally.
+     * Mirrors the `TYPE_MESSAGE` arm's drop idiom — **nothing here logs the payload** (the text / tool
+     * summaries may be sensitive).
+     */
+    private fun decodeLiveSessionEvent(envelope: Envelope): LiveSessionEvent? =
+        try {
+            when (envelope.type) {
+                TYPE_TURN_STATE -> MobileJson.decodeFromJsonElement<TurnStatePayloadDto>(envelope.payload).toEvent()
+                TYPE_ASSISTANT_DELTA -> MobileJson.decodeFromJsonElement<AssistantDeltaPayloadDto>(envelope.payload).toEvent()
+                TYPE_TOOL_USE -> MobileJson.decodeFromJsonElement<ToolUsePayloadDto>(envelope.payload).toEvent()
+                TYPE_TOOL_RESULT -> MobileJson.decodeFromJsonElement<ToolResultPayloadDto>(envelope.payload).toEvent()
+                TYPE_TURN_END -> MobileJson.decodeFromJsonElement<TurnEndPayloadDto>(envelope.payload).toEvent()
+                else -> null
+            }
+        } catch (e: IllegalArgumentException) {
+            null
+        }
 
     /**
      * Map a server `error` reply payload (#346) to the domain exception the awaiting suspend throws.
@@ -679,6 +765,21 @@ class RemoteConversationRepository(
 
         /** Correlated success reply carrying the rendered screen text (#375, #617 `ScreenSnapshot`). */
         const val TYPE_SCREEN_SNAPSHOT = "screen_snapshot"
+
+        /** Structured-stream event: coarse turn lifecycle `{conversation_id, state}` (#385, #607). */
+        const val TYPE_TURN_STATE = "turn_state"
+
+        /** Structured-stream event: incremental assistant text `{…, seq, text}` (#385, #607). */
+        const val TYPE_ASSISTANT_DELTA = "assistant_delta"
+
+        /** Structured-stream event: a tool invocation `{…, tool_use_id, name, input_summary}` (#385, #607). */
+        const val TYPE_TOOL_USE = "tool_use"
+
+        /** Structured-stream event: a tool result `{…, tool_use_id, is_error, result_summary}` (#385, #607). */
+        const val TYPE_TOOL_RESULT = "tool_result"
+
+        /** Structured-stream event: end of a turn `{…, turn_id, stop_reason}` (#385, #607). */
+        const val TYPE_TURN_END = "turn_end"
 
         /** Correlated success reply (empty `{}`) to a request, matched on `in_reply_to` (#346). */
         const val TYPE_ACK = "ack"
