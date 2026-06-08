@@ -590,6 +590,42 @@ class RelayRepositoryCoordinatorTest {
             env.coordinator.close()
         }
 
+    // #412 AC #4: the replay cursor is coordinator-scoped, so it survives connection churn — a fresh
+    // per-connection repo keeps recording into the same high-water mark the prior connection advanced.
+    @Test
+    fun replayCursor_survivesReconnect() =
+        runTest {
+            val env = newEnv()
+
+            // Connection 1: open with the capability, record an event_id.
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            env.pumps[0].open(capabilities = setOf(CAPABILITY_INTERACTIVE))
+            runCurrent()
+            env.pumps[0].push(turnStateEnvelope("c1", "thinking", eventId = 100))
+            runCurrent()
+            assertEquals(100L, env.coordinator.replayCursor.latest)
+
+            // Reconnect over a fresh transport (fresh pump #2): the cursor persists across the churn …
+            env.connections.value = null
+            runCurrent()
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            assertEquals(100L, env.coordinator.replayCursor.latest)
+
+            // … and the new connection's repo keeps folding into the same mark (out-of-order ignored).
+            env.pumps[1].open(capabilities = setOf(CAPABILITY_INTERACTIVE))
+            runCurrent()
+            env.pumps[1].push(turnStateEnvelope("c2", "responding", eventId = 5))
+            runCurrent()
+            assertEquals(100L, env.coordinator.replayCursor.latest)
+            env.pumps[1].push(turnStateEnvelope("c2", "responding", eventId = 200))
+            runCurrent()
+            assertEquals(200L, env.coordinator.replayCursor.latest)
+
+            env.coordinator.close()
+        }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     private fun TestScope.newEnv(
@@ -664,12 +700,14 @@ class RelayRepositoryCoordinatorTest {
     private fun turnStateEnvelope(
         conversationId: String,
         state: String,
+        eventId: Long? = null,
     ): Envelope =
         Envelope(
             id = 1L,
             type = "turn_state",
             ts = TS,
             payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId","state":"$state"}"""),
+            eventId = eventId,
         )
 
     /** Empty-`ack` reply correlated to [inReplyTo] — the register_push_token success signal. */

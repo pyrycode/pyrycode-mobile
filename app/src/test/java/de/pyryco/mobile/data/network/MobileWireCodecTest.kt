@@ -65,6 +65,38 @@ class MobileWireCodecTest {
     }
 
     @Test
+    fun envelope_withEventId_roundTrips() {
+        val fixture =
+            """{"id":1,"type":"turn_state","ts":"2026-05-29T12:00:00Z",""" +
+                """"payload":{"state":"thinking"},"event_id":42}"""
+        val decoded = MobileJson.decodeFromString<Envelope>(fixture)
+
+        assertEquals(42L, decoded.eventId)
+
+        val encoded = MobileJson.encodeToString(decoded)
+        assertTrue(encoded.contains("\"event_id\":42"))
+        assertEquals(decoded, MobileJson.decodeFromString<Envelope>(encoded))
+    }
+
+    @Test
+    fun envelope_withoutEventId_decodesToAbsent() {
+        val fixture =
+            """{"id":7,"type":"message","ts":"2026-05-29T12:00:00Z","payload":{"k":"v"}}"""
+        val decoded = MobileJson.decodeFromString<Envelope>(fixture)
+
+        assertNull(decoded.eventId)
+    }
+
+    @Test
+    fun envelope_withNullEventId_omitsOnEncode() {
+        val encoded =
+            MobileJson.encodeToString(
+                Envelope(id = 1L, type = "message", ts = "2026-05-29T12:00:00Z", payload = JsonObject(emptyMap())),
+            )
+        assertFalse("a null event_id is omitted, never emitted as 0/null", encoded.contains("event_id"))
+    }
+
+    @Test
     fun helloClientPayload_roundTrips() {
         val fixture =
             """{"role":"client","device_name":"Pixel 8","client_version":"1.0.0",""" +

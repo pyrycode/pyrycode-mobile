@@ -6,6 +6,7 @@ import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.RelayTransport
+import de.pyryco.mobile.data.network.ReplayCursor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -84,6 +85,18 @@ class RelayRepositoryCoordinator(
 ) {
     private val job = SupervisorJob()
     private val scope = CoroutineScope(job + dispatcher)
+
+    /**
+     * The reconnect-spanning replay cursor (#412): the latest interactive structured-stream
+     * [de.pyryco.mobile.data.network.Envelope.eventId] observed across all connections. It lives here,
+     * not in the per-connection [RemoteConversationRepository] (rebuilt each reconnect), because it must
+     * outlive connection churn and be readable at the next connection's `hello`-build — [teardownActive]
+     * never touches it, so only a full [close] ends it. Threaded into each per-connection repo in
+     * [onConnection] as the single recorder; #413 reads [ReplayCursor.latest] here to advertise the
+     * resume point. `internal` (module-visible, read-only seam) so #413 and unit tests can read it
+     * without a public API surface, mirroring [toPyrycodeLinkStatus]'s visibility.
+     */
+    internal val replayCursor: ReplayCursor = ReplayCursor()
 
     private val mutableRepository = MutableStateFlow<ConversationRepository?>(null)
 
@@ -173,6 +186,7 @@ class RelayRepositoryCoordinator(
                 childScope,
                 deviceName,
                 negotiatedCapabilities = { (pump.state.value as? PumpState.Open)?.capabilities.orEmpty() },
+                replayCursor = replayCursor,
             )
         mutableRepository.value = repo
         activeRemoteRepo.value = repo

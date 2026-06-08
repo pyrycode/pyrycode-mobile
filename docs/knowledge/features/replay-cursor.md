@@ -1,0 +1,187 @@
+# Replay cursor — the reconnect-spanning `event_id` high-water mark
+
+The mobile half of ADR 025's **mid-turn replay** contract: a tiny, thread-safe holder of the latest
+interactive structured-stream `event_id` the phone has observed, recorded as a strictly-advancing
+high-water mark that **outlives connection churn**. On a mid-turn reconnect a later slice advertises this
+value as `hello.last_event_id` so the daemon can replay the events the phone missed. This slice
+([#412](../codebase/412.md), split from #402) owns **recording** the cursor; advertising it + handling the
+resync marker is the consuming slice [#413](https://github.com/pyrycode/pyrycode-mobile/issues/413)
+(`blockedBy #412`).
+
+Wire SSOT: pyrycode `docs/protocol-mobile.md` § "Interactive events (v2, capability-gated)" → "Replay
+cursor (`event_id`)"; ADR 025 § Backpressure / replay. Server producer: pyrycode#649 (durable `event_id`
+on the wire); server consumer of the advertised cursor: pyrycode#647 (`hello.last_event_id` → ring replay
+/ resync marker).
+
+## `event_id` is envelope-level, durable, and distinct from `id`
+
+Every interactive structured-stream frame (`turn_state` / `assistant_delta` / `tool_use` /
+`tool_result` / `turn_end`) carries an **envelope-level** `event_id` (a sibling of `id` / `type` /
+`in_reply_to`, **not** a per-type payload field). Two ids ride the same envelope and mean different
+things:
+
+| Field | Scope | Lifetime |
+|---|---|---|
+| `id` | per-connection counter | **resets** each reconnect |
+| `event_id` | per-conversation, strictly-increasing | **durable**, stable across reconnects |
+
+`event_id` is modeled on [`Envelope`](mobile-protocol-v2-wire-layer.md#envelope--application-message-frame)
+**identically to `inReplyTo`** — `@SerialName("event_id") val eventId: Long? = null` — so under
+`MobileJson` (`explicitNulls = false`) it **omits when null** on encode (every outbound frame, including
+`hello`, stays byte-identical to today) and the nullable default tolerates its per-frame absence on
+decode (a missing `event_id` never fails the decode of an otherwise-valid envelope). It mirrors the
+server's `omitempty *uint64`; a pathological `uint64 > 2^63` decodes to a negative `Long` and is rejected
+downstream by the positive guard rather than poisoning the cursor.
+
+## `ReplayCursor` — the high-water-mark holder
+
+`data/network/ReplayCursor.kt` — portable (imports only `kotlinx.coroutines.flow`, zero Android imports
+per the CLAUDE.md `data/` rule). The entire contract:
+
+```kotlin
+class ReplayCursor {
+    val latest: Long?              // latest recorded event_id, or null if nothing valid ever observed
+    fun record(eventId: Long)      // fold an observed value into the high-water mark
+}
+```
+
+- **`latest`** is a **synchronous point read** valid at any moment — including *before* a connection's
+  inbound path exists, which is exactly when #413 reads it at `hello`-build. On a fresh process start it
+  is `null` ("no cursor", omittable — **never `0`**), because the cursor is **in-memory only** and never
+  persisted.
+- **`record`** is fail-closed at the trust boundary: it **ignores `eventId <= 0`** (a valid `uint64`
+  cursor is ≥ 1; a `0`, a negative, or a wrapped-huge value is never recorded), then advances **only** on
+  a strictly-greater value (`null` counts as below any value), so a smaller / equal / out-of-order /
+  replayed value is a no-op.
+- Backing is a `MutableStateFlow<Long?>(null)` with an atomic `update {}` **max-fold** — lock-free and
+  **TOCTOU-free** (max-fold, not check-then-set), so the recorder coroutine (the inbound collector) and
+  the reader (#413's hello-build, a different coroutine) cannot race. The backing flow is **intentionally
+  not exposed** — #413 needs a point read, not an observable stream — so only `latest` and `record` are
+  public.
+
+## Recording — first line of the single inbound consumer
+
+Recording happens inside the **existing** single inbound consumer of
+[`RemoteConversationRepository`](remote-conversation-repository.md) — **no second subscription** to
+`pump.inbound`. A private `recordReplayCursor(envelope)` is the **first line** of `onInbound`, *before*
+the `when` demux:
+
+```kotlin
+private fun recordReplayCursor(envelope: Envelope) {
+    if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+        envelope.eventId?.let { replayCursor.record(it) }
+    }
+}
+```
+
+Three properties, each mapped to an AC:
+
+- **Envelope-level and type-agnostic.** It reads `envelope.eventId` directly, independent of whether the
+  per-type structured *payload* decodes — so a frame with a valid `event_id` but a malformed payload still
+  advances the cursor (the durable event occurred; the cursor marks position, not decodability).
+- **A non-interactive frame leaves the cursor unchanged** (AC #3): it carries no `event_id`, so
+  `eventId` is `null` and `record` is never called. The `interactive` gate is the belt; the null-check is
+  the suspenders.
+- **Defence-in-depth gate.** Gating on the negotiated `interactive` capability (symmetric with the
+  [`liveSessionEvents`](live-session-events.md) and `stall` arms) means a buggy/hostile *authenticated*
+  daemon that ignored the negotiated set and injected `event_id` to a phone that did **not** negotiate
+  `interactive` cannot advance a cursor the phone will never advertise (#413's advertise is itself
+  `interactive`-gated). This is defence-in-depth, not load-bearing — see § Trust boundary.
+
+The recording is a **pure side-write with no feedback into delivery**: it writes the cursor and returns;
+no `when` arm, no `liveSessionEvents` emission, and no event delivery reads the cursor. It is also
+**throw-free** by construction (an already-decoded `Long?`, a set-membership check, a pure max-fold), so
+it cannot kill the single inbound collector that also carries `conversations`/`message`/`ack` traffic.
+
+## Reconnect-spanning ownership
+
+The recording site (`RemoteConversationRepository`) is **rebuilt every reconnect**, so the cursor cannot
+live there. It lives on the process-lifetime
+[`RelayRepositoryCoordinator`](relay-repository-coordinator.md) — the single layer that owns *both* the
+per-connection repo (the recorder) and the per-connection pump (the hello producer #413 reads from):
+
+```kotlin
+internal val replayCursor: ReplayCursor = ReplayCursor()   // survives connection churn
+```
+
+It is threaded into each per-connection repo in `onConnection` as one extra **defaulted** named arg —
+keeping `onConnection` non-suspending (no new suspension point) and every existing construction/test
+compiling unchanged (the same defaulted-param discipline as `deviceName` / `negotiatedCapabilities`).
+`teardownActive` (the per-connection churn path) never touches it; only a full coordinator `close()` ends
+it. It is `internal` (module-visible, read-only seam) so #413 and unit tests read it without a public API
+surface or a new Koin binding — mirroring `toPyrycodeLinkStatus`'s visibility, and the third non-interface
+surface the coordinator threads off the concrete repo/pump (after `liveSessionEvents` #406 and the
+`pyrycodeStatus` derivation #392).
+
+```
+pump.inbound (single consumer) ─▶ RemoteConversationRepository.onInbound(envelope)
+                                    │  recordReplayCursor(envelope):
+                                    │     if interactive: envelope.eventId?.let(coordinator.replayCursor::record)
+                                    └─▶ existing when(type) demux (unchanged)
+
+coordinator.replayCursor ──(survives connection churn)──▶ read at next hello-build (#413)
+```
+
+## Trust boundary
+
+`event_id` is untrusted network input that has already crossed the **authenticated** Noise channel (the
+pump MAC-verifies + decrypts before any envelope reaches `onInbound`), so its source is the authenticated
+paired daemon, not an arbitrary relay MITM. It crosses untrusted→trusted at exactly one named point —
+`ReplayCursor.record` — after which the only public read (`latest`) can only ever return a validated,
+monotonic, positive value, never a raw wire integer.
+
+Two failure modes, both fail-closed:
+
+- **Malformed / wrong-typed `event_id`** fails the *envelope* decode upstream in
+  [`NoiseSessionPump`](noise-session-pump.md) (exactly as a bad `id`/`type`/`ts` does today); the pump
+  tears the session down and the supervisor reconnects. The cursor is coordinator-scoped (not
+  pump-scoped), so a teardown never touches it — the reconnect re-reads the intact mark.
+- **Out-of-range / out-of-order value** (`0`, negative, wrapped-huge, or below the current mark) is
+  rejected or ignored by `record`. The cursor never moves backward and never records a non-positive
+  sentinel.
+
+> **The watermark-mute exploit is NOT this slice's.** A hostile authenticated daemon sending a giant
+> `event_id` → cursor jumps → advertise → daemon replays nothing newer → silent live-stream drop only
+> becomes reachable once **#413 advertises** + the server acts on the watermark. Because recording is a
+> pure side-write with no feedback into delivery, #412 alone cannot mute/drop an event. The #413 security
+> gate (verify pyrycode#647's watermark-mute is resolved on pyrycode `main` before #413 advertises) is
+> unaffected and still stands. Nothing logs `event_id` (a non-secret counter) or the payload, uniform
+> with every `onInbound` arm.
+
+## Edge cases / limitations
+
+- **In-memory only — process death resets it to `null`.** A fresh start has no cursor; the phone
+  re-derives thread state from the live stream (+ a re-`backfill_since`) on the next connection, exactly
+  as the other connection-scoped projections do.
+- **Single mark for the currently-paired server.** Re-pairing to a different server within one process
+  lifetime would make the mark stale for the new server — **out of scope** here (re-pairing is a heavy
+  `PairedServer` flow); stale-cursor recovery is owned by #413 + the server resync marker (pyrycode#647).
+  This slice records faithfully; it is not the place to detect a pairing change.
+- **The cursor is conceptually per-conversation, but this slice names no conversation.** It records the
+  latest *observed* value as a single global mark; the daemon resolves the conversation on its side
+  (via `currentConv` on reconnect). Naming a conversation here would be wrong.
+
+## Testing
+
+`ReplayCursorTest.kt` pins the behaviour invariant (null-initial, positive-guarded, strictly-advancing).
+`MobileWireCodecTest.kt` pins the `event_id` round-trip + omit, mirroring the `inReplyTo` tests.
+`RemoteConversationRepositoryTest.kt` (over `FakeSessionPump` + `runCurrent()`, **not**
+`advanceUntilIdle()`) covers cursor advance, out-of-order no-op, the non-interactive and gate-closed
+no-records, the malformed-payload-still-advances case, and reconnect survival via two repos sharing one
+cursor. `RelayRepositoryCoordinatorTest.kt` asserts `replayCursor.latest` persists across an
+`onConnection` churn. All unit; no instrumented coverage (pure `data/` layer).
+
+## Related
+
+- Ticket: [#412](../codebase/412.md) (files, line refs, patterns, lessons; split from #402).
+- Spec: `docs/specs/architecture/412-replay-cursor-event-id.md`.
+- Hosts the field: [Mobile Protocol v2 wire layer](mobile-protocol-v2-wire-layer.md) (`Envelope.eventId`).
+- Records it: [Remote conversation repository](remote-conversation-repository.md) (`recordReplayCursor`
+  in the single inbound consumer) — alongside the [`liveSessionEvents`](live-session-events.md) decode
+  seam ([#385](../codebase/385.md)) it shares the `onInbound` gate idiom with.
+- Owns it across reconnects: [Relay repository coordinator](relay-repository-coordinator.md).
+- Capability gate: [#401](../codebase/401.md) (`CAPABILITY_INTERACTIVE`, the negotiated-set surface).
+- Wire/contract SSOT: pyrycode `docs/protocol-mobile.md` § Replay cursor; ADR 025 § Backpressure / replay;
+  server pyrycode#649 (producer) / pyrycode#647 (`last_event_id` consumer — what #413 advertises into).
+- Downstream consumer: #413 (advertise `last_event_id` + handle the resync marker), `blockedBy #412`.
+</content>

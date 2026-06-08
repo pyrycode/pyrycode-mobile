@@ -624,6 +624,37 @@ already-authenticated Noise channel, and **nothing in the new arm or the drop br
 payload** (the text / tool-summary fields may carry sensitive session content). See
 [Live-session events § Trust boundary](live-session-events.md#trust-boundary--no-payload-logging).
 
+## `recordReplayCursor(envelope)` — the replay-cursor side-write (#412)
+
+The **first line** of `onInbound` (`:218`), *before* the `when` demux, folds each interactive frame's
+durable [`Envelope.eventId`](mobile-protocol-v2-wire-layer.md) into the reconnect-spanning
+[`ReplayCursor`](replay-cursor.md) ([#412](../codebase/412.md)) — the high-water mark
+[#413](https://github.com/pyrycode/pyrycode-mobile/issues/413) advertises as `last_event_id` on mid-turn
+reconnect:
+
+```kotlin
+private fun recordReplayCursor(envelope: Envelope) {
+    if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+        envelope.eventId?.let { replayCursor.record(it) }
+    }
+}
+```
+
+- **Rides the single existing inbound consumer** — no second `pump.inbound` subscription (the AC #2
+  constraint, same as `liveSessionEvents`). The `replayCursor` is a fifth **defaulted** ctor param
+  (`= ReplayCursor()`, `:117`); the [coordinator](relay-repository-coordinator.md) threads its shared,
+  process-scoped instance in so the mark **survives connection churn** (this repo is rebuilt each
+  reconnect — it cannot own the cursor).
+- **Envelope-level, type-agnostic, pure side-write.** It reads `envelope.eventId` directly, independent
+  of whether the per-type *payload* decodes — so a malformed-payload frame with a valid `event_id` still
+  advances the cursor. It has **no feedback into delivery**: no `when` arm, no `liveSessionEvents`
+  emission, and no delivery reads the cursor, so the recording alone cannot mute/drop a live event.
+- **Gated on `interactive`** (defence-in-depth, symmetric with the structured-stream + `stall` arms);
+  a non-interactive frame carries no `event_id` so nothing records (AC #3). **Throw-free** by
+  construction (already-decoded `Long?` + set-membership + a pure max-fold), so it cannot kill the single
+  inbound collector — see [Replay cursor](replay-cursor.md) for the holder, the fail-closed
+  positive/strict-greater fold, and the trust boundary.
+
 ## `observeStall(conversationId)` — the thread-observable stall state (#395)
 
 Whether a conversation's remote claude has **stopped making forward progress** (PTY quiet while not
