@@ -94,7 +94,9 @@ val appModule =
         viewModel { ScannerViewModel() }
         viewModel { ChannelListViewModel(get(), get()) }
         viewModel { DiscussionListViewModel(get()) }
-        viewModel { SettingsViewModel(get(), get()) }
+        viewModel {
+            SettingsViewModel(get(), get(), get<RelayRepositoryCoordinator>().connectionStatus)
+        }
         viewModel { ArchivedDiscussionsViewModel(get()) }
         viewModel { ThreadViewModel(get(), get(), get(), get()) }
         // #381: resolvable so #382's nav destination can obtain it (get() → SavedStateHandle +

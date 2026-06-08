@@ -6,7 +6,10 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
+import de.pyryco.mobile.data.model.PyrycodeLinkStatus
+import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.preferences.ThemeMode
@@ -26,6 +29,8 @@ class SettingsScreenTest {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
                 SettingsScreen(
+                    connectionStatus =
+                        ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down),
                     themeMode = ThemeMode.SYSTEM,
                     useWallpaperColors = false,
                     archivedDiscussionCount = 0,
@@ -62,6 +67,8 @@ class SettingsScreenTest {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
                 SettingsScreen(
+                    connectionStatus =
+                        ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down),
                     themeMode = ThemeMode.SYSTEM,
                     useWallpaperColors = false,
                     archivedDiscussionCount = 11,
@@ -99,6 +106,8 @@ class SettingsScreenTest {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
                 SettingsScreen(
+                    connectionStatus =
+                        ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down),
                     themeMode = ThemeMode.SYSTEM,
                     useWallpaperColors = false,
                     archivedDiscussionCount = 0,

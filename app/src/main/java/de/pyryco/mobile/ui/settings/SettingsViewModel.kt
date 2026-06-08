@@ -2,6 +2,7 @@ package de.pyryco.mobile.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.Effort
@@ -21,6 +22,12 @@ import kotlinx.coroutines.launch
 class SettingsViewModel(
     private val appPreferences: AppPreferences,
     conversationRepository: ConversationRepository,
+    /**
+     * The coordinator's already-hot two-part connection status (#392), forwarded verbatim — no
+     * `stateIn` re-wrap: unlike the sibling flows here (cold DataStore upstreams), this is already a
+     * process-scoped `StateFlow` shared `Eagerly`, so `.value` is always correct (#398).
+     */
+    val connectionStatus: StateFlow<ConnectionStatus>,
 ) : ViewModel() {
     val themeMode: StateFlow<ThemeMode> =
         appPreferences.themeMode.stateIn(

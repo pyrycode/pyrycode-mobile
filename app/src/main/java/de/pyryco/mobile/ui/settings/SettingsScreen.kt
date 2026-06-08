@@ -36,17 +36,22 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
+import de.pyryco.mobile.data.model.PyrycodeLinkStatus
+import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.data.preferences.label
+import de.pyryco.mobile.ui.conversations.components.ConnectionStatusLine
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
+    connectionStatus: ConnectionStatus,
     themeMode: ThemeMode,
     useWallpaperColors: Boolean,
     archivedDiscussionCount: Int,
@@ -144,6 +149,10 @@ fun SettingsScreen(
                 supporting = "juhana-mac-2026",
                 trailing = { ChevronIcon() },
                 onClick = {},
+            )
+            ConnectionStatusLine(
+                status = connectionStatus,
+                modifier = Modifier.padding(start = 16.dp, top = 4.dp, bottom = 8.dp),
             )
             SettingsRow(
                 headline = "Pair another server",
@@ -329,6 +338,8 @@ private fun workspaceLabel(cwd: String): String =
 private fun SettingsScreenLightPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
         SettingsScreen(
+            connectionStatus =
+                ConnectionStatus(RelayLinkStatus.DaemonAbsent, PyrycodeLinkStatus.Down),
             themeMode = ThemeMode.SYSTEM,
             useWallpaperColors = false,
             archivedDiscussionCount = 11,
@@ -359,6 +370,8 @@ private fun SettingsScreenLightPreview() {
 private fun SettingsScreenDarkPreview() {
     PyrycodeMobileTheme(darkTheme = true) {
         SettingsScreen(
+            connectionStatus =
+                ConnectionStatus(RelayLinkStatus.DaemonAbsent, PyrycodeLinkStatus.Down),
             themeMode = ThemeMode.SYSTEM,
             useWallpaperColors = false,
             archivedDiscussionCount = 11,
