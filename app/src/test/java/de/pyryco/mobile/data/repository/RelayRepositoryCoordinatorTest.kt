@@ -1,6 +1,9 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.PyrycodeLinkStatus
+import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.InnerFrameV2
 import de.pyryco.mobile.data.network.MobileJson
@@ -22,6 +25,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
@@ -380,30 +384,163 @@ class RelayRepositoryCoordinatorTest {
             env.coordinator.close()
         }
 
+    // ---- #392: pyrycode-leg readiness + combined two-part connection status ----------------------
+
+    // AC #1/#2: with no live pump (no connection) the pyrycode leg is Down — the not-ready floor.
+    @Test
+    fun noPump_pyrycodeLegIsDown() =
+        runTest {
+            val env = newEnv()
+            runCurrent()
+
+            assertEquals(PyrycodeLinkStatus.Down, env.coordinator.connectionStatus.value.pyrycode)
+
+            env.coordinator.close()
+        }
+
+    // AC #2 (false-green guard): a live socket whose pump has not completed the handshake reads
+    // Handshaking — never Connected on bare socket-up.
+    @Test
+    fun bareSocketUp_isHandshaking_neverConnected() =
+        runTest {
+            val env = newEnv()
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+
+            val pyrycode = env.coordinator.connectionStatus.value.pyrycode
+            assertEquals(PyrycodeLinkStatus.Handshaking, pyrycode)
+            assertNotEquals(PyrycodeLinkStatus.Connected, pyrycode)
+
+            env.coordinator.close()
+        }
+
+    // AC #1/#2: the leg reaches Connected only after the pump reaches Open (handshake complete).
+    @Test
+    fun pumpOpen_pyrycodeLegIsConnected() =
+        runTest {
+            val env = newEnv()
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            assertEquals(PyrycodeLinkStatus.Handshaking, env.coordinator.connectionStatus.value.pyrycode)
+
+            env.pumps.single().open()
+            runCurrent()
+
+            assertEquals(PyrycodeLinkStatus.Connected, env.coordinator.connectionStatus.value.pyrycode)
+
+            env.coordinator.close()
+        }
+
+    // AC #1: a closed session maps to Down regardless of the close cause — the no-log discrimination:
+    // Closed.cause is never read by the mapping.
+    @Test
+    fun pumpClosed_pyrycodeLegIsDown_regardlessOfCause() =
+        runTest {
+            val env = newEnv()
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            val pump = env.pumps.single()
+            pump.open()
+            runCurrent()
+            assertEquals(PyrycodeLinkStatus.Connected, env.coordinator.connectionStatus.value.pyrycode)
+
+            pump.closeState(RuntimeException("handshake timeout"))
+            runCurrent()
+
+            assertEquals(PyrycodeLinkStatus.Down, env.coordinator.connectionStatus.value.pyrycode)
+
+            env.coordinator.close()
+        }
+
+    // AC #2: the readiness leg follows the current pump across a reconnect with no carryover —
+    // Connected, then Down on drop, then Handshaking → Connected on the fresh pump.
+    @Test
+    fun pyrycodeLeg_tracksLivePumpAcrossReconnect() =
+        runTest {
+            val env = newEnv()
+
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            env.pumps[0].open()
+            runCurrent()
+            assertEquals(PyrycodeLinkStatus.Connected, env.coordinator.connectionStatus.value.pyrycode)
+
+            // Drop: no live pump → Down.
+            env.connections.value = null
+            runCurrent()
+            assertEquals(PyrycodeLinkStatus.Down, env.coordinator.connectionStatus.value.pyrycode)
+
+            // Fresh connection: a brand-new pump starts at Handshaking, not carrying the old Connected.
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            assertEquals(PyrycodeLinkStatus.Handshaking, env.coordinator.connectionStatus.value.pyrycode)
+
+            env.pumps[1].open()
+            runCurrent()
+            assertEquals(PyrycodeLinkStatus.Connected, env.coordinator.connectionStatus.value.pyrycode)
+
+            env.coordinator.close()
+        }
+
+    // AC #3/#4: the combined model reflects each leg independently — the relay leg moves while the
+    // pyrycode leg is held Connected, then the pyrycode leg moves while the relay leg is held.
+    @Test
+    fun combinedModel_reflectsEachLegIndependently() =
+        runTest {
+            val env = newEnv()
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            val pump = env.pumps.single()
+            pump.open()
+            runCurrent()
+
+            // pyrycode held at Connected; drive the relay leg to DaemonAbsent.
+            env.relayStatus.value = RelayLinkStatus.DaemonAbsent
+            runCurrent()
+            assertEquals(
+                ConnectionStatus(relay = RelayLinkStatus.DaemonAbsent, pyrycode = PyrycodeLinkStatus.Connected),
+                env.coordinator.connectionStatus.value,
+            )
+
+            // relay back to Connected; drive the pyrycode leg down via a session close.
+            env.relayStatus.value = RelayLinkStatus.Connected
+            pump.closeState(null)
+            runCurrent()
+            assertEquals(
+                ConnectionStatus(relay = RelayLinkStatus.Connected, pyrycode = PyrycodeLinkStatus.Down),
+                env.coordinator.connectionStatus.value,
+            )
+
+            env.coordinator.close()
+        }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     private fun TestScope.newEnv(
         deviceName: String = "",
         pushToken: suspend () -> String? = { null },
+        relayStatus: MutableStateFlow<RelayLinkStatus> = MutableStateFlow(RelayLinkStatus.Connected),
     ): Env {
         val connections = MutableStateFlow<RelayTransport?>(null)
         val pumps = mutableListOf<FakeManagedPump>()
         val coordinator =
             RelayRepositoryCoordinator(
                 connections = connections,
+                relayStatus = relayStatus,
                 createPump = { FakeManagedPump().also { pumps += it } },
                 dispatcher = StandardTestDispatcher(testScheduler),
                 deviceName = deviceName,
                 pushToken = pushToken,
             )
         coordinator.start()
-        return Env(connections, pumps, coordinator)
+        return Env(connections, pumps, coordinator, relayStatus)
     }
 
     private class Env(
         val connections: MutableStateFlow<RelayTransport?>,
         val pumps: MutableList<FakeManagedPump>,
         val coordinator: RelayRepositoryCoordinator,
+        val relayStatus: MutableStateFlow<RelayLinkStatus>,
     )
 
     private fun messageIds(thread: List<ThreadItem>): List<String> = thread.map { (it as ThreadItem.MessageItem).message.id }

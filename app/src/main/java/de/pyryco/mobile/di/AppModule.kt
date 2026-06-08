@@ -79,6 +79,7 @@ val appModule =
             val sessionFactory = get<NoiseSessionFactory>()
             RelayRepositoryCoordinator(
                 connections = get<RelayConnectionSupervisor>().currentConnection,
+                relayStatus = get<RelayConnectionSupervisor>().relayStatus,
                 createPump = { transport -> NoiseSessionPump(transport, sessionFactory) },
                 // #365: close #359's device_name: "" defer + supply the connect-time token read.
                 deviceName = get<NoiseClientInfo>().deviceName,

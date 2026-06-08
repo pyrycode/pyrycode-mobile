@@ -69,12 +69,16 @@ off the instant a daemon registers and the next dial succeeds. Every other close
 
 ## Consumer
 
-- **#392 (next, `blockedBy #391`)** zips this relay leg with the **pyrycode-session-readiness leg**
-  (derived from `NoiseSessionPump.state`) into the combined `{relay, pyrycode}` model, and re-points
-  the banner consumer (#390) at it. #392 fetches `relayStatus` off the concrete supervisor exactly like
-  `currentConnection` — no interface or DI change.
-- Today there is **no live consumer** of `relayStatus`; only the *derived* `observe()` is consumed
-  (by `ThreadViewModel`, unchanged). The leg type ships ahead of its consumer by design.
+- **[#392](../codebase/392.md) (landed)** zips this relay leg with the **pyrycode-session-readiness
+  leg** (derived from `NoiseSessionPump.state`) into the combined
+  [`ConnectionStatus { relay, pyrycode }`](connection-status.md) model, published off the
+  [`RelayRepositoryCoordinator`](relay-repository-coordinator.md) as `connectionStatus`. It fetches
+  `relayStatus` off the concrete supervisor exactly like `currentConnection` — **no interface or DI
+  change** (it becomes a coordinator ctor param). The relay leg is passed through **verbatim**.
+- The combined model's consumer is the Settings connection-status line (**#390**, `blockedBy #392`,
+  next).
+- The legacy *derived* `observe()` is still consumed unchanged (by `ThreadViewModel`); `relayStatus`
+  itself now has its first live consumer in the coordinator.
 
 ## Security
 
@@ -98,5 +102,7 @@ branch — out of scope here.
 - Legacy sibling it's derived to: [Connection state](connection-state.md) (`ConnectionState`, #196).
 - Delivers the `4404`: [Relay WebSocket transport](relay-ws-transport.md) ([#306](../codebase/306.md))
   — `TransportEvent.Down.code`.
-- Consumer (next): **#392** — pyrycode-leg readiness + the combined `{relay, pyrycode}` model; banner
-  consumer #390 re-pointed to it.
+- Consumer: **[#392](../codebase/392.md)** (landed) — the combined
+  [`{relay, pyrycode}` status](connection-status.md), published off the
+  [coordinator](relay-repository-coordinator.md) as `connectionStatus`; its consumer is the Settings
+  status line (#390, next).

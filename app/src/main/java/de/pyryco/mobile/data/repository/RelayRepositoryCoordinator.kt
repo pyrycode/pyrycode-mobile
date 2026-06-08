@@ -1,17 +1,28 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.model.ConnectionStatus
+import de.pyryco.mobile.data.model.PyrycodeLinkStatus
+import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.RelayTransport
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -48,12 +59,22 @@ import java.util.concurrent.atomic.AtomicBoolean
  * — closing #359's `device_name: ""` defer — and reads the token via [pushToken]. Both are defaulted
  * (`""` / `{ null }`), so the capability is dormant until `AppModule` wires the live values.
  *
+ * **Two-part connection status (#392).** It also publishes [connectionStatus], the combined
+ * `{relay, pyrycode}` model the Settings status line (#390) consumes. The relay leg is the
+ * supervisor's [relayStatus] (socket-level); the pyrycode leg is *derived here* from the live pump's
+ * lifecycle, reaching [PyrycodeLinkStatus.Connected] only once the Noise handshake completes
+ * (pump `Open`) — never on bare socket-up, and not at all between connections. This is the layer that
+ * owns the connection-scoped pump, so it is where the end-to-end-readiness signal is wired.
+ *
  * @property deviceName the paired device's live name (`NoiseClientInfo.deviceName`, i.e. `Build.MODEL`),
  *   threaded into the repo as `register_push_token`'s `device_name`; `""` until AppModule supplies it.
  * @property pushToken a one-shot read of the persisted FCM token (`null` ⇒ no registration is sent).
+ * @property relayStatus the relay-leg status (#391), fetched off the concrete supervisor like
+ *   [connections]; zipped with the derived pyrycode leg into [connectionStatus].
  */
 class RelayRepositoryCoordinator(
     private val connections: StateFlow<RelayTransport?>,
+    private val relayStatus: StateFlow<RelayLinkStatus>,
     private val createPump: (RelayTransport) -> ManagedSessionPump,
     private val dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val deviceName: String = "",
@@ -66,6 +87,28 @@ class RelayRepositoryCoordinator(
 
     /** The live connection-scoped repository, or `null` between connections. Hot; consumed by #352. */
     val currentRepository: StateFlow<ConversationRepository?> = mutableRepository.asStateFlow()
+
+    /** Observable mirror of the live pump (the pump half of [active]), or `null` between connections.
+     *  Written in lock-step with [mutableRepository] inside the non-suspending [onConnection] /
+     *  [teardownActive] critical section. Stays **private**: the pump is single-owner — only the
+     *  *derived* readiness ([connectionStatus]) is exposed, never the pump reference. */
+    private val activePumpFlow = MutableStateFlow<ManagedSessionPump?>(null)
+
+    /** The pyrycode leg (#392): the live pump's [PumpState] mapped to [PyrycodeLinkStatus], tracking the
+     *  current pump across reconnects ([flatMapLatest] cancels the prior pump's `state` collection). No
+     *  pump ⇒ `null` ⇒ [PyrycodeLinkStatus.Down]. Private — no consumer wants the leg standalone. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val pyrycodeStatus: Flow<PyrycodeLinkStatus> =
+        activePumpFlow
+            .flatMapLatest { pump -> pump?.state ?: flowOf(null) }
+            .map { it.toPyrycodeLinkStatus() }
+
+    /** The combined two-part status (#392) #390 consumes off this concrete singleton: the supervisor's
+     *  relay leg zipped with the derived pyrycode leg. `Eagerly` so `.value` is correct at any glance;
+     *  cancelled by [close] (which cancels [scope]). */
+    val connectionStatus: StateFlow<ConnectionStatus> =
+        combine(relayStatus, pyrycodeStatus) { relay, pyrycode -> ConnectionStatus(relay, pyrycode) }
+            .stateIn(scope, SharingStarted.Eagerly, ConnectionStatus(relayStatus.value, PyrycodeLinkStatus.Down))
 
     private val started = AtomicBoolean(false)
 
@@ -95,6 +138,7 @@ class RelayRepositoryCoordinator(
         val childScope = CoroutineScope(SupervisorJob(job) + dispatcher)
         val pump = createPump(transport).also { it.start() }
         active = Connection(pump, childScope)
+        activePumpFlow.value = pump
         // Retain the concrete repo: registerPushToken is not on the ConversationRepository interface, so
         // the hook must call it through this handle, not via the interface-typed currentRepository.
         val repo = RemoteConversationRepository(pump, childScope, deviceName)
@@ -138,6 +182,7 @@ class RelayRepositoryCoordinator(
      */
     private fun teardownActive() {
         mutableRepository.value = null
+        activePumpFlow.value = null
         val current = active ?: return
         active = null
         current.scope.cancel()
@@ -156,3 +201,18 @@ class RelayRepositoryCoordinator(
         val scope: CoroutineScope,
     )
 }
+
+/**
+ * Derives the pyrycode-leg readiness [PyrycodeLinkStatus] from the live pump's [PumpState] (or `null`
+ * when no pump is live, i.e. between connections). [PyrycodeLinkStatus.Connected] is reached **only**
+ * from [PumpState.Open] — the handshake-completion state — never on bare socket-up. Total over the
+ * sealed [PumpState] plus the no-pump `null`. `Open.connId` and `Closed.cause` are both **discarded**,
+ * holding the no-log contract: no relay/crypto-derived string flows into the status surface.
+ */
+internal fun PumpState?.toPyrycodeLinkStatus(): PyrycodeLinkStatus =
+    when (this) {
+        null -> PyrycodeLinkStatus.Down
+        PumpState.Handshaking -> PyrycodeLinkStatus.Handshaking
+        is PumpState.Open -> PyrycodeLinkStatus.Connected
+        is PumpState.Closed -> PyrycodeLinkStatus.Down
+    }
