@@ -172,8 +172,10 @@ server's dedup triple into a duplicate registry entry. See [[post-352-connection
 ## Two-part connection status (#392)
 
 The coordinator publishes [`connectionStatus`](connection-status.md), the combined
-`ConnectionStatus { relay, pyrycode }` model the Settings status line (**#390**, `blockedBy #392`)
-consumes. It owns the connection-scoped pump, so it is where the **pyrycode-leg readiness** (the
+`ConnectionStatus { relay, pyrycode }` model the Settings status line consumes — surfaced onto
+[`SettingsViewModel`](settings-viewmodel.md) and rendered as the
+[`ConnectionStatusLine`](connection-status-line.md) under the Server row in **[#398](../codebase/398.md)**
+(the live wiring of parent epic #390, `blockedBy #397`). It owns the connection-scoped pump, so it is where the **pyrycode-leg readiness** (the
 honest `relay → daemon` end-to-end signal) is derived — the relay leg's `Connected` only means
 *socket-open*, not Noise-session-open. The leg reaches `PyrycodeLinkStatus.Connected` **only** once the
 pump reaches `Open` (handshake complete) — never on bare socket-up, never between connections —
@@ -200,8 +202,9 @@ The mapping `internal fun PumpState?.toPyrycodeLinkStatus()` (bottom of the file
 `Handshaking → Handshaking`, `Open → Connected`. It **discards `Open.connId` and `Closed.cause`** —
 the no-log / no-leak contract is structurally enforced (no relay/crypto-derived string reaches the
 status surface). `relayStatus` is fetched off the concrete supervisor (`get<RelayConnectionSupervisor>().relayStatus`)
-exactly like `connections`, with **no new Koin binding** — #390 obtains the combined model via
-`get<RelayRepositoryCoordinator>().connectionStatus`.
+exactly like `connections`, with **no new Koin binding** — and the consumer (#398) likewise obtains
+the combined model with **no new binding**, passing `get<RelayRepositoryCoordinator>().connectionStatus`
+straight into the `SettingsViewModel` constructor at the `AppModule` factory.
 
 > **Init-order gotcha.** `stateIn(scope, Eagerly, …)` runs at *property initialization*, so
 > `connectionStatus`/`pyrycodeStatus` must be declared **after** `scope` and `activePumpFlow` in the

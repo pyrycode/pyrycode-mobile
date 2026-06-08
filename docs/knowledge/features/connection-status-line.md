@@ -132,16 +132,25 @@ AC#2 invariant is its own named test (`relayDaemonAbsent_mapsToUp_neverDown`). T
 category→token resolver and the layout are **preview-verified**, not instrumented — matching
 `ConnectionBanner` (no unit test there either). The pure mapper carries the test weight.
 
+## Live wiring (#398)
+
+Wired into Settings in [#398](../codebase/398.md) (slice B of #390): the
+[`RelayRepositoryCoordinator.connectionStatus`](relay-repository-coordinator.md) flow is forwarded
+verbatim onto [`SettingsViewModel`](settings-viewmodel.md), injected via Koin off the concrete
+coordinator, collected lifecycle-aware at the `MainActivity` Settings host, and this component is
+rendered under the **Server** row in the **Connection** section of the
+[Settings screen](settings-screen.md). Both legs now update live. In the default debug build
+(`USE_RELAY_REPOSITORY` OFF) the line honestly reads `Offline / Down` — there is no real relay link
+in that build; against a live, paired daemon the dots reflect reality.
+
 ## Limits / not yet done
 
-- **No live wiring.** This is the build slice; #398 sources `connectionStatus` off the
-  [`RelayRepositoryCoordinator`](relay-repository-coordinator.md), exposes it on the Settings
-  ViewModel, and drops `ConnectionStatusLine` under the server row. The component is referenced
-  nowhere in production until then.
-- **Design-owed visuals.** `## Figma` N/A — conceived after the design lock. Green shades, dot size,
-  and micro-spacing are placeholders to reconcile when the line is drawn under Settings frame `17-2`
-  (same resolution as [#343](../codebase/343.md)). The *behaviour* (leg → category + label) is locked;
-  the pixels are not.
+- **Design-owed visuals (residual).** `## Figma` was N/A in #397 (conceived after the design lock);
+  the design landed 2026-06-08 (frame `17-2`, node `90-4`) and #398 placed the component under the
+  Server row. The green shades and dot size are still placeholders to reconcile against the lock; the
+  micro-spacing under the Server row drew a non-blocking code-review NIT on #398 (the `top/bottom`
+  padding stacks on the `ListItem`'s own inset, so `17-2` couples it slightly tighter — left as a
+  visual-polish follow-up). The *behaviour* (leg → category + label) is locked; the pixels are not.
 
 ## Related
 
@@ -152,5 +161,7 @@ category→token resolver and the layout are **preview-verified**, not instrumen
 - The green token: [Success color](success-color.md) ([#397](../codebase/397.md)).
 - Component idioms followed: [Connection banner](connection-banner.md) (stateless-over-a-sealed-type
   + private preview-matrix), [Thread status row](thread-status-row.md) (category→token resolver).
-- Implementation notes: [`codebase/397.md`](../codebase/397.md).
-- Consumer (next): **#398** — Settings VM + DI + screen wiring (`blockedBy #397`).
+- Implementation notes: [`codebase/397.md`](../codebase/397.md) (build slice),
+  [`codebase/398.md`](../codebase/398.md) (live wiring).
+- Live consumer (shipped): [Settings ViewModel](settings-viewmodel.md) +
+  [Settings screen](settings-screen.md) via [#398](../codebase/398.md) (`blockedBy #397`).
