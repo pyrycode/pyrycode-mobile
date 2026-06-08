@@ -21,6 +21,7 @@ import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.PromoteConversationPayloadDto
 import de.pyryco.mobile.data.network.RegisterPushTokenPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
+import de.pyryco.mobile.data.network.ReplayCursor
 import de.pyryco.mobile.data.network.RequestSnapshotPayloadDto
 import de.pyryco.mobile.data.network.ScreenSnapshotPayloadDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
@@ -104,6 +105,16 @@ class RemoteConversationRepository(
      * no structured events until the supplier is wired.
      */
     private val negotiatedCapabilities: () -> Set<String> = { emptySet() },
+    /**
+     * The reconnect-spanning replay cursor (#412): each interactive structured frame's durable
+     * [Envelope.eventId] is folded into this high-water mark in [recordReplayCursor]. It is **not**
+     * owned by this repository (rebuilt every reconnect) — [RelayRepositoryCoordinator] holds the
+     * process-scoped instance and threads the same one into each per-connection repo, so the mark
+     * survives connection churn and is readable at the next `hello`-build (#413). **Defaulted to a
+     * throwaway instance** so existing constructions (tests, pre-wiring) compile unchanged; only the
+     * coordinator-wired instance outlives the connection.
+     */
+    private val replayCursor: ReplayCursor = ReplayCursor(),
 ) : ConversationRepository {
     /**
      * The demuxed list projection: `null` until the first `conversations` snapshot loads, then the
@@ -204,6 +215,7 @@ class RemoteConversationRepository(
     }
 
     private fun onInbound(envelope: Envelope) {
+        recordReplayCursor(envelope)
         when (envelope.type) {
             TYPE_CONVERSATIONS -> {
                 // The reply to our request AND any unsolicited change push arrive as a full-list
@@ -324,6 +336,24 @@ class RemoteConversationRepository(
             // this `when` in their own slice. `backfill_done` ({delivered}) needs no action — the
             // `message_chunk` already delivered the full history; the count is informational only.
             else -> Unit
+        }
+    }
+
+    /**
+     * Record the envelope-level replay cursor (#412), the **first** action in [onInbound] — before the
+     * `when` demux. Envelope-level and type-agnostic: it reads [Envelope.eventId] directly, so a frame
+     * with a valid `event_id` but a malformed structured *payload* still advances the cursor (the
+     * durable event occurred; the cursor marks position, not decodability). Gated on the negotiated
+     * `interactive` capability, symmetric with the structured-stream and `stall` arms: a buggy/hostile
+     * authenticated daemon that ignored the negotiated set cannot advance a cursor a non-interactive
+     * phone will never advertise (#413's advertise is itself `interactive`-gated) — defence in depth.
+     * A non-interactive frame carries no `event_id`, so [Envelope.eventId] is `null` and nothing is
+     * recorded (AC #3). [ReplayCursor.record] is throw-free (set-membership + a pure max-fold), so this
+     * never kills the single inbound collector; it is a pure side-write with no feedback into delivery.
+     */
+    private fun recordReplayCursor(envelope: Envelope) {
+        if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+            envelope.eventId?.let { replayCursor.record(it) }
         }
     }
 

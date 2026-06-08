@@ -33,6 +33,15 @@ data class InnerFrameV2(
  * polymorphic by [type]: consumer tickets bridge typed ↔ generic at the edges via
  * `MobileJson.decodeFromJsonElement` / `encodeToJsonElement`. It stays untrusted
  * raw JSON until a consumer decodes and validates it.
+ *
+ * [eventId] is the durable, per-conversation, strictly-increasing replay cursor (#412),
+ * stable across reconnects — distinct from [id], the per-connection id that resets each
+ * reconnect. It rides only the interactive structured-stream frames and is absent on every
+ * other frame, so it is modeled nullable-defaulted exactly like [inReplyTo]: `explicitNulls
+ * = false` omits it on encode (every outbound frame, including `hello`, stays byte-identical
+ * to today), and the default tolerates its per-frame absence on decode. Mirrors the server's
+ * `omitempty *uint64` (pyrycode#649); a pathological `uint64 > 2^63` decodes to a negative
+ * [Long] and is rejected downstream by [ReplayCursor.record]'s positive guard.
  */
 @Serializable
 data class Envelope(
@@ -41,6 +50,7 @@ data class Envelope(
     val ts: String,
     val payload: JsonElement,
     @SerialName("in_reply_to") val inReplyTo: Long? = null,
+    @SerialName("event_id") val eventId: Long? = null,
 )
 
 /**

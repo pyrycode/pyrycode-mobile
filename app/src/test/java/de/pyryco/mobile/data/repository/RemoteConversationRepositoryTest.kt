@@ -10,6 +10,7 @@ import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayErrorException
+import de.pyryco.mobile.data.network.ReplayCursor
 import de.pyryco.mobile.data.network.ScreenSnapshotPayloadDto
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
@@ -2128,6 +2129,153 @@ class RemoteConversationRepositoryTest {
             assertEquals(listOf("tu1"), messageIds(emissions.last()))
         }
 
+    // ---- #412: replay-cursor recording on the inbound path --------------------------------------
+
+    // AC #2: each interactive structured frame's event_id advances the high-water mark; an
+    // out-of-order (smaller) event_id leaves it unchanged.
+    @Test
+    fun replayCursor_advancesOnInteractiveFrames_ignoresOutOfOrder() =
+        runTest {
+            val pump = FakeSessionPump()
+            val cursor = ReplayCursor()
+            RemoteConversationRepository(
+                pump,
+                backgroundScope,
+                negotiatedCapabilities = { setOf("interactive") },
+                replayCursor = cursor,
+            )
+            runCurrent()
+
+            pump.push(turnStateEnvelope("c1", "thinking", eventId = 10))
+            runCurrent()
+            assertEquals(10L, cursor.latest)
+
+            pump.push(turnStateEnvelope("c1", "responding", eventId = 20))
+            runCurrent()
+            assertEquals(20L, cursor.latest)
+
+            pump.push(turnStateEnvelope("c1", "idle", eventId = 15))
+            runCurrent()
+            assertEquals(20L, cursor.latest)
+        }
+
+    // AC #3: a non-interactive frame (no event_id) leaves the cursor unchanged.
+    @Test
+    fun replayCursor_nonInteractiveFrame_leavesCursorUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val cursor = ReplayCursor()
+            RemoteConversationRepository(
+                pump,
+                backgroundScope,
+                negotiatedCapabilities = { setOf("interactive") },
+                replayCursor = cursor,
+            )
+            runCurrent()
+
+            pump.push(turnStateEnvelope("c1", "thinking", eventId = 7))
+            runCurrent()
+            assertEquals(7L, cursor.latest)
+
+            // A `conversations` snapshot carries no event_id → the cursor must not move.
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+            assertEquals(7L, cursor.latest)
+        }
+
+    // AC #4 / defence-in-depth: without `interactive` negotiated, an injected event_id never advances
+    // a cursor the phone will never advertise.
+    @Test
+    fun replayCursor_gateClosed_doesNotRecord() =
+        runTest {
+            val pump = FakeSessionPump()
+            val cursor = ReplayCursor()
+            RemoteConversationRepository(
+                pump,
+                backgroundScope,
+                negotiatedCapabilities = { emptySet() },
+                replayCursor = cursor,
+            )
+            runCurrent()
+
+            pump.push(turnStateEnvelope("c1", "thinking", eventId = 99))
+            runCurrent()
+            assertNull(cursor.latest)
+        }
+
+    // Envelope-level recording is independent of payload decode: a frame with a valid event_id but a
+    // malformed structured payload (dropped by decodeLiveSessionEvent) still advances the cursor.
+    @Test
+    fun replayCursor_advancesEvenWhenPayloadMalformed() =
+        runTest {
+            val pump = FakeSessionPump()
+            val cursor = ReplayCursor()
+            val repo =
+                RemoteConversationRepository(
+                    pump,
+                    backgroundScope,
+                    negotiatedCapabilities = { setOf("interactive") },
+                    replayCursor = cursor,
+                )
+            val events = collectLiveEvents(repo)
+            runCurrent()
+
+            // `tool_use` missing the required tool_use_id → the payload decode drops the event …
+            pump.push(
+                Envelope(
+                    id = 1L,
+                    type = "tool_use",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"c1","turn_id":"t1","name":"Bash","input_summary":"ls"}""",
+                        ),
+                    eventId = 33,
+                ),
+            )
+            runCurrent()
+
+            // … but the envelope-level event_id still advanced the cursor.
+            assertEquals(emptyList<LiveSessionEvent>(), events)
+            assertEquals(33L, cursor.latest)
+        }
+
+    // AC #4: the cursor survives a reconnect — a fresh per-connection repo sharing one cursor (as the
+    // coordinator hands it over) reads the high-water mark recorded by the previous connection's repo.
+    @Test
+    fun replayCursor_survivesReconnect_viaSharedCursor() =
+        runTest {
+            val cursor = ReplayCursor()
+
+            val pump1 = FakeSessionPump()
+            RemoteConversationRepository(
+                pump1,
+                backgroundScope,
+                negotiatedCapabilities = { setOf("interactive") },
+                replayCursor = cursor,
+            )
+            runCurrent()
+            pump1.push(turnStateEnvelope("c1", "thinking", eventId = 12))
+            runCurrent()
+            assertEquals(12L, cursor.latest)
+
+            // Reconnect: a brand-new repo over a fresh pump, handed the same cursor.
+            val pump2 = FakeSessionPump()
+            RemoteConversationRepository(
+                pump2,
+                backgroundScope,
+                negotiatedCapabilities = { setOf("interactive") },
+                replayCursor = cursor,
+            )
+            runCurrent()
+            // Readable before the new connection observes anything (the hello-build moment, #413).
+            assertEquals(12L, cursor.latest)
+
+            pump2.push(turnStateEnvelope("c1", "responding", eventId = 13))
+            runCurrent()
+            assertEquals(13L, cursor.latest)
+        }
+
     // ---- Helpers --------------------------------------------------------------------------------
 
     /**
@@ -2415,12 +2563,14 @@ class RemoteConversationRepositoryTest {
         conversationId: String,
         state: String,
         id: Long = 1L,
+        eventId: Long? = null,
     ): Envelope =
         Envelope(
             id = id,
             type = "turn_state",
             ts = TS,
             payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId","state":"$state"}"""),
+            eventId = eventId,
         )
 
     private fun assistantDeltaEnvelope(
