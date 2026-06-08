@@ -294,6 +294,12 @@ Keeping the previews self-contained means changing the rendering doesn't ripple 
 - **No disclosure affordance (chevron / caret).** If users miss that the row is tappable, the standard M3 pattern is a trailing `Icons.Outlined.ExpandMore` / `ExpandLess` glyph. Hold until preview review or in-app use surfaces the need.
 - **No expand/collapse animation.** Conditional `if (expanded) ExpandedBody(toolCall)` adds/removes the subtree on toggle. Out of scope for #131; a future ticket can wrap in `AnimatedVisibility(visible = expanded) { ExpandedBody(toolCall) }` without touching the public API.
 - **No TalkBack "expanded" / "collapsed" announcement.** `Modifier.clickable` carries no `onClickLabel` or `Role.Button` semantics. Not in AC; add only if a11y review surfaces the gap. The hook is `Modifier.clickable(onClick = onToggle, onClickLabel = if (expanded) "Collapse" else "Expand", role = Role.Button)`.
+- **`ToolCall.status` is not rendered yet (as of #387).** [#387](../codebase/387.md) added a
+  `status: ToolCallStatus = ToolCallStatus.Done` field to `ToolCall` and now drives it **live** in the
+  data layer (a `tool_use` opens a `Running` row, the correlated `tool_result` flips it to `Done`/`Failed`
+  — see [Live tool-call](./live-tool-call.md)). `ToolCallRow` still **ignores** `status` — it remains
+  total over all `ToolCall` values, so it compiles and renders unchanged. The running/done/failed
+  **affordance** (the visual) is the sibling slice **#388**, which extends this component to read `status`.
 - **`Role.Tool` invariant is enforced upstream, not here.** `ToolCallRow` consumes `ToolCall` directly; the null-unwrap of `Message.toolCall` happens in `MessageBubble`'s `Role.Tool` arm. If a future ticket changes the data-class invariant (e.g. allows `toolCall = null` with `Role.Tool` for placeholder rows), `MessageBubble` is the seam to update — `ToolCallRow` is total over all `ToolCall` values its constructor can produce.
 - **RTL.** `Arrangement.spacedBy` and `Alignment.CenterVertically` respect `LayoutDirection` automatically; the icon flips to the trailing edge in RTL locales without explicit handling.
 - **No instrumented tests.** Codebase has no Compose UI test infrastructure — same precedent as [#126](../codebase/126.md) / [#128](../codebase/128.md) / [#129](../codebase/129.md) / [#130](../codebase/130.md) / [#184](../codebase/184.md). Visual verification by the two `@Preview`s + `./gradlew assembleDebug` + `./gradlew lint` passing.
@@ -312,6 +318,7 @@ Keeping the previews self-contained means changing the rendering doesn't ripple 
 - Figma: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) — tool-call card at `16:28`–`16:31`. Three deliberate deviations: background (`surfaceContainerHigh` no border, vs Figma `surface-container` + outline), leading icon added per AC5, expand affordance added per AC1. Two-tone tool-name-in-`tertiary` + arg-in-`onSurfaceVariant` split preserved verbatim from Figma.
 - Downstream:
   - #191 — structured tool-message payload. Replaces `ToolCall.input: String` with a richer typed shape; `primaryArg` and `iconForTool` gain real branching at that point. Public `ToolCallRow(toolCall, modifier)` signature stays unchanged.
+  - [#387](../codebase/387.md) / [Live tool-call](./live-tool-call.md) — added `ToolCall.status` and the live correlation that drives it (data layer); **#388** extends this component to render the `Running`/`Done`/`Failed` affordance.
   - Open: language inference from path extension (`Read`/`Edit` output sections piping into [#130](../codebase/130.md)'s syntax highlighter).
   - Open: `AnimatedVisibility` wrapper around `ExpandedBody`.
   - Open: TalkBack a11y semantics on the row's `Modifier.clickable`.
