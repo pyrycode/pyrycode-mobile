@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.network
 
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -14,6 +15,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -57,9 +59,11 @@ interface RelayConnectionController {
  * handshake-completion signal would couple this layer to #309 (which has no blocker relationship) and
  * is out of scope; a future ticket may refine `Connected` to mean end-to-end readiness if wanted.
  *
- * Emits no logs: the only outward signal is the 4-case [ConnectionState] (no strings beyond
- * `secondsRemaining`). `PairedServer`, the relay URL, the transport, and `Down`'s code/reason/cause
- * are never logged.
+ * Emits no logs: the outward signal is the typed [RelayLinkStatus] relay leg (and its derived 4-case
+ * [ConnectionState]) — no strings beyond `secondsRemaining`, and `DaemonAbsent` is a static object
+ * carrying no relay-supplied text. `PairedServer`, the relay URL, the transport, and `Down`'s
+ * code/reason/cause are never logged; the 4404 branch reads `Down.code` only to compare it, never to
+ * log it.
  */
 class RelayConnectionSupervisor(
     private val transportFactory: RelayTransportFactory,
@@ -69,7 +73,7 @@ class RelayConnectionSupervisor(
 ) : ConnectionStateSource,
     RelayConnectionController {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
-    private val state = MutableStateFlow<ConnectionState>(ConnectionState.Connected)
+    private val state = MutableStateFlow<RelayLinkStatus>(RelayLinkStatus.Connected)
 
     // CONFLATED: a burst of retry() calls collapses to one pending wake-up.
     private val retrySignal = Channel<Unit>(Channel.CONFLATED)
@@ -80,9 +84,16 @@ class RelayConnectionSupervisor(
      *  the #302/future coordinator uses to hand this connection's `inbound` to a fresh #309 pump. */
     val currentConnection: StateFlow<RelayTransport?> = liveConnection.asStateFlow()
 
+    /** The relay-leg status (#391): the single hot source of truth, branching the relay's `4404`
+     *  close into [RelayLinkStatus.DaemonAbsent]. #392 zips this leg with the pyrycode-session leg
+     *  into the combined model; it is fetched off the concrete supervisor like [currentConnection]. */
+    val relayStatus: StateFlow<RelayLinkStatus> = state.asStateFlow()
+
     private var loopJob: Job? = null
 
-    override fun observe(): Flow<ConnectionState> = state.asStateFlow()
+    // Legacy single-signal surface (#197 banner): the 4-case [ConnectionState] derived per-collector
+    // from the relay leg, so every existing consumer is untouched (DaemonAbsent -> nearest, Offline).
+    override fun observe(): Flow<ConnectionState> = state.map { it.toConnectionState() }
 
     /** Starts the supervision loop. Idempotent — a repeated call (e.g. an over-eager #302) cannot
      *  spawn a second loop, which would mean two concurrent dials on one transport surface. */
@@ -100,7 +111,7 @@ class RelayConnectionSupervisor(
         loopJob = null
         liveConnection.value?.close()
         liveConnection.value = null
-        state.value = ConnectionState.Connected
+        state.value = RelayLinkStatus.Connected
     }
 
     /** Forces an immediate reconnect, collapsing any pending backoff wait. Starts the loop if idle
@@ -115,15 +126,16 @@ class RelayConnectionSupervisor(
         val paired = pairedServerStore.load()
         if (paired == null) {
             // Benign-unpaired: no dial, stay Connected so the banner stays hidden (AC 3).
-            state.value = ConnectionState.Connected
+            state.value = RelayLinkStatus.Connected
             return
         }
 
         var attempt = 0 // consecutive failures since the last ≥60 s-stable connection
         while (isActive) {
-            state.value = ConnectionState.Connecting
+            state.value = RelayLinkStatus.Connecting
             val transport = transportFactory.create(paired)
             var sawUp = false
+            var daemonAbsent = false
             val stableReached = AtomicBoolean(false)
             var stabilityTimer: Job? = null
             try {
@@ -133,7 +145,7 @@ class RelayConnectionSupervisor(
                         TransportEvent.Up -> {
                             sawUp = true
                             liveConnection.value = transport
-                            state.value = ConnectionState.Connected
+                            state.value = RelayLinkStatus.Connected
                             stabilityTimer =
                                 launch {
                                     delay(STABLE_THRESHOLD_MS)
@@ -141,8 +153,12 @@ class RelayConnectionSupervisor(
                                 }
                         }
                         is TransportEvent.Down -> {
-                            // #308 seam: Down.code (e.g. 4401 auth-reject) may later halt retries /
-                            // trigger re-pair. This ticket retries every Down uniformly — no branch.
+                            // #308 seam: a 4404 "no server" close (relay reachable, no daemon
+                            // registered) branches to DaemonAbsent; every other code — incl. 4401
+                            // auth-reject and a null dial failure — stays on the uniform retry path
+                            // (4401's halt/re-pair branch is a future ticket). Read-only: the code is
+                            // compared against the constant, never logged (no-log contract).
+                            daemonAbsent = event.code == RELAY_NO_DAEMON_CLOSE
                         }
                     }
                     // events completes after the single terminal Down (#306), ending collect.
@@ -156,25 +172,36 @@ class RelayConnectionSupervisor(
             }
             if (sawUp && stableReached.get()) attempt = 0
             attempt += 1
-            backoff(attempt)
+            backoff(attempt, daemonAbsent)
         }
     }
 
-    private suspend fun backoff(attempt: Int) {
+    private suspend fun backoff(
+        attempt: Int,
+        daemonAbsent: Boolean,
+    ) {
         val base = backoffBaseSeconds(attempt)
         val intervalMs = jitteredBackoffMs(attempt, random)
+        if (daemonAbsent) {
+            // Relay reachable, no daemon: a steady, distinct DaemonAbsent (no per-second countdown) on
+            // the SAME backoff schedule as any other drop, so the leg flips off the instant a daemon
+            // registers and the next dial succeeds. collapsibleWait keeps tap-to-retry working here.
+            state.value = RelayLinkStatus.DaemonAbsent
+            collapsibleWait(intervalMs)
+            return
+        }
         if (base < CAP_SECONDS) {
             // Sub-cap: a per-second Reconnecting countdown, each second collapsible by retry().
             var remainingMs = intervalMs
             while (remainingMs > 0) {
-                state.value = ConnectionState.Reconnecting(ceil(remainingMs / 1000.0).toInt())
+                state.value = RelayLinkStatus.Reconnecting(ceil(remainingMs / 1000.0).toInt())
                 val step = minOf(1000L, remainingMs)
                 if (collapsibleWait(step)) return // retry collapsed the wait -> reconnect now
                 remainingMs -= step
             }
         } else {
             // At the cap: sustained unavailability -> Offline ("tap to retry"); keep redialling.
-            state.value = ConnectionState.Offline
+            state.value = RelayLinkStatus.Offline
             collapsibleWait(intervalMs)
         }
     }
@@ -186,8 +213,25 @@ class RelayConnectionSupervisor(
     private companion object {
         const val CAP_SECONDS = 30
         const val STABLE_THRESHOLD_MS = 60_000L
+
+        /** The relay's "no server" WS close: relay reachable, but no daemon registered behind it. */
+        const val RELAY_NO_DAEMON_CLOSE = 4404
     }
 }
+
+/**
+ * Derives the legacy single-signal [ConnectionState] from the relay leg [RelayLinkStatus]: identity for
+ * the four shared cases; [RelayLinkStatus.DaemonAbsent] collapses to [ConnectionState.Offline] (the
+ * relay is up but unusable end-to-end) until #392's combined banner gives DaemonAbsent its own copy.
+ */
+internal fun RelayLinkStatus.toConnectionState(): ConnectionState =
+    when (this) {
+        RelayLinkStatus.Connected -> ConnectionState.Connected
+        RelayLinkStatus.Connecting -> ConnectionState.Connecting
+        is RelayLinkStatus.Reconnecting -> ConnectionState.Reconnecting(secondsRemaining)
+        RelayLinkStatus.DaemonAbsent -> ConnectionState.Offline
+        RelayLinkStatus.Offline -> ConnectionState.Offline
+    }
 
 /** Backoff base seconds for [attempt] (1-based): 1, 2, 4, 8, 16, then 30 (cap) from attempt 6. */
 internal fun backoffBaseSeconds(attempt: Int): Int = if (attempt >= 6) 30 else (1 shl (attempt - 1))
