@@ -5,10 +5,12 @@ when it finishes**. A `tool_use` event opens a `Running` `Role.Tool` [`Message`]
 carrying the tool name + input; the matching `tool_result` (correlated by `toolUseId`) updates that
 same row to `Done` (or `Failed`) and attaches the output. Landed in [#387](../codebase/387.md) (split
 from #368, the data slice; blocked by [#385](../codebase/385.md)). The **visible** status affordance —
-the running/done/failed pill on the row — is the sibling slice **#388**, which consumes this.
+the running/done/failed leading slot on the row — shipped in [#388](../codebase/388.md), which consumes
+this (see [ToolCallRow § Status affordance](tool-call-row.md#status-affordance-388)).
 
 This is the **data layer only**: correlate the event pair into one evolving `ToolCall` and interleave
-it into the thread stream. It renders nothing; output-encoding the untrusted strings is #388's job.
+it into the thread stream. It renders nothing; output-encoding the untrusted strings is the
+[#388](../codebase/388.md) renderer's job (it renders them through inert Compose `Text`/`CodeBlock`).
 
 ## The model — a status on the existing `ToolCall`
 
@@ -109,14 +111,16 @@ folds a tool row.
 adds **no new parse point** — it consumes the already-typed [`LiveSessionEvent`](live-session-events.md)
 decoded by #385 and copies `name`/`inputSummary`/`resultSummary` **verbatim** into
 `toolCall.toolName`/`input`/`output` with **no trim, parse, or sanitize**. Output-encoding — treating
-those server-authored strings as inert, non-active content at render — is the **#388** UI consumer's
-job, named here as the hand-off (exactly as #385/#395 named it). The folds and every drop/no-op branch
+those server-authored strings as inert, non-active content at render — was the **#388** UI consumer's
+job, named here as the hand-off (exactly as #385/#395 named it); [#388](../codebase/388.md) landed it by
+rendering the strings through inert Compose `Text`/`CodeBlock` (never parsed or treated as markup), so it
+stayed render-only and **not** `security-sensitive`. The folds and every drop/no-op branch
 **log nothing** (the strings can carry sensitive session content — commands, paths, command output);
 grep-confirmed zero `Log`/`println`/`print` touch tool-derived data. In-memory only, fail-closed gate,
 behind the authenticated Noise channel; the unbounded-growth posture (a daemon flooding distinct
 fabricated `toolUseId`s) is identical to the existing `message_id` path under the same
 authenticated-paired-daemon threat model. UI-surface threats (screenshot/overlay/accessibility leakage
-of rendered tool input/output) belong to #388.
+of rendered tool input/output) belong to the [#388](../codebase/388.md) renderer.
 
 ## Related
 
@@ -130,7 +134,8 @@ of rendered tool input/output) belong to #388.
   (per-conversation state from the one inbound collector), with the opposite surfacing decision (a
   separate `observeStall` flow vs folding a row into the thread stream).
 - [ToolCallRow](tool-call-row.md) ([#131](../codebase/131.md)/[#191](../codebase/191.md)) — the leaf
-  renderer that reads `toolCall`; **#388** extends it to render `status`.
-- Consumer (blockedBy this): **#388** — the tool-row status affordance (Figma 16-28 design-owed).
+  renderer that reads `toolCall`; [#388](../codebase/388.md) extends it to render `status`.
+- Consumer (was blockedBy this, now **shipped**): [#388](../codebase/388.md) — the tool-row status
+  affordance (running spinner / done icon / failed glyph; Figma 16-28 design-owed for running/failed).
 - Server SSOT: pyrycode#607 (wire types + capabilities), #616 (capability-gated fan-out), ADR 025
   § Phase 2 structured streaming, EPIC pyrycode#596.
