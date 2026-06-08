@@ -346,6 +346,7 @@ private fun PyryNavHost(
             val vm = koinViewModel<ThreadViewModel>()
             val state by vm.state.collectAsStateWithLifecycle()
             val connectionState by vm.connectionState.collectAsStateWithLifecycle()
+            val isThinking by vm.isThinking.collectAsStateWithLifecycle()
             LaunchedEffect(vm) {
                 vm.navigationEvents.collect { event ->
                     when (event) {
@@ -359,6 +360,7 @@ private fun PyryNavHost(
                 onSendMessage = vm::sendMessage,
                 connectionState = connectionState,
                 onRetry = vm::retry,
+                isThinking = isThinking,
                 onOverflowEvent = vm::onOverflowEvent,
                 onShowLiteralScreen = { navController.navigate("literal_screen/$conversationId") },
                 onModelSelected = vm::onModelSelected,

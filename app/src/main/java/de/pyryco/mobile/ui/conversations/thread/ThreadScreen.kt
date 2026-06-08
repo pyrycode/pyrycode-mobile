@@ -50,6 +50,7 @@ import de.pyryco.mobile.ui.conversations.components.RenameDialog
 import de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog
 import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
 import de.pyryco.mobile.ui.conversations.components.StatusSheet
+import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
 import de.pyryco.mobile.ui.conversations.components.WorkspaceChip
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
@@ -70,6 +71,7 @@ fun ThreadScreen(
     connectionState: ConnectionState,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
+    isThinking: Boolean = false,
     onTitleClick: () -> Unit = {},
     onOverflowEvent: (ThreadEvent) -> Unit = {},
     onShowLiteralScreen: () -> Unit = {},
@@ -216,6 +218,7 @@ fun ThreadScreen(
                     }
                 }
             }
+            ThinkingIndicator(isThinking = isThinking, modifier = Modifier.fillMaxWidth())
         }
     }
     WorkspacePicker(
