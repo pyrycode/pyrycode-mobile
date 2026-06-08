@@ -98,7 +98,9 @@ val appModule =
             SettingsViewModel(get(), get(), get<RelayRepositoryCoordinator>().connectionStatus)
         }
         viewModel { ArchivedDiscussionsViewModel(get()) }
-        viewModel { ThreadViewModel(get(), get(), get(), get()) }
+        viewModel {
+            ThreadViewModel(get(), get(), get(), get(), get<RelayRepositoryCoordinator>().liveSessionEvents)
+        }
         // #381: resolvable so #382's nav destination can obtain it (get() → SavedStateHandle +
         // ConversationRepository). Per-conversation scoping of the obtained instance is #382's job.
         viewModel { LiteralScreenViewModel(get(), get()) }

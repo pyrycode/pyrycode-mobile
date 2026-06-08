@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.ConnectionStatus
+import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.PumpState
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -103,6 +105,26 @@ class RelayRepositoryCoordinator(
             .flatMapLatest { pump -> pump?.state ?: flowOf(null) }
             .map { it.toPyrycodeLinkStatus() }
 
+    /** Observable mirror of the live concrete repository (the repo half of [active]), or `null` between
+     *  connections. Written in lock-step with [mutableRepository] / [activePumpFlow] inside the
+     *  non-suspending [onConnection] / [teardownActive] critical section. Stays **private**:
+     *  [liveSessionEvents] (#385's typed events live on the concrete repo, not the interface) only needs
+     *  this to re-subscribe across reconnects. */
+    private val activeRemoteRepo = MutableStateFlow<RemoteConversationRepository?>(null)
+
+    /** The decoded v2 structured live-session events (#385) for the current connection, surfaced off the
+     *  connection-scoped concrete [RemoteConversationRepository] (#406). The events are not on the
+     *  [ConversationRepository] interface, so — exactly as [pyrycodeStatus] reaches the concrete pump
+     *  through [activePumpFlow] — this reaches the concrete repo through [activeRemoteRepo]. A cold
+     *  `Flow` (events have no "current value", so no [stateIn]); [flatMapLatest] switches to the fresh
+     *  repo's stream on each connection and cancels the prior, so the seam survives reconnection. Empty
+     *  between connections. Kept generic (the full [LiveSessionEvent] stream, not an `isThinking`
+     *  projection) so the tool-correlation (#387) and assistant-text (#337) consumers reuse it without
+     *  re-plumbing this layer. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val liveSessionEvents: Flow<LiveSessionEvent> =
+        activeRemoteRepo.flatMapLatest { repo -> repo?.liveSessionEvents ?: emptyFlow() }
+
     /** The combined two-part status (#392) #390 consumes off this concrete singleton: the supervisor's
      *  relay leg zipped with the derived pyrycode leg. `Eagerly` so `.value` is correct at any glance;
      *  cancelled by [close] (which cancels [scope]). */
@@ -153,6 +175,7 @@ class RelayRepositoryCoordinator(
                 negotiatedCapabilities = { (pump.state.value as? PumpState.Open)?.capabilities.orEmpty() },
             )
         mutableRepository.value = repo
+        activeRemoteRepo.value = repo
         // launch returns immediately; the suspending re-registration runs on the child scope, off the
         // non-suspending critical path of this collector (the :69 cancellation-atomicity invariant).
         childScope.launch { reregisterPushTokenOnOpen(pump, repo) }
@@ -192,6 +215,7 @@ class RelayRepositoryCoordinator(
      */
     private fun teardownActive() {
         mutableRepository.value = null
+        activeRemoteRepo.value = null
         activePumpFlow.value = null
         val current = active ?: return
         active = null

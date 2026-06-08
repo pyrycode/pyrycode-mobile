@@ -2,8 +2,10 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
+import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.InnerFrameV2
 import de.pyryco.mobile.data.network.MobileJson
@@ -514,6 +516,80 @@ class RelayRepositoryCoordinatorTest {
             env.coordinator.close()
         }
 
+    // ---- #406: live turn-state events reach the coordinator seam --------------------------------
+
+    // AC #1: a decoded live-session event from the connection-scoped concrete repository surfaces on
+    // the coordinator's stable liveSessionEvents seam. The pump must be Open WITH the interactive
+    // capability for the decode gate to open.
+    @Test
+    fun liveSessionEvents_surfaceTurnStateFromLiveConnection() =
+        runTest {
+            val env = newEnv()
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            val pump = env.pumps.single()
+            pump.open(capabilities = setOf(CAPABILITY_INTERACTIVE))
+            runCurrent()
+
+            val events = mutableListOf<LiveSessionEvent>()
+            backgroundScope.launch { env.coordinator.liveSessionEvents.collect { events += it } }
+            runCurrent()
+
+            pump.push(turnStateEnvelope("c1", "thinking"))
+            runCurrent()
+
+            assertEquals(
+                listOf(LiveSessionEvent.TurnState("c1", LiveSessionEvent.TurnState.Phase.Thinking)),
+                events,
+            )
+
+            env.coordinator.close()
+        }
+
+    // AC #1: the seam survives reconnection — events from a fresh connection's repo continue to drive
+    // it (flatMapLatest switched to the new repo), and the dead pump no longer surfaces.
+    @Test
+    fun liveSessionEvents_surviveReconnection() =
+        runTest {
+            val env = newEnv()
+            val events = mutableListOf<LiveSessionEvent>()
+            backgroundScope.launch { env.coordinator.liveSessionEvents.collect { events += it } }
+
+            // Connection 1: open with the capability, push a turn_state.
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            val pump1 = env.pumps[0]
+            pump1.open(capabilities = setOf(CAPABILITY_INTERACTIVE))
+            runCurrent()
+            pump1.push(turnStateEnvelope("c1", "thinking"))
+            runCurrent()
+
+            // Reconnect over a fresh transport (fresh pump #2) and push a turn_state on it.
+            env.connections.value = null
+            runCurrent()
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            val pump2 = env.pumps[1]
+            pump2.open(capabilities = setOf(CAPABILITY_INTERACTIVE))
+            runCurrent()
+            pump2.push(turnStateEnvelope("c2", "responding"))
+            runCurrent()
+
+            // A push on the now-dead pump #1 surfaces nowhere — flatMapLatest cancelled its collection.
+            pump1.push(turnStateEnvelope("c1", "idle"))
+            runCurrent()
+
+            assertEquals(
+                listOf(
+                    LiveSessionEvent.TurnState("c1", LiveSessionEvent.TurnState.Phase.Thinking),
+                    LiveSessionEvent.TurnState("c2", LiveSessionEvent.TurnState.Phase.Responding),
+                ),
+                events,
+            )
+
+            env.coordinator.close()
+        }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     private fun TestScope.newEnv(
@@ -585,6 +661,17 @@ class RelayRepositoryCoordinatorTest {
                 ),
         )
 
+    private fun turnStateEnvelope(
+        conversationId: String,
+        state: String,
+    ): Envelope =
+        Envelope(
+            id = 1L,
+            type = "turn_state",
+            ts = TS,
+            payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId","state":"$state"}"""),
+        )
+
     /** Empty-`ack` reply correlated to [inReplyTo] — the register_push_token success signal. */
     private fun ackEnvelope(inReplyTo: Long): Envelope =
         Envelope(id = 99L, type = "ack", ts = TS, payload = MobileJson.parseToJsonElement("{}"), inReplyTo = inReplyTo)
@@ -637,9 +724,14 @@ class RelayRepositoryCoordinatorTest {
             inboundChannel.close()
         }
 
-        /** Drive the handshake to completion: the connect-time hook awaits this transition. */
-        fun open(connId: String = "c1") {
-            mutableState.value = PumpState.Open(connId)
+        /** Drive the handshake to completion: the connect-time hook awaits this transition.
+         *  [capabilities] mirror `hello_ack`'s negotiated set — the live-event decode gate
+         *  (#385) only opens when `CAPABILITY_INTERACTIVE` is present. */
+        fun open(
+            connId: String = "c1",
+            capabilities: Set<String> = emptySet(),
+        ) {
+            mutableState.value = PumpState.Open(connId, capabilities)
         }
 
         /** Drive a terminal close without ever reaching Open (pre-Open fault). */

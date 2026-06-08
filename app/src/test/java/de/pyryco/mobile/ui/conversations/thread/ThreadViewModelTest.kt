@@ -7,6 +7,7 @@ import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
+import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
@@ -22,8 +23,10 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
@@ -111,6 +114,130 @@ class ThreadViewModelTest {
             vm.retry()
             advanceUntilIdle()
             assertEquals(1, source.retryCallCount)
+        }
+
+    // ---- #406: isThinking reduction over live turn-state events ---------------------------------
+
+    @Test
+    fun isThinking_initialValue_isFalseWithNoLiveSource() =
+        runTest {
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            // 4-arg makeVm (no live source) still compiles; the flag defaults inert (AC #5).
+            val vm = makeVm(handle, FakeConversationRepository())
+            assertFalse(vm.isThinking.value)
+        }
+
+    @Test
+    fun isThinking_turnStateThinking_becomesTrue() =
+        runTest {
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = vmWithLiveEvents(events)
+            val collector = launch { vm.isThinking.collect {} }
+            advanceUntilIdle()
+
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Thinking))
+            advanceUntilIdle()
+
+            assertTrue(vm.isThinking.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun isThinking_turnStateRespondingAndIdle_areFalse() =
+        runTest {
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = vmWithLiveEvents(events)
+            val collector = launch { vm.isThinking.collect {} }
+            advanceUntilIdle()
+
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
+            advanceUntilIdle()
+            assertFalse(vm.isThinking.value)
+
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Thinking))
+            advanceUntilIdle()
+            assertTrue(vm.isThinking.value)
+
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Idle))
+            advanceUntilIdle()
+            assertFalse(vm.isThinking.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun isThinking_turnEnd_resetsToFalse() =
+        runTest {
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = vmWithLiveEvents(events)
+            val collector = launch { vm.isThinking.collect {} }
+            advanceUntilIdle()
+
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Thinking))
+            advanceUntilIdle()
+            assertTrue(vm.isThinking.value)
+
+            // A turn that ends straight out of thinking (no responding/idle between) still resets.
+            events.emit(LiveSessionEvent.TurnEnd(ACTIVE_CONV, turnId = "t1", stopReason = "end_turn"))
+            advanceUntilIdle()
+            assertFalse(vm.isThinking.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun isThinking_latestPhaseWins() =
+        runTest {
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = vmWithLiveEvents(events)
+            val collector = launch { vm.isThinking.collect {} }
+            advanceUntilIdle()
+
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Thinking))
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
+            advanceUntilIdle()
+
+            assertFalse(vm.isThinking.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun isThinking_otherConversation_doesNotAffectFlag() =
+        runTest {
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = vmWithLiveEvents(events)
+            val collector = launch { vm.isThinking.collect {} }
+            advanceUntilIdle()
+
+            // The active conversation enters thinking.
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Thinking))
+            advanceUntilIdle()
+            assertTrue(vm.isThinking.value)
+
+            // Another conversation going idle must not flip the active flag (AC #3).
+            events.emit(turnState("other-conversation", LiveSessionEvent.TurnState.Phase.Idle))
+            advanceUntilIdle()
+            assertTrue(vm.isThinking.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun isThinking_nonPhaseEvents_leaveFlagUnchanged() =
+        runTest {
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = vmWithLiveEvents(events)
+            val collector = launch { vm.isThinking.collect {} }
+            advanceUntilIdle()
+
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Thinking))
+            advanceUntilIdle()
+            assertTrue(vm.isThinking.value)
+
+            // assistant_delta / tool_use / tool_result are not phase transitions — flag holds.
+            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, turnId = "t1", seq = 0, text = "hi"))
+            events.emit(LiveSessionEvent.ToolUse(ACTIVE_CONV, turnId = "t1", toolUseId = "u1", name = "read", inputSummary = "f"))
+            events.emit(LiveSessionEvent.ToolResult(ACTIVE_CONV, turnId = "t1", toolUseId = "u1", isError = false, resultSummary = "ok"))
+            advanceUntilIdle()
+            assertTrue(vm.isThinking.value)
+            collector.cancel()
         }
 
     @Test
@@ -1016,7 +1143,21 @@ class ThreadViewModelTest {
         repository: ConversationRepository,
         source: ConnectionStateSource = FakeConnectionStateSource(),
         prefs: AppPreferences = AppPreferences(newDataStore()),
-    ): ThreadViewModel = ThreadViewModel(handle, repository, source, prefs)
+        liveSessionEvents: Flow<LiveSessionEvent> = emptyFlow(),
+    ): ThreadViewModel = ThreadViewModel(handle, repository, source, prefs, liveSessionEvents)
+
+    /** A VM whose active conversation is [ACTIVE_CONV], wired to a controllable live-event source. */
+    private fun TestScope.vmWithLiveEvents(events: Flow<LiveSessionEvent>): ThreadViewModel =
+        makeVm(
+            SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV)),
+            FakeConversationRepository(),
+            liveSessionEvents = events,
+        )
+
+    private fun turnState(
+        conversationId: String,
+        phase: LiveSessionEvent.TurnState.Phase,
+    ): LiveSessionEvent = LiveSessionEvent.TurnState(conversationId, phase)
 
     private class RecordingRepo : ConversationRepository {
         val archiveCalls = mutableListOf<String>()
@@ -1143,4 +1284,8 @@ class ThreadViewModelTest {
                 text: String,
             ): Message = TODO("not used")
         }
+
+    private companion object {
+        const val ACTIVE_CONV = "thread-406-active"
+    }
 }
