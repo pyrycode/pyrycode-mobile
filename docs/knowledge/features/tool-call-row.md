@@ -1,6 +1,6 @@
 # ToolCallRow
 
-Stateless row primitive (#131) rendering a single `ToolCall` payload in the conversation thread surface. Two states — **collapsed** (default) and **expanded** — toggled by tapping anywhere on the row's `surfaceContainerHigh` tile. Collapsed view shows a leading tool-type icon plus a two-tone `ToolName · primary-arg` summary, single-line with ellipsis truncation. Expanded view appends an "Input" / "Output" pair under the collapsed header; code-ish output (multi-line or > 80 chars) renders through [`MarkdownText`](./markdown-text.md)'s internal `CodeBlock` composable, plain output renders as inline `Monospace` text on the parent surface. Toggle state survives configuration changes via `rememberSaveable`; no `ViewModel` coupling. Routed from [`MessageBubble`](./message-bubble.md)'s `Role.Tool` arm via a null-safe `?.let`.
+Stateless row primitive (#131) rendering a single `ToolCall` payload in the conversation thread surface. Two states — **collapsed** (default) and **expanded** — toggled by tapping anywhere on the row's `surfaceContainerHigh` tile. Collapsed view shows a **status-aware** leading slot plus a two-tone `ToolName · primary-arg` summary, single-line with ellipsis truncation. The leading slot is a pure function of [`ToolCall.status`](./data-model.md) (#388): an indeterminate spinner while `Running`, the per-tool icon when `Done`, an error-tinted glyph when `Failed`. Expanded view appends an "Input" / "Output" pair under the collapsed header — **the "Output" section is gated on resolution** (hidden while `Running`, since the data layer fills `output` only on the correlated `tool_result`); code-ish output (multi-line or > 80 chars) renders through [`MarkdownText`](./markdown-text.md)'s internal `CodeBlock` composable, plain output renders as inline `Monospace` text on the parent surface. Toggle state survives configuration changes via `rememberSaveable`; no `ViewModel` coupling. Routed from [`MessageBubble`](./message-bubble.md)'s `Role.Tool` arm via a null-safe `?.let`.
 
 Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). File: `ToolCallRow.kt`. Sibling of [`MessageBubble`](./message-bubble.md), [`MarkdownText`](./markdown-text.md), [`ConversationRow`](./conversation-row.md), `ArchiveRow.kt`.
 
@@ -8,7 +8,7 @@ Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/p
 
 Consumes a [`ToolCall(toolName, input, output)`](./data-model.md) instance — the payload unwrapped from `Message.toolCall` by `MessageBubble`'s `Role.Tool` arm — and renders it as a left-aligned, full-width rounded card with a single `M3 ripple` click target spanning the whole tile.
 
-**Collapsed (default).** A 36dp-tall row with a 18dp leading `Outlined` icon (`Description` / `Edit` / `Terminal` / `Build` fallback per tool name, case-insensitive) followed by an `AnnotatedString` of the form `"$toolName · $primaryArg"` rendered as `MaterialTheme.typography.bodyMedium` with `maxLines = 1` + `TextOverflow.Ellipsis`. The tool-name span uses `MaterialTheme.colorScheme.tertiary` + `FontFamily.Monospace` (matches Figma's `Roboto Mono Regular`); the separator and primary-arg span use `MaterialTheme.colorScheme.onSurfaceVariant` proportional (matches Figma's `body-small`). The icon is tinted `onSurfaceVariant`.
+**Collapsed (default).** A 36dp-tall row with a 18dp leading **status slot** (spinner / per-tool icon / error glyph per [`ToolCall.status`](./data-model.md) — see [Status affordance](#status-affordance-388)) followed by an `AnnotatedString` of the form `"$toolName · $primaryArg"` rendered as `MaterialTheme.typography.bodyMedium` with `maxLines = 1` + `TextOverflow.Ellipsis`. The tool-name span uses `MaterialTheme.colorScheme.tertiary` + `FontFamily.Monospace` (matches Figma's `Roboto Mono Regular`); the separator and primary-arg span use `MaterialTheme.colorScheme.onSurfaceVariant` proportional (matches Figma's `body-small`). The summary renders for **all** statuses — only the leading slot varies — so a running call already shows tool name + input.
 
 **Expanded.** Below the collapsed header (separated by an 8dp top padding), a `Column` of two `ExpandedSection`s — `"Input"` then `"Output"`. Each section is a `labelSmall` caption (in `onSurfaceVariant`) on top of the body. Body dispatch follows the code-ish heuristic: `content.contains('\n') || content.length > 80` routes through `CodeBlock(content, language = null)` from [`MarkdownText`](./markdown-text.md); otherwise, plain `bodyMedium` `Monospace` `Text` on the parent surface (no nested coloured tile).
 
@@ -102,12 +102,7 @@ Row(
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(ToolCallHeaderGap),     // 8.dp
 )
-├── Icon(
-│       imageVector = iconForTool(toolCall.toolName),
-│       contentDescription = null,
-│       modifier = Modifier.size(ToolCallIconSize),                       // 18.dp
-│       tint = MaterialTheme.colorScheme.onSurfaceVariant,
-│   )
+├── ToolCallStatusIcon(toolCall)            // status-aware leading slot (#388, see below)
 └── Text(
         text = buildSummaryAnnotated(toolCall),
         modifier = Modifier.weight(1f),
@@ -118,6 +113,39 @@ Row(
 ```
 
 `Modifier.weight(1f)` on the `Text` lets it absorb the remaining horizontal space so `maxLines = 1` + `TextOverflow.Ellipsis` clip the primary-arg when it would wrap (AC4 from the issue).
+
+### Status affordance (#388)
+
+The leading element is a private `ToolCallStatusIcon(toolCall)` — a **pure function of `toolCall.status`** ([`ToolCallStatus`](./data-model.md)), branching one exhaustive `when` (no `else`) into a **fixed `ToolCallIconSize = 18.dp` footprint** in all three states so a row resolving `Running → Done/Failed` never reflows:
+
+```kotlin
+@Composable
+private fun ToolCallStatusIcon(toolCall: ToolCall) {
+    when (toolCall.status) {
+        ToolCallStatus.Running ->          // indeterminate spinner = "in progress"
+            CircularProgressIndicator(
+                modifier = Modifier.size(ToolCallIconSize)
+                    .semantics { contentDescription = stringResource(R.string.cd_tool_running) },
+                strokeWidth = ToolCallSpinnerStrokeWidth,   // 2.dp, mirrors ThinkingIndicator
+            )
+        ToolCallStatus.Done ->             // unchanged from #131 — the settled Figma design
+            Icon(iconForTool(toolCall.toolName), contentDescription = null,
+                 modifier = Modifier.size(ToolCallIconSize),
+                 tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        ToolCallStatus.Failed ->           // error-tinted glyph in the same slot
+            Icon(Icons.Outlined.ErrorOutline,
+                 contentDescription = stringResource(R.string.cd_tool_failed),
+                 modifier = Modifier.size(ToolCallIconSize),
+                 tint = MaterialTheme.colorScheme.error)
+    }
+}
+```
+
+The `Done` arm is the existing per-tool icon **moved verbatim** — the Done row is byte-identical to the shipped design. The status drives nothing else: it is read straight off `toolCall.status` (which [#387](../codebase/387.md) populates live — `Running` on `tool_use`, `Done`/`Failed` on the correlated `tool_result`; see [Live tool-call](./live-tool-call.md)), never derived from `output.isEmpty()` or any other field, and there is **no `remember`/`derivedStateOf` over it** (statelessness, AC#3 — the only local state remains the orthogonal `expanded` toggle). Because `ToolCall` is a stable `data class`, when #387 flips the status the data layer emits a **new** `ToolCall` value → the slot recomposes and the spinner is replaced by the resolved glyph with no reflow; the `CircularProgressIndicator` owns its own animation (no `LaunchedEffect`, no app-managed animation state).
+
+**Why the leading slot, not a trailing badge:** it's the one decorative slot already in the row, so a swap there adds zero layout and keeps the `Done` state pixel-identical to the shipped Figma design — the most elegant home for a three-state affordance and the reason "Done already matches" stays trivially true.
+
+**Design-owed.** The running spinner and failed glyph are **not** drawn in Figma `16-28` (flagged for Juhana in the ticket); they follow the app's M3 progress idiom (mirroring [`ThinkingIndicator`](./thinking-indicator.md)) until a frame lands. When the two states are drawn, only the `Running`/`Failed` arms need revisiting — the `Done` row and all behaviour are final. A stronger failed treatment (tinted border/surface) or an explicit success tick on `Done` would be localized changes to the same `when` arm; flagged, not built.
 
 `buildSummaryAnnotated(toolCall)` is a `@Composable` builder reading `MaterialTheme.colorScheme.tertiary` and `.onSurfaceVariant` once, then producing an `AnnotatedString`:
 
@@ -142,9 +170,12 @@ Column(
     modifier = Modifier.padding(top = ToolCallExpandedTopPadding),          // 8.dp
     verticalArrangement = Arrangement.spacedBy(ToolCallExpandedGap),        // 8.dp
 )
-├── ExpandedSection(label = "Input",  content = toolCall.input)
-└── ExpandedSection(label = "Output", content = toolCall.output)
+├── ExpandedSection(label = "Input",  content = toolCall.input)             // always
+└── if (toolCall.status != ToolCallStatus.Running)                          // #388: on resolution
+        ExpandedSection(label = "Output", content = toolCall.output)
 ```
+
+**The `Output` section is gated on `status != Running` (#388).** While running, `output` is `""` (the data layer fills it on the correlated `tool_result`, [#387](../codebase/387.md)), so gating it (a) avoids an empty "Output" label mid-run and (b) makes "on resolution it reveals the output" (AC#2) literally true. A `Failed` row's `output` is the error/result summary #387 placed there, so Failed surfaces it under the **same** `Output` section — no separate error branch in the UI. The gate is on the enum, **not** on `output.isEmpty()`.
 
 `ExpandedSection(label, content)` is a private helper:
 
@@ -232,8 +263,8 @@ Every value is a `dp` literal at the declaration site; consuming composables ref
 ## Configuration
 
 - **One transitive dependency added in #131:** `androidx.compose.material:material-icons-extended` (BOM-managed; one `[libraries]` line in `gradle/libs.versions.toml`, one `implementation(...)` line in `app/build.gradle.kts`). Carries the `Description`, `Terminal`, and `Build` icons. R8 / minify-release strips the unused ~6997 other icons in release builds; debug builds carry the full set (~3–4 MB of bloat).
-- **No new strings.** `"Input"` and `"Output"` are inlined English-only Phase-0 copy. Move to `strings.xml` when localisation lands.
-- **No theme overrides.** Reads `colorScheme.surfaceContainerHigh`, `.tertiary`, `.onSurfaceVariant`, `.onSurface`, `typography.bodyMedium`, `.labelSmall` directly. All M3 defaults.
+- **Two strings (#388):** `cd_tool_running` = "Tool call running" and `cd_tool_failed` = "Tool call failed" — content descriptions for the spinner / error glyph, following the `cd_*` convention (mirrors `cd_thread_thinking`). The `"Input"` / `"Output"` section labels remain inlined English-only Phase-0 copy; move to `strings.xml` when localisation lands.
+- **No theme overrides.** Reads `colorScheme.surfaceContainerHigh`, `.tertiary`, `.onSurfaceVariant`, `.onSurface`, `.error` (#388, failed glyph tint), `typography.bodyMedium`, `.labelSmall` directly; the spinner uses the default primary token. All M3 defaults, no hardcoded hex.
 - **No `ViewModel` wiring, no DI changes.** Pure leaf composable; the only `Composable` lookup is the colour and typography scheme.
 
 ## Routing from `MessageBubble`
@@ -258,26 +289,27 @@ Two `@Preview` functions at the bottom of `ToolCallRow.kt`, both `widthDp = 412`
 - **`ToolCallRowLightPreview`** — `PyrycodeMobileTheme(darkTheme = false)`.
 - **`ToolCallRowDarkPreview`** — `PyrycodeMobileTheme(darkTheme = true)`, `uiMode = Configuration.UI_MODE_NIGHT_YES`.
 
-Both delegate to a shared `ToolCallRowPreviewMatrix()` that renders 6 cells in a vertical `Column` inside `Surface { … }`:
+Both delegate to a shared `ToolCallRowPreviewMatrix()` that renders 10 cells in a vertical `Column` inside `Surface { … }`:
 
-| Row | Tool | State |
-|---|---|---|
-| 1 | `PreviewReadToolCall` | collapsed |
-| 2 | `PreviewReadToolCall` | expanded |
-| 3 | `PreviewEditToolCall` | collapsed |
-| 4 | `PreviewEditToolCall` | expanded |
-| 5 | `PreviewBashToolCall` | collapsed |
-| 6 | `PreviewBashToolCall` | expanded |
+| Row | Fixture | Status | State |
+|---|---|---|---|
+| 1–2 | `PreviewReadToolCall` | Done | collapsed / expanded |
+| 3–4 | `PreviewEditToolCall` | Done | collapsed / expanded |
+| 5–6 | `PreviewBashToolCall` | Done | collapsed / expanded |
+| 7–8 | `PreviewRunningToolCall` (#388) | Running | collapsed / expanded |
+| 9–10 | `PreviewFailedToolCall` (#388) | Failed | collapsed / expanded |
 
-Total: **3 tools × 2 states × 2 themes = 12 visual cells across 2 preview functions**, satisfying issue AC7.
+Total: **running + done + failed × collapsed/expanded × 2 themes**, across the existing 2 preview functions — so the Light + Dark `@Preview` pair cover each of the three statuses (AC#4; the original AC7 done-state coverage is unchanged). The expanded `Running` cell proves Output is hidden mid-run; the expanded `Failed` cell proves the error surfaces under Output with the error-tinted leading glyph.
 
 The matrix invokes `ToolCallRowContent` directly (not `ToolCallRow`) with pinned `expanded` values — driving the stateless inner skips the `rememberSaveable` toggle, so the preview renders both states deterministically without needing two separate composables or an interaction harness.
 
 **Preview fixtures** are file-private `val`s at the bottom of `ToolCallRow.kt` — not added to [`FakeConversationRepository`](./conversation-repository.md):
 
-- `PreviewReadToolCall` — `toolName = "Read"`, a long `MessageBubble.kt` path that fires the ellipsis in the collapsed cell, a multi-line Kotlin-source `output` that fires the `CodeBlock` path.
+- `PreviewReadToolCall` — `toolName = "Read"`, a long `MessageBubble.kt` path that fires the ellipsis in the collapsed cell, a multi-line Kotlin-source `output` that fires the `CodeBlock` path. (`status` defaults to `Done`.)
 - `PreviewEditToolCall` — `toolName = "Edit"`, a `Theme.kt` path, a diff-ish `output` (`@@ -42,3 +42,3 @@\n-val Foo = 1\n+val Foo = 2`) to exercise the multi-line `Edit` path.
 - `PreviewBashToolCall` — `toolName = "Bash"`, `input = "git status"` (short, plain), a multi-line stdout `output` (`CodeBlock` path).
+- `PreviewRunningToolCall` (#388) — `status = Running`, `output = ""` (`toolName = "Bash"`, a long-running input) — shows the spinner; expanded proves Output is gated out while running.
+- `PreviewFailedToolCall` (#388) — `status = Failed`, an error-string `output` — shows the error glyph; expanded proves the error surfaces under Output.
 
 Keeping the previews self-contained means changing the rendering doesn't ripple into the data-layer fake, and the seed pipeline isn't tied to preview cosmetics.
 
@@ -294,15 +326,16 @@ Keeping the previews self-contained means changing the rendering doesn't ripple 
 - **No disclosure affordance (chevron / caret).** If users miss that the row is tappable, the standard M3 pattern is a trailing `Icons.Outlined.ExpandMore` / `ExpandLess` glyph. Hold until preview review or in-app use surfaces the need.
 - **No expand/collapse animation.** Conditional `if (expanded) ExpandedBody(toolCall)` adds/removes the subtree on toggle. Out of scope for #131; a future ticket can wrap in `AnimatedVisibility(visible = expanded) { ExpandedBody(toolCall) }` without touching the public API.
 - **No TalkBack "expanded" / "collapsed" announcement.** `Modifier.clickable` carries no `onClickLabel` or `Role.Button` semantics. Not in AC; add only if a11y review surfaces the gap. The hook is `Modifier.clickable(onClick = onToggle, onClickLabel = if (expanded) "Collapse" else "Expand", role = Role.Button)`.
-- **`ToolCall.status` is not rendered yet (as of #387).** [#387](../codebase/387.md) added a
-  `status: ToolCallStatus = ToolCallStatus.Done` field to `ToolCall` and now drives it **live** in the
-  data layer (a `tool_use` opens a `Running` row, the correlated `tool_result` flips it to `Done`/`Failed`
-  — see [Live tool-call](./live-tool-call.md)). `ToolCallRow` still **ignores** `status` — it remains
-  total over all `ToolCall` values, so it compiles and renders unchanged. The running/done/failed
-  **affordance** (the visual) is the sibling slice **#388**, which extends this component to read `status`.
+- **`ToolCall.status` is rendered (#388).** [#387](../codebase/387.md) added a
+  `status: ToolCallStatus = ToolCallStatus.Done` field to `ToolCall` and drives it **live** in the data
+  layer (a `tool_use` opens a `Running` row, the correlated `tool_result` flips it to `Done`/`Failed` — see
+  [Live tool-call](./live-tool-call.md)). [#388](../codebase/388.md) surfaces it: the leading slot is now a
+  function of `status` (spinner / per-tool icon / error glyph) and the expanded `Output` section appears
+  only on resolution — see [Status affordance](#status-affordance-388). The running/failed glyphs are
+  design-owed (not in Figma `16-28`); the `Done` row is unchanged.
 - **`Role.Tool` invariant is enforced upstream, not here.** `ToolCallRow` consumes `ToolCall` directly; the null-unwrap of `Message.toolCall` happens in `MessageBubble`'s `Role.Tool` arm. If a future ticket changes the data-class invariant (e.g. allows `toolCall = null` with `Role.Tool` for placeholder rows), `MessageBubble` is the seam to update — `ToolCallRow` is total over all `ToolCall` values its constructor can produce.
 - **RTL.** `Arrangement.spacedBy` and `Alignment.CenterVertically` respect `LayoutDirection` automatically; the icon flips to the trailing edge in RTL locales without explicit handling.
-- **No instrumented tests.** Codebase has no Compose UI test infrastructure — same precedent as [#126](../codebase/126.md) / [#128](../codebase/128.md) / [#129](../codebase/129.md) / [#130](../codebase/130.md) / [#184](../codebase/184.md). Visual verification by the two `@Preview`s + `./gradlew assembleDebug` + `./gradlew lint` passing.
+- **Instrumented tests added in #388.** #131 shipped preview-verified with no test; [#388](../codebase/388.md) added a `ToolCallRowTest` (`androidTest`, 5 scenarios: running/failed/done status nodes + output gating) mirroring `ThinkingIndicatorTest`. It **compiles** (`assembleDebugAndroidTest`) but `connectedAndroidTest` is **not run** without a device — same posture as [#398](../codebase/398.md) / [#407](../codebase/407.md). Primary verification remains the `@Preview` matrix + `./gradlew assembleDebug` + `./gradlew lint`.
 
 ## Related
 
@@ -318,7 +351,8 @@ Keeping the previews self-contained means changing the rendering doesn't ripple 
 - Figma: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) — tool-call card at `16:28`–`16:31`. Three deliberate deviations: background (`surfaceContainerHigh` no border, vs Figma `surface-container` + outline), leading icon added per AC5, expand affordance added per AC1. Two-tone tool-name-in-`tertiary` + arg-in-`onSurfaceVariant` split preserved verbatim from Figma.
 - Downstream:
   - #191 — structured tool-message payload. Replaces `ToolCall.input: String` with a richer typed shape; `primaryArg` and `iconForTool` gain real branching at that point. Public `ToolCallRow(toolCall, modifier)` signature stays unchanged.
-  - [#387](../codebase/387.md) / [Live tool-call](./live-tool-call.md) — added `ToolCall.status` and the live correlation that drives it (data layer); **#388** extends this component to render the `Running`/`Done`/`Failed` affordance.
+  - [#387](../codebase/387.md) / [Live tool-call](./live-tool-call.md) — added `ToolCall.status` and the live correlation that drives it (data layer).
+  - [#388](../codebase/388.md) (**shipped**) — extends this component to render the `Running`/`Done`/`Failed` affordance (status-aware leading slot + resolution-gated `Output`); running/failed glyphs are design-owed.
   - Open: language inference from path extension (`Read`/`Edit` output sections piping into [#130](../codebase/130.md)'s syntax highlighter).
   - Open: `AnimatedVisibility` wrapper around `ExpandedBody`.
   - Open: TalkBack a11y semantics on the row's `Modifier.clickable`.

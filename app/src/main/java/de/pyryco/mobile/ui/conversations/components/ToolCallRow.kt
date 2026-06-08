@@ -13,7 +13,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -26,6 +28,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -34,7 +39,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ToolCall
+import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 private val MessageRowVerticalSpacing = 12.dp
@@ -43,6 +50,7 @@ private val ToolCallHorizontalPadding = 12.dp
 private val ToolCallVerticalPadding = 8.dp
 private val ToolCallHeaderGap = 8.dp
 private val ToolCallIconSize = 18.dp
+private val ToolCallSpinnerStrokeWidth = 2.dp
 private val ToolCallExpandedTopPadding = 8.dp
 private val ToolCallExpandedGap = 8.dp
 
@@ -106,12 +114,7 @@ private fun CollapsedHeaderRow(toolCall: ToolCall) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(ToolCallHeaderGap),
     ) {
-        Icon(
-            imageVector = iconForTool(toolCall.toolName),
-            contentDescription = null,
-            modifier = Modifier.size(ToolCallIconSize),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        ToolCallStatusIcon(toolCall)
         Text(
             text = buildSummaryAnnotated(toolCall),
             modifier = Modifier.weight(1f),
@@ -122,6 +125,43 @@ private fun CollapsedHeaderRow(toolCall: ToolCall) {
     }
 }
 
+/**
+ * Leading affordance for the row, a pure function of [ToolCall.status] (#388). Keeps a fixed
+ * [ToolCallIconSize] footprint in all three states so a row resolving from running → done/failed never
+ * reflows. The running spinner/failed glyph are design-owed (not yet in Figma `16-28`); they follow the
+ * app's Material 3 progress idiom (mirroring [ThinkingIndicator]) until the frame lands. The [Done] arm
+ * is the settled design — the existing per-tool icon, unchanged.
+ */
+@Composable
+private fun ToolCallStatusIcon(toolCall: ToolCall) {
+    when (toolCall.status) {
+        ToolCallStatus.Running -> {
+            val description = stringResource(R.string.cd_tool_running)
+            CircularProgressIndicator(
+                modifier =
+                    Modifier
+                        .size(ToolCallIconSize)
+                        .semantics { contentDescription = description },
+                strokeWidth = ToolCallSpinnerStrokeWidth,
+            )
+        }
+        ToolCallStatus.Done ->
+            Icon(
+                imageVector = iconForTool(toolCall.toolName),
+                contentDescription = null,
+                modifier = Modifier.size(ToolCallIconSize),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        ToolCallStatus.Failed ->
+            Icon(
+                imageVector = Icons.Outlined.ErrorOutline,
+                contentDescription = stringResource(R.string.cd_tool_failed),
+                modifier = Modifier.size(ToolCallIconSize),
+                tint = MaterialTheme.colorScheme.error,
+            )
+    }
+}
+
 @Composable
 private fun ExpandedBody(toolCall: ToolCall) {
     Column(
@@ -129,7 +169,11 @@ private fun ExpandedBody(toolCall: ToolCall) {
         verticalArrangement = Arrangement.spacedBy(ToolCallExpandedGap),
     ) {
         ExpandedSection(label = "Input", content = toolCall.input)
-        ExpandedSection(label = "Output", content = toolCall.output)
+        // Output arrives on the correlated `tool_result` (#387); while running it is "" — gate it so the
+        // section appears only on resolution ("on resolution it reveals the output", AC#2).
+        if (toolCall.status != ToolCallStatus.Running) {
+            ExpandedSection(label = "Output", content = toolCall.output)
+        }
     }
 }
 
@@ -229,6 +273,28 @@ private val PreviewBashToolCall =
             """.trimIndent(),
     )
 
+// status = Running: spinner in the leading slot, output not yet arrived (gated out while expanded).
+private val PreviewRunningToolCall =
+    ToolCall(
+        toolName = "Bash",
+        input = "./gradlew assembleDebug",
+        output = "",
+        status = ToolCallStatus.Running,
+    )
+
+// status = Failed: error-tinted leading glyph, error summary surfaced under Output when expanded.
+private val PreviewFailedToolCall =
+    ToolCall(
+        toolName = "Bash",
+        input = "./gradlew assembleDebug",
+        output =
+            """
+            FAILURE: Build failed with an exception.
+            > Task :app:compileDebugKotlin FAILED
+            """.trimIndent(),
+        status = ToolCallStatus.Failed,
+    )
+
 @Composable
 private fun ToolCallRowPreviewMatrix() {
     Column(modifier = Modifier.padding(horizontal = 16.dp)) {
@@ -259,6 +325,26 @@ private fun ToolCallRowPreviewMatrix() {
         )
         ToolCallRowContent(
             toolCall = PreviewBashToolCall,
+            expanded = true,
+            onToggle = {},
+        )
+        ToolCallRowContent(
+            toolCall = PreviewRunningToolCall,
+            expanded = false,
+            onToggle = {},
+        )
+        ToolCallRowContent(
+            toolCall = PreviewRunningToolCall,
+            expanded = true,
+            onToggle = {},
+        )
+        ToolCallRowContent(
+            toolCall = PreviewFailedToolCall,
+            expanded = false,
+            onToggle = {},
+        )
+        ToolCallRowContent(
+            toolCall = PreviewFailedToolCall,
             expanded = true,
             onToggle = {},
         )
