@@ -51,6 +51,8 @@ No call sites in production today — this slice is foundational. Downstream con
 
 This is the project's first non-Material custom color slot, and the chosen mechanism (extension property + private `CompositionLocal` + provider inside `PyrycodeMobileTheme`) is the precedent for any future ones (e.g. brand-specific `success`, `info`). The pattern preserves `MaterialTheme.colorScheme.<token>` as the call-site surface and does not interfere with `ColorScheme` equality, copy, or future Material additions.
 
+**Realized once so far:** the green [`success` slot](success-color.md) ([#397](../codebase/397.md)) mirrors this shape one-for-one. The lesson it set: a new semantic slot gets its **own** sibling `XxxColors` holder — *not* an extra field on `WarningColors` (which would leave a holder named `WarningColors` owning an unrelated colour). One holder per semantic concept.
+
 ## Related
 
 - Implementation notes: [`codebase/119.md`](../codebase/119.md)

@@ -248,6 +248,8 @@ private val highContrastDarkColorScheme =
 
 private val lightWarningColors = WarningColors(warningLight)
 private val darkWarningColors = WarningColors(warningDark)
+private val lightSuccessColors = SuccessColors(successLight)
+private val darkSuccessColors = SuccessColors(successDark)
 private val mediumContrastLightWarningColors = WarningColors(warningLightMediumContrast)
 private val highContrastLightWarningColors = WarningColors(warningLightHighContrast)
 private val mediumContrastDarkWarningColors = WarningColors(warningDarkMediumContrast)
@@ -292,8 +294,12 @@ fun PyrycodeMobileTheme(
             darkTheme -> darkScheme to darkWarningColors
             else -> lightScheme to lightWarningColors
         }
+    val successColors = if (darkTheme) darkSuccessColors else lightSuccessColors
 
-    CompositionLocalProvider(LocalWarningColors provides warningColors) {
+    CompositionLocalProvider(
+        LocalWarningColors provides warningColors,
+        LocalSuccessColors provides successColors,
+    ) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography = AppTypography,

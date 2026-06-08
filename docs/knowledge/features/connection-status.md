@@ -87,11 +87,20 @@ RelayConnectionSupervisor          activePumpFlow (private mirror of the live pu
 
 ## Consumer
 
-- **#390 (next, `blockedBy #392`)** — the Settings connection-status line fetches
+#390 (the Settings connection-status line) **split into two slices** at the architect:
+
+- **[#397](../codebase/397.md) (the rendering component — shipped)** — the stateless
+  [`ConnectionStatusLine`](connection-status-line.md) composable that renders *this* model as the
+  two-part `● Relay   ● Pyrycode` line (each leg's dot coloured from a semantic token via a pure,
+  unit-tested mapper). It consumes `ConnectionStatus` **verbatim** but does **not** touch the live
+  data path.
+- **#398 (the live wiring — `blockedBy #397`)** — fetches
   `get<RelayRepositoryCoordinator>().connectionStatus` off the concrete coordinator singleton (the
-  same pattern `currentRepository`/`relayStatus` use — **no new Koin binding**; whether #390 adds a
-  thin `single { … }` is its call) and renders each leg's dot independently.
-- There is no other live consumer; the model ships ahead of its UI by design.
+  same pattern `currentRepository`/`relayStatus` use — **no new Koin binding**; whether #398 adds a
+  thin `single { … }` is its call), exposes it on the Settings ViewModel, and drops the component
+  under the server row.
+
+There is no other live consumer; the model ships ahead of its UI by design.
 
 ## Security
 
@@ -122,5 +131,6 @@ vetted in #391 and is passed through verbatim. Mirror trust-boundary shape to #3
   `PumpState.Open` is the handshake-completion moment.
 - Legacy single-signal sibling: [Connection state](connection-state.md) (`ConnectionState`, #196) —
   what a one-dot status used to collapse to.
-- Consumer (next): **#390** — the Settings connection-status line.
+- Renderer (shipped): [Connection status line](connection-status-line.md)
+  ([#397](../codebase/397.md)) — the two-part `● Relay   ● Pyrycode` component; live wiring is #398.
 </content>
