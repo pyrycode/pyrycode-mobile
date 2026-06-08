@@ -26,6 +26,7 @@ import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
+import de.pyryco.mobile.ui.conversations.thread.LiteralScreenViewModel
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerViewModel
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
@@ -95,6 +96,9 @@ val appModule =
         viewModel { SettingsViewModel(get(), get()) }
         viewModel { ArchivedDiscussionsViewModel(get()) }
         viewModel { ThreadViewModel(get(), get(), get(), get()) }
+        // #381: resolvable so #382's nav destination can obtain it (get() → SavedStateHandle +
+        // ConversationRepository). Per-conversation scoping of the obtained instance is #382's job.
+        viewModel { LiteralScreenViewModel(get(), get()) }
     }
 
 /**
