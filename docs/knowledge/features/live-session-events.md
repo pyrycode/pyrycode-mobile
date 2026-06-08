@@ -199,6 +199,15 @@ turn-lifecycle state machine, rendering/sanitization, lossless delivery (consume
 `buffer()`/`stateIn`), and an `event_id` replay cursor (reconnect-replay #402) / the sixth `stall`
 type (#395) — both correctly excluded here.
 
+> **`tool_use`↔`tool_result` correlation landed in [#387](../codebase/387.md).** It is the first
+> *consumer* of the `ToolUse`/`ToolResult` events: the [Live tool-call](live-tool-call.md) slice
+> correlates the pair (by `toolUseId`) into one evolving `Role.Tool` thread row carrying a status
+> (`Running → Done`/`Failed`), folded into `messagesByConversation` on the **same gated demux arm** (a
+> `when (event)` dispatch alongside the #395 stall-clear and the `tryEmit` — no second subscription).
+> The events are carried **verbatim** into the row's `ToolCall` fields; output-encoding remains the
+> rendering consumer's job (#388). The turn-state phase reduction is [#406](../codebase/406.md)'s
+> `isThinking`; live assistant-delta accumulation is still parked #337.
+
 > **The sixth type — `stall` (#395) — landed as state, not a `LiveSessionEvent`.** It is still
 > correctly **not** one of these five streaming events (it is current-value state, not an event), so it
 > never lands on `liveSessionEvents`. But [#395](../codebase/395.md) is now a **consumer** of this seam
@@ -214,6 +223,9 @@ type (#395) — both correctly excluded here.
 - [Remote conversation repository](remote-conversation-repository.md) — hosts the flow + the demux.
 - [Stall state](stall-state.md) ([#395](../codebase/395.md)) — the **consumer in the other direction**:
   a decoded `LiveSessionEvent` clears a stall for its conversation, folded into the same gated arm.
+- [Live tool-call](live-tool-call.md) ([#387](../codebase/387.md)) — the **`tool_use`/`tool_result`
+  consumer**: correlates the pair into one status-carrying `Role.Tool` thread row, dispatched on the
+  same gated arm.
 - [Relay repository coordinator](relay-repository-coordinator.md) — wires the capability supplier, and
   ([#406](../codebase/406.md)) surfaces the reconnection-surviving `liveSessionEvents` seam that brings
   these events to UI ViewModels.

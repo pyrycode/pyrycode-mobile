@@ -596,7 +596,9 @@ section records only how it attaches to the repository.
   `when (envelope.type)` demux (`:265-275`) — **no second subscription** (ticket constraint). The
   arm gates on the negotiated `interactive` capability, then calls the private
   `decodeLiveSessionEvent(envelope): LiveSessionEvent?` helper (`:296`) and `tryEmit`s the result.
-  Five `TYPE_*` constants join the companion (`:770`+).
+  Five `TYPE_*` constants join the companion (`:770`+). The same `.let { event -> … }` block also hosts
+  the #395 stall-clear and the [#387 tool-call dispatch](#live-tool-call-rows--applytooluse--applytoolresult-387)
+  — three folds on one decoded event, one gate, one collector.
 - **`SharedFlow`, not `StateFlow`** (`replay = 0`, `extraBufferCapacity = 64`, `DROP_OLDEST`): these
   are *events*, not current-value state. The bounded buffer + `DROP_OLDEST` make `tryEmit`
   **infallible and non-blocking** — load-bearing, so a slow live-event consumer never back-pressures
@@ -673,6 +675,60 @@ subscription**.
 `security-sensitive`, but the narrowest of the interactive boundaries: the `stall` payload carries no
 free-form text, the data layer surfaces only a `Boolean`, and `decodeStall` logs nothing on the drop
 path. See [Stall state § Security](stall-state.md#security).
+
+## Live tool-call rows — `applyToolUse` / `applyToolResult` (#387)
+
+Correlate the v2 `tool_use` (start) / `tool_result` (completion)
+[`LiveSessionEvent`](live-session-events.md)s into **one evolving thread row** carrying a status
+(`Running → Done`/`Failed`). [#387](../codebase/387.md) adds the correlation + status state machine;
+the onset/correlation model lives in [Live tool-call](live-tool-call.md), this section records only how
+it attaches to the repository. Unlike #395 (a *separate* `Set<String>` projection), a tool row **is** a
+thread row, so it folds into the **existing** `messagesByConversation` — see [Live tool-call § Chronological
+interleave](live-tool-call.md#chronological-interleave-ac-4--why-its-free).
+
+- **Two demux hooks, dispatched inside the existing `interactive` gated live-session arm.** The
+  `.let { event -> … }` block (`RemoteConversationRepository.kt:301-305`) gains a `when (event)`
+  dispatch **alongside** the unchanged #395 stall-clear and #385 `tryEmit` — **no second subscription,
+  no new gate, no new collector**:
+
+  ```kotlin
+  when (event) {
+      is LiveSessionEvent.ToolUse -> applyToolUse(event)
+      is LiveSessionEvent.ToolResult -> applyToolResult(event)
+      else -> Unit
+  }
+  ```
+
+- **`applyToolUse` (`:473`) — append a `Running` row, idempotent on a repeat id.** One atomic
+  `messagesByConversation.update {}`: if a row with `id == toolUseId && role == Role.Tool` already
+  exists, leave it untouched (a duplicate `tool_use` never adds a second row nor resets a finished one
+  to `Running`); else append a `Role.Tool` `Message` with `id = toolUseId`, `content = name` (a
+  non-empty fallback the UI ignores), `timestamp = Clock.System.now()`, and
+  `ToolCall(name, inputSummary, output = "", status = Running)`. The `&& role == Role.Tool` namespaces
+  the match so a `toolUseId` can never clobber a real `message_id` row.
+- **`applyToolResult` (`:510`) — update the matching row in place, or drop.** One atomic
+  `messagesByConversation.update {}`: find the row with `id == toolUseId && role == Role.Tool`; if
+  absent, **no-op** (a `tool_result` with no prior `tool_use`, including a result-before-use, is dropped
+  — no orphan half-row); if present, replace it (position + `timestamp` preserved) with its `toolCall`
+  copied as `output = resultSummary`, `status = if (isError) Failed else Done`. A duplicate
+  `tool_result` re-applies the same update (idempotent / last-write-wins). `row.toolCall?.copy(...)`
+  handles the theoretical null gracefully — no `!!`.
+- **Why fold into `messagesByConversation`, not a separate flow.** The two folds write the **same**
+  `StateFlow` [`observeMessages`](#observemessagesconversationid--the-live-thread-read-313) reads, whose
+  `threadProjection` preserves **arrival order with no re-sort** — so a tool row interleaves
+  chronologically with messages for free (AC #4); a ViewModel-side merge cannot, because ordering is a
+  repository surface. The in-place status flip changes the `data class` row → the projected list is
+  unequal → `distinctUntilChanged` re-emits the `Running → Done/Failed` transition. **Not folded into
+  `lastMessages`** — a tool invocation never becomes a conversation-list preview.
+- **Single writer, no race.** Both folds run on the lone `init` inbound collector (the sole writer of
+  `messagesByConversation` alongside `sendMessage`'s `update {}` insert), in wire arrival order, so
+  insert-then-update never races; an out-of-order result simply finds no row and drops.
+
+`security-sensitive`, but the repository stays plain orchestration: no new parse point (consumes the
+already-typed `LiveSessionEvent`), `name`/`inputSummary`/`resultSummary` carried **verbatim** into the
+`ToolCall` fields (output-encoding is #388's job), and **nothing in the folds or the drop/no-op branches
+logs the payload** (the tool fields may carry sensitive session content). See
+[Live tool-call § Security](live-tool-call.md#security).
 
 ## `requestScreenSnapshot(conversationId)` — the parser-independent screen-snapshot read (#375)
 
@@ -917,7 +973,11 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   the fourth projection `stalledConversations`; a `TYPE_STALL` onset arm + a clearing hook folded into
   #385's live-session arm; **on the interface with a `flowOf(false)` default** so it reaches the thread
   through the facade, the deliberate inverse of #385's concrete-only `liveSessionEvents` — see
-  [Stall state](stall-state.md)).
+  [Stall state](stall-state.md)), [#387](../codebase/387.md) (`applyToolUse`/`applyToolResult`,
+  **landed** — correlate `tool_use`/`tool_result` into one evolving `Role.Tool` row keyed by
+  `toolUseId`; a `when (event)` dispatch folded into #385's live-session arm mutates the existing
+  `messagesByConversation` so tool rows interleave by arrival order, the inverse choice from #395's
+  separate projection — see [Live tool-call](live-tool-call.md)).
 - Connection wiring: [`RelayRepositoryCoordinator`](relay-repository-coordinator.md)
   ([#351](../codebase/351.md), **landed**) — constructs this repository per live connection against the
   pump + a child scope, made `NoiseSessionPump : ManagedSessionPump : SessionPump`, and publishes the
