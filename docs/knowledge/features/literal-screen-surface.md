@@ -202,5 +202,6 @@ via the test API); the verbatim assertion + code review cover it. CI gate: `./gr
 - [Conversation repository](conversation-repository.md) — `requestScreenSnapshot`, the consumed read ([#375](../codebase/375.md))
 - [Scanner screen](scanner-screen.md) — the `(state, …)` surface + verbatim-render pattern mirrored; [Thread overflow menu](thread-overflow-menu.md) — the compose-test idiom mirrored
 - [MarkdownText](markdown-text.md) ([ADR 0002](../decisions/0002-markdown-renderer-library.md)) — the renderer this surface deliberately bypasses
-- Sibling **[#382](../codebase/382.md)** (shipped) — thread entry-point action + `literal_screen/{conversationId}` destination that obtains + per-conversation-scopes this VM and renders this surface; the only path here
+- Sibling **[#382](../codebase/382.md)** (shipped) — thread entry-point action + `literal_screen/{conversationId}` destination that obtains + per-conversation-scopes this VM and renders this surface; the first path here
+- **[#396](../codebase/396.md)** (shipped) — the [stall promotion banner](stall-promotion-banner.md): a **second** entry point into the same `literal_screen/{conversationId}` destination, reusing #382's `onShowLiteralScreen` navigation verbatim (no new path). It promotes this action prominently while the conversation is stalled ([stall state](stall-state.md), #395)
 - pyrycode ADR 025 § Safe degradation / Security model · pyrycode#596 (Phase 2 structured streaming) · pyrycode#618 (daemon snapshot handler)

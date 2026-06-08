@@ -4,7 +4,9 @@ A per-conversation `Boolean` the thread layer observes to learn that the remote 
 making forward progress** — PTY quiet while not idle, no JSONL progress, typically a screen-parser
 break — so the phone can react instead of silently appearing to hang. Landed in
 [#395](../codebase/395.md) (split from #373, the data slice). The **visible** reaction (promoting the
-always-available screen-snapshot action when stalled) is sibling **#396**, which depends on this.
+always-available screen-snapshot action when stalled) shipped in sibling **[#396](../codebase/396.md)** —
+the [stall promotion banner](stall-promotion-banner.md), which consumes this through
+`ThreadViewModel.isStalled`.
 
 This is the **data layer only**: decode the inbound `stall` envelope into observable state and infer
 recovery. It renders nothing.
@@ -88,8 +90,9 @@ it. Onset and clearing are symmetric — both gated.
 - **Not durable.** Lost on connection drop / process death; re-derived from the live stream on
   reconnect. The facade's `whenAbsent = false` reports "not stalled" between connections.
 - **No "finished" vs "recovered mid-turn" distinction at this layer.** Any forward-progress event clears.
-  If #396 wants that distinction it is a UI-layer derivation over `observeStall` + `liveSessionEvents`,
-  not a data-layer change.
+  [#396](../codebase/396.md) consumed this as a single boolean and deliberately did **not** add that
+  distinction (resolving the open question below); were it ever wanted it is a UI-layer derivation over
+  `observeStall` + `liveSessionEvents`, not a data-layer change.
 
 ## Security
 
@@ -101,7 +104,10 @@ to mishandle, and the data layer surfaces only a `Boolean`. Memory posture is a 
 conversation ids (membership, not accumulation) — the same per-conversation-id growth posture
 `lastMessages`/`messagesByConversation` already accept under the paired-daemon threat model, with the
 lightest footprint. No payload logging; UI-leakage threats (screenshot/overlay of a stall banner) belong
-to #396.
+to #396 — and the [stall promotion banner](stall-promotion-banner.md) it shipped carries **no**
+sensitive content (only fixed copy + a CTA into the existing snapshot action), so there is nothing to
+leak at the banner itself; the snapshot text's confidentiality (FLAG_SECURE, no clipboard) is handled
+where it is actually rendered, in [`LiteralScreenSurface`](literal-screen-surface.md) (#381).
 
 ## Related
 
@@ -113,7 +119,8 @@ to #396.
 - [ConversationRepository](conversation-repository.md) — the interface the defaulted `observeStall`
   joins; [`StableConversationRepository`](stable-conversation-repository.md) — the facade that makes it
   reach the thread ViewModel.
-- Consumer (blockedBy this): **#396** — promote the screen-snapshot action when stalled.
+- Consumer (shipped): **[#396](../codebase/396.md)** — the [stall promotion banner](stall-promotion-banner.md),
+  which renders this flag as a prominent screen-snapshot CTA at the top of the thread.
 - Server SSOT: pyrycode#624 (stall transport), #638 (`stall` wire vocabulary, `{conversation_id}`,
   onset-only), #639 (bridge + interactive-only fan-out), tui-driver #141 v1.3.0 (`stall_detected`),
   ADR-025 § Safe degradation.

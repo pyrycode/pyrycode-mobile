@@ -53,6 +53,8 @@
     <string name="cd_thread_status_expand">Expand status details</string>
     <string name="thread_thinking_label">Thinking…</string>
     <string name="cd_thread_thinking">Agent is thinking</string>
+    <string name="thread_stall_promotion_message">Claude seems to have stalled. See what it\'s doing right now:</string>
+    <string name="cd_thread_stall_promotion">Claude seems to have stalled. Show the literal screen.</string>
     <string name="cd_tool_running">Tool call running</string>
     <string name="cd_tool_failed">Tool call failed</string>
     <string name="thread_overflow_new_session">New session</string>

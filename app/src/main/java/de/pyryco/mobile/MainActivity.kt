@@ -347,6 +347,7 @@ private fun PyryNavHost(
             val state by vm.state.collectAsStateWithLifecycle()
             val connectionState by vm.connectionState.collectAsStateWithLifecycle()
             val isThinking by vm.isThinking.collectAsStateWithLifecycle()
+            val isStalled by vm.isStalled.collectAsStateWithLifecycle()
             LaunchedEffect(vm) {
                 vm.navigationEvents.collect { event ->
                     when (event) {
@@ -361,6 +362,7 @@ private fun PyryNavHost(
                 connectionState = connectionState,
                 onRetry = vm::retry,
                 isThinking = isThinking,
+                isStalled = isStalled,
                 onOverflowEvent = vm::onOverflowEvent,
                 onShowLiteralScreen = { navController.navigate("literal_screen/$conversationId") },
                 onModelSelected = vm::onModelSelected,
