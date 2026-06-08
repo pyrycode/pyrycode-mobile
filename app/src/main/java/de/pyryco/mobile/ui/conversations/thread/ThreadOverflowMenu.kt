@@ -16,6 +16,7 @@ fun ThreadOverflowMenu(
     isPromoted: Boolean,
     onDismiss: () -> Unit,
     onEvent: (ThreadEvent) -> Unit,
+    onShowLiteralScreen: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val uriHandler = LocalUriHandler.current
@@ -24,6 +25,15 @@ fun ThreadOverflowMenu(
         onDismissRequest = onDismiss,
         modifier = modifier,
     ) {
+        // First item, outside the promotion conditionals: always available regardless of
+        // connection / parse / promotion state (AC#1). Pure navigation — bypasses ThreadEvent.
+        DropdownMenuItem(
+            text = { Text(stringResource(R.string.thread_overflow_show_literal_screen)) },
+            onClick = {
+                onDismiss()
+                onShowLiteralScreen()
+            },
+        )
         if (!isPromoted) {
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.save_as_channel_action)) },

@@ -57,6 +57,7 @@
     <string name="thread_overflow_archive">Archive</string>
     <string name="thread_overflow_channel_info">Channel info</string>
     <string name="thread_overflow_install_memory_plugin">Install memory plugin</string>
+    <string name="thread_overflow_show_literal_screen">Show the literal screen</string>
     <string name="rename_dialog_title">Rename</string>
     <string name="rename_dialog_field_label">Name</string>
     <string name="rename_dialog_save">Save</string>

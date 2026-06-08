@@ -72,6 +72,7 @@ fun ThreadScreen(
     modifier: Modifier = Modifier,
     onTitleClick: () -> Unit = {},
     onOverflowEvent: (ThreadEvent) -> Unit = {},
+    onShowLiteralScreen: () -> Unit = {},
     onModelSelected: (Model) -> Unit = {},
     onEffortSelected: (Effort) -> Unit = {},
     onYoloToggled: (Boolean) -> Unit = {},
@@ -92,6 +93,7 @@ fun ThreadScreen(
                 overflowExpanded = overflowExpanded,
                 onOverflowDismiss = { overflowExpanded = false },
                 onOverflowEvent = onOverflowEvent,
+                onShowLiteralScreen = onShowLiteralScreen,
                 isPromoted = state.isPromoted,
             )
         },

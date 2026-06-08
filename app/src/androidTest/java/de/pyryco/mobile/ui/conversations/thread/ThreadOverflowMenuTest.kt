@@ -41,10 +41,14 @@ class ThreadOverflowMenuTest {
                     isPromoted = true,
                     onDismiss = {},
                     onEvent = {},
+                    onShowLiteralScreen = {},
                 )
             }
         }
 
+        // Always available regardless of promotion (AC#1) — asserted here (promoted) and in the
+        // discussion test below (unpromoted).
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_show_literal_screen)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_new_session)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_rename)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).assertIsDisplayed()
@@ -63,10 +67,13 @@ class ThreadOverflowMenuTest {
                     isPromoted = false,
                     onDismiss = {},
                     onEvent = {},
+                    onShowLiteralScreen = {},
                 )
             }
         }
 
+        // Still present when unpromoted — proves the action is never gated on promotion (AC#1).
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_show_literal_screen)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.save_as_channel_action)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_new_session)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_rename)).assertIsDisplayed()
@@ -74,6 +81,28 @@ class ThreadOverflowMenuTest {
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_archive)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_channel_info)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_install_memory_plugin)).assertDoesNotExist()
+    }
+
+    @Test
+    fun tapping_show_literal_screen_dismisses_then_invokes_callback() {
+        val log = mutableListOf<String>()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadOverflowMenu(
+                    expanded = true,
+                    isPromoted = true,
+                    onDismiss = { log.add("dismiss") },
+                    onEvent = { log.add("event:$it") },
+                    onShowLiteralScreen = { log.add("show") },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_show_literal_screen)).performClick()
+
+        // dismiss-then-navigate, and no ThreadEvent dispatched: the action bypasses onEvent, so an
+        // "event:…" entry would mean it leaked through the VM path.
+        assertEquals(listOf("dismiss", "show"), log)
     }
 
     @Test
@@ -86,6 +115,7 @@ class ThreadOverflowMenuTest {
                     isPromoted = true,
                     onDismiss = { log.add("dismiss") },
                     onEvent = { log.add("event:$it") },
+                    onShowLiteralScreen = {},
                 )
             }
         }
@@ -105,6 +135,7 @@ class ThreadOverflowMenuTest {
                     isPromoted = true,
                     onDismiss = { log.add("dismiss") },
                     onEvent = { log.add("event:$it") },
+                    onShowLiteralScreen = {},
                 )
             }
         }
@@ -124,6 +155,7 @@ class ThreadOverflowMenuTest {
                     isPromoted = true,
                     onDismiss = { log.add("dismiss") },
                     onEvent = { log.add("event:$it") },
+                    onShowLiteralScreen = {},
                 )
             }
         }
@@ -143,6 +175,7 @@ class ThreadOverflowMenuTest {
                     isPromoted = true,
                     onDismiss = { log.add("dismiss") },
                     onEvent = { log.add("event:$it") },
+                    onShowLiteralScreen = {},
                 )
             }
         }
@@ -162,6 +195,7 @@ class ThreadOverflowMenuTest {
                     isPromoted = true,
                     onDismiss = { log.add("dismiss") },
                     onEvent = { log.add("event:$it") },
+                    onShowLiteralScreen = {},
                 )
             }
         }
@@ -181,6 +215,7 @@ class ThreadOverflowMenuTest {
                     isPromoted = false,
                     onDismiss = { log.add("dismiss") },
                     onEvent = { log.add("event:$it") },
+                    onShowLiteralScreen = {},
                 )
             }
         }
@@ -202,6 +237,7 @@ class ThreadOverflowMenuTest {
                         isPromoted = true,
                         onDismiss = { log.add("dismiss") },
                         onEvent = { log.add("event:$it") },
+                        onShowLiteralScreen = {},
                     )
                 }
             }
