@@ -622,6 +622,58 @@ already-authenticated Noise channel, and **nothing in the new arm or the drop br
 payload** (the text / tool-summary fields may carry sensitive session content). See
 [Live-session events § Trust boundary](live-session-events.md#trust-boundary--no-payload-logging).
 
+## `observeStall(conversationId)` — the thread-observable stall state (#395)
+
+Whether a conversation's remote claude has **stopped making forward progress** (PTY quiet while not
+idle, no JSONL progress — typically a screen-parser break). [#395](../codebase/395.md) decodes the
+capability-gated v2 `stall` control envelope into a per-conversation `Boolean` the thread layer observes
+to react to a stall (the visible reaction is sibling **#396**). The onset/inferred-clearing model lives
+in [Stall state](stall-state.md); this section records only how it attaches to the repository — it rides
+the **same single inbound collector** as everything else, with **no new class, no new file, no second
+subscription**.
+
+- **A fourth connection-scoped projection.** `private val stalledConversations =
+  MutableStateFlow<Set<String>>(emptySet())` — membership = stalled. Written **only** from the one
+  `init` inbound collector, so onset and clearing never race (single writer); `MutableStateFlow.update {}`
+  matches the sibling projections' posture. Empty per connection (#351) → a stall never survives a
+  reconnect.
+- **Two demux hooks, both inside the existing `interactive` gate (symmetric with #385).**
+  - **Onset** — a **new** `TYPE_STALL` arm: `decodeStall(envelope)?.let { stalledConversations.update {
+    s -> s + it } }`. Re-receipt for an already-stalled conversation is an idempotent `Set` add.
+  - **Clearing** — folded into the **existing** live-session arm: any successfully decoded
+    `LiveSessionEvent` is forward progress, so `stalledConversations.update { it - event.conversationId }`
+    runs alongside the unchanged `mutableLiveSessionEvents.tryEmit(event)`. **No second decode** — the
+    `conversationId` is already on the decoded event; a removal of an absent id is a no-op. This clears
+    on all five event types (incl. `turn_state: idle` and `turn_end`). A *malformed* or
+    *unrecognized-state* live envelope decodes to `null` and so does **not** clear (we don't attribute
+    forward progress we couldn't parse).
+- **The method is a pure cold projection** (1:1 with `observeLastMessage`), issuing no request:
+
+  ```kotlin
+  override fun observeStall(conversationId: String): Flow<Boolean> =
+      stalledConversations.map { conversationId in it }.distinctUntilChanged()
+  ```
+
+  `distinctUntilChanged()` means a stall change to **another** conversation does not re-emit this flow;
+  a `StateFlow` always has a current value, so every collector (including a `flatMapLatest`
+  re-subscription through the facade) gets the current state (`false` until a stall lands) on
+  subscription, fanning out from the one inbound consumer.
+- **`decodeStall(envelope): String?`** mirrors `decodeLiveSessionEvent`: one `try { decode →
+  conversationId } catch (IllegalArgumentException) { null }` (`SerializationException ⊂` it), so a
+  malformed `stall` (missing/wrong-typed `conversation_id`) drops the one envelope while the lone
+  collector survives (AC #3). The `StallPayloadDto` (`{conversation_id}` only, **no `toEvent()` mapper**
+  — a stall is *state*, not a streaming event) lives in `data/network/InteractivePayloads.kt`.
+- **On the interface, not the concrete repo — the deliberate inverse of `liveSessionEvents`.** Stall is
+  current-value state the thread needs through the [`StableConversationRepository`](stable-conversation-repository.md)
+  facade (AC #4), so `observeStall` is a **defaulted** `ConversationRepository` method (`flowOf(false)`),
+  with the facade and this repo overriding it. The default absorbs the Fake/test-double cascade (no ≥5
+  split), and there is no consumer cascade. Contrast `liveSessionEvents`: `replay=0` events the thread
+  does not need as current-value state → concrete-only. See [[post-352-connection-scoped-repo-behind-facade]].
+
+`security-sensitive`, but the narrowest of the interactive boundaries: the `stall` payload carries no
+free-form text, the data layer surfaces only a `Boolean`, and `decodeStall` logs nothing on the drop
+path. See [Stall state § Security](stall-state.md#security).
+
 ## `requestScreenSnapshot(conversationId)` — the parser-independent screen-snapshot read (#375)
 
 Requests a one-shot text picture of the current claude screen and returns its rendered `text` — the
@@ -684,11 +736,15 @@ this implementation's surface. All three read paths are now **cold flows that de
 
 ## State & concurrency model
 
-- **Three `StateFlow` projections — `projection` (the conversation list, #312), `lastMessages` (#329's
-  per-conversation most-recent `Message`), and `messagesByConversation` (#313's per-conversation ordered
-  thread) — fed by one inbound collector** launched on the injected connection `scope`. No second
-  collector or scope is added per slice; a single `message` envelope can update **two** projections
-  (`lastMessages` + `messagesByConversation`). The scope (and thus the collector) is cancelled by its
+- **Four `StateFlow` projections — `projection` (the conversation list, #312), `lastMessages` (#329's
+  per-conversation most-recent `Message`), `messagesByConversation` (#313's per-conversation ordered
+  thread), and `stalledConversations` (#395's per-conversation stall `Set<String>`) — fed by one inbound
+  collector** launched on the injected connection `scope`. No second collector or scope is added per
+  slice; a single `message` envelope can update **two** projections (`lastMessages` +
+  `messagesByConversation`), and a single decoded `LiveSessionEvent` both `tryEmit`s on `liveSessionEvents`
+  and clears `stalledConversations` for its conversation (#395). `stalledConversations` is **single-writer**
+  on this collector (onset on a `stall` arm, clearing on the live-session arm — never from a caller
+  coroutine), so onset and clearing cannot race. The scope (and thus the collector) is cancelled by its
   owner — the [#351 coordinator](relay-repository-coordinator.md) — when the connection ends; the pump completing `inbound` on teardown also ends the
   collector naturally. All projections are in-memory and connection-scoped — lost on process death and
   re-derived from the live stream (+ a re-`backfill_since`) on reconnect.
@@ -741,6 +797,9 @@ this implementation's surface. All three read paths are now **cold flows that de
 | `promote` — `pump.send` returns `false` (not `Open`, #348) | `IllegalStateException` from `sendAndAwaitReply`'s `check`; no request awaited, no projection mutated |
 | `promote` — malformed `conversation_updated` reply (#348) | the #318 decode boundary's `SerializationException` / `IllegalArgumentException`, propagated to the caller; decode precedes `upsertConversation`, so **no projection mutated** (no partial promote) |
 | `requestScreenSnapshot` — server `error` `conversation.not_found` / any other / not-`Open` send / malformed `screen_snapshot` reply (#375) | `IllegalArgumentException` / `RelayErrorException` / `IllegalStateException` respectively via the shared `mapError` + `sendAndAwaitReply`'s `check`; a malformed reply throws the #374 `SerializationException` (⊂ `IllegalArgumentException`) **caller-side** after `sendAndAwaitReply` returns. A pure read — **nothing mutated** on any path; nothing logged |
+| Malformed `stall` payload (missing / wrong-typed `conversation_id`, #395) | `decodeStall` catches `IllegalArgumentException` (⊃ `SerializationException`) → `null` → the one envelope dropped, **single inbound collector survives** (AC #3); `stalledConversations` unchanged; nothing logged. A later valid `stall` still flips state |
+| `stall` on a non-`interactive` connection (#395) | dropped **before** decode by the `TYPE_STALL` capability gate — never surfaces (fail-closed, defence in depth on the server-side fan-out gate) |
+| Malformed / unrecognized-`state` live-session envelope while a stall is live (#395) | `decodeLiveSessionEvent` → `null` → neither surfaces on `liveSessionEvents` nor **clears** the stall (no trustworthy `conversationId` / unknown forward-progress semantics) — the stall persists until a recognized forward-progress event arrives. Unchanged #385 decode behaviour |
 | Stubbed method called | `UnsupportedOperationException` naming the owning follow-up |
 
 **Why catch-and-drop:** the `ConversationRepository` flow type has no error channel and the Fake never
@@ -854,7 +913,11 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   `register_push_token` request encoder + the last/defaulted `deviceName` ctor param), [#365](../codebase/365.md)
   (`registerPushToken`'s **first live caller**, **landed** — the coordinator's connect-time hook re-sends it
   once per connection and threads the live `deviceName`, closing #359's `device_name: ""` defer; still
-  dormant until Firebase #361 stores a token).
+  dormant until Firebase #361 stores a token), [#395](../codebase/395.md) (`observeStall`, **landed** —
+  the fourth projection `stalledConversations`; a `TYPE_STALL` onset arm + a clearing hook folded into
+  #385's live-session arm; **on the interface with a `flowOf(false)` default** so it reaches the thread
+  through the facade, the deliberate inverse of #385's concrete-only `liveSessionEvents` — see
+  [Stall state](stall-state.md)).
 - Connection wiring: [`RelayRepositoryCoordinator`](relay-repository-coordinator.md)
   ([#351](../codebase/351.md), **landed**) — constructs this repository per live connection against the
   pump + a child scope, made `NoiseSessionPump : ManagedSessionPump : SessionPump`, and publishes the

@@ -195,10 +195,21 @@ turn-lifecycle state machine, rendering/sanitization, lossless delivery (consume
 `buffer()`/`stateIn`), and an `event_id` replay cursor (reconnect-replay #402) / the sixth `stall`
 type (#395) — both correctly excluded here.
 
+> **The sixth type — `stall` (#395) — landed as state, not a `LiveSessionEvent`.** It is still
+> correctly **not** one of these five streaming events (it is current-value state, not an event), so it
+> never lands on `liveSessionEvents`. But [#395](../codebase/395.md) is now a **consumer** of this seam
+> in the other direction: every successfully decoded `LiveSessionEvent` is forward progress, so it
+> **clears** any active [stall](stall-state.md) for `event.conversationId` (the `stall` wire is
+> onset-only, so recovery is inferred from these events — all five clear, incl. `turn_state: idle` and
+> `turn_end`). The clearing hook is folded into the same gated demux arm, reading `conversationId` off
+> the already-decoded event (no second decode). See [Stall state](stall-state.md).
+
 ## Related
 
 - [#385 implementation notes](../codebase/385.md) — files, line refs, lessons.
 - [Remote conversation repository](remote-conversation-repository.md) — hosts the flow + the demux.
+- [Stall state](stall-state.md) ([#395](../codebase/395.md)) — the **consumer in the other direction**:
+  a decoded `LiveSessionEvent` clears a stall for its conversation, folded into the same gated arm.
 - [Relay repository coordinator](relay-repository-coordinator.md) — wires the capability supplier.
 - [Noise session pump](noise-session-pump.md) — surfaces `PumpState.Open.capabilities` (#401), the
   gate source.
