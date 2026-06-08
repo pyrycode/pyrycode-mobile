@@ -22,6 +22,7 @@ import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RequestSnapshotPayloadDto
 import de.pyryco.mobile.data.network.ScreenSnapshotPayloadDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
+import de.pyryco.mobile.data.network.StallPayloadDto
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
 import de.pyryco.mobile.data.network.ToolUsePayloadDto
 import de.pyryco.mobile.data.network.TurnEndPayloadDto
@@ -140,6 +141,19 @@ class RemoteConversationRepository(
      * is complete-on-first-emission once backfill arrives and live messages append after.
      */
     private val messagesByConversation = MutableStateFlow<Map<String, List<Message>>>(emptyMap())
+
+    /**
+     * The set of conversation ids currently in a stall (#395) — membership = stalled. Written **only**
+     * from the single [init] inbound collector: a `stall` envelope adds its id (onset), and any
+     * successfully-decoded forward-progress [LiveSessionEvent] removes its conversation (clearing —
+     * the wire carries no clearing edge, so recovery is inferred from forward progress). Single writer
+     * on the one collector coroutine, so onset and clearing never race; the atomic
+     * [MutableStateFlow.update] matches the sibling projections' memory-visibility posture.
+     * [observeStall] fans out from it. Connection-scoped in-memory state — a fresh repository per
+     * connection (#351) starts empty, so a stall never survives a reconnect (it is re-derived from the
+     * live stream). A stall is a transient "right now" condition, not durable state.
+     */
+    private val stalledConversations = MutableStateFlow<Set<String>>(emptySet())
 
     private val requestId = AtomicLong(0)
 
@@ -271,7 +285,27 @@ class RemoteConversationRepository(
                 // non-blocking (DROP_OLDEST) so the shared inbound collector is never stalled.
                 // Drop silently: the payloads carry message/tool content — nothing here logs them.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    decodeLiveSessionEvent(envelope)?.let { mutableLiveSessionEvents.tryEmit(it) }
+                    decodeLiveSessionEvent(envelope)?.let { event ->
+                        // Forward progress ends any active stall for the conversation (#395, AC #2):
+                        // the quiet-while-not-idle condition no longer holds. A removal of an absent id
+                        // is a no-op, so clearing rides every live event harmlessly. Symmetric with the
+                        // onset arm below — both are inside the same `interactive` gate.
+                        stalledConversations.update { it - event.conversationId }
+                        mutableLiveSessionEvents.tryEmit(event)
+                    }
+                }
+            }
+            TYPE_STALL -> {
+                // Stall onset (#395). Same `interactive` gate as the live-session arm: a non-interactive
+                // phone never decodes a spurious `stall` from a buggy/hostile daemon that ignored the
+                // server-side fan-out gate (fail-closed, defence in depth). A malformed payload decodes
+                // to null and is dropped so the single inbound consumer survives (AC #3). The wire is
+                // onset-only ({conversation_id}, no clearing edge); re-receipt for an already-stalled
+                // conversation is an idempotent Set add. Drop silently — nothing here logs the payload.
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    decodeStall(envelope)?.let { conversationId ->
+                        stalledConversations.update { it + conversationId }
+                    }
                 }
             }
             // Any other type is a no-op here: single-row conversation deltas (#318 → #314) extend
@@ -303,6 +337,22 @@ class RemoteConversationRepository(
                 TYPE_TURN_END -> MobileJson.decodeFromJsonElement<TurnEndPayloadDto>(envelope.payload).toEvent()
                 else -> null
             }
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+
+    /**
+     * Decode one v2 `stall` envelope (#395) to its conversation id, or **null** when it cannot be
+     * read. Decodes the untrusted [Envelope.payload] through the single configured [MobileJson]; the
+     * whole body is one `try`/`catch (IllegalArgumentException)`
+     * ([kotlinx.serialization.SerializationException] ⊂ [IllegalArgumentException]), so a malformed
+     * payload — a missing or wrong-typed `conversation_id` (AC #3) — yields `null`, dropping the one
+     * envelope while the lone inbound collector survives. Mirrors [decodeLiveSessionEvent]'s drop
+     * idiom — **nothing here logs the payload** (uniform with every other `onInbound` arm).
+     */
+    private fun decodeStall(envelope: Envelope): String? =
+        try {
+            MobileJson.decodeFromJsonElement<StallPayloadDto>(envelope.payload).conversationId
         } catch (e: IllegalArgumentException) {
             null
         }
@@ -504,6 +554,18 @@ class RemoteConversationRepository(
      * and re-emits only on change; the one inbound consumer fans out to unlimited collectors.
      */
     override fun observeLastMessage(conversationId: String): Flow<Message?> = lastMessages.map { it[conversationId] }.distinctUntilChanged()
+
+    /**
+     * Whether [conversationId] is currently stalled (#395), a pure cold projection of the shared
+     * [stalledConversations] `StateFlow` (membership = stalled). Issues no request — rides the live
+     * interactive stream (onset on a `stall` envelope, clearing on the next forward-progress event).
+     * [distinctUntilChanged] means a stall change to **another** conversation does not re-emit this
+     * flow. A `StateFlow` always has a current value, so every collector (including a `flatMapLatest`
+     * re-subscription through the facade) receives the current state (`false` until a stall lands) on
+     * subscription; the one inbound consumer fans out to unlimited collectors.
+     */
+    override fun observeStall(conversationId: String): Flow<Boolean> =
+        stalledConversations.map { conversationId in it }.distinctUntilChanged()
 
     /**
      * Create an unpromoted discussion over v2 `create_conversation` (#347). Encodes the request
@@ -780,6 +842,12 @@ class RemoteConversationRepository(
 
         /** Structured-stream event: end of a turn `{…, turn_id, stop_reason}` (#385, #607). */
         const val TYPE_TURN_END = "turn_end"
+
+        /**
+         * Capability-gated control event: a remote-head stall `{conversation_id}` (#395, #638/#639) —
+         * onset-only, no clearing edge on the wire (recovery is inferred from forward progress).
+         */
+        const val TYPE_STALL = "stall"
 
         /** Correlated success reply (empty `{}`) to a request, matched on `in_reply_to` (#346). */
         const val TYPE_ACK = "ack"

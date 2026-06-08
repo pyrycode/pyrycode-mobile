@@ -215,6 +215,44 @@ class StableConversationRepositoryTest {
             assertTrue(runCatching { facade.archive("c1") }.exceptionOrNull() is UnsupportedOperationException)
         }
 
+    // ---- #395: observeStall delegates and tracks connection churn --------------------------------
+
+    @Test
+    fun observeStall_whileAbsent_emitsFalse() =
+        runTest {
+            val current = MutableStateFlow<ConversationRepository?>(null)
+            val facade = StableConversationRepository(current)
+
+            val stalls = mutableListOf<Boolean>()
+            backgroundScope.launch { facade.observeStall("c1").collect { stalls += it } }
+            runCurrent()
+
+            assertEquals(listOf(false), stalls)
+        }
+
+    @Test
+    fun observeStall_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            val stalls = mutableListOf<Boolean>()
+            backgroundScope.launch { facade.observeStall("c1").collect { stalls += it } }
+            runCurrent()
+            assertEquals(listOf(false), stalls)
+
+            repoA.pushStall(true)
+            runCurrent()
+            assertEquals(listOf(false, true), stalls)
+
+            // Switching to a fresh (not-stalled) connection drops the prior connection's stall.
+            current.value = repoB
+            runCurrent()
+            assertEquals(listOf(false, true, false), stalls)
+        }
+
     // ---- fakes / builders ------------------------------------------------------------------------
 
     /**
@@ -225,6 +263,7 @@ class StableConversationRepositoryTest {
      */
     private class RecordingConversationRepository : ConversationRepository {
         private val conversations = MutableStateFlow<List<Conversation>?>(null)
+        private val stalled = MutableStateFlow(false)
 
         val createDiscussionCalls = mutableListOf<String?>()
         val sendMessageCalls = mutableListOf<Pair<String, String>>()
@@ -238,11 +277,17 @@ class StableConversationRepositoryTest {
             conversations.value = value
         }
 
+        fun pushStall(value: Boolean) {
+            stalled.value = value
+        }
+
         override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = conversations.filterNotNull()
 
         override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = flowOf(emptyList())
 
         override fun observeLastMessage(conversationId: String): Flow<Message?> = flowOf(null)
+
+        override fun observeStall(conversationId: String): Flow<Boolean> = stalled
 
         override suspend fun createDiscussion(workspace: String?): Conversation {
             createDiscussionCalls += workspace

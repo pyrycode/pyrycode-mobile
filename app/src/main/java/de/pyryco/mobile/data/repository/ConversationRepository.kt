@@ -29,6 +29,19 @@ interface ConversationRepository {
      */
     fun observeLastMessage(conversationId: String): Flow<Message?>
 
+    /**
+     * Emits whether [conversationId] is currently stalled — its remote claude has
+     * stopped making forward progress (PTY quiet while not idle, no JSONL progress;
+     * typically a screen-parser break). `true` on stall onset, `false` once the wire
+     * signals recovery (the next forward-progress event). Cold flow; re-emits on every
+     * change. The thread layer observes this to react to a stall (#396).
+     *
+     * Default `flowOf(false)` — implementations without an interactive wire (the fake,
+     * inline test doubles) inherit "never stalled" and need no override, the same
+     * cascade-avoidance as [delete] / [requestScreenSnapshot] / [recentWorkspaces].
+     */
+    fun observeStall(conversationId: String): Flow<Boolean> = flowOf(false)
+
     suspend fun createDiscussion(workspace: String? = null): Conversation
 
     suspend fun promote(

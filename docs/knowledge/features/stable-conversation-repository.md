@@ -51,12 +51,13 @@ class StableConversationRepository(
 ) : ConversationRepository
 ```
 
-It overrides **all 15** interface members — the 4 stream-shaped reads (`observeConversations`,
-`observeMessages`, `observeLastMessage`, **and** `recentWorkspaces`) and the 11 suspend one-shots
-(`createDiscussion`, `promote`, `archive`, `unarchive`, `delete`, `rename`, `startNewSession`,
-`changeWorkspace`, `sendMessage`, `createWorkspaceFolder`, `requestScreenSnapshot`) — including the
-four that ship a default body on the interface (`recentWorkspaces`, `createWorkspaceFolder`, `delete`,
-`requestScreenSnapshot`; #375), so delegation is faithful and nothing silently falls back to a default.
+It overrides **all 16** interface members — the 5 stream-shaped reads (`observeConversations`,
+`observeMessages`, `observeLastMessage`, `observeStall` (#395), **and** `recentWorkspaces`) and the 11
+suspend one-shots (`createDiscussion`, `promote`, `archive`, `unarchive`, `delete`, `rename`,
+`startNewSession`, `changeWorkspace`, `sendMessage`, `createWorkspaceFolder`, `requestScreenSnapshot`) —
+including the five that ship a default body on the interface (`recentWorkspaces`, `createWorkspaceFolder`,
+`delete`, `requestScreenSnapshot`; #375, **and** `observeStall`; #395), so delegation is faithful and
+nothing silently falls back to a default.
 
 ## How it works
 
@@ -72,6 +73,10 @@ private fun <T> switchToLive(whenAbsent: T, select: (ConversationRepository) -> 
 
 - `observeConversations(filter)` / `observeMessages(id)` / `recentWorkspaces()` → `switchToLive(emptyList()) { … }`
 - `observeLastMessage(id)` → `switchToLive<Message?>(null) { … }`
+- `observeStall(id)` (#395) → `switchToLive(false) { … }` — no live connection reports "not stalled";
+  `flatMapLatest` cancel-old-on-switch means a stall from a prior connection never leaks across a
+  reconnect (each connection's remote repo starts with an empty stall set, #351). See
+  [Stall state](stall-state.md).
 
 When `currentRepository` emits a new value, `flatMapLatest` **cancels the previous inner flow** and
 subscribes the new one:
@@ -209,4 +214,7 @@ pass-through. The eight tests map to the ACs, the key one being
 - Bound by: **[#350](../codebase/350.md)** (the flag-gated Fake↔Remote binding swap — the
   `conversationRepositoryModule` selector binds this facade when `USE_RELAY_REPOSITORY` is on; landed
   with no ViewModel changes, since consumers already resolve the interface).
+- Delegated observable: [Stall state](stall-state.md) ([#395](../codebase/395.md)) — the `observeStall`
+  read this facade forwards with `whenAbsent = false`, the reachability path that lets the thread
+  ViewModel observe the live repo's stall state through this facade.
 - DI: [Dependency injection](dependency-injection.md).

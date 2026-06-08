@@ -63,6 +63,20 @@ internal data class TurnEndPayloadDto(
 )
 
 /**
+ * The `stall` control event (#395, pyrycode#638/#639): the remote claude has stopped making forward
+ * progress. The wire payload is `{conversation_id}` only — the peer of [TurnStatePayloadDto] minus
+ * `state` — and is **onset-only** (tui-driver's `stall_detected` has no clearing edge; recovery is
+ * inferred mobile-side from the next forward-progress event). No `toEvent()` mapper: a stall is
+ * *state*, not one of the five [LiveSessionEvent] streaming events, so it never lands on the live
+ * event stream. The required-`String` field is the fail-closed posture — a missing/wrong-typed
+ * `conversation_id` fails the structural decode and the one envelope is dropped (AC #3).
+ */
+@Serializable
+internal data class StallPayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+)
+
+/**
  * Map a decoded [TurnStatePayloadDto] to a [LiveSessionEvent.TurnState], or **null** when [state] is
  * not one of the three documented values (AC #3). Modeling `state` as a plain `String` in the DTO
  * (not a strict enum) keeps the unrecognized-value decision a *mapper* concern: an unknown `state`
