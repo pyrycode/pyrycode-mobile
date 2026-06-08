@@ -58,7 +58,7 @@ class NoiseSessionPump(
 
     private val mutableState = MutableStateFlow<PumpState>(PumpState.Handshaking)
 
-    /** Handshake-completion + lifecycle signal: `Handshaking → Open(connId) → Closed(cause)`. */
+    /** Handshake-completion + lifecycle signal: `Handshaking → Open(connId, capabilities) → Closed(cause)`. */
     override val state: StateFlow<PumpState> = mutableState.asStateFlow()
 
     private val inboundChannel = Channel<Envelope>(Channel.BUFFERED)
@@ -161,7 +161,7 @@ class NoiseSessionPump(
                 teardown(e)
                 return
             }
-        mutableState.value = PumpState.Open(connId)
+        mutableState.value = PumpState.Open(connId, session.negotiatedCapabilities)
         rebaseRekeyTimer() // arm the 1-hour re-key cadence at handshake completion (#304)
 
         // Steps 5–6: the single inbound collector decrypts each open-state noise_msg. Completes when
@@ -289,9 +289,14 @@ sealed interface PumpState {
     /** Initial / in-flight: `noise_init` sent, awaiting `noise_resp`. */
     data object Handshaking : PumpState
 
-    /** The handshake completed; the encrypted transport is live. Consumers observe this before sending. */
+    /**
+     * The handshake completed; the encrypted transport is live. Consumers observe this before sending.
+     * [capabilities] is the negotiated set surfaced from `hello_ack` (#401) — empty when the daemon
+     * granted none; a consumer checks membership (e.g. `CAPABILITY_INTERACTIVE in capabilities`).
+     */
     data class Open(
         val connId: String,
+        val capabilities: Set<String> = emptySet(),
     ) : PumpState
 
     /** Terminal. [cause] is `null` on a clean transport Down / [NoiseSessionPump.close], else the fault. */

@@ -76,6 +76,7 @@ class NoiseIkSession(
     private var sender: CipherState? = null
     private var receiver: CipherState? = null
     private var establishedConnId: String? = null
+    private var negotiatedCaps: Set<String>? = null
 
     /** The pinned server static (`rs`); the re-key continuity anchor. Public key — no wipe needed. */
     private val pinnedRemoteStatic: ByteArray = remoteStaticPublicKey.copyOf()
@@ -102,6 +103,15 @@ class NoiseIkSession(
     /** The established `conn_id`. Throws [IllegalStateException] until the handshake completes. */
     val connId: String
         get() = establishedConnId ?: throw IllegalStateException("conn_id is not available until the handshake completes")
+
+    /**
+     * The capability set the daemon granted in `hello_ack` (the intersection of what the phone
+     * advertised with what the daemon supports); empty when the daemon echoed none (#401). A
+     * membership set — `CAPABILITY_INTERACTIVE in negotiatedCapabilities` answers "is it granted?".
+     * Throws [IllegalStateException] until the handshake completes, mirroring [connId].
+     */
+    val negotiatedCapabilities: Set<String>
+        get() = negotiatedCaps ?: throw IllegalStateException("negotiated capabilities are not available until the handshake completes")
 
     /**
      * Builds the `noise_init` frame: the `hello` envelope (with the token) sealed as encrypted
@@ -139,14 +149,15 @@ class NoiseIkSession(
                     throw NoiseSessionException("malformed noise_resp", e)
                 }
             check(hs.action == HandshakeState.SPLIT) { "noise handshake did not complete" }
-            val connId = parseHelloAck(ackBuf, ackLen)
+            val ack = parseHelloAck(ackBuf, ackLen)
             val pair = hs.split() // initiator does NOT swap: sender = encrypt-out, receiver = decrypt-in
             ciphers = pair
             sender = pair.sender
             receiver = pair.receiver
-            establishedConnId = connId
+            establishedConnId = ack.connId
+            negotiatedCaps = ack.capabilities.toSet() // wire List → membership Set, dedup/normalise here
             state = State.ESTABLISHED
-            return connId
+            return ack.connId
         } catch (e: Throwable) {
             state = State.CLOSED
             throw e
@@ -304,7 +315,7 @@ class NoiseIkSession(
     private fun parseHelloAck(
         ackBuf: ByteArray,
         ackLen: Int,
-    ): String {
+    ): HelloAckPayload {
         val envelope =
             try {
                 MobileJson.decodeFromString<Envelope>(String(ackBuf, 0, ackLen, Charsets.UTF_8))
@@ -315,7 +326,7 @@ class NoiseIkSession(
             throw NoiseSessionException("malformed hello_ack")
         }
         return try {
-            MobileJson.decodeFromJsonElement<HelloAckPayload>(envelope.payload).connId
+            MobileJson.decodeFromJsonElement<HelloAckPayload>(envelope.payload)
         } catch (e: SerializationException) {
             throw NoiseSessionException("malformed hello_ack", e)
         }
