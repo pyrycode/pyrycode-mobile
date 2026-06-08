@@ -4,8 +4,9 @@ The **data/ViewModel half of the thinking indicator**: how the daemon's coarse `
 reaches the conversation thread and is reduced to a single presentation flag, `isThinking`, on
 [`ThreadViewModel`](thread-screen.md). Landed in [#406](../codebase/406.md) (split from #386), part of
 the Phase 2 structured-streaming exit-gate (pyrycode#596, ADR 025). The stateless indicator composable
-and its placement in the thread are the **sibling UI slice #407** — this slice adds **no UI** (all
-state is hoisted to the VM).
+and its placement in the thread are the **sibling UI slice [#407](../codebase/407.md)** (now shipped —
+see [Thinking indicator](thinking-indicator.md)) — this slice adds **no UI** (all state is hoisted to
+the VM).
 
 `responding` (assistant text growing) is already covered by the shipped streaming UI; this flag
 exposes **`thinking`** — the active, pre-text phase — versus not-thinking (`responding` / `idle` /
@@ -24,7 +25,7 @@ RelayRepositoryCoordinator.liveSessionEvents : Flow<LiveSessionEvent>   ◀─�
 ThreadViewModel.isThinking : StateFlow<Boolean>   ◀── #406 reduction (route by conversationId, latest-phase-wins)
         │  separate parameter beside `state`
         ▼
-ThreadScreen (#407 renders the indicator)   ◀── not built here
+ThreadScreen → ThinkingIndicator (#407 renders it at the foot of the list)
 ```
 
 Two non-trivial hops, both reusing an established precedent:
@@ -87,7 +88,9 @@ with a distinct source, and the stateless `ThreadScreen` already receives `conne
 **separate** parameter beside `state` (ThreadScreen.kt:70). Folding `isThinking` into the max-arity-5
 `state` `combine` would force a sub-combine restructure and touch its `initialValue`, putting AC #5
 ("existing tests compile and pass unchanged") at risk. The sibling flow is **zero-touch** to the
-combine. #407 will follow the same separate-parameter pattern for the indicator composable.
+combine. [#407](../codebase/407.md) followed the same separate-parameter pattern for the
+[indicator composable](thinking-indicator.md) — a defaulted hoisted `isThinking: Boolean` on
+`ThreadScreen`, collected at `MainActivity` beside `connectionState`.
 
 ## Lifecycle, errors, edge cases
 
@@ -102,8 +105,9 @@ combine. #407 will follow the same separate-parameter pattern for the indicator 
   `thinking` while the screen is backgrounded > 5 s and re-foregrounds before a fresh event,
   `isThinking` can momentarily read a stale `true` until the next event. This matches the transient
   "right-now" posture already accepted for the [stall flag](stall-state.md) (#395) and
-  `connectionState`. If #407 finds it visually jarring, an `idle`/`turn_end`-on-resubscribe reset is a
-  UI-slice follow-up, not data-layer work.
+  `connectionState`. [#407](../codebase/407.md) shipped the UI **without** handling it — deliberately,
+  since a reset would need either a data-layer change or local state in the (stateless) composable; an
+  `idle`/`turn_end`-on-resubscribe reset remains a deferred follow-up if it ever reads jarring.
 
 ## Wiring
 
@@ -132,8 +136,9 @@ inert — `isThinking` honestly holds `false` with no live daemon.
   the generic `liveSessionEvents` seam (§ Live-session event seam).
 - [Thread screen](thread-screen.md) — the `ThreadViewModel` host; `isThinking` joins `connectionState`
   as a sibling signal the stateless screen takes as a separate parameter.
-- Sibling UI slice: #407 — the stateless thinking-indicator composable + placement (consumes
-  `isThinking`).
+- Sibling UI slice (shipped): [Thinking indicator](thinking-indicator.md)
+  ([#407](../codebase/407.md)) — the stateless composable + its placement at the foot of the thread,
+  consuming `isThinking`.
 - Other consumers of the generic seam (unblocked): #387 (tool-use timeline), #337 (live assistant
   text).
 - Precedent: `connectionStatus` injected into [`SettingsViewModel`](settings-viewmodel.md)
