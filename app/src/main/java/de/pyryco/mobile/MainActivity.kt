@@ -388,6 +388,7 @@ private fun PyryNavHost(
         }
         composable(Routes.SETTINGS) {
             val vm = koinViewModel<SettingsViewModel>()
+            val connectionStatus by vm.connectionStatus.collectAsStateWithLifecycle()
             val themeMode by vm.themeMode.collectAsStateWithLifecycle()
             val useWallpaperColors by vm.useWallpaperColors.collectAsStateWithLifecycle()
             val archivedDiscussionCount by vm.archivedDiscussionCount.collectAsStateWithLifecycle()
@@ -398,6 +399,7 @@ private fun PyryNavHost(
             val defaultWorkspace by vm.defaultWorkspace.collectAsStateWithLifecycle()
             val workspacePickerVisible by vm.workspacePickerVisible.collectAsStateWithLifecycle()
             SettingsScreen(
+                connectionStatus = connectionStatus,
                 themeMode = themeMode,
                 useWallpaperColors = useWallpaperColors,
                 archivedDiscussionCount = archivedDiscussionCount,

@@ -3,9 +3,12 @@ package de.pyryco.mobile.ui.settings
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
+import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.PyrycodeLinkStatus
+import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.Effort
@@ -18,6 +21,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
@@ -60,7 +65,9 @@ class SettingsViewModelTest {
     private fun makeVm(
         prefs: AppPreferences,
         repo: ConversationRepository = stubRepo(),
-    ): SettingsViewModel = SettingsViewModel(prefs, repo)
+        connectionStatus: StateFlow<ConnectionStatus> =
+            MutableStateFlow(ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)),
+    ): SettingsViewModel = SettingsViewModel(prefs, repo, connectionStatus)
 
     @Test
     fun initialState_emitsSystem_whenNoStoredValue() =
@@ -568,6 +575,32 @@ class SettingsViewModelTest {
             advanceUntilIdle()
             assertEquals(false, vm.workspacePickerVisible.value)
             assertEquals(DEFAULT_SCRATCH_CWD, prefs.defaultWorkspace.first())
+        }
+
+    @Test
+    fun connectionStatus_reExposesInjectedCoordinatorValue() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val status = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
+            val vm = makeVm(prefs, connectionStatus = MutableStateFlow(status))
+            assertEquals(status, vm.connectionStatus.value)
+        }
+
+    @Test
+    fun connectionStatus_reflectsUpstreamReemission() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val upstream =
+                MutableStateFlow(
+                    ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected),
+                )
+            val vm = makeVm(prefs, connectionStatus = upstream)
+            val collector = launch { vm.connectionStatus.collect { } }
+            val updated = ConnectionStatus(RelayLinkStatus.DaemonAbsent, PyrycodeLinkStatus.Down)
+            upstream.value = updated
+            advanceUntilIdle()
+            assertEquals(updated, vm.connectionStatus.value)
+            collector.cancel()
         }
 
     private fun stubRepo(
