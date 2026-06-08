@@ -2,10 +2,18 @@
 
 The **Phase 4 reconnect-policy layer**: the loop that sits **on top of** the single-connection
 [relay WS transport](relay-ws-transport.md) and turns a series of single-use sockets into a continuously
-available connection. It re-dials on drop with capped-exponential backoff, maps live socket state onto
-the existing [`ConnectionState`](connection-state.md) surface, and is **the real
+available connection. It re-dials on drop with capped-exponential backoff and is **the real
 `ConnectionStateSource`** that the [`ConnectionBanner`](connection-banner.md) reflects — replacing the
 Phase-2 `FakeConnectionStateSource` in the Koin graph.
+
+> **Since [#391](../codebase/391.md): the source of truth is the relay-leg model, not
+> `ConnectionState`.** The supervisor's single hot state is now a `MutableStateFlow<RelayLinkStatus>`
+> (the [relay link status](relay-link-status.md) — the four `ConnectionState` cases **plus**
+> `DaemonAbsent`), exposed read-only as `val relayStatus: StateFlow<RelayLinkStatus>`. The legacy 4-case
+> [`ConnectionState`](connection-state.md) surface is **derived per-collector** from it, so every
+> existing consumer is untouched. The `#308 seam` Down arm now branches the relay's `4404 "no server"`
+> close into `DaemonAbsent` (relay reachable, no daemon registered) while every other code retries as
+> before. This doc describes the post-#391 state.
 
 Package: `de.pyryco.mobile.data.network` (`RelayConnectionSupervisor` + `RelayTransportFactory`),
 co-located with the [transport](relay-ws-transport.md) it supervises; it implements the
@@ -56,11 +64,20 @@ class RelayConnectionSupervisor(
 ) : ConnectionStateSource {
     fun connect()                                  // start the supervision loop (idempotent); driven by #302
     fun close()                                    // stop the loop, tear down the socket, go idle
-    override fun observe(): Flow<ConnectionState>  // the live state (a StateFlow under the hood)
+    override fun observe(): Flow<ConnectionState>  // legacy surface, DERIVED per-collector from relayStatus (#391)
     override suspend fun retry()                   // force an immediate reconnect; never throws
     val currentConnection: StateFlow<RelayTransport?>  // live instance (Up) or null — consumed by the #351 coordinator
+    val relayStatus: StateFlow<RelayLinkStatus>    // #391 relay-leg source of truth (5 cases incl. DaemonAbsent); #392 zips it
 }
 ```
+
+`relayStatus` and `currentConnection` are plain public `val`s on the **concrete** supervisor (not on
+the `ConnectionStateSource` interface, no Koin change) — [#392](https://github.com/pyrycode/pyrycode-mobile/issues/392)
+fetches `relayStatus` off the concrete type exactly like the coordinator fetches `currentConnection`.
+`observe()` is the **legacy single-signal** surface, derived from `relayStatus` via
+`state.map { it.toConnectionState() }` (`DaemonAbsent → Offline`); its return type is unchanged, so
+the [`ConnectionBanner`](connection-banner.md)/`ThreadViewModel` consume it untouched. See
+[relay link status](relay-link-status.md) for the leg model and the Strangler-Fig rationale.
 
 `RelayTransportFactory` is a `fun interface`: the supervisor reconnects by **constructing a fresh
 transport** (the #306 single-use contract), so it needs a per-dial builder it can fake. Production binds
@@ -69,9 +86,11 @@ a lambda closing over the shared `WebSocket.Factory` ([`defaultClient()`](relay-
 
 ## The state machine
 
-A single `MutableStateFlow<ConnectionState>` (initial value **`Connected`**) is the only state source;
-`observe()` exposes it via `asStateFlow()`. The supervision loop runs as one child `loopJob` of an
-app-singleton `CoroutineScope(SupervisorJob() + dispatcher)`.
+A single `MutableStateFlow<RelayLinkStatus>` (initial value **`Connected`**) is the only state source
+(since [#391](../codebase/391.md); was `ConnectionState` before). `relayStatus` exposes it via
+`asStateFlow()`; the legacy `observe()` derives the 4-case `ConnectionState` from it per-collector. The
+supervision loop runs as one child `loopJob` of an app-singleton
+`CoroutineScope(SupervisorJob() + dispatcher)`.
 
 ```
 load PairedServer
@@ -85,23 +104,29 @@ while active:
   collect transport.events until it completes (terminal Down):
       Up   → state = Connected; currentConnection = transport
              launch stability timer (delay 60 s → stableReached = true)
-      Down → no-op (recorded; collect completes next — single terminal Down)
+      Down → daemonAbsent = (event.code == 4404)   // #308 seam: read-only, never logged; else false
   finally: cancel stability timer (before reading the flag); currentConnection = null; transport.close()
   if (sawUp && stableReached) attempt = 0     // ≥60 s stable → reset escalation
   attempt += 1
-  backoff(attempt)                            // Reconnecting countdown OR Offline; collapsible by retry()
+  backoff(attempt, daemonAbsent)              // DaemonAbsent | Reconnecting countdown | Offline; collapsible by retry()
 ```
 
-**`ConnectionState` mapping** (the 4 cases, no schema change):
+`daemonAbsent` is a per-dial-iteration `var` (same closure-capture pattern as `sawUp`), set from the
+relay's WS close code in the `#308 seam` Down arm and threaded into `backoff()`.
 
-| State | When | Banner |
-|---|---|---|
-| `Connecting` | a dial is in flight | `"Connecting…"` |
-| `Connected` | transport `Up` (**socket-open** — see § Cross-sibling seams A) | hidden |
-| `Reconnecting(secondsRemaining)` | counting down a **sub-cap** backoff interval (per-second) | `"Reconnecting in Ns"` |
-| `Offline` | backoff escalated to the **30 s cap** (sustained unavailability) | `"Offline — tap to retry"` |
+**Relay-leg → banner mapping** (the leg has 5 cases; `observe()` derives the legacy `ConnectionState`):
 
-The AC-observed transition on an unexpected drop is
+| `RelayLinkStatus` | When | Derived `ConnectionState` | Banner |
+|---|---|---|---|
+| `Connecting` | a dial is in flight | `Connecting` | `"Connecting…"` |
+| `Connected` | transport `Up` (**socket-open** — see § Cross-sibling seams A) | `Connected` | hidden |
+| `Reconnecting(secondsRemaining)` | counting down a **sub-cap** backoff interval (per-second) | `Reconnecting(secondsRemaining)` | `"Reconnecting in Ns"` |
+| `DaemonAbsent` | a `4404` close: **relay reachable, no daemon registered** (steady, no countdown) | `Offline` | `"Offline — tap to retry"` (until #392's combined banner) |
+| `Offline` | backoff escalated to the **30 s cap** (sustained unavailability) | `Offline` | `"Offline — tap to retry"` |
+
+`DaemonAbsent` derives to `Offline` (nearest legacy meaning — the relay is up but unusable
+end-to-end); #392's combined banner gives it its own copy. The AC-observed transition on an
+unexpected (non-4404) drop is
 **`Connected → Reconnecting(secondsRemaining) → Connecting → Connected`** (`backoff()` emits
 `Reconnecting` before the loop re-sets `Connecting`, with no spurious intermediate state).
 
@@ -114,6 +139,15 @@ The wire-spec cadence (`protocol-mobile.md` § Reconnect, mirrored from the Go s
 - **±20 % jitter** `jitteredBackoffMs(attempt, random)` = `base * 1000 * (0.8 + random.nextDouble() * 0.4)`
   → `[0.8, 1.2)`. **Invariant: exactly one `random.nextDouble()` per interval**, so a seeded `Random`
   replays deterministically under the test clock (the test asserts *exact* ms, not a tolerance band).
+  `intervalMs` is computed **before** the `daemonAbsent` branch (below), so the daemon-absent path
+  consumes one `nextDouble()` like every other path — this alignment is what lets the test prove the
+  schedule is **reused, not replaced** (#391).
+- **Daemon-absent (`event.code == 4404`):** emit a **steady** `DaemonAbsent` (no per-second countdown —
+  it's a distinct state, not a counting-down reconnect), one collapsible wait on the **same**
+  attempt-based jittered interval, then re-dial — so the leg flips off the instant a daemon registers
+  and the next dial succeeds. `attempt` still escalates to the 30 s cap under sustained daemon-absence
+  (worst-case ~30 s to notice a freshly-registered daemon); `retry()` still collapses the wait, so
+  tap-to-retry works during `DaemonAbsent`. (#391)
 - **Sub-cap (`base < 30`):** a **per-second** `Reconnecting(ceil(remainingMs / 1000.0))` countdown, each
   second a collapsible wait; then loop back to `Connecting`.
 - **At the cap (`base == 30`):** emit `Offline` (no countdown), one collapsible wait, then **re-dial
@@ -184,10 +218,12 @@ untrusted-relay boundary:
 - **No `inbound`, no frame decode.** It collects only `events` (`Up`/`Down`); #306 owns the
   untrusted-content boundary and surfaces only typed `TransportEvent`s. `PairedServer` is passed
   **opaquely** to the factory — not inspected, parsed, or persisted here.
-- **No logging.** The only outward signal is the 4-case `ConnectionState` (no strings beyond
-  `secondsRemaining: Int`). `PairedServer`, `relayUrl`, the transport, and `Down`'s `code`/`reason`/
-  `cause` are **never** logged (mirrors #306's posture; code-review confirmed zero `Log`/`Timber`/
-  `println`).
+- **No logging.** The only outward signal is the typed [`RelayLinkStatus`](relay-link-status.md) leg
+  (and its derived 4-case `ConnectionState`) — no strings beyond `secondsRemaining: Int`, and
+  `DaemonAbsent` is a static `data object` carrying **no** relay-supplied text. `PairedServer`,
+  `relayUrl`, the transport, and `Down`'s `code`/`reason`/`cause` are **never** logged; the #391
+  `4404` branch reads `Down.code` **only to compare it** against the constant, never to log it (mirrors
+  #306's posture; code-review confirmed zero `Log`/`Timber`/`println`).
 - **Anti-reconnect-storm (security-positive).** Capped-exponential backoff + `retry()` **not** resetting
   `attempt` + escalation-only-after-genuine-stability (the ≥60 s reset) + a CONFLATED retry channel
   (`retry()`-spam collapses to one wakeup) together prevent a client-side reconnect storm /
@@ -196,14 +232,22 @@ untrusted-relay boundary:
   **one** shared client as-is (no `HttpLoggingInterceptor`, no TLS reconfig — a fresh client per reconnect
   would leak thread pools). The jitter RNG is `kotlin.random.Random` — explicitly a **non-security**
   (backoff-timing) use.
-- **`4401` auth-reject handling is out of scope** — named to [#308](https://github.com/pyrycode/pyrycode-mobile/issues/308). This layer treats every
-  `Down` uniformly as "backoff + redial"; a code comment marks the `Down.code` seam.
+- **Close-code branching at the `#308 seam`.** Since [#391](../codebase/391.md) the `Down` arm branches
+  the relay's `4404 "no server"` close into `DaemonAbsent` (relay reachable, no daemon) via a single
+  integer comparison — the one point where the untrusted relay-controlled code crosses into trusted
+  state; `null` (dial failure / malformed data) and every other code cannot masquerade as it. **`4401`
+  auth-reject halt/re-pair remains out of scope** — the seam's eventual *other* branch, named to
+  [#308](https://github.com/pyrycode/pyrycode-mobile/issues/308); every non-`4404` code still retries
+  uniformly.
 
 ## Edge cases & limitations
 
 - **Benign-unpaired** — no stored `PairedServer` → no dial, stays `Connected` (banner hidden), and a
   tap-to-retry re-checks and stays idle. Never regresses into a spurious `Offline`/error.
 - **`Offline` is not terminal** — the loop keeps redialing every ~30 s at the cap.
+- **`DaemonAbsent` is not terminal either** (#391) — the relay is reachable but no daemon is registered;
+  the loop keeps redialling on the same schedule, so the leg flips off the moment a daemon registers.
+  It derives to the legacy `Offline` banner until #392's combined banner gives it its own copy.
 - **Process death mid-loop** leaves nothing partial — no durable state (the #306 non-resumable contract);
   on relaunch, #302 drives a fresh `connect()`.
 - **`Connected` is socket-level, not E2E** — until a future ticket gates it on #309 (decision A).
@@ -226,10 +270,22 @@ deterministic via a **seeded `Random(SEED)`**; `intervalsFor(vararg attempts)` r
 Coverage: single-drop per-second countdown + recover on a fresh transport; backoff bases 1/2/4/8/16
 (jitter band); `Offline` at the cap + continued retry; `retry()` collapse + no-throw; ≥60 s stability
 reset vs <60 s escalation; benign-unpaired (no dial, tap-to-retry stays idle); `close()` teardown.
+**#391 added** (`relayStatus.value` read helper alongside the `observe().first()` legacy helper):
+`4404 → DaemonAbsent` distinct from `Offline` (and the legacy view → `Offline`); `DaemonAbsent` keeps
+redialling + flips to `Connected` when a daemon registers; repeated `4404` stays `DaemonAbsent` on the
+**unchanged** base-2 jitter band; non-`4404` (`1006`/`4401`/`1000`) → `Reconnecting`, never
+`DaemonAbsent`; `null` dial failure → `Reconnecting`→`Offline`, never `DaemonAbsent`; a direct
+`toConnectionState()` map test. The six pre-existing tests (reading the derived `observe()`) are the
+legacy-derivation regression guard.
 
 ## Related
 
-- Ticket notes: [`../codebase/307.md`](../codebase/307.md) — files/line refs, patterns, lessons.
+- Ticket notes: [`../codebase/307.md`](../codebase/307.md) (original supervisor) ·
+  [`../codebase/391.md`](../codebase/391.md) (relay-leg `RelayLinkStatus` + the `4404` → `DaemonAbsent`
+  branch) — files/line refs, patterns, lessons.
+- Relay-leg model: [Relay link status](relay-link-status.md) ([#391](../codebase/391.md)) — the
+  `RelayLinkStatus` source of truth this supervisor produces (`relayStatus`) and derives
+  `ConnectionState` from.
 - Spec: `docs/specs/architecture/307-relay-reconnect-supervisor-connectionstatesource.md` (§ Design,
   § State + concurrency model, § Cross-sibling decisions A/B, § Security review — Verdict PASS).
 - Sits on: [Relay WebSocket transport](relay-ws-transport.md) ([#306](../codebase/306.md)) — drives
@@ -243,7 +299,10 @@ reset vs <60 s escalation; benign-unpaired (no dial, tap-to-retry stays idle); `
   **landed** — the consumer of `currentConnection`: starts a #309 pump + builds a remote repository per
   live connection), **[#302](../codebase/302.md)** ([lifecycle connection driver](lifecycle-connection-driver.md),
   **landed** — drives `connect()`/`close()` across foreground/background edges via the new
-  `RelayConnectionController` seam), **#308** (relay auth-gate — will consume `Down.code == 4401`), **#278**
+  `RelayConnectionController` seam), **#308** (relay auth-gate — the seam's *other* branch, will consume
+  `Down.code == 4401`; #391 already branched `4404`), **[#391](../codebase/391.md)** (relay-leg
+  `RelayLinkStatus` + the `4404` → `DaemonAbsent` branch — **landed**), **#392** (pyrycode-leg readiness +
+  the combined `{relay, pyrycode}` model that zips `relayStatus`, `blockedBy #391`), **#278**
   (`RemoteConversationRepository`).
 - Engine: [ADR 0005 — OkHttp WebSocket engine](../decisions/0005-okhttp-websocket-engine.md). Aligns with
   pyrycode-side ADR 024 (relay untrusted; E2E auth is Noise).
