@@ -3,6 +3,7 @@ package de.pyryco.mobile.data.network
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.RelayLinkStatus
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -16,6 +17,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -302,6 +304,164 @@ class RelayConnectionSupervisorTest {
 
             supervisor.close() // idempotent
         }
+
+    // ---- #391 AC 2: a 4404 close maps to DaemonAbsent, distinct from Offline ----------------------
+
+    @Test
+    fun daemonAbsentClose_4404_mapsToDaemonAbsentDistinctFromOffline() =
+        runTest {
+            val (factory, supervisor) = newPairedSupervisor()
+
+            supervisor.connect()
+            runCurrent()
+            factory.created[0].emitUp()
+            runCurrent()
+            assertEquals(RelayLinkStatus.Connected, supervisor.relayStatus.value)
+
+            factory.created[0].emitDown(code = 4404)
+            runCurrent()
+
+            val status = supervisor.relayStatus.value
+            assertEquals(RelayLinkStatus.DaemonAbsent, status)
+            assertTrue("DaemonAbsent must not be a Reconnecting countdown", status !is RelayLinkStatus.Reconnecting)
+            assertNotEquals(RelayLinkStatus.Offline, status)
+            // Legacy single-signal view derives DaemonAbsent to the nearest case, Offline.
+            assertEquals(ConnectionState.Offline, supervisor.state())
+
+            supervisor.close()
+        }
+
+    // ---- #391 AC 2: DaemonAbsent keeps redialling and flips off when a daemon registers -----------
+
+    @Test
+    fun daemonAbsent_keepsRedialling_andFlipsOffWhenDaemonRegisters() =
+        runTest {
+            val (factory, supervisor) = newPairedSupervisor()
+
+            supervisor.connect()
+            runCurrent()
+            factory.created[0].emitUp()
+            runCurrent()
+            factory.created[0].emitDown(code = 4404)
+            runCurrent()
+            assertEquals(RelayLinkStatus.DaemonAbsent, supervisor.relayStatus.value)
+
+            val dialsBeforeRedial = factory.created.size
+            advanceUntilIdle() // the DaemonAbsent backoff wait elapses -> a fresh dial
+            assertEquals(RelayLinkStatus.Connecting, supervisor.relayStatus.value)
+            assertEquals(dialsBeforeRedial + 1, factory.created.size)
+
+            // A daemon is now registered: Up on the fresh transport -> Connected (the leg flips off).
+            factory.created[1].emitUp()
+            runCurrent()
+            assertEquals(RelayLinkStatus.Connected, supervisor.relayStatus.value)
+
+            supervisor.close()
+        }
+
+    // ---- #391 AC 2: repeated 4404 stays DaemonAbsent on the unchanged escalating schedule ---------
+
+    @Test
+    fun repeated4404_staysDaemonAbsent_onTheExistingBackoffSchedule() =
+        runTest {
+            val (factory, supervisor) = newPairedSupervisor()
+            // The supervisor consumes one nextDouble() per backoff regardless of DaemonAbsent, so a
+            // base-1 then base-2 replay matches the existing escalation (no intervening stability reset).
+            val intervals = intervalsFor(1, 2)
+
+            supervisor.connect()
+            runCurrent()
+            factory.created[0].emitUp()
+            runCurrent()
+
+            // First 4404 (attempt 1) -> DaemonAbsent on the base-1 wait.
+            factory.created[0].emitDown(code = 4404)
+            runCurrent()
+            assertEquals(RelayLinkStatus.DaemonAbsent, supervisor.relayStatus.value)
+            advanceUntilIdle() // base-1 wait elapses -> re-dial (no Up -> escalation continues)
+
+            // Second 4404 (attempt 2) -> still DaemonAbsent, now on the base-2 wait.
+            factory.created[1].emitDown(code = 4404)
+            runCurrent()
+            assertEquals(RelayLinkStatus.DaemonAbsent, supervisor.relayStatus.value)
+
+            // Prove the wait is the base-2 ±20% jittered interval, i.e. the existing schedule is reused.
+            val secondInterval = intervals[1]
+            assertTrue("expected base-2 interval, was $secondInterval", secondInterval >= 1600L && secondInterval < 2400L)
+            val dialsBeforeRedial = factory.created.size
+            advanceTimeBy(secondInterval - 1)
+            runCurrent()
+            assertEquals(RelayLinkStatus.DaemonAbsent, supervisor.relayStatus.value)
+            assertEquals(dialsBeforeRedial, factory.created.size) // not yet re-dialled
+            advanceTimeBy(1)
+            runCurrent()
+            assertEquals(RelayLinkStatus.Connecting, supervisor.relayStatus.value)
+            assertEquals(dialsBeforeRedial + 1, factory.created.size) // re-dialled at the interval
+
+            supervisor.close()
+        }
+
+    // ---- #391 AC 3: a non-4404 close drives the existing reconnect path, never DaemonAbsent -------
+
+    @Test
+    fun nonDaemonClose_followsExistingReconnectPath_neverDaemonAbsent() =
+        runTest {
+            for (code in listOf(1006, 4401, 1000)) {
+                val (factory, supervisor) = newPairedSupervisor()
+
+                supervisor.connect()
+                runCurrent()
+                factory.created[0].emitUp()
+                runCurrent()
+                factory.created[0].emitDown(code = code)
+                runCurrent()
+
+                assertTrue("code $code should reconnect", supervisor.relayStatus.value is RelayLinkStatus.Reconnecting)
+                assertNotEquals("code $code must not be DaemonAbsent", RelayLinkStatus.DaemonAbsent, supervisor.relayStatus.value)
+                // Legacy view: Reconnecting maps identity, so existing consumers are unchanged.
+                assertTrue(supervisor.state() is ConnectionState.Reconnecting)
+
+                supervisor.close()
+            }
+        }
+
+    // ---- #391 AC 4: a clean dial failure (null code) follows the unreachable path, never DaemonAbsent
+
+    @Test
+    fun cleanDialFailure_nullCode_followsUnreachablePath_neverDaemonAbsent() =
+        runTest {
+            val (factory, supervisor) = newPairedSupervisor()
+
+            supervisor.connect()
+            runCurrent()
+            // Sub-cap: a null-code drop reconnects, never DaemonAbsent.
+            factory.created[0].emitDown(code = null)
+            runCurrent()
+            assertTrue(supervisor.relayStatus.value is RelayLinkStatus.Reconnecting)
+            assertNotEquals(RelayLinkStatus.DaemonAbsent, supervisor.relayStatus.value)
+
+            // Escalate to the cap -> Offline, still never DaemonAbsent.
+            repeat(5) { i ->
+                advanceUntilIdle() // backoff elapses -> re-dial
+                factory.created[i + 1].emitDown(code = null)
+                runCurrent()
+                assertNotEquals(RelayLinkStatus.DaemonAbsent, supervisor.relayStatus.value)
+            }
+            assertEquals(RelayLinkStatus.Offline, supervisor.relayStatus.value)
+
+            supervisor.close()
+        }
+
+    // ---- #391: toConnectionState() preserves the four legacy cases; DaemonAbsent -> Offline -------
+
+    @Test
+    fun toConnectionState_mapsLegacyCasesIdentityAndDaemonAbsentToOffline() {
+        assertEquals(ConnectionState.Connected, RelayLinkStatus.Connected.toConnectionState())
+        assertEquals(ConnectionState.Connecting, RelayLinkStatus.Connecting.toConnectionState())
+        assertEquals(ConnectionState.Reconnecting(7), RelayLinkStatus.Reconnecting(7).toConnectionState())
+        assertEquals(ConnectionState.Offline, RelayLinkStatus.Offline.toConnectionState())
+        assertEquals(ConnectionState.Offline, RelayLinkStatus.DaemonAbsent.toConnectionState())
+    }
 
     // ---- helpers ---------------------------------------------------------------------------------
 

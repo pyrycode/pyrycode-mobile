@@ -94,6 +94,10 @@ The real source is [`RelayConnectionSupervisor`](relay-reconnect-supervisor.md) 
 
 No other call site changed; `ThreadViewModel` consumes the unchanged interface. The interface itself did **not** change (no `StateFlow` leak, no new methods) — exactly the stability the Phase-2 doc promised.
 
+## Now derived from the relay leg (landed in [#391](../codebase/391.md))
+
+`ConnectionState` is no longer the supervisor's source of truth — it's **derived**. [#391](../codebase/391.md) introduced the relay-leg model [`RelayLinkStatus`](relay-link-status.md) (these four cases **plus** `DaemonAbsent`, for the relay's `4404 "no server"` close) as the [`RelayConnectionSupervisor`](relay-reconnect-supervisor.md)'s single hot state, and made `observe()` derive `ConnectionState` from it per-collector via `state.map { it.toConnectionState() }` (`DaemonAbsent → Offline`, the nearest legacy banner meaning). This `ConnectionState` model and the `ConnectionStateSource` interface are **unchanged** — the four cases, the product copy, and every consumer (the [`ConnectionBanner`](./connection-banner.md)'s exhaustive `when`, `ThreadViewModel`) stay exactly as before. It's a Strangler-Fig step: a richer leg model alongside the legacy single signal, the legacy one derived, until #392's combined `{relay, pyrycode}` model becomes the real banner source. See [Relay link status](relay-link-status.md) for the rationale and why `DaemonAbsent` was **not** added as a fifth `ConnectionState` case (it would have broken the banner's exhaustive `when` at compile time).
+
 ## Related
 
 - Ticket notes: [`../codebase/196.md`](../codebase/196.md) (model + source), [`../codebase/200.md`](../codebase/200.md) (banner UI consumer)
@@ -102,6 +106,7 @@ No other call site changed; `ThreadViewModel` consumes the unchanged interface. 
 - Downstream:
   - [`ConnectionBanner`](./connection-banner.md) (#200, landed) — pure-UI consumer that renders this model with the four product copy strings.
   - Follow-up wiring slice (split from #197, landed) — places the banner inside `ThreadScreen`, injects `ConnectionStateSource` into `ThreadViewModel`, and routes `observe()` / `retry()` through.
-  - [Relay reconnect supervisor](relay-reconnect-supervisor.md) ([#307](../codebase/307.md), landed) — the **real** `ConnectionStateSource` over the [#306](relay-ws-transport.md) WS transport; swapped the Koin binding away from the fake and drives the four states from live socket events + backoff.
+  - [Relay reconnect supervisor](relay-reconnect-supervisor.md) ([#307](../codebase/307.md), landed) — the **real** `ConnectionStateSource` over the [#306](relay-ws-transport.md) WS transport; swapped the Koin binding away from the fake and drives the four states from live socket events + backoff. Since [#391](../codebase/391.md) it derives this `ConnectionState` from the richer [relay link status](relay-link-status.md) leg model rather than holding it directly.
+  - [Relay link status](relay-link-status.md) ([#391](../codebase/391.md), landed) — the relay-leg model `ConnectionState` is now derived from (these four cases + `DaemonAbsent`); #392 zips it with the pyrycode leg into the combined banner source.
 - Sibling pattern: [`FakeConversationRepository`](conversation-repository.md) (`MutableStateFlow` + `state.map { … }` exposure shape, scaled down to one flow).
 - DI: [Dependency injection](dependency-injection.md).
