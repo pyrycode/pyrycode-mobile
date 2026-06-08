@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
+import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.Envelope
@@ -1464,6 +1465,251 @@ class RemoteConversationRepositoryTest {
             assertEquals("ok", second().getOrThrow())
         }
 
+    // ---- #385: v2 structured live-session stream decode (gated on `interactive`) -----------------
+
+    // AC #1, #3: each of the three documented turn_state values decodes to its Phase, verbatim id.
+    @Test
+    fun liveEvents_turnState_decodesEachPhase() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectLiveEvents(repo)
+            runCurrent()
+
+            pump.push(turnStateEnvelope("c1", "thinking"))
+            pump.push(turnStateEnvelope("c1", "responding"))
+            pump.push(turnStateEnvelope("c1", "idle"))
+            runCurrent()
+
+            assertEquals(
+                listOf(
+                    LiveSessionEvent.TurnState("c1", LiveSessionEvent.TurnState.Phase.Thinking),
+                    LiveSessionEvent.TurnState("c1", LiveSessionEvent.TurnState.Phase.Responding),
+                    LiveSessionEvent.TurnState("c1", LiveSessionEvent.TurnState.Phase.Idle),
+                ),
+                events,
+            )
+        }
+
+    // AC #1: assistant_delta decodes all four fields, including the seq == 0 boundary.
+    @Test
+    fun liveEvents_assistantDelta_decodesAllFieldsIncludingSeqZero() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectLiveEvents(repo)
+            runCurrent()
+
+            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "hel"))
+            runCurrent()
+
+            assertEquals(listOf(LiveSessionEvent.AssistantDelta("c1", "t1", 0, "hel")), events)
+        }
+
+    // AC #1: tool_use decodes every field.
+    @Test
+    fun liveEvents_toolUse_decodesAllFields() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectLiveEvents(repo)
+            runCurrent()
+
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls -la"))
+            runCurrent()
+
+            assertEquals(listOf(LiveSessionEvent.ToolUse("c1", "t1", "tu1", "Bash", "ls -la")), events)
+        }
+
+    // AC #1: tool_result decodes both is_error boundaries.
+    @Test
+    fun liveEvents_toolResult_decodesIsErrorBothValues() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectLiveEvents(repo)
+            runCurrent()
+
+            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "ok"))
+            pump.push(toolResultEnvelope("c1", "t1", "tu2", isError = true, resultSummary = "boom"))
+            runCurrent()
+
+            assertEquals(
+                listOf(
+                    LiveSessionEvent.ToolResult("c1", "t1", "tu1", false, "ok"),
+                    LiveSessionEvent.ToolResult("c1", "t1", "tu2", true, "boom"),
+                ),
+                events,
+            )
+        }
+
+    // AC #1: turn_end passes a non-mapped stop_reason string through verbatim (no enum).
+    @Test
+    fun liveEvents_turnEnd_passesStopReasonVerbatim() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectLiveEvents(repo)
+            runCurrent()
+
+            pump.push(turnEndEnvelope("c1", "t1", "end_turn"))
+            pump.push(turnEndEnvelope("c1", "t2", "some_future_reason"))
+            runCurrent()
+
+            assertEquals(
+                listOf(
+                    LiveSessionEvent.TurnEnd("c1", "t1", "end_turn"),
+                    LiveSessionEvent.TurnEnd("c1", "t2", "some_future_reason"),
+                ),
+                events,
+            )
+        }
+
+    // AC #2: without `interactive` negotiated, a well-formed structured envelope is ignored.
+    @Test
+    fun liveEvents_capabilityGateClosed_blocksEmission() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { emptySet() })
+            val events = collectLiveEvents(repo)
+            runCurrent()
+
+            pump.push(turnStateEnvelope("c1", "thinking"))
+            runCurrent()
+
+            assertEquals(emptyList<LiveSessionEvent>(), events)
+        }
+
+    // AC #2: a negotiated set with another token but NOT `interactive` still blocks.
+    @Test
+    fun liveEvents_capabilityGateOtherTokenOnly_blocksEmission() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("something_else") })
+            val events = collectLiveEvents(repo)
+            runCurrent()
+
+            pump.push(turnStateEnvelope("c1", "thinking"))
+            runCurrent()
+
+            assertEquals(emptyList<LiveSessionEvent>(), events)
+        }
+
+    // AC #2: with `interactive` negotiated, the same envelope surfaces.
+    @Test
+    fun liveEvents_capabilityGateOpen_allowsEmission() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectLiveEvents(repo)
+            runCurrent()
+
+            pump.push(turnStateEnvelope("c1", "thinking"))
+            runCurrent()
+
+            assertEquals(
+                listOf(LiveSessionEvent.TurnState("c1", LiveSessionEvent.TurnState.Phase.Thinking)),
+                events,
+            )
+        }
+
+    // AC #3: an unrecognized turn_state value is dropped; a subsequent valid envelope still surfaces.
+    @Test
+    fun liveEvents_unrecognizedTurnState_droppedNextSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectLiveEvents(repo)
+            runCurrent()
+
+            pump.push(turnStateEnvelope("c1", "compacting"))
+            runCurrent()
+            assertEquals(emptyList<LiveSessionEvent>(), events)
+
+            pump.push(turnStateEnvelope("c1", "idle"))
+            runCurrent()
+            assertEquals(
+                listOf(LiveSessionEvent.TurnState("c1", LiveSessionEvent.TurnState.Phase.Idle)),
+                events,
+            )
+        }
+
+    // AC #4: a malformed envelope (missing required field) is dropped; the next envelope still surfaces.
+    @Test
+    fun liveEvents_malformedEnvelope_droppedNextSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectLiveEvents(repo)
+            runCurrent()
+
+            // `tool_use` missing the required `tool_use_id` → SerializationException → envelope dropped.
+            pump.push(
+                Envelope(
+                    id = 1L,
+                    type = "tool_use",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"c1","turn_id":"t1","name":"Bash","input_summary":"ls"}""",
+                        ),
+                ),
+            )
+            runCurrent()
+            assertEquals(emptyList<LiveSessionEvent>(), events)
+
+            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 1, text = "ok"))
+            runCurrent()
+            assertEquals(listOf(LiveSessionEvent.AssistantDelta("c1", "t1", 1, "ok")), events)
+        }
+
+    // AC #1: a full five-envelope turn surfaces all five typed events in push order.
+    @Test
+    fun liveEvents_fullTurnSequence_surfacesAllFiveInOrder() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectLiveEvents(repo)
+            runCurrent()
+
+            pump.push(turnStateEnvelope("c1", "thinking"))
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
+            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "files"))
+            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "done"))
+            pump.push(turnEndEnvelope("c1", "t1", "end_turn"))
+            runCurrent()
+
+            assertEquals(
+                listOf("turn_state", "tool_use", "tool_result", "assistant_delta", "turn_end"),
+                events.map {
+                    when (it) {
+                        is LiveSessionEvent.TurnState -> "turn_state"
+                        is LiveSessionEvent.AssistantDelta -> "assistant_delta"
+                        is LiveSessionEvent.ToolUse -> "tool_use"
+                        is LiveSessionEvent.ToolResult -> "tool_result"
+                        is LiveSessionEvent.TurnEnd -> "turn_end"
+                    }
+                },
+            )
+        }
+
+    // AC #1: hot fan-out — two collectors of the one flow both receive the event.
+    @Test
+    fun liveEvents_multipleCollectors_eachReceive() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val a = collectLiveEvents(repo)
+            val b = collectLiveEvents(repo)
+            runCurrent()
+
+            pump.push(turnStateEnvelope("c1", "idle"))
+            runCurrent()
+
+            assertEquals(1, a.size)
+            assertEquals(1, b.size)
+        }
+
     // ---- Helpers --------------------------------------------------------------------------------
 
     /**
@@ -1690,6 +1936,95 @@ class RemoteConversationRepositoryTest {
             payload =
                 MobileJson.parseToJsonElement(
                     """{"conversation_id":"$conversationId","message_id":"$messageId","role":"$role","text":"$text"}""",
+                ),
+        )
+
+    private fun TestScope.collectLiveEvents(repo: RemoteConversationRepository): MutableList<LiveSessionEvent> {
+        // liveSessionEvents is a replay=0 SharedFlow, so the collector must subscribe before any push;
+        // callers runCurrent() after this to let the subscription attach, then push.
+        val events = mutableListOf<LiveSessionEvent>()
+        backgroundScope.launch { repo.liveSessionEvents.collect { events += it } }
+        return events
+    }
+
+    private fun turnStateEnvelope(
+        conversationId: String,
+        state: String,
+        id: Long = 1L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "turn_state",
+            ts = TS,
+            payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId","state":"$state"}"""),
+        )
+
+    private fun assistantDeltaEnvelope(
+        conversationId: String,
+        turnId: String,
+        seq: Int,
+        text: String,
+        id: Long = 1L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "assistant_delta",
+            ts = TS,
+            payload =
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"$conversationId","turn_id":"$turnId","seq":$seq,"text":"$text"}""",
+                ),
+        )
+
+    private fun toolUseEnvelope(
+        conversationId: String,
+        turnId: String,
+        toolUseId: String,
+        name: String,
+        inputSummary: String,
+        id: Long = 1L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "tool_use",
+            ts = TS,
+            payload =
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"$conversationId","turn_id":"$turnId","tool_use_id":"$toolUseId","name":"$name","input_summary":"$inputSummary"}""",
+                ),
+        )
+
+    private fun toolResultEnvelope(
+        conversationId: String,
+        turnId: String,
+        toolUseId: String,
+        isError: Boolean,
+        resultSummary: String,
+        id: Long = 1L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "tool_result",
+            ts = TS,
+            payload =
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"$conversationId","turn_id":"$turnId","tool_use_id":"$toolUseId","is_error":$isError,"result_summary":"$resultSummary"}""",
+                ),
+        )
+
+    private fun turnEndEnvelope(
+        conversationId: String,
+        turnId: String,
+        stopReason: String,
+        id: Long = 1L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "turn_end",
+            ts = TS,
+            payload =
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"$conversationId","turn_id":"$turnId","stop_reason":"$stopReason"}""",
                 ),
         )
 

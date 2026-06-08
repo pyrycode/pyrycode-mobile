@@ -1,0 +1,78 @@
+package de.pyryco.mobile.data.model
+
+/**
+ * A decoded v2 structured live-session stream event (#385): the typed in-process form of one of the
+ * five **binary → phone** interactive envelopes — `turn_state`, `assistant_delta`, `tool_use`,
+ * `tool_result`, `turn_end` — that the daemon emits **only** to a phone whose `interactive`
+ * capability was echoed in `hello_ack` (pyrycode#607 wire types, #616 capability-gated fan-out).
+ *
+ * Part of the Phase 2 structured-streaming exit-gate (pyrycode#596, ADR 025). The decode boundary
+ * lives in `data/network` (the `…PayloadDto.toEvent()` mappers); this is the **portable** typed
+ * surface consumers read off `RemoteConversationRepository.liveSessionEvents`. Decode-only: nothing
+ * here correlates `tool_use`↔`tool_result`, accumulates `assistant_delta` text, or drives a
+ * turn-lifecycle state machine — those are the consumer slices (the thinking indicator, the tool-use
+ * timeline, live assistant text, #386/#387/#337).
+ *
+ * Every event carries [conversationId] (every wire payload does) so a consumer can route per
+ * conversation without a `when`. The free-form text fields ([AssistantDelta.text],
+ * [ToolUse.inputSummary], [ToolResult.resultSummary], [TurnEnd.stopReason]) are carried **verbatim**
+ * — the decode seam neither trims, parses, nor sanitizes them. They may contain sensitive
+ * user/session content, so a rendering consumer MUST treat them as inert data (not
+ * markup/HTML/active content) and own its own output-encoding at render time.
+ *
+ * Pure data, no Android imports — kept portable per CLAUDE.md (`data/` is a Compose Multiplatform
+ * walk-back surface). The subtype names mirror the wire `type` strings 1:1.
+ */
+sealed interface LiveSessionEvent {
+    val conversationId: String
+
+    /**
+     * A coarse turn-lifecycle transition (`turn_state`). Carries no `turn_id` — the wire payload is
+     * `{conversation_id, state}` only. [Phase] is exactly the three documented states; an
+     * unrecognized or absent wire `state` is dropped at the mapper rather than surfaced (AC #3).
+     */
+    data class TurnState(
+        override val conversationId: String,
+        val phase: Phase,
+    ) : LiveSessionEvent {
+        /** The three documented `turn_state.state` values (`thinking`/`responding`/`idle`). */
+        enum class Phase { Thinking, Responding, Idle }
+    }
+
+    /** Incremental, coalesced assistant text for a turn (`assistant_delta`). [seq] is the per-turn,
+     *  non-negative ordering counter (a consumer concern; this seam does not order or accumulate). */
+    data class AssistantDelta(
+        override val conversationId: String,
+        val turnId: String,
+        val seq: Int,
+        val text: String,
+    ) : LiveSessionEvent
+
+    /** A tool invocation (`tool_use`). [toolUseId] correlates this call with its later [ToolResult]
+     *  (correlation itself is a consumer concern). [inputSummary] is a server-authored précis. */
+    data class ToolUse(
+        override val conversationId: String,
+        val turnId: String,
+        val toolUseId: String,
+        val name: String,
+        val inputSummary: String,
+    ) : LiveSessionEvent
+
+    /** A tool invocation's result (`tool_result`), matched to its [ToolUse] by [toolUseId].
+     *  [resultSummary] is a server-authored précis (not the raw output). */
+    data class ToolResult(
+        override val conversationId: String,
+        val turnId: String,
+        val toolUseId: String,
+        val isError: Boolean,
+        val resultSummary: String,
+    ) : LiveSessionEvent
+
+    /** End of a turn (`turn_end`). [stopReason] is carried as a plain string (wire values include
+     *  `end_turn`/`max_tokens`/`max_turn_requests`/`refusal`/`cancelled`); consumers map it. */
+    data class TurnEnd(
+        override val conversationId: String,
+        val turnId: String,
+        val stopReason: String,
+    ) : LiveSessionEvent
+}
