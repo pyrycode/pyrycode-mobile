@@ -35,10 +35,13 @@ data class Envelope(
     val ts: String,                                     // RFC3339, kept as String (not parsed)
     val payload: JsonElement,                           // generic carrier, polymorphic by `type`
     @SerialName("in_reply_to") val inReplyTo: Long? = null,  // OMITTED when absent
+    @SerialName("event_id") val eventId: Long? = null,       // #412: durable replay cursor; OMITTED when absent
 )
 ```
 
 Carried inside `noise_msg` plaintext and as handshake early-data. `ts` stays a `String` this phase (not parsed to a typed instant). `inReplyTo` is **omitted from the JSON when null** (never serialized as `"in_reply_to":null`) — see the codec config.
+
+`eventId` ([#412](../codebase/412.md)) is the **durable per-conversation replay cursor** — strictly-increasing, stable across reconnects, **distinct from `id`** (the per-connection counter that resets each reconnect). It rides **only** the interactive structured-stream frames and is absent on every other frame, so it is modeled nullable-defaulted **identically to `inReplyTo`**: `explicitNulls = false` omits it on encode (every outbound frame, including `hello`, stays byte-identical to today) and the default tolerates its per-frame absence on decode. Mirrors the server's `omitempty *uint64` (pyrycode#649); a pathological `uint64 > 2^63` decodes to a negative `Long` and is rejected downstream by the [`ReplayCursor`](replay-cursor.md) positive guard. The latest observed value is recorded as a reconnect-spanning cursor — see [Replay cursor](replay-cursor.md).
 
 `payload` is a **generic `JsonElement` carrier** (the `json.RawMessage` analog), polymorphic by `type`, rather than a sealed payload hierarchy. It stays untrusted raw JSON until a consumer decodes and validates it — a deliberate trust-boundary property (the type itself says "not yet trusted"). Consumers bridge typed ↔ generic at the edges:
 

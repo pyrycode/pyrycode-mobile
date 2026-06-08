@@ -262,6 +262,36 @@ val liveSessionEvents: Flow<LiveSessionEvent> =
   re-plumbing this layer. Each fetches it off the concrete coordinator singleton at the `AppModule`
   factory — **no new Koin binding** — exactly like `connectionStatus`.
 
+## Reconnect-spanning replay cursor (#412)
+
+The coordinator owns the [`ReplayCursor`](replay-cursor.md) ([#412](../codebase/412.md)) — the durable
+high-water mark of the latest interactive structured-stream
+[`Envelope.eventId`](mobile-protocol-v2-wire-layer.md) observed across all connections — for the **same
+reason** it owns `liveSessionEvents` and the pyrycode-leg derivation: it is the single process-lifetime
+layer that holds both the per-connection repo (the recorder) and the per-connection pump (the future
+hello producer). The cursor **cannot** live on the per-connection
+[`RemoteConversationRepository`](remote-conversation-repository.md) (rebuilt each reconnect), because it
+must outlive connection churn and be readable at the *next* connection's `hello`-build moment — **before**
+that connection's inbound path exists.
+
+```kotlin
+internal val replayCursor: ReplayCursor = ReplayCursor()   // survives connection churn; read by #413 at hello-build
+```
+
+- Threaded into each per-connection repo in `onConnection` as one extra **defaulted** named arg
+  (`replayCursor = replayCursor`) — keeping `onConnection` non-suspending (no new suspension point) and
+  every existing construction/test compiling unchanged (the same defaulted-param discipline as
+  `deviceName`/`negotiatedCapabilities`).
+- **Survives reconnects** because `teardownActive` (the per-connection churn path) never touches it; only
+  a full `close()` ends the process-scoped object. A coordinator test pins `replayCursor.latest`
+  persisting across an `onConnection` churn.
+- **`internal`, read-only seam** (mirroring `toPyrycodeLinkStatus`'s visibility) so unit tests and the
+  consuming slice [#413](https://github.com/pyrycode/pyrycode-mobile/issues/413) read it **without** a
+  public API surface or a new Koin binding. This slice **records** the cursor; #413 reads
+  `replayCursor.latest` at `buildHello` to advertise `last_event_id` and resume the missed event tail.
+  The cursor is the third non-interface surface threaded off the concrete repo/pump, after
+  `liveSessionEvents` (#406) and the `pyrycodeStatus` derivation (#392).
+
 ## Security invariants
 
 The coordinator sits *above* the authenticated Noise channel — it only moves object references and never
