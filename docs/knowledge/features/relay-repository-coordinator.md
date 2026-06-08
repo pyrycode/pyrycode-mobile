@@ -17,6 +17,10 @@ side effect — the **FCM push-token re-registration** ([#365](../codebase/365.m
 Because it owns the connection-scoped pump, it is also where the **pyrycode-leg session readiness** is
 derived and the combined [`ConnectionStatus`](connection-status.md) `{relay, pyrycode}` status
 published ([#392](../codebase/392.md)) — see [§ Two-part connection status](#two-part-connection-status-392).
+For the same reason — it owns the connection-scoped *repository* — it surfaces the
+reconnection-surviving [`liveSessionEvents`](live-session-events.md) seam ([#406](../codebase/406.md))
+that brings #385's decoded turn-state/tool/assistant events to UI ViewModels — see
+[§ Live-session event seam](#live-session-event-seam-406).
 
 Package: `de.pyryco.mobile.data.repository` (`RelayRepositoryCoordinator` + the `ManagedSessionPump`
 interface it drives, the latter appended to `SessionPump.kt`), co-located with the
@@ -62,6 +66,7 @@ class RelayRepositoryCoordinator(
 ) {
     val currentRepository: StateFlow<ConversationRepository?>  // live repo, or null between connections
     val connectionStatus: StateFlow<ConnectionStatus>         // (#392) combined {relay, pyrycode} two-part status
+    val liveSessionEvents: Flow<LiveSessionEvent>             // (#406) reconnection-surviving #385 live-event seam
     fun start()   // idempotent — launches the single connections collector on the coordinator scope
     fun close()   // tears down the active connection (wiping pump keys) + cancels the coordinator scope
 }
@@ -220,6 +225,43 @@ straight into the `SettingsViewModel` constructor at the `AppModule` factory.
 > class body — referencing an earlier-declared field is a construction-time NPE (not a compile error).
 > Placing them beside `mutableRepository` (already below `scope`) satisfies this.
 
+## Live-session event seam (#406)
+
+The decoded [`LiveSessionEvent`](live-session-events.md) stream ([#385](../codebase/385.md)) lives on
+the **concrete** `RemoteConversationRepository.liveSessionEvents` — connection-scoped and **not** on the
+`ConversationRepository` interface — so a UI ViewModel cannot reach it. The coordinator owns the
+connection-scoped repository, so it threads that non-interface surface up exactly as `pyrycodeStatus`
+reaches the concrete pump through `activePumpFlow` (and as `registerPushToken` reaches the concrete repo
+through the construction-time handle):
+
+```kotlin
+// private mirror of the live concrete repo, written lock-step with mutableRepository / activePumpFlow
+private val activeRemoteRepo = MutableStateFlow<RemoteConversationRepository?>(null)
+
+val liveSessionEvents: Flow<LiveSessionEvent> =
+    activeRemoteRepo.flatMapLatest { repo -> repo?.liveSessionEvents ?: emptyFlow() }
+```
+
+- `activeRemoteRepo.value = repo` is set in `onConnection` (alongside `mutableRepository.value = repo`)
+  and `= null` in `teardownActive` — both **non-suspending** writes inside the same critical section, so
+  the cancellation-atomicity invariant is preserved. It stays **private**: only the *derived* event flow
+  is exposed, never the concrete repo reference.
+- **Cold, not `stateIn`'d.** Unlike `connectionStatus` (current-value state), these are *events* with no
+  "current value", so `liveSessionEvents` is a cold `Flow` with no scope of its own. Each consumer's
+  collection independently observes `activeRemoteRepo` (a `StateFlow`) and subscribes to the current
+  repo's `SharedFlow` (both multi-subscriber-safe) — no `shareIn`. (A code-review NIT flagged that
+  per-subscriber `flatMapLatest` re-derivation is fine at today's consumer count; revisit only if the
+  count grows.)
+- **Reconnection-surviving.** `flatMapLatest` cancels the prior connection's collection and switches to
+  the fresh repo's `liveSessionEvents` on each new connection; `emptyFlow()` between connections. A push
+  on a now-dead pump surfaces nowhere — a coordinator test pins this.
+- **Generic, not turn-state-specific.** The seam carries the **full** `LiveSessionEvent` stream, not an
+  `isThinking`/turn-state projection — reducing to "latest phase" is a consumer concern. The first
+  consumer is [`ThreadViewModel.isThinking`](turn-state-thinking-flag.md) (#406, the thinking-indicator
+  data half); #387 (tool timeline) and #337 (live assistant text) reuse the same flow without
+  re-plumbing this layer. Each fetches it off the concrete coordinator singleton at the `AppModule`
+  factory — **no new Koin binding** — exactly like `connectionStatus`.
+
 ## Security invariants
 
 The coordinator sits *above* the authenticated Noise channel — it only moves object references and never
@@ -318,7 +360,9 @@ correlation mirrors `RemoteConversationRepositoryTest`'s #359 shape.
 - Tickets: [#351](../codebase/351.md) — the coordinator + `ManagedSessionPump` (files, line refs,
   patterns, lessons) · [#365](../codebase/365.md) — the connect-time FCM push-token re-registration hook,
   the `ManagedSessionPump.state` addition, and closing #359's `device_name: ""` defer ·
-  [#392](../codebase/392.md) — the derived pyrycode-leg readiness + the combined `connectionStatus`.
+  [#392](../codebase/392.md) — the derived pyrycode-leg readiness + the combined `connectionStatus` ·
+  [#406](../codebase/406.md) — the reconnection-surviving [`liveSessionEvents`](live-session-events.md)
+  seam (first consumer: [`ThreadViewModel.isThinking`](turn-state-thinking-flag.md)).
 - Two-part status: [Connection status](connection-status.md) (`ConnectionStatus` + `PyrycodeLinkStatus`,
   [#392](../codebase/392.md)) — derived/published here; relay leg from
   [`relayStatus`](relay-link-status.md) ([#391](../codebase/391.md)); consumed by the Settings status
