@@ -5,6 +5,8 @@ import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.model.ToolCall
+import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayErrorException
@@ -1898,6 +1900,234 @@ class RemoteConversationRepositoryTest {
             assertEquals(listOf(false, true, false), c1)
         }
 
+    // ---- #387: correlate tool_use/tool_result into live tool-call thread items with status ------
+
+    // AC #1: a tool_use produces a running tool row carrying the tool name + input, empty output.
+    @Test
+    fun toolCall_toolUse_producesRunningRow() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls -la"))
+            runCurrent()
+
+            assertEquals(listOf("tu1"), messageIds(emissions.last()))
+            assertEquals(
+                ToolCall(toolName = "Bash", input = "ls -la", output = "", status = ToolCallStatus.Running),
+                toolCallOf(emissions.last(), "tu1"),
+            )
+        }
+
+    // AC #2: the matching tool_result updates that same row in place → Done with output attached,
+    // tool name + input unchanged, still exactly one row at the same position.
+    @Test
+    fun toolCall_toolResult_updatesRowInPlaceToDone() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls -la"))
+            runCurrent()
+            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "files"))
+            runCurrent()
+
+            assertEquals(listOf("tu1"), messageIds(emissions.last()))
+            assertEquals(
+                ToolCall(toolName = "Bash", input = "ls -la", output = "files", status = ToolCallStatus.Done),
+                toolCallOf(emissions.last(), "tu1"),
+            )
+        }
+
+    // AC #2: a tool_result with is_error=true marks the row Failed and attaches the result summary.
+    @Test
+    fun toolCall_toolResultIsError_marksRowFailed() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "boom"))
+            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = true, resultSummary = "exit 1"))
+            runCurrent()
+
+            assertEquals(
+                ToolCall(toolName = "Bash", input = "boom", output = "exit 1", status = ToolCallStatus.Failed),
+                toolCallOf(emissions.last(), "tu1"),
+            )
+        }
+
+    // AC #2: correlation is by tool_use_id, not position — a result completes only its own row.
+    @Test
+    fun toolCall_correlatesById_notPosition() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "first"))
+            pump.push(toolUseEnvelope("c1", "t1", "tu2", "Read", "second"))
+            runCurrent()
+            pump.push(toolResultEnvelope("c1", "t1", "tu2", isError = false, resultSummary = "done2"))
+            runCurrent()
+
+            assertEquals(listOf("tu1", "tu2"), messageIds(emissions.last()))
+            assertEquals(ToolCallStatus.Running, toolCallOf(emissions.last(), "tu1")?.status)
+            assertEquals(ToolCallStatus.Done, toolCallOf(emissions.last(), "tu2")?.status)
+            assertEquals("done2", toolCallOf(emissions.last(), "tu2")?.output)
+        }
+
+    // AC #3: a tool_result with no matching tool_use is tolerated — no row appears, no crash.
+    @Test
+    fun toolCall_resultWithNoMatchingUse_producesNoRow() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(toolResultEnvelope("c1", "t1", "tuX", isError = false, resultSummary = "orphan"))
+            runCurrent()
+
+            assertEquals(emptyList<String>(), messageIds(emissions.last()))
+        }
+
+    // AC #3: out-of-order (result before its use) — the early result is dropped, the use still opens
+    // exactly one running row.
+    @Test
+    fun toolCall_resultBeforeUse_dropsResultKeepsSingleRunningRow() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "early"))
+            runCurrent()
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
+            runCurrent()
+
+            assertEquals(listOf("tu1"), messageIds(emissions.last()))
+            assertEquals(ToolCallStatus.Running, toolCallOf(emissions.last(), "tu1")?.status)
+            assertEquals("", toolCallOf(emissions.last(), "tu1")?.output)
+        }
+
+    // AC #3: a duplicate tool_use creates no second row and does not reset a completed row to Running.
+    @Test
+    fun toolCall_duplicateToolUse_keepsSingleRowAndStatus() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
+            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "files"))
+            runCurrent()
+            // A repeat tool_use for the same id arrives after completion — must not reopen the row.
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
+            runCurrent()
+
+            assertEquals(listOf("tu1"), messageIds(emissions.last()))
+            assertEquals(ToolCallStatus.Done, toolCallOf(emissions.last(), "tu1")?.status)
+            assertEquals("files", toolCallOf(emissions.last(), "tu1")?.output)
+        }
+
+    // AC #3: a duplicate tool_result is idempotent — one row, status stable.
+    @Test
+    fun toolCall_duplicateToolResult_isIdempotent() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
+            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "files"))
+            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "files"))
+            runCurrent()
+
+            assertEquals(listOf("tu1"), messageIds(emissions.last()))
+            assertEquals(
+                ToolCall(toolName = "Bash", input = "ls", output = "files", status = ToolCallStatus.Done),
+                toolCallOf(emissions.last(), "tu1"),
+            )
+        }
+
+    // AC #4: tool rows interleave chronologically with messages in observeMessages (arrival order).
+    @Test
+    fun toolCall_interleavesChronologicallyWithMessages() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(messageEnvelope("c1", "m1", "user", "run it", "2026-05-31T10:00:00Z"))
+            runCurrent()
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
+            runCurrent()
+            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "files"))
+            runCurrent()
+            pump.push(messageEnvelope("c1", "m2", "assistant", "done", "2026-05-31T10:01:00Z"))
+            runCurrent()
+
+            assertEquals(listOf("m1", "tu1", "m2"), messageIds(emissions.last()))
+            assertEquals(ToolCallStatus.Done, toolCallOf(emissions.last(), "tu1")?.status)
+        }
+
+    // AC #2 (fail-closed): without `interactive` negotiated, tool events fold nothing — no row.
+    @Test
+    fun toolCall_capabilityGateClosed_producesNoRow() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { emptySet() })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
+            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "files"))
+            runCurrent()
+
+            assertEquals(emptyList<String>(), messageIds(emissions.last()))
+        }
+
+    // AC #5: a malformed tool_use folds nothing and does not tear down the collector — a later valid
+    // tool_use still surfaces its row.
+    @Test
+    fun toolCall_malformedToolUse_droppedCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            // tool_use missing the required tool_use_id → SerializationException → envelope dropped.
+            pump.push(
+                Envelope(
+                    id = 1L,
+                    type = "tool_use",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"c1","turn_id":"t1","name":"Bash","input_summary":"ls"}""",
+                        ),
+                ),
+            )
+            runCurrent()
+            assertEquals(emptyList<String>(), messageIds(emissions.last()))
+
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
+            runCurrent()
+            assertEquals(listOf("tu1"), messageIds(emissions.last()))
+        }
+
     // ---- Helpers --------------------------------------------------------------------------------
 
     /**
@@ -2088,6 +2318,17 @@ class RemoteConversationRepositoryTest {
     }
 
     private fun messageIds(thread: List<ThreadItem>): List<String> = thread.map { (it as ThreadItem.MessageItem).message.id }
+
+    /** The [ToolCall] of the [Role.Tool] thread row with [id] in [thread], or null if absent (#387). */
+    private fun toolCallOf(
+        thread: List<ThreadItem>,
+        id: String,
+    ): ToolCall? =
+        thread
+            .filterIsInstance<ThreadItem.MessageItem>()
+            .firstOrNull { it.message.id == id && it.message.role == Role.Tool }
+            ?.message
+            ?.toolCall
 
     /** One `message_chunk` row JSON object (same shape as a `message` payload). */
     private fun chunkRow(

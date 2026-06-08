@@ -5,6 +5,8 @@ import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
+import de.pyryco.mobile.data.model.ToolCall
+import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.BackfillSincePayloadDto
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
@@ -291,6 +293,16 @@ class RemoteConversationRepository(
                         // is a no-op, so clearing rides every live event harmlessly. Symmetric with the
                         // onset arm below — both are inside the same `interactive` gate.
                         stalledConversations.update { it - event.conversationId }
+                        // Correlate the tool-call pair into a single evolving thread row (#387): a
+                        // `tool_use` opens a running row, its matching `tool_result` updates it in
+                        // place. Folds into the same `messagesByConversation` the live `message` arm
+                        // writes, so tool rows interleave by arrival order (AC #4). The other event
+                        // types are surfaced only on the live-event stream below.
+                        when (event) {
+                            is LiveSessionEvent.ToolUse -> applyToolUse(event)
+                            is LiveSessionEvent.ToolResult -> applyToolResult(event)
+                            else -> Unit
+                        }
                         mutableLiveSessionEvents.tryEmit(event)
                     }
                 }
@@ -441,6 +453,78 @@ class RemoteConversationRepository(
                     }
             }
             updated
+        }
+    }
+
+    /**
+     * Open a live tool-call row for a `tool_use` (#387): append a `Running` [Role.Tool] [Message]
+     * carrying the tool name + input, keyed by [LiveSessionEvent.ToolUse.toolUseId] (the correlation
+     * handle and the row's [Message.id]). One atomic [MutableStateFlow.update] into the same
+     * [messagesByConversation] the live `message` arm writes, so the row interleaves by **arrival
+     * order** with messages (AC #4). **Idempotent on a repeat id:** if a [Role.Tool] row with this id
+     * already exists (possibly already completed by an earlier `tool_result`), it is left untouched —
+     * a duplicate `tool_use` never adds a second row nor resets a finished one to `Running` (AC #3).
+     * The `&& role == Role.Tool` match namespaces tool rows so a `toolUseId` can never clobber a real
+     * `message_id` row. The fields the UI ignores ([Message.content] = the tool name, a non-empty
+     * fallback; [Message.timestamp] = [Clock.System.now], the established locally-assembled-row clock —
+     * thread order is arrival order, never a timestamp sort) mirror [sendMessage]'s posture. The tool
+     * name/input/output are carried **verbatim** — never trimmed, parsed, or logged (Security review).
+     */
+    private fun applyToolUse(event: LiveSessionEvent.ToolUse) {
+        messagesByConversation.update { current ->
+            val existing = current[event.conversationId].orEmpty()
+            if (existing.any { it.id == event.toolUseId && it.role == Role.Tool }) {
+                current
+            } else {
+                val row =
+                    Message(
+                        id = event.toolUseId,
+                        sessionId = "",
+                        role = Role.Tool,
+                        content = event.name,
+                        timestamp = Clock.System.now(),
+                        isStreaming = false,
+                        toolCall =
+                            ToolCall(
+                                toolName = event.name,
+                                input = event.inputSummary,
+                                output = "",
+                                status = ToolCallStatus.Running,
+                            ),
+                    )
+                current + (event.conversationId to (existing + row))
+            }
+        }
+    }
+
+    /**
+     * Complete a live tool-call row for a `tool_result` (#387): update the matching [Role.Tool] row in
+     * place — position and `timestamp` preserved — attaching the output and flipping the status to
+     * [ToolCallStatus.Failed] when [LiveSessionEvent.ToolResult.isError], else [ToolCallStatus.Done]
+     * (AC #2). One atomic [MutableStateFlow.update]. **If no matching row exists, no-op:** a
+     * `tool_result` with no prior `tool_use` — including a result arriving before its use
+     * (out-of-order) — is dropped, leaving no orphan half-row (AC #3). A duplicate `tool_result`
+     * re-applies the same in-place update (idempotent / last-write-wins, one row). The result summary
+     * is carried **verbatim** — never trimmed, parsed, or logged (Security review).
+     */
+    private fun applyToolResult(event: LiveSessionEvent.ToolResult) {
+        messagesByConversation.update { current ->
+            val existing = current[event.conversationId].orEmpty()
+            val index = existing.indexOfFirst { it.id == event.toolUseId && it.role == Role.Tool }
+            if (index < 0) {
+                current
+            } else {
+                val row = existing[index]
+                val updated =
+                    row.copy(
+                        toolCall =
+                            row.toolCall?.copy(
+                                output = event.resultSummary,
+                                status = if (event.isError) ToolCallStatus.Failed else ToolCallStatus.Done,
+                            ),
+                    )
+                current + (event.conversationId to existing.toMutableList().apply { this[index] = updated })
+            }
         }
     }
 
