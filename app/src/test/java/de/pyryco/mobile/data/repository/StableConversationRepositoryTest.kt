@@ -172,6 +172,7 @@ class StableConversationRepositoryTest {
             assertTrue(runCatching { facade.createDiscussion("/ws") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.sendMessage("c1", "hi") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.promote("c1", "Name", null) }.exceptionOrNull() is IllegalStateException)
+            assertTrue(runCatching { facade.requestScreenSnapshot("c1") }.exceptionOrNull() is IllegalStateException)
         }
 
     // ---- AC #4: one-shots delegate verbatim to the live repo (args + return value) ---------------
@@ -184,16 +185,20 @@ class StableConversationRepositoryTest {
             val sent = message("m1")
             repoA.createDiscussionResult = created
             repoA.sendMessageResult = sent
+            repoA.requestScreenSnapshotResult = "screen!"
             val current = MutableStateFlow<ConversationRepository?>(repoA)
             val facade = StableConversationRepository(current)
 
             val createResult = facade.createDiscussion("/ws")
             val sendResult = facade.sendMessage("c1", "hi")
+            val snapshotResult = facade.requestScreenSnapshot("c9")
 
             assertEquals(listOf<String?>("/ws"), repoA.createDiscussionCalls)
             assertEquals(listOf("c1" to "hi"), repoA.sendMessageCalls)
+            assertEquals(listOf("c9"), repoA.requestScreenSnapshotCalls)
             assertSame(created, createResult)
             assertSame(sent, sendResult)
+            assertEquals("screen!", snapshotResult)
         }
 
     // ---- AC #4: a throwing stub on the live repo passes through unchanged -------------------------
@@ -223,9 +228,11 @@ class StableConversationRepositoryTest {
 
         val createDiscussionCalls = mutableListOf<String?>()
         val sendMessageCalls = mutableListOf<Pair<String, String>>()
+        val requestScreenSnapshotCalls = mutableListOf<String>()
 
         var createDiscussionResult: Conversation = conversation("created")
         var sendMessageResult: Message = message("sent")
+        var requestScreenSnapshotResult: String = "snapshot-text"
 
         fun pushConversations(value: List<Conversation>) {
             conversations.value = value
@@ -254,6 +261,11 @@ class StableConversationRepositoryTest {
         ): Message {
             sendMessageCalls += (conversationId to text)
             return sendMessageResult
+        }
+
+        override suspend fun requestScreenSnapshot(conversationId: String): String {
+            requestScreenSnapshotCalls += conversationId
+            return requestScreenSnapshotResult
         }
 
         override suspend fun archive(conversationId: String): Unit = throw UnsupportedOperationException("archive stub")

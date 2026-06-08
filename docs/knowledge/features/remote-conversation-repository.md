@@ -113,7 +113,7 @@ demultiplexes each envelope by `Envelope.type`:
 | `"conversations"` | Decode `MobileJson.decodeFromJsonElement<ConversationsPayload>(payload).toConversations()` (#316) → assign to `projection`. A **full-list snapshot** — both the reply to our request and any unsolicited server change-push arrive this way, so re-emission needs **no `in_reply_to` correlation**. Decode is wrapped in a per-envelope `try/catch` (a malformed snapshot is dropped, the collector survives). |
 | `"message"` | Decode `MobileJson.decodeFromJsonElement<MessagePayloadDto>(payload)` (#317) → key by `conversation_id` (**read off the DTO before mapping** — the domain `Message` carries none) → `toMessage(envelope, sessionId = "")`, then **two folds** off the one decoded DTO: (a) the strictly-greater-by-`timestamp` `lastMessages` preview fold ([#329](../codebase/329.md)); (b) an arrival-order append into the `messagesByConversation` thread ([#313](../codebase/313.md)). Same per-envelope `try/catch` drop; **silent** (no payload logged, content may be sensitive). The singular live/echo `message`. See [`observeLastMessage`](#observelastmessageconversationid--the-live-last-message-preview-329) and [`observeMessages`](#observemessagesconversationid--the-live-thread-read-313) below. |
 | `"message_chunk"` | The `backfill_since` **response** body ([#313](../codebase/313.md)): `MobileJson.decodeFromJsonElement<MessageChunkPayloadDto>(payload)` → map **each** row via the same `toMessage(envelope, sessionId = "")` (one envelope `ts` covers every row) → append the whole batch into `messagesByConversation` in one atomic `update`. Each row **self-routes** by its own `conversation_id` — no `in_reply_to` correlation. A single bad row drops the **whole chunk** in one `catch (IllegalArgumentException)`; silent. |
-| `"ack"` / `"conversation_created"` / `"conversation_updated"` | Correlated **success** reply to an outgoing mutation request, **one shared arm** ([#346](../codebase/346.md) / [#347](../codebase/347.md) / [#348](../codebase/348.md)): `envelope.inReplyTo?.let { pendingRequests[it]?.complete(envelope.payload) }`. An `ack` payload is the empty `{}` a bare-`ack` caller (`sendMessage`) ignores; a `conversation_created` (`createDiscussion`) / `conversation_updated` (`promote`) payload is the **bare conversation object** the mutation decodes for its typed return. The payload is handed verbatim to the waiting suspend, which decodes (or ignores) it **in the caller's coroutine** — so a malformed reply never throws inside this collector. An `inReplyTo` matching no pending entry (or null) is a no-op; `complete` is idempotent (duplicate reply harmless). `conversation_updated` is also the server's **unsolicited broadcast** on change (no `inReplyTo`), which must stay a harmless no-op here — the authoritative `conversations` snapshot, not this delta, drives an unsolicited list refresh. |
+| `"ack"` / `"conversation_created"` / `"conversation_updated"` / `"screen_snapshot"` | Correlated **success** reply to an outgoing request, **one shared arm** ([#346](../codebase/346.md) / [#347](../codebase/347.md) / [#348](../codebase/348.md) / [#375](../codebase/375.md)): `envelope.inReplyTo?.let { pendingRequests[it]?.complete(envelope.payload) }`. An `ack` payload is the empty `{}` a bare-`ack` caller (`sendMessage`) ignores; a `conversation_created` (`createDiscussion`) / `conversation_updated` (`promote`) payload is the **bare conversation object** the mutation decodes for its typed return; a `screen_snapshot` (`requestScreenSnapshot`, #375) payload is the **rendered-screen object** the read decodes for its `text`. The payload is handed verbatim to the waiting suspend, which decodes (or ignores) it **in the caller's coroutine** — so a malformed reply never throws inside this collector. An `inReplyTo` matching no pending entry (or null) is a no-op; `complete` is idempotent (duplicate reply harmless). `screen_snapshot` is **always** a correlated reply (no unsolicited snapshot push), so an unmatched one is the same harmless no-op; `conversation_updated` is also the server's **unsolicited broadcast** on change (no `inReplyTo`), which must stay a harmless no-op here — the authoritative `conversations` snapshot, not this delta, drives an unsolicited list refresh. |
 | `"error"` | Correlated **failure** reply ([#346](../codebase/346.md)): `envelope.inReplyTo?.let { pendingRequests[it]?.completeExceptionally(mapError(envelope.payload)) }` — unblocks the waiter exceptionally with the mapped domain error. `mapError` **never throws** (a malformed payload yields a fallback exception), so the lone collector survives; `completeExceptionally` is idempotent and a no-op when no entry matches. |
 | anything else | **No-op** (intentional `else`, not a bug). `backfill_done` (`{delivered}`) needs no action — the `message_chunk` already delivered the history, the count is informational. **Unsolicited** single-row deltas (a server-pushed `conversation_created`/`conversation_updated` with no `inReplyTo` match) are caught by the success arm above and no-op there — merging them into the live projection is future work; the list refreshes on the next `conversations` snapshot. |
 
@@ -583,6 +583,50 @@ suspend fun registerPushToken(token: String) {
 > the Firebase sibling's pending handoff — a known-stale comment #365's code review flagged as an optional
 > NIT and deferred, since the file is outside that PR's surface.)_
 
+## `requestScreenSnapshot(conversationId)` — the parser-independent screen-snapshot read (#375)
+
+Requests a one-shot text picture of the current claude screen and returns its rendered `text` — the
+**always-available, parser-independent floor** of ADR 025's safe-degradation strategy (pyrycode#596/#618).
+[#375](../codebase/375.md) is a near-verbatim mirror of `sendMessage`'s shape, but it **decodes its reply**
+(like `createDiscussion` / `promote`) rather than reconstructing from input, and — unlike every prior
+mutation — it **mutates no projection**. It is the **first pure read** to ride the #346 correlation
+primitive.
+
+The flow (the entire method, ≤ ~12 lines):
+
+```kotlin
+override suspend fun requestScreenSnapshot(conversationId: String): String {
+    val request = Envelope(
+        id = requestId.incrementAndGet(),
+        type = TYPE_REQUEST_SNAPSHOT, ts = Clock.System.now().toString(),
+        payload = MobileJson.encodeToJsonElement(RequestSnapshotPayloadDto(conversationId = conversationId)),
+    )
+    val reply = sendAndAwaitReply(request)   // throws on server `error` / not-Open; decode below unreachable on failure
+    return MobileJson.decodeFromJsonElement<ScreenSnapshotPayloadDto>(reply).text
+}
+```
+
+- **The one genuinely-new bit is in the collector, not the method:** `screen_snapshot` is a *new*
+  correlated reply type, so `TYPE_SCREEN_SNAPSHOT` is added to the success-arm `when` (see the [demux
+  table](#the-repository--one-projection-cold-fan-out) — it was previously an `else -> Unit` no-op, so
+  existing flows are behaviorally unchanged). Everything else is the existing pattern: same single `init`
+  collector, `pendingRequests`, `requestId`, `sendAndAwaitReply`. **No second pump subscription.**
+- **Reuses the #374 wire DTOs verbatim:** encodes `RequestSnapshotPayloadDto` (`{conversation_id}`),
+  decodes `ScreenSnapshotPayloadDto` (`{conversation_id, text, ts}`), returns `.text` only. `ts` is **never
+  read**; `text` is returned **verbatim** — never parsed, trimmed, or sanitized (decode fidelity is the
+  whole point of the floor). All (de)serialization is through `MobileJson`, never a default `Json`.
+- **The decode runs caller-side, after `sendAndAwaitReply` returns**, so a malformed `screen_snapshot`
+  (missing `text`) throws `SerializationException` (⊂ `IllegalArgumentException`) in the caller's coroutine
+  and **never threatens the single inbound collector** — same posture as `createDiscussion` / `promote`.
+- **No local membership guard:** an unknown `conversationId` surfaces through the server's
+  `conversation.not_found` `error` → `IllegalArgumentException` (the same type the fake throws
+  synchronously), the server being authoritative — matching `sendMessage`'s decision.
+- **`security-sensitive` → a logging discipline:** the snapshot `text` is server-originated screen content
+  returned literally, so the method adds **zero** `Log.*` — the request, envelope, reply, `conversationId`,
+  and `text` are all unlogged (the #346 "content may be sensitive" posture). No new error mapping;
+  `mapError` is reused unchanged. `TYPE_REQUEST_SNAPSHOT` / `TYPE_SCREEN_SNAPSHOT` join the full `TYPE_*`
+  companion registry (every wire type is a named constant here).
+
 ## Stubs — the full interface compiles; later slices replace what they own
 
 Every method other than the three live read paths and the now-live `sendMessage` (#346) /
@@ -657,6 +701,7 @@ this implementation's surface. All three read paths are now **cold flows that de
 | `promote` — any other server `error` (#348) | `RelayErrorException(code, retryable, message)` via `mapError`; no projection mutated |
 | `promote` — `pump.send` returns `false` (not `Open`, #348) | `IllegalStateException` from `sendAndAwaitReply`'s `check`; no request awaited, no projection mutated |
 | `promote` — malformed `conversation_updated` reply (#348) | the #318 decode boundary's `SerializationException` / `IllegalArgumentException`, propagated to the caller; decode precedes `upsertConversation`, so **no projection mutated** (no partial promote) |
+| `requestScreenSnapshot` — server `error` `conversation.not_found` / any other / not-`Open` send / malformed `screen_snapshot` reply (#375) | `IllegalArgumentException` / `RelayErrorException` / `IllegalStateException` respectively via the shared `mapError` + `sendAndAwaitReply`'s `check`; a malformed reply throws the #374 `SerializationException` (⊂ `IllegalArgumentException`) **caller-side** after `sendAndAwaitReply` returns. A pure read — **nothing mutated** on any path; nothing logged |
 | Stubbed method called | `UnsupportedOperationException` naming the owning follow-up |
 
 **Why catch-and-drop:** the `ConversationRepository` flow type has no error channel and the Fake never

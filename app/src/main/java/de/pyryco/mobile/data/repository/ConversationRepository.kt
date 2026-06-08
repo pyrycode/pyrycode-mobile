@@ -117,6 +117,23 @@ interface ConversationRepository {
      */
     suspend fun createWorkspaceFolder(name: String): String =
         error("createWorkspaceFolder is not implemented for this ConversationRepository")
+
+    /**
+     * Requests the current claude screen for [conversationId] and returns its rendered text — the
+     * always-available, parser-independent snapshot floor (pyrycode#596, ADR 025 § Safe degradation).
+     * The returned text is **verbatim**: never parsed, trimmed, or sanitized — decode fidelity is the
+     * whole point of the floor.
+     *
+     * Throws [IllegalArgumentException] for an unknown [conversationId] (the fake throws it
+     * synchronously; the remote surfaces the server's `conversation.not_found` as the same type).
+     * Throws on a server error ([de.pyryco.mobile.data.network.RelayErrorException]) or a
+     * not-connected session ([IllegalStateException]) — the caller handles failure.
+     *
+     * Default throws — implementations that do not support snapshots inherit it, so the inline test
+     * doubles need no override (the same cascade-avoidance as [delete] / [createWorkspaceFolder]).
+     */
+    suspend fun requestScreenSnapshot(conversationId: String): String =
+        error("requestScreenSnapshot is not implemented for this ConversationRepository")
 }
 
 enum class ConversationFilter { All, Channels, Discussions, Archived }

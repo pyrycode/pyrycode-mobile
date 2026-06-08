@@ -51,11 +51,12 @@ class StableConversationRepository(
 ) : ConversationRepository
 ```
 
-It overrides **all 14** interface members — the 4 stream-shaped reads (`observeConversations`,
-`observeMessages`, `observeLastMessage`, **and** `recentWorkspaces`) and the 10 suspend one-shots
+It overrides **all 15** interface members — the 4 stream-shaped reads (`observeConversations`,
+`observeMessages`, `observeLastMessage`, **and** `recentWorkspaces`) and the 11 suspend one-shots
 (`createDiscussion`, `promote`, `archive`, `unarchive`, `delete`, `rename`, `startNewSession`,
-`changeWorkspace`, `sendMessage`, `createWorkspaceFolder`) — including the three that ship a default
-body on the interface, so delegation is faithful and nothing silently falls back to a default.
+`changeWorkspace`, `sendMessage`, `createWorkspaceFolder`, `requestScreenSnapshot`) — including the
+four that ship a default body on the interface (`recentWorkspaces`, `createWorkspaceFolder`, `delete`,
+`requestScreenSnapshot`; #375), so delegation is faithful and nothing silently falls back to a default.
 
 ## How it works
 

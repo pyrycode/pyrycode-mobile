@@ -202,8 +202,8 @@ parser-independent **floor** of ADR 025's safe-degradation strategy: the phone a
 one-shot **text** picture of the current claude screen, and the daemon renders it via tui-driver inside
 the substrate seal — depending on no screen parser, so it survives any parser break. Wire SSOT: server
 `internal/protocol/snapshot.go` (pyrycode#617, merged; daemon handler #618). This slice is the
-**wire-vocabulary half only** — no repository method, no dispatch, no trust decision; those land in the
-consumer #375.
+**wire-vocabulary half only** — no repository method, no dispatch, no trust decision; those landed in the
+consumer [#375](../codebase/375.md) (`ConversationRepository.requestScreenSnapshot`).
 
 - **`RequestSnapshotPayloadDto` (`SnapshotPayload.kt`)** — the sixth **encode-only request DTO**:
   `request_snapshot` `{conversation_id}` (phone → daemon control), a single `@SerialName("conversation_id")`
@@ -227,15 +227,20 @@ consumer #375.
     **Refined rule:** parse-at-decode a payload timestamp only when a domain field consumes the instant;
     otherwise keep it a `String` like `Envelope.ts`.
 
-The envelope `type` strings `"request_snapshot"` / `"screen_snapshot"` are **inline literals at the
-consumer's call site** — there is no mobile-side type-constants registry mirroring the server's
-`codes.go` `TypeRequestSnapshot` / `TypeScreenSnapshot` (same as `"send_message"` / `"list_conversations"`
-today). Because `SnapshotPayload.kt` holds **two** public types, ktlint `standard:filename` does not fire,
+The envelope `type` strings are defined by the consumer ([#375](../codebase/375.md)) as
+`TYPE_REQUEST_SNAPSHOT` / `TYPE_SCREEN_SNAPSHOT` companion constants in `RemoteConversationRepository`,
+joining its **complete** mobile-side `TYPE_*` registry — every wire type (including `send_message` /
+`list_conversations`) is a named constant there and every request envelope uses `type = TYPE_*`, with no
+inline `type = "..."` literals. (This **corrects** the prediction recorded when #374 landed that these
+would be inline literals "with no mobile-side type-constants registry" — the registry already existed in
+`RemoteConversationRepository`; #375 simply extended it. The registry is local to that class, not a shared
+module mirroring the server's `codes.go`.) Because `SnapshotPayload.kt` holds **two** public types, ktlint `standard:filename` does not fire,
 so it keeps the spec's `SnapshotPayload.kt` name — unlike #318's single-class rename ([[ktlint-filename-rule-single-class]]).
 `ScreenSnapshotPayloadDto` keeps the `data class` auto-`toString()` (which includes `text`) — matching the
 content-bearing `MessagePayloadDto`; `toString`-redaction is reserved for the `token` credential. The
-no-content-logging obligation (the #346 posture) is a **code-level invariant on the consumer #375**, not
-this zero-log-call slice.
+no-content-logging obligation (the #346 posture) was a **code-level invariant on the consumer**, now
+honored by [#375](../codebase/375.md)'s `requestScreenSnapshot` (which adds zero log calls — the request,
+reply, `conversationId`, and decoded `text` are never logged), not this zero-log-call wire slice.
 
 ## What's deliberately absent
 
@@ -260,6 +265,6 @@ this zero-log-call slice.
   - **[#347](../codebase/347.md)** the second outbound request encoder: `CreateConversationPayloadDto` (encode-only `create_conversation` request — `is_promoted` + optional `cwd`, `name` unmodeled), in its own file. Reuses #346's `ErrorPayload` / `RelayErrorException` correlated-reply types and routes the typed `conversation_created` success reply through #318's `ConversationResponseDto`. Consumed by `RemoteConversationRepository.createDiscussion`.
   - **[#348](../codebase/348.md)** the third (and last #314) outbound request encoder: `PromoteConversationPayloadDto` (encode-only `promote_conversation` request — all **three** fields `conversation_id`/`name`/`cwd` required/non-null, contrast #347's optional `cwd`), in its own file. Reuses #346's correlated-reply types and routes the typed `conversation_updated` success reply through the **same** #318 `ConversationResponseDto`. Consumed by `RemoteConversationRepository.promote`.
   - **[#359](../codebase/359.md)** the fifth (and first **device-concern**) outbound request encoder: `RegisterPushTokenPayloadDto` (encode-only `register_push_token` request — all three fields `platform`/`token`/`device_name` required/non-null; `platform` a plain `String "fcm"`, `token` never logged, #275 SSOT), in its own file. Reuses #346's `sendAndAwaitReply` + `ErrorPayload`/`RelayErrorException` correlated-reply types verbatim; the reply is a bare `ack` (no response DTO). Consumed by `RemoteConversationRepository.registerPushToken` (a non-`ConversationRepository`-interface device-concern method, dormant until the Firebase sibling adds a live caller).
-  - **[#374](../codebase/374.md)** the screen-snapshot exchange (see [The screen-snapshot exchange](#the-screen-snapshot-exchange-374)): `RequestSnapshotPayloadDto` (sixth encode-only request, `request_snapshot` `{conversation_id}`) + `ScreenSnapshotPayloadDto` (decode-only `screen_snapshot` `{conversation_id, text, ts}` — the **first decode-only payload with no domain mapper**; `text` verbatim, `ts` an unparsed `String`), co-located in `SnapshotPayload.kt`. Wire SSOT pyrycode#617/#618; ADR 025 safe-degradation floor. Consumed by #375 (repository read), which owns the dispatch + trust decision + no-content-logging invariant.
+  - **[#374](../codebase/374.md)** the screen-snapshot exchange (see [The screen-snapshot exchange](#the-screen-snapshot-exchange-374)): `RequestSnapshotPayloadDto` (sixth encode-only request, `request_snapshot` `{conversation_id}`) + `ScreenSnapshotPayloadDto` (decode-only `screen_snapshot` `{conversation_id, text, ts}` — the **first decode-only payload with no domain mapper**; `text` verbatim, `ts` an unparsed `String`), co-located in `SnapshotPayload.kt`. Wire SSOT pyrycode#617/#618; ADR 025 safe-degradation floor. Consumed by [#375](../codebase/375.md) (repository read, **landed**: `RemoteConversationRepository.requestScreenSnapshot` decodes the reply for its `text`), which owns the dispatch + trust decision + no-content-logging invariant.
 - Sibling data-layer doc: [Data model](data-model.md) (the non-wire `Conversation`/`Session`/`Message` schema, which deliberately carries **no** serialization annotations — those belong to this Phase 4 wire layer).
 - Spike: vault doc *"Phase 4 — Noise Client Spike Findings"* (`second-brain`, `2026-05-02-pyrycode-mobile/phase-4-noise-client-spike-findings.md`), § "Proven wire contract (byte-accurate)".
