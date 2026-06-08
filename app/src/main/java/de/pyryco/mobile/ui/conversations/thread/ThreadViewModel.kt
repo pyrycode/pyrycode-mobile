@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
+import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.Model
@@ -19,6 +20,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -97,6 +100,9 @@ class ThreadViewModel(
     private val repository: ConversationRepository,
     private val connectionStateSource: ConnectionStateSource,
     private val appPreferences: AppPreferences,
+    // #406: the coordinator's reconnection-surviving live-event seam, reduced to [isThinking]. Defaulted
+    // to an empty flow so the fake-backed graph + existing tests stay inert (the flag holds `false`).
+    liveSessionEvents: Flow<LiveSessionEvent> = emptyFlow(),
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
@@ -197,6 +203,42 @@ class ThreadViewModel(
                 started = SharingStarted.WhileSubscribed(5_000),
                 initialValue = ConnectionState.Connected,
             )
+
+    /**
+     * Whether this conversation's agent is currently in its `thinking` phase (#406) — `true` only while
+     * the latest `turn_state` for [conversationId] is [LiveSessionEvent.TurnState.Phase.Thinking],
+     * `false` for `responding` / `idle` / `turn_end` or before any event. A sibling [StateFlow] beside
+     * [connectionState] (not a [ThreadUiState] field): like the connection signal it is a transient,
+     * connection-scoped cross-cutting signal the stateless screen takes as a separate parameter. The
+     * reduction emits only on a phase transition, so [stateIn]'s last value is retained for events that
+     * leave the flag unchanged; `false` covers both "no event yet" and the inert empty-flow default.
+     */
+    val isThinking: StateFlow<Boolean> =
+        liveSessionEvents
+            .mapNotNull { event -> thinkingTransition(event) }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = false,
+            )
+
+    /**
+     * Folds one live event to the next [isThinking] value, or `null` to leave the flag unchanged. Routes
+     * by [conversationId] first (AC #3 — other conversations never move the flag), then maps the turn
+     * phase: `thinking` ⇒ `true`; `responding` / `idle` / `turn_end` ⇒ `false`; the non-phase events
+     * (`assistant_delta` / `tool_use` / `tool_result`) are not transitions ⇒ `null`.
+     */
+    private fun thinkingTransition(event: LiveSessionEvent): Boolean? {
+        if (event.conversationId != conversationId) return null
+        return when (event) {
+            is LiveSessionEvent.TurnState -> event.phase == LiveSessionEvent.TurnState.Phase.Thinking
+            is LiveSessionEvent.TurnEnd -> false
+            is LiveSessionEvent.AssistantDelta,
+            is LiveSessionEvent.ToolUse,
+            is LiveSessionEvent.ToolResult,
+            -> null
+        }
+    }
 
     fun sendMessage(text: String) {
         if (text.isBlank()) return

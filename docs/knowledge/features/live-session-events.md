@@ -183,8 +183,12 @@ Architect self-review verdict **PASS**; code review **PASS** with zero findings.
 tripping the ≥5 split gate) for plumbing this decode slice doesn't use. This is the accepted
 [`registerPushToken`](remote-conversation-repository.md) ([#359](../codebase/359.md)) pattern: a
 non-interface capability on the concrete repo, reached by the consumer through a concrete handle (the
-coordinator holds the repo). Surfacing it through the facade / a coordinator seam for the UI
-ViewModels is **consumer-slice wiring**, deferred to #386/#387/#337. See
+coordinator holds the repo). Surfacing it through a coordinator seam for the UI ViewModels was
+**consumer-slice wiring**, deferred to #386/#387/#337 — now realized in
+[#406](../codebase/406.md): the [coordinator](relay-repository-coordinator.md) exposes a generic,
+reconnection-surviving `liveSessionEvents: Flow<LiveSessionEvent>` over the connection-scoped concrete
+repo (`activeRemoteRepo.flatMapLatest { it?.liveSessionEvents ?: emptyFlow() }`), and
+[`ThreadViewModel.isThinking`](turn-state-thinking-flag.md) is its first consumer. See
 [[post-352-connection-scoped-repo-behind-facade]].
 
 ## Scope boundary
@@ -210,7 +214,11 @@ type (#395) — both correctly excluded here.
 - [Remote conversation repository](remote-conversation-repository.md) — hosts the flow + the demux.
 - [Stall state](stall-state.md) ([#395](../codebase/395.md)) — the **consumer in the other direction**:
   a decoded `LiveSessionEvent` clears a stall for its conversation, folded into the same gated arm.
-- [Relay repository coordinator](relay-repository-coordinator.md) — wires the capability supplier.
+- [Relay repository coordinator](relay-repository-coordinator.md) — wires the capability supplier, and
+  ([#406](../codebase/406.md)) surfaces the reconnection-surviving `liveSessionEvents` seam that brings
+  these events to UI ViewModels.
+- [Turn-state thinking flag](turn-state-thinking-flag.md) ([#406](../codebase/406.md)) — the first
+  consumer: reduces `TurnState` to `ThreadViewModel.isThinking`.
 - [Noise session pump](noise-session-pump.md) — surfaces `PumpState.Open.capabilities` (#401), the
   gate source.
 - [Mobile Protocol v2 wire layer](mobile-protocol-v2-wire-layer.md) — `MobileJson`, `Envelope`,
