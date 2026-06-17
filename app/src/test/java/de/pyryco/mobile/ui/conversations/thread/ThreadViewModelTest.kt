@@ -284,6 +284,207 @@ class ThreadViewModelTest {
             collector.cancel()
         }
 
+    // ---- #337: accumulate assistant_delta into a growing streaming MessageItem -------------------
+
+    @Test
+    fun assistantDeltas_produceSingleGrowingStreamingMessage() =
+        runTest {
+            val repo = MessagesControllableRepo()
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
+            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, turnId = "t1", seq = 0, text = "Hel"))
+            advanceUntilIdle()
+            assertEquals(listOf("Hel"), streamingContents(vm))
+
+            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, turnId = "t1", seq = 1, text = "lo"))
+            advanceUntilIdle()
+            // One growing streaming item — accumulated text, isStreaming == true (AC #1).
+            assertEquals(listOf("Hello"), streamingContents(vm))
+            assertEquals(
+                1,
+                vm.state.value.items
+                    .count { it is ThreadItem.MessageItem },
+            )
+            collector.cancel()
+        }
+
+    @Test
+    fun assistantDeltas_outOfOrderOrDuplicateSeq_areIgnored() =
+        runTest {
+            val repo = MessagesControllableRepo()
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t1", seq = 0, text = "A"))
+            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t1", seq = 1, text = "B"))
+            advanceUntilIdle()
+            assertEquals(listOf("AB"), streamingContents(vm))
+
+            // A replayed seq (== lastSeq) and an out-of-order seq (< lastSeq) leave the text unchanged (AC #2).
+            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t1", seq = 1, text = "X"))
+            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t1", seq = 0, text = "Y"))
+            advanceUntilIdle()
+            assertEquals(listOf("AB"), streamingContents(vm))
+            collector.cancel()
+        }
+
+    @Test
+    fun assistantDelta_forOtherConversation_neverAddsItem() =
+        runTest {
+            val repo = MessagesControllableRepo()
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            // A delta for a different conversation must never surface in this thread (AC #2 confidentiality).
+            events.emit(LiveSessionEvent.AssistantDelta("other-conversation", "t1", seq = 0, text = "leak"))
+            advanceUntilIdle()
+            assertTrue(
+                vm.state.value.items
+                    .isEmpty(),
+            )
+            collector.cancel()
+        }
+
+    @Test
+    fun turnEndThenFinishedMessage_settlesToFinishedWithoutDuplicate() =
+        runTest {
+            val repo = MessagesControllableRepo()
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t1", seq = 0, text = "Done"))
+            advanceUntilIdle()
+            assertEquals(listOf("Done"), streamingContents(vm))
+
+            // turn_end settles the typewriter but the item stays until the finished message arrives (AC #3).
+            events.emit(LiveSessionEvent.TurnEnd(ACTIVE_CONV, "t1", stopReason = "end_turn"))
+            advanceUntilIdle()
+            val settled =
+                vm.state.value.items
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .single()
+            assertFalse(settled.message.isStreaming)
+            assertEquals("Done", settled.message.content)
+
+            // The persisted finished message (distinct id) replaces the streaming item — no duplicate (AC #3/#5).
+            repo.messages.value = listOf(assistantMessage(id = "m1", content = "Done"))
+            advanceUntilIdle()
+            assertEquals(listOf("m1"), messageIds(vm))
+            assertTrue(
+                vm.state.value.items
+                    .none { it is ThreadItem.MessageItem && it.message.isStreaming },
+            )
+            collector.cancel()
+        }
+
+    @Test
+    fun finishedMessageBeforeTurnEnd_dropsStreamingWithoutDuplicate() =
+        runTest {
+            val repo = MessagesControllableRepo()
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t1", seq = 0, text = "Done"))
+            advanceUntilIdle()
+            assertEquals(listOf("Done"), streamingContents(vm))
+
+            // The finished message wins the race against turn_end → streaming item dropped immediately (AC #3).
+            repo.messages.value = listOf(assistantMessage(id = "m1", content = "Done"))
+            advanceUntilIdle()
+            assertEquals(listOf("m1"), messageIds(vm))
+
+            // The later turn_end is a no-op — no resurrected streaming item, still single.
+            events.emit(LiveSessionEvent.TurnEnd(ACTIVE_CONV, "t1", stopReason = "end_turn"))
+            advanceUntilIdle()
+            assertEquals(listOf("m1"), messageIds(vm))
+            collector.cancel()
+        }
+
+    @Test
+    fun streamingTurn_appendsAtEndWithoutReorderingBackfill() =
+        runTest {
+            val repo = MessagesControllableRepo()
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            repo.messages.value =
+                listOf(
+                    userMessage(id = "u1", content = "hi"),
+                    assistantMessage(id = "a1", content = "prior answer"),
+                )
+            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t2", seq = 0, text = "new"))
+            advanceUntilIdle()
+            // The backfilled items keep their order; exactly one streaming item is appended last (AC #4).
+            assertEquals(listOf("u1", "a1", "t2"), messageIds(vm))
+            assertEquals(listOf("new"), streamingContents(vm))
+
+            // Finalising with the new persisted message leaves the prior items untouched.
+            repo.messages.value =
+                listOf(
+                    userMessage(id = "u1", content = "hi"),
+                    assistantMessage(id = "a1", content = "prior answer"),
+                    assistantMessage(id = "a2", content = "new"),
+                )
+            advanceUntilIdle()
+            assertEquals(listOf("u1", "a1", "a2"), messageIds(vm))
+            collector.cancel()
+        }
+
+    @Test
+    fun cancelledTurn_withNoFinishedMessage_keepsSettledPartial() =
+        runTest {
+            val repo = MessagesControllableRepo()
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t1", seq = 0, text = "partial"))
+            events.emit(LiveSessionEvent.TurnEnd(ACTIVE_CONV, "t1", stopReason = "cancelled"))
+            advanceUntilIdle()
+
+            // No finished message ever arrives — the settled partial stays as a non-streaming message, no orphan.
+            val item =
+                vm.state.value.items
+                    .filterIsInstance<ThreadItem.MessageItem>()
+                    .single()
+            assertEquals("partial", item.message.content)
+            assertFalse(item.message.isStreaming)
+            collector.cancel()
+        }
+
+    @Test
+    fun inertLiveEvents_itemsEqualObserveMessagesProjection() =
+        runTest {
+            val repo = MessagesControllableRepo()
+            repo.messages.value =
+                listOf(
+                    userMessage(id = "u1", content = "hi"),
+                    assistantMessage(id = "a1", content = "answer"),
+                )
+            // Default emptyFlow() live source → behaves exactly as the #313 finished-message thread (AC #5).
+            val vm = makeVm(activeHandle(), repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            assertEquals(repo.messages.value, vm.state.value.items)
+            collector.cancel()
+        }
+
     @Test
     fun state_resolvedTitle_isChannelNameForSeededChannel() =
         runTest {
@@ -1203,6 +1404,51 @@ class ThreadViewModelTest {
         phase: LiveSessionEvent.TurnState.Phase,
     ): LiveSessionEvent = LiveSessionEvent.TurnState(conversationId, phase)
 
+    private fun activeHandle(): SavedStateHandle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+
+    private fun assistantMessage(
+        id: String,
+        content: String,
+    ): ThreadItem.MessageItem =
+        ThreadItem.MessageItem(
+            Message(
+                id = id,
+                sessionId = "s1",
+                role = Role.Assistant,
+                content = content,
+                timestamp = Instant.parse("2026-06-17T00:00:00Z"),
+                isStreaming = false,
+            ),
+        )
+
+    private fun userMessage(
+        id: String,
+        content: String,
+    ): ThreadItem.MessageItem =
+        ThreadItem.MessageItem(
+            Message(
+                id = id,
+                sessionId = "s1",
+                role = Role.User,
+                content = content,
+                timestamp = Instant.parse("2026-06-17T00:00:00Z"),
+                isStreaming = false,
+            ),
+        )
+
+    /** Ids of every [ThreadItem.MessageItem] in the VM's items, in order. */
+    private fun messageIds(vm: ThreadViewModel): List<String> =
+        vm.state.value.items
+            .filterIsInstance<ThreadItem.MessageItem>()
+            .map { it.message.id }
+
+    /** Content of every currently-streaming assistant message in the VM's items, in order. */
+    private fun streamingContents(vm: ThreadViewModel): List<String> =
+        vm.state.value.items
+            .filterIsInstance<ThreadItem.MessageItem>()
+            .filter { it.message.isStreaming }
+            .map { it.message.content }
+
     private class RecordingRepo : ConversationRepository {
         val archiveCalls = mutableListOf<String>()
         val deleteCalls = mutableListOf<String>()
@@ -1291,6 +1537,20 @@ class ThreadViewModelTest {
             observedIds += conversationId
             return stall
         }
+    }
+
+    /**
+     * Delegates the whole [ConversationRepository] surface to a seeded [FakeConversationRepository]
+     * (so the VM's `state` pipeline stays populated) and overrides only [observeMessages] with a
+     * controllable [MutableStateFlow], so a test can push a finished-message projection mid-turn — the
+     * fake cannot drive a finished message into the thread on demand.
+     */
+    private class MessagesControllableRepo(
+        private val delegate: FakeConversationRepository = FakeConversationRepository(),
+    ) : ConversationRepository by delegate {
+        val messages = MutableStateFlow<List<ThreadItem>>(emptyList())
+
+        override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = messages
     }
 
     private class RecordingConnectionStateSource : ConnectionStateSource {
