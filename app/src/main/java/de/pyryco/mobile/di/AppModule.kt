@@ -50,7 +50,21 @@ val appModule =
         single { KeystoreDeviceStaticKeyStore(get()) } bind DeviceStaticKeyStore::class
         single { KeystorePairedServerStore(get()) } bind PairedServerStore::class
         single { NoiseClientInfo(deviceName = Build.MODEL, clientVersion = BuildConfig.VERSION_NAME) }
-        single { NoiseSessionFactory(get(), get(), get()) }
+        // #416: the factory holds a live read of the reconnect-spanning replay cursor (#412), so each
+        // reconnect's `hello` advertises `last_event_id` as of its own handshake-build. No DI cycle: the
+        // lambda is invoked only at hello-build (per connection, after the coordinator is constructed and
+        // started), so constructing the factory only STORES it — it never resolves the coordinator
+        // eagerly. The coordinator single resolves this factory eagerly at its own construction, but by
+        // the time the lambda fires, get<RelayRepositoryCoordinator>() returns the already-cached
+        // singleton. replayCursor is `internal` and AppModule is in the same module → accessible.
+        single {
+            NoiseSessionFactory(
+                get(),
+                get(),
+                get(),
+                lastEventId = { get<RelayRepositoryCoordinator>().replayCursor.latest },
+            )
+        }
         single<WebSocket.Factory> { OkHttpRelayTransport.defaultClient() }
         single<RelayTransportFactory> {
             val client = get<WebSocket.Factory>()

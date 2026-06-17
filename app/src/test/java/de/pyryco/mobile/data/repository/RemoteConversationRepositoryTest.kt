@@ -2399,6 +2399,67 @@ class RemoteConversationRepositoryTest {
             assertEquals(13L, cursor.latest)
         }
 
+    // ---- #416 AC#3: ring-replayed events compose with the live stream on the single inbound path --
+
+    // After a reconnect advertised the cursor, the daemon replays the missed tail (event_id > cursor)
+    // ahead of the live stream, all on the same single inbound path. Distinct message_ids → one row
+    // each, in arrival order; the cursor advances monotonically through replay-then-live.
+    @Test
+    fun replayedThenLiveMessages_areAppliedOnceAndAdvanceCursor() =
+        runTest {
+            val pump = FakeSessionPump()
+            val cursor = ReplayCursor()
+            cursor.record(100) // a prior connection's high-water mark — the value the reconnect advertised
+            val repo =
+                RemoteConversationRepository(
+                    pump,
+                    backgroundScope,
+                    negotiatedCapabilities = { setOf("interactive") },
+                    replayCursor = cursor,
+                )
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            // Replayed-from-ring tail (event_id > advertised cursor), then the live stream that follows.
+            pump.push(messageEnvelope("c1", "m101", "assistant", "replayed-1", TS, eventId = 101))
+            pump.push(messageEnvelope("c1", "m102", "assistant", "replayed-2", TS, eventId = 102))
+            runCurrent()
+            pump.push(messageEnvelope("c1", "m103", "user", "live", "2026-05-31T12:00:00Z", eventId = 103))
+            runCurrent()
+
+            assertEquals(listOf("m101", "m102", "m103"), messageIds(emissions.last()))
+            assertEquals(103L, cursor.latest)
+        }
+
+    // Defensive overlap: a replayed row whose message_id the live stream also carries folds in place
+    // (one row, last write wins) via the existing appendMessages dedup — never a duplicate row (AC#3).
+    @Test
+    fun replayedMessageOverlappingLive_foldsInPlaceNoDuplicateRow() =
+        runTest {
+            val pump = FakeSessionPump()
+            val cursor = ReplayCursor()
+            cursor.record(100)
+            val repo =
+                RemoteConversationRepository(
+                    pump,
+                    backgroundScope,
+                    negotiatedCapabilities = { setOf("interactive") },
+                    replayCursor = cursor,
+                )
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(messageEnvelope("c1", "m1", "assistant", "from-replay", TS, eventId = 101))
+            runCurrent()
+            pump.push(messageEnvelope("c1", "m1", "assistant", "from-live", "2026-05-31T12:00:00Z", eventId = 102))
+            runCurrent()
+
+            val thread = emissions.last()
+            assertEquals(listOf("m1"), messageIds(thread))
+            assertEquals("from-live", (thread[0] as ThreadItem.MessageItem).message.content)
+            assertEquals(102L, cursor.latest)
+        }
+
     // ---- Helpers --------------------------------------------------------------------------------
 
     /**
@@ -2638,6 +2699,7 @@ class RemoteConversationRepositoryTest {
         text: String,
         ts: String,
         id: Long = 1L,
+        eventId: Long? = null,
     ): Envelope =
         Envelope(
             id = id,
@@ -2647,6 +2709,7 @@ class RemoteConversationRepositoryTest {
                 MobileJson.parseToJsonElement(
                     """{"conversation_id":"$conversationId","message_id":"$messageId","role":"$role","text":"$text"}""",
                 ),
+            eventId = eventId,
         )
 
     private fun TestScope.collectStall(

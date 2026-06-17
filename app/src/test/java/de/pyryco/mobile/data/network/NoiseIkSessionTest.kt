@@ -9,6 +9,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -247,6 +248,38 @@ class NoiseIkSessionTest {
     @Test
     fun negotiatedCapabilities_beforeHandshakeThrowsIllegalState() {
         assertThrows(IllegalStateException::class.java) { freshSession().negotiatedCapabilities }
+    }
+
+    // ---- #416: advertise the replay cursor as last_event_id in the hello -------
+
+    @Test
+    fun handshake_advertisesRecordedReplayCursorReadLiveAtBuild() {
+        // The cursor is read at hello-build time, not captured at session construction (AC #1):
+        // record(5) before construction, then record(8) AFTER construction but BEFORE writeInit().
+        // A construction-time snapshot would advertise 5; the live supplier advertises 8.
+        val responder = TestResponder()
+        val cursor = ReplayCursor()
+        cursor.record(5)
+        val session =
+            NoiseIkSession(newPrivateKey(), responder.staticPublicKey, "tok", clientInfo, lastEventId = { cursor.latest })
+        cursor.record(8)
+
+        val helloJson = responder.readInit(session.writeInit())
+
+        val envelope = MobileJson.decodeFromString<Envelope>(helloJson)
+        val hello = MobileJson.decodeFromJsonElement<HelloClientPayload>(envelope.payload)
+        assertEquals(8L, hello.lastEventId)
+    }
+
+    @Test
+    fun handshake_freshCursorOmitsLastEventIdFromHello() {
+        // Default supplier ({ null }) — nothing observed → the hello JSON omits last_event_id (AC #2).
+        val responder = TestResponder()
+        val session = NoiseIkSession(newPrivateKey(), responder.staticPublicKey, "tok", clientInfo)
+
+        val helloJson = responder.readInit(session.writeInit())
+
+        assertFalse(helloJson.contains("last_event_id"))
     }
 
     // ---- AC #1/#2/#4: re-key happy path + atomic swap --------------------------

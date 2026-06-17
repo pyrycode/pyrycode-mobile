@@ -174,6 +174,29 @@ class MobileWireCodecTest {
         assertTrue(hello.toString().contains("token=***"))
     }
 
+    // ---- #416 AC#2: last_event_id rides when set, omitted when null ------------
+
+    @Test
+    fun helloClientPayload_withLastEventId_encodesIt() {
+        // A reconnect after observing event_id 42 advertises it verbatim, mirroring Envelope.eventId.
+        val hello = HelloClientPayload(deviceName = "d", clientVersion = "1.0", token = "t", lastEventId = 42L)
+        assertTrue(MobileJson.encodeToString(hello).contains("\"last_event_id\":42"))
+        // toString surfaces the (non-secret) ordinal while the token stays redacted.
+        assertTrue(hello.toString().contains("lastEventId=42"))
+        assertTrue(hello.toString().contains("token=***"))
+    }
+
+    @Test
+    fun helloClientPayload_withNullLastEventId_omitsOnEncode() {
+        // A fresh connection (nothing observed) omits the field — never `0`/`null` — via explicitNulls=false.
+        val hello = HelloClientPayload(deviceName = "d", clientVersion = "1.0", token = "t")
+        assertNull(hello.lastEventId)
+        assertFalse(
+            "a null last_event_id is omitted, never emitted as 0/null",
+            MobileJson.encodeToString(hello).contains("last_event_id"),
+        )
+    }
+
     // ---- in_reply_to omitted when absent (AC #5) -------------------------------
 
     @Test
