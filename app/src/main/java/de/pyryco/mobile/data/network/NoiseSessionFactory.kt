@@ -21,6 +21,11 @@ class NoiseSessionFactory(
     private val pairedServerStore: PairedServerStore,
     private val clientInfo: NoiseClientInfo,
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    // The replay-cursor supplier (#416), forwarded verbatim into each [NoiseIkSession] so its `hello`
+    // advertises `last_event_id` read live at handshake-build. Default `{ null }` omits the field;
+    // `AppModule` wires the live `RelayRepositoryCoordinator.replayCursor.latest` read. The re-key path
+    // ([reloadDeviceStaticKey]) builds no `hello`, so it is unaffected.
+    private val lastEventId: () -> Long? = { null },
 ) {
     /** Builds a fresh session. Throws [NoiseSessionException] if setup fails. */
     suspend fun create(): NoiseIkSession =
@@ -46,7 +51,7 @@ class NoiseSessionFactory(
                     throw NoiseSessionException("device static key unavailable", e)
                 }
 
-            NoiseIkSession(keyPair.privateKey, remoteStaticKey, paired.token, clientInfo).also {
+            NoiseIkSession(keyPair.privateKey, remoteStaticKey, paired.token, clientInfo, lastEventId).also {
                 // The constructor has copied the private key into the DH state — zero our copy.
                 keyPair.privateKey.fill(0)
             }

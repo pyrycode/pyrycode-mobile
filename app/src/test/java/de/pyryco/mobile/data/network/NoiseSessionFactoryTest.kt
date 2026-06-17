@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.network
 
+import com.southernstorm.noise.protocol.HandshakeState
 import com.southernstorm.noise.protocol.Noise
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyException
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyPair
@@ -9,6 +10,8 @@ import de.pyryco.mobile.data.crypto.PairedServerStore
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.decodeFromJsonElement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -85,16 +88,45 @@ class NoiseSessionFactoryTest {
             assertNotNull(session.writeInit())
         }
 
+    // ---- #416: the factory forwards the last_event_id supplier into the session
+    @Test
+    fun create_forwardsLastEventIdSupplierIntoHello() =
+        runTest(dispatcher) {
+            // A responder keypair we control so the session's writeInit() can be decrypted and the
+            // hello recovered — its public key is the paired server static the session pins.
+            val responder = HandshakeState(PROTO, HandshakeState.RESPONDER)
+            responder.localKeyPair.generateKeyPair()
+            val serverStatic = ByteArray(responder.localKeyPair.publicKeyLength)
+            responder.localKeyPair.getPublicKey(serverStatic, 0)
+            responder.start()
+
+            val factory =
+                factory(
+                    deviceStore = FakeDeviceStaticKeyStore(newDeviceKeyPair()),
+                    pairedStore = FakePairedServerStore(pairedRecord(serverStaticPublicKey = base64StdEncode(serverStatic))),
+                    lastEventId = { 9L },
+                )
+
+            val init = factory.create().writeInit()
+            val buf = ByteArray(init.size)
+            val n = responder.readMessage(init, 0, init.size, buf, 0)
+            val envelope = MobileJson.decodeFromString<Envelope>(String(buf, 0, n, Charsets.UTF_8))
+            val hello = MobileJson.decodeFromJsonElement<HelloClientPayload>(envelope.payload)
+            assertEquals(9L, hello.lastEventId)
+        }
+
     // ---- Fakes + helpers -------------------------------------------------------
 
     private fun factory(
         deviceStore: DeviceStaticKeyStore,
         pairedStore: PairedServerStore,
+        lastEventId: () -> Long? = { null },
     ) = NoiseSessionFactory(
         deviceStaticKeyStore = deviceStore,
         pairedServerStore = pairedStore,
         clientInfo = clientInfo,
         ioDispatcher = dispatcher,
+        lastEventId = lastEventId,
     )
 
     private fun pairedRecord(
@@ -139,6 +171,8 @@ class NoiseSessionFactoryTest {
     }
 
     private companion object {
+        const val PROTO = "Noise_IK_25519_ChaChaPoly_BLAKE2s"
+
         fun newDeviceKeyPair(): DeviceStaticKeyPair {
             val dh = Noise.createDH("25519")
             dh.generateKeyPair()

@@ -30,6 +30,7 @@ class NoiseIkSession(           // a plain class, deliberately NOT a data class 
     remoteStaticPublicKey: ByteArray,   // raw 32-byte server rs   (#294)
     token: String,                      // hello secret            (#294)
     clientInfo: NoiseClientInfo,
+    lastEventId: () -> Long? = { null }, // #416: replay cursor, read LIVE inside buildHello()
 ) {
     fun writeInit(): ByteArray              // raw noise_init frame (hello as encrypted early-data)
     fun readResp(resp: ByteArray): String   // recover hello_ack; return conn_id; → established
@@ -47,6 +48,7 @@ class NoiseSessionFactory(
     pairedServerStore: PairedServerStore,
     clientInfo: NoiseClientInfo,
     ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    lastEventId: () -> Long? = { null },    // #416: forwarded verbatim into each session's hello
 ) {
     suspend fun create(): NoiseIkSession    // throws NoiseSessionException if setup fails
 }
@@ -63,7 +65,7 @@ NEW ──writeInit()──▶ AWAITING_RESP ──readResp()──▶ ESTABLISH
 ```
 
 - **Constructor** (NEW) — `require` both keys are 32 bytes; build `HandshakeState(PROTOCOL, INITIATOR)`; set the local private key (which derives the matching public key) and pin the remote static `rs`; call `start()`. **Never `setPrologue`** — `start()` mixes the *empty* prologue, and that empty prologue is load-bearing for Go interop (a non-empty prologue diverges the handshake hash and the responder rejects msg1). Setup is eager, so the raw private key is copied into the DH state immediately, shrinking its RAM window.
-- **`writeInit()`** (NEW → AWAITING_RESP) — build the `hello` envelope, `writeMessage` it as encrypted early-data into a buffer sized `hello.size + 96` (IK msg1 overhead: 32-byte `e` + 48-byte encrypted `s` + 16-byte payload MAC), drop the in-memory token reference, return the raw frame bytes.
+- **`writeInit()`** (NEW → AWAITING_RESP) — build the `hello` envelope (inside `buildHello()`), `writeMessage` it as encrypted early-data into a buffer sized `hello.size + 96` (IK msg1 overhead: 32-byte `e` + 48-byte encrypted `s` + 16-byte payload MAC), drop the in-memory token reference, return the raw frame bytes. **`buildHello()` invokes the `lastEventId` supplier here** ([#416](../codebase/416.md)) — so the [replay cursor](replay-cursor.md) is read **at handshake-build, not at session construction**: each reconnect advertises the cursor as of its own `hello`, never a captured snapshot.
 - **`readResp(resp)`** (AWAITING_RESP → ESTABLISHED) — `readMessage` recovers the `hello_ack` early-data; `check(action == SPLIT)`; parse `conn_id` + the negotiated `capabilities` ([#401](../codebase/401.md), see § `hello`/`hello_ack`); `split()`. **The initiator does NOT swap**: `sender` = encrypt-outbound, `receiver` = decrypt-inbound (the spike's "one high-risk line"; the responder mirror-swaps). The handshake is then destroyed (it forks independent transport ciphers on `split()` — see Secret handling). **Fail-closed**: any failure transitions to CLOSED, not a half-open state.
 - **`encrypt` / `decrypt`** (ESTABLISHED) — `encryptWithAd(null, …)` / `decryptWithAd(null, …)`. **`ad = null` always** (empty associated data is load-bearing — `protocol-mobile.md` mandates *"Implementations MUST NOT pass a non-empty AD without a corresponding spec amendment"*); ciphertext length = plaintext + 16 (Poly1305 tag). `decrypt` rejects ciphertext shorter than the 16-byte tag.
 - **`writeRekeyInit(s)` → `readRekeyResp(resp)`** (ESTABLISHED, in place — [#303](../codebase/303.md)) — refresh the transport keys without tearing down the session. `writeRekeyInit` runs a *fresh* IK handshake against the **same pinned `rs`** with **empty** early-data and returns the raw `noise_init`; transport keeps flowing on the **current** keys until `readRekeyResp` derives the fresh pair and **atomically** swaps it in (under the same lock as `encrypt`/`decrypt`), wiping the old pair. `state` stays `ESTABLISHED` throughout — "re-key in flight" is tracked by a private `pendingRekey` field, not a new state, so transport never pauses. **Fail-RETAIN** (unlike `readResp`'s fail-close): any handshake/crypto failure retains the live keys and is **retryable**. See § Re-key below.
@@ -75,7 +77,7 @@ NEW ──writeInit()──▶ AWAITING_RESP ──readResp()──▶ ESTABLISH
 
 The handshake carries application early-data, framed by the [#273](mobile-protocol-v2-wire-layer.md) wire models and **always (de)serialized via `MobileJson`** (a default `Json {}` would drop defaulted fields like `role`/`protocol_versions`, which is wire-breaking):
 
-- **`hello`** (in `noise_init`) — `HelloClientPayload(deviceName, clientVersion, token)` (`role = "client"`, `protocolVersions = ["v2"]`, and `capabilities = ["interactive"]` default) inside `Envelope(id = 1, type = "hello", ts = <RFC3339>, payload)`. The token rides **inside the encrypted early-data**, never a plaintext header (correct v2). The `capabilities` default ([#401](../codebase/401.md)) advertises the v2 features the phone understands and rides the wire via `MobileJson`'s `encodeDefaults` — see the [wire layer § Capability negotiation](mobile-protocol-v2-wire-layer.md#capability-negotiation-401).
+- **`hello`** (in `noise_init`) — `HelloClientPayload(deviceName, clientVersion, token, lastEventId = lastEventId())` (`role = "client"`, `protocolVersions = ["v2"]`, and `capabilities = ["interactive"]` default) inside `Envelope(id = 1, type = "hello", ts = <RFC3339>, payload)`. The token rides **inside the encrypted early-data**, never a plaintext header (correct v2). The `capabilities` default ([#401](../codebase/401.md)) advertises the v2 features the phone understands and rides the wire via `MobileJson`'s `encodeDefaults` — see the [wire layer § Capability negotiation](mobile-protocol-v2-wire-layer.md#capability-negotiation-401). `lastEventId` ([#416](../codebase/416.md)) is the [replay cursor](replay-cursor.md), read **live** via the supplier here; a `null` (fresh connection, nothing observed) is **omitted on encode** by `explicitNulls = false`, so a fresh `hello` stays byte-identical to today.
 - **`hello_ack`** (in `noise_resp`) — decode `Envelope`, require `type == "hello_ack"`, decode the whole `HelloAckPayload` (since [#401](../codebase/401.md) `parseHelloAck` returns the payload, not just `connId`). Any malformed/wrong-type/missing-`conn_id` → `NoiseSessionException("malformed hello_ack")` (a non-array `capabilities` is a malformed payload too → same fail-closed throw).
 - **Negotiated capabilities ([#401](../codebase/401.md))** — `readResp` extracts both `connId` and `capabilities.toSet()` from the decoded `hello_ack`. The set is surfaced on a **new property** `val negotiatedCapabilities: Set<String>`, mirroring `connId` exactly (written once before `state = ESTABLISHED`; **throws `IllegalStateException` until established**). The **wire `List` → surface `Set`** conversion happens once here, at the post-MAC trust crossing — capabilities are a membership set (`CAPABILITY_INTERACTIVE in negotiatedCapabilities` answers "is it granted?"), and a `Set` dedups a daemon that repeats an entry. A daemon that echoes none decodes to the empty default → empty set (not granted). This is **surfacing-only**: the session gates nothing on the set; the [pump](noise-session-pump.md) carries it onto `PumpState.Open.capabilities` for the eventual decode gate (#385) / stall gate (#395).
 
@@ -111,10 +113,17 @@ After constructing the session, the factory **zeroes its copy of the private-key
 
 ```kotlin
 single { NoiseClientInfo(deviceName = Build.MODEL, clientVersion = BuildConfig.VERSION_NAME) }
-single { NoiseSessionFactory(get(), get(), get()) }   // DeviceStaticKeyStore, PairedServerStore, NoiseClientInfo
+single {
+    NoiseSessionFactory(   // DeviceStaticKeyStore, PairedServerStore, NoiseClientInfo
+        get(), get(), get(),
+        lastEventId = { get<RelayRepositoryCoordinator>().replayCursor.latest },   // #416
+    )
+}
 ```
 
 The factory is the **first registered consumer** of both [#291](../codebase/291.md) and [#294](../codebase/294.md)'s crypto stores (nothing calls `create()` yet — #276 wires the WS client).
+
+The `lastEventId` supplier ([#416](../codebase/416.md)) is the **only cross-layer edge** between `data/network` and the repository layer, and it is confined to this composition-root lambda — the factory and session hold only a `() -> Long?`, never a repository reference. It reads the [coordinator](relay-repository-coordinator.md)'s `internal val replayCursor` (the seam [#412](../codebase/412.md) exposed for exactly this read). **No Koin DI cycle**: constructing the factory only *stores* the lambda; it resolves the coordinator **only when invoked at `hello`-build** (per connection, after the coordinator is constructed and started), by which point Koin returns the already-cached singleton — even though the coordinator single eagerly resolves this factory at its own construction, the lambda is never fired there. The reasoning is recorded inline in `AppModule.kt` so a future "simplify to an eager `get`" edit (which *would* cycle) is warned off.
 
 ## Threading & key hygiene
 
@@ -137,8 +146,8 @@ JVM-only (`app/src/test/.../NoiseIkSessionTest.kt`, `./gradlew test`) — the ve
 
 ## Related
 
-- Ticket notes: [`../codebase/298.md`](../codebase/298.md) (the one-shot session) + [`../codebase/303.md`](../codebase/303.md) (the in-place re-key mechanism) + [`../codebase/401.md`](../codebase/401.md) (advertise + surface the negotiated `interactive` capability) — Patterns established + Lessons learned.
-- Specs: `docs/specs/architecture/298-noise-ik-session-handshake-aead-transport.md`, `docs/specs/architecture/303-noise-ik-session-rekey.md`, `docs/specs/architecture/401-advertise-surface-interactive-capability.md`.
+- Ticket notes: [`../codebase/298.md`](../codebase/298.md) (the one-shot session) + [`../codebase/303.md`](../codebase/303.md) (the in-place re-key mechanism) + [`../codebase/401.md`](../codebase/401.md) (advertise + surface the negotiated `interactive` capability) + [`../codebase/416.md`](../codebase/416.md) (advertise the [replay cursor](replay-cursor.md) as `last_event_id` — the `lastEventId` supplier read in `buildHello()`) — Patterns established + Lessons learned.
+- Specs: `docs/specs/architecture/298-noise-ik-session-handshake-aead-transport.md`, `docs/specs/architecture/303-noise-ik-session-rekey.md`, `docs/specs/architecture/401-advertise-surface-interactive-capability.md`, `docs/specs/architecture/416-advertise-replay-cursor-last-event-id.md`.
 - Sits on: [Mobile Protocol v2 wire layer](mobile-protocol-v2-wire-layer.md) ([#273](../codebase/273.md)) — `Envelope` / `HelloClientPayload` / `HelloAckPayload` / `MobileJson` / `base64StdDecode`; the `capabilities` field + `CAPABILITY_INTERACTIVE` token ([#401](../codebase/401.md), see [§ Capability negotiation](mobile-protocol-v2-wire-layer.md#capability-negotiation-401)).
 - Consumes: [Device static keystore](device-static-keystore.md) ([#291](../codebase/291.md), local `s`) + [Paired server store](paired-server-store.md) ([#294](../codebase/294.md), remote `rs` + token).
 - Decisions: [ADR 0004 — vendor noise-java](../decisions/0004-vendor-noise-java-crypto.md) (suite + library), [ADR 0006 — Keystore wrap-at-rest](../decisions/0006-keystore-wrap-at-rest-device-static-key.md) (local `s` custody). Aligns with pyrycode-side ADR 024 (Noise_IK for mobile E2E).

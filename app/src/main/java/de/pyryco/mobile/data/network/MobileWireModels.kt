@@ -72,6 +72,16 @@ internal const val CAPABILITY_INTERACTIVE = "interactive"
  * [capabilities] advertises the v2 features the phone understands; it defaults to
  * `["interactive"]` and rides every `hello` via `MobileJson`'s `encodeDefaults = true`
  * (same mechanism as [protocolVersions]). It is non-secret, so [toString] surfaces it.
+ *
+ * [lastEventId] is the replay cursor (#416): on reconnect the phone advertises the latest
+ * structured-stream [Envelope.eventId] it observed (#412's [ReplayCursor]) so the daemon replays the
+ * conversation's missed tail (events with id `> last_event_id`) before the live stream resumes. It is
+ * modeled exactly like [Envelope.eventId] — nullable-defaulted, so `explicitNulls = false` omits it on
+ * encode: a fresh connection that observed nothing leaves the field absent (never `0`/`null`), keeping
+ * that `hello` byte-identical to today, while a positive value rides as the server's `omitempty
+ * *uint64`. The phone advertises only the cursor it itself recorded through [ReplayCursor.record]'s
+ * positive guard — never a conversation id, never an unvalidated server value. Non-secret (an event
+ * ordinal), so [toString] surfaces it alongside [capabilities].
  */
 @Serializable
 data class HelloClientPayload(
@@ -81,11 +91,12 @@ data class HelloClientPayload(
     @SerialName("protocol_versions") val protocolVersions: List<String> = listOf("v2"),
     val token: String,
     val capabilities: List<String> = listOf(CAPABILITY_INTERACTIVE),
+    @SerialName("last_event_id") val lastEventId: Long? = null,
 ) {
     override fun toString(): String =
         "HelloClientPayload(role=$role, deviceName=$deviceName, " +
             "clientVersion=$clientVersion, protocolVersions=$protocolVersions, " +
-            "capabilities=$capabilities, token=***)"
+            "capabilities=$capabilities, lastEventId=$lastEventId, token=***)"
 }
 
 /**

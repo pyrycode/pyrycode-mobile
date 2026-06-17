@@ -64,6 +64,10 @@ class NoiseIkSession(
     remoteStaticPublicKey: ByteArray,
     token: String,
     private val clientInfo: NoiseClientInfo,
+    // The replay cursor (#416), read **live** at [writeInit] (inside [buildHello]) — never captured at
+    // construction — so each reconnect advertises the cursor as of its own hello-build. Default `{ null }`
+    // omits `last_event_id` (a fresh connection with nothing observed). Invoked once per session.
+    private val lastEventId: () -> Long? = { null },
 ) {
     private enum class State { NEW, AWAITING_RESP, ESTABLISHED, CLOSED }
 
@@ -301,6 +305,7 @@ class NoiseIkSession(
                 deviceName = clientInfo.deviceName,
                 clientVersion = clientInfo.clientVersion,
                 token = token,
+                lastEventId = lastEventId(), // live read at hello-build (#416); null → omitted on encode
             )
         val envelope =
             Envelope(

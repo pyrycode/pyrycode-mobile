@@ -63,10 +63,11 @@ data class HelloClientPayload(
     @SerialName("protocol_versions") val protocolVersions: List<String> = listOf("v2"),
     val token: String,                                  // device-pairing SECRET — toString() redacts
     val capabilities: List<String> = listOf(CAPABILITY_INTERACTIVE),  // #401: advertised feature set
+    @SerialName("last_event_id") val lastEventId: Long? = null,       // #416: replay cursor, omit-when-null
 )
 ```
 
-`role="client"`, `protocol_versions=["v2"]`, and `capabilities=["interactive"]` default but are always emitted. `token` is the device-pairing secret (see [Secret handling](#secret-handling)). `capabilities` (added [#401](../codebase/401.md)) advertises the v2 features the phone understands — see [Capability negotiation](#capability-negotiation-401); it is **non-secret**, so the `toString` override surfaces it (only `token` stays `***`).
+`role="client"`, `protocol_versions=["v2"]`, and `capabilities=["interactive"]` default but are always emitted. `token` is the device-pairing secret (see [Secret handling](#secret-handling)). `capabilities` (added [#401](../codebase/401.md)) advertises the v2 features the phone understands — see [Capability negotiation](#capability-negotiation-401); it is **non-secret**, so the `toString` override surfaces it (only `token` stays `***`). `last_event_id` (added [#416](../codebase/416.md)) is the [replay cursor](replay-cursor.md): on reconnect the phone advertises the latest structured-stream `Envelope.eventId` it observed so the daemon replays the missed tail before the live stream resumes. It is modeled **byte-for-byte like `Envelope.eventId`** — nullable-defaulted, so `explicitNulls = false` **omits it when null** (a fresh connection that observed nothing leaves the field absent — never `0`/`null`, keeping that `hello` byte-identical to today) while a positive value rides as the server's `omitempty *uint64`. Non-secret (an event ordinal), so `toString` surfaces it too. The value is read **live at `hello`-build** via a supplier — see [Noise_IK session § hello](noise-ik-session.md).
 
 ### `HelloAckPayload` — the `hello_ack` payload (in `noise_resp` early-data)
 
