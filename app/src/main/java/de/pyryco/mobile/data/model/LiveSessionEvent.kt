@@ -20,6 +20,10 @@ package de.pyryco.mobile.data.model
  * user/session content, so a rendering consumer MUST treat them as inert data (not
  * markup/HTML/active content) and own its own output-encoding at render time.
  *
+ * The family also carries one **control-derived** signal beyond the five binary→phone render
+ * envelopes: [ReplayGap] (#417), derived from the daemon's `resync` marker. It is not itself a render
+ * event and carries no verbatim user/tool text — only the conversation id the gap concerns.
+ *
  * Pure data, no Android imports — kept portable per CLAUDE.md (`data/` is a Compose Multiplatform
  * walk-back surface). The subtype names mirror the wire `type` strings 1:1.
  */
@@ -74,5 +78,17 @@ sealed interface LiveSessionEvent {
         override val conversationId: String,
         val turnId: String,
         val stopReason: String,
+    ) : LiveSessionEvent
+
+    /**
+     * A replay gap (#417), surfaced when the daemon emits a `resync` marker because the phone's
+     * advertised replay position aged out of its bounded ring, so gap-free in-ring replay was
+     * impossible. Carries only [conversationId] (the conversation the gap concerns) — no turn / event /
+     * text content. An observable signal a UI layer can later render (e.g. a "messages may be missing"
+     * affordance); this slice does not render it. Unlike the five wire-event subtypes it is
+     * control-derived, not a decoded render envelope.
+     */
+    data class ReplayGap(
+        override val conversationId: String,
     ) : LiveSessionEvent
 }

@@ -36,4 +36,17 @@ class ReplayCursor {
         if (eventId <= 0) return
         mark.update { current -> if (current == null || eventId > current) eventId else current }
     }
+
+    /**
+     * Clear the high-water mark back to its no-cursor state (#417) so the *next* `hello`-build reads
+     * `null` and omits `last_event_id` (#416) — a fresh resume. Called on a `resync` marker, the
+     * daemon's signal that the advertised position aged out of its bounded ring, so gap-free in-ring
+     * replay is impossible. A direct atomic [MutableStateFlow] set, consistent with [record]'s
+     * lock-free backing; called only from the single inbound collector (the same writer as [record]),
+     * so reset and record never race within a connection, and [latest] — read at the next connection's
+     * hello-build — sees the cleared value via the [MutableStateFlow] happens-before.
+     */
+    fun reset() {
+        mark.value = null
+    }
 }

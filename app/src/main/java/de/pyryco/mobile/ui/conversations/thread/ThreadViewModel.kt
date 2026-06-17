@@ -278,6 +278,7 @@ class ThreadViewModel(
             is LiveSessionEvent.AssistantDelta,
             is LiveSessionEvent.ToolUse,
             is LiveSessionEvent.ToolResult,
+            is LiveSessionEvent.ReplayGap,
             -> null
         }
     }
@@ -499,6 +500,7 @@ private fun ThreadFold.reduceLive(
         is LiveSessionEvent.TurnState,
         is LiveSessionEvent.ToolUse,
         is LiveSessionEvent.ToolResult,
+        is LiveSessionEvent.ReplayGap,
         -> this
     }
 }

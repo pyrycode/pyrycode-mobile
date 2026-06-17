@@ -5,6 +5,12 @@ into one typed, in-process Kotlin event family the thread UI can consume without
 bytes. Landed in [#385](../codebase/385.md) (split from #368), part of the Phase 2
 structured-streaming exit-gate (pyrycode#596, ADR 025).
 
+> The `LiveSessionEvent` family later gained one **control-derived** member that does **not** pass
+> through this decode seam: `ReplayGap` ([#417](../codebase/417.md)), surfaced by the
+> [`RemoteConversationRepository`](remote-conversation-repository.md) `resync` arm (not a decoded wire
+> envelope). The decode seam below still concerns exactly the **five** render envelopes; see
+> [§ The `ReplayGap` member](#the-replaygap-member-417).
+
 This is **decode only** — wire → typed events. Everything semantic is downstream and out of scope:
 correlating `tool_use`↔`tool_result`, accumulating `assistant_delta` text, the turn-lifecycle state
 machine, and rendering all belong to the consumer slices (#386 thinking indicator, #387 tool-use
@@ -77,6 +83,10 @@ Nesting the enum keeps the file at exactly **one** public top-level type
 stays portable per CLAUDE.md (Compose Multiplatform walk-back surface). The free-form strings
 (`text`, `inputSummary`, `resultSummary`, `stopReason`) are carried **verbatim** — the seam never
 trims, parses, or sanitizes them (see [Trust boundary](#trust-boundary--no-payload-logging)).
+
+A **sixth** subtype, `ReplayGap`, joined the family in [#417](../codebase/417.md) — but it is
+**control-derived**, not a decoded wire envelope, so it has no DTO and no `toEvent()` mapper. See
+[§ The `ReplayGap` member](#the-replaygap-member-417).
 
 ### 3. Mappers — `…PayloadDto.toEvent()` (in `InteractivePayloads.kt`)
 
@@ -196,8 +206,10 @@ repo (`activeRemoteRepo.flatMapLatest { it?.liveSessionEvents ?: emptyFlow() }`)
 In scope: wire → typed events, the capability gate, fail-closed strict decode. Out of scope (named
 for consumers): `tool_use`↔`tool_result` correlation, `assistant_delta` accumulation, the
 turn-lifecycle state machine, rendering/sanitization, lossless delivery (consumer adds its own
-`buffer()`/`stateIn`), and an `event_id` replay cursor (reconnect-replay #402) / the sixth `stall`
-type (#395) — both correctly excluded here.
+`buffer()`/`stateIn`), and an `event_id` replay cursor (reconnect-replay #402) / a `stall`
+type (#395) — both correctly excluded here. (The replay cursor's *gap* signal did later join the family
+as the control-derived `ReplayGap` member — #417 — but via the resync arm, not this decode seam; see
+[§ The `ReplayGap` member](#the-replaygap-member-417). `stall` correctly stayed out, landing as state.)
 
 > **`tool_use`↔`tool_result` correlation landed in [#387](../codebase/387.md).** It is the first
 > *consumer* of the `ToolUse`/`ToolResult` events: the [Live tool-call](live-tool-call.md) slice
@@ -227,6 +239,29 @@ type (#395) — both correctly excluded here.
 > `turn_end`). The clearing hook is folded into the same gated demux arm, reading `conversationId` off
 > the already-decoded event (no second decode). See [Stall state](stall-state.md).
 
+## The `ReplayGap` member (#417)
+
+[#417](../codebase/417.md) added a sixth member, `data class ReplayGap(override val conversationId:
+String)`, that carries **only** the conversation the gap concerns — no turn / event / text content. It
+is **not** one of the five render envelopes and does **not** flow through the decode seam above:
+
+- **Control-derived, not wire-decoded.** It is surfaced by the
+  [`RemoteConversationRepository`](remote-conversation-repository.md) `resync` arm — the reaction to the
+  daemon's `resync` marker (the phone's advertised [replay cursor](replay-cursor.md) position aged out of
+  the daemon's bounded ring, so gap-free in-ring replay was impossible). The arm `tryEmit`s a `ReplayGap`
+  onto **this same** `liveSessionEvents` `SharedFlow` — preferring the existing surface over a parallel
+  channel — but there is **no `ReplayGapDto`** and no `toEvent()` (the resync marker is a payload-less
+  inline `{conversation_id}` struct; the arm reads it structurally). See
+  [Remote conversation repository § the resync arm](remote-conversation-repository.md#the-resync-arm--reset-the-cursor--surface-the-gap-417).
+- **An observable signal a UI layer can later render** (e.g. a "messages may be missing" affordance) —
+  this slice does not render it. The current consumer, [`ThreadViewModel`](turn-state-thinking-flag.md),
+  **ignores** it: it is added to the `→ null` / `→ this` ignore-groups of the two exhaustive
+  `when (event)` blocks (`thinkingTransition` / `reduceLive`) so the build stays green and the future
+  rendering consumer is *forced* to handle it consciously (the `when`s deliberately keep no `else`).
+- **Stable for Compose** (a `data class` with a single `String` field) — consumers that later render it
+  stay skippable. Carries no verbatim user/tool text, so it is outside the no-payload-logging concern
+  above (there is nothing sensitive to log).
+
 ## Related
 
 - [#385 implementation notes](../codebase/385.md) — files, line refs, lessons.
@@ -244,6 +279,9 @@ type (#395) — both correctly excluded here.
 - [Streaming assistant turns](streaming-assistant-turns.md) ([#337](../codebase/337.md)) — the
   **`AssistantDelta`/`TurnEnd` consumer**: accumulates an in-flight turn into one growing `isStreaming`
   thread row (VM-layer fold with the #313 finished-message projection).
+- [Replay cursor](replay-cursor.md) ([#417](../codebase/417.md)) — the **`ReplayGap` producer**: the
+  `resync` arm `reset()`s the cursor and `tryEmit`s the control-derived `ReplayGap` onto this flow (no
+  DTO, no decode). See [§ The `ReplayGap` member](#the-replaygap-member-417).
 - [Noise session pump](noise-session-pump.md) — surfaces `PumpState.Open.capabilities` (#401), the
   gate source.
 - [Mobile Protocol v2 wire layer](mobile-protocol-v2-wire-layer.md) — `MobileJson`, `Envelope`,
