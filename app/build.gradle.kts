@@ -55,7 +55,11 @@ android {
         // Stays "false" until the relay backend is functional end-to-end (depends on #346/#347/#348, #336, #337).
         buildConfigField("boolean", "USE_RELAY_REPOSITORY", "false")
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Custom runner for the interactive-stream e2e prototype (#337/#642 rung 3). Pass-through to
+        // the stock AndroidJUnitRunner for every existing component test; only swaps in the paired,
+        // relay-backed test Application when the run carries the e2e relay args (-e relayUrl …). Safe
+        // for `connectedAndroidTest` as well as the managed-device run.
+        testInstrumentationRunner = "de.pyryco.mobile.e2e.E2eInstrumentationRunner"
     }
 
     buildTypes {
@@ -79,6 +83,23 @@ android {
     }
     lint {
         abortOnError = true
+    }
+    testOptions {
+        managedDevices {
+            // Headless Automated Test Device (ATD): GPU off, no window, no Play services. Generates the
+            // Gradle task `pixel2Api33AtdDebugAndroidTest`, which creates, runs, and tears down the
+            // emulator with no display — the e2e harness target driven by scripts/e2e-emulator.sh.
+            // If the paired happy-path ever needs Play services, switch systemImageSource to
+            // "google-atd" (still headless). AGP auto-provisions the system image on first run; that
+            // needs the SDK cmdline-tools installed and the image licence accepted.
+            localDevices {
+                create("pixel2Api33Atd") {
+                    device = "Pixel 2"
+                    apiLevel = 33
+                    systemImageSource = "aosp-atd"
+                }
+            }
+        }
     }
 }
 
@@ -120,6 +141,9 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
+    // The custom E2eInstrumentationRunner subclasses AndroidJUnitRunner — pull the runner artifact in
+    // explicitly rather than rely on a transitive of espresso-core.
+    androidTestImplementation(libs.androidx.test.runner)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

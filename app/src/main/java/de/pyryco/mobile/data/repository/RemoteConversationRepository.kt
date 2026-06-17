@@ -305,14 +305,18 @@ class RemoteConversationRepository(
                         // is a no-op, so clearing rides every live event harmlessly. Symmetric with the
                         // onset arm below — both are inside the same `interactive` gate.
                         stalledConversations.update { it - event.conversationId }
-                        // Correlate the tool-call pair into a single evolving thread row (#387): a
-                        // `tool_use` opens a running row, its matching `tool_result` updates it in
-                        // place. Folds into the same `messagesByConversation` the live `message` arm
-                        // writes, so tool rows interleave by arrival order (AC #4). The other event
-                        // types are surfaced only on the live-event stream below.
+                        // Fold the structured turn into the same `messagesByConversation` the live
+                        // `message` arm writes, so every row interleaves by arrival order (AC #4): a
+                        // `tool_use`/`tool_result` pair into one evolving tool row (#387), and the
+                        // `assistant_delta` stream into one streaming assistant row that `turn_end`
+                        // finalizes (#337). `turn_state` stays a stream-only signal — the thinking
+                        // indicator reads it off the live-event stream below (#406) — and every event
+                        // is surfaced on that stream regardless of whether it also folds a row.
                         when (event) {
+                            is LiveSessionEvent.AssistantDelta -> applyAssistantDelta(event)
                             is LiveSessionEvent.ToolUse -> applyToolUse(event)
                             is LiveSessionEvent.ToolResult -> applyToolResult(event)
+                            is LiveSessionEvent.TurnEnd -> finalizeAssistantTurn(event)
                             else -> Unit
                         }
                         mutableLiveSessionEvents.tryEmit(event)
@@ -554,6 +558,78 @@ class RemoteConversationRepository(
                             ),
                     )
                 current + (event.conversationId to existing.toMutableList().apply { this[index] = updated })
+            }
+        }
+    }
+
+    /**
+     * Fold one `assistant_delta` into the conversation's live streaming assistant row (#337). The
+     * first delta of a turn opens a [Role.Assistant] [Message] keyed by
+     * [LiveSessionEvent.AssistantDelta.turnId] with [Message.isStreaming] `= true`; each later delta
+     * for that turn **appends** its text in place, keeping the row's id and position. One atomic
+     * [MutableStateFlow.update] into the same [messagesByConversation] the live `message` and tool
+     * arms write, so the assistant text interleaves by **arrival order** with messages and tool rows
+     * (AC #4). The `&& role == Role.Assistant` match namespaces this row so a `turnId` can never
+     * clobber a `message_id` or `toolUseId` row.
+     *
+     * **Arrival-order concatenation, by design.** The wire delivers a turn's deltas in
+     * [LiveSessionEvent.AssistantDelta.seq] order over the single ordered inbound stream, and a fresh
+     * repository is built per connection (#351), so within a connection arrival order *is* seq order
+     * and concatenation is correct. Cross-reconnect replay de-dup ([LiveSessionEvent.AssistantDelta.seq]
+     * as the idempotency key) is a #402 concern, deferred until the reconnect/replay path lands. The
+     * delta text is carried **verbatim** — never trimmed, parsed, or logged (it may be sensitive).
+     *
+     * An interactive phone receives **only** the structured stream, never a whole-turn `message` for
+     * the same turn (the server's fan-out is capability-exclusive: pyrycode `interactive_turn_v2` vs
+     * `assistant_turn_v2`), so this folded row is the canonical assistant reply — there is no `message`
+     * echo to de-dup against.
+     */
+    private fun applyAssistantDelta(event: LiveSessionEvent.AssistantDelta) {
+        messagesByConversation.update { current ->
+            val existing = current[event.conversationId].orEmpty()
+            val index = existing.indexOfFirst { it.id == event.turnId && it.role == Role.Assistant }
+            if (index >= 0) {
+                val row = existing[index]
+                val updated = row.copy(content = row.content + event.text)
+                current + (event.conversationId to existing.toMutableList().apply { this[index] = updated })
+            } else {
+                val row =
+                    Message(
+                        id = event.turnId,
+                        sessionId = "",
+                        role = Role.Assistant,
+                        content = event.text,
+                        timestamp = Clock.System.now(),
+                        isStreaming = true,
+                    )
+                current + (event.conversationId to (existing + row))
+            }
+        }
+    }
+
+    /**
+     * Finalize the live streaming assistant row on `turn_end` (#337): flip the matching
+     * [Role.Assistant] row (keyed by [LiveSessionEvent.TurnEnd.turnId]) to [Message.isStreaming]
+     * `= false` in place, so the thread renders the completed reply as static markdown rather than the
+     * streaming caret view. One atomic [MutableStateFlow.update]. **No-op when no streaming assistant
+     * row exists for the turn** — a tool-only or empty turn carries no assistant text (AC #3), and a
+     * duplicate `turn_end` re-applies the same flip (idempotent). `turn_end` carries no final text, so
+     * nothing is appended here; [LiveSessionEvent.TurnEnd.stopReason] is not consumed by this slice
+     * (turn-outcome mapping is a later consumer concern).
+     */
+    private fun finalizeAssistantTurn(event: LiveSessionEvent.TurnEnd) {
+        messagesByConversation.update { current ->
+            val existing = current[event.conversationId].orEmpty()
+            val index = existing.indexOfFirst { it.id == event.turnId && it.role == Role.Assistant }
+            if (index < 0) {
+                current
+            } else {
+                val row = existing[index]
+                if (!row.isStreaming) {
+                    current
+                } else {
+                    current + (event.conversationId to existing.toMutableList().apply { this[index] = row.copy(isStreaming = false) })
+                }
             }
         }
     }

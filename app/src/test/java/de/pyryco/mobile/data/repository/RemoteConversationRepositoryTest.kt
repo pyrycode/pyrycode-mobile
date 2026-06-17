@@ -2129,6 +2129,129 @@ class RemoteConversationRepositoryTest {
             assertEquals(listOf("tu1"), messageIds(emissions.last()))
         }
 
+    // ---- #337: fold assistant_delta into a live streaming assistant row -------------------------
+
+    // AC #1: a single assistant_delta opens a streaming Role.Assistant row keyed by turn_id, carrying
+    // the delta text verbatim.
+    @Test
+    fun assistantDelta_singleDelta_opensStreamingAssistantRow() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "hel"))
+            runCurrent()
+
+            assertEquals(listOf("t1"), messageIds(emissions.last()))
+            val row = assistantRowOf(emissions.last(), "t1")!!
+            assertEquals(Role.Assistant, row.role)
+            assertEquals("hel", row.content)
+            assertTrue(row.isStreaming)
+        }
+
+    // AC #1: successive deltas for the same turn concatenate in arrival order into the one row —
+    // position + id fixed, still streaming (the wire delivers a turn's deltas in seq order).
+    @Test
+    fun assistantDelta_multipleDeltas_concatenateInArrivalOrder() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "hel"))
+            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 1, text = "lo "))
+            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 2, text = "world"))
+            runCurrent()
+
+            assertEquals(listOf("t1"), messageIds(emissions.last()))
+            val row = assistantRowOf(emissions.last(), "t1")!!
+            assertEquals("hello world", row.content)
+            assertTrue(row.isStreaming)
+        }
+
+    // AC #2: turn_end finalizes the row in place — content unchanged, isStreaming flipped to false,
+    // still one row at the same position (turn_end carries no final text of its own).
+    @Test
+    fun assistantDelta_turnEnd_finalizesRowToNonStreaming() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "pi"))
+            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 1, text = "ng"))
+            pump.push(turnEndEnvelope("c1", "t1", "end_turn"))
+            runCurrent()
+
+            assertEquals(listOf("t1"), messageIds(emissions.last()))
+            val row = assistantRowOf(emissions.last(), "t1")!!
+            assertEquals("ping", row.content)
+            assertFalse(row.isStreaming)
+        }
+
+    // AC #2: turn_end for a turn with no assistant text (a tool-only turn) is a no-op — it adds no
+    // synthetic assistant row and does not crash; the tool row is the only row.
+    @Test
+    fun turnEnd_withNoAssistantDelta_isNoOp() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
+            pump.push(turnEndEnvelope("c1", "t1", "end_turn"))
+            runCurrent()
+
+            assertEquals(listOf("tu1"), messageIds(emissions.last()))
+            assertNull(assistantRowOf(emissions.last(), "t1"))
+        }
+
+    // AC #3 (fail-closed): without `interactive` negotiated, assistant_delta folds nothing — no row.
+    @Test
+    fun assistantDelta_capabilityGateClosed_producesNoRow() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { emptySet() })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "hello"))
+            pump.push(turnEndEnvelope("c1", "t1", "end_turn"))
+            runCurrent()
+
+            assertEquals(emptyList<String>(), messageIds(emissions.last()))
+        }
+
+    // AC #4: assistant text interleaves chronologically with user messages and tool rows by arrival
+    // order — the full structured-turn shape the e2e prototype renders end to end.
+    @Test
+    fun assistantDelta_interleavesWithMessagesAndTools_inArrivalOrder() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(messageEnvelope("c1", "m1", "user", "reply with exactly: ping", "2026-05-31T10:00:00Z"))
+            runCurrent()
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
+            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = false, resultSummary = "files"))
+            runCurrent()
+            pump.push(assistantDeltaEnvelope("c1", "t1", seq = 0, text = "ping"))
+            pump.push(turnEndEnvelope("c1", "t1", "end_turn"))
+            runCurrent()
+
+            assertEquals(listOf("m1", "tu1", "t1"), messageIds(emissions.last()))
+            val assistant = assistantRowOf(emissions.last(), "t1")!!
+            assertEquals("ping", assistant.content)
+            assertFalse(assistant.isStreaming)
+        }
+
     // ---- #412: replay-cursor recording on the inbound path --------------------------------------
 
     // AC #2: each interactive structured frame's event_id advances the high-water mark; an
@@ -2477,6 +2600,16 @@ class RemoteConversationRepositoryTest {
             .firstOrNull { it.message.id == id && it.message.role == Role.Tool }
             ?.message
             ?.toolCall
+
+    /** The [Role.Assistant] thread row with [id] (the turn id) in [thread], or null if absent (#337). */
+    private fun assistantRowOf(
+        thread: List<ThreadItem>,
+        id: String,
+    ): Message? =
+        thread
+            .filterIsInstance<ThreadItem.MessageItem>()
+            .firstOrNull { it.message.id == id && it.message.role == Role.Assistant }
+            ?.message
 
     /** One `message_chunk` row JSON object (same shape as a `message` payload). */
     private fun chunkRow(
