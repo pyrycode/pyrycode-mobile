@@ -43,9 +43,11 @@ PYRY_BIN="${PYRY_BIN:-pyry}"
 RELAY_BIN="${RELAY_BIN:-pyrycode-relay}"
 TEST_CLASS="de.pyryco.mobile.e2e.InteractiveStreamE2ETest"
 
-# The daemon (on the host) reaches the relay over loopback …
-DAEMON_RELAY_URL="ws://127.0.0.1:${PORT}"
-# … while the emulator reaches the host via the 10.0.2.2 alias (relay path is /v1/client).
+# The daemon (on the host, server side) reaches the relay over loopback. v0.14.0-era daemons do NOT
+# append the relay path themselves, so spell out /v1/server here.
+DAEMON_RELAY_URL="ws://127.0.0.1:${PORT}/v1/server"  # newer daemons append /v1/server automatically
+# … while the emulator reaches the host via the 10.0.2.2 alias as a bare origin (no path);
+# OkHttpRelayTransport appends /v1/client itself.
 PHONE_RELAY_URL="ws://10.0.2.2:${PORT}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -100,27 +102,28 @@ log "relay healthy."
 # server_static_pubkey}. We parse that line and ignore its `relay` (the daemon's loopback URL); the
 # phone must dial the 10.0.2.2 alias instead, so we override relayUrl below.
 log "minting device pairing token (name='${PAIR_NAME}', pyry-name='${PYRY_NAME}')…"
-PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" -pyry-name="${PYRY_NAME}" pair --name="${PAIR_NAME}" \
+PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME}" --name="${PAIR_NAME}" \
   >"${PAIR_OUT}" 2>&1 || { cat "${PAIR_OUT}" >&2; die "pyry pair failed"; }
 
 # Parse the first line that base64url-decodes to a JSON object with the expected keys.
-PARSED="$(python3 - <"${PAIR_OUT}" <<'PY'
+PARSED="$(python3 - "${PAIR_OUT}" <<'PY'
 import sys, json, base64, shlex
 def b64url(s):
     s = s.strip()
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 payload = None
-for line in sys.stdin:
-    line = line.strip()
-    if not line:
-        continue
-    try:
-        obj = json.loads(b64url(line))
-    except Exception:
-        continue
-    if isinstance(obj, dict) and {"server", "token", "server_static_pubkey"} <= obj.keys():
-        payload = obj
-        break
+with open(sys.argv[1]) as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(b64url(line))
+        except Exception:
+            continue
+        if isinstance(obj, dict) and {"server", "token", "server_static_pubkey"} <= obj.keys():
+            payload = obj
+            break
 if payload is None:
     sys.stderr.write("could not find the base64url pairing payload line in `pyry pair` output\n")
     sys.exit(1)
@@ -135,7 +138,7 @@ log "paired: serverId=${SERVER_ID}"
 
 # ---- 3. daemon (Mobile Protocol v2, pointed at the local relay) -------------------------------
 log "starting pyry daemon (PYRY_MOBILE_V2=1) → ${DAEMON_RELAY_URL}…"
-PYRY_MOBILE_V2=1 PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" -pyry-name="${PYRY_NAME}" \
+PYRY_ALLOW_INSECURE_RELAY=1 PYRY_MOBILE_V2=1 PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" -pyry-name="${PYRY_NAME}" \
   >"${DAEMON_LOG}" 2>&1 &
 DAEMON_PID=$!
 sleep 3
