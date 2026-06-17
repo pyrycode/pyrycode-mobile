@@ -12,40 +12,51 @@ import org.koin.android.ext.koin.androidContext
 import org.koin.core.context.startKoin
 
 /**
- * Test-only [Application] for the interactive-stream e2e prototype (#337 / #642 rung 3). It is
- * substituted for the production [de.pyryco.mobile.PyryApp] by [E2eInstrumentationRunner] **only**
- * when the instrumentation is started with the e2e relay arguments, so it never affects an ordinary
- * `connectedAndroidTest` run. It diverges from `PyryApp` in exactly two ways:
+ * Test Application installed by [E2eInstrumentationRunner] for every instrumented run.
  *
- *  1. It binds the **real** relay-backed repository (`conversationRepositoryModule(useRelay = true)`)
- *     instead of the compile-time-flagged fake, so the structured live stream is actually exercised.
- *     This is the runtime equivalent of flipping `USE_RELAY_REPOSITORY`, scoped to the e2e run.
- *  2. It pre-writes a [PairedServer] built from the instrumentation arguments into the **same**
- *     [PairedServerStore] the app reads, so the app boots straight to the channel list (no QR scan)
- *     and dials the host relay at `ws://10.0.2.2:<port>` — the emulator's alias for the host loopback.
+ * It reads the instrumentation arguments in [onCreate] — which runs **after** the instrumentation has
+ * registered them (unlike the runner's `newApplication`, which runs before) — and branches:
  *
- * No secret is hardcoded: the device token and the server keys arrive as instrumentation arguments
- * that `scripts/e2e-emulator.sh` mints at run time via `pyry pair`.
+ *  * **No e2e relay arguments** → behaves exactly like the production [de.pyryco.mobile.PyryApp]:
+ *    starts Koin with the default (fake) repository binding. This keeps every existing component test
+ *    on its unchanged environment.
+ *  * **e2e relay arguments present** (the interactive-stream prototype, #337 / #642 rung 3) → it
+ *    1. binds the real relay-backed repository (`conversationRepositoryModule(useRelay = true)`), the
+ *       runtime equivalent of flipping the compile-time `USE_RELAY_REPOSITORY`; and
+ *    2. pre-writes a [PairedServer] built from the arguments into the **same** [PairedServerStore] the
+ *       app reads, so the app boots straight to the channel list (no QR scan) and dials the host relay
+ *       at `ws://10.0.2.2:<port>` — the emulator's alias for the host loopback.
+ *
+ * No secret is hardcoded: the token + keys arrive as arguments minted at run time by `pyry pair` (see
+ * `scripts/e2e-emulator.sh`).
  */
 class E2eTestApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         val args = InstrumentationRegistry.getArguments()
+        val relayUrl = args.getString(ARG_RELAY_URL)
+        if (relayUrl == null) {
+            // Ordinary instrumented run: identical to PyryApp (default fake repository binding).
+            startKoin {
+                androidContext(this@E2eTestApplication)
+                modules(appModule, conversationRepositoryModule())
+            }
+            return
+        }
+        // e2e run: bind the relay-backed repository and pre-pair from the injected arguments.
         val paired =
             PairedServer(
                 serverId = requireArg(args, ARG_SERVER_ID),
                 token = requireArg(args, ARG_TOKEN),
-                relayUrl = requireArg(args, ARG_RELAY_URL),
+                relayUrl = relayUrl,
                 serverStaticPublicKey = requireArg(args, ARG_SERVER_STATIC_PUBLIC_KEY),
             )
-        // Start the production graph but force the relay-backed repository binding on.
         val koin =
             startKoin {
                 androidContext(this@E2eTestApplication)
                 modules(appModule, conversationRepositoryModule(useRelay = true))
             }.koin
-        // Persist into the SAME store singleton MainActivity reads, so load() != null → the app starts
-        // on the channel list. Blocking is fine here: one small write during Application.onCreate.
+        // Persist into the SAME store singleton MainActivity reads, so load() != null → channel list.
         runBlocking { koin.get<PairedServerStore>().save(paired) }
     }
 

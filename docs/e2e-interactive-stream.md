@@ -43,9 +43,11 @@ same turn (the server's fan-out is capability-exclusive: pyrycode `interactive_t
 
 ### The credential seam
 
-`E2eInstrumentationRunner` is the module's `testInstrumentationRunner`. It is a pass-through to the
-stock `AndroidJUnitRunner` for every existing component test, and only when the run carries the e2e
-relay arguments (`-e relayUrl …`) does it swap in `E2eTestApplication`. That test app:
+`E2eInstrumentationRunner` is the module's `testInstrumentationRunner`. It installs `E2eTestApplication`
+for every instrumented run. The branch happens in that app's `onCreate` (which runs *after* the
+instrumentation registers its arguments — the runner's `newApplication` runs before, so it cannot read
+them). With no e2e relay arguments it behaves exactly like the production app (default fake
+repository), so existing component tests are unchanged. When the e2e relay arguments are present, it:
 
 1. pre-writes a `PairedServer{serverId, token, relayUrl, serverStaticPublicKey}` (built from the
    instrumentation args) into the real credential store, so the app boots straight to the channel list
