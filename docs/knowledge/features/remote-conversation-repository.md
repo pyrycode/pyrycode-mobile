@@ -655,6 +655,55 @@ private fun recordReplayCursor(envelope: Envelope) {
   inbound collector — see [Replay cursor](replay-cursor.md) for the holder, the fail-closed
   positive/strict-greater fold, and the trust boundary.
 
+## The resync arm — reset the cursor + surface the gap (#417)
+
+The **reaction** to the daemon's `resync` marker — `type = "resync"`, binary → phone, inline
+`{conversation_id}`, **no** `event_id` (the daemon's signal that the position the phone advertised as
+`hello.last_event_id` aged out of its bounded ring, so gap-free in-ring replay is impossible).
+[#417](../codebase/417.md) adds a `TYPE_RESYNC` arm to `onInbound`'s `when (envelope.type)` demux
+(`:340`), gated **identically** to the `recordReplayCursor` / `stall` / structured-event arms:
+
+```kotlin
+TYPE_RESYNC -> {
+    if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+        replayCursor.reset()                              // unconditional on the type match
+        resyncConversationId(envelope)?.let { id ->
+            mutableLiveSessionEvents.tryEmit(LiveSessionEvent.ReplayGap(id))
+        }
+    }
+}
+```
+
+- **Two effects, split by trust posture.** The **reset** ([`ReplayCursor.reset()`](replay-cursor.md),
+  #412) is **unconditional** on the type match — the cursor is process-global (not per-conversation), so
+  a malformed/absent `conversation_id` still clears it; the next reconnect then advertises a **fresh**
+  position (omits `last_event_id`, #416) instead of mis-resuming. The **gap surface** — a
+  [`LiveSessionEvent.ReplayGap`](live-session-events.md) on the **existing**
+  [`liveSessionEvents`](#livesessionevents--the-v2-structured-stream-decode-seam-385) flow — is
+  **conditional** on a decodable `conversation_id` (it needs an id to route). The principle: the safety
+  action (avoid mis-resuming) must not depend on untrusted payload shape; only the routing-dependent part
+  may.
+- **No DTO, no decode — a throw-free structural read.** `resyncConversationId(envelope): String?`
+  (`:434`) reads `conversation_id` directly off `envelope.payload` cast to `JsonObject` as a
+  `JsonPrimitive` string (no `decodeFromJsonElement`, mirroring the server's payload-less inline-struct
+  precedent), returning `null` when the payload is not a `JsonObject`, the field is absent, or it is not
+  a JSON string. Because it is pure structural access it **cannot throw** — no `try/catch` needed
+  (unlike `decodeStall` / `decodeLiveSessionEvent`), and it cannot kill the single inbound collector.
+- **No record-then-reset conflict.** `recordReplayCursor` runs first (the first line of `onInbound`) but
+  a `resync` carries **no** `event_id`, so it records nothing for this envelope — no ordering hazard with
+  the `reset()` that follows.
+- **Fail-closed `interactive` gate.** A non-interactive phone never advertised a cursor (the cursor only
+  advances under the same gate, so `latest` is always `null` there), so a spurious `resync` from a
+  buggy/hostile daemon is ignored — no reset (a no-op anyway), no surface.
+- **`backfill_since` full reload is deferred** — no daemon-side message-history store / handler exists
+  yet. This arm's contract ends at reset-the-cursor + surface-the-gap.
+
+`security-sensitive`, but the repository stays plain orchestration: the `conversation_id` is read
+throw-free and used **only** to tag the `ReplayGap` for routing (never a path, never an authz decision),
+and **nothing on the arm logs** the envelope or its payload. Blast radius of a spurious/forged `resync`
+is self-inflicted and bounded (a false gap-surface + a fresh re-advertise) — see
+[#417 § Security](../codebase/417.md#security) and [Replay cursor § Reacting](replay-cursor.md#reacting--the-resync-marker-417).
+
 ## `observeStall(conversationId)` — the thread-observable stall state (#395)
 
 Whether a conversation's remote claude has **stopped making forward progress** (PTY quiet while not
@@ -834,7 +883,10 @@ this implementation's surface. All three read paths are now **cold flows that de
   coroutine), so onset and clearing cannot race. The scope (and thus the collector) is cancelled by its
   owner — the [#351 coordinator](relay-repository-coordinator.md) — when the connection ends; the pump completing `inbound` on teardown also ends the
   collector naturally. All projections are in-memory and connection-scoped — lost on process death and
-  re-derived from the live stream (+ a re-`backfill_since`) on reconnect.
+  re-derived from the live stream (+ a re-`backfill_since`) on reconnect. The #417 `resync` arm adds **no
+  projection**: it `reset()`s the coordinator's process-scoped [`ReplayCursor`](replay-cursor.md) (the
+  **same single writer** as `recordReplayCursor`, so reset and record never race within a connection) and
+  `tryEmit`s a `ReplayGap` on `liveSessionEvents`.
 - **Two-or-more writers per projection, still data-safe (#346 / #347 / #348).** The mutations relaxed
   each projection from single-writer to **collector + confirmed fold(s)**: `sendMessage` (#346) is the
   second writer of `lastMessages` and `messagesByConversation`; `createDiscussion` (#347) and `promote`
@@ -887,6 +939,9 @@ this implementation's surface. All three read paths are now **cold flows that de
 | Malformed `stall` payload (missing / wrong-typed `conversation_id`, #395) | `decodeStall` catches `IllegalArgumentException` (⊃ `SerializationException`) → `null` → the one envelope dropped, **single inbound collector survives** (AC #3); `stalledConversations` unchanged; nothing logged. A later valid `stall` still flips state |
 | `stall` on a non-`interactive` connection (#395) | dropped **before** decode by the `TYPE_STALL` capability gate — never surfaces (fail-closed, defence in depth on the server-side fan-out gate) |
 | Malformed / unrecognized-`state` live-session envelope while a stall is live (#395) | `decodeLiveSessionEvent` → `null` → neither surfaces on `liveSessionEvents` nor **clears** the stall (no trustworthy `conversationId` / unknown forward-progress semantics) — the stall persists until a recognized forward-progress event arrives. Unchanged #385 decode behaviour |
+| `resync` on a non-`interactive` connection (#417) | dropped **before** any effect by the `TYPE_RESYNC` capability gate — no cursor reset (a no-op anyway; `latest` is `null` on a non-interactive connection), no `ReplayGap` (fail-closed) |
+| `resync` with missing / non-string `conversation_id` (#417) | the cursor **is** reset (unconditional on the type match — process-global); `resyncConversationId` returns `null` so **no** `ReplayGap` is surfaced; the collector survives (`resyncConversationId` cannot throw). A later valid `resync` still surfaces the gap |
+| `resync` with a valid `conversation_id` (#417) | cursor reset (next reconnect omits `last_event_id`) **and** `LiveSessionEvent.ReplayGap(id)` emitted on `liveSessionEvents`; nothing logged |
 | Stubbed method called | `UnsupportedOperationException` naming the owning follow-up |
 
 **Why catch-and-drop:** the `ConversationRepository` flow type has no error channel and the Fake never
@@ -1008,7 +1063,11 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   **landed** — correlate `tool_use`/`tool_result` into one evolving `Role.Tool` row keyed by
   `toolUseId`; a `when (event)` dispatch folded into #385's live-session arm mutates the existing
   `messagesByConversation` so tool rows interleave by arrival order, the inverse choice from #395's
-  separate projection — see [Live tool-call](live-tool-call.md)).
+  separate projection — see [Live tool-call](live-tool-call.md)), [#417](../codebase/417.md) (the
+  **`resync` arm**, **landed** — `reset()`s the [`ReplayCursor`](replay-cursor.md) #412 records + #416
+  advertises and `tryEmit`s a control-derived [`LiveSessionEvent.ReplayGap`](live-session-events.md) on
+  the existing `liveSessionEvents`; a payload-less inline marker read structurally, no DTO — see
+  [the resync arm](#the-resync-arm--reset-the-cursor--surface-the-gap-417)).
 - Connection wiring: [`RelayRepositoryCoordinator`](relay-repository-coordinator.md)
   ([#351](../codebase/351.md), **landed**) — constructs this repository per live connection against the
   pump + a child scope, made `NoiseSessionPump : ManagedSessionPump : SessionPump`, and publishes the
