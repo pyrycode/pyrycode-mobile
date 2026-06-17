@@ -7,6 +7,8 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.LiveSessionEvent
+import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.Model
@@ -20,9 +22,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Instant
@@ -154,10 +160,29 @@ class ThreadViewModel(
             )
         }
 
+    /**
+     * The thread rows (#337): the #313 finished-message projection from [ConversationRepository.observeMessages]
+     * folded together with the live `assistant_delta` stream so an in-flight turn renders as a single
+     * growing `isStreaming` assistant message that settles into the finished message when the turn ends.
+     *
+     * `observeMessages` (cold, re-emits on subscribe) and [liveSessionEvents] (hot, `replay = 0`) are two
+     * uncoordinated server emitters — there is no wire ordering between `turn_end` and the finished
+     * `message`, and the finished `message` carries no `turn_id`. So the dedup is structural, not
+     * id-correlated: see [ThreadFold.reduce]. With the inert empty-flow default the `merge` yields only the
+     * `observeMessages` arm, so the thread behaves exactly as #313.
+     */
+    private val threadItems: Flow<List<ThreadItem>> =
+        merge(
+            repository.observeMessages(conversationId).map(ThreadInput::Finished),
+            liveSessionEvents.map(ThreadInput::Live),
+        ).scan(ThreadFold(emptyList(), null)) { fold, input -> fold.reduce(input, conversationId) }
+            .map { it.render() }
+            .distinctUntilChanged()
+
     val state: StateFlow<ThreadUiState> =
         combine(
             repository.observeConversations(ConversationFilter.All),
-            repository.observeMessages(conversationId),
+            threadItems,
             pendingWorkspacePicker,
             transientDialogs,
             runConfigFlow,
@@ -394,3 +419,134 @@ private fun Conversation.workspaceLabel(): String =
     } else {
         cwd.substringAfterLast('/').ifEmpty { cwd }
     }
+
+// ---- #337: live assistant-delta accumulation (pure, file-private) -------------------------------
+
+/** The merged input to the thread fold: the finished projection plus the live structured stream. */
+private sealed interface ThreadInput {
+    /** A finished-message projection from `observeMessages` (#313). */
+    data class Finished(
+        val items: List<ThreadItem>,
+    ) : ThreadInput
+
+    /** One decoded live structured event from `liveSessionEvents` (#385). */
+    data class Live(
+        val event: LiveSessionEvent,
+    ) : ThreadInput
+}
+
+/** The in-flight streaming turn being accumulated, or `null` between turns. */
+private data class StreamingTurn(
+    val turnId: String,
+    /** Accumulated [LiveSessionEvent.AssistantDelta] text, in `seq` order. */
+    val text: String,
+    /** Ordering/dup guard for the current turn — deltas with `seq <= lastSeq` are ignored. */
+    val lastSeq: Int,
+    /** `turn_end` seen → render `isStreaming = false` (settled) but keep the item until the finished message. */
+    val ended: Boolean,
+    /** Assistant [ThreadItem.MessageItem] ids present when the turn started — the finalise oracle. */
+    val baselineAssistantIds: Set<String>,
+)
+
+/** The fold accumulator: the latest finished projection plus the current [StreamingTurn]. */
+private data class ThreadFold(
+    val finished: List<ThreadItem>,
+    val stream: StreamingTurn?,
+)
+
+/**
+ * Folds one [ThreadInput] into the next [ThreadFold]. Pure and side-effect-free — **no logging** of
+ * delta text or any payload field (the verbatim text is untrusted/sensitive; see [LiveSessionEvent]).
+ *
+ * The conversation-id guard is checked **first** for every live event (AC #2/#3 confidentiality —
+ * mirrors `thinkingTransition`). Finalise is structural, not id-correlated: the streaming item is
+ * dropped the moment the finished list gains an assistant message whose id was not present when the
+ * turn started — i.e. this turn's persisted message has arrived, whether before or after `turn_end`.
+ */
+private fun ThreadFold.reduce(
+    input: ThreadInput,
+    conversationId: String,
+): ThreadFold =
+    when (input) {
+        is ThreadInput.Finished -> {
+            val turnPersisted =
+                stream != null &&
+                    input.items.any {
+                        it is ThreadItem.MessageItem &&
+                            it.message.role == Role.Assistant &&
+                            it.message.id !in stream.baselineAssistantIds
+                    }
+            ThreadFold(finished = input.items, stream = if (turnPersisted) null else stream)
+        }
+        is ThreadInput.Live -> reduceLive(input.event, conversationId)
+    }
+
+private fun ThreadFold.reduceLive(
+    event: LiveSessionEvent,
+    conversationId: String,
+): ThreadFold {
+    if (event.conversationId != conversationId) return this
+    return when (event) {
+        is LiveSessionEvent.AssistantDelta -> reduceDelta(event)
+        is LiveSessionEvent.TurnEnd -> {
+            val current = stream
+            if (current != null && current.turnId == event.turnId) {
+                copy(stream = current.copy(ended = true))
+            } else {
+                this
+            }
+        }
+        is LiveSessionEvent.TurnState,
+        is LiveSessionEvent.ToolUse,
+        is LiveSessionEvent.ToolResult,
+        -> this
+    }
+}
+
+private fun ThreadFold.reduceDelta(delta: LiveSessionEvent.AssistantDelta): ThreadFold {
+    val current = stream
+    return when {
+        // A new turn (or first delta) — supersedes any unfinalised prior turn.
+        current == null || current.turnId != delta.turnId ->
+            copy(
+                stream =
+                    StreamingTurn(
+                        turnId = delta.turnId,
+                        text = delta.text,
+                        lastSeq = delta.seq,
+                        ended = false,
+                        baselineAssistantIds = finished.assistantIds(),
+                    ),
+            )
+        // In-order delta for the current turn — append.
+        delta.seq > current.lastSeq ->
+            copy(stream = current.copy(text = current.text + delta.text, lastSeq = delta.seq))
+        // Out-of-order or replayed delta — ignore (AC #2).
+        else -> this
+    }
+}
+
+/** Renders the fold to thread rows: the finished projection, plus the streaming turn appended last. */
+private fun ThreadFold.render(): List<ThreadItem> {
+    val turn = stream ?: return finished
+    val lastMessage = finished.lastOrNull { it is ThreadItem.MessageItem } as? ThreadItem.MessageItem
+    val synthetic =
+        Message(
+            // Stable per-turn id, distinct namespace from the server message_id — the LazyColumn key
+            // never collides, and the two are never both present (finalise drops this in the same emission).
+            id = turn.turnId,
+            sessionId = lastMessage?.message?.sessionId.orEmpty(),
+            role = Role.Assistant,
+            content = turn.text,
+            timestamp = lastMessage?.message?.timestamp ?: Instant.fromEpochMilliseconds(0),
+            isStreaming = !turn.ended,
+        )
+    return finished + ThreadItem.MessageItem(synthetic)
+}
+
+private fun List<ThreadItem>.assistantIds(): Set<String> =
+    asSequence()
+        .filterIsInstance<ThreadItem.MessageItem>()
+        .filter { it.message.role == Role.Assistant }
+        .map { it.message.id }
+        .toSet()

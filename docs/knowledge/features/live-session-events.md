@@ -206,7 +206,17 @@ type (#395) — both correctly excluded here.
 > `when (event)` dispatch alongside the #395 stall-clear and the `tryEmit` — no second subscription).
 > The events are carried **verbatim** into the row's `ToolCall` fields; output-encoding remains the
 > rendering consumer's job (#388). The turn-state phase reduction is [#406](../codebase/406.md)'s
-> `isThinking`; live assistant-delta accumulation is still parked #337.
+> `isThinking`; live assistant-delta accumulation landed in [#337](../codebase/337.md) — see below.
+
+> **`assistant_delta` accumulation landed in [#337](../codebase/337.md).** Unlike the tool-row
+> ([#387](../codebase/387.md), folds into `data/`) and the stall flag, the
+> [Streaming assistant turns](streaming-assistant-turns.md) slice consumes this seam at the **VM**:
+> `ThreadViewModel` folds `liveSessionEvents` together with the #313 `observeMessages` projection
+> (`merge → scan → render`) so an in-flight turn's `AssistantDelta` text accumulates (in `seq` order,
+> per `turnId`, conversation-scoped) into one growing `isStreaming` `MessageItem` that settles into the
+> finished `message` on `TurnEnd`. The verbatim text is **only concatenated** into `Message.content` and
+> routed through the existing [`MessageBubble`](message-bubble.md) (#184) render — no new sink, no
+> logging, honoring the verbatim-untrusted-text contract above.
 
 > **The sixth type — `stall` (#395) — landed as state, not a `LiveSessionEvent`.** It is still
 > correctly **not** one of these five streaming events (it is current-value state, not an event), so it
@@ -231,6 +241,9 @@ type (#395) — both correctly excluded here.
   these events to UI ViewModels.
 - [Turn-state thinking flag](turn-state-thinking-flag.md) ([#406](../codebase/406.md)) — the first
   consumer: reduces `TurnState` to `ThreadViewModel.isThinking`.
+- [Streaming assistant turns](streaming-assistant-turns.md) ([#337](../codebase/337.md)) — the
+  **`AssistantDelta`/`TurnEnd` consumer**: accumulates an in-flight turn into one growing `isStreaming`
+  thread row (VM-layer fold with the #313 finished-message projection).
 - [Noise session pump](noise-session-pump.md) — surfaces `PumpState.Open.capabilities` (#401), the
   gate source.
 - [Mobile Protocol v2 wire layer](mobile-protocol-v2-wire-layer.md) — `MobileJson`, `Envelope`,

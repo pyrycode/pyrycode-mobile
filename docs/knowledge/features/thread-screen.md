@@ -85,10 +85,22 @@ class ThreadViewModel(
             )
         }
 
+    // new in #337 — folds the #313 finished-message projection together with the live assistant_delta
+    // stream (liveSessionEvents: the #406 coordinator seam, an injected ctor flow) so an in-flight turn
+    // renders as one growing isStreaming MessageItem that settles into the finished message on turn_end.
+    // With the inert emptyFlow() default this is just the observeMessages arm. See streaming-assistant-turns.md.
+    private val threadItems: Flow<List<ThreadItem>> =
+        merge(
+            repository.observeMessages(conversationId).map(ThreadInput::Finished),
+            liveSessionEvents.map(ThreadInput::Live),
+        ).scan(ThreadFold(emptyList(), null)) { fold, input -> fold.reduce(input, conversationId) }
+            .map { it.render() }
+            .distinctUntilChanged()
+
     val state: StateFlow<ThreadUiState> =
         combine(                                                  // shape since #137; widened 3→4 in #253; widened 4→5 in #141; arm 4 bundled in #142; arm 5 bundled in #229
             repository.observeConversations(ConversationFilter.All),
-            repository.observeMessages(conversationId),
+            threadItems,                                          // arm 2: was observeMessages; swapped in #337 — see note below
             pendingWorkspacePicker,
             transientDialogs,                                     // new in #142 — bundles pendingRenameDialog + pendingSaveAsChannelDialog
             runConfigFlow,                                        // new in #229 — bundles selectedModelFlow + selectedEffortFlow + yoloEnabled
