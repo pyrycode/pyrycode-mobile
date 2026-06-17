@@ -8,9 +8,11 @@ and its placement in the thread are the **sibling UI slice [#407](../codebase/40
 see [Thinking indicator](thinking-indicator.md)) — this slice adds **no UI** (all state is hoisted to
 the VM).
 
-`responding` (assistant text growing) is already covered by the shipped streaming UI; this flag
-exposes **`thinking`** — the active, pre-text phase — versus not-thinking (`responding` / `idle` /
-`turn_end` / no event yet), so the UI can show an at-work indicator instead of appearing stalled.
+`responding` (assistant text growing) is covered by the live `assistant_delta` stream — fed into the
+thread render by [Streaming assistant turns](streaming-assistant-turns.md)
+([#337](../codebase/337.md)); this flag exposes **`thinking`** — the active, pre-text phase — versus
+not-thinking (`responding` / `idle` / `turn_end` / no event yet), so the UI can show an at-work
+indicator instead of appearing stalled.
 
 ## The data path
 
@@ -139,8 +141,9 @@ inert — `isThinking` honestly holds `false` with no live daemon.
 - Sibling UI slice (shipped): [Thinking indicator](thinking-indicator.md)
   ([#407](../codebase/407.md)) — the stateless composable + its placement at the foot of the thread,
   consuming `isThinking`.
-- Other consumers of the generic seam (unblocked): #387 (tool-use timeline), #337 (live assistant
-  text).
+- Other consumers of the generic seam (shipped): [#387](../codebase/387.md)
+  ([Live tool-call](live-tool-call.md), tool-use timeline), [#337](../codebase/337.md)
+  ([Streaming assistant turns](streaming-assistant-turns.md), live assistant text).
 - Precedent: `connectionStatus` injected into [`SettingsViewModel`](settings-viewmodel.md)
   ([#398](../codebase/398.md)); `registerPushToken` reached through the concrete repo
   ([#365](../codebase/365.md)). See [[post-352-connection-scoped-repo-behind-facade]].
