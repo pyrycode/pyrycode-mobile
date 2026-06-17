@@ -143,6 +143,7 @@ class InteractiveStreamE2ETest {
         const val LIST_TIMEOUT_MS = 30_000L
         const val CONNECT_TIMEOUT_MS = 30_000L
         const val THREAD_TIMEOUT_MS = 30_000L
+
         // Generous: a real claude turn over the relay can take many seconds end to end.
         const val REPLY_TIMEOUT_MS = 90_000L
     }

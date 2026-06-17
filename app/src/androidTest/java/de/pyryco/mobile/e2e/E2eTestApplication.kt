@@ -64,7 +64,10 @@ class E2eTestApplication : Application() {
             val store = koin.get<PairedServerStore>()
             store.save(paired)
             val readBack = store.load()
-            Log.i("E2E", "app.onCreate: pairing saved; load() readBack=${if (readBack != null) "OK serverId=${readBack.serverId}" else "NULL (save did not persist!)"}")
+            Log.i(
+                "E2E",
+                "app.onCreate: pairing saved; load() readBack=${if (readBack != null) "OK serverId=${readBack.serverId}" else "NULL (save did not persist!)"}",
+            )
         }
     }
 
