@@ -2,6 +2,7 @@ package de.pyryco.mobile.e2e
 
 import android.app.Application
 import android.os.Bundle
+import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
@@ -37,12 +38,14 @@ class E2eTestApplication : Application() {
         val relayUrl = args.getString(ARG_RELAY_URL)
         if (relayUrl == null) {
             // Ordinary instrumented run: identical to PyryApp (default fake repository binding).
+            Log.i("E2E", "app.onCreate: no relayUrl arg → FAKE repository mode (PyryApp-equivalent)")
             startKoin {
                 androidContext(this@E2eTestApplication)
                 modules(appModule, conversationRepositoryModule())
             }
             return
         }
+        Log.i("E2E", "app.onCreate: relayUrl=$relayUrl → RELAY-backed mode; pairing serverId=${args.getString(ARG_SERVER_ID)}")
         // e2e run: bind the relay-backed repository and pre-pair from the injected arguments.
         val paired =
             PairedServer(
@@ -57,7 +60,12 @@ class E2eTestApplication : Application() {
                 modules(appModule, conversationRepositoryModule(useRelay = true))
             }.koin
         // Persist into the SAME store singleton MainActivity reads, so load() != null → channel list.
-        runBlocking { koin.get<PairedServerStore>().save(paired) }
+        runBlocking {
+            val store = koin.get<PairedServerStore>()
+            store.save(paired)
+            val readBack = store.load()
+            Log.i("E2E", "app.onCreate: pairing saved; load() readBack=${if (readBack != null) "OK serverId=${readBack.serverId}" else "NULL (save did not persist!)"}")
+        }
     }
 
     private fun requireArg(

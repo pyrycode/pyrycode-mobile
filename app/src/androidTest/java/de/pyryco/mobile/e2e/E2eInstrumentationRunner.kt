@@ -2,6 +2,7 @@ package de.pyryco.mobile.e2e
 
 import android.app.Application
 import android.content.Context
+import android.util.Log
 import androidx.test.runner.AndroidJUnitRunner
 
 /**
@@ -21,5 +22,8 @@ class E2eInstrumentationRunner : AndroidJUnitRunner() {
         cl: ClassLoader?,
         className: String?,
         context: Context?,
-    ): Application = super.newApplication(cl, E2eTestApplication::class.java.name, context)
+    ): Application {
+        Log.i("E2E", "runner.newApplication → installing E2eTestApplication (was $className)")
+        return super.newApplication(cl, E2eTestApplication::class.java.name, context)
+    }
 }
