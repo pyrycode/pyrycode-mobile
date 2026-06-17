@@ -54,4 +54,38 @@ class ReplayCursorTest {
         cursor.record(-3)
         assertEquals(7L, cursor.latest)
     }
+
+    // ---- #417: reset() — clear the mark so the next hello-build omits last_event_id -----------------
+
+    @Test
+    fun reset_afterRecord_clearsToNoCursor() {
+        val cursor = ReplayCursor()
+        cursor.record(7)
+        assertEquals(7L, cursor.latest)
+
+        cursor.reset()
+        assertNull("reset clears the high-water mark back to 'no cursor'", cursor.latest)
+    }
+
+    @Test
+    fun reset_onFreshCursor_isNoOp() {
+        val cursor = ReplayCursor()
+
+        cursor.reset()
+        assertNull("reset on a fresh cursor is an idempotent no-op", cursor.latest)
+    }
+
+    @Test
+    fun reset_thenRecord_readvancesFromNoCursor() {
+        val cursor = ReplayCursor()
+        cursor.record(5)
+
+        cursor.reset()
+        assertNull(cursor.latest)
+
+        // Post-resync the cursor re-advances on new frames — the next reconnect would advertise the
+        // new position. The strictly-greater fold restarts from "no cursor", so any positive advances.
+        cursor.record(8)
+        assertEquals(8L, cursor.latest)
+    }
 }

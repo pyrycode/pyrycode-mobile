@@ -231,10 +231,12 @@ class ThreadViewModelTest {
             advanceUntilIdle()
             assertTrue(vm.isThinking.value)
 
-            // assistant_delta / tool_use / tool_result are not phase transitions — flag holds.
+            // assistant_delta / tool_use / tool_result are not phase transitions — flag holds. The
+            // control-derived replay-gap (#417) is likewise not a thinking transition — flag holds.
             events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, turnId = "t1", seq = 0, text = "hi"))
             events.emit(LiveSessionEvent.ToolUse(ACTIVE_CONV, turnId = "t1", toolUseId = "u1", name = "read", inputSummary = "f"))
             events.emit(LiveSessionEvent.ToolResult(ACTIVE_CONV, turnId = "t1", toolUseId = "u1", isError = false, resultSummary = "ok"))
+            events.emit(LiveSessionEvent.ReplayGap(ACTIVE_CONV))
             advanceUntilIdle()
             assertTrue(vm.isThinking.value)
             collector.cancel()

@@ -52,6 +52,7 @@ import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
 import java.util.UUID
@@ -336,6 +337,25 @@ class RemoteConversationRepository(
                     }
                 }
             }
+            TYPE_RESYNC -> {
+                // Replay resync (#417): the daemon's signal that the advertised `last_event_id` aged out
+                // of its bounded ring (pyrycode#646/#647), so gap-free in-ring replay is impossible. Same
+                // `interactive` gate as the live-session, `stall`, and recordReplayCursor arms — a
+                // non-interactive phone never advertised a cursor, so a spurious `resync` from a buggy/
+                // hostile daemon is ignored (fail-closed, defence in depth). The reset is unconditional on
+                // the type match: the cursor is process-global (not per-conversation), so a malformed/
+                // absent conversation_id still clears it — the safety action (avoid mis-resuming; the next
+                // reconnect then advertises a fresh position, #416) must not depend on payload shape. The
+                // gap surface is conditional on a decodable conversation_id (it routes the ReplayGap).
+                // recordReplayCursor ran first (above) but a `resync` carries no event_id, so it recorded
+                // nothing — no record-then-reset conflict. Drop silently — nothing here logs the payload.
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    replayCursor.reset()
+                    resyncConversationId(envelope)?.let { id ->
+                        mutableLiveSessionEvents.tryEmit(LiveSessionEvent.ReplayGap(id))
+                    }
+                }
+            }
             // Any other type is a no-op here: single-row conversation deltas (#318 → #314) extend
             // this `when` in their own slice. `backfill_done` ({delivered}) needs no action — the
             // `message_chunk` already delivered the full history; the count is informational only.
@@ -402,6 +422,21 @@ class RemoteConversationRepository(
         } catch (e: IllegalArgumentException) {
             null
         }
+
+    /**
+     * Read the inline `conversation_id` of a `resync` marker (#417) as a JSON string, or **null** when
+     * it is absent / not a string / the payload is not a JSON object. Pure structural access off
+     * [Envelope.payload] — no `decodeFromJsonElement`, no DTO (mirrors the server's payload-less
+     * inline-struct precedent) — so it cannot throw and cannot kill the single inbound collector. Used
+     * only to tag the surfaced [LiveSessionEvent.ReplayGap] for routing; the id is never trusted beyond
+     * that (the cursor reset is process-global and does not read it). Nothing here logs the payload.
+     */
+    private fun resyncConversationId(envelope: Envelope): String? =
+        (envelope.payload as? JsonObject)
+            ?.get("conversation_id")
+            ?.let { it as? JsonPrimitive }
+            ?.takeIf { it.isString }
+            ?.content
 
     /**
      * Map a server `error` reply payload (#346) to the domain exception the awaiting suspend throws.
@@ -1038,6 +1073,14 @@ class RemoteConversationRepository(
          * onset-only, no clearing edge on the wire (recovery is inferred from forward progress).
          */
         const val TYPE_STALL = "stall"
+
+        /**
+         * Capability-gated control marker: a replay resync `{conversation_id}`, no `event_id` (#417,
+         * pyrycode#646/#647) — the daemon's signal that the advertised `last_event_id` aged out of its
+         * bounded ring, so gap-free in-ring replay is impossible. The phone resets its replay cursor and
+         * surfaces the gap; full reload via `backfill_since` is deferred (no daemon handler yet).
+         */
+        const val TYPE_RESYNC = "resync"
 
         /** Correlated success reply (empty `{}`) to a request, matched on `in_reply_to` (#346). */
         const val TYPE_ACK = "ack"

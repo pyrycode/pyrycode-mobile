@@ -1691,6 +1691,7 @@ class RemoteConversationRepositoryTest {
                         is LiveSessionEvent.ToolUse -> "tool_use"
                         is LiveSessionEvent.ToolResult -> "tool_result"
                         is LiveSessionEvent.TurnEnd -> "turn_end"
+                        is LiveSessionEvent.ReplayGap -> "replay_gap"
                     }
                 },
             )
@@ -2399,6 +2400,134 @@ class RemoteConversationRepositoryTest {
             assertEquals(13L, cursor.latest)
         }
 
+    // ---- #417: the `resync` marker — reset the replay cursor + surface the gap -------------------
+
+    // AC #1: a `resync` resets the cursor, so the next hello-build omits last_event_id. Asserting
+    // `cursor.latest == null` is the proxy for "next hello omits it" — #416's MobileWireCodecTest
+    // proves omit-on-null on the wire (MobileJson has explicitNulls = false).
+    @Test
+    fun resync_resetsCursor_soNextHelloOmitsLastEventId() =
+        runTest {
+            val pump = FakeSessionPump()
+            val cursor = ReplayCursor()
+            RemoteConversationRepository(
+                pump,
+                backgroundScope,
+                negotiatedCapabilities = { setOf("interactive") },
+                replayCursor = cursor,
+            )
+            runCurrent()
+
+            // Pre-advance the cursor via an interactive frame — the position a reconnect would advertise.
+            pump.push(turnStateEnvelope("c1", "thinking", eventId = 10))
+            runCurrent()
+            assertEquals(10L, cursor.latest)
+
+            pump.push(resyncEnvelope("c1"))
+            runCurrent()
+            assertNull("resync clears the cursor → next hello omits last_event_id", cursor.latest)
+        }
+
+    // AC #2: a `resync` surfaces the gap as a ReplayGap on the existing liveSessionEvents stream.
+    @Test
+    fun resync_surfacesReplayGapOnLiveEvents() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectLiveEvents(repo)
+            runCurrent()
+
+            pump.push(resyncEnvelope("c1"))
+            runCurrent()
+            assertEquals(listOf(LiveSessionEvent.ReplayGap("c1")), events)
+        }
+
+    // AC #2 (fail-closed): without `interactive` negotiated, a well-formed `resync` neither resets the
+    // cursor (never advanced under the closed gate anyway) nor surfaces a gap.
+    @Test
+    fun resync_capabilityGateClosed_noResetNoSurface() =
+        runTest {
+            val pump = FakeSessionPump()
+            val cursor = ReplayCursor()
+            val repo =
+                RemoteConversationRepository(
+                    pump,
+                    backgroundScope,
+                    negotiatedCapabilities = { emptySet() },
+                    replayCursor = cursor,
+                )
+            val events = collectLiveEvents(repo)
+            runCurrent()
+
+            pump.push(resyncEnvelope("c1"))
+            runCurrent()
+            assertNull(cursor.latest)
+            assertEquals(emptyList<LiveSessionEvent>(), events)
+        }
+
+    // Malformed/absent conversation_id still resets the cursor (the safety action is unconditional on the
+    // type match — the cursor is process-global), but surfaces no ReplayGap (it needs an id to route).
+    // A later valid event still processes, proving the single inbound collector survived.
+    @Test
+    fun resync_malformedConversationId_stillResetsButNoSurface() =
+        runTest {
+            val pump = FakeSessionPump()
+            val cursor = ReplayCursor()
+            val repo =
+                RemoteConversationRepository(
+                    pump,
+                    backgroundScope,
+                    negotiatedCapabilities = { setOf("interactive") },
+                    replayCursor = cursor,
+                )
+            val events = collectLiveEvents(repo)
+            runCurrent()
+
+            pump.push(turnStateEnvelope("c1", "thinking", eventId = 10))
+            runCurrent()
+            assertEquals(10L, cursor.latest)
+
+            // Missing conversation_id, and a wrong-typed (number) one → no id decodes → no ReplayGap …
+            pump.push(Envelope(id = 1L, type = "resync", ts = TS, payload = MobileJson.parseToJsonElement("""{}""")))
+            pump.push(Envelope(id = 2L, type = "resync", ts = TS, payload = MobileJson.parseToJsonElement("""{"conversation_id":123}""")))
+            runCurrent()
+            assertNull("the cursor reset happens regardless of payload shape", cursor.latest)
+            assertTrue("a malformed conversation_id surfaces no gap", events.none { it is LiveSessionEvent.ReplayGap })
+
+            // … and the collector survived: a later valid resync still surfaces the gap.
+            pump.push(resyncEnvelope("c1"))
+            runCurrent()
+            assertEquals(listOf(LiveSessionEvent.ReplayGap("c1")), events.filterIsInstance<LiveSessionEvent.ReplayGap>())
+        }
+
+    // Robustness: after a resync clears the cursor, a later interactive frame re-advances it — those are
+    // events the phone now genuinely holds and would legitimately advertise on the next reconnect.
+    @Test
+    fun resync_thenInteractiveFrame_readvancesCursor() =
+        runTest {
+            val pump = FakeSessionPump()
+            val cursor = ReplayCursor()
+            RemoteConversationRepository(
+                pump,
+                backgroundScope,
+                negotiatedCapabilities = { setOf("interactive") },
+                replayCursor = cursor,
+            )
+            runCurrent()
+
+            pump.push(turnStateEnvelope("c1", "thinking", eventId = 10))
+            runCurrent()
+            assertEquals(10L, cursor.latest)
+
+            pump.push(resyncEnvelope("c1"))
+            runCurrent()
+            assertNull(cursor.latest)
+
+            pump.push(turnStateEnvelope("c1", "responding", eventId = 30))
+            runCurrent()
+            assertEquals(30L, cursor.latest)
+        }
+
     // ---- #416 AC#3: ring-replayed events compose with the live stream on the single inbound path --
 
     // After a reconnect advertised the cursor, the daemon replays the missed tail (event_id > cursor)
@@ -2729,6 +2858,18 @@ class RemoteConversationRepositoryTest {
         Envelope(
             id = id,
             type = "stall",
+            ts = TS,
+            payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId"}"""),
+        )
+
+    /** A `resync` control marker `{conversation_id}` (#417) — no event_id; daemon's aged-out-of-ring signal. */
+    private fun resyncEnvelope(
+        conversationId: String,
+        id: Long = 1L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "resync",
             ts = TS,
             payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId"}"""),
         )
