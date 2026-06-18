@@ -100,9 +100,6 @@ class RelayRepositoryCoordinator(
 
     private val mutableRepository = MutableStateFlow<ConversationRepository?>(null)
 
-    /** The live connection-scoped repository, or `null` between connections. Hot; consumed by #352. */
-    val currentRepository: StateFlow<ConversationRepository?> = mutableRepository.asStateFlow()
-
     /** Observable mirror of the live pump (the pump half of [active]), or `null` between connections.
      *  Written in lock-step with [mutableRepository] inside the non-suspending [onConnection] /
      *  [teardownActive] critical section. Stays **private**: the pump is single-owner — only the
@@ -117,6 +114,31 @@ class RelayRepositoryCoordinator(
         activePumpFlow
             .flatMapLatest { pump -> pump?.state ?: flowOf(null) }
             .map { it.toPyrycodeLinkStatus() }
+
+    /**
+     * The live connection-scoped repository, or `null` until the Noise pump reaches [PumpState.Open]
+     * (and `null` again between connections). Hot; consumed by the #352 facade.
+     *
+     * **Open-gated (#421 fix).** Exposing the repo at bare socket-up (when [mutableRepository] is set but
+     * the pump is still `Handshaking`) made the conversation list never load. The facade (#352)
+     * subscribes to [RemoteConversationRepository.observeConversations] the moment a non-null repo
+     * appears, and that subscription fires a **one-shot** `list_conversations` via `pump.send` — which
+     * returns false and is **dropped** while the pump is pre-`Open`, and is never re-issued after the
+     * handshake completes. So the daemon never received the request, never replied with a `conversations`
+     * snapshot, and the list screen spun on its loading state forever (the "New discussion" FAB, gated on
+     * the first snapshot, never appeared). Gating the repo behind `Open` — mirroring [pyrycodeStatus] and
+     * the connect-time push-token hook, which already await `Open` — means the facade subscribes, and the
+     * list send fires, only once `pump.send` will succeed. The derivation is race-free: both inputs are
+     * StateFlows mutated only on the single non-suspending [onConnection] / [teardownActive] path (plus
+     * the pump's own `state`), so a teardown that nulls the inputs deterministically re-derives `null`.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val currentRepository: StateFlow<ConversationRepository?> =
+        combine(
+            mutableRepository,
+            activePumpFlow.flatMapLatest { pump -> pump?.state ?: flowOf(null) },
+        ) { repo, pumpState -> if (pumpState is PumpState.Open) repo else null }
+            .stateIn(scope, SharingStarted.Eagerly, null)
 
     /** Observable mirror of the live concrete repository (the repo half of [active]), or `null` between
      *  connections. Written in lock-step with [mutableRepository] / [activePumpFlow] inside the
