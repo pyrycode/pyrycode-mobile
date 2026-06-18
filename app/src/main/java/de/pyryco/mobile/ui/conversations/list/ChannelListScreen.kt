@@ -212,7 +212,7 @@ private fun ChannelListFab(
                     onClickLabel = onTapLabel,
                     onLongClickLabel = onLongPressLabel,
                     role = Role.Button,
-                ),
+                ).semantics { contentDescription = onTapLabel },
         shape = FloatingActionButtonDefaults.shape,
         color = MaterialTheme.colorScheme.primaryContainer,
         contentColor = MaterialTheme.colorScheme.onPrimaryContainer,

@@ -54,6 +54,12 @@ class RelayRepositoryCoordinatorTest {
             val env = newEnv()
             env.connections.value = StubRelayTransport()
             runCurrent()
+            // #421: the repository is published only once the Noise pump reaches Open, not on bare
+            // socket-up. A pre-Open list_conversations send returns false and is dropped, so exposing
+            // the repo before Open stranded the conversation list on its loading state forever.
+            assertNull("not published until the pump is Open", env.coordinator.currentRepository.value)
+            env.pumps.single().open()
+            runCurrent()
 
             assertNotNull(env.coordinator.currentRepository.value)
             assertEquals(1, env.pumps.size)
@@ -72,6 +78,8 @@ class RelayRepositoryCoordinatorTest {
 
             env.connections.value = StubRelayTransport()
             runCurrent()
+            env.pumps.single().open()
+            runCurrent()
             assertNotNull(env.coordinator.currentRepository.value)
 
             env.connections.value = null
@@ -88,6 +96,8 @@ class RelayRepositoryCoordinatorTest {
         runTest {
             val env = newEnv()
             env.connections.value = StubRelayTransport()
+            runCurrent()
+            env.pumps.single().open()
             runCurrent()
             val repo = requireNotNull(env.coordinator.currentRepository.value)
             val pump = env.pumps.single()
@@ -125,6 +135,8 @@ class RelayRepositoryCoordinatorTest {
             val env = newEnv()
             env.connections.value = StubRelayTransport()
             runCurrent()
+            env.pumps.single().open()
+            runCurrent()
             val repo = requireNotNull(env.coordinator.currentRepository.value)
             val pump = env.pumps.single()
 
@@ -159,6 +171,8 @@ class RelayRepositoryCoordinatorTest {
         runTest {
             val env = newEnv()
             env.connections.value = StubRelayTransport()
+            runCurrent()
+            env.pumps.single().open()
             runCurrent()
             val repo1 = requireNotNull(env.coordinator.currentRepository.value)
             val pump1 = env.pumps.single()
@@ -197,6 +211,8 @@ class RelayRepositoryCoordinatorTest {
             // Connection 1 loads a snapshot containing c1.
             env.connections.value = StubRelayTransport()
             runCurrent()
+            env.pumps[0].open()
+            runCurrent()
             val repo1 = requireNotNull(env.coordinator.currentRepository.value)
             val pump1 = env.pumps[0]
             val list1 = mutableListOf<List<Conversation>>()
@@ -214,6 +230,8 @@ class RelayRepositoryCoordinatorTest {
             env.connections.value = null
             runCurrent()
             env.connections.value = StubRelayTransport()
+            runCurrent()
+            env.pumps[1].open()
             runCurrent()
 
             val repo2 = requireNotNull(env.coordinator.currentRepository.value)
@@ -360,6 +378,8 @@ class RelayRepositoryCoordinatorTest {
             env.connections.value = null
             runCurrent()
             env.connections.value = StubRelayTransport()
+            runCurrent()
+            env.pumps.last().open()
             runCurrent()
             assertNotNull(env.coordinator.currentRepository.value)
 
