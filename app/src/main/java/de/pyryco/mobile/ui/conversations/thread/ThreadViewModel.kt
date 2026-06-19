@@ -531,11 +531,15 @@ private fun ThreadFold.reduceDelta(delta: LiveSessionEvent.AssistantDelta): Thre
 /** Renders the fold to thread rows: the finished projection, plus the streaming turn appended last. */
 private fun ThreadFold.render(): List<ThreadItem> {
     val turn = stream ?: return finished
+    // Key-uniqueness guard (#425): the daemon may set `turnId == message_id`, so the synthetic's id can
+    // equal a persisted message's id and the structural finalise can miss the collision (when the colliding
+    // id was already in the turn's baseline). The thread keys every MessageItem as "msg:<id>", so two items
+    // sharing an id crash LazyColumn. Append the synthetic only when no finished message already carries
+    // this turn's id — render-time, source-independent, total over every interleaving.
+    if (finished.any { it is ThreadItem.MessageItem && it.message.id == turn.turnId }) return finished
     val lastMessage = finished.lastOrNull { it is ThreadItem.MessageItem } as? ThreadItem.MessageItem
     val synthetic =
         Message(
-            // Stable per-turn id, distinct namespace from the server message_id — the LazyColumn key
-            // never collides, and the two are never both present (finalise drops this in the same emission).
             id = turn.turnId,
             sessionId = lastMessage?.message?.sessionId.orEmpty(),
             role = Role.Assistant,
