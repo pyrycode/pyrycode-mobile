@@ -415,6 +415,61 @@ class ThreadViewModelTest {
         }
 
     @Test
+    fun assistantDelta_turnIdEqualsPersistedMessageId_noDuplicateKeySettlesToSingle() =
+        runTest {
+            val repo = MessagesControllableRepo()
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            // The persisted assistant message is already in the baseline at turn start, and the daemon's
+            // turnId equals its id — the live-failure ordering #421 surfaced (the colliding id is in the
+            // baseline set, so the structural finalise never sees a "new" id and never drops the synthetic).
+            repo.messages.value = listOf(assistantMessage(id = "t1", content = "Done"))
+            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t1", seq = 0, text = "Done"))
+            advanceUntilIdle()
+
+            // AC #1: exactly one item, and no duplicate list key (a duplicate id is a duplicate "msg:<id>" key).
+            assertEquals(listOf("t1"), messageIds(vm))
+            assertEquals(messageIds(vm).distinct(), messageIds(vm))
+            // AC #2: the synthetic is suppressed — no transient streaming bubble, no double-render.
+            assertTrue(streamingContents(vm).isEmpty())
+
+            // A later turn_end for the colliding turn keeps it single — no resurrected synthetic.
+            events.emit(LiveSessionEvent.TurnEnd(ACTIVE_CONV, "t1", stopReason = "end_turn"))
+            advanceUntilIdle()
+            assertEquals(listOf("t1"), messageIds(vm))
+            assertEquals(messageIds(vm).distinct(), messageIds(vm))
+            collector.cancel()
+        }
+
+    @Test
+    fun streamingThenFinishedMessageWithSameTurnId_settlesWithoutDuplicate() =
+        runTest {
+            val repo = MessagesControllableRepo()
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = makeVm(activeHandle(), repo, liveSessionEvents = events)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            // AC #3: the synthetic still appears and grows while the turn is in flight (no collision yet).
+            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t1", seq = 0, text = "Don"))
+            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, "t1", seq = 1, text = "e"))
+            advanceUntilIdle()
+            assertEquals(listOf("Done"), streamingContents(vm))
+            assertEquals(listOf("t1"), messageIds(vm))
+
+            // The finished message arrives with id == turnId — settles to exactly one, no duplicate key.
+            repo.messages.value = listOf(assistantMessage(id = "t1", content = "Done"))
+            advanceUntilIdle()
+            assertEquals(listOf("t1"), messageIds(vm))
+            assertEquals(messageIds(vm).distinct(), messageIds(vm))
+            assertTrue(streamingContents(vm).isEmpty())
+            collector.cancel()
+        }
+
+    @Test
     fun streamingTurn_appendsAtEndWithoutReorderingBackfill() =
         runTest {
             val repo = MessagesControllableRepo()
