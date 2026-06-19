@@ -78,7 +78,11 @@ private data class ThreadFold(val finished: List<ThreadItem>, val stream: Stream
 `render` returns `finished` when idle; otherwise `finished + MessageItem(synthetic)` appended last, with
 `id = turnId`, `role = Assistant`, `content = stream.text`, `isStreaming = !stream.ended`,
 `sessionId`/`timestamp` derived from the last finished item (render-irrelevant; no live clock, so the
-fold stays pure).
+fold stays pure). A **key-uniqueness guard** ([#425](../codebase/425.md)) sits at the top of `render`,
+before the synthetic is built: the synthetic is appended **only when no finished `MessageItem` already
+carries this turn's id** —
+`if (finished.any { it is ThreadItem.MessageItem && it.message.id == turn.turnId }) return finished`.
+See *Why the synthetic key never collides* below for why this is load-bearing against the live daemon.
 
 ## Why the dedup is structural, not id-correlated
 
@@ -95,10 +99,34 @@ So the streaming item is dropped the moment the finished list gains an assistant
 flicker a gap if `turn_end` won the race and a transient duplicate if the finished `message` won — AC #3
 forbids both. Both directions are tested.
 
-The synthetic item's id is the `turnId`, a distinct namespace from the server `message_id`, so the
-`LazyColumn` key `"msg:$turnId"` never collides with `"msg:$messageId"` — and they are never both
-present (finalise drops the streaming item in the **same** emission the finished message appears, so the
-row swaps seamlessly with identical content).
+### Why the synthetic key never collides — and why the structural finalise alone wasn't enough
+
+The synthetic item's id is the `turnId`, and the thread keys every `MessageItem` as `"msg:<id>"`. #337
+originally **assumed** `turnId` lived in "a distinct namespace from the server `message_id`" and that the
+synthetic and the finished message were "never both present." Both assumptions held against the fake and
+**broke against the live pyrycode `main` daemon** ([#425](../codebase/425.md), surfaced by the #421
+rung-3 e2e): the daemon may set `turnId == message_id`, so the synthetic and the finished message produce
+the **same** `"msg:<id>"` key, and when both are in the list `LazyColumn` throws
+`IllegalArgumentException: Key … was already used`.
+
+The structural finalise above does **not** catch this. In the live failure ordering the finished
+projection carrying the colliding message is present *before* the first delta starts the turn, so the
+colliding id is **already in `baselineAssistantIds`** at turn start — the finalise only fires on an
+assistant id **absent** at turn start, so it never sees a "new" id and never drops the synthetic. (This is
+the same `baselineAssistantIds` mechanism, hitting the one ordering #337's § Open questions framed
+backwards — it expected a backfilled *new* id to finalise *early*, "never a duplicate"; the real failure
+is the opposite, a *baseline* id that finalise can never react to.)
+
+The fix is the render-time key-uniqueness guard ([#425](../codebase/425.md)): the synthetic is appended
+only when no finished `MessageItem` already carries `turn.turnId`. It is **source-independent** (makes no
+assumption about the relationship between `turnId` and `message_id`) and **total over every interleaving**,
+so the `"msg:<id>"` key is unique however the fold state arose. It satisfies both no-crash (AC #1) and
+settle-to-exactly-one (AC #2) in one clause — a `stream:`-key prefix would stop the crash but still
+double-render the colliding-at-baseline window. The guard and the baseline-diff finalise are
+**belt-and-suspenders, both deterministic**: the finalise drops the stream in the non-colliding case, the
+guard guarantees key uniqueness in the colliding case; neither relies on the other. In the colliding
+ordering `stream` lingers (non-rendered) until the next turn supersedes it — harmless, and
+`distinctUntilChanged` absorbs the no-op re-emissions so there is no flicker.
 
 ## Lifecycle, errors, edge cases
 
@@ -142,7 +170,11 @@ Architect self-review **PASS**; code review **PASS** with zero findings.
 
 ## Related
 
-- [#337 implementation notes](../codebase/337.md) — files, line refs, patterns, lessons.
+- [#337 implementation notes](../codebase/337.md) — files, line refs, patterns, lessons (point-in-time;
+  predates the #425 collision correction above).
+- [#425 implementation notes](../codebase/425.md) — the render-time key-uniqueness guard that lands the
+  `turnId == message_id` fix on `main`; corrects the now-false "distinct namespace / never both present"
+  assumptions.
 - [Live-session events](live-session-events.md) ([#385](../codebase/385.md)) — the decode seam that
   produces `LiveSessionEvent.AssistantDelta`/`TurnEnd`; this slice realizes its "assistant_delta
   accumulation belongs to a consumer slice" deferral.
