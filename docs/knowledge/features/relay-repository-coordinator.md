@@ -67,6 +67,7 @@ class RelayRepositoryCoordinator(
     val currentRepository: StateFlow<ConversationRepository?>  // live repo, or null between connections
     val connectionStatus: StateFlow<ConnectionStatus>         // (#392) combined {relay, pyrycode} two-part status
     val liveSessionEvents: Flow<LiveSessionEvent>             // (#406) reconnection-surviving #385 live-event seam
+    val modalEvents: Flow<ModalEvent>                         // (#445) reconnection-surviving #437 modal-event seam (mirror of liveSessionEvents)
     fun start()   // idempotent — launches the single connections collector on the coordinator scope
     fun close()   // tears down the active connection (wiping pump keys) + cancels the coordinator scope
 }
@@ -262,6 +263,30 @@ val liveSessionEvents: Flow<LiveSessionEvent> =
   re-plumbing this layer. Each fetches it off the concrete coordinator singleton at the `AppModule`
   factory — **no new Koin binding** — exactly like `connectionStatus`.
 
+## Modal event seam (#445)
+
+The decoded [`ModalEvent`](modal-events.md) stream ([#437](../codebase/437.md)) lives on the **concrete**
+`RemoteConversationRepository.modalEvents` (`replay = 0`, connection-scoped, **not** on the interface) —
+the same posture as `liveSessionEvents`, so a UI ViewModel cannot reach it directly. The coordinator
+threads it up as a **byte-for-byte mirror** of the live-session seam, reusing the same private
+`activeRemoteRepo` mirror (**no new field**):
+
+```kotlin
+@OptIn(ExperimentalCoroutinesApi::class)
+val modalEvents: Flow<ModalEvent> =
+    activeRemoteRepo.flatMapLatest { repo -> repo?.modalEvents ?: emptyFlow() }
+```
+
+- **Cold, not `stateIn`'d** — events, no current value. "Which modal is currently open" is folded
+  downstream by the consumer ([`ThreadViewModel.currentModal`](current-modal-state.md), #445), *forced* to
+  be the consumer's job because the source is `replay = 0` (no held current-modal state upstream).
+- **Reconnection-surviving** — `flatMapLatest` switches to the fresh repo's `modalEvents` on each new
+  connection and cancels the prior; `emptyFlow()` between connections. (Out of scope, flagged in #445:
+  the passthrough pushes **no "clear" event** on a null repo, so a stale open modal can persist across a
+  drop — owned by the render slice #446 + the connection signal, not this seam.)
+- The first (and only) consumer is `currentModal`, fetched off the concrete coordinator singleton at the
+  `AppModule` `ThreadViewModel` factory — **no new Koin binding**, exactly like `liveSessionEvents`.
+
 ## Reconnect-spanning replay cursor (#412)
 
 The coordinator owns the [`ReplayCursor`](replay-cursor.md) ([#412](../codebase/412.md)) — the durable
@@ -392,7 +417,9 @@ correlation mirrors `RemoteConversationRepositoryTest`'s #359 shape.
   the `ManagedSessionPump.state` addition, and closing #359's `device_name: ""` defer ·
   [#392](../codebase/392.md) — the derived pyrycode-leg readiness + the combined `connectionStatus` ·
   [#406](../codebase/406.md) — the reconnection-surviving [`liveSessionEvents`](live-session-events.md)
-  seam (first consumer: [`ThreadViewModel.isThinking`](turn-state-thinking-flag.md)).
+  seam (first consumer: [`ThreadViewModel.isThinking`](turn-state-thinking-flag.md)) ·
+  [#445](../codebase/445.md) — the reconnection-surviving [`modalEvents`](modal-events.md) seam (mirror of
+  `liveSessionEvents`; consumer: [`ThreadViewModel.currentModal`](current-modal-state.md)).
 - Two-part status: [Connection status](connection-status.md) (`ConnectionStatus` + `PyrycodeLinkStatus`,
   [#392](../codebase/392.md)) — derived/published here; relay leg from
   [`relayStatus`](relay-link-status.md) ([#391](../codebase/391.md)); consumed by the Settings status

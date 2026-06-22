@@ -12,10 +12,12 @@ out of scope:
 - **sending** the answer / cancel (`modal_answer` / `modal_cancel`) — sibling **#438** (**landed**:
   [`answerModal` / `cancelModal`](remote-conversation-repository.md#answermodal--cancelmodal--the-v2-modal-answercancel-control-send-438),
   [#438 notes](../codebase/438.md));
-- **rendering** the overlay + the destructive second-confirm — **#439**;
+- **rendering** the overlay + the fail-safe-deny default highlight — the render slice **#446**
+  (#439 split into the projection **#445** + the render overlay #446); answering / cancelling is **#444**;
 - the **read-only-when-ungranted** mode — **#440**;
-- folding `Shown`/`Dismissed` into a **"which modal is currently open"** projection — the #439 consumer's
-  `StateFlow`, deliberately **not** held here (see [Why a `SharedFlow`, not held state](#why-a-sharedflow-not-held-state)).
+- folding `Shown`/`Dismissed` into a **"which modal is currently open"** projection — **landed** in
+  [`ThreadViewModel.currentModal`](current-modal-state.md) ([#445](../codebase/445.md)), deliberately
+  **not** held here (see [Why a `SharedFlow`, not held state](#why-a-sharedflow-not-held-state)).
 
 It follows the established v2 decode-slice pattern of [Live-session events](live-session-events.md)
 ([#385](../codebase/385.md)) — same three layers, same single-collector demux arm, same fail-closed
@@ -68,7 +70,7 @@ ModalEvent { Shown, Dismissed } + ModalOption    (data/model/ModalEvent.kt — p
         ▼
 val modalEvents: SharedFlow<ModalEvent>   (RemoteConversationRepository, concrete)
         ▼
-consumer slices (#439 render / #440 read-only — fold Shown/Dismissed into a current-modal UI state)
+consumer: #445 ThreadViewModel.currentModal folds Shown/Dismissed → ModalUiState (then #446 renders / #440 read-only)
 ```
 
 ### 1. DTOs — `data/network/InteractivePayloads.kt` (`internal`)
@@ -113,8 +115,9 @@ sealed interface ModalEvent {
 data class ModalOption(val id: String, val label: String)
 ```
 
-`ModalOption` is **top-level (not nested under `Shown`)** for consumer ergonomics — the render slice
-(#439) references it directly when laying out the option list. The file carries **two** public top-level
+`ModalOption` is **top-level (not nested under `Shown`)** for consumer ergonomics — the projection
+([#445](current-modal-state.md)) reuses it verbatim in `ModalUiState.Open`, and the render slice (#446)
+references it directly when laying out the option list. The file carries **two** public top-level
 types (`ModalEvent`, `ModalOption`), so the [[ktlint-filename-rule-single-class]] does not fire (cf.
 [`LiveSessionEvent.kt`](live-session-events.md)'s contrasting choice to *nest* `Phase` to keep one public
 type). Pure data, **zero Android imports** — `data/` stays portable per CLAUDE.md (Compose Multiplatform
@@ -137,8 +140,9 @@ The `turn_state` mapper drops an unrecognized `state` (returns `null`). The moda
 **opposite**: AC #3 says an unknown/forward-compat `class`/`source`/`outcome` "is preserved verbatim
 rather than coerced to an enum that drops it." So `modalClass`/`outcome`/`source` stay plain `String`
 carried verbatim, and **both mappers are total** (never `null`). AC #2's "distinguishing `remote`,
-`local`, `timeout`" is satisfied by the **distinct string values** — the consumer (#439) matches `source
-== "timeout"` etc.; a compile-time-exhaustive `DismissSource { Remote, Local, Timeout, Other(raw) }`, if
+`local`, `timeout`" is satisfied by the **distinct string values** — the consumer (#445's projection
+carries `source` verbatim into `ModalUiState.Dismissed`; #446 matches `source == "timeout"` etc.); a
+compile-time-exhaustive `DismissSource { Remote, Local, Timeout, Other(raw) }`, if
 ever wanted, is a **consumer-side** mapper that preserves the raw string in `Other` (out of scope here,
 evidence-based — no observed need). This matches the SSOT (pyrycode#701 models all three as plain strings)
 and the #385 `stopReason` precedent (closed wire set kept as `String`, "consumers map it"). **The only
@@ -190,17 +194,19 @@ TYPE_MODAL_SHOWN, TYPE_MODAL_DISMISSED -> {
 
 ### Why a `SharedFlow`, not held state
 
-`replay = 0`: these are **events**, not current-value state. "Which modal is currently open" is the #439
-consumer's projection (it folds `Shown`/`Dismissed` into its own `StateFlow`), mirroring #385's "holding
-latest is a consumer concern." The bounded `extraBufferCapacity = 64` + `DROP_OLDEST` make `tryEmit`
-**infallible and non-blocking** — the load-bearing invariant is that a slow modal consumer can never
-back-pressure the shared `pump.inbound` collector and stall the connection's
+`replay = 0`: these are **events**, not current-value state. "Which modal is currently open" is the
+consumer's projection — **landed** in [`ThreadViewModel.currentModal`](current-modal-state.md)
+([#445](../codebase/445.md)), which folds `Shown`/`Dismissed` into its own `StateFlow<ModalUiState>`,
+mirroring #385's "holding latest is a consumer concern." The bounded `extraBufferCapacity = 64` +
+`DROP_OLDEST` make `tryEmit` **infallible and non-blocking** — the load-bearing invariant is that a slow
+modal consumer can never back-pressure the shared `pump.inbound` collector and stall the connection's
 `conversations`/`message`/`ack` processing. Modals are inherently low-rate (one outstanding at a time,
 user-driven), so the bound is never realistically hit. Late subscribers get no history (`replay = 0`) —
 the late-subscriber-while-a-modal-is-open case (e.g. a re-created ViewModel collecting after
-`modal_shown`) is the #439 consumer's lifecycle concern (the cleanest fix is consumer-side `stateIn` with
-a started policy or a connection-scoped eager collector — **not** widening this seam). If it ever turns
-out the data layer should hold the current modal, revisit then.
+`modal_shown`) is the consumer's lifecycle concern, and #445 resolved it **exactly as predicted here**:
+consumer-side `stateIn` with `SharingStarted.Eagerly` (a VM-lifetime eager collector so the `scan`
+accumulator runs once and never re-emits `Hidden` over a retained `Open`) — **not** by widening this seam.
+The data layer still does not hold the current modal.
 
 ### Why on the concrete repo, not the interface (AC #4)
 
@@ -212,8 +218,10 @@ tripping the ≥5 split gate) for plumbing this decode slice doesn't use. This i
 [`liveSessionEvents`](live-session-events.md) (#385) / [`registerPushToken`](remote-conversation-repository.md)
 (#359) posture: a non-interface capability on the concrete repo, reached by a downstream consumer through
 a concrete handle ([the coordinator](relay-repository-coordinator.md) holds the repo). Facade/coordinator
-reachability for the #439 render consumer is **downstream consumer-slice work** — exactly as
-`liveSessionEvents`' UI reachability was deferred to (and realized in) [#406](../codebase/406.md).
+reachability for the consumer was **downstream consumer-slice work** — exactly as `liveSessionEvents`' UI
+reachability was deferred to (and realized in) [#406](../codebase/406.md), and now **realized for modals
+in [#445](../codebase/445.md)** via the coordinator's [`modalEvents`](relay-repository-coordinator.md#modal-event-seam-445)
+passthrough seam (the byte-for-byte mirror of the `liveSessionEvents` seam).
 
 > **Contrast with [Stall state](stall-state.md) (#395), which went on the interface.** A `stall` is
 > *current-value state the thread needs through the facade*, so `observeStall` is an interface method with
@@ -234,7 +242,7 @@ Modal events get their **own** `ModalEvent` family on their **own** `modalEvents
   semantically-wrong cascade. A separate family is the minimal, honest shape.
 - **Different handling.** Modal events don't fold thread rows and don't touch stalls; they only emit.
   Mixing them into the row-folding `TYPE_TURN_STATE …` arm would require carve-outs. A separate arm + flow
-  keeps each concern clean and lets the #439 consumer collect `modalEvents` directly without filtering
+  keeps each concern clean and lets the #445 consumer collect `modalEvents` directly without filtering
   modal items out of the broader session stream.
 
 This is the inverse of the [Live tool-call](live-tool-call.md) (#387) decision (a tool row *is* a thread
@@ -264,11 +272,13 @@ findings.
   **Nothing in this seam logs decoded fields or raw payloads**, including the malformed-drop branch (a
   bare `catch { null }`) — mirroring the existing `decodeStall`/`decodeLiveSessionEvent`/`TYPE_MESSAGE`
   no-log posture. Any future change here must preserve this.
-- **Rendering consumer owns output-encoding — hand-off to #439.** The strings are carried verbatim and
-  uninterpreted; the render slice (#439) **MUST treat them as inert data, not
-  markup/HTML/markdown-with-active-content**, and own output-encoding at render time — the same hand-off
-  `LiveSessionEvent` documents for `assistant_delta.text`/tool summaries. `modalClass`/`source`/`outcome`
-  are likewise verbatim — #439 must not `eval`/reflect on them, only compare. This slice renders nothing.
+- **Rendering consumer owns output-encoding — hand-off to #446.** The strings are carried verbatim and
+  uninterpreted through both this decode seam **and** the [#445 projection](current-modal-state.md) (which
+  also carries them verbatim, never interpreting); the render slice (**#446**) **MUST treat them as inert
+  data, not markup/HTML/markdown-with-active-content**, and own output-encoding at render time — the same
+  hand-off `LiveSessionEvent` documents for `assistant_delta.text`/tool summaries.
+  `modalClass`/`source`/`outcome` are likewise verbatim — #446 must not `eval`/reflect on them, only
+  compare. Neither this slice nor #445 renders anything.
 - **DoS posture.** The `SharedFlow` buffer is **bounded** (`DROP_OLDEST`, capacity 64) and `tryEmit`
   never blocks — a hostile/buggy daemon flooding modal envelopes can neither grow unbounded memory at the
   seam nor stall the shared inbound collector. `options` is an inbound unbounded `List`, but it is
@@ -282,10 +292,11 @@ findings.
 ## Scope boundary
 
 In scope: wire → typed events, the capability gate, fail-closed strict decode, surface on a concrete hot
-flow. Out of scope (named for consumers): sending the answer/cancel (#438), rendering the overlay + the
-destructive second-confirm (#439), the read-only-when-ungranted mode (#440), folding events into a
-"current modal" UI state (#439's `StateFlow`), enforcing the `default_option_id ∈ options[].id` invariant
-(producer-owned; a #439 default-to-first render fallback if wanted), and a typed
+flow. Out of scope (named for consumers): sending the answer/cancel (#438, landed), folding events into a
+"current modal" UI state (**landed** in [#445](current-modal-state.md)'s `currentModal`), rendering the
+overlay + the fail-safe-deny default highlight (the render slice **#446**), answering / cancelling from
+the UI (**#444**), the read-only-when-ungranted mode (#440), enforcing the `default_option_id ∈
+options[].id` invariant (producer-owned; a #446 default-to-first render fallback if wanted), and a typed
 `source`/`class`/`outcome` projection (a consumer-side `Other(raw)`-preserving mapper if ever needed).
 
 ## Related
@@ -301,11 +312,17 @@ destructive second-confirm (#439), the read-only-when-ungranted mode (#440), fol
 - [Live tool-call](live-tool-call.md) ([#387](../codebase/387.md)) — the fold-into-the-thread inverse
   (a tool row *is* a thread row; a modal is not).
 - [Relay repository coordinator](relay-repository-coordinator.md) — wires the `negotiatedCapabilities`
-  supplier the gate reuses; the future #439 surface for UI reachability lands here.
+  supplier the gate reuses; the [`modalEvents`](relay-repository-coordinator.md#modal-event-seam-445)
+  passthrough seam for UI reachability landed here in [#445](../codebase/445.md).
+- [Current-modal state](current-modal-state.md) ([#445](../codebase/445.md)) — the **consumer projection**
+  that folds this stream into the hoisted `ThreadViewModel.currentModal`; realizes the
+  "which-modal-is-open is a consumer concern" deferral above.
 - [Mobile Protocol v2 wire layer](mobile-protocol-v2-wire-layer.md) — `MobileJson`, `Envelope`,
   `@SerialName` Go-interop.
 - Sibling slices: **#438** answer/cancel send (**landed** — [`answerModal` / `cancelModal`](remote-conversation-repository.md#answermodal--cancelmodal--the-v2-modal-answercancel-control-send-438),
-  [notes](../codebase/438.md)) · **#439** render UI · **#440** read-only-when-ungranted.
+  [notes](../codebase/438.md)) · **#445** current-modal projection (**landed** — [Current-modal state](current-modal-state.md))
+  · **#446** render overlay (blocked by #445) · **#444** answer/cancel from the UI · **#440**
+  read-only-when-ungranted. (#439 was split into the projection #445 + the render overlay #446.)
 - Server SSOT: pyrycode#701 (modal wire types + `modal_id` nonce + `answer_token` idempotency), #703
   (modal control loop / producer), #706 (two-heads ownership), #702 (per-device answer gate); ADR 025
   § Phase 3 modals, EPIC pyrycode#597.
