@@ -9,7 +9,9 @@ collect without ever touching wire bytes. Landed in [#437](../codebase/437.md) (
 This is **decode + surface only** — wire → typed events on a hot flow. Everything else is downstream and
 out of scope:
 
-- **sending** the answer / cancel (`modal_answer` / `modal_cancel`) — sibling **#438**;
+- **sending** the answer / cancel (`modal_answer` / `modal_cancel`) — sibling **#438** (**landed**:
+  [`answerModal` / `cancelModal`](remote-conversation-repository.md#answermodal--cancelmodal--the-v2-modal-answercancel-control-send-438),
+  [#438 notes](../codebase/438.md));
 - **rendering** the overlay + the destructive second-confirm — **#439**;
 - the **read-only-when-ungranted** mode — **#440**;
 - folding `Shown`/`Dismissed` into a **"which modal is currently open"** projection — the #439 consumer's
@@ -302,7 +304,8 @@ destructive second-confirm (#439), the read-only-when-ungranted mode (#440), fol
   supplier the gate reuses; the future #439 surface for UI reachability lands here.
 - [Mobile Protocol v2 wire layer](mobile-protocol-v2-wire-layer.md) — `MobileJson`, `Envelope`,
   `@SerialName` Go-interop.
-- Sibling slices: **#438** answer/cancel send · **#439** render UI · **#440** read-only-when-ungranted.
+- Sibling slices: **#438** answer/cancel send (**landed** — [`answerModal` / `cancelModal`](remote-conversation-repository.md#answermodal--cancelmodal--the-v2-modal-answercancel-control-send-438),
+  [notes](../codebase/438.md)) · **#439** render UI · **#440** read-only-when-ungranted.
 - Server SSOT: pyrycode#701 (modal wire types + `modal_id` nonce + `answer_token` idempotency), #703
   (modal control loop / producer), #706 (two-heads ownership), #702 (per-device answer gate); ADR 025
   § Phase 3 modals, EPIC pyrycode#597.
