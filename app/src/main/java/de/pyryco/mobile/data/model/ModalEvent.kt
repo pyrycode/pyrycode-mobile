@@ -1,0 +1,69 @@
+package de.pyryco.mobile.data.model
+
+/**
+ * A decoded v2 interactive **modal** lifecycle event (#437): the typed in-process form of one of the
+ * two **binary → phone** modal envelopes — `modal_shown` and `modal_dismissed` — the daemon emits when
+ * the supervised `claude` surfaces a permission/choice modal and when that modal resolves
+ * (pyrycode#701 wire types, #703 producer). Phase 3 of epic pyrycode#597 (ADR 025).
+ *
+ * The decode boundary lives in `data/network` (the `…PayloadDto.toEvent()` mappers); this is the
+ * **portable** typed surface consumers read off `RemoteConversationRepository.modalEvents`. Decode-only:
+ * nothing here folds `Shown`/`Dismissed` into a "current modal" projection, sends an answer, or renders
+ * an overlay — those are the downstream consumer slices (#438 answer/cancel, #439 render UI, #440
+ * read-only mode).
+ *
+ * Modal events carry **no `conversation_id`** — [modalId] is the sole correlation key (the phone treats
+ * it as an opaque token to echo back in #438, never as a routing key it asserts; the daemon validates it
+ * against its own outstanding-modal state). This is why modal events form their own family on their own
+ * flow rather than a sixth [LiveSessionEvent], whose every subtype mandates a `conversationId`.
+ *
+ * The free-form text fields ([Shown.title], [Shown.prompt], [ModalOption.label]) and the verbatim
+ * strings ([Shown.modalClass], [Dismissed.outcome], [Dismissed.source]) are carried **verbatim** — the
+ * decode seam neither trims, parses, nor sanitizes them. They may name a sensitive command or path, so a
+ * rendering consumer (#439) MUST treat them as inert data (not markup/HTML/active content) and own its
+ * own output-encoding at render time.
+ *
+ * Pure data, no Android imports — kept portable per CLAUDE.md (`data/` is a Compose Multiplatform
+ * walk-back surface). The subtype names mirror the wire `type` strings 1:1.
+ */
+sealed interface ModalEvent {
+    val modalId: String
+
+    /**
+     * A surfaced modal (`modal_shown`). [modalClass] is the wire `class` (a Kotlin keyword), carried as
+     * a plain string over a closed set (e.g. `permission`) — **not** coerced to an enum, so a
+     * forward-compat value survives (AC #3). [options] preserves wire array order, which **is** the
+     * canonical display/selection order (AC #1/#5). [defaultOptionId] equals one of [options]`.id` by the
+     * producer's invariant; this seam carries it verbatim and does not enforce the invariant.
+     */
+    data class Shown(
+        override val modalId: String,
+        val modalClass: String,
+        val title: String,
+        val prompt: String,
+        val options: List<ModalOption>,
+        val defaultOptionId: String,
+    ) : ModalEvent
+
+    /**
+     * A resolved modal (`modal_dismissed`). [outcome] is the selected option id when answered, or a
+     * producer-defined sentinel on cancel/timeout. [source] is a closed set (`remote` | `local` |
+     * `timeout`) distinguishing how it resolved. Both are carried as plain strings verbatim — a
+     * forward-compat value survives rather than being dropped by an enum (AC #2/#3).
+     */
+    data class Dismissed(
+        override val modalId: String,
+        val outcome: String,
+        val source: String,
+    ) : ModalEvent
+}
+
+/**
+ * One selectable modal option (`{id, label}`). Top-level (not nested under [ModalEvent.Shown]) for
+ * consumer ergonomics — the render slice (#439) references it directly when laying out the option list.
+ * [id] is the opaque token echoed back as the answer (#438); [label] is operator-authored display text.
+ */
+data class ModalOption(
+    val id: String,
+    val label: String,
+)

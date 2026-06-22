@@ -1,6 +1,8 @@
 package de.pyryco.mobile.data.network
 
 import de.pyryco.mobile.data.model.LiveSessionEvent
+import de.pyryco.mobile.data.model.ModalEvent
+import de.pyryco.mobile.data.model.ModalOption
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -108,3 +110,57 @@ internal fun ToolResultPayloadDto.toEvent(): LiveSessionEvent =
 
 /** Total field copy: [stopReason] passes through verbatim (consumers map the wire value). */
 internal fun TurnEndPayloadDto.toEvent(): LiveSessionEvent = LiveSessionEvent.TurnEnd(conversationId, turnId, stopReason)
+
+/**
+ * The two v2 **modal** lifecycle payloads (#437, pyrycode#701/#703): `modal_shown` (a surfaced
+ * permission/choice modal) and `modal_dismissed` (its resolution), mapped to the portable [ModalEvent]
+ * family. Like the five live-session DTOs above, every field is **always present** (no `omitempty`,
+ * pyrycode#701 § Design 2), so each is a required non-null `String`/`List` — the fail-closed posture for
+ * an untrusted boundary: a missing/wrong-typed field throws a [kotlinx.serialization.SerializationException]
+ * and the one malformed envelope is dropped, keeping the stream alive (AC #4).
+ *
+ * Modal payloads carry **no `conversation_id`** — `modal_id` is the sole correlation key. `class`,
+ * `source`, and `outcome` are **plain `String`s carried verbatim** (not Kotlin enums): AC #3 requires an
+ * unknown/forward-compat value to survive rather than be coerced or dropped, so the mappers are **total**
+ * (never `null`) — the only decode-failure path is a structurally malformed envelope. `class` is a Kotlin
+ * keyword, so the DTO property is [ModalShownPayloadDto.modalClass] with `@SerialName("class")`.
+ * `default_option_id` MUST equal one of `options[].id` by the producer's invariant; this seam carries it
+ * verbatim and does **not** enforce it (a decode asserting it would couple decode to producer correctness
+ * and could drop a forward-compat modal).
+ */
+@Serializable
+internal data class ModalOptionDto(
+    val id: String,
+    val label: String,
+)
+
+@Serializable
+internal data class ModalShownPayloadDto(
+    @SerialName("modal_id") val modalId: String,
+    @SerialName("class") val modalClass: String,
+    val title: String,
+    val prompt: String,
+    val options: List<ModalOptionDto>,
+    @SerialName("default_option_id") val defaultOptionId: String,
+)
+
+@Serializable
+internal data class ModalDismissedPayloadDto(
+    @SerialName("modal_id") val modalId: String,
+    val outcome: String,
+    val source: String,
+)
+
+/** Total field copy. `options.map` preserves wire array order — the canonical display order (AC #1/#5). */
+internal fun ModalShownPayloadDto.toEvent(): ModalEvent =
+    ModalEvent.Shown(
+        modalId = modalId,
+        modalClass = modalClass,
+        title = title,
+        prompt = prompt,
+        options = options.map { ModalOption(it.id, it.label) },
+        defaultOptionId = defaultOptionId,
+    )
+
+/** Total field copy: [outcome] and [source] pass through verbatim (consumers map the wire values). */
+internal fun ModalDismissedPayloadDto.toEvent(): ModalEvent = ModalEvent.Dismissed(modalId, outcome, source)
