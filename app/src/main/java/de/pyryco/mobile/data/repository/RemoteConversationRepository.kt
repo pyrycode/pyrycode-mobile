@@ -3,6 +3,7 @@ package de.pyryco.mobile.data.repository
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.model.ToolCall
@@ -18,6 +19,8 @@ import de.pyryco.mobile.data.network.ErrorPayload
 import de.pyryco.mobile.data.network.MessageChunkPayloadDto
 import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.ModalDismissedPayloadDto
+import de.pyryco.mobile.data.network.ModalShownPayloadDto
 import de.pyryco.mobile.data.network.PromoteConversationPayloadDto
 import de.pyryco.mobile.data.network.RegisterPushTokenPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
@@ -207,6 +210,31 @@ class RemoteConversationRepository(
         )
     val liveSessionEvents: SharedFlow<LiveSessionEvent> = mutableLiveSessionEvents.asSharedFlow()
 
+    /**
+     * Hot stream of decoded v2 interactive **modal** lifecycle events (#437) — the typed `modal_shown` /
+     * `modal_dismissed` family, surfaced off the same single [init] inbound collector (no second
+     * subscription). A verbatim sibling of [mutableLiveSessionEvents]: `replay = 0` (these are *events*,
+     * not held state — "which modal is currently open" is the #439 consumer's projection), a bounded
+     * [extraBufferCapacity] + [BufferOverflow.DROP_OLDEST] make [MutableSharedFlow.tryEmit] **infallible
+     * and non-blocking** so a slow modal consumer can never back-pressure the shared inbound collector and
+     * stall the connection's `conversations`/`message`/`ack` processing. Modals are inherently low-rate
+     * (one outstanding at a time, user-driven), so the bound is never realistically hit.
+     *
+     * A **separate** flow from [liveSessionEvents], deliberately not a sixth [LiveSessionEvent]: modal
+     * payloads carry **no `conversation_id`** ([ModalEvent] keys on `modalId`), whereas every
+     * [LiveSessionEvent] subtype mandates `conversationId` and the structured arm routes on it. Exposed on
+     * the **concrete** repository only — **not** on the [ConversationRepository] interface — the exact
+     * [liveSessionEvents] / [registerPushToken] (#359) posture; facade/coordinator reachability for the
+     * render consumer (#439) is downstream consumer-slice work.
+     */
+    private val mutableModalEvents =
+        MutableSharedFlow<ModalEvent>(
+            replay = 0,
+            extraBufferCapacity = 64,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+    val modalEvents: SharedFlow<ModalEvent> = mutableModalEvents.asSharedFlow()
+
     init {
         // The single consumer of the hot, single-consumer inbound stream. Cancelled by its owner
         // (#279/#302) when the connection ends; the pump completing `inbound` on teardown also ends it.
@@ -337,6 +365,20 @@ class RemoteConversationRepository(
                     }
                 }
             }
+            TYPE_MODAL_SHOWN, TYPE_MODAL_DISMISSED -> {
+                // A v2 modal lifecycle envelope (#437). Same `interactive` gate as the structured-stream,
+                // `stall`, and `resync` siblings — a non-interactive phone never decodes a spurious modal
+                // from a buggy/hostile daemon that ignored the negotiated set (fail-closed, defence in
+                // depth). Decode-or-drop only: unlike the TYPE_TURN_STATE arm this does NOT fold a thread
+                // row (modals are not rows and carry no conversation_id) and does NOT clear a stall (a
+                // `modal_shown` means claude is *waiting* for input — not turn forward-progress). A
+                // malformed payload decodes to null and is dropped so the single inbound consumer survives
+                // (AC #3); tryEmit is non-blocking (DROP_OLDEST) so the shared collector is never stalled.
+                // Drop silently — title/prompt/option-label are operator content; nothing here logs them.
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    decodeModalEvent(envelope)?.let { mutableModalEvents.tryEmit(it) }
+                }
+            }
             TYPE_RESYNC -> {
                 // Replay resync (#417): the daemon's signal that the advertised `last_event_id` aged out
                 // of its bounded ring (pyrycode#646/#647), so gap-free in-ring replay is impossible. Same
@@ -419,6 +461,28 @@ class RemoteConversationRepository(
     private fun decodeStall(envelope: Envelope): String? =
         try {
             MobileJson.decodeFromJsonElement<StallPayloadDto>(envelope.payload).conversationId
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+
+    /**
+     * Decode one v2 modal envelope (#437) to its typed [ModalEvent], or **null** when it cannot be
+     * surfaced. Selects the DTO by [Envelope.type], decodes the untrusted [Envelope.payload] through the
+     * single configured [MobileJson], and maps via `toEvent()`. The whole body is one `try`/`catch
+     * (IllegalArgumentException)` ([kotlinx.serialization.SerializationException] ⊂
+     * [IllegalArgumentException]), so a malformed / partially-decodable payload (missing or wrong-typed
+     * required field, AC #3) yields `null`, dropping the one envelope while the lone inbound collector
+     * survives. Both mappers are **total** — `class`/`source`/`outcome` are carried verbatim, so there is
+     * no "unrecognized value" drop (AC #3). Mirrors [decodeStall] / [decodeLiveSessionEvent]'s drop idiom
+     * — **nothing here logs the payload** (title/prompt/option-label are operator content).
+     */
+    private fun decodeModalEvent(envelope: Envelope): ModalEvent? =
+        try {
+            when (envelope.type) {
+                TYPE_MODAL_SHOWN -> MobileJson.decodeFromJsonElement<ModalShownPayloadDto>(envelope.payload).toEvent()
+                TYPE_MODAL_DISMISSED -> MobileJson.decodeFromJsonElement<ModalDismissedPayloadDto>(envelope.payload).toEvent()
+                else -> null
+            }
         } catch (e: IllegalArgumentException) {
             null
         }
@@ -1073,6 +1137,20 @@ class RemoteConversationRepository(
          * onset-only, no clearing edge on the wire (recovery is inferred from forward progress).
          */
         const val TYPE_STALL = "stall"
+
+        /**
+         * Capability-gated modal event: a surfaced permission/choice modal
+         * `{modal_id, class, title, prompt, options, default_option_id}` (#437, pyrycode#701) — no
+         * `conversation_id`; `modal_id` is the sole correlation key.
+         */
+        const val TYPE_MODAL_SHOWN = "modal_shown"
+
+        /**
+         * Capability-gated modal event: a resolved modal `{modal_id, outcome, source}` (#437,
+         * pyrycode#701) — `source` ∈ {`remote`, `local`, `timeout`}. The outbound `modal_answer`/
+         * `modal_cancel` constants belong to the answer-send slice (#438).
+         */
+        const val TYPE_MODAL_DISMISSED = "modal_dismissed"
 
         /**
          * Capability-gated control marker: a replay resync `{conversation_id}`, no `event_id` (#417,

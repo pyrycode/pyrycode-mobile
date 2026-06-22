@@ -4,6 +4,8 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.ModalEvent
+import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
@@ -2589,6 +2591,232 @@ class RemoteConversationRepositoryTest {
             assertEquals(102L, cursor.latest)
         }
 
+    // ---- #437: decode modal_shown / modal_dismissed into the modalEvents stream -----------------
+
+    // AC #1, #5: modal_shown decodes every field; options keep wire array order; default id carried.
+    @Test
+    fun modalShown_decodesAllFieldsPreservingOptionOrder() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectModalEvents(repo)
+            runCurrent()
+
+            pump.push(
+                modalShownEnvelope(
+                    """
+                    {"modal_id":"m1","class":"permission","title":"Allow?","prompt":"Run rm -rf build/?",
+                     "options":[{"id":"allow","label":"Allow"},{"id":"deny","label":"Deny"}],
+                     "default_option_id":"deny"}
+                    """.trimIndent(),
+                ),
+            )
+            runCurrent()
+
+            assertEquals(
+                listOf(
+                    ModalEvent.Shown(
+                        modalId = "m1",
+                        modalClass = "permission",
+                        title = "Allow?",
+                        prompt = "Run rm -rf build/?",
+                        options = listOf(ModalOption("allow", "Allow"), ModalOption("deny", "Deny")),
+                        defaultOptionId = "deny",
+                    ),
+                ),
+                events,
+            )
+            // Explicit order assertion (AC #5): array order is the canonical display order.
+            val shown = events.single() as ModalEvent.Shown
+            assertEquals(listOf("allow", "deny"), shown.options.map { it.id })
+        }
+
+    // AC #2: modal_dismissed source `remote`, outcome = a selected option id.
+    @Test
+    fun modalDismissed_sourceRemote() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectModalEvents(repo)
+            runCurrent()
+
+            pump.push(modalDismissedEnvelope("m1", outcome = "allow", source = "remote"))
+            runCurrent()
+
+            assertEquals(listOf(ModalEvent.Dismissed("m1", "allow", "remote")), events)
+        }
+
+    // AC #2: modal_dismissed source `local`.
+    @Test
+    fun modalDismissed_sourceLocal() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectModalEvents(repo)
+            runCurrent()
+
+            pump.push(modalDismissedEnvelope("m1", outcome = "deny", source = "local"))
+            runCurrent()
+
+            assertEquals(listOf(ModalEvent.Dismissed("m1", "deny", "local")), events)
+        }
+
+    // AC #2: modal_dismissed source `timeout`, with a producer sentinel outcome carried verbatim.
+    @Test
+    fun modalDismissed_sourceTimeout() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectModalEvents(repo)
+            runCurrent()
+
+            pump.push(modalDismissedEnvelope("m1", outcome = "cancelled", source = "timeout"))
+            runCurrent()
+
+            assertEquals(listOf(ModalEvent.Dismissed("m1", "cancelled", "timeout")), events)
+        }
+
+    // AC #3: an unknown/forward-compat `class` is preserved verbatim, not coerced or dropped.
+    @Test
+    fun modalShown_unknownClassPreservedVerbatim() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectModalEvents(repo)
+            runCurrent()
+
+            pump.push(
+                modalShownEnvelope(
+                    """
+                    {"modal_id":"m1","class":"some_future_class","title":"T","prompt":"P",
+                     "options":[{"id":"ok","label":"OK"}],"default_option_id":"ok"}
+                    """.trimIndent(),
+                ),
+            )
+            runCurrent()
+
+            assertEquals("some_future_class", (events.single() as ModalEvent.Shown).modalClass)
+        }
+
+    // AC #3: an unknown/forward-compat `source` and `outcome` are preserved verbatim, not dropped.
+    @Test
+    fun modalDismissed_unknownSourceAndOutcomePreservedVerbatim() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectModalEvents(repo)
+            runCurrent()
+
+            pump.push(modalDismissedEnvelope("m1", outcome = "some_future_outcome", source = "some_future_source"))
+            runCurrent()
+
+            assertEquals(
+                listOf(ModalEvent.Dismissed("m1", "some_future_outcome", "some_future_source")),
+                events,
+            )
+        }
+
+    // AC #3: a trailing/unknown JSON field is tolerated (ignoreUnknownKeys) — decode still surfaces.
+    @Test
+    fun modalShown_trailingUnknownFieldTolerated() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectModalEvents(repo)
+            runCurrent()
+
+            pump.push(
+                modalShownEnvelope(
+                    """
+                    {"modal_id":"m1","class":"permission","title":"T","prompt":"P",
+                     "options":[{"id":"ok","label":"OK"}],"default_option_id":"ok","deadline_ms":5000}
+                    """.trimIndent(),
+                ),
+            )
+            runCurrent()
+
+            assertEquals(
+                ModalEvent.Shown("m1", "permission", "T", "P", listOf(ModalOption("ok", "OK")), "ok"),
+                events.single(),
+            )
+        }
+
+    // A malformed modal_shown (missing required `title`) is dropped; the next event still surfaces.
+    @Test
+    fun modalShown_malformedDroppedNextSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectModalEvents(repo)
+            runCurrent()
+
+            pump.push(
+                modalShownEnvelope(
+                    """
+                    {"modal_id":"m1","class":"permission","prompt":"P",
+                     "options":[{"id":"ok","label":"OK"}],"default_option_id":"ok"}
+                    """.trimIndent(),
+                ),
+            )
+            runCurrent()
+            assertEquals(emptyList<ModalEvent>(), events)
+
+            pump.push(modalDismissedEnvelope("m1", outcome = "ok", source = "remote"))
+            runCurrent()
+            assertEquals(listOf(ModalEvent.Dismissed("m1", "ok", "remote")), events)
+        }
+
+    // AC #4: without `interactive` negotiated, a well-formed modal envelope is ignored (gate, siblings).
+    @Test
+    fun modal_capabilityGateClosed_blocksEmission() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { emptySet() })
+            val events = collectModalEvents(repo)
+            runCurrent()
+
+            pump.push(
+                modalShownEnvelope(
+                    """
+                    {"modal_id":"m1","class":"permission","title":"T","prompt":"P",
+                     "options":[{"id":"ok","label":"OK"}],"default_option_id":"ok"}
+                    """.trimIndent(),
+                ),
+            )
+            runCurrent()
+
+            assertEquals(emptyList<ModalEvent>(), events)
+        }
+
+    // AC #1: a shown→dismissed lifecycle for one modal_id surfaces both typed events in push order.
+    @Test
+    fun modal_shownThenDismissed_surfacesBothInOrder() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectModalEvents(repo)
+            runCurrent()
+
+            pump.push(
+                modalShownEnvelope(
+                    """
+                    {"modal_id":"m1","class":"permission","title":"T","prompt":"P",
+                     "options":[{"id":"ok","label":"OK"}],"default_option_id":"ok"}
+                    """.trimIndent(),
+                ),
+            )
+            pump.push(modalDismissedEnvelope("m1", outcome = "ok", source = "remote"))
+            runCurrent()
+
+            assertEquals(
+                listOf(
+                    ModalEvent.Shown("m1", "permission", "T", "P", listOf(ModalOption("ok", "OK")), "ok"),
+                    ModalEvent.Dismissed("m1", "ok", "remote"),
+                ),
+                events,
+            )
+        }
+
     // ---- Helpers --------------------------------------------------------------------------------
 
     /**
@@ -2895,6 +3123,43 @@ class RemoteConversationRepositoryTest {
         backgroundScope.launch { repo.liveSessionEvents.collect { events += it } }
         return events
     }
+
+    private fun TestScope.collectModalEvents(repo: RemoteConversationRepository): MutableList<ModalEvent> {
+        // modalEvents is a replay=0 SharedFlow, so the collector must subscribe before any push; callers
+        // runCurrent() after this to let the subscription attach, then push. Mirrors collectLiveEvents.
+        val events = mutableListOf<ModalEvent>()
+        backgroundScope.launch { repo.modalEvents.collect { events += it } }
+        return events
+    }
+
+    /** A `modal_shown` envelope (#437) — raw payload so tests can vary fields, options, and extra keys. */
+    private fun modalShownEnvelope(
+        rawPayload: String,
+        id: Long = 1L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "modal_shown",
+            ts = TS,
+            payload = MobileJson.parseToJsonElement(rawPayload),
+        )
+
+    /** A `modal_dismissed` envelope (#437) — three flat string fields `{modal_id, outcome, source}`. */
+    private fun modalDismissedEnvelope(
+        modalId: String,
+        outcome: String,
+        source: String,
+        id: Long = 1L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "modal_dismissed",
+            ts = TS,
+            payload =
+                MobileJson.parseToJsonElement(
+                    """{"modal_id":"$modalId","outcome":"$outcome","source":"$source"}""",
+                ),
+        )
 
     private fun turnStateEnvelope(
         conversationId: String,
