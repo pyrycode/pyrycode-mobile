@@ -239,6 +239,21 @@ as the control-derived `ReplayGap` member — #417 — but via the resync arm, n
 > `turn_end`). The clearing hook is folded into the same gated demux arm, reading `conversationId` off
 > the already-decoded event (no second decode). See [Stall state](stall-state.md).
 
+> **A sibling decode family — [Modal events](modal-events.md) (#437) — mirrors this seam on its own
+> flow.** The two `modal_shown`/`modal_dismissed` envelopes decode through the **same** three-layer
+> pattern (`internal` DTOs in `InteractivePayloads.kt` → `toEvent()` mappers → a portable sealed family),
+> on the **same** single inbound collector behind the **same** `interactive` gate, with the **same**
+> fail-closed `try/catch (IllegalArgumentException)` drop. But they are deliberately **not** a sixth
+> `LiveSessionEvent`: modal payloads carry **no `conversation_id`** (`modalId` is the sole correlation
+> key), whereas every member here mandates `conversationId` and the demux routes on it — so they form
+> their own [`ModalEvent`](modal-events.md) family on their own concrete-only
+> [`modalEvents`](remote-conversation-repository.md#modalevents--the-v2-permissionchoice-modal-decode-seam-437)
+> flow. Two further contrasts worth noting when adding a new interactive event: the modal mappers are
+> **total** (`class`/`source`/`outcome` carried **verbatim** as `String`, never coerced to an enum that
+> drops a forward-compat value — the inverse of `turn_state.state`'s nullable mapper above), and the modal
+> arm **decode-and-emits only** — it does **not** clear a stall (a `modal_shown` means `claude` is
+> *waiting* for input, not forward progress).
+
 ## The `ReplayGap` member (#417)
 
 [#417](../codebase/417.md) added a sixth member, `data class ReplayGap(override val conversationId:
@@ -282,6 +297,10 @@ is **not** one of the five render envelopes and does **not** flow through the de
 - [Replay cursor](replay-cursor.md) ([#417](../codebase/417.md)) — the **`ReplayGap` producer**: the
   `resync` arm `reset()`s the cursor and `tryEmit`s the control-derived `ReplayGap` onto this flow (no
   DTO, no decode). See [§ The `ReplayGap` member](#the-replaygap-member-417).
+- [Modal events](modal-events.md) ([#437](../codebase/437.md)) — the **sibling decode family**: the same
+  three-layer pattern + single-collector gated demux arm + fail-closed drop, on its own
+  [`modalEvents`](remote-conversation-repository.md#modalevents--the-v2-permissionchoice-modal-decode-seam-437)
+  flow (modal payloads carry no `conversation_id`, so not a sixth member here).
 - [Noise session pump](noise-session-pump.md) — surfaces `PumpState.Open.capabilities` (#401), the
   gate source.
 - [Mobile Protocol v2 wire layer](mobile-protocol-v2-wire-layer.md) — `MobileJson`, `Envelope`,

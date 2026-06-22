@@ -624,6 +624,43 @@ already-authenticated Noise channel, and **nothing in the new arm or the drop br
 payload** (the text / tool-summary fields may carry sensitive session content). See
 [Live-session events § Trust boundary](live-session-events.md#trust-boundary--no-payload-logging).
 
+## `modalEvents` — the v2 permission/choice-modal decode seam (#437)
+
+A second hot **`val modalEvents: SharedFlow<ModalEvent>`** (`RemoteConversationRepository.kt:230-236`), a
+verbatim sibling of [`liveSessionEvents`](#livesessionevents--the-v2-structured-stream-decode-seam-385),
+surfacing the two v2 **binary → phone** modal lifecycle envelopes — `modal_shown`, `modal_dismissed` —
+decoded into the typed [`ModalEvent`](modal-events.md) `{ Shown, Dismissed }` family. The decode boundary
+itself (DTOs + mappers + verbatim-string rationale) is documented in [Modal events](modal-events.md); this
+section records only how it attaches to the repository.
+
+- **Rides the same single existing `pump.inbound` collector** — **no** third subscription. A new arm joins
+  the `onInbound` `when (envelope.type)` demux (`:368-381`), beside the [#395 `stall` arm](stall-state.md),
+  gated **identically** on `CAPABILITY_INTERACTIVE in negotiatedCapabilities()` (the **reused** #385
+  supplier — no new capability, no coordinator/DI change), then calls the private
+  `decodeModalEvent(envelope): ModalEvent?` helper (`:479`) and `tryEmit`s the result. Two `TYPE_*`
+  constants join the companion (`:1146`+).
+- **Decode-and-emit only — two deliberate non-folds.** Unlike the `TYPE_TURN_STATE …` arm this arm does
+  **not** fold a thread row (modals are not rows and carry **no `conversation_id`**) and does **not** clear
+  a [stall](stall-state.md) — a `modal_shown` means `claude` is *waiting* for input, **not** turn
+  forward-progress (the inverse of every `LiveSessionEvent`, which clears a stall). It is the cleanest of
+  the interactive arms: one decode, one `tryEmit`, no side effects on `messagesByConversation` /
+  `stalledConversations`.
+- **A separate flow + family, not a sixth `LiveSessionEvent`.** Forced by the wire: modal payloads carry
+  no `conversation_id` (`modalId` is the sole key), whereas every `LiveSessionEvent` subtype mandates
+  `conversationId` and the structured arm routes on it. Same `SharedFlow` shape (`replay = 0`,
+  `extraBufferCapacity = 64`, `DROP_OLDEST` → infallible non-blocking `tryEmit`); **concrete repo only**,
+  not the [`ConversationRepository`](conversation-repository.md) interface (the `liveSessionEvents` / #359
+  `registerPushToken` posture; the #439 render consumer's facade/coordinator reachability is downstream).
+- **`decodeModalEvent`** copies the `decodeStall` / `decodeLiveSessionEvent` `try { when(type) … } catch
+  (IllegalArgumentException) { null }` drop idiom — a malformed payload yields `null`, the one envelope is
+  dropped, the lone collector survives. Both `toEvent()` mappers are **total** (`class`/`source`/`outcome`
+  carried verbatim, no enum drop) — see [Modal events § Verbatim strings](modal-events.md#verbatim-strings-no-enum-coercion-ac-3).
+
+`security-sensitive` (high-consequence — the answer #438 injects a decision into `claude`), but the
+repository stays plain orchestration: decode runs behind the authenticated Noise channel, and **nothing in
+the new arm or the drop branch logs the payload** (`title`/`prompt`/option-`label` are operator content —
+pyrycode#701 "never log modal body text"). See [Modal events § Trust boundary](modal-events.md#trust-boundary--no-payload-logging).
+
 ## `recordReplayCursor(envelope)` — the replay-cursor side-write (#412)
 
 The **first line** of `onInbound` (`:218`), *before* the `when` demux, folds each interactive frame's
