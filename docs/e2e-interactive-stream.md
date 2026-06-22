@@ -125,4 +125,4 @@ These are grounded in the source but unverified end to end:
 
 - Runs as a local Gradle/script command, **not** a GitHub CI gate (the org does not gate on Actions).
 - Assert tolerantly (substring, trimmed, generous timeouts); never on delta counts or timing.
-- Keep the test to the single structured path; do not assert the retired coarse `message` path.
+- Keep the test to the single structured path; do not assert the coarse `message` path. As of 2026-06-22 there is no old-app-version support: the operator controls both ends and ships the app and daemon together, so every phone gets the structured stream and the coarse path is dead code slated for removal. See the 2026-06-22 amendment in pyrycode ADR 025.
