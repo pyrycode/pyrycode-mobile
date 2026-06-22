@@ -19,6 +19,8 @@ import de.pyryco.mobile.data.network.ErrorPayload
 import de.pyryco.mobile.data.network.MessageChunkPayloadDto
 import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.ModalAnswerPayloadDto
+import de.pyryco.mobile.data.network.ModalCancelPayloadDto
 import de.pyryco.mobile.data.network.ModalDismissedPayloadDto
 import de.pyryco.mobile.data.network.ModalShownPayloadDto
 import de.pyryco.mobile.data.network.PromoteConversationPayloadDto
@@ -1047,6 +1049,91 @@ class RemoteConversationRepository(
         sendAndAwaitReply(request)
     }
 
+    /**
+     * Answer the surfaced permission/choice modal (#437) over v2 `modal_answer` (#438): send
+     * `{modal_id, option_id, answer_token}` and await its correlated reply — an empty `ack` (the
+     * daemon received and will process the answer) or an `error` (failure). [modalId] and [optionId]
+     * are the opaque tokens the caller (#439, via the #437 decode) hands in — echoed **verbatim**,
+     * never parsed or validated; the daemon validates [modalId] against its own outstanding modal
+     * (first-answer-wins; a stale id is rejected) and maps [optionId] against its own option list.
+     * The [answerToken] is minted here ([answerToken] helper) as a deterministic idempotency key.
+     *
+     * A pure request/reply control call with **no** projection side effect — success is simply "the
+     * call returned without throwing". The modal's eventual *resolution* arrives asynchronously as the
+     * inbound `modal_dismissed` event on [modalEvents] (#437); this method does **not** await it.
+     * Never logs the payload (the modal may name a sensitive command/path).
+     *
+     * Throws [RelayErrorException] for a server `error` (carrying `code`/`retryable` — incl. the
+     * ungranted-device reject pyrycode#702/#703, whose read-only degrade is #440's concern, not
+     * caught here), and [IllegalStateException] when the session is not connected ([SessionPump.send]
+     * returns `false`) — neither mutates any state (there is none).
+     */
+    suspend fun answerModal(
+        modalId: String,
+        optionId: String,
+    ) {
+        val request =
+            Envelope(
+                id = requestId.incrementAndGet(),
+                type = TYPE_MODAL_ANSWER,
+                ts = Clock.System.now().toString(),
+                payload =
+                    MobileJson.encodeToJsonElement(
+                        ModalAnswerPayloadDto(
+                            modalId = modalId,
+                            optionId = optionId,
+                            answerToken = answerToken(modalId, optionId),
+                        ),
+                    ),
+            )
+        // Throws on a server `error` / not-Open session; the empty `{}` ack is ignored.
+        sendAndAwaitReply(request)
+    }
+
+    /**
+     * Cancel the surfaced permission/choice modal (#437) over v2 `modal_cancel` (#438): send
+     * `{modal_id}` and await its correlated `ack`/`error`. [modalId] is echoed **verbatim**, never
+     * parsed; the daemon validates it against its own outstanding modal (a stale id — e.g. a re-cancel
+     * of an already-resolved modal — is rejected). Cancel carries no idempotency token (pyrycode#701).
+     * Same request/reply, no-projection, never-log posture as [answerModal].
+     *
+     * Throws [RelayErrorException] for a server `error` and [IllegalStateException] when the session
+     * is not connected ([SessionPump.send] returns `false`).
+     */
+    suspend fun cancelModal(modalId: String) {
+        val request =
+            Envelope(
+                id = requestId.incrementAndGet(),
+                type = TYPE_MODAL_CANCEL,
+                ts = Clock.System.now().toString(),
+                payload = MobileJson.encodeToJsonElement(ModalCancelPayloadDto(modalId = modalId)),
+            )
+        // Throws on a server `error` / not-Open session; the empty `{}` ack is ignored.
+        sendAndAwaitReply(request)
+    }
+
+    /**
+     * Mint the `answer_token` for a `modal_answer`: a deterministic, collision-free encoding of the
+     * answer's identity `(modalId, optionId)` (pyrycode#701 — uniqueness + stability matter, secrecy
+     * does not). A **pure** function: no stored state, no random, no clock — purity is what gives the
+     * two AC#2 properties by construction:
+     *
+     *  - **Stable across a retry of the same logical answer:** the same `(modalId, optionId)` always
+     *    yields the same token, so a resend carries the identical token and the daemon dedups it to a
+     *    no-op (no remembered state, no cache lifetime).
+     *  - **Unique per distinct answer:** distinct pairs always yield distinct tokens. Both ids
+     *    participate — two different modals each answered with an option id `"allow"` are distinct
+     *    answers and must carry distinct tokens.
+     *
+     * The modal id is **length-prefixed** so the opaque ids (which may contain the `:` separator)
+     * cannot alias: `("a:b","c")` → `"3:a:b:c"` and `("a","b:c")` → `"1:a:b:c"` are distinct. The
+     * daemon treats the token as an opaque comparison key, so this conforming encoding is wire-correct.
+     */
+    private fun answerToken(
+        modalId: String,
+        optionId: String,
+    ): String = "${modalId.length}:$modalId:$optionId"
+
     override suspend fun archive(conversationId: String): Unit =
         throw UnsupportedOperationException("archive: no v2 wire message defined (follow-up specs the wire contract)")
 
@@ -1151,6 +1238,22 @@ class RemoteConversationRepository(
          * `modal_cancel` constants belong to the answer-send slice (#438).
          */
         const val TYPE_MODAL_DISMISSED = "modal_dismissed"
+
+        /**
+         * Capability-gated outbound modal control: the phone's answer
+         * `{modal_id, option_id, answer_token}` to a surfaced modal (#438, pyrycode#701). The
+         * `answer_token` is a client-minted idempotency key (uniqueness + stability matter, secrecy
+         * does not), letting the daemon collapse a replayed/reordered answer to a no-op. Authorization
+         * is `modal_id` validity plus the per-device answer gate (pyrycode#702), never this token.
+         */
+        const val TYPE_MODAL_ANSWER = "modal_answer"
+
+        /**
+         * Capability-gated outbound modal control: the phone's cancellation `{modal_id}` of a surfaced
+         * modal (#438, pyrycode#701) — carries no idempotency token; a re-cancel of an already-resolved
+         * modal is a stale-`modal_id` reject the daemon handles.
+         */
+        const val TYPE_MODAL_CANCEL = "modal_cancel"
 
         /**
          * Capability-gated control marker: a replay resync `{conversation_id}`, no `event_id` (#417,

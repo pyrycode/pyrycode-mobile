@@ -661,6 +661,74 @@ repository stays plain orchestration: decode runs behind the authenticated Noise
 the new arm or the drop branch logs the payload** (`title`/`prompt`/option-`label` are operator content —
 pyrycode#701 "never log modal body text"). See [Modal events § Trust boundary](modal-events.md#trust-boundary--no-payload-logging).
 
+## `answerModal` / `cancelModal` — the v2 modal answer/cancel control-send (#438)
+
+The **outbound (phone → binary) half** of the permission modal feature: the two control messages that
+answer or cancel a modal the [`modalEvents`](#modalevents--the-v2-permissionchoice-modal-decode-seam-437)
+seam (#437) surfaced. [#438](../codebase/438.md) implements them as **two concrete suspend methods** that
+mirror [`registerPushToken`](#registerpushtokentoken--the-device-concern-push-registration-359) (#359)
+exactly — a pure request/reply over the **reused** `sendAndAwaitReply` (#346) primitive, with no new
+correlation infra, no projection mutation, and no interface/facade/Fake touch:
+
+```kotlin
+suspend fun answerModal(modalId: String, optionId: String)   // modal_answer{modal_id, option_id, answer_token}
+suspend fun cancelModal(modalId: String)                     // modal_cancel{modal_id}
+```
+
+Each builds an `Envelope(id = requestId.incrementAndGet(), type = TYPE_MODAL_ANSWER/_CANCEL, ts =
+Clock.System.now()…, payload = MobileJson.encodeToJsonElement(dto))` and `sendAndAwaitReply`s it,
+**discarding the empty `{}` ack** — success is simply "the call returned without throwing". The
+[`ModalAnswerPayloadDto` / `ModalCancelPayloadDto`](mobile-protocol-v2-wire-layer.md#outbound-request-encoders--the-ackerror-correlated-reply-models-346)
+encode DTOs (new `data/network/ModalOutboundPayloads.kt`) are the **encode mirror** of #437's decode DTOs.
+
+- **`modalId`/`optionId` are echoed verbatim — never parsed or validated.** They are the opaque tokens
+  the caller (#439, via the #437 decode) hands in; the daemon validates `modalId` against its own
+  outstanding modal (first-answer-wins; a stale id is rejected) and maps `optionId` against its own
+  recorded option list (pyrycode#701/#703/#706). The phone asserts only *which* modal and *which* offered
+  option — never a conversation. A client-side check here would be security theatre that could diverge
+  from the daemon.
+- **`answer_token` — a deterministic, stateless idempotency key (the one real design decision).** Minted
+  by a **pure** `private fun answerToken(modalId, optionId) = "${modalId.length}:$modalId:$optionId"` — no
+  stored state, no random, no clock. Purity gives both AC#2 properties **by construction**: the same
+  `(modalId, optionId)` always yields the same token, so a **resend of one logical answer carries the
+  identical token** and the daemon collapses the replay to a no-op (stability with no remembered cache,
+  no eviction lifecycle); **distinct answers always yield distinct tokens** (both ids participate — two
+  different modals each answered with option id `"allow"` are distinct answers). The modal id is
+  **length-prefixed** so opaque ids containing the `:` separator can't alias (`("a:b","c")` → `3:a:b:c`
+  vs `("a","b:c")` → `1:a:b:c`). It is **not** authorization — that is `modalId` validity (#706) + the
+  per-device answer gate (#702, default OFF); pyrycode#701 makes *secrecy an explicit non-goal*, so the
+  predictable derivation is **safe** (a guessed token grants nothing) and *stronger* than a remembered
+  UUID for the stability AC. (Rejected: random UUID + a cache keyed by `(modalId, optionId)` — buys
+  nothing the pure derivation lacks while adding mutable shared state, thread-safety, and an eviction
+  question coupling the slice to the inbound `modal_dismissed` stream.)
+- **`modal_cancel` carries no token.** Cancel is not idempotency-keyed (pyrycode#701 shape `{modal_id}`);
+  a re-cancel of an already-resolved modal is a stale-`modal_id` reject the daemon handles.
+- **Failure surfaces deterministically (AC#4), nothing swallowed.** A not-`Open` session
+  (`pump.send` → `false`) throws `IllegalStateException` synchronously (no hang); a server `error` —
+  **including the ungranted-device reject** (pyrycode#702/#703) — propagates as
+  [`RelayErrorException`](mobile-protocol-v2-wire-layer.md)`(code, retryable, message)`. This slice does
+  **not** catch or interpret the reject: switching the modal to read-only on it is **#440's** concern.
+  No new error type, no new mapping — inherited from `sendAndAwaitReply`/`mapError` verbatim.
+- **`modal_dismissed` is not awaited here.** The `ack` confirms the daemon *received and will process*
+  the answer; the modal's eventual *resolution* arrives asynchronously as the inbound `modal_dismissed`
+  event on [`modalEvents`](#modalevents--the-v2-permissionchoice-modal-decode-seam-437) (#437). Two
+  distinct signals — this slice owns only send + ack/error correlation.
+- **Concrete-only, like `registerPushToken`/`liveSessionEvents`/`modalEvents`.** Modal answering is a
+  device/control capability, not conversation CRUD, so it is **not** on the
+  [`ConversationRepository`](conversation-repository.md) interface, the
+  [facade](stable-conversation-repository.md), or the Fake (which would force a +2-file plumbing cascade
+  for a method they never call). The #439 render consumer reaches these by fetching the concrete
+  `RemoteConversationRepository` (the `registerPushToken` reachability story) — downstream consumer-slice
+  work, not this slice's. Two `TYPE_MODAL_ANSWER`/`TYPE_MODAL_CANCEL` companion constants join the block.
+
+`security-sensitive` (a high-consequence outbound control — the answer injects a permission decision into
+`claude`), verdict **PASS** (architect self-review + code review): the design keeps the daemon the sole
+authority (the payload carries only opaque ids + a non-authoritative dedup key), mints nothing
+trust-bearing, and **never logs the payload** (the modal may name a sensitive command/path — e.g. "Allow
+`rm -rf build/`"), mirroring `registerPushToken`'s never-log-the-token posture. See the
+[#438 implementation notes](../codebase/438.md) for the line refs, the test matrix, and the *untested
+length-prefix injectivity* lesson.
+
 ## `recordReplayCursor(envelope)` — the replay-cursor side-write (#412)
 
 The **first line** of `onInbound` (`:218`), *before* the `when` demux, folds each interactive frame's

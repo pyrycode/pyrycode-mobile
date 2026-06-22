@@ -1343,6 +1343,205 @@ class RemoteConversationRepositoryTest {
             assertTrue(register().exceptionOrNull() is IllegalStateException)
         }
 
+    // ---- answerModal / cancelModal (#438): modal_answer / modal_cancel outbound control ----------
+
+    // AC #1, #5: the sent modal_answer payload matches the wire contract — exactly the three keys
+    // {modal_id, option_id, answer_token}; modal_id/option_id echoed verbatim, answer_token present.
+    @Test
+    fun answerModal_sendsModalAnswerMatchingWireContract() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+
+            val answer = startAnswerModal(repo, "mdl-7f3a", "allow")
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "modal_answer" }
+            val payload = sent.payload.jsonObject
+            assertEquals(setOf("modal_id", "option_id", "answer_token"), payload.keys)
+            assertEquals("mdl-7f3a", payload.getValue("modal_id").jsonPrimitive.content)
+            assertEquals("allow", payload.getValue("option_id").jsonPrimitive.content)
+            assertTrue(
+                payload
+                    .getValue("answer_token")
+                    .jsonPrimitive.content
+                    .isNotEmpty(),
+            )
+
+            // Resolve so the awaiting coroutine completes cleanly.
+            pump.push(ackEnvelope(sent.id))
+            runCurrent()
+            assertTrue(answer().isSuccess)
+        }
+
+    // AC #2, #5: two resends of one logical answer (same modal_id + option_id) carry a STABLE token,
+    // so the daemon dedups the replay to a no-op rather than double-answering.
+    @Test
+    fun answerModal_tokenIsStableAcrossResendOfSameAnswer() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+
+            startAnswerModal(repo, "mdl-7f3a", "allow")
+            startAnswerModal(repo, "mdl-7f3a", "allow")
+            runCurrent()
+
+            val tokens =
+                pump.sent
+                    .filter { it.type == "modal_answer" }
+                    .map {
+                        it.payload.jsonObject
+                            .getValue("answer_token")
+                            .jsonPrimitive.content
+                    }
+            assertEquals(2, tokens.size)
+            assertEquals(tokens[0], tokens[1])
+        }
+
+    // AC #2, #5: distinct answers carry DISTINCT tokens — both option_id (deny vs allow) and modal_id
+    // (mdl-OTHER vs mdl-7f3a, SAME option id) must participate, so no two collapse to one.
+    @Test
+    fun answerModal_tokenIsDistinctAcrossDistinctAnswers() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+
+            startAnswerModal(repo, "mdl-7f3a", "allow")
+            startAnswerModal(repo, "mdl-7f3a", "deny")
+            startAnswerModal(repo, "mdl-OTHER", "allow")
+            runCurrent()
+
+            val tokens =
+                pump.sent
+                    .filter { it.type == "modal_answer" }
+                    .map {
+                        it.payload.jsonObject
+                            .getValue("answer_token")
+                            .jsonPrimitive.content
+                    }
+            assertEquals(3, tokens.size)
+            assertEquals(3, tokens.toSet().size)
+        }
+
+    // AC #4: the correlated empty ack completes the call successfully (no throw).
+    @Test
+    fun answerModal_onAck_completesSuccessfully() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+
+            val answer = startAnswerModal(repo, "mdl-7f3a", "allow")
+            runCurrent()
+            val sent = pump.sent.single { it.type == "modal_answer" }
+            pump.push(ackEnvelope(sent.id))
+            runCurrent()
+
+            assertTrue(answer().isSuccess)
+        }
+
+    // AC #4: a server error (stand-in for the #702 ungranted-device reject) surfaces as a
+    // RelayErrorException exposing code + retryable — this slice does NOT degrade (#440 does).
+    @Test
+    fun answerModal_onServerError_throwsRelayErrorExposingCode() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+
+            val answer = startAnswerModal(repo, "mdl-7f3a", "allow")
+            runCurrent()
+            val sent = pump.sent.single { it.type == "modal_answer" }
+            pump.push(errorEnvelope(sent.id, code = "modal.answer_forbidden", retryable = false))
+            runCurrent()
+
+            val ex = answer().exceptionOrNull()
+            assertTrue("expected RelayErrorException, got $ex", ex is RelayErrorException)
+            assertEquals("modal.answer_forbidden", (ex as RelayErrorException).code)
+            assertFalse(ex.retryable)
+        }
+
+    // AC #4: a not-Open session (pump.send returns false) fails fast with IllegalStateException and
+    // does not hang — no reply is ever fed, yet the call has already completed exceptionally.
+    @Test
+    fun answerModal_whenSendReturnsFalse_throwsIllegalStateAndDoesNotHang() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+
+            val answer = startAnswerModal(repo, "mdl-7f3a", "allow")
+            runCurrent()
+
+            assertTrue(answer().exceptionOrNull() is IllegalStateException)
+        }
+
+    // AC #3: the sent modal_cancel payload matches the single-key wire contract {modal_id}.
+    @Test
+    fun cancelModal_sendsModalCancelMatchingWireContract() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+
+            val cancel = startCancelModal(repo, "mdl-7f3a")
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "modal_cancel" }
+            assertEquals(MobileJson.parseToJsonElement("""{"modal_id":"mdl-7f3a"}"""), sent.payload)
+
+            // Resolve so the awaiting coroutine completes cleanly.
+            pump.push(ackEnvelope(sent.id))
+            runCurrent()
+            assertTrue(cancel().isSuccess)
+        }
+
+    // AC #4: the correlated empty ack completes the cancel successfully (no throw).
+    @Test
+    fun cancelModal_onAck_completesSuccessfully() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+
+            val cancel = startCancelModal(repo, "mdl-7f3a")
+            runCurrent()
+            val sent = pump.sent.single { it.type == "modal_cancel" }
+            pump.push(ackEnvelope(sent.id))
+            runCurrent()
+
+            assertTrue(cancel().isSuccess)
+        }
+
+    // AC #4: a server error surfaces as RelayErrorException exposing code + retryable.
+    @Test
+    fun cancelModal_onServerError_throwsRelayErrorExposingCode() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+
+            val cancel = startCancelModal(repo, "mdl-7f3a")
+            runCurrent()
+            val sent = pump.sent.single { it.type == "modal_cancel" }
+            pump.push(errorEnvelope(sent.id, code = "modal.stale_id", retryable = false))
+            runCurrent()
+
+            val ex = cancel().exceptionOrNull()
+            assertTrue("expected RelayErrorException, got $ex", ex is RelayErrorException)
+            assertEquals("modal.stale_id", (ex as RelayErrorException).code)
+            assertFalse(ex.retryable)
+        }
+
+    // AC #4: a not-Open session (pump.send returns false) fails fast with IllegalStateException.
+    @Test
+    fun cancelModal_whenSendReturnsFalse_throwsIllegalStateAndDoesNotHang() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+
+            val cancel = startCancelModal(repo, "mdl-7f3a")
+            runCurrent()
+
+            assertTrue(cancel().exceptionOrNull() is IllegalStateException)
+        }
+
     // ---- requestScreenSnapshot (#375): request_snapshot request → screen_snapshot correlation ----
 
     // AC #2 + happy path: the sent envelope matches the request_snapshot wire contract
@@ -2911,6 +3110,35 @@ class RemoteConversationRepositoryTest {
         var outcome: Result<Unit>? = null
         backgroundScope.launch { outcome = runCatching { repo.registerPushToken(token) } }
         return { requireNotNull(outcome) { "registerPushToken has not completed" } }
+    }
+
+    /**
+     * Launch [RemoteConversationRepository.answerModal] on [backgroundScope] (it suspends awaiting the
+     * ack/error reply) and return a getter for its eventual [Result]. Read the result only after the
+     * correlated reply has been pushed and [runCurrent] has drained the cascade (the not-Open path
+     * completes synchronously, before any reply).
+     */
+    private fun TestScope.startAnswerModal(
+        repo: RemoteConversationRepository,
+        modalId: String,
+        optionId: String,
+    ): () -> Result<Unit> {
+        var outcome: Result<Unit>? = null
+        backgroundScope.launch { outcome = runCatching { repo.answerModal(modalId, optionId) } }
+        return { requireNotNull(outcome) { "answerModal has not completed" } }
+    }
+
+    /**
+     * Launch [RemoteConversationRepository.cancelModal] on [backgroundScope] and return a getter for
+     * its eventual [Result], mirroring [startAnswerModal].
+     */
+    private fun TestScope.startCancelModal(
+        repo: RemoteConversationRepository,
+        modalId: String,
+    ): () -> Result<Unit> {
+        var outcome: Result<Unit>? = null
+        backgroundScope.launch { outcome = runCatching { repo.cancelModal(modalId) } }
+        return { requireNotNull(outcome) { "cancelModal has not completed" } }
     }
 
     /** A correlated `conversation_created` reply carrying a bare conversation object (#347). */
