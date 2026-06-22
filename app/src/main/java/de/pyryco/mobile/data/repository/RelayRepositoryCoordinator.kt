@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.LiveSessionEvent
+import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.PumpState
@@ -158,6 +159,17 @@ class RelayRepositoryCoordinator(
     @OptIn(ExperimentalCoroutinesApi::class)
     val liveSessionEvents: Flow<LiveSessionEvent> =
         activeRemoteRepo.flatMapLatest { repo -> repo?.liveSessionEvents ?: emptyFlow() }
+
+    /** The decoded v2 interactive **modal** lifecycle events (#437) for the current connection, surfaced
+     *  off the connection-scoped concrete [RemoteConversationRepository] — a byte-for-byte mirror of the
+     *  [liveSessionEvents] seam. Like it, modal events live on the concrete repo, not the
+     *  [ConversationRepository] interface, so this reaches them through [activeRemoteRepo]. A cold `Flow`
+     *  (events, `replay = 0`, no "current value" → no [stateIn]; folding "which modal is open" is the #445
+     *  ViewModel projection's job); [flatMapLatest] switches to the fresh repo's stream on each connection
+     *  and cancels the prior, so the seam survives reconnection. Empty between connections. */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val modalEvents: Flow<ModalEvent> =
+        activeRemoteRepo.flatMapLatest { repo -> repo?.modalEvents ?: emptyFlow() }
 
     /** The combined two-part status (#392) #390 consumes off this concrete singleton: the supervisor's
      *  relay leg zipped with the derived pyrycode leg. `Eagerly` so `.value` is correct at any glance;
