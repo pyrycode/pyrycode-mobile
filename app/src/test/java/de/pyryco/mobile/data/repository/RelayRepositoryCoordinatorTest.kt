@@ -731,6 +731,39 @@ class RelayRepositoryCoordinatorTest {
             env.coordinator.close()
         }
 
+    // A live connection (pump Open) → interrupt delegates: one bare `interrupt` frame, fire-and-forget.
+    @Test
+    fun interrupt_withActiveConnection_delegatesAndSendsBareFrame() =
+        runTest {
+            val env = newEnv()
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            val pump = env.pumps.single()
+            pump.open()
+            runCurrent()
+
+            env.coordinator.interrupt()
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "interrupt" }
+            assertTrue(sent.payload.jsonObject.isEmpty())
+
+            env.coordinator.close()
+        }
+
+    // No active connection → IllegalStateException (the not-connected path the ViewModel swallows).
+    @Test
+    fun interrupt_withNoActiveConnection_throwsIllegalState() =
+        runTest {
+            val env = newEnv()
+            runCurrent()
+
+            val outcome = runCatching { env.coordinator.interrupt() }
+            assertTrue(outcome.exceptionOrNull() is IllegalStateException)
+
+            env.coordinator.close()
+        }
+
     // ---- helpers ---------------------------------------------------------------------------------
 
     private fun TestScope.newEnv(

@@ -1542,6 +1542,36 @@ class RemoteConversationRepositoryTest {
             assertTrue(cancel().exceptionOrNull() is IllegalStateException)
         }
 
+    // ---- interrupt (#458): bare fire-and-forget control frame -------------------------------------
+
+    // AC #1, wire contract: interrupt() emits exactly one bare `interrupt` frame whose payload is the
+    // empty object `{}` (no conversation_id / no other keys). Fire-and-forget: no reply is awaited.
+    @Test
+    fun interrupt_sendsBareInterruptMatchingWireContract() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+
+            repo.interrupt()
+
+            val sent = pump.sent.single { it.type == "interrupt" }
+            assertEquals(MobileJson.parseToJsonElement("{}"), sent.payload)
+        }
+
+    // AC #3: a not-Open session (pump.send returns false) fails fast with IllegalStateException and
+    // does not hang (no awaited reply).
+    @Test
+    fun interrupt_whenSendReturnsFalse_throwsIllegalStateAndDoesNotHang() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+
+            val outcome = runCatching { repo.interrupt() }
+
+            assertTrue(outcome.exceptionOrNull() is IllegalStateException)
+        }
+
     // ---- dropQueuedMessage (#466): dequeue_message request → ack/error correlation ----------------
 
     // AC #1, #5: the sent dequeue_message payload matches the two-key wire contract

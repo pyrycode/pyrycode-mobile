@@ -307,6 +307,16 @@ class RelayRepositoryCoordinator(
         repo.cancelModal(modalId)
     }
 
+    /**
+     * Outbound `interrupt` passthrough (#458): the [cancelModal] mirror for
+     * [RemoteConversationRepository.interrupt]. Same null-guard-only posture and never-log contract;
+     * fire-and-forget (no reply awaited).
+     */
+    suspend fun interrupt() {
+        val repo = activeRemoteRepo.value ?: throw IllegalStateException("no active connection")
+        repo.interrupt()
+    }
+
     private class Connection(
         val pump: ManagedSessionPump,
         val scope: CoroutineScope,

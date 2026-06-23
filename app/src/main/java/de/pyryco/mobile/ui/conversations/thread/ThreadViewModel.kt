@@ -123,6 +123,10 @@ class ThreadViewModel(
     // the facade-bypassing concrete repo or the coordinator (the outbound analog of the modalEvents flow).
     private val answerModal: suspend (modalId: String, optionId: String) -> Unit = { _, _ -> },
     private val cancelModal: suspend (modalId: String) -> Unit = { _ -> },
+    // #458: the outbound `interrupt` send path → the coordinator's passthrough (RelayRepositoryCoordinator
+    // .interrupt). Defaulted no-op so the fake-backed Koin graph + existing tests stay inert. The VM holds
+    // only this suspend lambda, never the coordinator/concrete repo — same posture as answerModal/cancelModal.
+    private val interrupt: suspend () -> Unit = {},
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
@@ -462,6 +466,40 @@ class ThreadViewModel(
                 modalSendErrorChannel.trySend(Unit)
             } catch (e: IllegalStateException) {
                 modalSendErrorChannel.trySend(Unit)
+            }
+        }
+    }
+
+    /** Send the bare `interrupt` control frame (#458) — the action sibling #459's busy-state affordance
+     *  calls. Always attempts the send (minimal client; the server is authoritative on whether a turn is
+     *  running and on the `interactive` gate); takes no args — the frame is connection-level, not
+     *  per-conversation. Holds no per-VM state to gate on, so unlike [onModalCancel] there is no guard. */
+    fun onInterrupt() {
+        sendInterrupt()
+    }
+
+    /**
+     * The [sendCancel] structural twin for `interrupt`, with **empty catch bodies**: interrupt is inert
+     * on failure (AC #3 — no error channel, no log; any user-visible surface is #459's concern). The
+     * not-connected path surfaces as [IllegalStateException] (coordinator null-guard / repo `check`).
+     *
+     * The [RelayErrorException] catch is **unreachable on the real path** — interrupt is fire-and-forget
+     * (plain `pump.send`, no awaited reply), so a correlated server `error` can never originate. It is
+     * retained for (1) the AC #4 relay-error-swallow test (exercised via an injected throwing double) and
+     * (2) exact parity with [sendCancel], so the two outbound senders read identically. The
+     * [CancellationException] rethrow **MUST precede** the typed catches (`j.u.c.CancellationException`
+     * extends `IllegalStateException` on the JVM) so structured cancellation is never swallowed.
+     */
+    private fun sendInterrupt() {
+        viewModelScope.launch {
+            try {
+                interrupt()
+            } catch (e: CancellationException) {
+                throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
+            } catch (e: RelayErrorException) {
+                // Inert: unreachable on the real fire-and-forget path; retained for parity + AC #4 test.
+            } catch (e: IllegalStateException) {
+                // Inert: not-connected / pre-Open send fails silently (AC #3).
             }
         }
     }
