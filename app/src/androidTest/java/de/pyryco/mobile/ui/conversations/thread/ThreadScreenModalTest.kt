@@ -1,5 +1,9 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
@@ -14,6 +18,10 @@ import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -57,7 +65,10 @@ class ThreadScreenModalTest {
 
     private fun setContent(
         modalState: ModalUiState,
+        armedOptionId: String? = null,
         onModalOption: (String) -> Unit = {},
+        onModalCancel: () -> Unit = {},
+        modalSendErrors: Flow<Unit> = emptyFlow(),
     ) {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
@@ -68,7 +79,10 @@ class ThreadScreenModalTest {
                     connectionState = ConnectionState.Connected,
                     onRetry = {},
                     modalState = modalState,
+                    armedOptionId = armedOptionId,
+                    modalSendErrors = modalSendErrors,
                     onModalOption = onModalOption,
+                    onModalCancel = onModalCancel,
                 )
             }
         }
@@ -160,5 +174,126 @@ class ThreadScreenModalTest {
         permissionOptions.forEach { option ->
             composeTestRule.onNodeWithText(option.label).assertDoesNotExist()
         }
+    }
+
+    @Test
+    fun armed_non_default_renders_the_second_confirm_affordance() {
+        setContent(openModal(), armedOptionId = "allow_once")
+        val armedDesc = string(R.string.modal_armed_option_desc)
+
+        // exactly one option carries the armed marker …
+        composeTestRule
+            .onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, armedDesc))
+            .assertCountEquals(1)
+        // … and it is the armed allow_once option.
+        composeTestRule
+            .onNode(
+                hasText("Allow once") and
+                    SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, armedDesc),
+            ).assertIsDisplayed()
+    }
+
+    @Test
+    fun no_arm_marker_when_nothing_is_armed() {
+        setContent(openModal(), armedOptionId = null)
+        val armedDesc = string(R.string.modal_armed_option_desc)
+
+        composeTestRule
+            .onAllNodes(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, armedDesc))
+            .assertCountEquals(0)
+    }
+
+    @Test
+    fun default_option_shows_no_arm_step_even_when_a_non_default_is_armed() {
+        setContent(openModal(), armedOptionId = "allow_once")
+        val armedDesc = string(R.string.modal_armed_option_desc)
+
+        // the fail-safe-deny default never carries the armed marker (it answers on a single tap).
+        composeTestRule
+            .onNode(
+                hasText("Reject once") and
+                    SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, armedDesc),
+            ).assertDoesNotExist()
+    }
+
+    @Test
+    fun tapping_the_default_forwards_its_id() {
+        val tapped = mutableListOf<String>()
+        setContent(openModal(), onModalOption = { tapped += it })
+
+        composeTestRule.onNodeWithText("Reject once").performClick()
+
+        assertEquals(listOf("reject_once"), tapped)
+    }
+
+    @Test
+    fun tapping_cancel_invokes_on_modal_cancel() {
+        var cancelled = 0
+        setContent(openModal(), onModalCancel = { cancelled++ })
+
+        composeTestRule.onNodeWithText(string(R.string.modal_cancel)).performClick()
+
+        assertEquals(1, cancelled)
+    }
+
+    // AC#4 "single tap does not confirm, second tap confirms" observed at the screen layer. The VM's
+    // authoritative two-tap rule is unit-tested in #451; here a small stateful stand-in faithfully mimics it
+    // (default → send; armed-match → send + clear; else → arm) so the rendered affordance drives the flow.
+    @Test
+    fun non_default_requires_two_taps_to_confirm_via_vm_mimicking_stand_in() {
+        val sent = mutableListOf<String>()
+        composeTestRule.setContent {
+            val modal = remember { openModal() }
+            var armed by remember { mutableStateOf<String?>(null) }
+            PyrycodeMobileTheme {
+                ThreadScreen(
+                    state = baseState(),
+                    onBack = {},
+                    onSendMessage = {},
+                    connectionState = ConnectionState.Connected,
+                    onRetry = {},
+                    modalState = modal,
+                    armedOptionId = armed,
+                    onModalOption = { id ->
+                        when {
+                            id == modal.defaultOptionId -> sent += id
+                            armed == id -> {
+                                sent += id
+                                armed = null
+                            }
+                            else -> armed = id
+                        }
+                    },
+                )
+            }
+        }
+        val armedDesc = string(R.string.modal_armed_option_desc)
+
+        // first tap of a non-default arms it — it does NOT confirm.
+        composeTestRule.onNodeWithText("Allow once").performClick()
+        assertTrue("first tap must not send", sent.isEmpty())
+        composeTestRule
+            .onNode(
+                hasText("Allow once") and
+                    SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, armedDesc),
+            ).assertIsDisplayed()
+
+        // second tap of the same option confirms.
+        composeTestRule.onNodeWithText("Allow once").performClick()
+        assertEquals(listOf("allow_once"), sent)
+    }
+
+    @Test
+    fun modal_send_error_surfaces_local_string_without_payload() {
+        val errors = Channel<Unit>(Channel.BUFFERED)
+        // Hidden: with no modal drawn, the snackbar is the only thing that could carry a payload substring.
+        setContent(modalState = ModalUiState.Hidden, modalSendErrors = errors.receiveAsFlow())
+
+        errors.trySend(Unit)
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithText(string(R.string.modal_send_failed)).assertIsDisplayed()
+        // confidentiality: a sensitive command / path must never reach the un-secured snackbar window.
+        composeTestRule.onNodeWithText("rm -rf", substring = true).assertDoesNotExist()
     }
 }

@@ -87,4 +87,7 @@
     <string name="modal_dismissed_local">Resolved on this device</string>
     <string name="modal_dismissed_timeout">Request timed out</string>
     <string name="modal_dismissed_resolved">Request resolved</string>
+    <string name="modal_armed_option_desc">Tap again to confirm</string>
+    <string name="modal_cancel">Cancel</string>
+    <string name="modal_send_failed">Couldn\'t send your answer. Try again.</string>
 </resources>
