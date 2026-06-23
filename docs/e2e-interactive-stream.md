@@ -19,7 +19,8 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    [Layer 1 — component render harness (rung 2)](#layer-1--component-render-harness-rung-2).
 3. **Emulator + host daemon + real constrained claude** ← **what this directory ships.** The real app
    on a headless emulator connects to a host `pyry` + relay, sends "reply with exactly: ping", and
-   asserts "ping" renders. Semi-deterministic.
+   asserts "ping" renders. Also covers a **tool-use** scenario (#481): a constrained prompt makes real
+   claude run a shell tool and asserts the tool step renders. Semi-deterministic.
 4. **Emulator + deterministic host** ← **shipped (#431).** The same real app + Noise/relay path, but
    claude is swapped for #642's scripted `fakeclaude` backend replaying a fixed JSONL fixture. No real
    claude, **zero claude turns**; re-running back-to-back yields the same pass. Run it with
@@ -81,6 +82,14 @@ unshipped #336 fold) is still ticketed.
 | Test-only credential injection seam | `app/src/androidTest/.../e2e/E2eInstrumentationRunner.kt` + `E2eTestApplication.kt` |
 | The instrumented test | `app/src/androidTest/.../e2e/InteractiveStreamE2ETest.kt` |
 | Host orchestration | `scripts/e2e-emulator.sh` |
+
+Rung 3 covers two scenarios on this one harness: the **ping** happy path (a constrained reply renders)
+and a **tool-use** scenario (#481 — a constrained prompt makes real claude run a shell tool, asserting
+the tool step renders, keyed tolerantly on the verbatim tool name `"Bash"` in the tool-row header). The
+tool-use test asserts the **durable** terminal signal — the tool name in the resolved row — not the
+transient running spinner: rung 3 has no scripted backend to hold the turn open, so racing the spinner
+over a real relay turn is the "never on timing" failure the [Constraints](#constraints) forbid (it is
+why rung 4's `tool` scenario needed a two-drop fence).
 
 ### The render gap fixed first (#337)
 
@@ -362,8 +371,12 @@ token is the chief first-run unknown (see Assumptions).
   must yield the same pass — that determinism is the whole point and the thing to confirm on real infra.
 - **Negative control:** `InteractiveStreamE2ETest.negativeControl_wordClaudeNeverSays_isNeverDisplayed`
   is `@Ignore`d. Un-ignore it once to confirm the positive assertion can fail (it waits for a word
-  claude is never asked to say, so it must time out). Re-ignore after, so it does not burn a turn. Rung
-  4 needs no negative control: the scripted backend makes the positive assertion deterministic.
+  claude is never asked to say, so it must time out). Re-ignore after, so it does not burn a turn. The
+  tool-use test has its own `@Ignore`d twin, `negativeControl_toolClaudeNeverUses_isNeverDisplayed`
+  (#481): same tool prompt, but it waits for a tool name claude is never asked to use (`"Edit"` — the
+  prompt asks only for a read-only shell command), so it must time out, proving the `"Bash"` matcher is
+  selective. Rung 4 needs no negative control: the scripted backend makes the positive assertion
+  deterministic.
 
 ## Assumptions to confirm on first run
 
@@ -437,6 +450,30 @@ These are grounded in the source but unverified end to end:
 - **Brief drop stays in the in-ring window → no `resync` (`replay-order` #477).** Same as #476: the
   reconnect is immediate, so `last_event_id` cannot age out → gap-free path, cursor never `reset()`. Confirm
   no `resync` is logged.
+- **Real claude emits the tool step the phone expects (`tool-use` #481).** The producer must emit a
+  `tool_use` envelope (with `name = "Bash"`, carried verbatim) and a correlated `tool_result` for a
+  real-claude shell tool — the same shape #455's fixtures simulate (the standard Anthropic transcript
+  shape; matches pyrycode's `ParseToolUse`/`ParseToolResult`, cf. pyrycode #382/#671), but unverified end
+  to end with real claude. If real claude's tool-use output differs (a different tool name, a changed
+  envelope shape), the assertion fails — **that is the drift Layer 3 exists to surface.** Adjust
+  `TOOL_NAME` (and/or the prompt to target whichever tool claude reliably uses) on first run; do **not**
+  weaken the assertion to a generic match.
+- **Tool permission behaviour (`tool-use` #481, the chief first-run unknown — the ping path never hit
+  this).** The rung-3 daemon (`scripts/e2e-emulator.sh`) spawns default real claude with no
+  permission-bypass flag. If a real tool call interposes the mobile permission modal (#428), the tool
+  will not run until approved → the tool-row assertion times out. Resolve in order of preference:
+  **(a)** run the e2e daemon's claude in a non-interactive / auto-approve permission mode (a
+  host/daemon-side config — *pyrycode-side, not a mobile change*) so `echo` runs without a modal; if the
+  daemon already auto-approves this path, nothing is needed — confirm on first run. **(b)** if a modal
+  appears and (a) is unavailable, tap the approve affordance in-test before asserting the row — but this
+  couples the test to the permission-modal UI (#437/#438) and is the more fragile option. Prefer (a);
+  record whichever path is taken here.
+- **Prompt reliably triggers the shell tool (`tool-use` #481).** "Run this exact shell command … echo
+  pyry481" should make real claude run the shell tool every run. If it sometimes answers inline (no
+  tool), tighten the wording, or `@Ignore`-gate the positive test (like the negative control) per the
+  no-flaky-always-on rule rather than leaving a flaky always-on test. The exact wording is the
+  developer's to tune on first run; the design depends only on "compels one shell tool call" + "omits the
+  asserted tool-name token".
 
 ## Follow-ups to ticket
 
@@ -452,7 +489,9 @@ These are grounded in the source but unverified end to end:
   multi-delta `stream`-render scenario; tool-use event assertion (running → done, and failed) —
   **shipped (#455, Layer 2c)**; reconnect continuity (reply survives a mid-turn drop) —
   **shipped (#476, Layer 2b)**; reconnect **ordering** (events buffered while offline replay in order) —
-  **shipped (#477, Layer 2d)**.
+  **shipped (#477, Layer 2d)**; Layer-3 (real claude) tool-use renders — **shipped (#481)** (the
+  tool-use path is now covered at all three layers: component #472, rung-4 deterministic #455, rung-3
+  real-claude #481).
 - **#337 full scope:** `seq`-based ordering and replay de-dup across reconnect (a #402 concern; this
   fold concatenates in arrival order, correct within a single connection); and a `make`/Gradle wrapper
   for the orchestration plus fork-sync of any shared `bin/` script per the org convention.
