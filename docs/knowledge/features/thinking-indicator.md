@@ -171,6 +171,11 @@ state so the visual is reviewable — the `false` case renders nothing and needs
   the `turn_state` → flag reduction this component renders.
 - Host: [Thread screen](thread-screen.md) — threads `isThinking` as a third flat sibling parameter and
   mounts the indicator at the foot of the content `Column`.
+- Foot-of-list sibling (shipped): [Interrupt affordance](interrupt-affordance.md)
+  ([#459](../codebase/459.md)) — the "Stop the running turn" control mounted **directly below** this
+  indicator, copying its stateless early-return / merged-`semantics` / light+dark-preview structure but
+  gated on the broader [`isBusy`](turn-state-thinking-flag.md) flag (`thinking` **or** `responding`). During
+  `thinking` both show, stacked — intentional/interim until the design-owed Figma frame reconciles them.
 - Idiom mirrored: [ConnectionBanner](connection-banner.md) (stateless early-return show/hide,
   file-private spacing `val`s, 16dp horizontal inset), [EmptyThreadState](empty-thread-state.md)
   (light/dark preview template, `stringResource` usage). The existing M3 progress idiom it follows:

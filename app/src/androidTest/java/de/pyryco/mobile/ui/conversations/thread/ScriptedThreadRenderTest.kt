@@ -6,10 +6,12 @@ import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import org.junit.After
+import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -34,6 +36,12 @@ class ScriptedThreadRenderTest {
             .getInstrumentation()
             .targetContext
             .getString(R.string.cd_thread_thinking)
+
+    private val interruptDescription: String =
+        InstrumentationRegistry
+            .getInstrumentation()
+            .targetContext
+            .getString(R.string.cd_thread_interrupt)
 
     @Before
     fun setUp() {
@@ -90,6 +98,34 @@ class ScriptedThreadRenderTest {
                 .isEmpty()
         }
         composeRule.onNodeWithContentDescription(thinkingDescription).assertDoesNotExist()
+    }
+
+    // Interrupt affordance (AC#4): a turn goes in flight (`responding` — busy ⊋ thinking, so this also
+    // proves the affordance shows when the thinking indicator would be hidden) → the affordance shows →
+    // tap it → the VM's interrupt-send action fires exactly once → turn_end → the affordance is gone.
+    @Test
+    fun interrupt_shownWhileBusy_invokesOnTap_goneAfterTurnEnd() {
+        harness.pushTurnState("responding")
+        composeRule.waitUntil(timeoutMillis = TIMEOUT_MS) {
+            composeRule
+                .onAllNodesWithContentDescription(interruptDescription)
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
+        composeRule.onNodeWithContentDescription(interruptDescription).assertIsDisplayed()
+
+        composeRule.onNodeWithContentDescription(interruptDescription).performClick()
+        composeRule.waitForIdle()
+        assertEquals(1, harness.interruptInvocations())
+
+        harness.pushTurnEnd("t1")
+        composeRule.waitUntil(timeoutMillis = TIMEOUT_MS) {
+            composeRule
+                .onAllNodesWithContentDescription(interruptDescription)
+                .fetchSemanticsNodes()
+                .isEmpty()
+        }
+        composeRule.onNodeWithContentDescription(interruptDescription).assertDoesNotExist()
     }
 
     private companion object {

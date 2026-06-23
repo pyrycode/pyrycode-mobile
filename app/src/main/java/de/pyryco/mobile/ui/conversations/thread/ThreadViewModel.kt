@@ -281,6 +281,28 @@ class ThreadViewModel(
             )
 
     /**
+     * Whether this conversation's agent is currently **running a turn** (#459) — `true` while the latest
+     * `turn_state` for [conversationId] is [LiveSessionEvent.TurnState.Phase.Thinking] **or**
+     * [LiveSessionEvent.TurnState.Phase.Responding], `false` for `idle` / `turn_end` or before any event.
+     * The broader sibling of [isThinking] (which is `true` for `thinking` only): the interrupt affordance
+     * (#459) must stay visible across the whole in-flight turn, not just the thinking phase. Same posture
+     * and lifecycle as [isThinking] — a hoisted [StateFlow] beside [connectionState] the stateless screen
+     * takes as a separate parameter, backed by its own [busyTransition] reducer (a dedicated reducer is
+     * simpler than combining [isThinking] with a second flow and matches the established sibling pattern).
+     * The reduction emits only on a busy/not-busy transition, so [stateIn]'s last value is retained for
+     * events that leave the flag unchanged; `false` covers both "no event yet" and the inert empty-flow
+     * default.
+     */
+    val isBusy: StateFlow<Boolean> =
+        liveSessionEvents
+            .mapNotNull { event -> busyTransition(event) }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = false,
+            )
+
+    /**
      * Whether this conversation is currently stalled (#395) — drives the prominent screen-snapshot CTA
      * (#396). A sibling [StateFlow] beside [connectionState] / [isThinking] (not a [ThreadUiState]
      * field): like them it is a transient, connection-scoped cross-cutting signal the stateless screen
@@ -367,6 +389,29 @@ class ThreadViewModel(
         if (event.conversationId != conversationId) return null
         return when (event) {
             is LiveSessionEvent.TurnState -> event.phase == LiveSessionEvent.TurnState.Phase.Thinking
+            is LiveSessionEvent.TurnEnd -> false
+            is LiveSessionEvent.AssistantDelta,
+            is LiveSessionEvent.ToolUse,
+            is LiveSessionEvent.ToolResult,
+            is LiveSessionEvent.ReplayGap,
+            -> null
+        }
+    }
+
+    /**
+     * Folds one live event to the next [isBusy] value, or `null` to leave the flag unchanged. Mirrors
+     * [thinkingTransition] exactly; the **only** difference is the phase predicate — a turn is "running"
+     * across the `thinking` **and** `responding` phases. Routes by [conversationId] first (other
+     * conversations never move the flag), then maps the turn phase: `thinking` / `responding` ⇒ `true`;
+     * `idle` / `turn_end` ⇒ `false`; the non-phase events (`assistant_delta` / `tool_use` / `tool_result`
+     * / replay-gap) are not transitions ⇒ `null`.
+     */
+    private fun busyTransition(event: LiveSessionEvent): Boolean? {
+        if (event.conversationId != conversationId) return null
+        return when (event) {
+            is LiveSessionEvent.TurnState ->
+                event.phase == LiveSessionEvent.TurnState.Phase.Thinking ||
+                    event.phase == LiveSessionEvent.TurnState.Phase.Responding
             is LiveSessionEvent.TurnEnd -> false
             is LiveSessionEvent.AssistantDelta,
             is LiveSessionEvent.ToolUse,

@@ -96,8 +96,9 @@ ride an unauthenticated channel. No token/nonce by design (replay-safe). Permiss
   outbound slice this is the twin of); the concrete sends [#438](../codebase/438.md).
 - Hosts the send: [Remote conversation repository](remote-conversation-repository.md) (`interrupt()`);
   the passthrough: [Relay repository coordinator](relay-repository-coordinator.md).
-- Consumer (downstream, unblocked): **#459** — the busy-turn interrupt affordance (Figma 16-8), `blockedBy`
-  #458; will add the visible control + its show/hide gating + the screen test.
+- Consumer (downstream, **shipped**): [Interrupt affordance](interrupt-affordance.md)
+  ([#459](../codebase/459.md), `blockedBy` #458) — the busy-turn interrupt control (Figma 16-8), its
+  `isBusy` show/hide gating, and the AC#4 screen test. `onInterrupt()` (this slice) is the tap target.
 - Placement counterpoint: [#466](../codebase/466.md) (`dropQueuedMessage` — the interface-method shape for a
   `conversation_id`-carrying frame; interrupt is the connection-level injected-lambda branch).
 - Server SSOT: pyrycode#707, `docs/protocol-mobile.md` § Interrupt (v2), ADR 025, EPIC pyrycode#597.

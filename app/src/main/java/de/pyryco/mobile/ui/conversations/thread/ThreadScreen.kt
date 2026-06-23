@@ -66,6 +66,7 @@ import de.pyryco.mobile.ui.conversations.components.ChannelInfoSheet
 import de.pyryco.mobile.ui.conversations.components.ChannelInfoUiModel
 import de.pyryco.mobile.ui.conversations.components.ConnectionBanner
 import de.pyryco.mobile.ui.conversations.components.EmptyThreadState
+import de.pyryco.mobile.ui.conversations.components.InterruptAffordance
 import de.pyryco.mobile.ui.conversations.components.MessageBubble
 import de.pyryco.mobile.ui.conversations.components.QueuedBacklog
 import de.pyryco.mobile.ui.conversations.components.RenameDialog
@@ -98,6 +99,8 @@ fun ThreadScreen(
     modifier: Modifier = Modifier,
     isThinking: Boolean = false,
     isStalled: Boolean = false,
+    isBusy: Boolean = false, // #459: a turn is in flight (thinking OR responding) → show the interrupt affordance
+    onInterrupt: () -> Unit = {}, // #459: wired by MainActivity → vm::onInterrupt (the #458 send path)
     onTitleClick: () -> Unit = {},
     onOverflowEvent: (ThreadEvent) -> Unit = {},
     onShowLiteralScreen: () -> Unit = {},
@@ -270,6 +273,10 @@ fun ThreadScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
             ThinkingIndicator(isThinking = isThinking, modifier = Modifier.fillMaxWidth())
+            // The interrupt affordance (#459): shown across the whole in-flight turn (thinking OR
+            // responding), so it sits at the very foot of the list, below the thinking spinner. Interim
+            // placement — design-owed, same status as ThinkingIndicator until the Figma frame draws it.
+            InterruptAffordance(isBusy = isBusy, onInterrupt = onInterrupt, modifier = Modifier.fillMaxWidth())
         }
     }
     WorkspacePicker(

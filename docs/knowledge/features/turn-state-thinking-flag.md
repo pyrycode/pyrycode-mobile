@@ -141,6 +141,12 @@ inert — `isThinking` honestly holds `false` with no live daemon.
 - Sibling UI slice (shipped): [Thinking indicator](thinking-indicator.md)
   ([#407](../codebase/407.md)) — the stateless composable + its placement at the foot of the thread,
   consuming `isThinking`.
+- Broader sibling (shipped): [Interrupt affordance](interrupt-affordance.md)
+  ([#459](../codebase/459.md)) — `ThreadViewModel.isBusy`, declared **identically** to `isThinking` over
+  the same seam but **broadened** to `thinking` **or** `responding` via its own `busyTransition` reducer
+  (the "a turn is running" signal driving the foot-of-list interrupt control). `isThinking` is `false`
+  during `responding`, so it can't drive an affordance that must persist across the whole turn — hence the
+  dedicated flow rather than reuse.
 - Other consumers of the generic seam (shipped): [#387](../codebase/387.md)
   ([Live tool-call](live-tool-call.md), tool-use timeline), [#337](../codebase/337.md)
   ([Streaming assistant turns](streaming-assistant-turns.md), live assistant text).

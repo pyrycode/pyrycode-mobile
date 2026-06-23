@@ -65,6 +65,10 @@ class ScriptedThreadHarness(
             negotiatedCapabilities = { setOf(CAPABILITY_INTERACTIVE) },
         )
 
+    /** Records taps on the interrupt affordance (#459) — the recording analog of #458's send path,
+     *  injected as the VM's interrupt lambda so the screen test can assert exactly-once invocation. */
+    private var interruptCount = 0
+
     private val vm =
         ThreadViewModel(
             savedStateHandle = SavedStateHandle(mapOf("conversationId" to conversationId)),
@@ -72,6 +76,7 @@ class ScriptedThreadHarness(
             connectionStateSource = FakeConnectionStateSource(),
             appPreferences = AppPreferences(newDataStore()),
             liveSessionEvents = repo.liveSessionEvents,
+            interrupt = { interruptCount++ },
         )
 
     /**
@@ -90,12 +95,19 @@ class ScriptedThreadHarness(
                     connectionState = vm.connectionState.collectAsState().value,
                     onRetry = {},
                     isThinking = vm.isThinking.collectAsState().value,
+                    // #459: subscribe isBusy in the same composition pass as state/isThinking so its
+                    // `replay = 0` upstream is live before any push* (awaitReady's top-bar proof covers it).
+                    isBusy = vm.isBusy.collectAsState().value,
+                    onInterrupt = vm::onInterrupt,
                 )
             }
         }
         seedConversation()
         awaitReady()
     }
+
+    /** Number of times the interrupt affordance's tap invoked the VM's interrupt-send action (#459). */
+    fun interruptInvocations(): Int = interruptCount
 
     /** Script one `assistant_delta` for [turnId] at [seq] carrying [text] (#337). */
     fun pushAssistantDelta(
