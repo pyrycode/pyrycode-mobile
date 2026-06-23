@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.lifecycle.SavedStateHandle
 import androidx.test.platform.app.InstrumentationRegistry
+import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.preferences.AppPreferences
@@ -56,6 +57,14 @@ class ScriptedThreadHarness(
 
     private val pump = FakeSessionPump()
 
+    /**
+     * The connection-state seam driving the banner (#200/#201), distinct from the [pump] envelope
+     * stream that drives the deltas / tool rows. Held as the concrete [FakeConnectionStateSource] (not
+     * the interface) so [pushConnectionState] can reach its `emit`, mirroring how the harness holds the
+     * concrete [pump]. Default `Connected` ⇒ no banner until a state is pushed (#474).
+     */
+    private val connectionStateSource = FakeConnectionStateSource()
+
     private val repo =
         RemoteConversationRepository(
             pump = pump,
@@ -73,7 +82,7 @@ class ScriptedThreadHarness(
         ThreadViewModel(
             savedStateHandle = SavedStateHandle(mapOf("conversationId" to conversationId)),
             repository = repo,
-            connectionStateSource = FakeConnectionStateSource(),
+            connectionStateSource = connectionStateSource,
             appPreferences = AppPreferences(newDataStore()),
             liveSessionEvents = repo.liveSessionEvents,
             interrupt = { interruptCount++ },
@@ -144,6 +153,15 @@ class ScriptedThreadHarness(
         isError: Boolean,
         resultSummary: String,
     ) = pump.push(toolResultEnvelope(conversationId, turnId, toolUseId, isError, resultSummary))
+
+    /**
+     * Drive the connection banner (#474). Pushes [state] into the [connectionStateSource] — a retained
+     * `MutableStateFlow`, so (unlike the `replay = 0` pump stream) a value emitted before the VM's
+     * collector subscribes is re-emitted on subscribe; no readiness gate is needed beyond [start]'s
+     * `awaitReady`. This seam is disjoint from the [pump]: the banner reacts to its own connection
+     * source, never to the scripted envelope stream.
+     */
+    fun pushConnectionState(state: ConnectionState) = connectionStateSource.emit(state)
 
     /** Cancel [scope] — stops the inbound collector and the DataStore scope. Call from `@After`. */
     fun close() {
