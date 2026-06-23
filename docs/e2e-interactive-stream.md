@@ -13,8 +13,9 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    structured-event stream and assert the assembled thread renders. **Layer 1a shipped (#432):** the
    reusable `ScriptedThreadHarness` drives the scripted stream through the **real**
    `RemoteConversationRepository` fold → `ThreadViewModel` → `ThreadScreen`, plus the first two render
-   cases (text deltas → finalized message; `turn_state` → thinking spinner). Layer 1b (#435, rides the
-   same harness) adds tool rows, the session divider, and the connection banner. See
+   cases (text deltas → finalized message; `turn_state` → thinking spinner). Layer 1b (#435, split
+   3-way, all riding the same harness) adds tool rows (**shipped #472**), the session divider (#473,
+   blocked on the unshipped #336 fold), and the connection banner (#474, blocked on #472). See
    [Layer 1 — component render harness (rung 2)](#layer-1--component-render-harness-rung-2).
 3. **Emulator + host daemon + real constrained claude** ← **what this directory ships.** The real app
    on a headless emulator connects to a host `pyry` + relay, sends "reply with exactly: ping", and
@@ -57,7 +58,15 @@ Key facts (see [`codebase/432.md`](knowledge/codebase/432.md) for the full notes
   text case asserts after `turn_end` (the streaming body reveals progressively and carries the caret).
 
 Layer 1b (**#435**, blocked on #432) extends the same harness with tool rows, the session divider, and
-the connection banner — additive scripting methods, no re-wiring.
+the connection banner — additive scripting methods, no re-wiring. #435 was split 3-way 2026-06-23:
+**tool rows shipped (#472)** — `pushToolUse` / `pushToolResult` + `ScriptedToolRowTest`, asserting
+running → done (the absence triad) and failed (see [`codebase/472.md`](knowledge/codebase/472.md)); the
+session divider (#473, blocked on the unshipped #336 fold) and the connection banner (#474, blocked on
+#472) are still ticketed.
+
+| Piece | File |
+| --- | --- |
+| Tool-step rows (running → done; failed) — `pushToolUse` / `pushToolResult` scripting + builders | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#472), `ScriptedToolRowTest.kt` (#472) |
 
 ## What rung 3 is made of
 
