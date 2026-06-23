@@ -68,6 +68,8 @@ class RelayRepositoryCoordinator(
     val connectionStatus: StateFlow<ConnectionStatus>         // (#392) combined {relay, pyrycode} two-part status
     val liveSessionEvents: Flow<LiveSessionEvent>             // (#406) reconnection-surviving #385 live-event seam
     val modalEvents: Flow<ModalEvent>                         // (#445) reconnection-surviving #437 modal-event seam (mirror of liveSessionEvents)
+    suspend fun answerModal(modalId: String, optionId: String)  // (#451) outbound modal_answer passthrough — the modalEvents mirror, but a call not a flow
+    suspend fun cancelModal(modalId: String)                    // (#451) outbound modal_cancel passthrough
     fun start()   // idempotent — launches the single connections collector on the coordinator scope
     fun close()   // tears down the active connection (wiping pump keys) + cancels the coordinator scope
 }
@@ -287,6 +289,38 @@ val modalEvents: Flow<ModalEvent> =
 - The first (and only) consumer is `currentModal`, fetched off the concrete coordinator singleton at the
   `AppModule` `ThreadViewModel` factory — **no new Koin binding**, exactly like `liveSessionEvents`.
 
+## Outbound modal-send passthrough (#451)
+
+The **outbound mirror** of the inbound `modalEvents` seam: where `modalEvents` surfaces decoded modals *up*
+to the ViewModel, the answer/cancel passthrough sends the user's decision *down* to the connection-scoped
+concrete [`RemoteConversationRepository.answerModal` / `cancelModal`](remote-conversation-repository.md)
+([#438](../codebase/438.md)). The asymmetry is correct: inbound is a stream (`Flow`); an answer/cancel is a
+request/reply control **call**, so these are **suspend methods, not flows**. Both reach the same private
+`activeRemoteRepo` mirror (**no new field**):
+
+```kotlin
+suspend fun answerModal(modalId: String, optionId: String) {
+    val repo = activeRemoteRepo.value ?: throw IllegalStateException("no active connection")
+    repo.answerModal(modalId, optionId)
+}
+// cancelModal(modalId) is identical, minus the optionId.
+```
+
+- **Null-guard only — both not-connected paths funnel to `IllegalStateException`.** When
+  `activeRemoteRepo.value == null` (between connections) the guard throws. When a connection exists but the
+  pump is still pre-`Open` (Handshaking), `repo.answerModal` → `sendAndAwaitReply` → `pump.send` returns
+  false → `IllegalStateException` (the #438 precedent). So the passthrough needs **only** the null-guard — a
+  redundant `Open` gate (like `currentRepository`'s, which exists for a different reason: facade
+  publication) would be needless complexity, since the concrete send already fails fast.
+- A server `error` propagates from the concrete repo as `RelayErrorException` **unchanged** — the
+  passthrough neither catches nor maps it (the consuming [`ThreadViewModel`](modal-answer-flow.md) catches
+  both exceptions and surfaces a one-shot error signal).
+- **No log** — the `modalId`/`optionId` may name a sensitive command/path (never-log contract); the
+  passthrough adds no `android.*` (data/ stays portable).
+- The consumer is [`ThreadViewModel.sendAnswer` / `sendCancel`](modal-answer-flow.md), bound at the
+  `AppModule` `ThreadViewModel` factory as suspend **method references**
+  (`answerModal = coordinator::answerModal`) — **no new Koin binding**, exactly like the inbound seams.
+
 ## Reconnect-spanning replay cursor (#412)
 
 The coordinator owns the [`ReplayCursor`](replay-cursor.md) ([#412](../codebase/412.md)) — the durable
@@ -419,7 +453,9 @@ correlation mirrors `RemoteConversationRepositoryTest`'s #359 shape.
   [#406](../codebase/406.md) — the reconnection-surviving [`liveSessionEvents`](live-session-events.md)
   seam (first consumer: [`ThreadViewModel.isThinking`](turn-state-thinking-flag.md)) ·
   [#445](../codebase/445.md) — the reconnection-surviving [`modalEvents`](modal-events.md) seam (mirror of
-  `liveSessionEvents`; consumer: [`ThreadViewModel.currentModal`](current-modal-state.md)).
+  `liveSessionEvents`; consumer: [`ThreadViewModel.currentModal`](current-modal-state.md)) ·
+  [#451](../codebase/451.md) — the **outbound** `answerModal` / `cancelModal` passthrough (the modalEvents
+  mirror, but a suspend call; consumer: [`ThreadViewModel` modal answer flow](modal-answer-flow.md)).
 - Two-part status: [Connection status](connection-status.md) (`ConnectionStatus` + `PyrycodeLinkStatus`,
   [#392](../codebase/392.md)) — derived/published here; relay leg from
   [`relayStatus`](relay-link-status.md) ([#391](../codebase/391.md)); consumed by the Settings status
