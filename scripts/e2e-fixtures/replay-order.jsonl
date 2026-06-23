@@ -1,0 +1,3 @@
+{"type":"assistant","message":{"id":"order-1","content":[{"type":"text","text":"alpha "}]}}
+{"type":"assistant","message":{"id":"order-2","content":[{"type":"text","text":"bravo "}]}}
+{"type":"assistant","message":{"id":"order-3","stop_reason":"end_turn","content":[{"type":"text","text":"charlie"}]}}
