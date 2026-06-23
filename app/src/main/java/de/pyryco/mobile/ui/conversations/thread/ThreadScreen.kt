@@ -60,12 +60,14 @@ import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.preferences.label
 import de.pyryco.mobile.data.repository.BoundaryReason
+import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.ChannelInfoSheet
 import de.pyryco.mobile.ui.conversations.components.ChannelInfoUiModel
 import de.pyryco.mobile.ui.conversations.components.ConnectionBanner
 import de.pyryco.mobile.ui.conversations.components.EmptyThreadState
 import de.pyryco.mobile.ui.conversations.components.MessageBubble
+import de.pyryco.mobile.ui.conversations.components.QueuedBacklog
 import de.pyryco.mobile.ui.conversations.components.RenameDialog
 import de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog
 import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
@@ -257,6 +259,11 @@ fun ThreadScreen(
                     }
                 }
             }
+            // Content continuation below the thread: the ordered queued-message backlog (#461). Sits
+            // directly under the list (it extends the user's side of the conversation) and above the
+            // foot-most ThinkingIndicator. A separate wrap-content section, not a LazyColumn row, so the
+            // list's keying / alpha-dimming / auto-scroll logic stays untouched.
+            QueuedBacklog(queued = state.queuedMessages, modifier = Modifier.fillMaxWidth())
             ThinkingIndicator(isThinking = isThinking, modifier = Modifier.fillMaxWidth())
         }
     }
@@ -619,6 +626,42 @@ private fun ThreadScreenDarkPreview() {
                     displayName = "kitchenclaw refactor",
                     isPromoted = true,
                     items = previewItems(),
+                    tokenPercent = 73,
+                    tokensUsed = 146_000,
+                    tokensTotal = 200_000,
+                ),
+            onBack = {},
+            onSendMessage = {},
+            connectionState = ConnectionState.Connected,
+            onRetry = {},
+        )
+    }
+}
+
+@Preview(name = "Thread — Queued backlog · Dark", showBackground = true, widthDp = 412)
+@Composable
+private fun ThreadScreenQueuedBacklogDarkPreview() {
+    PyrycodeMobileTheme(darkTheme = true) {
+        ThreadScreen(
+            state =
+                ThreadUiState(
+                    conversationId = "seed-channel-personal",
+                    displayName = "kitchenclaw refactor",
+                    isPromoted = true,
+                    items = previewItems(),
+                    queuedMessages =
+                        listOf(
+                            QueuedMessage(
+                                id = 1L,
+                                text = "Also update the migration tests once you're done.",
+                                timestamp = Instant.parse("2026-05-17T14:34:00Z"),
+                            ),
+                            QueuedMessage(
+                                id = 2L,
+                                text = "Then push a draft PR.",
+                                timestamp = Instant.parse("2026-05-17T14:34:10Z"),
+                            ),
+                        ),
                     tokenPercent = 73,
                     tokensUsed = 146_000,
                     tokensTotal = 200_000,

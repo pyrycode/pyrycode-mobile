@@ -17,6 +17,7 @@ import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
@@ -87,6 +88,7 @@ data class ThreadUiState(
     val showRenameDialog: Boolean = false,
     val saveAsChannelDialog: SaveAsChannelDialogState? = null,
     val items: List<ThreadItem> = emptyList(),
+    val queuedMessages: List<QueuedMessage> = emptyList(),
     val channelInfoOpen: Boolean = false,
     val deleteConfirmVisible: Boolean = false,
     val workspacePath: String = "",
@@ -191,25 +193,40 @@ class ThreadViewModel(
             .map { it.render() }
             .distinctUntilChanged()
 
+    /**
+     * The thread's content surface: the [threadItems] rows folded with the conversation's queued-message
+     * backlog (#461). [ConversationRepository.observeQueue] is a thread-content stream (an ordered list of
+     * not-yet-sent user text, the same category as [items]) rather than a transient cross-cutting signal,
+     * so it is surfaced on [ThreadUiState] — not as a sibling [StateFlow] like [isStalled]. Combined here
+     * so the five-arm typed `state` combine keeps one content arm; both inputs seed immediately (the `scan`
+     * seeds `emptyList()`, `observeQueue` seeds `emptyList()`) and each already carries
+     * `distinctUntilChanged`, so this never stalls and adds no operator.
+     */
+    private val threadContent: Flow<ThreadContent> =
+        combine(threadItems, repository.observeQueue(conversationId)) { items, queued ->
+            ThreadContent(items, queued)
+        }
+
     val state: StateFlow<ThreadUiState> =
         combine(
             repository.observeConversations(ConversationFilter.All),
-            threadItems,
+            threadContent,
             pendingWorkspacePicker,
             transientDialogs,
             runConfigFlow,
-        ) { conversations, items, pickerVisible, dialogs, runConfig ->
+        ) { conversations, content, pickerVisible, dialogs, runConfig ->
             val conv = conversations.firstOrNull { it.id == conversationId }
             ThreadUiState(
                 conversationId = conversationId,
                 displayName = conv?.displayName() ?: conversationId,
                 isPromoted = conv?.isPromoted ?: false,
-                hasMessages = items.any { it is ThreadItem.MessageItem },
+                hasMessages = content.items.any { it is ThreadItem.MessageItem },
                 workspaceLabel = conv?.workspaceLabel() ?: "scratch",
                 workspacePickerVisible = pickerVisible,
                 showRenameDialog = dialogs.renameVisible,
                 saveAsChannelDialog = dialogs.saveAsChannel,
-                items = items,
+                items = content.items,
+                queuedMessages = content.queued,
                 channelInfoOpen = dialogs.channelInfoOpen,
                 deleteConfirmVisible = dialogs.deleteConfirmVisible,
                 workspacePath = conv?.cwd ?: "",
@@ -520,6 +537,12 @@ class ThreadViewModel(
         val model: Model,
         val effort: Effort,
         val yoloEnabled: Boolean,
+    )
+
+    /** The thread's content surface (#461): the rendered rows folded with the queued-message backlog. */
+    private data class ThreadContent(
+        val items: List<ThreadItem>,
+        val queued: List<QueuedMessage>,
     )
 
     private data class TransientDialogs(

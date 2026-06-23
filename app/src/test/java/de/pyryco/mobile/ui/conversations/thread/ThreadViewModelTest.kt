@@ -23,6 +23,7 @@ import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -619,6 +620,62 @@ class ThreadViewModelTest {
             val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
             val vm = makeVm(handle, repo)
             val collector = launch { vm.isStalled.collect {} }
+            advanceUntilIdle()
+
+            assertTrue(repo.observedIds.isNotEmpty())
+            assertTrue(repo.observedIds.all { it == ACTIVE_CONV })
+            collector.cancel()
+        }
+
+    // ---- #461: queuedMessages projection over repository.observeQueue ----------------------------
+
+    @Test
+    fun queuedMessages_initialValue_isEmptyWithNonQueueingRepo() =
+        runTest {
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            // A plain fake inherits observeQueue's flowOf(emptyList()) default — the backlog stays empty.
+            val vm = makeVm(handle, FakeConversationRepository())
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals(emptyList<QueuedMessage>(), vm.state.value.queuedMessages)
+            collector.cancel()
+        }
+
+    @Test
+    fun queuedMessages_reflectsOrderedSnapshotThenFullReplaceThenClear() =
+        runTest {
+            val repo = QueueControllableRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            val a = QueuedMessage(1L, "a", Instant.parse("2026-06-23T10:00:00Z"))
+            val b = QueuedMessage(2L, "b", Instant.parse("2026-06-23T10:00:01Z"))
+            repo.queue.value = listOf(a, b)
+            advanceUntilIdle()
+            // AC #1 ordered (wire order preserved), AC #3/#4 reactive surfacing through UiState.
+            assertEquals(listOf(a, b), vm.state.value.queuedMessages)
+
+            val c = QueuedMessage(3L, "c", Instant.parse("2026-06-23T10:00:02Z"))
+            repo.queue.value = listOf(c)
+            advanceUntilIdle()
+            // Full-snapshot semantics flow through: the new snapshot replaces, not appends.
+            assertEquals(listOf(c), vm.state.value.queuedMessages)
+
+            repo.queue.value = emptyList()
+            advanceUntilIdle()
+            assertEquals(emptyList<QueuedMessage>(), vm.state.value.queuedMessages)
+            collector.cancel()
+        }
+
+    @Test
+    fun queuedMessages_observesOnlyOwnConversationId() =
+        runTest {
+            val repo = QueueControllableRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
             advanceUntilIdle()
 
             assertTrue(repo.observedIds.isNotEmpty())
@@ -1998,6 +2055,23 @@ class ThreadViewModelTest {
         override fun observeStall(conversationId: String): Flow<Boolean> {
             observedIds += conversationId
             return stall
+        }
+    }
+
+    /**
+     * Delegates the whole [ConversationRepository] surface to a seeded [FakeConversationRepository]
+     * (so the VM's `state` pipeline stays populated) and overrides only [observeQueue] with a
+     * controllable [MutableStateFlow], recording each observed id for the routing assertion (#461).
+     */
+    private class QueueControllableRepo(
+        private val delegate: FakeConversationRepository = FakeConversationRepository(),
+    ) : ConversationRepository by delegate {
+        val queue = MutableStateFlow<List<QueuedMessage>>(emptyList())
+        val observedIds = mutableListOf<String>()
+
+        override fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> {
+            observedIds += conversationId
+            return queue
         }
     }
 

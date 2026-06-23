@@ -22,6 +22,7 @@ data class ThreadUiState(
     val showRenameDialog: Boolean = false,            // new in #141
     val saveAsChannelDialog: SaveAsChannelDialogState? = null,  // new in #142 — nullable sub-state carrier
     val items: List<ThreadItem> = emptyList(),        // new in #246
+    val queuedMessages: List<QueuedMessage> = emptyList(),  // new in #461 — the queued-message backlog (#460 observeQueue); see queued-backlog-section.md
     val channelInfoOpen: Boolean = false,             // new in #226 — ChannelInfoSheet visibility
     val deleteConfirmVisible: Boolean = false,        // new in #227 — delete-confirmation AlertDialog visibility
     val workspacePath: String = "",                   // new in #226 — conv.cwd (full path; cf. leaf-only workspaceLabel)
@@ -97,25 +98,36 @@ class ThreadViewModel(
             .map { it.render() }
             .distinctUntilChanged()
 
+    // new in #461 — folds the queued-message backlog (#460 observeQueue) together with threadItems into a
+    // file-private ThreadContent(items, queued), so the 5-arm typed `state` combine keeps ONE content arm
+    // (the threadItems slot below becomes threadContent; queuedMessages = content.queued). The queue is
+    // thread content, so it rides ThreadUiState — NOT a sibling StateFlow like isStalled/isThinking; this
+    // is the only edit, MainActivity is untouched. See queued-backlog-section.md.
+    private val threadContent: Flow<ThreadContent> =
+        combine(threadItems, repository.observeQueue(conversationId)) { items, queued ->
+            ThreadContent(items, queued)
+        }
+
     val state: StateFlow<ThreadUiState> =
         combine(                                                  // shape since #137; widened 3→4 in #253; widened 4→5 in #141; arm 4 bundled in #142; arm 5 bundled in #229
             repository.observeConversations(ConversationFilter.All),
-            threadItems,                                          // arm 2: was observeMessages; swapped in #337 — see note below
+            threadContent,                                        // arm 2: was observeMessages (#337 threadItems); folded with observeQueue → ThreadContent in #461
             pendingWorkspacePicker,
             transientDialogs,                                     // new in #142 — bundles pendingRenameDialog + pendingSaveAsChannelDialog
             runConfigFlow,                                        // new in #229 — bundles selectedModelFlow + selectedEffortFlow + yoloEnabled
-        ) { conversations, items, pickerVisible, dialogs, runConfig ->
+        ) { conversations, content, pickerVisible, dialogs, runConfig ->
             val conv = conversations.firstOrNull { it.id == conversationId }
             ThreadUiState(
                 conversationId = conversationId,
                 displayName = conv?.displayName() ?: conversationId,
                 isPromoted = conv?.isPromoted ?: false,
-                hasMessages = items.any { it is ThreadItem.MessageItem },
+                hasMessages = content.items.any { it is ThreadItem.MessageItem },  // sourced from content.items since #461
                 workspaceLabel = conv?.workspaceLabel() ?: "scratch",
                 workspacePickerVisible = pickerVisible,
                 showRenameDialog = dialogs.renameVisible,         // new in #141, destructured from bundle in #142
                 saveAsChannelDialog = dialogs.saveAsChannel,      // new in #142
-                items = items,                                    // new in #246
+                items = content.items,                            // new in #246; sourced from the ThreadContent fold since #461
+                queuedMessages = content.queued,                  // new in #461 — the queued-message backlog (queued-backlog-section.md)
                 channelInfoOpen = dialogs.channelInfoOpen,        // new in #226, destructured from the TransientDialogs bundle
                 deleteConfirmVisible = dialogs.deleteConfirmVisible,  // new in #227
                 workspacePath = conv?.cwd ?: "",                  // new in #226
@@ -187,6 +199,11 @@ class ThreadViewModel(
         val model: Model,
         val effort: Effort,
         val yoloEnabled: Boolean,
+    )
+
+    private data class ThreadContent(                      // new in #461 — file-private bundle for the threadContent pre-combine
+        val items: List<ThreadItem>,
+        val queued: List<QueuedMessage>,
     )
 
     companion object {                                      // new in #145; STUB_MODEL deleted in #253; STUB_EFFORT deleted in #229
