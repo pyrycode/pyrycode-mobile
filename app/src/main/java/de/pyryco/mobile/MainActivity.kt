@@ -348,6 +348,7 @@ private fun PyryNavHost(
             val connectionState by vm.connectionState.collectAsStateWithLifecycle()
             val isThinking by vm.isThinking.collectAsStateWithLifecycle()
             val isStalled by vm.isStalled.collectAsStateWithLifecycle()
+            val isBusy by vm.isBusy.collectAsStateWithLifecycle()
             val modalState by vm.currentModal.collectAsStateWithLifecycle()
             val armedOptionId by vm.armedOptionId.collectAsStateWithLifecycle()
             LaunchedEffect(vm) {
@@ -365,6 +366,8 @@ private fun PyryNavHost(
                 onRetry = vm::retry,
                 isThinking = isThinking,
                 isStalled = isStalled,
+                isBusy = isBusy,
+                onInterrupt = vm::onInterrupt,
                 modalState = modalState,
                 armedOptionId = armedOptionId,
                 modalSendErrors = vm.modalSendErrors,

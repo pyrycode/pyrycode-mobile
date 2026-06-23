@@ -249,6 +249,128 @@ class ThreadViewModelTest {
             collector.cancel()
         }
 
+    // ---- #459: isBusy reduction over live turn-state events (thinking OR responding) -------------
+
+    @Test
+    fun isBusy_initialValue_isFalseWithNoLiveSource() =
+        runTest {
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            // No live source: the flag defaults inert, like isThinking (AC #1 — hidden before any turn).
+            val vm = makeVm(handle, FakeConversationRepository())
+            assertFalse(vm.isBusy.value)
+        }
+
+    @Test
+    fun isBusy_turnStateThinking_becomesTrue() =
+        runTest {
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = vmWithLiveEvents(events)
+            val collector = launch { vm.isBusy.collect {} }
+            advanceUntilIdle()
+
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Thinking))
+            advanceUntilIdle()
+
+            assertTrue(vm.isBusy.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun isBusy_turnStateResponding_becomesTrue() =
+        runTest {
+            // The case that distinguishes isBusy from isThinking: `responding` is busy (true), but
+            // isThinking treats it as false. The interrupt affordance must show across the whole turn.
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = vmWithLiveEvents(events)
+            val collector = launch { vm.isBusy.collect {} }
+            advanceUntilIdle()
+
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
+            advanceUntilIdle()
+
+            assertTrue(vm.isBusy.value)
+            assertFalse(vm.isThinking.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun isBusy_turnStateIdle_isFalse() =
+        runTest {
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = vmWithLiveEvents(events)
+            val collector = launch { vm.isBusy.collect {} }
+            advanceUntilIdle()
+
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
+            advanceUntilIdle()
+            assertTrue(vm.isBusy.value)
+
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Idle))
+            advanceUntilIdle()
+            assertFalse(vm.isBusy.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun isBusy_turnEnd_resetsToFalse() =
+        runTest {
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = vmWithLiveEvents(events)
+            val collector = launch { vm.isBusy.collect {} }
+            advanceUntilIdle()
+
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
+            advanceUntilIdle()
+            assertTrue(vm.isBusy.value)
+
+            // AC #3: the turn ending hides the affordance with no further input.
+            events.emit(LiveSessionEvent.TurnEnd(ACTIVE_CONV, turnId = "t1", stopReason = "end_turn"))
+            advanceUntilIdle()
+            assertFalse(vm.isBusy.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun isBusy_otherConversation_doesNotAffectFlag() =
+        runTest {
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = vmWithLiveEvents(events)
+            val collector = launch { vm.isBusy.collect {} }
+            advanceUntilIdle()
+
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
+            advanceUntilIdle()
+            assertTrue(vm.isBusy.value)
+
+            // Another conversation going idle must not flip the active flag.
+            events.emit(turnState("other-conversation", LiveSessionEvent.TurnState.Phase.Idle))
+            advanceUntilIdle()
+            assertTrue(vm.isBusy.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun isBusy_nonPhaseEvents_leaveFlagUnchanged() =
+        runTest {
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = vmWithLiveEvents(events)
+            val collector = launch { vm.isBusy.collect {} }
+            advanceUntilIdle()
+
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
+            advanceUntilIdle()
+            assertTrue(vm.isBusy.value)
+
+            // assistant_delta / tool_use / tool_result / replay-gap are not phase transitions — flag holds.
+            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, turnId = "t1", seq = 0, text = "hi"))
+            events.emit(LiveSessionEvent.ToolUse(ACTIVE_CONV, turnId = "t1", toolUseId = "u1", name = "read", inputSummary = "f"))
+            events.emit(LiveSessionEvent.ToolResult(ACTIVE_CONV, turnId = "t1", toolUseId = "u1", isError = false, resultSummary = "ok"))
+            events.emit(LiveSessionEvent.ReplayGap(ACTIVE_CONV))
+            advanceUntilIdle()
+            assertTrue(vm.isBusy.value)
+            collector.cancel()
+        }
+
     // ---- #445: currentModal projection over the modal-event stream ------------------------------
 
     @Test
