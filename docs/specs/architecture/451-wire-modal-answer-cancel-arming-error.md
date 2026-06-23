@@ -7,6 +7,24 @@ is `blockedBy` this one.
 **Consumes (shipped):** #445 `ThreadViewModel.currentModal` / `ModalUiState.Open.defaultOptionId`; #438
 concrete `RemoteConversationRepository.answerModal` / `cancelModal`; #437 decoded `modalEvents`.
 
+## Rework note (rework-count 1 — `needs-rework:architect`, 2026-06-23)
+
+Code-review FAILED the first implementation (PR #453) on one blocking, `security-sensitive` defect that
+**this spec caused**: the §2c `sendAnswer`/`sendCancel` sketch — and this spec's own § Security review —
+certified that `catch (e: IllegalStateException)` leaves `CancellationException` uncaught. **It does not.**
+On the JVM/Android `kotlinx.coroutines.CancellationException` is a typealias for
+`java.util.concurrent.CancellationException`, which **`extends IllegalStateException`** — so the
+`IllegalStateException` catch swallows coroutine cancellation exactly like the well-known `catch (Exception)`
+trap: it breaks structured cancellation and fires a spurious error signal when `viewModelScope` is cancelled
+(VM cleared / user leaves) while a send awaits its reply in `deferred.await()`.
+
+**The fix (one line per send method):** a `catch (e: CancellationException) { throw e }` **must precede** the
+typed catches. Corrected below in §2c, § Error handling, § Security posture, and § Security review.
+**Developer obligation:** apply the rethrow to the existing `ThreadViewModel.sendAnswer` *and* `sendCancel`
+(PR #453, ~`:427`/`:441`); add a unit test that a `viewModelScope`-cancellation mid-send does **not** emit a
+`modalSendErrors` event. Nothing else in the prior implementation changed — it was otherwise faithful and
+green.
+
 ## Design source
 
 N/A — data/VM behavior, no UI surface (same posture as the #445 projection slice). The render of the
@@ -174,6 +192,7 @@ private fun sendAnswer(modalId: String, optionId: String) {
     armedModalOption.value = null
     viewModelScope.launch {
         try { answerModal(modalId, optionId) }
+        catch (e: CancellationException) { throw e }   // MUST be first — see below; it is an ISE subtype
         catch (e: RelayErrorException) { modalSendErrorChannel.trySend(Unit) }
         catch (e: IllegalStateException) { modalSendErrorChannel.trySend(Unit) }
     }
@@ -181,11 +200,20 @@ private fun sendAnswer(modalId: String, optionId: String) {
 // sendCancel(modalId) is identical minus the optionId.
 ```
 
-**Catch only the two documented throws** (`RelayErrorException` from a server `error` incl. the
-ungranted-device reject pyrycode#702; `IllegalStateException` from a not-connected session). Do **not** use
-a broad `catch (e: Exception)` — it would swallow `CancellationException` and break structured cancellation.
-Any other `Throwable` propagates normally. The catch surfaces the one-shot error event and **nothing else** —
-no log, no `currentModal` mutation, no state change beyond the already-applied arm clear.
+**Rethrow `CancellationException` first, then catch only the two documented throws** (`RelayErrorException`
+from a server `error` incl. the ungranted-device reject pyrycode#702; `IllegalStateException` from a
+not-connected session). The `catch (e: CancellationException) { throw e }` is **load-bearing and mandatory,
+not cosmetic**: on the JVM/Android `kotlinx.coroutines.CancellationException` is a typealias for
+`java.util.concurrent.CancellationException`, which **`extends IllegalStateException`** — so the
+`IllegalStateException` catch below would otherwise swallow coroutine cancellation exactly like the
+well-known `catch (e: Exception)` trap (`viewModelScope` teardown while a send awaits its reply →
+`deferred.await()` throws `CancellationException`), breaking structured cancellation and firing a spurious
+error signal. Do **not** use a broad `catch (e: Exception)` / `catch (e: Throwable)` either (same trap, and
+they also swallow the cancellation). With the rethrow in place, cancellation propagates cleanly and any other
+`Throwable` propagates normally. The catch surfaces the one-shot error event and **nothing else** — no log,
+no `currentModal` mutation, no state change beyond the already-applied arm clear. (Use the
+`kotlinx.coroutines.CancellationException` import; on Android it resolves to the same `java.util.concurrent`
+type.)
 
 #### 2d. One-shot error signal (mirror `navigationChannel` / `navigationEvents`)
 
@@ -245,7 +273,7 @@ instance — do not call `get<…>()` *inside* the escaping lambda (the Koin sco
 | No active connection (`activeRemoteRepo.value == null`) | coordinator null-guard | `IllegalStateException` → caught in VM → `modalSendErrors` emits once |
 | Pump pre-`Open` / dropped (`pump.send` false) | concrete `sendAndAwaitReply` `check` | `IllegalStateException` → same |
 | Server `error` (incl. ungranted-device reject #702) | concrete `sendAndAwaitReply` | `RelayErrorException` → caught in VM → `modalSendErrors` emits once |
-| Caller cancellation while awaiting | structured cancellation | `CancellationException` **propagates** (not caught) — coroutine cancels cleanly |
+| Caller cancellation while awaiting (`viewModelScope` teardown) | explicit `catch (CancellationException) { throw e }` **before** the typed catches | `CancellationException` **re-thrown** — it is a JVM **subtype** of `IllegalStateException` (via the `java.util.concurrent` typealias), so without the leading rethrow the ISE catch would swallow it. Coroutine cancels cleanly; **no** spurious error signal |
 
 AC#4 is satisfied by construction: every documented send failure is caught and emits the one-shot signal;
 nothing is logged; `currentModal` and all other state are untouched (only the arm clear, which is the
@@ -268,6 +296,10 @@ See the full adversarial pass in **§ Security review** below. Summary of the lo
   the coordinator passthrough.
 - **Stale-arm safety.** The modalId-scoping makes a stale arm structurally unable to pre-arm or auto-confirm
   a fresh modal.
+- **Structured cancellation preserved (rework fix).** The send try/catch rethrows `CancellationException`
+  **before** the typed catches, so the `IllegalStateException` catch (its JVM subtype-via-typealias) does
+  not swallow it — VM teardown mid-send cancels cleanly with no spurious error signal. (This corrects the
+  first revision's false certification; see § Security review.)
 
 ## Testing strategy
 
@@ -299,6 +331,12 @@ Scenarios (AC#5 — bullets, not pre-written bodies):
   IllegalStateException(…) }`: `onModalOption("reject_once")`; assert `modalSendErrors` received exactly one
   `Unit`, `currentModal.value` is still `Open(m1)`. (Asserting "nothing logged" is by construction — the
   event carries `Unit`; code-review verifies no `Log.*`.)
+- **cancellation is NOT swallowed (rework regression guard)** — drive `sendAnswer` so the awaiting send is
+  cancelled (e.g. a send lambda that suspends indefinitely / awaits a never-completing deferred, then cancel
+  the VM scope via the standard test idiom), and assert **no** `modalSendErrors` `Unit` is emitted. This
+  pins the `catch (CancellationException) { throw e }` rethrow: were it removed, the `IllegalStateException`
+  catch would swallow the cancellation and emit a spurious error. (Drive with `runTest`/`TestScope`; see the
+  `viewModelScope`-cancellation idiom already used in `ThreadViewModelTest`.)
 - **stale arm cannot pre-arm a fresh modal (scoping)** — arm `"allow_once"` on `m1`; emit `modalShown(m2)`;
   assert `armedOptionId.value == null` (scoped to `m1`); then `onModalOption("allow_once")` on `m2` → arms
   (no send), proving the `m1` arm did not auto-confirm `m2`.
@@ -360,8 +398,8 @@ solidly S.**
 
 **Reviewer:** architect (self-review; `agents/architect/security-review.md` is not synced into this worktree —
 performing the pass inline using the standard adversarial categories, per the #438/#446/#445 precedent).
-**Date:** 2026-06-23
-**Verdict:** PASS
+**Date:** 2026-06-23 (re-run after `needs-rework:architect` — corrected the false fail-closed certification below)
+**Verdict:** PASS (after the §2c `CancellationException`-rethrow fix; the first revision's PASS was unsound — see [Fail-closed / availability])
 
 Run adversarially against the spec above, assuming it has holes. This slice opens the **decision-to-send**
 path for a permission answer — a high-consequence action (it injects "allow/deny this command" into the
@@ -399,12 +437,23 @@ logged; does the catch mask failures.
   **`Unit`** — structurally incapable of leaking the payload. No `Log.*`/`Timber` statement is added in the
   VM decision methods or the coordinator passthrough; `RelayErrorException` is caught and its message is
   **not** surfaced (only a `Unit` event is emitted). Mirrors #438/#445's never-log discipline.
-- **[Fail-closed / availability — does the catch mask anything].** No findings. The catch is scoped to the
-  two documented throws (`RelayErrorException`, `IllegalStateException`); `CancellationException` is **not**
-  caught, so structured cancellation is preserved (a broad `catch (e: Exception)` would be a bug — flagged in
-  the spec). A failed send mutates nothing beyond the already-applied arm clear and leaves `currentModal`
-  `Open`, so the user can re-answer; the VM does **not** auto-retry (first-answer-wins is server-side, so a
-  blind retry could race the daemon's dedup — correctly avoided). A not-connected send fails fast (no hang).
+- **[Fail-closed / availability — does the catch mask anything].** **Finding (corrected in rework — this was
+  a FALSE PASS in the first revision; the cause of the code-review FAIL on PR #453).** The first revision
+  caught `RelayErrorException` + `IllegalStateException` and this review certified that "`CancellationException`
+  is **not** caught, so structured cancellation is preserved." **That certification was wrong.** On the
+  JVM/Android `CancellationException` *is* an `IllegalStateException` — `kotlinx.coroutines.CancellationException`
+  is a typealias for `java.util.concurrent.CancellationException`, which `extends IllegalStateException` — so
+  the ISE catch **swallowed** the cancellation, breaking structured cancellation and firing a spurious error
+  signal on `viewModelScope` teardown mid-send (the exact `catch (Exception)` trap, in disguise). **Resolved
+  in §2c:** the send try/catch now rethrows `CancellationException` *first*
+  (`catch (e: CancellationException) { throw e }`) before the two typed catches, so cancellation propagates
+  cleanly and only genuine send failures reach the error signal; a broad `catch (e: Exception)` /
+  `catch (e: Throwable)` is likewise forbidden (same trap). With that fix in place, a failed send mutates
+  nothing beyond the already-applied arm clear and leaves `currentModal` `Open`, so the user can re-answer;
+  the VM does **not** auto-retry (first-answer-wins is server-side, so a blind retry could race the daemon's
+  dedup — correctly avoided); a not-connected send fails fast (no hang). **Code-review must verify** the
+  rethrow precedes the typed catches in `sendAnswer` **and** `sendCancel`, and that the cancellation-not-
+  swallowed regression test (§ Testing) is present.
 - **[Replay / idempotency].** No findings. Replay-safety lives in #438's `answer_token` + the daemon's
   `(modal_id, answer_token)` dedup; this slice neither weakens nor relies on it beyond forwarding. The
   no-auto-retry rule means the VM does not itself generate replayed answers.
