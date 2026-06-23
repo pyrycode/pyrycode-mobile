@@ -24,6 +24,7 @@ import de.pyryco.mobile.data.network.ModalCancelPayloadDto
 import de.pyryco.mobile.data.network.ModalDismissedPayloadDto
 import de.pyryco.mobile.data.network.ModalShownPayloadDto
 import de.pyryco.mobile.data.network.PromoteConversationPayloadDto
+import de.pyryco.mobile.data.network.QueueStatePayloadDto
 import de.pyryco.mobile.data.network.RegisterPushTokenPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.ReplayCursor
@@ -39,6 +40,7 @@ import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.network.toConversations
 import de.pyryco.mobile.data.network.toEvent
 import de.pyryco.mobile.data.network.toMessage
+import de.pyryco.mobile.data.network.toQueue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.BufferOverflow
@@ -173,6 +175,19 @@ class RemoteConversationRepository(
      * live stream). A stall is a transient "right now" condition, not durable state.
      */
     private val stalledConversations = MutableStateFlow<Set<String>>(emptySet())
+
+    /**
+     * `conversationId -> ordered queued-message backlog` (#460) — the messages the daemon has queued
+     * while claude is busy, in wire/FIFO order. Written **only** from the single [init] inbound
+     * collector: each `queue_state` envelope is a full snapshot that **replaces** that conversation's
+     * entry (the wire form of `msgqueue.Snapshot`), leaving every other conversation untouched. Single
+     * writer on the one collector coroutine, so snapshots never race; the atomic [MutableStateFlow.update]
+     * matches the sibling projections' memory-visibility posture. [observeQueue] fans out from it.
+     * Connection-scoped in-memory state — a fresh repository per connection (#351) starts empty, so a
+     * backlog never survives a reconnect (it is re-derived from the next live `queue_state`). The backlog
+     * is a transient "right now" condition, not durable state.
+     */
+    private val queuedByConversation = MutableStateFlow<Map<String, List<QueuedMessage>>>(emptyMap())
 
     private val requestId = AtomicLong(0)
 
@@ -367,6 +382,22 @@ class RemoteConversationRepository(
                     }
                 }
             }
+            TYPE_QUEUE_STATE -> {
+                // Queued-backlog snapshot (#460). Same `interactive` gate as the live-session / `stall`
+                // siblings: a non-interactive phone never decodes a spurious `queue_state` from a buggy/
+                // hostile daemon that ignored the server-side fan-out gate (fail-closed, defence in depth).
+                // Each snapshot is the authoritative current backlog (msgqueue.Snapshot), so it FULLY
+                // REPLACES this conversation's entry and leaves every other conversation untouched (AC #3);
+                // wire array order is preserved verbatim (AC #1). A malformed payload decodes to null and
+                // is dropped so the single inbound consumer survives (AC #4). Unlike the live-session arm
+                // this folds no thread row and does NOT clear a stall (a backlog is "waiting", not forward
+                // progress). Drop silently — queued `text` is user content; nothing here logs the payload.
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    decodeQueueState(envelope)?.let { (conversationId, queue) ->
+                        queuedByConversation.update { it + (conversationId to queue) }
+                    }
+                }
+            }
             TYPE_MODAL_SHOWN, TYPE_MODAL_DISMISSED -> {
                 // A v2 modal lifecycle envelope (#437). Same `interactive` gate as the structured-stream,
                 // `stall`, and `resync` siblings — a non-interactive phone never decodes a spurious modal
@@ -463,6 +494,24 @@ class RemoteConversationRepository(
     private fun decodeStall(envelope: Envelope): String? =
         try {
             MobileJson.decodeFromJsonElement<StallPayloadDto>(envelope.payload).conversationId
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+
+    /**
+     * Decode one v2 `queue_state` envelope (#460) to its conversation id and ordered backlog, or
+     * **null** when it cannot be read. Decodes the untrusted [Envelope.payload] through the single
+     * configured [MobileJson] and maps via `toQueue()`. The whole body is one `try`/`catch
+     * (IllegalArgumentException)` ([kotlinx.serialization.SerializationException] ⊂
+     * [IllegalArgumentException]), so a malformed payload — a missing/wrong-typed `conversation_id`, a
+     * bad item (`queued_msg_id` as a string, missing `text`), or an unparseable item `ts` — yields
+     * `null`, dropping the one envelope while the lone inbound collector survives (AC #4). Mirrors
+     * [decodeStall]'s drop idiom — **nothing here logs the payload** (queued `text` is user content).
+     */
+    private fun decodeQueueState(envelope: Envelope): Pair<String, List<QueuedMessage>>? =
+        try {
+            val dto = MobileJson.decodeFromJsonElement<QueueStatePayloadDto>(envelope.payload)
+            dto.conversationId to dto.toQueue()
         } catch (e: IllegalArgumentException) {
             null
         }
@@ -859,6 +908,18 @@ class RemoteConversationRepository(
         stalledConversations.map { conversationId in it }.distinctUntilChanged()
 
     /**
+     * Ordered queued-message backlog for [conversationId] (#460), a pure cold projection of the shared
+     * [queuedByConversation] `StateFlow`. Issues no request — rides the live `queue_state` snapshots.
+     * `orEmpty()` gives empty-until-first-snapshot (AC #2). [distinctUntilChanged] means a `queue_state`
+     * for **another** conversation, or a value-identical re-snapshot, does not re-emit this flow (AC #3).
+     * A `StateFlow` always has a current value, so every collector (including a `flatMapLatest`
+     * re-subscription through the facade) receives the current backlog (empty until one lands) on
+     * subscription; the one inbound consumer fans out to unlimited collectors.
+     */
+    override fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> =
+        queuedByConversation.map { it[conversationId].orEmpty() }.distinctUntilChanged()
+
+    /**
      * Create an unpromoted discussion over v2 `create_conversation` (#347). Encodes the request
      * ([CreateConversationPayloadDto]: `is_promoted=false`, optional `cwd`), sends it, and awaits its
      * correlated `conversation_created` reply — the **typed** bare-conversation payload (contrast
@@ -1224,6 +1285,13 @@ class RemoteConversationRepository(
          * onset-only, no clearing edge on the wire (recovery is inferred from forward progress).
          */
         const val TYPE_STALL = "stall"
+
+        /**
+         * Capability-gated snapshot event: a conversation's queued-message backlog
+         * `{conversation_id, queued:[{queued_msg_id, text, ts}]}` (#460, pyrycode#705/#720) — the full
+         * current backlog (`msgqueue.Snapshot`) in FIFO order, each snapshot replacing the prior one.
+         */
+        const val TYPE_QUEUE_STATE = "queue_state"
 
         /**
          * Capability-gated modal event: a surfaced permission/choice modal

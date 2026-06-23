@@ -3,6 +3,8 @@ package de.pyryco.mobile.data.network
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.ModalOption
+import de.pyryco.mobile.data.repository.QueuedMessage
+import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
@@ -77,6 +79,46 @@ internal data class TurnEndPayloadDto(
 internal data class StallPayloadDto(
     @SerialName("conversation_id") val conversationId: String,
 )
+
+/**
+ * The `queue_state` snapshot event (#460, pyrycode#705/#720): the full ordered backlog of messages the
+ * daemon has queued for a conversation while claude is busy — the wire form of `msgqueue.Snapshot`, in
+ * FIFO/enqueue order. Decode-only — the phone never sends one. Always decode through [MobileJson].
+ *
+ * Wire SSOT: pyrycode `docs/protocol-mobile.md` § Queue (v2); ADR 025. Shape:
+ * `{conversation_id, queued:[{queued_msg_id, text, ts}]}`. [conversationId], and every
+ * [QueuedMessageDto] field, are **required, non-null** — the fail-closed posture of every sibling DTO
+ * (a missing/wrong-typed field throws a [kotlinx.serialization.SerializationException], dropping the
+ * one envelope). `queued_msg_id` is a wire **uint64** monotonic counter, decoded as a [Long] (the same
+ * posture as [Envelope.eventId]) — a `String` would be wrong (pyrycode#720 flags it).
+ *
+ * The **one** documented latitude is [queued] itself: an empty backlog may marshal to either `null`
+ * (`[]QueuedItem(nil)`) or `[]`, so it is nullable-defaulted and [toQueue] coalesces both (and a
+ * missing key) to `emptyList()`. Without this, a wire `null` into a non-nullable list would throw
+ * ([MobileJson] sets no `coerceInputValues`). Every other field stays strict-required.
+ */
+@Serializable
+internal data class QueuedMessageDto(
+    @SerialName("queued_msg_id") val queuedMsgId: Long,
+    val text: String,
+    val ts: String,
+)
+
+@Serializable
+internal data class QueueStatePayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    val queued: List<QueuedMessageDto>? = null,
+)
+
+/**
+ * Map a decoded [QueueStatePayloadDto] to the portable ordered [QueuedMessage] backlog (#460),
+ * preserving wire array order verbatim (no sort, no dedup — AC #1). A `null`/absent [queued] coalesces
+ * to `emptyList()` (the documented empty-backlog latitude). Element strictness is preserved: a bad item
+ * (a non-parseable [QueuedMessageDto.ts]) throws [IllegalArgumentException] inside the `map`, dropping
+ * the **whole** snapshot at the decode boundary — the established "one bad row drops the chunk" idiom.
+ */
+internal fun QueueStatePayloadDto.toQueue(): List<QueuedMessage> =
+    queued.orEmpty().map { QueuedMessage(id = it.queuedMsgId, text = it.text, timestamp = Instant.parse(it.ts)) }
 
 /**
  * Map a decoded [TurnStatePayloadDto] to a [LiveSessionEvent.TurnState], or **null** when [state] is

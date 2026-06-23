@@ -861,6 +861,56 @@ subscription**.
 free-form text, the data layer surfaces only a `Boolean`, and `decodeStall` logs nothing on the drop
 path. See [Stall state § Security](stall-state.md#security).
 
+## `observeQueue(conversationId)` — the thread-observable queued backlog (#460)
+
+A conversation's ordered list of messages the daemon has **queued** while claude is busy.
+[#460](../codebase/460.md) decodes the capability-gated v2 `queue_state` snapshot envelope into a
+per-conversation `List<QueuedMessage>` the thread layer observes to render the backlog (the visible render
+is the consumer slice **#461**). The full-snapshot model lives in [Queued backlog](queued-backlog.md);
+this section records only how it attaches to the repository — it rides the **same single inbound
+collector** as everything else, with **no new class, no new file, no second subscription**.
+
+- **A fifth connection-scoped projection.** `private val queuedByConversation =
+  MutableStateFlow<Map<String, List<QueuedMessage>>>(emptyMap())` — key = conversation id, value = the
+  full ordered backlog (FIFO/wire order). Written **only** from the one `init` inbound collector (single
+  writer → snapshots never race); `MutableStateFlow.update {}` matches the sibling projections' posture.
+  Empty per connection (#351) → a backlog never survives a reconnect.
+- **One demux hook — a full-replace, inside the existing `interactive` gate.** A **new** `TYPE_QUEUE_STATE`
+  arm: `decodeQueueState(envelope)?.let { (conversationId, queue) -> queuedByConversation.update { it +
+  (conversationId to queue) } }`. Each `queue_state` is the authoritative current backlog
+  (`msgqueue.Snapshot`), so the `it + (id to queue)` **overwrites** that conversation's entry and leaves
+  every other conversation untouched (AC #3); wire array order is preserved verbatim (AC #1). **Unlike the
+  #395 stall arm there is no second hook and no clearing** — a snapshot is replaced by the next snapshot
+  (possibly empty), never cleared by forward-progress events, so the live-session arm is **not touched**.
+- **The method is a pure cold projection** (1:1 with `observeStall`), issuing no request:
+
+  ```kotlin
+  override fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> =
+      queuedByConversation.map { it[conversationId].orEmpty() }.distinctUntilChanged()
+  ```
+
+  `orEmpty()` gives empty-until-first-snapshot (AC #2); `distinctUntilChanged()` means a `queue_state` for
+  **another** conversation, or a value-identical re-snapshot, does not re-emit this flow; a `StateFlow`
+  always has a current value, so every collector (including a `flatMapLatest` re-subscription through the
+  facade) gets the current backlog on subscription, fanning out from the one inbound consumer.
+- **`decodeQueueState(envelope): Pair<String, List<QueuedMessage>>?`** mirrors `decodeStall`: one `try {
+  decode → (id, list) } catch (IllegalArgumentException) { null }` (`SerializationException ⊂` it; the
+  per-item `Instant.parse` throws the same). A malformed payload — bad `conversation_id`, a bad item, an
+  unparseable `ts` — drops the one envelope while the lone collector survives (AC #4); **one bad item drops
+  the whole snapshot**. The `QueuedMessageDto` / `QueueStatePayloadDto` decode DTOs + the `toQueue()`
+  mapper live in `data/network/InteractivePayloads.kt`; `queued` is the **only** non-strict field
+  (nullable-defaulted to tolerate a wire `null`/`[]` empty backlog).
+- **On the interface with a default — like `observeStall`, unlike `liveSessionEvents`.** The thread needs
+  the current-value backlog through the [`StableConversationRepository`](stable-conversation-repository.md)
+  facade (#461 is the first consumer), so `observeQueue` is a **defaulted** `ConversationRepository` method
+  (`flowOf(emptyList())`), with the facade and this repo overriding it. The default absorbs the
+  Fake/test-double cascade (no ≥5 split); no consumer cascade. See [[post-352-connection-scoped-repo-behind-facade]].
+
+`security-sensitive`, but the repository stays plain orchestration: decode runs behind the
+already-authenticated Noise channel, and **nothing in the new arm or the drop branch logs the payload**
+(`QueuedMessage.text` is user-authored queued-message content). See
+[Queued backlog § Security](queued-backlog.md#security).
+
 ## Live tool-call rows — `applyToolUse` / `applyToolResult` (#387)
 
 Correlate the v2 `tool_use` (start) / `tool_result` (completion)
@@ -977,9 +1027,10 @@ this implementation's surface. All three read paths are now **cold flows that de
 
 ## State & concurrency model
 
-- **Four `StateFlow` projections — `projection` (the conversation list, #312), `lastMessages` (#329's
+- **Five `StateFlow` projections — `projection` (the conversation list, #312), `lastMessages` (#329's
   per-conversation most-recent `Message`), `messagesByConversation` (#313's per-conversation ordered
-  thread), and `stalledConversations` (#395's per-conversation stall `Set<String>`) — fed by one inbound
+  thread), `stalledConversations` (#395's per-conversation stall `Set<String>`), and `queuedByConversation`
+  (#460's per-conversation queued backlog `Map<String, List<QueuedMessage>>`) — fed by one inbound
   collector** launched on the injected connection `scope`. No second collector or scope is added per
   slice; a single `message` envelope can update **two** projections (`lastMessages` +
   `messagesByConversation`), and a single decoded `LiveSessionEvent` both `tryEmit`s on `liveSessionEvents`
@@ -988,10 +1039,12 @@ this implementation's surface. All three read paths are now **cold flows that de
   coroutine), so onset and clearing cannot race. The scope (and thus the collector) is cancelled by its
   owner — the [#351 coordinator](relay-repository-coordinator.md) — when the connection ends; the pump completing `inbound` on teardown also ends the
   collector naturally. All projections are in-memory and connection-scoped — lost on process death and
-  re-derived from the live stream (+ a re-`backfill_since`) on reconnect. The #417 `resync` arm adds **no
-  projection**: it `reset()`s the coordinator's process-scoped [`ReplayCursor`](replay-cursor.md) (the
-  **same single writer** as `recordReplayCursor`, so reset and record never race within a connection) and
-  `tryEmit`s a `ReplayGap` on `liveSessionEvents`.
+  re-derived from the live stream (+ a re-`backfill_since`) on reconnect. `queuedByConversation` (#460) is
+  the same shape: **single-writer** on this collector (one `TYPE_QUEUE_STATE` full-replace arm, no clearing
+  hook), each snapshot overwriting one conversation's entry. The #417 `resync` arm adds **no projection**:
+  it `reset()`s the coordinator's process-scoped [`ReplayCursor`](replay-cursor.md) (the **same single
+  writer** as `recordReplayCursor`, so reset and record never race within a connection) and `tryEmit`s a
+  `ReplayGap` on `liveSessionEvents`.
 - **Two-or-more writers per projection, still data-safe (#346 / #347 / #348).** The mutations relaxed
   each projection from single-writer to **collector + confirmed fold(s)**: `sendMessage` (#346) is the
   second writer of `lastMessages` and `messagesByConversation`; `createDiscussion` (#347) and `promote`
@@ -1043,6 +1096,9 @@ this implementation's surface. All three read paths are now **cold flows that de
 | `requestScreenSnapshot` — server `error` `conversation.not_found` / any other / not-`Open` send / malformed `screen_snapshot` reply (#375) | `IllegalArgumentException` / `RelayErrorException` / `IllegalStateException` respectively via the shared `mapError` + `sendAndAwaitReply`'s `check`; a malformed reply throws the #374 `SerializationException` (⊂ `IllegalArgumentException`) **caller-side** after `sendAndAwaitReply` returns. A pure read — **nothing mutated** on any path; nothing logged |
 | Malformed `stall` payload (missing / wrong-typed `conversation_id`, #395) | `decodeStall` catches `IllegalArgumentException` (⊃ `SerializationException`) → `null` → the one envelope dropped, **single inbound collector survives** (AC #3); `stalledConversations` unchanged; nothing logged. A later valid `stall` still flips state |
 | `stall` on a non-`interactive` connection (#395) | dropped **before** decode by the `TYPE_STALL` capability gate — never surfaces (fail-closed, defence in depth on the server-side fan-out gate) |
+| Malformed `queue_state` payload (bad `conversation_id`, a bad item — `queued_msg_id` as a string, missing `text`, unparseable `ts`, #460) | `decodeQueueState` catches `IllegalArgumentException` (⊃ `SerializationException`, + the per-item `Instant.parse`) → `null` → the one envelope dropped, **collector survives** (AC #4); `queuedByConversation` unchanged; nothing logged. **One bad item drops the whole snapshot.** A later valid `queue_state` still surfaces |
+| `queued` is `null` / `[]` / absent (empty backlog, #460) | `toQueue()` coalesces via `.orEmpty()` → the conversation's backlog is replaced with `emptyList()` — a legitimate "queue drained" snapshot, not an error (the one wire latitude; `MobileJson` has no `coerceInputValues`) |
+| `queue_state` on a non-`interactive` connection (#460) | dropped **before** decode by the `TYPE_QUEUE_STATE` capability gate — never surfaces (fail-closed, defence in depth) |
 | Malformed / unrecognized-`state` live-session envelope while a stall is live (#395) | `decodeLiveSessionEvent` → `null` → neither surfaces on `liveSessionEvents` nor **clears** the stall (no trustworthy `conversationId` / unknown forward-progress semantics) — the stall persists until a recognized forward-progress event arrives. Unchanged #385 decode behaviour |
 | `resync` on a non-`interactive` connection (#417) | dropped **before** any effect by the `TYPE_RESYNC` capability gate — no cursor reset (a no-op anyway; `latest` is `null` on a non-interactive connection), no `ReplayGap` (fail-closed) |
 | `resync` with missing / non-string `conversation_id` (#417) | the cursor **is** reset (unconditional on the type match — process-global); `resyncConversationId` returns `null` so **no** `ReplayGap` is surfaced; the collector survives (`resyncConversationId` cannot throw). A later valid `resync` still surfaces the gap |
@@ -1164,7 +1220,11 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   the fourth projection `stalledConversations`; a `TYPE_STALL` onset arm + a clearing hook folded into
   #385's live-session arm; **on the interface with a `flowOf(false)` default** so it reaches the thread
   through the facade, the deliberate inverse of #385's concrete-only `liveSessionEvents` — see
-  [Stall state](stall-state.md)), [#387](../codebase/387.md) (`applyToolUse`/`applyToolResult`,
+  [Stall state](stall-state.md)), [#460](../codebase/460.md) (`observeQueue`, **landed** — the fifth
+  projection `queuedByConversation`; a `TYPE_QUEUE_STATE` **full-replace** arm with **no clearing hook**
+  (a snapshot is whole-truth state, the simpler counterpart to #395's onset-only model), **on the interface
+  with a `flowOf(emptyList())` default** so the backlog reaches the thread through the facade — see
+  [Queued backlog](queued-backlog.md)), [#387](../codebase/387.md) (`applyToolUse`/`applyToolResult`,
   **landed** — correlate `tool_use`/`tool_result` into one evolving `Role.Tool` row keyed by
   `toolUseId`; a `when (event)` dispatch folded into #385's live-session arm mutates the existing
   `messagesByConversation` so tool rows interleave by arrival order, the inverse choice from #395's

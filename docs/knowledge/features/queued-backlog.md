@@ -1,0 +1,130 @@
+# Queued backlog — the thread-observable list of messages waiting while claude is busy
+
+A per-conversation **ordered list** the thread layer observes to learn which messages the daemon has
+**queued** while claude is busy — so the phone can render the backlog instead of silently dropping the
+turns the user fired during a long response. Landed in [#460](../codebase/460.md) (the data substrate,
+split from #429). The **visible** render (the backlog list UI) is the consumer slice **#461**; dropping a
+queued entry (`dequeue_message`) is **#462** (blockedBy #461).
+
+This is the **data layer only**: decode the inbound `queue_state` snapshot into observable state. It
+renders nothing.
+
+## The signal
+
+```kotlin
+// ConversationRepository (the interface every UI tier binds to)
+fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> = flowOf(emptyList())
+
+// the portable element type, co-located with the contract (like ThreadItem)
+data class QueuedMessage(val id: Long, val text: String, val timestamp: Instant)
+```
+
+- Emits the conversation's **current ordered backlog** (FIFO / enqueue order), `emptyList()` until the
+  first `queue_state` snapshot lands, re-emitting the full new list on each snapshot. Cold flow;
+  re-emits only on change (`distinctUntilChanged`), so a `queue_state` for *another* conversation never
+  wakes this collector (AC #3).
+- `QueuedMessage.id` is the daemon's per-conversation `queued_msg_id` — a wire **`uint64`** monotonic
+  counter, decoded as a `Long` (same posture as `Envelope.eventId`; a `String` is wrong, pyrycode#720
+  flags it). It is a plain ordinal, **not a secret/nonce**; #462 echoes it back verbatim to drop an entry.
+  `timestamp` is enqueue time.
+- **On the interface, with a `flowOf(emptyList())` default** — the same surfacing decision as
+  [`observeStall`](stall-state.md). The thread ViewModel reaches the backlog through the
+  [`StableConversationRepository`](stable-conversation-repository.md) facade it already holds, and the
+  facade only delegates the `ConversationRepository` interface, so a concrete-only capability would be
+  stranded ([[post-352-connection-scoped-repo-behind-facade]]). The default body is the cascade-escape
+  valve: the [Fake](conversation-repository.md) and every inline test double inherit "never queued" and
+  need no override (same lever as `observeStall` / `delete` / `requestScreenSnapshot`). Only the facade and
+  the [live remote repo](remote-conversation-repository.md) override it.
+
+## Full-snapshot replace — no onset/clearing edge
+
+The decisive wire fact (server SSOT pyrycode#705/#720, `docs/protocol-mobile.md` § Queue (v2), ADR 025):
+`queue_state = {conversation_id, queued: [{queued_msg_id, text, ts}]}` is a **full snapshot** of the
+conversation's backlog — the wire form of `msgqueue.Snapshot(convID)`, in FIFO order. Every snapshot is
+self-describing and authoritative, so:
+
+| Edge | Source | Mechanism |
+|---|---|---|
+| **Update** | an inbound `queue_state` envelope | decode → **replace** that conversation's stored list in full (`it + (id to queue)`) |
+| **Drain** | a `queue_state` with `queued: []` / `null` | the same replace, with an empty list — a legitimate "queue drained" snapshot, not a special case |
+
+> **The deliberate counterpoint to [stall state](stall-state.md) (#395).** Both ride the same single
+> `pump.inbound` collector and both are facade-reachable interface state — but stall is an **onset-only**
+> `Boolean` whose recovery is *inferred* from the next forward-progress [`LiveSessionEvent`](live-session-events.md),
+> whereas a queue snapshot carries the *complete current backlog* every time. So `queue_state` needs **no
+> live-session-arm hook** and **no clearing inference**: the next snapshot (possibly empty) is the whole
+> truth. A full-snapshot wire event is the *simpler* shape — an atomic per-key map replace, no cross-arm
+> coupling.
+
+## How it surfaces in the repository
+
+All of the behaviour lives in [`RemoteConversationRepository`](remote-conversation-repository.md#observequeueconversationid--the-thread-observable-queued-backlog-460)
+on the **single existing** inbound collector — see that doc for the field, the demux arm, and the
+projection. In short: a connection-scoped `MutableStateFlow<Map<String, List<QueuedMessage>>>` (key =
+conversation id, value = the full ordered backlog), written **only** from `onInbound` (single writer → no
+race), with `observeQueue` a cold `map { it[id].orEmpty() }.distinctUntilChanged()` projection.
+Connection-scoped, in-memory: a fresh repo per connection (#351) starts empty, so a backlog **never
+survives a reconnect** — it re-derives from the next live `queue_state`. A backlog is a transient "right
+now" condition, not durable state.
+
+## Capability gate (fail-closed)
+
+The `TYPE_QUEUE_STATE` arm sits inside `CAPABILITY_INTERACTIVE in negotiatedCapabilities()` — the same gate
+[#385](../codebase/385.md) / [#395](../codebase/395.md) use, **riding the already-negotiated `interactive`
+capability**; no new capability is introduced or advertised. The server already fans `queue_state` out
+**only** to phones that advertised `interactive`, but the mobile gate is **defence in depth**: a
+non-interactive phone that receives a spurious `queue_state` from a buggy/hostile daemon never decodes it
+and never surfaces it.
+
+> The separate ADR-025 statement that "viewing/dequeuing is *ungated* for any paired phone" is the
+> **authorization** model — it means no extra per-device answer-gate like permission modals need — and is
+> the **outbound `dequeue_message`** concern of #462. It does **not** loosen this inbound decode gate.
+
+## Edge cases & limitations
+
+- **`queued` tolerates `null` OR `[]` (the one wire latitude).** An empty backlog may marshal to either,
+  since the producer (#722) recommends but is not forced to emit `[]`. The DTO models `queued` as
+  nullable-defaulted (`List<QueuedMessageDto>? = null`) and `toQueue()` coalesces `null` / `[]` / a missing
+  key to `emptyList()` — required because `MobileJson` sets no `coerceInputValues` (a wire `null` into a
+  non-nullable list would throw). Every other field stays strict-required.
+- **Malformed snapshot dropped, collector survives (AC #4).** A missing/wrong-typed `conversation_id`, a
+  bad item (`queued_msg_id` as a string, missing `text`, unparseable `ts`) fails the strict decode of
+  `QueueStatePayloadDto` (or `Instant.parse`) → that one envelope is dropped, the lone inbound collector
+  lives, a later valid `queue_state` still surfaces. Element strictness is preserved: **one bad item drops
+  the whole snapshot** (the `message_chunk` "one bad row drops the chunk" idiom). Same drop idiom as every
+  other `onInbound` arm; **nothing logs the payload**.
+- **Full-replace, not append.** A second `queue_state` for a conversation **replaces** its backlog; the
+  list is never accumulated client-side. Wire array order is preserved verbatim — no sort, no dedup.
+- **Not durable.** Lost on connection drop / process death; re-derived from the next live snapshot. The
+  facade's `whenAbsent = emptyList()` reports an empty backlog between connections.
+
+## Security
+
+`security-sensitive`; architect self-review **PASS**, code-review **PASS**. One untrusted→trusted boundary
+— `decodeQueueState(envelope): Pair<String, List<QueuedMessage>>?` through the single configured
+`MobileJson`, behind the already-authenticated Noise channel. `QueuedMessage.text` is **user-authored
+queued-message content** (potentially sensitive) and is carried **verbatim, never logged** — the same
+discipline #385/#387 apply to `assistant_delta` / tool summaries; `decodeQueueState` logs nothing on the
+drop path. The data layer surfaces only a `List<QueuedMessage>`, never an error or a raw `JsonElement`.
+Memory posture is bounded by **replacement** (each snapshot overwrites a conversation's backlog, never
+accumulates), the same daemon-supplied-id growth posture `lastMessages` / `messagesByConversation` /
+`stalledConversations` already accept under the paired-daemon threat model. `queued_msg_id` is a
+per-conversation counter, not a nonce (no constant-time-compare concern). UI-leakage threats
+(screenshot/overlay of the rendered backlog text) belong to **#461** (the visible render).
+
+## Related
+
+- [#460 implementation notes](../codebase/460.md) — files, line refs, lessons, verification.
+- [Remote conversation repository](remote-conversation-repository.md) — hosts the `queuedByConversation`
+  projection, the `TYPE_QUEUE_STATE` arm, and the `observeQueue` projection.
+- [Stall state](stall-state.md) (#395) — the structural twin: the decode→state→observe shape, gate, and
+  test harness this reuses; the onset-only counterpoint to this full-snapshot model.
+- [Live-session events](live-session-events.md) (#385) / [Modal events](modal-events.md) (#437) — the other
+  capability-gated decode seams on the same single inbound collector.
+- [ConversationRepository](conversation-repository.md) — the interface the defaulted `observeQueue` joins;
+  [`StableConversationRepository`](stable-conversation-repository.md) — the facade that makes it reach the
+  thread ViewModel.
+- Consumers: **#461** (render the backlog list, Figma 16-8 design-owed), **#462** (drop a queued entry via
+  `dequeue_message`, blockedBy #461).
+- Server SSOT: pyrycode#705/#720 (`queue_state` / `dequeue_message` wire types, `queued_msg_id` `uint64`),
+  #722 (producer), #723 (`dequeue_message` handler), `docs/protocol-mobile.md` § Queue (v2), ADR 025.
