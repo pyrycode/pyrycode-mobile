@@ -10,8 +10,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -66,12 +68,14 @@ private const val QUEUED_ALPHA = 0.6f
  *
  * The design-owed Figma frame (16-8) has no backlog treatment drawn yet; the visual follows the app's
  * existing message-row idiom until it lands, exactly as [ThinkingIndicator] / [StallPromotionBanner]
- * shipped their Material 3 defaults. The drop affordance is a separate slice (#462); this render is
- * read-only (no callbacks).
+ * shipped their Material 3 defaults. Each row carries a trailing drop affordance (#467) hoisted as
+ * [onDrop], called with the row's [QueuedMessage.id]; the drop is a one-way trigger — this render mutates
+ * nothing and the dropped row leaves only on the next `queue_state` snapshot (no optimistic removal).
  */
 @Composable
 fun QueuedBacklog(
     queued: List<QueuedMessage>,
+    onDrop: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (queued.isEmpty()) return
@@ -92,14 +96,16 @@ fun QueuedBacklog(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         queued.forEach { entry ->
-            QueuedMessageRow(text = entry.text)
+            QueuedMessageRow(id = entry.id, text = entry.text, onDrop = onDrop)
         }
     }
 }
 
 @Composable
 private fun QueuedMessageRow(
+    id: Long,
     text: String,
+    onDrop: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -136,6 +142,16 @@ private fun QueuedMessageRow(
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
         }
+        // Trailing un-queue affordance. The clickable IconButton forms its own semantics node, so it stays
+        // individually addressable despite the section's mergeDescendants group. `Close` (×) is the Material
+        // "remove from a list" convention — a queued message is un-queued, not deleted.
+        IconButton(onClick = { onDrop(id) }) {
+            Icon(
+                imageVector = Icons.Outlined.Close,
+                contentDescription = stringResource(R.string.cd_thread_queued_drop),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
@@ -155,7 +171,7 @@ private fun previewQueue(): List<QueuedMessage> {
 private fun QueuedBacklogLightPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
         Surface {
-            QueuedBacklog(queued = previewQueue())
+            QueuedBacklog(queued = previewQueue(), onDrop = {})
         }
     }
 }
@@ -170,7 +186,7 @@ private fun QueuedBacklogLightPreview() {
 private fun QueuedBacklogDarkPreview() {
     PyrycodeMobileTheme(darkTheme = true) {
         Surface {
-            QueuedBacklog(queued = previewQueue())
+            QueuedBacklog(queued = previewQueue(), onDrop = {})
         }
     }
 }

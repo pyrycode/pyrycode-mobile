@@ -112,6 +112,7 @@ fun ThreadScreen(
     modalSendErrors: Flow<Unit> = emptyFlow(), // #452: payload-free one-shot modal send-failure signal (#451)
     onModalOption: (String) -> Unit = {}, // #452: wired by MainActivity → vm::onModalOption (passes ModalOption.id)
     onModalCancel: () -> Unit = {}, // #452: wired by MainActivity → vm::onModalCancel
+    onDropQueued: (Long) -> Unit = {}, // #467: wired by MainActivity → vm::onDropQueued (passes QueuedMessage.id)
 ) {
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
@@ -263,7 +264,11 @@ fun ThreadScreen(
             // directly under the list (it extends the user's side of the conversation) and above the
             // foot-most ThinkingIndicator. A separate wrap-content section, not a LazyColumn row, so the
             // list's keying / alpha-dimming / auto-scroll logic stays untouched.
-            QueuedBacklog(queued = state.queuedMessages, modifier = Modifier.fillMaxWidth())
+            QueuedBacklog(
+                queued = state.queuedMessages,
+                onDrop = onDropQueued,
+                modifier = Modifier.fillMaxWidth(),
+            )
             ThinkingIndicator(isThinking = isThinking, modifier = Modifier.fillMaxWidth())
         }
     }

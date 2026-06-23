@@ -3,11 +3,15 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
@@ -18,6 +22,7 @@ import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -38,6 +43,8 @@ class QueuedBacklogTest {
     private fun string(resId: Int): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(resId)
 
     private val backlogDescription: String = string(R.string.cd_thread_queued_backlog)
+
+    private val dropDescription: String = string(R.string.cd_thread_queued_drop)
 
     private val ts: Instant = Instant.parse("2026-06-23T10:00:00Z")
 
@@ -162,5 +169,59 @@ class QueuedBacklogTest {
         // The backlog is additive — the sent message still renders and the backlog renders alongside it.
         composeTestRule.onNodeWithText("an already sent message").assertIsDisplayed()
         composeTestRule.onNodeWithContentDescription(backlogDescription).assertIsDisplayed()
+    }
+
+    @Test
+    fun each_row_exposes_a_drop_affordance() {
+        setThreadScreen(
+            stateWith(
+                queue =
+                    listOf(
+                        queued(1L, "first queued message"),
+                        queued(2L, "second queued message"),
+                    ),
+            ),
+        )
+
+        // AC #1 — every rendered row carries an individually-addressable drop affordance. The backlog
+        // Column merges descendants for its a11y group, but each clickable IconButton is its own
+        // semantics node, so the drop nodes stay addressable in the unmerged tree (as the per-row text is).
+        composeTestRule
+            .onAllNodes(hasContentDescription(dropDescription), useUnmergedTree = true)
+            .assertCountEquals(2)
+    }
+
+    @Test
+    fun activating_a_rows_drop_affordance_routes_that_rows_id() {
+        val dropped = mutableListOf<Long>()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadScreen(
+                    state =
+                        stateWith(
+                            queue =
+                                listOf(
+                                    queued(1L, "first queued message"),
+                                    queued(2L, "second queued message"),
+                                ),
+                        ),
+                    onBack = {},
+                    onSendMessage = {},
+                    connectionState = ConnectionState.Connected,
+                    onRetry = {},
+                    onDropQueued = { dropped += it },
+                )
+            }
+        }
+
+        // AC #2 / AC #5 (activate half) — tapping the SECOND row's affordance routes the SECOND row's id
+        // through onDropQueued. Asserting on the id (not just "a tap happened") proves per-row id wiring.
+        composeTestRule
+            .onAllNodes(hasContentDescription(dropDescription), useUnmergedTree = true)
+            .onLast()
+            .performClick()
+        composeTestRule.runOnIdle {
+            assertEquals(listOf(2L), dropped)
+        }
     }
 }

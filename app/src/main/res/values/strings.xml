@@ -57,6 +57,7 @@
     <string name="cd_thread_stall_promotion">Claude seems to have stalled. Show the literal screen.</string>
     <string name="thread_queued_backlog_label">Queued</string>
     <string name="cd_thread_queued_backlog">Queued messages waiting to send</string>
+    <string name="cd_thread_queued_drop">Drop this queued message</string>
     <string name="cd_tool_running">Tool call running</string>
     <string name="cd_tool_failed">Tool call failed</string>
     <string name="thread_overflow_new_session">New session</string>

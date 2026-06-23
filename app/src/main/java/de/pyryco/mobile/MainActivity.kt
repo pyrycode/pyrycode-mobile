@@ -370,6 +370,7 @@ private fun PyryNavHost(
                 modalSendErrors = vm.modalSendErrors,
                 onModalOption = vm::onModalOption,
                 onModalCancel = vm::onModalCancel,
+                onDropQueued = vm::onDropQueued,
                 onOverflowEvent = vm::onOverflowEvent,
                 onShowLiteralScreen = { navController.navigate("literal_screen/$conversationId") },
                 onModelSelected = vm::onModelSelected,
