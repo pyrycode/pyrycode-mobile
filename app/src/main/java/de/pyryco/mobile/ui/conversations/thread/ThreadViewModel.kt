@@ -10,6 +10,7 @@ import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.Model
@@ -113,6 +114,12 @@ class ThreadViewModel(
     // #445: the coordinator's reconnection-surviving modal-event seam (#437), folded to [currentModal].
     // Defaulted to an empty flow so the fake-backed graph + existing tests stay inert (state holds Hidden).
     modalEvents: Flow<ModalEvent> = emptyFlow(),
+    // #451: the outbound modal-send path → the coordinator's passthrough to the connection-scoped concrete
+    // repo (RelayRepositoryCoordinator.answerModal / cancelModal). Defaulted no-ops so the fake-backed Koin
+    // graph + existing ThreadViewModel tests stay inert. The VM holds only these two suspend lambdas, never
+    // the facade-bypassing concrete repo or the coordinator (the outbound analog of the modalEvents flow).
+    private val answerModal: suspend (modalId: String, optionId: String) -> Unit = { _, _ -> },
+    private val cancelModal: suspend (modalId: String) -> Unit = { _ -> },
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
@@ -296,6 +303,39 @@ class ThreadViewModel(
             )
 
     /**
+     * Which non-default option of the currently-open modal is "armed" (#451) — tapped once and awaiting an
+     * explicit second confirm — or `null`. Carries its own [ArmedModalOption.modalId] so a stale arm can
+     * never pre-arm or auto-confirm a fresh modal (the modalId equality in [onModalOption] is the
+     * deterministic guard; the scoping is the "resets on resolve" property). **Transient** — never
+     * persisted (no `rememberSaveable` / [SavedStateHandle]); it resets on resolve / cancel / re-tap.
+     */
+    private val armedModalOption = MutableStateFlow<ArmedModalOption?>(null)
+
+    /**
+     * The option of the *currently-open* modal that is armed (tapped once, awaiting a second confirm), or
+     * `null`. The render slice (#452) draws the armed affordance off this — the #445→#446 seam analog (this
+     * behavior slice owns the arm state, the render slice renders it). **Scoped:** `null` unless the arm's
+     * `modalId` matches the open modal, so a stale arm is invisible and a resolve nulls it automatically. A
+     * sibling [StateFlow] to [currentModal]; [SharingStarted.Eagerly] matches it so `.value` is always the
+     * true projection and a resolve immediately clears the affordance.
+     */
+    val armedOptionId: StateFlow<String?> =
+        combine(currentModal, armedModalOption) { modal, arm ->
+            if (modal is ModalUiState.Open && arm?.modalId == modal.modalId) arm.optionId else null
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    private val modalSendErrorChannel = Channel<Unit>(capacity = Channel.BUFFERED)
+
+    /**
+     * One-shot "a modal send (answer or cancel) failed" signal (#451) — the established one-shot VM→UI
+     * event idiom this VM already uses for [navigationEvents]. Carries **no** modal payload (just [Unit]),
+     * so nothing sensitive can leak through it; the render slice (#452) shows a transient snackbar. Fires
+     * exactly once per caught failure ([RelayErrorException] from a server `error`, incl. the
+     * ungranted-device reject pyrycode#702; [IllegalStateException] from a not-connected session).
+     */
+    val modalSendErrors: Flow<Unit> = modalSendErrorChannel.receiveAsFlow()
+
+    /**
      * Folds one live event to the next [isThinking] value, or `null` to leave the flag unchanged. Routes
      * by [conversationId] first (AC #3 — other conversations never move the flag), then maps the turn
      * phase: `thinking` ⇒ `true`; `responding` / `idle` / `turn_end` ⇒ `false`; the non-phase events
@@ -338,6 +378,70 @@ class ThreadViewModel(
 
     fun onWorkspacePickerDismissed() {
         pendingWorkspacePicker.value = false
+    }
+
+    /**
+     * Handle a tap on modal option [optionId] (#451). The modal being answered is the VM's own
+     * [currentModal] — **never** a caller-supplied id (the stateless screen passes only the tapped option;
+     * the `modalId` is the VM's server-supplied state). Fail-safe-deny UX belt: the producer's highlighted
+     * default ([ModalUiState.Open.defaultOptionId]) answers on a **single** tap; any other option **arms**
+     * and requires an explicit **second** confirm of the *same* armed option before it sends; a tap of a
+     * different option re-arms. No-op if no modal is open.
+     */
+    fun onModalOption(optionId: String) {
+        val open = currentModal.value as? ModalUiState.Open ?: return
+        when {
+            optionId == open.defaultOptionId -> sendAnswer(open.modalId, optionId)
+            armedModalOption.value == ArmedModalOption(open.modalId, optionId) ->
+                sendAnswer(open.modalId, optionId)
+            else -> armedModalOption.value = ArmedModalOption(open.modalId, optionId)
+        }
+    }
+
+    /** Cancel the currently-open modal (#451): clear any arm and send `modal_cancel`. No-op if no modal is
+     *  open. */
+    fun onModalCancel() {
+        val open = currentModal.value as? ModalUiState.Open ?: return
+        armedModalOption.value = null
+        sendCancel(open.modalId)
+    }
+
+    /**
+     * Send a `modal_answer` for [optionId] of modal [modalId] via the injected outbound path. Clears the
+     * arm **before** launching — the second-confirm gesture is consumed on the attempt (success or
+     * failure); [currentModal] stays [ModalUiState.Open] until the daemon resolves it, so the user may
+     * answer again after a failure (no auto-retry — first-answer-wins is server-side). Catches **only** the
+     * two documented throws so [kotlinx.coroutines.CancellationException] still propagates; on failure it
+     * surfaces a one-shot [modalSendErrors] event and nothing else (no log, no [currentModal] mutation).
+     */
+    private fun sendAnswer(
+        modalId: String,
+        optionId: String,
+    ) {
+        armedModalOption.value = null
+        viewModelScope.launch {
+            try {
+                answerModal(modalId, optionId)
+            } catch (e: RelayErrorException) {
+                modalSendErrorChannel.trySend(Unit)
+            } catch (e: IllegalStateException) {
+                modalSendErrorChannel.trySend(Unit)
+            }
+        }
+    }
+
+    /** The [sendAnswer] mirror for `modal_cancel` (no option id, no idempotency token). Same never-log,
+     *  catch-only-the-two-documented-throws, one-shot-error posture. */
+    private fun sendCancel(modalId: String) {
+        viewModelScope.launch {
+            try {
+                cancelModal(modalId)
+            } catch (e: RelayErrorException) {
+                modalSendErrorChannel.trySend(Unit)
+            } catch (e: IllegalStateException) {
+                modalSendErrorChannel.trySend(Unit)
+            }
+        }
     }
 
     fun onModelSelected(model: Model) {
@@ -399,6 +503,13 @@ class ThreadViewModel(
             ThreadEvent.NewSession -> Unit
         }
     }
+
+    /** A non-default option armed for a second confirm (#451), scoped to the [modalId] it belongs to.
+     *  `private` → not an exported type; structural equality drives the second-confirm match. */
+    private data class ArmedModalOption(
+        val modalId: String,
+        val optionId: String,
+    )
 
     private data class RunConfig(
         val model: Model,

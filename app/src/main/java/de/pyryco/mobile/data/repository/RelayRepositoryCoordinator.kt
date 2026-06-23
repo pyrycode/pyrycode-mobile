@@ -277,6 +277,36 @@ class RelayRepositoryCoordinator(
         scope.cancel()
     }
 
+    /**
+     * Outbound modal **answer** passthrough (#451): reach the connection-scoped concrete
+     * [RemoteConversationRepository.answerModal] through [activeRemoteRepo] — the **outbound mirror** of
+     * the inbound [modalEvents] seam. Inbound is a `Flow` (a stream); an answer is a request/reply control
+     * **call**, so this is a suspend method, not a flow.
+     *
+     * When no connection is active ([activeRemoteRepo] is `null`, between connections) it throws
+     * [IllegalStateException]. When a connection exists but the pump is still pre-[PumpState.Open], the
+     * concrete `answerModal` → `sendAndAwaitReply` → `pump.send` returns false → [IllegalStateException]
+     * (the #438 precedent) — so this needs **only** the null-guard, not a redundant `Open` gate. A server
+     * `error` propagates as [de.pyryco.mobile.data.network.RelayErrorException] unchanged. Adds **no log**:
+     * the `modalId`/`optionId` may name a sensitive command/path (never-log contract).
+     */
+    suspend fun answerModal(
+        modalId: String,
+        optionId: String,
+    ) {
+        val repo = activeRemoteRepo.value ?: throw IllegalStateException("no active connection")
+        repo.answerModal(modalId, optionId)
+    }
+
+    /**
+     * Outbound modal **cancel** passthrough (#451): the [answerModal] mirror for
+     * [RemoteConversationRepository.cancelModal]. Same null-guard-only posture and never-log contract.
+     */
+    suspend fun cancelModal(modalId: String) {
+        val repo = activeRemoteRepo.value ?: throw IllegalStateException("no active connection")
+        repo.cancelModal(modalId)
+    }
+
     private class Connection(
         val pump: ManagedSessionPump,
         val scope: CoroutineScope,

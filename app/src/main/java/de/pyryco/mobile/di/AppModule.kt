@@ -113,13 +113,17 @@ val appModule =
         }
         viewModel { ArchivedDiscussionsViewModel(get()) }
         viewModel {
+            val coordinator = get<RelayRepositoryCoordinator>()
             ThreadViewModel(
                 get(),
                 get(),
                 get(),
                 get(),
-                get<RelayRepositoryCoordinator>().liveSessionEvents,
-                get<RelayRepositoryCoordinator>().modalEvents,
+                coordinator.liveSessionEvents,
+                coordinator.modalEvents,
+                // #451: bind the outbound modal-send path to the coordinator's passthrough.
+                answerModal = coordinator::answerModal,
+                cancelModal = coordinator::cancelModal,
             )
         }
         // #381: resolvable so #382's nav destination can obtain it (get() → SavedStateHandle +
