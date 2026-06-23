@@ -22,9 +22,9 @@
 #      swaps in E2eTestApplication, which pre-pairs the app and binds the relay-backed repository.
 #   4b. (DETERMINISTIC) A background watcher drops the JSONL fixture once the daemon logs the
 #       `send_message.enqueued` cursor-stamp fence, so the scripted reply tails the real producer
-#       mid-test. The `spinner` and `tool` scenarios drop twice — a 2nd, turn-ending fixture on the 2nd
-#       enqueue — to hold the turn open long enough to observe the transient state (thinking spinner /
-#       running tool row).
+#       mid-test. The `spinner`, `tool`, and `reconnect` scenarios drop twice — a 2nd, turn-ending
+#       fixture on the 2nd enqueue — to hold the turn open long enough to observe the transient state
+#       (thinking spinner / running tool row) or to span a mid-turn link drop (reconnect).
 #   5. Tear everything down (trap on EXIT).
 #
 # Prerequisites (host):
@@ -47,6 +47,7 @@
 #   DETERMINISTIC=1 SCENARIO=spinner PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, spinner
 #   DETERMINISTIC=1 SCENARIO=tool        PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, tool running→done
 #   DETERMINISTIC=1 SCENARIO=tool-failed PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, tool failed
+#   DETERMINISTIC=1 SCENARIO=reconnect   PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, reconnect continuity
 # Tunables (env):
 #   PORT=8888  DEVICE=pixel2Api33Atd  PAIR_NAME=e2e-emulator  PYRY_NAME=e2e-emulator
 #   PYRY_BIN=pyry  RELAY_BIN=pyrycode-relay
@@ -91,9 +92,9 @@ PYRYCODE_SRC="${PYRYCODE_SRC:-}"              # local pyrycode checkout (to buil
 FAKE_CLAUDE_BIN="${FAKE_CLAUDE_BIN:-}"        # prebuilt fakeclaude path (overrides PYRYCODE_SRC build)
 FIXTURES_DIR="${REPO_ROOT}/scripts/e2e-fixtures"
 SCENARIO="${SCENARIO:-ping}"                  # which deterministic scenario: ping | stream | spinner (#454) |
-                                              # tool | tool-failed (#455). Resolved to a @Test method +
-                                              # fixture(s) in the preflight below; bare DETERMINISTIC=1
-                                              # (SCENARIO unset → ping) keeps #431.
+                                              # tool | tool-failed (#455) | reconnect (#476). Resolved to a
+                                              # @Test method + fixture(s) in the preflight below; bare
+                                              # DETERMINISTIC=1 (SCENARIO unset → ping) keeps #431.
 INITIAL_UUID="${INITIAL_UUID:-43143143-4314-4314-8314-431431431431}"  # bootstrap session JSONL stem
 CONV_UUID="${CONV_UUID:-c0a70431-0431-4031-8031-043104310431}"        # seeded channel id
 SEED_CHANNEL_NAME="${SEED_CHANNEL_NAME:-e2e-seed}"  # MUST equal DeterministicInteractiveStreamE2ETest.SEED_CHANNEL_NAME
@@ -134,8 +135,9 @@ command -v python3        >/dev/null 2>&1 || die "python3 not found (needed to d
 
 if [ -n "${DETERMINISTIC}" ]; then
   # Resolve SCENARIO → the single @Test method this invocation runs + its fixture(s) (#454). One
-  # scenario per run, mirroring #431's one-fixture→one-turn→one-scenario model. Only `spinner` uses a
-  # 2nd (turn-ending) drop; FIXTURE_FILE / FIXTURE_FILE_2 stay env-overridable for first-run tuning.
+  # scenario per run, mirroring #431's one-fixture→one-turn→one-scenario model. The held-open two-drop
+  # scenarios (`spinner`/`tool`/`reconnect`) set a 2nd (turn-ending) drop; FIXTURE_FILE / FIXTURE_FILE_2
+  # stay env-overridable for first-run tuning.
   FIXTURE_FILE_2="${FIXTURE_FILE_2:-}"
   case "${SCENARIO}" in
     ping)
@@ -160,8 +162,13 @@ if [ -n "${DETERMINISTIC}" ]; then
       TEST_METHOD="interactiveTurn_seededChannel_failedToolStepRendersFailed"
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/tool-failed.jsonl}"    # single terminal drop
       ;;
+    reconnect)
+      TEST_METHOD="interactiveTurn_seededChannel_replySurvivesMidTurnReconnect"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/reconnect-open.jsonl}"      # drop A: thinking, held open across the drop
+      FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/reconnect-done.jsonl}"  # drop B: complete reply + turn_end, post-reconnect
+      ;;
     *)
-      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed)"
+      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed | reconnect)"
       ;;
   esac
   log "deterministic scenario: ${SCENARIO} → ${TEST_METHOD}"
@@ -326,12 +333,13 @@ log "daemon up (the test waits for the relay session to open before sending)."
 # file.
 if [ -n "${DETERMINISTIC}" ]; then
   if [ -n "${FIXTURE_FILE_2}" ]; then
-    # Two-drop scenarios (spinner #454, tool #455): two causally-fenced drops. Drop A on the 1st enqueue
-    # opens a turn and HOLDS it open (no end_turn) so the transient state is observable (thinking spinner
-    # / running tool row); the test, after asserting that state, sends a 2nd message whose enqueue
-    # triggers drop B, ending the turn and resolving the state. Count enqueues (not a one-shot grep) to
-    # tell the 1st from the 2nd. Drop B waits for the 2nd enqueue — long after fakeclaude consumed drop
-    # A's trigger — so it never clobbers an unconsumed A.
+    # Two-drop scenarios (spinner #454, tool #455, reconnect #476): two causally-fenced drops. Drop A on
+    # the 1st enqueue opens a turn and HOLDS it open (no end_turn) so the transient state is observable
+    # (thinking spinner / running tool row) or so the turn is still streaming when the test severs the
+    # phone link (reconnect); the test, after asserting that state / restoring the link, sends a 2nd
+    # message whose enqueue triggers drop B, ending the turn and resolving the state. Count enqueues (not a
+    # one-shot grep) to tell the 1st from the 2nd. Drop B waits for the 2nd enqueue — long after fakeclaude
+    # consumed drop A's trigger — so it never clobbers an unconsumed A.
     log "arming two-drop watcher (${FIXTURE_FILE##*/} on enqueue #1, ${FIXTURE_FILE_2##*/} on #2)…"
     (
       while [ "$(grep -cF 'send_message.enqueued' "${DAEMON_LOG}" 2>/dev/null || echo 0)" -lt 1 ]; do sleep 0.5; done

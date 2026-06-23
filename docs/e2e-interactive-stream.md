@@ -24,9 +24,10 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    claude is swapped for #642's scripted `fakeclaude` backend replaying a fixed JSONL fixture. No real
    claude, **zero claude turns**; re-running back-to-back yields the same pass. Run it with
    `DETERMINISTIC=1` — see [Deterministic mode (rung 4)](#deterministic-mode-rung-4).
-5. **Broaden** — multi-delta stream render + thinking indicator **shipped (#454)** and tool-use steps
-   (running → done, and failed) **shipped (#455, Layer 2c)** on rung 4; reconnect/replay (`mobile#436`,
-   Layer 2b) ticketed.
+5. **Broaden** — multi-delta stream render + thinking indicator **shipped (#454)**, tool-use steps
+   (running → done, and failed) **shipped (#455, Layer 2c)**, and reconnect continuity (reply survives a
+   mid-turn drop) **shipped (#476, Layer 2b)** on rung 4; reconnect **ordering** (`mobile#477`,
+   `blockedBy #476`) ticketed.
 
 ## Layer 1 — component render harness (rung 2)
 
@@ -210,6 +211,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `spinner` | the thinking spinner shows mid-turn, then clears at turn end | `spinner-open.jsonl` + `spinner-end.jsonl` | **two** |
 | `tool` (#455) | a tool step shows **running** in flight, then **done** after the result | `tool-open.jsonl` + `tool-done.jsonl` | **two** |
 | `tool-failed` (#455) | a failing tool step renders **failed** | `tool-failed.jsonl` | one |
+| `reconnect` (#476) | an in-flight reply **survives a mid-turn link drop** and renders exactly once | `reconnect-open.jsonl` + `reconnect-done.jsonl` | **two** |
 
 ```bash
 DETERMINISTIC=1 PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh                      # ping
@@ -217,6 +219,7 @@ DETERMINISTIC=1 SCENARIO=stream      PYRYCODE_SRC=~/Workspace/Projects/pyrycode 
 DETERMINISTIC=1 SCENARIO=spinner     PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # spinner
 DETERMINISTIC=1 SCENARIO=tool        PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # tool running→done
 DETERMINISTIC=1 SCENARIO=tool-failed PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # tool failed
+DETERMINISTIC=1 SCENARIO=reconnect   PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # reconnect continuity
 ```
 
 **`stream`** — `stream.jsonl` is three `text` lines with **distinct** `message.id`s, so the producer
@@ -270,6 +273,33 @@ content-description (tolerant, stable). The `tool_use` line must precede the `to
 correlate. Assertions never depend on the producer-derived `input_summary`/`result_summary` text — only
 the status CDs and the verbatim tool name.
 
+**`reconnect` (#476, Layer 2b)** — an in-flight reply must survive a mid-turn relay-link drop. It reuses
+the spinner's **two-drop causal fence** with a sever/restore inserted in the gap:
+
+1. **Drop A** (`reconnect-open.jsonl`, a `thinking`-only line) fires on the **1st** `send_message.enqueued`
+   → `turn_state(thinking)`, held open. The turn is now streaming.
+2. The test asserts the thinking spinner (proving the turn is open at the moment we sever), then
+   **severs and restores the phone's relay link** (`severAndRestoreLink()`): `RelayConnectionSupervisor.close()`
+   drops the socket and `connect()` re-dials. This is **phone-side only** — the daemon stays up, so its
+   in-ring event buffer survives and the reconnecting phone re-advertises `last_event_id` (#416) rather
+   than tripping the `resync`/gap path a daemon **restart** (#417) would. The helper awaits the
+   coordinator's `currentRepository` going `null` (drop landed) then non-null (fresh Noise pump reached
+   `Open`), so the drop+restore is proven, not assumed. The sever/restore injects **no** `send_message`,
+   so the two-drop watcher counts exactly two enqueues and is reused unchanged.
+3. **Drop B** (`reconnect-done.jsonl`, a complete reply + `end_turn`) fires on the **2nd**
+   `send_message.enqueued` → the held-open turn completes to the reconnected phone.
+
+Drop A carries **no** partial text by design: on the drop the connection-scoped repo tears down and the
+thread projection clears, so the **whole** reply arrives post-reconnect in drop B. This makes "no missing
+text" hold by construction — without depending on uncertain partial-turn replay semantics (events at or
+below `last_event_id` are not re-delivered by the gap-free path). The closing assert is the one deliberate
+count assertion in the suite: `assertCountEquals(1)` on the assembled reply text `"reconnected reply"` —
+the load-bearing dedup invariant (`event_id` high-water + `message_id` upsert, #337/#385). A re-delivered
+event must render the reply **exactly once**: no duplicate row, no missing text. That is the final
+assembled text (stable), not a transient delta count, so it does not violate the "never on counts" rule,
+which targets delta/timing counts. The drop/restore primitive `severAndRestoreLink()` is the reusable
+seam #477 (ordering) builds on.
+
 ## Verification status
 
 - **Verified here (host JVM, no device):** the #337 fold (full `RemoteConversationRepositoryTest`
@@ -278,7 +308,7 @@ the status CDs and the verbatim tool name.
   payload.
 - **Operator-run (needs your infra):** the actual headless-emulator + host-daemon run — for rung 3
   with real claude (`bash scripts/e2e-emulator.sh`), and for rung 4 with the scripted backend, each of
-  the five [scenarios](#scenarios-454) (`DETERMINISTIC=1 SCENARIO=ping|stream|spinner|tool|tool-failed …
+  the six [scenarios](#scenarios-454) (`DETERMINISTIC=1 SCENARIO=ping|stream|spinner|tool|tool-failed|reconnect …
   bash scripts/e2e-emulator.sh`, `DeterministicInteractiveStreamE2ETest`). That is the point of both
   rungs — prove the emulator↔host↔app chain end to end. Expect to tune on first run; these are
   hand-built first-green prototypes, not hardened gates. Re-running each rung-4 scenario back-to-back
@@ -324,6 +354,23 @@ These are grounded in the source but unverified end to end:
 - **`tool-failed` SCENARIO token.** The hyphen is fine in the `case` arm and on the CLI
   (`SCENARIO=tool-failed`). If a future operator prefers no hyphen, rename to `toolfail` in lockstep in
   the script `case` and this doc — the `@Test` method name is independent.
+- **Held-open turn resumes to the reconnected phone (`reconnect` #476).** After the phone re-attaches
+  (new conn_id / Noise session), the relay must route the daemon's continued stream to the new connection,
+  and drop B (fenced on the 2nd `send_message.enqueued`) completes the held-open turn. This is the shipped
+  relay+daemon contract (#416/#646) but unverified end to end **with a reconnect in the middle** — confirm
+  on first run. If the held-open turn does **not** resume to the reconnected phone, that is the
+  buildability finding to surface (do **not** restart the daemon to work around it — a restart trips the
+  #417 gap path this test must avoid).
+- **Brief drop stays in the in-ring window → no `resync` (`reconnect` #476).** The reconnect is immediate
+  (test-triggered, no host delay), so `last_event_id` cannot age out of the daemon's bounded buffer → the
+  gap-free path runs and the cursor is never `reset()`. `resync` is not cleanly UI-observable, so it is not
+  separately asserted; the observable proxy is the exactly-once render (a `resync`-driven full reload would
+  be a different code path). Confirm on first run that no `resync` is logged.
+- **`ProcessLifecycleOwner` driver doesn't fight the explicit drive (`reconnect` #476).** A stable
+  foreground instrumented run emits no `onStart`/`onStop` lifecycle edges, so `LifecycleConnectionDriver`
+  won't re-`connect()`/`close()` under the test. If an emulator focus blip does fire one, prefer the
+  real-transport-drop variant (`supervisor.currentConnection.value?.close()` + `supervisor.retry()`), which
+  doesn't cancel the supervision loop.
 
 ## Follow-ups to ticket
 
@@ -337,7 +384,8 @@ These are grounded in the source but unverified end to end:
   (#435, rides the same harness) adds tool rows, the session divider, and the connection banner.
 - **Coverage:** thinking indicator (hardest, screen-sourced) — **shipped (#454)**, alongside the
   multi-delta `stream`-render scenario; tool-use event assertion (running → done, and failed) —
-  **shipped (#455, Layer 2c)**; reconnect / replay (`mobile#436`, Layer 2b) remains ticketed.
+  **shipped (#455, Layer 2c)**; reconnect continuity (reply survives a mid-turn drop) —
+  **shipped (#476, Layer 2b)**; reconnect **ordering** (`mobile#477`, `blockedBy #476`) remains ticketed.
 - **#337 full scope:** `seq`-based ordering and replay de-dup across reconnect (a #402 concern; this
   fold concatenates in arrival order, correct within a single connection); and a `make`/Gradle wrapper
   for the orchestration plus fork-sync of any shared `bin/` script per the org convention.
