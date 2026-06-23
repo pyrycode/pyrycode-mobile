@@ -1048,6 +1048,42 @@ override suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: 
   monotonic `queued_msg_id` is never recycled, so a replayed drop hits an already-consumed id → a benign
   daemon stale-id reject (the `modal_cancel` no-token posture). Authorization is daemon-side.
 
+## `interrupt()` — the bare v2 `interrupt` control-send (#458)
+
+The **outbound, fire-and-forget** half of the remote-Esc feature: a bare `interrupt` control frame the daemon
+maps to `turnevent.Cancel` → one Esc keystroke to the supervised claude (pyrycode#707). The
+[`cancelModal`](#answermodal--cancelmodal--the-v2-modal-answercancel-control-send-438) template with **one
+behavioural departure** — interrupt gets **no reply**, so it uses plain `pump.send`, **not**
+`sendAndAwaitReply` (awaiting a reply that never comes would hang). [#458](../codebase/458.md).
+
+```kotlin
+suspend fun interrupt() {
+    check(pump.send(interruptRequest())) { "$TYPE_INTERRUPT not sent: session not connected" }
+}
+private fun interruptRequest(): Envelope = Envelope(
+    id = requestId.incrementAndGet(), type = TYPE_INTERRUPT,
+    ts = Clock.System.now().toString(), payload = JsonObject(emptyMap()),   // bare — no payload
+)
+```
+
+- **Bare connection-level frame — no `conversationId` argument.** The method takes none; the payload is the
+  empty object `{}` (the `listConversationsRequest()` precedent), with no `conversation_id` / no idempotency
+  key. Claude serialises turns ⇒ at most one running turn ⇒ a bare frame is unambiguous. **Replay-safe** (a
+  replayed Esc with no running turn is a daemon no-op), so the absence of a token is by design, not omission.
+- **Fire-and-forget — plain `pump.send`, no awaited reply.** The `check` throws `IllegalStateException` when
+  the pump is not `Open` (`send` returns `false`), reusing `sendAndAwaitReply`'s line-612 not-connected idiom
+  so the caller (`ThreadViewModel.sendInterrupt`) can swallow it. New companion const `TYPE_INTERRUPT =
+  "interrupt"` near `TYPE_MODAL_CANCEL`.
+- **Concrete-only, injected as a defaulted suspend lambda** off the
+  [coordinator passthrough](relay-repository-coordinator.md#outbound-interrupt-passthrough-458), exactly like
+  `answerModal`/`cancelModal` — **not** on the interface. The discriminator is the payload: a frame with no
+  `conversation_id` (modal-keyed, or here connection-level) is fetched off the concrete coordinator; a
+  `conversation_id`-carrying frame (`requestScreenSnapshot` / `dropQueuedMessage`) goes on the interface +
+  facade. See [Interrupt send path](interrupt-send-path.md).
+- **The `interactive` gate is server-authoritative** — the phone always sends (minimal client); a
+  non-interactive connection's interrupt is dropped daemon-side. **Permission-gate-exempt.** `security-sensitive`,
+  PASS: outbound-only, no untrusted parse, the empty payload has no injection surface, never logs.
+
 ## Stubs — the full interface compiles; later slices replace what they own
 
 Every method other than the three live read paths and the now-live `sendMessage` (#346) /
@@ -1134,6 +1170,7 @@ this implementation's surface. All three read paths are now **cold flows that de
 | `promote` — malformed `conversation_updated` reply (#348) | the #318 decode boundary's `SerializationException` / `IllegalArgumentException`, propagated to the caller; decode precedes `upsertConversation`, so **no projection mutated** (no partial promote) |
 | `requestScreenSnapshot` — server `error` `conversation.not_found` / any other / not-`Open` send / malformed `screen_snapshot` reply (#375) | `IllegalArgumentException` / `RelayErrorException` / `IllegalStateException` respectively via the shared `mapError` + `sendAndAwaitReply`'s `check`; a malformed reply throws the #374 `SerializationException` (⊂ `IllegalArgumentException`) **caller-side** after `sendAndAwaitReply` returns. A pure read — **nothing mutated** on any path; nothing logged |
 | `dropQueuedMessage` — server `error` `conversation.not_found` / any other (a stale / already-drained id, e.g. `queue.stale_id`) / not-`Open` send (#466) | `IllegalArgumentException` / `RelayErrorException(code, retryable)` / `IllegalStateException` respectively via the shared `mapError` + `sendAndAwaitReply`'s `check`. The empty `{}` ack carries nothing to decode and is ignored. A pure send — **no projection mutated** on any path (the backlog updates only via a later `queue_state`); nothing to roll back; nothing logged |
+| `interrupt` — not-`Open` send (`pump.send` → `false`, #458) | `IllegalStateException` from the `check` — **no reply awaited** (fire-and-forget, plain `pump.send` not `sendAndAwaitReply`), so it cannot hang. No projection mutated, nothing to roll back, nothing logged. The caller (`ThreadViewModel.sendInterrupt`) swallows it inert. No server-`error` path exists (the daemon sends no reply) |
 | Malformed `stall` payload (missing / wrong-typed `conversation_id`, #395) | `decodeStall` catches `IllegalArgumentException` (⊃ `SerializationException`) → `null` → the one envelope dropped, **single inbound collector survives** (AC #3); `stalledConversations` unchanged; nothing logged. A later valid `stall` still flips state |
 | `stall` on a non-`interactive` connection (#395) | dropped **before** decode by the `TYPE_STALL` capability gate — never surfaces (fail-closed, defence in depth on the server-side fan-out gate) |
 | Malformed `queue_state` payload (bad `conversation_id`, a bad item — `queued_msg_id` as a string, missing `text`, unparseable `ts`, #460) | `decodeQueueState` catches `IllegalArgumentException` (⊃ `SerializationException`, + the per-item `Instant.parse`) → `null` → the one envelope dropped, **collector survives** (AC #4); `queuedByConversation` unchanged; nothing logged. **One bad item drops the whole snapshot.** A later valid `queue_state` still surfaces |
