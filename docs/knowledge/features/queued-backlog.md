@@ -3,11 +3,12 @@
 A per-conversation **ordered list** the thread layer observes to learn which messages the daemon has
 **queued** while claude is busy — so the phone can render the backlog instead of silently dropping the
 turns the user fired during a long response. Landed in [#460](../codebase/460.md) (the data substrate,
-split from #429). The **visible** render (the backlog list UI) is the consumer slice **#461**; dropping a
-queued entry (`dequeue_message`) is **#462** (blockedBy #461).
+split from #429). The **visible** render (the backlog list UI) shipped in
+[#461](../codebase/461.md) → [`QueuedBacklog`](queued-backlog-section.md); dropping a queued entry
+(`dequeue_message`) is **#462** (blockedBy #461).
 
 This is the **data layer only**: decode the inbound `queue_state` snapshot into observable state. It
-renders nothing.
+renders nothing — the [queued backlog section](queued-backlog-section.md) (#461) is what shows it.
 
 ## The signal
 
@@ -110,7 +111,10 @@ Memory posture is bounded by **replacement** (each snapshot overwrites a convers
 accumulates), the same daemon-supplied-id growth posture `lastMessages` / `messagesByConversation` /
 `stalledConversations` already accept under the paired-daemon threat model. `queued_msg_id` is a
 per-conversation counter, not a nonce (no constant-time-compare concern). UI-leakage threats
-(screenshot/overlay of the rendered backlog text) belong to **#461** (the visible render).
+(screenshot/overlay of the rendered backlog text) were forwarded to **#461** (the visible render) and
+**resolved there**: `entry.text` is the same user-content class the thread host already renders for sent
+messages **without** `FLAG_SECURE`, so the [queued backlog section](queued-backlog-section.md) adds no new
+screen-capture surface — see [#461](../codebase/461.md). #461 is therefore **not** `security-sensitive`.
 
 ## Related
 
@@ -124,7 +128,7 @@ per-conversation counter, not a nonce (no constant-time-compare concern). UI-lea
 - [ConversationRepository](conversation-repository.md) — the interface the defaulted `observeQueue` joins;
   [`StableConversationRepository`](stable-conversation-repository.md) — the facade that makes it reach the
   thread ViewModel.
-- Consumers: **#461** (render the backlog list, Figma 16-8 design-owed), **#462** (drop a queued entry via
-  `dequeue_message`, blockedBy #461).
+- Consumers: **#461** (render the backlog list — **shipped**, [`QueuedBacklog`](queued-backlog-section.md) /
+  [codebase #461](../codebase/461.md)), **#462** (drop a queued entry via `dequeue_message`, blockedBy #461).
 - Server SSOT: pyrycode#705/#720 (`queue_state` / `dequeue_message` wire types, `queued_msg_id` `uint64`),
   #722 (producer), #723 (`dequeue_message` handler), `docs/protocol-mobile.md` § Queue (v2), ADR 025.
