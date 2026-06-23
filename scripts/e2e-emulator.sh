@@ -44,7 +44,7 @@
 #   PORT=8888  DEVICE=pixel2Api33Atd  PAIR_NAME=e2e-emulator  PYRY_NAME=e2e-emulator
 #   PYRY_BIN=pyry  RELAY_BIN=pyrycode-relay
 #   DETERMINISTIC=  PYRYCODE_SRC=  FAKE_CLAUDE_BIN=  FIXTURE_FILE=  INITIAL_UUID=  CONV_UUID=
-#   SEED_CHANNEL_NAME=e2e-ping
+#   SEED_CHANNEL_NAME=e2e-seed
 
 set -euo pipefail
 
@@ -85,7 +85,10 @@ FAKE_CLAUDE_BIN="${FAKE_CLAUDE_BIN:-}"        # prebuilt fakeclaude path (overri
 FIXTURE_FILE="${FIXTURE_FILE:-${REPO_ROOT}/scripts/e2e-fixtures/ping.jsonl}"
 INITIAL_UUID="${INITIAL_UUID:-43143143-4314-4314-8314-431431431431}"  # bootstrap session JSONL stem
 CONV_UUID="${CONV_UUID:-c0a70431-0431-4031-8031-043104310431}"        # seeded channel id
-SEED_CHANNEL_NAME="${SEED_CHANNEL_NAME:-e2e-ping}"  # MUST equal DeterministicInteractiveStreamE2ETest.SEED_CHANNEL_NAME
+SEED_CHANNEL_NAME="${SEED_CHANNEL_NAME:-e2e-seed}"  # MUST equal DeterministicInteractiveStreamE2ETest.SEED_CHANNEL_NAME
+                                                    # Deliberately NOT containing "ping": the seeded channel name
+                                                    # renders verbatim in the thread top bar, and the reply assert is a
+                                                    # "ping" substring match — a "ping"-bearing name would false-green it.
 
 RELAY_PID=""
 DAEMON_PID=""
@@ -277,7 +280,7 @@ log "daemon up (the test waits for the relay session to open before sending)."
 if [ -n "${DETERMINISTIC}" ]; then
   log "arming fixture-drop watcher (waits for send_message.ack, then drops ${FIXTURE_FILE##*/})…"
   (
-    while ! grep -q 'send_message.ack' "${DAEMON_LOG}" 2>/dev/null; do
+    while ! grep -qF 'send_message.ack' "${DAEMON_LOG}" 2>/dev/null; do
       sleep 0.5
     done
     cp "${FIXTURE_FILE}" "${JSONL_TRIGGER}"

@@ -120,7 +120,9 @@ file → the producer tails exactly the file `fakeclaude` writes.
    sessions dir `<HOME>/.claude/projects/<encode(HOME)>` (the daemon's exact tail dir, `/` and `.`
    both → `-`); pre-create `<INITIAL_UUID>.jsonl` (avoids the cold-start tail race); write one
    promoted row to `conversations.json` with `current_session_id == INITIAL_UUID`,
-   `is_promoted: true`, `name: "e2e-ping"`.
+   `is_promoted: true`, `name: "e2e-seed"` (deliberately **not** `"…ping…"`: the seeded channel name
+   renders verbatim in the thread top bar, and the reply is asserted as a `"ping"` substring — a
+   `"ping"`-bearing channel name would false-green the test on the title alone).
 3. **Daemon** — adds `-pyry-claude=<fakeclaude>`, `-pyry-workdir=<HOME>`, and the
    `PYRY_FAKE_CLAUDE_*` env (`TUI=1`, `INITIAL_UUID`, `SESSIONS_DIR`, `JSONL_TRIGGER`).
 4. **Fixture-drop watcher** — a background job waits for the `send_message.ack` line in `daemon.log`

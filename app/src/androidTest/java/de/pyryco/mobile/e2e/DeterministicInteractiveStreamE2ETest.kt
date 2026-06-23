@@ -55,7 +55,7 @@ class DeterministicInteractiveStreamE2ETest {
 
     @Test
     fun interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread() {
-        // 1. A paired launch lands on the channel list. The host-seeded promoted channel "e2e-ping"
+        // 1. A paired launch lands on the channel list. The host-seeded promoted channel "e2e-seed"
         //    surfaces once list_conversations round-trips, so waiting for that text node implicitly
         //    waits for the connection + list response.
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
@@ -104,8 +104,12 @@ class DeterministicInteractiveStreamE2ETest {
         const val PING = "ping"
 
         // The host-seeded promoted channel's name (scripts/e2e-emulator.sh writes conversations.json
-        // with name="e2e-ping", is_promoted=true). Keep the two in sync.
-        const val SEED_CHANNEL_NAME = "e2e-ping"
+        // with name="e2e-seed", is_promoted=true). Keep the two in sync. Deliberately does NOT contain
+        // "ping": the channel name renders verbatim in the thread top bar (ThreadTopAppBar shows
+        // displayName), and the reply assert below is a "ping" substring match — a "ping"-bearing name
+        // would satisfy that assert on the title alone and false-green the test even if the scripted
+        // reply never arrived.
+        const val SEED_CHANNEL_NAME = "e2e-seed"
 
         // A non-"ping" prompt: the scripted backend ignores it and always replies "ping", so the only
         // on-screen "ping" is the scripted reply — no baseline/count dance needed.
