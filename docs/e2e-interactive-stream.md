@@ -15,7 +15,7 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    `RemoteConversationRepository` fold → `ThreadViewModel` → `ThreadScreen`, plus the first two render
    cases (text deltas → finalized message; `turn_state` → thinking spinner). Layer 1b (#435, split
    3-way, all riding the same harness) adds tool rows (**shipped #472**), the connection banner
-   (**shipped #474**), and the session divider (#473, blocked on the unshipped #336 fold). See
+   (**shipped #474**), and the session divider (**shipped #473**). See
    [Layer 1 — component render harness (rung 2)](#layer-1--component-render-harness-rung-2).
 3. **Emulator + host daemon + real constrained claude** ← **what this directory ships.** The real app
    on a headless emulator connects to a host `pyry` + relay, sends "reply with exactly: ping", and
@@ -62,18 +62,21 @@ Key facts (see [`codebase/432.md`](knowledge/codebase/432.md) for the full notes
   text case asserts after `turn_end` (the streaming body reveals progressively and carries the caret).
 
 Layer 1b (**#435**, blocked on #432) extends the same harness with tool rows, the connection banner, and
-the session divider — additive scripting methods, no re-wiring. #435 was split 3-way 2026-06-23:
-**tool rows shipped (#472)** — `pushToolUse` / `pushToolResult` + `ScriptedToolRowTest`, asserting
-running → done (the absence triad) and failed (see [`codebase/472.md`](knowledge/codebase/472.md)); the
-**connection banner shipped (#474)** — `pushConnectionState` + `ScriptedConnectionBannerTest`, asserting
+the session divider — additive scripting methods, no re-wiring. #435 was split 3-way 2026-06-23, **all
+three now shipped**: **tool rows (#472)** — `pushToolUse` / `pushToolResult` + `ScriptedToolRowTest`,
+asserting running → done (the absence triad) and failed (see [`codebase/472.md`](knowledge/codebase/472.md));
+the **connection banner (#474)** — `pushConnectionState` + `ScriptedConnectionBannerTest`, asserting
 the connecting / reconnecting-countdown / offline affordances and a present→absent fence for connected
-(see [`codebase/474.md`](knowledge/codebase/474.md)); only the session divider (#473, blocked on the
-unshipped #336 fold) is still ticketed.
+(see [`codebase/474.md`](knowledge/codebase/474.md)); and the **session divider (#473)** —
+`pushSessionTransition` + `ScriptedSessionBoundaryTest`, asserting one folded `SessionBoundary` draws a
+delimiter positioned between the two cross-session messages, driven through the **real** #336 fold (see
+[`codebase/473.md`](knowledge/codebase/473.md)).
 
 | Piece | File |
 | --- | --- |
 | Tool-step rows (running → done; failed) — `pushToolUse` / `pushToolResult` scripting + builders | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#472), `ScriptedToolRowTest.kt` (#472) |
 | Connection banner (connecting / reconnecting / offline; absent when connected) — `pushConnectionState` scripting (lifted `FakeConnectionStateSource` field) | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#474), `ScriptedConnectionBannerTest.kt` (#474) |
+| Session-boundary divider (one delimiter, between two cross-session messages) — `pushSessionTransition` scripting + `sessionTransitionEnvelope` builder (ported from `RemoteConversationRepositoryTest`) | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#473), `ScriptedSessionBoundaryTest.kt` (#473) |
 
 ## What rung 3 is made of
 

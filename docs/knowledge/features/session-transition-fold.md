@@ -180,6 +180,10 @@ the arm and the invariant exist so the decode is exhaustive and expressible, and
   `observeMessages` thread read (#313) this extends and the unified `threadByConversation` store.
 - [SessionBoundaryDelimiter](session-boundary-delimiter.md) — the render half (#135/#192); consumes the
   `ThreadItem.SessionBoundary` rows this fold produces.
+- Component render test: [#473 session-boundary divider](../codebase/473.md) — the e2e-ladder Layer-1b
+  test that drives **this** fold (not the fake) through to render, asserting one folded boundary draws a
+  delimiter between two cross-session messages. The data-layer behaviour is unit-tested in
+  `RemoteConversationRepositoryTest`; #473 adds the missing render rung.
 - Sibling interactive folds: [live-session events](live-session-events.md) (#385, the shared decode
   substrate + gate), [stall state](stall-state.md) (#395), [queued backlog](queued-backlog.md) (#460),
   [modal events](modal-events.md) (#437).

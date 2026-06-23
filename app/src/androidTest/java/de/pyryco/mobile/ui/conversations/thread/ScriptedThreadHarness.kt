@@ -155,6 +155,29 @@ class ScriptedThreadHarness(
     ) = pump.push(toolResultEnvelope(conversationId, turnId, toolUseId, isError, resultSummary))
 
     /**
+     * Script one `session_transition` — folds a `ThreadItem.SessionBoundary` into the thread in arrival
+     * order (#336), routed on the harness's own [conversationId] like the other `push*` methods so the
+     * folded boundary lands in the thread the screen observes. [reason] stays a plain `String` (matching
+     * the wire and the unit-test builder); the harness does not constrain it to the recognized set
+     * (`clear` / `idle_evict` / `workspace_change`). Named args below so the builder's param order can't
+     * silently transpose [workspaceCwd] into the `occurred_at` slot.
+     */
+    fun pushSessionTransition(
+        previousSessionId: String,
+        newSessionId: String,
+        reason: String,
+        workspaceCwd: String? = null,
+    ) = pump.push(
+        sessionTransitionEnvelope(
+            conversationId = conversationId,
+            previousSessionId = previousSessionId,
+            newSessionId = newSessionId,
+            reason = reason,
+            workspaceCwd = workspaceCwd,
+        ),
+    )
+
+    /**
      * Drive the connection banner (#474). Pushes [state] into the [connectionStateSource] — a retained
      * `MutableStateFlow`, so (unlike the `replay = 0` pump stream) a value emitted before the VM's
      * collector subscribes is re-emitted on subscribe; no readiness gate is needed beyond [start]'s
@@ -311,6 +334,33 @@ private fun toolResultEnvelope(
                 """{"conversation_id":"$conversationId","turn_id":"$turnId","tool_use_id":"$toolUseId","is_error":$isError,"result_summary":"$resultSummary"}""",
             ),
     )
+
+/**
+ * A `session_transition` envelope `{conversation_id, previous_session_id, new_session_id, reason,
+ * occurred_at, workspace_cwd}` (#336), ported verbatim from `RemoteConversationRepositoryTest`.
+ * [workspaceCwd] emits `"workspace_cwd":null` when null (the `clear` / `idle_evict` shape) and a quoted
+ * string otherwise (the `workspace_change` shape).
+ */
+private fun sessionTransitionEnvelope(
+    conversationId: String,
+    previousSessionId: String,
+    newSessionId: String,
+    reason: String,
+    occurredAt: String = TS,
+    workspaceCwd: String? = null,
+    id: Long = 1L,
+): Envelope {
+    val cwd = workspaceCwd?.let { "\"$it\"" } ?: "null"
+    return Envelope(
+        id = id,
+        type = "session_transition",
+        ts = TS,
+        payload =
+            MobileJson.parseToJsonElement(
+                """{"conversation_id":"$conversationId","previous_session_id":"$previousSessionId","new_session_id":"$newSessionId","reason":"$reason","occurred_at":"$occurredAt","workspace_cwd":$cwd}""",
+            ),
+    )
+}
 
 private fun conversationsEnvelope(rawConversationsPayload: String): Envelope =
     Envelope(
