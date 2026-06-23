@@ -24,7 +24,10 @@
 #       `send_message.enqueued` cursor-stamp fence, so the scripted reply tails the real producer
 #       mid-test. The `spinner`, `tool`, and `reconnect` scenarios drop twice — a 2nd, turn-ending
 #       fixture on the 2nd enqueue — to hold the turn open long enough to observe the transient state
-#       (thinking spinner / running tool row) or to span a mid-turn link drop (reconnect).
+#       (thinking spinner / running tool row) or to span a mid-turn link drop (reconnect). The
+#       `replay-order` scenario also drops twice but fences drop B on the relay logging the phone-leg
+#       disconnect (a severed phone cannot send a 2nd enqueue), so the ordered sequence accrues in the
+#       daemon's in-ring buffer entirely while the phone is offline, then replays in order on reconnect.
 #   5. Tear everything down (trap on EXIT).
 #
 # Prerequisites (host):
@@ -48,11 +51,14 @@
 #   DETERMINISTIC=1 SCENARIO=tool        PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, tool running→done
 #   DETERMINISTIC=1 SCENARIO=tool-failed PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, tool failed
 #   DETERMINISTIC=1 SCENARIO=reconnect   PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, reconnect continuity
+#   DETERMINISTIC=1 SCENARIO=replay-order PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh  # rung 4, post-reconnect replay ordering
 # Tunables (env):
 #   PORT=8888  DEVICE=pixel2Api33Atd  PAIR_NAME=e2e-emulator  PYRY_NAME=e2e-emulator
 #   PYRY_BIN=pyry  RELAY_BIN=pyrycode-relay
 #   DETERMINISTIC=  SCENARIO=ping  PYRYCODE_SRC=  FAKE_CLAUDE_BIN=  FIXTURE_FILE=  FIXTURE_FILE_2=
 #   INITIAL_UUID=  CONV_UUID=  SEED_CHANNEL_NAME=e2e-seed
+#   DISCONNECT_LOG=<relay.log>  DISCONNECT_TOKEN=disconnect  (replay-order only: where/what to watch for
+#                                                             the phone-leg drop that fences drop B)
 
 set -euo pipefail
 
@@ -92,9 +98,18 @@ PYRYCODE_SRC="${PYRYCODE_SRC:-}"              # local pyrycode checkout (to buil
 FAKE_CLAUDE_BIN="${FAKE_CLAUDE_BIN:-}"        # prebuilt fakeclaude path (overrides PYRYCODE_SRC build)
 FIXTURES_DIR="${REPO_ROOT}/scripts/e2e-fixtures"
 SCENARIO="${SCENARIO:-ping}"                  # which deterministic scenario: ping | stream | spinner (#454) |
-                                              # tool | tool-failed (#455) | reconnect (#476). Resolved to a
-                                              # @Test method + fixture(s) in the preflight below; bare
-                                              # DETERMINISTIC=1 (SCENARIO unset → ping) keeps #431.
+                                              # tool | tool-failed (#455) | reconnect (#476) |
+                                              # replay-order (#477). Resolved to a @Test method + fixture(s)
+                                              # in the preflight below; bare DETERMINISTIC=1 (SCENARIO unset
+                                              # → ping) keeps #431.
+
+# replay-order (#477) only: drop B fences on the relay logging the phone-leg disconnect (a severed phone
+# cannot send a 2nd send_message to fence on enqueue #2). The relay terminates the phone's WebSocket, so
+# relay.log is the most reliable place to observe the drop; daemon.log is the fallback. The exact log
+# token is the chief first-run unknown (relay/daemon source lives in pyrycode, not verifiable here) —
+# override DISCONNECT_TOKEN / DISCONNECT_LOG and confirm on the first operator run. See docs.
+DISCONNECT_LOG="${DISCONNECT_LOG:-${RELAY_LOG}}"
+DISCONNECT_TOKEN="${DISCONNECT_TOKEN:-disconnect}"
 INITIAL_UUID="${INITIAL_UUID:-43143143-4314-4314-8314-431431431431}"  # bootstrap session JSONL stem
 CONV_UUID="${CONV_UUID:-c0a70431-0431-4031-8031-043104310431}"        # seeded channel id
 SEED_CHANNEL_NAME="${SEED_CHANNEL_NAME:-e2e-seed}"  # MUST equal DeterministicInteractiveStreamE2ETest.SEED_CHANNEL_NAME
@@ -139,6 +154,10 @@ if [ -n "${DETERMINISTIC}" ]; then
   # scenarios (`spinner`/`tool`/`reconnect`) set a 2nd (turn-ending) drop; FIXTURE_FILE / FIXTURE_FILE_2
   # stay env-overridable for first-run tuning.
   FIXTURE_FILE_2="${FIXTURE_FILE_2:-}"
+  # How the watcher fences drop B (the 2nd drop): `enqueue` = the 2nd `send_message.enqueued` (the held-open
+  # two-drop scenarios); `disconnect` = the relay logging the phone-leg drop (replay-order #477, whose phone
+  # is offline when drop B must fire). Only the replay-order arm overrides it.
+  DROP_B_FENCE="enqueue"
   case "${SCENARIO}" in
     ping)
       TEST_METHOD="interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread"
@@ -167,8 +186,14 @@ if [ -n "${DETERMINISTIC}" ]; then
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/reconnect-open.jsonl}"      # drop A: thinking, held open across the drop
       FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/reconnect-done.jsonl}"  # drop B: complete reply + turn_end, post-reconnect
       ;;
+    replay-order)
+      TEST_METHOD="interactiveTurn_seededChannel_missedEventsReplayInOrderAfterReconnect"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/replay-order-open.jsonl}"  # drop A: thinking, held open across the outage
+      FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/replay-order.jsonl}"   # drop B: ordered sequence, produced while offline
+      DROP_B_FENCE=disconnect                                                  # drop B fences on the phone-leg disconnect, not enqueue #2
+      ;;
     *)
-      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed | reconnect)"
+      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed | reconnect | replay-order)"
       ;;
   esac
   log "deterministic scenario: ${SCENARIO} → ${TEST_METHOD}"
@@ -332,7 +357,27 @@ log "daemon up (the test waits for the relay session to open before sending)."
 # single kill of this subshell fully reaps the watcher on EXIT — no orphaned `tail` following a deleted
 # file.
 if [ -n "${DETERMINISTIC}" ]; then
-  if [ -n "${FIXTURE_FILE_2}" ]; then
+  if [ -n "${FIXTURE_FILE_2}" ] && [ "${DROP_B_FENCE}" = "disconnect" ]; then
+    # Straddle-the-outage scenario (replay-order #477): two causally-fenced drops, but the sever/restore
+    # straddles drop B. Drop A on the 1st enqueue opens + HOLDS the turn (no end_turn); the test then severs
+    # the phone link. Drop B must fire DURING the offline window — but a severed phone cannot send a 2nd
+    # send_message, so it cannot fence on enqueue #2 (the reconnect path). Instead fence drop B on the relay
+    # logging the phone-leg disconnect: the ordered sequence then accrues in the daemon's in-ring buffer
+    # entirely while the phone is offline, and replays in order when the test restores the link. Baseline
+    # the disconnect-token count AFTER drop A, then wait for it to INCREASE — a bare `grep -q` would
+    # false-fire on a stale churn line from before the sever. (Robust `|| true` count idiom: `|| echo 0`
+    # would append a 2nd "0" and break the integer compare on a zero-count existing file — see PR notes.)
+    log "arming disconnect-fenced watcher (${FIXTURE_FILE##*/} on enqueue #1, ${FIXTURE_FILE_2##*/} on phone-leg disconnect)…"
+    log "  drop-B disconnect fence: token '${DISCONNECT_TOKEN}' in ${DISCONNECT_LOG##*/} (override DISCONNECT_TOKEN / DISCONNECT_LOG; confirm on first operator run)"
+    (
+      while [ "$(grep -cF 'send_message.enqueued' "${DAEMON_LOG}" 2>/dev/null || true)" -lt 1 ]; do sleep 0.5; done
+      cp "${FIXTURE_FILE}" "${JSONL_TRIGGER}"        # drop A: thinking, held open across the outage
+      drop_b_base="$(grep -cF "${DISCONNECT_TOKEN}" "${DISCONNECT_LOG}" 2>/dev/null || true)"; drop_b_base="${drop_b_base:-0}"
+      while [ "$(grep -cF "${DISCONNECT_TOKEN}" "${DISCONNECT_LOG}" 2>/dev/null || true)" -le "${drop_b_base}" ]; do sleep 0.5; done
+      cp "${FIXTURE_FILE_2}" "${JSONL_TRIGGER}"      # drop B: ordered sequence, produced while the phone is offline
+    ) &
+    WATCHER_PID=$!
+  elif [ -n "${FIXTURE_FILE_2}" ]; then
     # Two-drop scenarios (spinner #454, tool #455, reconnect #476): two causally-fenced drops. Drop A on
     # the 1st enqueue opens a turn and HOLDS it open (no end_turn) so the transient state is observable
     # (thinking spinner / running tool row) or so the turn is still streaming when the test severs the

@@ -25,9 +25,9 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    claude, **zero claude turns**; re-running back-to-back yields the same pass. Run it with
    `DETERMINISTIC=1` — see [Deterministic mode (rung 4)](#deterministic-mode-rung-4).
 5. **Broaden** — multi-delta stream render + thinking indicator **shipped (#454)**, tool-use steps
-   (running → done, and failed) **shipped (#455, Layer 2c)**, and reconnect continuity (reply survives a
-   mid-turn drop) **shipped (#476, Layer 2b)** on rung 4; reconnect **ordering** (`mobile#477`,
-   `blockedBy #476`) ticketed.
+   (running → done, and failed) **shipped (#455, Layer 2c)**, reconnect continuity (reply survives a
+   mid-turn drop) **shipped (#476, Layer 2b)**, and reconnect **ordering** (events buffered while
+   offline replay in order) **shipped (#477, Layer 2d)** on rung 4.
 
 ## Layer 1 — component render harness (rung 2)
 
@@ -197,8 +197,9 @@ non-empty text:
 ```
 
 `#454` added the `stream` + `spinner` fixtures below; `#455` added the `tool-open` / `tool-done` /
-`tool-failed` tool-step fixtures (same shape, with `tool_use` / `tool_result` content blocks); `#436`
-(reconnect + replay) builds its fixtures on this same shape.
+`tool-failed` tool-step fixtures (same shape, with `tool_use` / `tool_result` content blocks); `#476`
+(reconnect) and `#477` (replay-order) build their fixtures on this same shape — `replay-order.jsonl`
+mirrors `stream.jsonl`'s three-delta shape (distinct `message.id`s, last with `stop_reason: "end_turn"`).
 
 ### Scenarios (#454)
 
@@ -215,6 +216,7 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `tool` (#455) | a tool step shows **running** in flight, then **done** after the result | `tool-open.jsonl` + `tool-done.jsonl` | **two** |
 | `tool-failed` (#455) | a failing tool step renders **failed** | `tool-failed.jsonl` | one |
 | `reconnect` (#476) | an in-flight reply **survives a mid-turn link drop** and renders exactly once | `reconnect-open.jsonl` + `reconnect-done.jsonl` | **two** |
+| `replay-order` (#477) | events produced **entirely while offline** replay **in order, each exactly once** | `replay-order-open.jsonl` + `replay-order.jsonl` | **two** (drop B on disconnect) |
 
 ```bash
 DETERMINISTIC=1 PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh                      # ping
@@ -222,7 +224,8 @@ DETERMINISTIC=1 SCENARIO=stream      PYRYCODE_SRC=~/Workspace/Projects/pyrycode 
 DETERMINISTIC=1 SCENARIO=spinner     PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # spinner
 DETERMINISTIC=1 SCENARIO=tool        PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # tool running→done
 DETERMINISTIC=1 SCENARIO=tool-failed PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # tool failed
-DETERMINISTIC=1 SCENARIO=reconnect   PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # reconnect continuity
+DETERMINISTIC=1 SCENARIO=reconnect    PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # reconnect continuity
+DETERMINISTIC=1 SCENARIO=replay-order PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # post-reconnect replay ordering
 ```
 
 **`stream`** — `stream.jsonl` is three `text` lines with **distinct** `message.id`s, so the producer
@@ -303,6 +306,47 @@ assembled text (stable), not a transient delta count, so it does not violate the
 which targets delta/timing counts. The drop/restore primitive `severAndRestoreLink()` is the reusable
 seam #477 (ordering) builds on.
 
+**`replay-order` (#477, Layer 2d)** — a *sequence* of events produced **entirely while the phone is
+offline** must replay **in production order, each exactly once**, after reconnect. Where the continuity
+case (#476) proves a single reply survives a drop, this proves an ordered backlog buffered during the
+outage replays in order — and genuinely exercises the dedup fold on a **buffered-during-outage
+re-delivery**, the path #476 did not reach (its reply arrived strictly *after* reconnect, so its
+`event_id` was above the advertised cursor → delivered once, never deduplicated).
+
+It forks the reconnect two-drop fence, but the sever and restore **straddle** the event production. The
+atomic `severAndRestoreLink()` is split into its two halves — `severLink()` (close + await
+`currentRepository == null`) and `restoreLink()` (connect + await `currentRepository != null`) — so the
+test can hold an offline window between them:
+
+1. **Drop A** (`replay-order-open.jsonl`, a `thinking`-only line) fires on the **1st**
+   `send_message.enqueued` → `turn_state(thinking)`, held open. The test asserts the spinner (the turn is
+   open at the moment we sever).
+2. **`severLink()`** — the phone goes offline. The test then holds for a bounded `OFFLINE_WINDOW_MS`.
+3. **Drop B** (`replay-order.jsonl`, three ordered `assistant_delta` lines + `end_turn`) fires not on a
+   2nd enqueue (a severed phone cannot send one) but on the **relay logging the phone-leg disconnect** —
+   so the ordered sequence accrues in the daemon's in-ring buffer **entirely while the phone is offline**.
+4. **`restoreLink()`** — the fresh Noise `hello` re-advertises `last_event_id` (#416); the buffered
+   sequence (all `event_id` above the cursor) replays whole into the fresh, empty repo, which folds the
+   deltas in arrival (= production) order.
+
+The offline-window hold is **not** the forbidden fixed-delay-to-catch-a-transient: the buffered events
+are **durable** (they replay whenever the phone returns), so erring long is free, and the order /
+exactly-once asserts hold whether the deltas arrive as pure replay (window long enough) or a replay/live
+mix (window short) — a too-short window only *under-exercises* "entirely offline", never false-greens
+(a reordering still breaks the substring) nor false-reds. The window is a determinism quality knob.
+
+Drop A carries **no** partial text by design (same as #476), so the **whole** ordered sequence arrives
+post-reconnect into the fresh repo and "no missing segment, in order" holds by construction. The closing
+asserts reuse #476's one-deliberate-count exception: the **order** check matches the cross-delta-boundary
+concatenation `"alpha bravo charlie"` (present only if the deltas assembled in production order — a
+reordered replay breaks the substring), and `assertCountEquals(1)` on it is the dedup invariant on a
+genuinely buffered-during-outage re-delivery.
+
+The drop-B disconnect fence is wired as the overridable `DISCONNECT_TOKEN` / `DISCONNECT_LOG` (defaulting
+to a `"disconnect"` substring in `relay.log`) and baseline-counted (wait for the count to *increase* past
+the level captured after drop A) so a stale connection-churn line cannot false-fire it. The exact relay
+token is the chief first-run unknown (see Assumptions).
+
 ## Verification status
 
 - **Verified here (host JVM, no device):** the #337 fold (full `RemoteConversationRepositoryTest`
@@ -373,22 +417,42 @@ These are grounded in the source but unverified end to end:
   foreground instrumented run emits no `onStart`/`onStop` lifecycle edges, so `LifecycleConnectionDriver`
   won't re-`connect()`/`close()` under the test. If an emulator focus blip does fire one, prefer the
   real-transport-drop variant (`supervisor.currentConnection.value?.close()` + `supervisor.retry()`), which
-  doesn't cancel the supervision loop.
+  doesn't cancel the supervision loop. (Same caveat for `replay-order` #477, which drives the same seam.)
+- **Disconnect fence token (`replay-order` #477, PRIMARY UNKNOWN).** Drop B fences on the relay/daemon
+  logging the phone-leg drop (a severed phone cannot send a 2nd `send_message`). The watcher greps
+  `DISCONNECT_LOG` (default `relay.log`) for `DISCONNECT_TOKEN` (default a `"disconnect"` substring),
+  baseline-counted so a stale churn line cannot false-fire. The exact relay/daemon token is unverifiable
+  from this repo (that source lives in pyrycode) — **confirm/adjust on first operator run**; if the token
+  never appears, drop B never drops and the test times out. Override with `DISCONNECT_TOKEN=… DISCONNECT_LOG=…`.
+- **Offline window length (`replay-order` #477).** `OFFLINE_WINDOW_MS = 5_000L` (in the test) must exceed
+  [disconnect-detect + watcher poll 0.5s + `fakeclaude` append + producer tail]. Erring long is free (the
+  buffered events are durable); erring short only *under-exercises* "entirely while offline" — the
+  order/exactly-once verdict still holds — so lengthen it if the replay arrives as a live mix rather than a
+  clean post-reconnect batch.
+- **Buffered sequence replays in production order (`replay-order` #477).** After the phone re-attaches, the
+  relay routes the daemon's buffered stream to the new connection in ascending `event_id`, and the fresh
+  repo folds it in arrival (= production) order — shipped #416/#647 contract, but unverified end to end
+  **with the whole sequence produced during the outage**. If the replayed order is wrong, that is the
+  buildability finding to surface — do **not** restart the daemon to force it (that trips the #417 gap path).
+- **Brief drop stays in the in-ring window → no `resync` (`replay-order` #477).** Same as #476: the
+  reconnect is immediate, so `last_event_id` cannot age out → gap-free path, cursor never `reset()`. Confirm
+  no `resync` is logged.
 
 ## Follow-ups to ticket
 
 - **Rung 4 (shipped, #431; extended #454, #455):** deterministic host backend via #642's scripted
   `fakeclaude` — see [Deterministic mode (rung 4)](#deterministic-mode-rung-4). #454 added the
   multi-delta `stream` render + the `spinner` scenario, and #455 added the `tool` / `tool-failed`
-  tool-step scenarios (see [Scenarios](#scenarios-454)); `#436` (reconnect + replay, Layer 2b) extends
-  the same fixture format.
+  tool-step scenarios (see [Scenarios](#scenarios-454)); #476 (reconnect continuity) and #477
+  (reconnect ordering) — the #436 split — extend the same fixture format.
 - **Rung 2 (Layer 1a shipped, #432):** the cheap Compose render harness — see
   [Layer 1 — component render harness (rung 2)](#layer-1--component-render-harness-rung-2). Layer 1b
   (#435, rides the same harness) adds tool rows, the session divider, and the connection banner.
 - **Coverage:** thinking indicator (hardest, screen-sourced) — **shipped (#454)**, alongside the
   multi-delta `stream`-render scenario; tool-use event assertion (running → done, and failed) —
   **shipped (#455, Layer 2c)**; reconnect continuity (reply survives a mid-turn drop) —
-  **shipped (#476, Layer 2b)**; reconnect **ordering** (`mobile#477`, `blockedBy #476`) remains ticketed.
+  **shipped (#476, Layer 2b)**; reconnect **ordering** (events buffered while offline replay in order) —
+  **shipped (#477, Layer 2d)**.
 - **#337 full scope:** `seq`-based ordering and replay de-dup across reconnect (a #402 concern; this
   fold concatenates in arrival order, correct within a single connection); and a `make`/Gradle wrapper
   for the orchestration plus fork-sync of any shared `bin/` script per the org convention.

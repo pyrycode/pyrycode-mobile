@@ -17,6 +17,7 @@ import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -31,7 +32,7 @@ import org.koin.core.context.GlobalContext
  * `fakeclaude` backend (pyrycode #642) — **no real claude, zero claude turns** — and asserts a
  * scripted reply renders in the thread.
  *
- * Six scenarios, one per script invocation (the harness runs exactly one `@Test` method per run,
+ * Seven scenarios, one per script invocation (the harness runs exactly one `@Test` method per run,
  * selected by `SCENARIO` in `scripts/e2e-emulator.sh`):
  *  - `ping` (default, #431) — a single-line reply renders.
  *  - `stream` (#454) — a multi-`assistant_delta` reply assembles into one message.
@@ -43,6 +44,11 @@ import org.koin.core.context.GlobalContext
  *  - `reconnect` (#476) — an in-flight reply survives a mid-turn relay-link drop: the turn is held
  *    open (two-fixture drop, spinner-style), the phone's link is severed and restored across the gap,
  *    and the reply renders exactly once after reconnect (see the method KDoc).
+ *  - `replay-order` (#477) — a sequence of events produced **entirely while the phone is offline**
+ *    replays **in production order, each exactly once** after reconnect: the turn is held open, the
+ *    link is severed, the ordered sequence accrues in the daemon's in-ring buffer during the outage
+ *    (drop B fenced on the relay-logged phone-leg disconnect, not a 2nd send a severed phone cannot
+ *    make), then the link is restored and the buffered sequence replays in order (see the method KDoc).
  *
  * It is a thin variant of [InteractiveStreamE2ETest] (rung 3). **One** step differs: instead of
  * tapping "New discussion" (which mints a *fresh* per-conversation claude session that `fakeclaude` —
@@ -275,6 +281,79 @@ class DeterministicInteractiveStreamE2ETest {
     }
 
     /**
+     * `replay-order` scenario (#477, Layer 2d) — a sequence of events produced **entirely while the
+     * phone's relay link is severed** must replay **in their original production order, each exactly
+     * once**, after reconnect. Where the continuity case (#476) proves a single in-flight reply survives
+     * a drop, this proves a *sequence* buffered during the outage replays in order — and genuinely
+     * exercises the dedup fold on a **buffered-during-outage re-delivery**, the path #476 did not reach
+     * (its reply arrived strictly *after* reconnect, `event_id` > the advertised cursor → delivered once,
+     * never deduplicated).
+     *
+     * It forks the `reconnect` two-drop fence, but the sever and restore **straddle** the event
+     * production — using the split [severLink] / [restoreLink] halves of #476's atomic
+     * [severAndRestoreLink] primitive. Drop A (`replay-order-open.jsonl`, a `thinking`-only line) holds
+     * the turn open on the 1st `send_message.enqueued`; the test then **severs** the link, the host drops
+     * drop B (`replay-order.jsonl`, three ordered `assistant_delta` lines + `end_turn`) fenced on the
+     * relay logging the phone-leg disconnect — so the whole sequence accrues in the daemon's in-ring
+     * buffer **while the phone is offline** — and the test **restores** the link, on which the buffered
+     * sequence (all `event_id` > the advertised `last_event_id`, #416) replays whole into the fresh,
+     * empty repo, which folds the deltas in arrival (= production) order.
+     *
+     * A bounded [OFFLINE_WINDOW_MS] hold between sever and restore keeps the phone down until the
+     * producer has emitted. This is **not** the harness's forbidden fixed-delay-to-catch-a-transient: the
+     * buffered events are **durable** (they replay whenever the phone returns), so erring long is free,
+     * and the order / exactly-once asserts hold whether the deltas arrive as pure replay (window long
+     * enough — the intended path) or as a replay/live mix (window short). A too-short window only
+     * under-exercises "entirely offline"; it never false-greens (a reordering still breaks the substring)
+     * nor false-reds. The window is a determinism quality knob, not a correctness razor.
+     *
+     * Drop A carries **no** partial text by design (same as #476): on the sever the connection-scoped
+     * repo tears down (`currentRepository` → `null`) and the thread clears, so the **whole** ordered
+     * sequence arrives post-reconnect into the fresh, empty repo. "No missing segment, in order" holds by
+     * construction, independent of uncertain partial-turn replay semantics.
+     *
+     * The closing asserts are the one deliberate count assertion the suite allows (#476 precedent): the
+     * **order** check matches the cross-delta-boundary concatenation [ORDERED_REPLY_SUBSTRING] (present
+     * only if the deltas assembled in production order — a reordered replay breaks the substring), and the
+     * **exactly-once** check `assertCountEquals(1)` on it is the load-bearing dedup invariant (`event_id`
+     * high-water + `message_id` upsert, #337/#385) on a genuinely buffered-during-outage re-delivery.
+     * Both key on the final assembled text (stable — any duplicate from replay is a stable extra row, not
+     * a transient), so they do not violate the ladder's "never on counts" rule, which targets delta /
+     * timing counts. Tolerant otherwise (substring, generous timeouts).
+     */
+    @Test
+    fun interactiveTurn_seededChannel_missedEventsReplayInOrderAfterReconnect() {
+        arriveInSeededThread()
+
+        // Message #1 → drop A → turn_state(thinking), held open. The spinner proves the turn is open and
+        // streaming at the moment we sever; nothing renderable has arrived yet (no partial text by design).
+        typeAndSend(SEND_PROMPT)
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(thinkingDescription)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodes(hasContentDescription(thinkingDescription)).onFirst().assertIsDisplayed()
+
+        // Sever the phone's relay link (daemon stays up, in-ring buffer intact). While the phone is offline
+        // the host drops the ordered sequence — fenced on the relay logging the phone-leg disconnect, since
+        // a severed phone cannot send a 2nd send_message — so it accrues in the buffer entirely during the
+        // outage. The bounded hold keeps the phone down until the producer has emitted.
+        severLink()
+        runBlocking { delay(OFFLINE_WINDOW_MS) }
+
+        // Restore the link. The fresh Noise hello re-advertises last_event_id (#416); the buffered sequence
+        // (all event_id > cursor) replays whole into the fresh empty repo, which folds the deltas in
+        // arrival (= production) order.
+        restoreLink()
+
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(ORDERED_REPLY_SUBSTRING, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        // In order: the cross-delta-boundary concatenation is present (a reordering breaks the substring).
+        // Exactly once: it renders in a single node — no segment lost, no row duplicated.
+        composeTestRule.onAllNodesWithText(ORDERED_REPLY_SUBSTRING, substring = true).assertCountEquals(1)
+    }
+
+    /**
      * Steps shared by every scenario: a paired launch lands on the channel list → the host-seeded
      * promoted channel "e2e-seed" surfaces once `list_conversations` round-trips (so waiting on that
      * text implicitly waits for the connection + list response) → gate on [ConnectionState.Connected]
@@ -309,32 +388,58 @@ class DeterministicInteractiveStreamE2ETest {
     }
 
     /**
-     * Sever the phone's relay link and restore it, proving the drop truly landed (the connection-scoped
-     * repository tore down to `null`) and the phone re-attached (a fresh Noise pump reached `Open`). The
-     * reusable harness primitive #477 (ordering) builds on.
+     * Sever the phone's relay link and restore it atomically (#476 continuity): the drop is taken and
+     * immediately healed with no gap. Re-expressed as [severLink] then [restoreLink] — the two halves
+     * #477 (ordering) drives separately so event production can straddle the offline window. The
+     * `replySurvivesMidTurnReconnect` test still calls this combined form unchanged.
+     */
+    private fun severAndRestoreLink() {
+        severLink()
+        restoreLink()
+    }
+
+    /**
+     * Sever the phone's relay link, proving the drop truly landed (the connection-scoped repository tore
+     * down to `null` — not a no-op). One half of the split drop/restore primitive (see [restoreLink]);
+     * #477 holds an offline window between the two halves.
      *
      * **Phone-side only.** [RelayConnectionSupervisor.close] cancels the supervision loop and closes the
      * live socket at the transport layer; the daemon's relay session is independent and stays up, so its
      * in-ring event buffer survives — this can never trip the `resync`/gap path a daemon restart (#417)
-     * would. [RelayConnectionSupervisor.connect] re-dials with a fresh Noise session whose `hello`
-     * re-advertises `last_event_id` (#416), read live off the coordinator's surviving `replayCursor`.
+     * would.
      *
      * **Race-free.** `close()` leaves the loop cancelled (no auto-redial racing the explicit drive), so
-     * the `currentRepository == null` phase is stable; the two `first { … }` awaits over the coordinator's
+     * the `currentRepository == null` phase is stable; the `first { … }` await over the coordinator's
      * `StateFlow` cannot be conflated away. Mirrors [awaitConnected]'s `runBlocking { withTimeout { … } }`
      * idiom; both singletons resolve off Koin like [ConnectionStateSource].
      */
-    private fun severAndRestoreLink() {
+    private fun severLink() {
         val supervisor = GlobalContext.get().get<RelayConnectionSupervisor>()
         val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
         runBlocking {
             withTimeout(RECONNECT_TIMEOUT_MS) {
-                // Sever: cancel the loop + close the socket → the coordinator tears the per-connection repo
-                // down. Await null so we prove the drop landed (not a no-op).
                 supervisor.close()
                 coordinator.currentRepository.first { it == null }
-                // Restore: a fresh supervision loop → new dial → new Noise hello advertising last_event_id.
-                // Await non-null so the fresh pump reached Open before the step-5 sendMessage round-trips.
+            }
+        }
+    }
+
+    /**
+     * Restore the phone's relay link, proving the phone re-attached (a fresh Noise pump reached `Open`).
+     * The other half of the split primitive (see [severLink]).
+     *
+     * [RelayConnectionSupervisor.connect] starts a fresh supervision loop → new dial → a new Noise
+     * `hello` re-advertising `last_event_id` (#416), read live off the coordinator's surviving
+     * `replayCursor`; the daemon then replays any events buffered while the phone was offline. Awaiting
+     * `currentRepository != null` proves true end-to-end readiness (the fold can receive replay), not
+     * bare socket-up — an idle-`Connected` `ConnectionState` after `close()` would false-green a
+     * `ConnectionState.Connected` check.
+     */
+    private fun restoreLink() {
+        val supervisor = GlobalContext.get().get<RelayConnectionSupervisor>()
+        val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
+        runBlocking {
+            withTimeout(RECONNECT_TIMEOUT_MS) {
                 supervisor.connect()
                 coordinator.currentRepository.first { it != null }
             }
@@ -378,6 +483,13 @@ class DeterministicInteractiveStreamE2ETest {
         // "streamed world").
         const val RECONNECT_REPLY_SUBSTRING = "reconnected reply"
 
+        // The replay-order scenario's drop-B sequence assembles into "alpha bravo charlie" (three deltas
+        // "alpha "/"bravo "/"charlie" in replay-order.jsonl). The asserted substring spans all three delta
+        // boundaries, so matching it requires the deltas to have assembled in production order — a reordered
+        // replay ("bravo alpha charlie") fails the match. Collides with nothing else on screen (the
+        // "e2e-seed" title, "ping", "Bash", "streamed world", "reconnected reply", the inert "hello" prompt).
+        const val ORDERED_REPLY_SUBSTRING = "alpha bravo charlie"
+
         // Production UI string (no test tags exist). Keep in sync with res/values/strings.xml:
         //   cd_send_message = "Send message".
         const val CD_SEND_MESSAGE = "Send message"
@@ -386,9 +498,17 @@ class DeterministicInteractiveStreamE2ETest {
         const val CONNECT_TIMEOUT_MS = 30_000L
         const val THREAD_TIMEOUT_MS = 30_000L
 
-        // The two currentRepository awaits in severAndRestoreLink (drop-to-null, then reconnect-to-non-null);
+        // The two currentRepository awaits in severLink/restoreLink (drop-to-null, then reconnect-to-non-null);
         // reuses the connect/thread wait budget — an immediate, test-triggered reconnect, not a backoff.
         const val RECONNECT_TIMEOUT_MS = 30_000L
+
+        // The replay-order offline window: how long the phone stays severed between severLink() and
+        // restoreLink() so the ordered sequence is produced entirely while it is offline. NOT a
+        // catch-a-transient delay — the buffered events are durable, so erring long is free; erring short
+        // only under-exercises "entirely offline" without breaking the order/exactly-once verdict. Must
+        // exceed [relay disconnect-detect + watcher poll 0.5s + fakeclaude append + one producer tail
+        // cycle]. Primary first-run tuning point — lengthen if the replay arrives as a live mix.
+        const val OFFLINE_WINDOW_MS = 5_000L
 
         // Generous: the fixture drop is fenced on send_message.enqueued, then tails the real producer
         // over the relay. Also used as the spinner scenario's presence/absence timeout.
