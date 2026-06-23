@@ -4,6 +4,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModelStore
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
@@ -13,6 +14,7 @@ import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
+import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.Model
@@ -22,6 +24,7 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -43,6 +46,7 @@ import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -360,6 +364,222 @@ class ThreadViewModelTest {
             advanceUntilIdle()
 
             assertEquals("m2", (vm.currentModal.value as ModalUiState.Open).modalId)
+        }
+
+    // ---- #451: modal answer/cancel + arming/second-confirm + error → live send path -------------
+
+    @Test
+    fun onModalOption_default_sendsAnswerOnSingleTap() =
+        runTest {
+            val modals = MutableSharedFlow<ModalEvent>()
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modals, recorder)
+            val errors = mutableListOf<Unit>()
+            val errorCollector = launch { vm.modalSendErrors.collect { errors += it } }
+            advanceUntilIdle()
+
+            modals.emit(modalShown(modalId = "m1")) // default = reject_once
+            advanceUntilIdle()
+
+            vm.onModalOption("reject_once")
+            advanceUntilIdle()
+
+            // The fail-safe-deny default answers on a single tap (AC #1) — no arm.
+            assertEquals(listOf("m1" to "reject_once"), recorder.answers)
+            assertTrue(recorder.cancels.isEmpty())
+            assertNull(vm.armedOptionId.value)
+            assertTrue(errors.isEmpty())
+            errorCollector.cancel()
+        }
+
+    @Test
+    fun onModalOption_nonDefault_armsWithoutSending() =
+        runTest {
+            val modals = MutableSharedFlow<ModalEvent>()
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modals, recorder)
+            advanceUntilIdle()
+
+            modals.emit(modalShown(modalId = "m1"))
+            advanceUntilIdle()
+
+            vm.onModalOption("allow_once")
+            advanceUntilIdle()
+
+            // A single tap of a non-default option arms it; it does not send (AC #2).
+            assertTrue("a single non-default tap must not send", recorder.answers.isEmpty())
+            assertEquals("allow_once", vm.armedOptionId.value)
+        }
+
+    @Test
+    fun onModalOption_secondTapOfArmedOption_sendsAndClears() =
+        runTest {
+            val modals = MutableSharedFlow<ModalEvent>()
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modals, recorder)
+            advanceUntilIdle()
+
+            modals.emit(modalShown(modalId = "m1"))
+            advanceUntilIdle()
+
+            vm.onModalOption("allow_once") // arm
+            advanceUntilIdle()
+            vm.onModalOption("allow_once") // second confirm of the same armed option
+            advanceUntilIdle()
+
+            // The second confirm sends exactly one answer and clears the arm (AC #2).
+            assertEquals(listOf("m1" to "allow_once"), recorder.answers)
+            assertNull(vm.armedOptionId.value)
+        }
+
+    @Test
+    fun onModalOption_reTapDifferentOption_reArmsWithoutSending() =
+        runTest {
+            val modals = MutableSharedFlow<ModalEvent>()
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modals, recorder)
+            advanceUntilIdle()
+
+            modals.emit(modalShown(modalId = "m1", options = fourOptions))
+            advanceUntilIdle()
+
+            vm.onModalOption("allow_once") // arm
+            advanceUntilIdle()
+            vm.onModalOption("allow_always") // tapping a different option re-arms — never sends the old one
+            advanceUntilIdle()
+
+            assertTrue("re-arming a different option must not send", recorder.answers.isEmpty())
+            assertEquals("allow_always", vm.armedOptionId.value)
+        }
+
+    @Test
+    fun onModalCancel_sendsCancelAndClearsArm() =
+        runTest {
+            val modals = MutableSharedFlow<ModalEvent>()
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modals, recorder)
+            advanceUntilIdle()
+
+            modals.emit(modalShown(modalId = "m1"))
+            advanceUntilIdle()
+            vm.onModalOption("allow_once") // arm
+            advanceUntilIdle()
+
+            vm.onModalCancel()
+            advanceUntilIdle()
+
+            // Cancel sends modal_cancel and clears the arm (AC #3).
+            assertEquals(listOf("m1"), recorder.cancels)
+            assertTrue(recorder.answers.isEmpty())
+            assertNull(vm.armedOptionId.value)
+        }
+
+    @Test
+    fun modalSend_onFailure_emitsErrorSignalWithoutMutatingModal() =
+        runTest {
+            // Both documented throws (server `error` incl. the ungranted-device reject; not-connected).
+            val failures =
+                listOf<Throwable>(
+                    RelayErrorException(code = "device.not_granted", retryable = false, message = "no"),
+                    IllegalStateException("not connected"),
+                )
+            for (failure in failures) {
+                val modals = MutableSharedFlow<ModalEvent>()
+                val recorder = ModalSendRecorder(failWith = failure)
+                val vm = vmWithModalSendPath(modals, recorder)
+                val errors = mutableListOf<Unit>()
+                val errorCollector = launch { vm.modalSendErrors.collect { errors += it } }
+                advanceUntilIdle()
+
+                modals.emit(modalShown(modalId = "m1"))
+                advanceUntilIdle()
+
+                vm.onModalOption("reject_once") // default → single-tap answer that fails
+                advanceUntilIdle()
+
+                // Exactly one non-crashing error signal; the modal is untouched so the user can re-answer (AC #4).
+                assertEquals(1, errors.size)
+                assertEquals("m1", (vm.currentModal.value as ModalUiState.Open).modalId)
+                errorCollector.cancel()
+            }
+        }
+
+    @Test
+    fun staleArm_cannotPreArmAFreshModal() =
+        runTest {
+            val modals = MutableSharedFlow<ModalEvent>()
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modals, recorder)
+            advanceUntilIdle()
+
+            modals.emit(modalShown(modalId = "m1", options = fourOptions))
+            advanceUntilIdle()
+            vm.onModalOption("allow_once") // arm on m1
+            advanceUntilIdle()
+            assertEquals("allow_once", vm.armedOptionId.value)
+
+            // A fresh modal supersedes m1; the m1 arm is scoped to m1, so it never surfaces on m2.
+            modals.emit(modalShown(modalId = "m2", options = fourOptions))
+            advanceUntilIdle()
+            assertNull("the m1 arm does not pre-arm m2", vm.armedOptionId.value)
+
+            // Tapping the same option on m2 only arms it — the stale m1 arm cannot auto-confirm m2.
+            vm.onModalOption("allow_once")
+            advanceUntilIdle()
+            assertTrue("the stale arm must not auto-confirm a fresh modal", recorder.answers.isEmpty())
+            assertEquals("allow_once", vm.armedOptionId.value)
+        }
+
+    @Test
+    fun modalDecisionMethods_areInertWithNoOpenModal() =
+        runTest {
+            // A VM with no modal source holds Hidden; the no-op send defaults stay inert (AC #5).
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, FakeConversationRepository())
+            advanceUntilIdle()
+
+            vm.onModalOption("anything")
+            vm.onModalCancel()
+            advanceUntilIdle()
+
+            assertEquals(ModalUiState.Hidden, vm.currentModal.value)
+            assertNull(vm.armedOptionId.value)
+        }
+
+    @Test
+    fun modalSend_scopeCancellationMidSend_doesNotEmitErrorSignal() =
+        runTest {
+            // Regression guard (#451 rework): on the JVM `kotlinx.coroutines.CancellationException` is a
+            // typealias for `j.u.c.CancellationException`, which extends `IllegalStateException` — so a bare
+            // `catch (IllegalStateException)` would swallow `viewModelScope` teardown mid-send and fire a
+            // spurious error. The `catch (CancellationException) { throw e }` rethrow prevents that.
+            val gate = CompletableDeferred<Unit>() // never completes — the send stays suspended in-flight
+            val modals = MutableSharedFlow<ModalEvent>()
+            val vm =
+                makeVm(
+                    SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV)),
+                    FakeConversationRepository(),
+                    modalEvents = modals,
+                    answerModal = { _, _ -> gate.await() },
+                )
+            // Host the VM in a store so store.clear() cancels its viewModelScope — the real teardown path.
+            val store = ViewModelStore().apply { put("vm", vm) }
+            val errors = mutableListOf<Unit>()
+            val errorCollector = launch { vm.modalSendErrors.collect { errors += it } }
+            advanceUntilIdle()
+
+            modals.emit(modalShown(modalId = "m1")) // default = reject_once
+            advanceUntilIdle()
+            vm.onModalOption("reject_once") // single-tap send; suspends on `gate`
+            advanceUntilIdle()
+            assertTrue("the send must still be suspended in-flight", errors.isEmpty())
+
+            store.clear() // cancels viewModelScope → the awaiting send throws CancellationException
+            advanceUntilIdle()
+
+            // The rethrow keeps cancellation structured: no spurious error signal fires (AC #4 invariant).
+            assertTrue("VM-scope cancellation mid-send must not emit an error signal", errors.isEmpty())
+            errorCollector.cancel()
         }
 
     // ---- #396: isStalled projection over repository.observeStall ------------------------------
@@ -1567,7 +1787,9 @@ class ThreadViewModelTest {
         prefs: AppPreferences = AppPreferences(newDataStore()),
         liveSessionEvents: Flow<LiveSessionEvent> = emptyFlow(),
         modalEvents: Flow<ModalEvent> = emptyFlow(),
-    ): ThreadViewModel = ThreadViewModel(handle, repository, source, prefs, liveSessionEvents, modalEvents)
+        answerModal: suspend (String, String) -> Unit = { _, _ -> },
+        cancelModal: suspend (String) -> Unit = { _ -> },
+    ): ThreadViewModel = ThreadViewModel(handle, repository, source, prefs, liveSessionEvents, modalEvents, answerModal, cancelModal)
 
     /** A VM whose active conversation is [ACTIVE_CONV], wired to a controllable live-event source. */
     private fun TestScope.vmWithLiveEvents(events: Flow<LiveSessionEvent>): ThreadViewModel =
@@ -1583,6 +1805,47 @@ class ThreadViewModelTest {
             SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV)),
             FakeConversationRepository(),
             modalEvents = events,
+        )
+
+    /** A VM (#451) wired to a controllable modal-event source plus a [recorder] capturing the outbound
+     *  answer/cancel send path. */
+    private fun TestScope.vmWithModalSendPath(
+        events: Flow<ModalEvent>,
+        recorder: ModalSendRecorder,
+    ): ThreadViewModel =
+        makeVm(
+            SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV)),
+            FakeConversationRepository(),
+            modalEvents = events,
+            answerModal = recorder.answer,
+            cancelModal = recorder.cancel,
+        )
+
+    /** Records the outbound modal answer/cancel calls (#451), optionally throwing [failWith] after
+     *  recording to exercise the caught-error path. */
+    private class ModalSendRecorder(
+        private val failWith: Throwable? = null,
+    ) {
+        val answers = mutableListOf<Pair<String, String>>()
+        val cancels = mutableListOf<String>()
+
+        val answer: suspend (String, String) -> Unit = { modalId, optionId ->
+            answers += modalId to optionId
+            failWith?.let { throw it }
+        }
+        val cancel: suspend (String) -> Unit = { modalId ->
+            cancels += modalId
+            failWith?.let { throw it }
+        }
+    }
+
+    /** A four-option permission modal (`reject_once` is the fail-safe-deny default) for the #451 arm tests. */
+    private val fourOptions: List<ModalOption> =
+        listOf(
+            ModalOption("allow_once", "Allow once"),
+            ModalOption("allow_always", "Allow always"),
+            ModalOption("reject_once", "Reject once"),
+            ModalOption("reject_always", "Reject always"),
         )
 
     private fun modalShown(

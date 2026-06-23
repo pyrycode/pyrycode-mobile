@@ -7,7 +7,10 @@ open" observable, `currentModal`, on [`ThreadViewModel`](thread-screen.md). Land
 feature (epic pyrycode#597, ADR 025). The visual overlay, the fail-safe-deny default highlight, the
 inert-text output-encoding, and the dismiss-reason UI are the **sibling render slice #446**
 ([shipped](permission-modal-overlay.md) — it consumes this `currentModal`); answering / cancelling is
-**#444**. This slice adds **no UI** — all state is hoisted to the VM.
+**#444**, split into the behavior half [#451](../codebase/451.md) ([shipped](modal-answer-flow.md) — the
+fail-safe-deny answer/cancel decision logic + outbound send) and the render half #452 (the armed affordance
++ snackbar + route-host forward, `blockedBy` #451). This slice adds **no UI** — all state is hoisted to the
+VM.
 
 It is the **modal twin of [`isThinking`](turn-state-thinking-flag.md) ([#406](../codebase/406.md))**: the
 same coordinator-passthrough + sibling-`StateFlow` shape, with one load-bearing deviation — a `scan`
@@ -27,7 +30,7 @@ RelayRepositoryCoordinator.modalEvents : Flow<ModalEvent>   ◀── #445 seam 
 ThreadViewModel.currentModal : StateFlow<ModalUiState>   ◀── #445 fold (scan, modalId-keyed, last-shown-wins)
         │  separate parameter beside `state` / `isThinking` / `isStalled`
         ▼
-ThreadScreen → modal overlay (#446 renders it; #444 answers it)
+ThreadScreen → modal overlay (#446 renders it; #451 answers it, #452 renders the armed affordance)
 ```
 
 Two hops, both reusing the established [`liveSessionEvents`](live-session-events.md) precedent — but note
@@ -131,8 +134,11 @@ modal outstanding across the whole app.
   `Hidden`. No `catch`, no result type.
 - **Disconnect/reconnect clear (deferred, no AC)** — the coordinator passthrough emits `emptyFlow()` on a
   null repo but pushes **no "clear" event**, so a stale `Open` can persist across a connection drop. The
-  render slice [#446](permission-modal-overlay.md) did **not** build it either (state-driven overlay only);
-  owned by #444 + the connection signal.
+  render slice [#446](permission-modal-overlay.md) did **not** build it either (state-driven overlay only).
+  [#451](modal-answer-flow.md) did not build it either: answering a stale `Open` is rejected server-side
+  (stale `modalId`) and surfaces via #451's error signal, so a proactive stale-clear is a UX nicety, not a
+  correctness requirement (the daemon validation is the deterministic backstop). Deferred to #452 + the
+  connection signal if ever needed.
 
 ## Wiring
 
@@ -171,6 +177,7 @@ holds `Hidden` with no live daemon.
   `isStalled` / `connectionState` as a sibling signal the stateless screen takes as a separate parameter.
 - [Permission-modal overlay](permission-modal-overlay.md) ([#446](../codebase/446.md)) — the render slice
   (shipped) that collects this `currentModal` in the route host and draws the overlay.
-- Sibling slices: **#446** the render overlay (shipped) · **#444** answering / cancelling.
+- Sibling slices: **#446** the render overlay (shipped) · **#444** answering / cancelling, split into
+  [**#451**](modal-answer-flow.md) the behavior (shipped) and **#452** the render of the armed affordance.
 - Producer SSOT: pyrycode#716 (surfaces only `permission` / `trust` classes; fail-safe-deny
   `default_option_id`, no per-option destructive marker), ADR 025 § Phase 3 modals, EPIC pyrycode#597.

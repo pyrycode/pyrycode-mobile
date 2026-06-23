@@ -6,8 +6,11 @@ conversation thread, and how its resolution is surfaced on dismissal. Landed in
 [#446](../codebase/446.md) (split from #443, the render half of #439), part of the Phase 3 permission-modal
 feature (epic pyrycode#597, ADR 025). The state/projection half it consumes is the sibling slice
 [#445](../codebase/445.md) (blocked this one); **answering / cancelling** the modal — wiring the inert
-option-tap / cancel hooks to outbound `modal_answer` / `modal_cancel` sends — is the sibling slice **#444**
-(blocked by this one); a read-only device without remote-permission rights is **#440**.
+option-tap / cancel hooks to outbound `modal_answer` / `modal_cancel` sends — is the sibling slice **#444**,
+split into the behavior half [#451](../codebase/451.md) ([shipped](modal-answer-flow.md) — the VM
+fail-safe-deny decision logic + outbound send) and the render half **#452** (the armed/second-confirm
+affordance + error snackbar + route-host forward, `blockedBy` #451); a read-only device without
+remote-permission rights is **#440** (re-pointed onto #452).
 
 This slice is **render-only**: a pure function of `modalState`, with no VM change, no new public type, and
 no data-layer change. It owns the two render-time obligations [#445](../codebase/445.md) deliberately
@@ -39,7 +42,9 @@ ThreadScreen(state, …, modalState: ModalUiState = Hidden, onModalOption = {}, 
 `modalState` is a **defaulted** parameter (`= ModalUiState.Hidden`), so every existing preview and
 androidTest call site stays inert — no call-site cascade. The route host forwards it exactly like the
 `isThinking` / `isStalled` collect-and-forward; `onModalOption` / `onModalCancel` are **not** wired yet
-(they default to `{}`; #444 binds them to the VM's answer/cancel methods).
+(they default to `{}`). [#451](modal-answer-flow.md) added the VM's `onModalOption` / `onModalCancel`
+decision methods (the answer/cancel + arm logic); the render slice **#452** forwards these screen hooks to
+`vm::onModalOption` / `vm::onModalCancel` in the route host and draws the armed affordance.
 
 App-level by construction: modal events carry **no `conversation_id`** ([Modal events](modal-events.md)),
 so there is **one** `currentModal` across the app and the overlay shows over **whichever thread is active**
@@ -136,16 +141,19 @@ both render-time output-encoding **and** the screen-capture hardening land here.
 - **Accepted residuals (named, not skipped):** `FLAG_SECURE` blocks screen *capture*, not the accessibility
   node tree — a malicious accessibility service can read the verbatim text, but suppressing the a11y tree
   would break legitimate TalkBack users, so it is a platform-level tradeoff, not a regression here.
-  Tapjacking on the answer is **#444**'s concern (taps are inert here, so moot).
+  Tapjacking on the answer is the render slice **#452**'s concern (taps are inert here, so moot; [#451](modal-answer-flow.md)
+  ships the answer logic but not the live taps).
 
 ## Non-dismissable here, and the stale-`Open` question
 
 The overlay is purely **state-driven**: `dismissOnBackPress` / `dismissOnClickOutside` are `false`, so it
 leaves composition **only** when `currentModal` transitions away from `Open` (a daemon `Dismissed`,
-including timeout). `onModalCancel` is declared but inert — local cancel/back wiring is #444's. The
-[#445 open question](current-modal-state.md#lifecycle-errors-edge-cases) — should a connection drop clear a
-stale `Open`? — is **not** built here: it is owned by #444 + the connection signal, and the daemon validates
-`modalId` server-side so a stale answer is rejected.
+including timeout). `onModalCancel` is declared but inert — the live cancel/back wiring is the render slice
+**#452**'s ([#451](modal-answer-flow.md) ships the VM `onModalCancel` logic; #452 forwards the screen hook).
+The [#445 open question](current-modal-state.md#lifecycle-errors-edge-cases) — should a connection drop clear
+a stale `Open`? — is **not** built here, nor in #451: the daemon validates `modalId` server-side so a stale
+answer is rejected (surfacing via #451's error signal), so a proactive stale-clear is a UX nicety deferred to
+#452 + the connection signal.
 
 ## Testing
 
@@ -193,6 +201,8 @@ dismiss affordance) reconcile when it lands.
   the verbatim-`Text` (never `MarkdownText`) rule.
 - [Archived discussions screen](archived-discussions-screen.md) — the snackbar dismiss-reason precedent
   (`remember { SnackbarHostState() }` + `LaunchedEffect` + `Scaffold(snackbarHost = …)`).
-- Sibling slices: **#444** answering / cancelling (blocked by this) · **#440** read-only device mode.
+- Sibling slices: **#444** answering / cancelling (blocked by this), split into
+  [**#451**](modal-answer-flow.md) the behavior (shipped) + **#452** the armed-affordance render · **#440**
+  read-only device mode (re-pointed onto #452).
 - Producer SSOT: pyrycode#716 (`permission` / `trust` classes; fail-safe-deny `default_option_id`, no
   per-option destructive marker); ADR 025 § Phase 3 modals, EPIC pyrycode#597.

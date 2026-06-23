@@ -25,6 +25,8 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -642,6 +644,89 @@ class RelayRepositoryCoordinatorTest {
             env.pumps[1].push(turnStateEnvelope("c2", "responding", eventId = 200))
             runCurrent()
             assertEquals(200L, env.coordinator.replayCursor.latest)
+
+            env.coordinator.close()
+        }
+
+    // ---- #451: outbound modal answer/cancel passthrough to the connection-scoped concrete repo ----
+
+    // A live connection (pump Open) → answerModal delegates: exactly one modal_answer frame carrying the
+    // modal_id/option_id is sent, and the suspend completes on the correlated ack.
+    @Test
+    fun answerModal_withActiveConnection_delegatesAndCompletesOnAck() =
+        runTest {
+            val env = newEnv()
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            val pump = env.pumps.single()
+            pump.open()
+            runCurrent()
+
+            backgroundScope.launch { env.coordinator.answerModal("m1", "allow_once") }
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "modal_answer" }
+            val payload = sent.payload.jsonObject
+            assertEquals("m1", payload["modal_id"]?.jsonPrimitive?.content)
+            assertEquals("allow_once", payload["option_id"]?.jsonPrimitive?.content)
+
+            // The correlated ack completes the awaiting suspend without throwing.
+            pump.push(ackEnvelope(sent.id))
+            runCurrent()
+
+            env.coordinator.close()
+        }
+
+    // A live connection (pump Open) → cancelModal delegates: one modal_cancel frame carrying the modal_id.
+    @Test
+    fun cancelModal_withActiveConnection_delegatesAndCompletesOnAck() =
+        runTest {
+            val env = newEnv()
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            val pump = env.pumps.single()
+            pump.open()
+            runCurrent()
+
+            backgroundScope.launch { env.coordinator.cancelModal("m1") }
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "modal_cancel" }
+            assertEquals(
+                "m1",
+                sent.payload.jsonObject["modal_id"]
+                    ?.jsonPrimitive
+                    ?.content,
+            )
+
+            pump.push(ackEnvelope(sent.id))
+            runCurrent()
+
+            env.coordinator.close()
+        }
+
+    // The load-bearing new branch: no active connection → IllegalStateException (the not-connected path
+    // the ViewModel catches and surfaces as the non-crashing error signal).
+    @Test
+    fun answerModal_withNoActiveConnection_throwsIllegalState() =
+        runTest {
+            val env = newEnv()
+            runCurrent()
+
+            val outcome = runCatching { env.coordinator.answerModal("m1", "allow_once") }
+            assertTrue(outcome.exceptionOrNull() is IllegalStateException)
+
+            env.coordinator.close()
+        }
+
+    @Test
+    fun cancelModal_withNoActiveConnection_throwsIllegalState() =
+        runTest {
+            val env = newEnv()
+            runCurrent()
+
+            val outcome = runCatching { env.coordinator.cancelModal("m1") }
+            assertTrue(outcome.exceptionOrNull() is IllegalStateException)
 
             env.coordinator.close()
         }
