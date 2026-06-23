@@ -73,6 +73,9 @@ class StableConversationRepository(
 
     override fun observeStall(conversationId: String): Flow<Boolean> = switchToLive(false) { it.observeStall(conversationId) }
 
+    override fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> =
+        switchToLive(emptyList()) { it.observeQueue(conversationId) }
+
     override fun recentWorkspaces(): Flow<List<String>> = switchToLive(emptyList()) { it.recentWorkspaces() }
 
     override suspend fun createDiscussion(workspace: String?): Conversation = live.createDiscussion(workspace)

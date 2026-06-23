@@ -253,6 +253,45 @@ class StableConversationRepositoryTest {
             assertEquals(listOf(false, true, false), stalls)
         }
 
+    // ---- #460: observeQueue delegates and tracks connection churn --------------------------------
+
+    @Test
+    fun observeQueue_whileAbsent_emitsEmpty() =
+        runTest {
+            val current = MutableStateFlow<ConversationRepository?>(null)
+            val facade = StableConversationRepository(current)
+
+            val queues = mutableListOf<List<QueuedMessage>>()
+            backgroundScope.launch { facade.observeQueue("c1").collect { queues += it } }
+            runCurrent()
+
+            assertEquals(listOf(emptyList<QueuedMessage>()), queues)
+        }
+
+    @Test
+    fun observeQueue_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            val queues = mutableListOf<List<QueuedMessage>>()
+            backgroundScope.launch { facade.observeQueue("c1").collect { queues += it } }
+            runCurrent()
+            assertEquals(listOf(emptyList<QueuedMessage>()), queues)
+
+            val backlog = listOf(QueuedMessage(1L, "a", Instant.parse("2026-05-31T00:00:01Z")))
+            repoA.pushQueue(backlog)
+            runCurrent()
+            assertEquals(listOf(emptyList(), backlog), queues)
+
+            // Switching to a fresh (empty-backlog) connection drops the prior connection's queue.
+            current.value = repoB
+            runCurrent()
+            assertEquals(listOf(emptyList(), backlog, emptyList()), queues)
+        }
+
     // ---- fakes / builders ------------------------------------------------------------------------
 
     /**
@@ -264,6 +303,7 @@ class StableConversationRepositoryTest {
     private class RecordingConversationRepository : ConversationRepository {
         private val conversations = MutableStateFlow<List<Conversation>?>(null)
         private val stalled = MutableStateFlow(false)
+        private val queued = MutableStateFlow<List<QueuedMessage>>(emptyList())
 
         val createDiscussionCalls = mutableListOf<String?>()
         val sendMessageCalls = mutableListOf<Pair<String, String>>()
@@ -281,6 +321,10 @@ class StableConversationRepositoryTest {
             stalled.value = value
         }
 
+        fun pushQueue(value: List<QueuedMessage>) {
+            queued.value = value
+        }
+
         override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = conversations.filterNotNull()
 
         override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = flowOf(emptyList())
@@ -288,6 +332,8 @@ class StableConversationRepositoryTest {
         override fun observeLastMessage(conversationId: String): Flow<Message?> = flowOf(null)
 
         override fun observeStall(conversationId: String): Flow<Boolean> = stalled
+
+        override fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> = queued
 
         override suspend fun createDiscussion(workspace: String?): Conversation {
             createDiscussionCalls += workspace

@@ -2103,6 +2103,243 @@ class RemoteConversationRepositoryTest {
             assertEquals(listOf(false, true, false), c1)
         }
 
+    // ---- #460: decode `queue_state` into an observable per-conversation queued backlog ----------
+
+    // AC #1, #5: a `queue_state` snapshot decodes into an ordered list (id, text, timestamp) in wire
+    // order; `id` is the Long from `queued_msg_id` and `timestamp` is `Instant.parse(ts)`.
+    @Test
+    fun queue_orderedDecode_preservesWireOrder() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val queue = collectQueue(repo, "c1")
+            runCurrent()
+            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
+
+            pump.push(
+                queueStateEnvelope(
+                    "c1",
+                    listOf(
+                        Triple(1L, "a", "2026-05-31T00:00:01Z"),
+                        Triple(2L, "b", "2026-05-31T00:00:02Z"),
+                    ),
+                ),
+            )
+            runCurrent()
+            assertEquals(
+                listOf(
+                    emptyList(),
+                    listOf(
+                        QueuedMessage(1L, "a", Instant.parse("2026-05-31T00:00:01Z")),
+                        QueuedMessage(2L, "b", Instant.parse("2026-05-31T00:00:02Z")),
+                    ),
+                ),
+                queue,
+            )
+        }
+
+    // The #720 trap: `queued_msg_id` is a wire uint64 number decoded as a Long. A numeric id decodes;
+    // a string-typed id is a wrong-typed field → SerializationException → the whole snapshot is dropped.
+    @Test
+    fun queue_queuedMsgId_decodedAsNumberNotString() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val queue = collectQueue(repo, "c1")
+            runCurrent()
+
+            pump.push(
+                Envelope(
+                    id = 1L,
+                    type = "queue_state",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"c1","queued":[{"queued_msg_id":7,"text":"x","ts":"$TS"}]}""",
+                        ),
+                ),
+            )
+            runCurrent()
+            assertEquals(7L, queue.last().single().id)
+
+            // A string-typed queued_msg_id is wrong-typed → snapshot dropped, the prior value stands.
+            pump.push(
+                Envelope(
+                    id = 2L,
+                    type = "queue_state",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"c1","queued":[{"queued_msg_id":"7","text":"x","ts":"$TS"}]}""",
+                        ),
+                ),
+            )
+            runCurrent()
+            assertEquals(7L, queue.last().single().id)
+        }
+
+    // AC #2: empty until the first snapshot; an empty backlog (`[]`, `null`, or a missing `queued`
+    // key) stays empty — no spurious non-empty emission (distinctUntilChanged suppresses the equal).
+    @Test
+    fun queue_emptyUntilFirstState_toleratesEmptyArrayNullAndMissing() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val queue = collectQueue(repo, "c1")
+            runCurrent()
+            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
+
+            // queued: [] → empty backlog, no new emission.
+            pump.push(queueStateEnvelope("c1", emptyList()))
+            runCurrent()
+            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
+
+            // queued: null → also empty backlog.
+            pump.push(
+                Envelope(
+                    id = 2L,
+                    type = "queue_state",
+                    ts = TS,
+                    payload = MobileJson.parseToJsonElement("""{"conversation_id":"c1","queued":null}"""),
+                ),
+            )
+            runCurrent()
+            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
+
+            // missing queued key → also empty backlog (the DTO's nullable default).
+            pump.push(
+                Envelope(
+                    id = 3L,
+                    type = "queue_state",
+                    ts = TS,
+                    payload = MobileJson.parseToJsonElement("""{"conversation_id":"c1"}"""),
+                ),
+            )
+            runCurrent()
+            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
+        }
+
+    // AC #2: each snapshot is the authoritative backlog — it fully replaces the prior list (not append)
+    // and re-emits.
+    @Test
+    fun queue_eachSnapshot_fullyReplaces() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val queue = collectQueue(repo, "c1")
+            runCurrent()
+
+            pump.push(queueStateEnvelope("c1", listOf(Triple(1L, "a", "2026-05-31T00:00:01Z"))))
+            runCurrent()
+            assertEquals(listOf(QueuedMessage(1L, "a", Instant.parse("2026-05-31T00:00:01Z"))), queue.last())
+
+            pump.push(
+                queueStateEnvelope(
+                    "c1",
+                    listOf(
+                        Triple(2L, "b", "2026-05-31T00:00:02Z"),
+                        Triple(3L, "c", "2026-05-31T00:00:03Z"),
+                    ),
+                ),
+            )
+            runCurrent()
+            assertEquals(
+                listOf(
+                    QueuedMessage(2L, "b", Instant.parse("2026-05-31T00:00:02Z")),
+                    QueuedMessage(3L, "c", Instant.parse("2026-05-31T00:00:03Z")),
+                ),
+                queue.last(),
+            )
+        }
+
+    // AC #3: a snapshot for one conversation does not re-emit another conversation's queue flow.
+    @Test
+    fun queue_perConversationIsolation() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val c1 = collectQueue(repo, "c1")
+            val c2 = collectQueue(repo, "c2")
+            runCurrent()
+
+            pump.push(queueStateEnvelope("c1", listOf(Triple(1L, "a", "2026-05-31T00:00:01Z"))))
+            runCurrent()
+            assertEquals(listOf(QueuedMessage(1L, "a", Instant.parse("2026-05-31T00:00:01Z"))), c1.last())
+            assertEquals(listOf(emptyList<QueuedMessage>()), c2)
+        }
+
+    // AC #4: a malformed `queue_state` (missing conversation_id, a bad item, or an unparseable ts) is
+    // dropped without tearing down the single inbound consumer — a later valid snapshot still surfaces.
+    @Test
+    fun queue_malformed_droppedCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val queue = collectQueue(repo, "c1")
+            runCurrent()
+
+            // Missing conversation_id → SerializationException → dropped.
+            pump.push(Envelope(id = 1L, type = "queue_state", ts = TS, payload = MobileJson.parseToJsonElement("""{"queued":[]}""")))
+            // A queued item missing `text` → SerializationException → whole snapshot dropped.
+            pump.push(
+                Envelope(
+                    id = 2L,
+                    type = "queue_state",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"c1","queued":[{"queued_msg_id":1,"ts":"$TS"}]}""",
+                        ),
+                ),
+            )
+            // An unparseable `ts` → IllegalArgumentException (Instant.parse) → whole snapshot dropped.
+            pump.push(
+                Envelope(
+                    id = 3L,
+                    type = "queue_state",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"c1","queued":[{"queued_msg_id":1,"text":"x","ts":"not-a-timestamp"}]}""",
+                        ),
+                ),
+            )
+            runCurrent()
+            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
+
+            pump.push(queueStateEnvelope("c1", listOf(Triple(9L, "ok", "2026-05-31T00:00:09Z"))))
+            runCurrent()
+            assertEquals(listOf(QueuedMessage(9L, "ok", Instant.parse("2026-05-31T00:00:09Z"))), queue.last())
+        }
+
+    // Fail-closed: without `interactive` negotiated, a well-formed `queue_state` never surfaces.
+    @Test
+    fun queue_capabilityGateClosed_blocksDecode() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { emptySet() })
+            val queue = collectQueue(repo, "c1")
+            runCurrent()
+
+            pump.push(queueStateEnvelope("c1", listOf(Triple(1L, "a", "2026-05-31T00:00:01Z"))))
+            runCurrent()
+            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
+        }
+
+    // Fail-closed: a negotiated set with another token but NOT `interactive` still blocks.
+    @Test
+    fun queue_capabilityGateOtherTokenOnly_blocksDecode() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("something_else") })
+            val queue = collectQueue(repo, "c1")
+            runCurrent()
+
+            pump.push(queueStateEnvelope("c1", listOf(Triple(1L, "a", "2026-05-31T00:00:01Z"))))
+            runCurrent()
+            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
+        }
+
     // ---- #387: correlate tool_use/tool_result into live tool-call thread items with status ------
 
     // AC #1: a tool_use produces a running tool row carrying the tool name + input, empty output.
@@ -3317,6 +3554,34 @@ class RemoteConversationRepositoryTest {
             ts = TS,
             payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId"}"""),
         )
+
+    private fun TestScope.collectQueue(
+        repo: RemoteConversationRepository,
+        conversationId: String,
+    ): MutableList<List<QueuedMessage>> {
+        val emissions = mutableListOf<List<QueuedMessage>>()
+        backgroundScope.launch { repo.observeQueue(conversationId).collect { emissions += it } }
+        return emissions
+    }
+
+    /**
+     * A `queue_state` snapshot envelope `{conversation_id, queued:[{queued_msg_id, text, ts}]}` (#460).
+     * Each item is a `(queued_msg_id, text, ts)` triple; `queued_msg_id` is emitted as a JSON **number**
+     * (the wire uint64). An empty [items] emits `"queued":[]`.
+     */
+    private fun queueStateEnvelope(
+        conversationId: String,
+        items: List<Triple<Long, String, String>>,
+        id: Long = 1L,
+    ): Envelope {
+        val queued = items.joinToString(",") { (msgId, text, ts) -> """{"queued_msg_id":$msgId,"text":"$text","ts":"$ts"}""" }
+        return Envelope(
+            id = id,
+            type = "queue_state",
+            ts = TS,
+            payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId","queued":[$queued]}"""),
+        )
+    }
 
     /** A `resync` control marker `{conversation_id}` (#417) — no event_id; daemon's aged-out-of-ring signal. */
     private fun resyncEnvelope(

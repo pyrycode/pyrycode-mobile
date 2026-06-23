@@ -42,6 +42,18 @@ interface ConversationRepository {
      */
     fun observeStall(conversationId: String): Flow<Boolean> = flowOf(false)
 
+    /**
+     * Emits [conversationId]'s ordered queued-message backlog (FIFO) — the messages waiting while
+     * claude is busy (#460). Each `queue_state` snapshot the daemon broadcasts replaces the backlog in
+     * full; the flow re-emits the new ordered list. Empty until the first snapshot lands. Cold flow;
+     * re-emits on every change. The thread layer observes this to render the backlog (#461).
+     *
+     * Default `flowOf(emptyList())` — implementations without an interactive wire (the fake, inline
+     * test doubles) inherit "never queued" and need no override, the same cascade-avoidance as
+     * [observeStall] / [delete] / [requestScreenSnapshot].
+     */
+    fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> = flowOf(emptyList())
+
     suspend fun createDiscussion(workspace: String? = null): Conversation
 
     suspend fun promote(
@@ -180,3 +192,16 @@ sealed interface ThreadItem {
 }
 
 enum class BoundaryReason { Clear, IdleEvict, WorkspaceChange }
+
+/**
+ * One message waiting in a conversation's queued backlog while claude is busy (#460). The element type
+ * of [ConversationRepository.observeQueue], co-located with the contract it serves (like [ThreadItem]).
+ *
+ * [id] is the daemon's per-conversation `queued_msg_id` counter (a wire `uint64`, so [Long]); it is a
+ * monotonic ordinal, not a secret. [timestamp] is enqueue time.
+ */
+data class QueuedMessage(
+    val id: Long,
+    val text: String,
+    val timestamp: Instant,
+)
