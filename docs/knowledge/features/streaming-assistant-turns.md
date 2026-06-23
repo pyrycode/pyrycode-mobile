@@ -192,6 +192,9 @@ Architect self-review **PASS**; code review **PASS** with zero findings.
   now `threadItems`.
 - [Relay repository coordinator](relay-repository-coordinator.md) ([#406](../codebase/406.md)) — owns
   the generic `liveSessionEvents` seam this consumes.
+- Render regression coverage: [#432 scripted-stream thread harness](../codebase/432.md) — the Layer-1a
+  `ScriptedThreadHarness` drives scripted deltas through **this** repo fold into `ThreadScreen` and asserts
+  the finalized message, joining the previously-separate fold (unit) and render (component) coverage.
 - Memory: [[phase4-v2-wire-no-streaming]] — streaming is a separate `assistant_delta` envelope, not an
   `isStreaming` flag on `message`.
 - Server SSOT: pyrycode#572→#589 (`assistant_delta` wire + relay emit), #608→#615/#616 (event-stream
