@@ -223,12 +223,19 @@ fun ThreadScreen(
     onWorkspacePicked: (String) -> Unit = {},         // new in #137
     onWorkspacePickerDismissed: () -> Unit = {},      // new in #137
     modalState: ModalUiState = ModalUiState.Hidden,   // new in #446 — hoisted app-level currentModal (#445)
-    onModalOption: (String) -> Unit = {},             // new in #446 — INERT here; #444 wires it (passes ModalOption.id)
-    onModalCancel: () -> Unit = {},                   // new in #446 — INERT here; #444 wires it
+    armedOptionId: String? = null,                    // new in #452 — VM-scoped armed non-default option (#451)
+    modalSendErrors: Flow<Unit> = emptyFlow(),        // new in #452 — payload-free one-shot send-failure (#451)
+    onModalOption: (String) -> Unit = {},             // new in #446 — LIVE since #452 → vm::onModalOption (passes ModalOption.id)
+    onModalCancel: () -> Unit = {},                   // new in #446 — LIVE since #452 → vm::onModalCancel
 ) {
     var sheetVisible by rememberSaveable { mutableStateOf(false) }   // new in #254
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }   // new in #252
-    val snackbarHostState = remember { SnackbarHostState() }   // new in #446 — dismiss-reason host
+    val snackbarHostState = remember { SnackbarHostState() }   // new in #446 — dismiss-reason + (#452) send-error host
+    // #452: collect the payload-free modalSendErrors into the snackbar (fixed local string — never the payload)
+    val modalSendFailedMessage = stringResource(R.string.modal_send_failed)
+    LaunchedEffect(modalSendErrors, snackbarHostState) {
+        modalSendErrors.collect { snackbarHostState.showSnackbar(modalSendFailedMessage) }
+    }
     Scaffold(
         modifier = modifier,
         snackbarHost = { SnackbarHost(snackbarHostState) },   // new in #446
@@ -399,35 +406,48 @@ private fun DeleteConfirmationDialog(displayName: String, onConfirm: () -> Unit,
     )
 }
 
-// ThreadScreen.kt — the permission-modal overlay private composables (new in #446). Full doc:
+// ThreadScreen.kt — the permission-modal overlay private composables (base #446, made live #452). Full doc:
 // features/permission-modal-overlay.md. BasicAlertDialog with FLAG_SECURE on its OWN window.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PermissionModalOverlay(open: ModalUiState.Open, onOption: (String) -> Unit, onCancel: () -> Unit) {
+private fun PermissionModalOverlay(open: ModalUiState.Open, armedOptionId: String?, onOption: (String) -> Unit, onCancel: () -> Unit) {
     BasicAlertDialog(
-        onDismissRequest = onCancel,              // inert in this slice; #444 wires cancel
+        onDismissRequest = onCancel,              // inert while both dismiss flags false; cancel = the explicit button
         properties = DialogProperties(
             securePolicy = SecureFlagPolicy.SecureOn,  // FLAG_SECURE on the dialog's own window (load-bearing)
             dismissOnBackPress = false, dismissOnClickOutside = false,  // gate ignores stray taps
         ),
     ) {
+        // #452: now that taps are live, harden the dialog's OWN window against tapjacking (no semantics node → code-review-verified)
+        val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+        SideEffect { dialogWindow?.decorView?.filterTouchesWhenObscured = true }
         Surface(shape = AlertDialogDefaults.shape, color = AlertDialogDefaults.containerColor, tonalElevation = AlertDialogDefaults.TonalElevation) {
             Column(Modifier.padding(24.dp)) {
                 Text(open.title, style = MaterialTheme.typography.headlineSmall)    // verbatim plain Text — never MarkdownText
                 Text(open.prompt, style = MaterialTheme.typography.bodyMedium)      // verbatim plain Text
                 open.options.forEach { option ->                                   // wire array order = display order
-                    ModalOptionButton(option.label, isDefault = option.id == open.defaultOptionId, onClick = { onOption(option.id) })
+                    ModalOptionButton(option.label,
+                        isDefault = option.id == open.defaultOptionId,
+                        isArmed = option.id == armedOptionId,                      // #452: reflects the VM's armed option — no UI-side arming
+                        onClick = { onOption(option.id) })                         // every tap forwards verbatim
                 }
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = onCancel, Modifier.align(Alignment.End)) { Text(stringResource(R.string.modal_cancel)) }  // #452: explicit Cancel
             }
         }
     }
 }
 
 @Composable
-private fun ModalOptionButton(label: String, isDefault: Boolean, onClick: () -> Unit) {
-    // default (fail-safe-deny) → filled Button + stateDescription "Default"; others → OutlinedButton.
-    if (isDefault) Button(onClick, Modifier.fillMaxWidth().semantics { stateDescription = … }) { Text(label) }
-    else OutlinedButton(onClick, Modifier.fillMaxWidth()) { Text(label) }
+private fun ModalOptionButton(label: String, isDefault: Boolean, isArmed: Boolean, onClick: () -> Unit) {
+    // #452: stateless 3-way, isArmed precedence. armed non-default → FilledTonalButton (below the default's
+    // emphasis) + stateDescription "Tap again to confirm"; default (fail-safe-deny) → filled Button +
+    // stateDescription "Default"; else → OutlinedButton. No remember-based arm (the arm lives on the VM).
+    when {
+        isArmed -> FilledTonalButton(onClick, Modifier.fillMaxWidth().semantics { stateDescription = … }) { Text(label) }
+        isDefault -> Button(onClick, Modifier.fillMaxWidth().semantics { stateDescription = … }) { Text(label) }
+        else -> OutlinedButton(onClick, Modifier.fillMaxWidth()) { Text(label) }
+    }
 }
 
 @Composable
@@ -476,7 +496,7 @@ fun ThreadTopAppBar(
 
 `ThreadUiState` is still a **`data class`, not a `sealed interface`.** The canonical pattern in this codebase (`ChannelListUiState`, `DiscussionListUiState`, `ArchivedDiscussionsUiState`) is sealed `Loading | Empty | Loaded | Error` precisely because each represents a real async data-load stage; this screen still has zero `Loading` / `Error` distinction worth modelling (the `displayName` lookup falls back to the raw id rather than failing, so there is no error state to project). The first downstream ticket that introduces an error path or a "load-bearing waiting" frame is the one that widens to a sealed envelope; the current `data class` becomes the `Loaded` variant via grep-replace. Post-[#227](../codebase/227.md) the class carries eighteen fields (`conversationId`, `displayName`, `isPromoted`, `hasMessages`, `workspaceLabel`, `workspacePickerVisible`, `showRenameDialog`, `saveAsChannelDialog`, `items`, `channelInfoOpen`, `deleteConfirmVisible`, `workspacePath`, `lastUsedAt`, `sessionCount`, `selectedModel`, `selectedEffort`, `yoloEnabled`, `tokenPercent`); the additions since #145 (`showRenameDialog` from #141, `saveAsChannelDialog` from #142, `yoloEnabled` from #229, `channelInfoOpen` / `workspacePath` / `lastUsedAt` / `sessionCount` from #226, and `deleteConfirmVisible` from #227) all default so the pre-existing `assertEquals(ThreadUiState(...), vm.state.value)` test cases compile unchanged. The `model: String` field was retyped to `selectedModel: Model` in [#253](../codebase/253.md) and the `effort: String` field was similarly retyped to `selectedEffort: Effort` in [#229](../codebase/229.md) — both as part of typing the Status Sheet's selection contracts; the fields' data-class default positions are preserved.
 
-`ThreadScreen`'s signature is **`(state, onBack, onSendMessage, connectionState, onRetry, modifier, isThinking, isStalled, onTitleClick, onOverflowEvent, onModelSelected, onWorkspaceChipTapped, onWorkspacePicked, onWorkspacePickerDismissed)` — mixed: one sealed-event sink (`onOverflowEvent`) alongside six flat callbacks, plus three flat `State` parameters (`connectionState`, `isThinking`, `isStalled`).** Every other VM-backed screen in the codebase uses `(state: UiState, onEvent: (Event) -> Unit)` once they have at least one VM-owned event. #188 added `onSendMessage`, #201 added `onRetry`, #137 added three workspace handlers, #145 added a hoisted `onExpandClick` placeholder that #254 deleted in favour of an internal `{ sheetVisible = true }` plus a new `onModelSelected: (Model) -> Unit` parameter bound to `vm::onModelSelected` ([#253](../codebase/253.md)) — all as flat callbacks rather than folding into a sealed `ThreadEvent`. [`#251`](../codebase/251.md) **introduced** the `sealed interface ThreadEvent` (co-located at the top of `ThreadViewModel.kt`) and a `ThreadViewModel.onOverflowEvent(event: ThreadEvent)` dispatcher, **scoped to overflow only**: the existing six plain handlers (`sendMessage`, `retry`, `onWorkspaceChipTapped`, `onWorkspacePicked`, `onWorkspacePickerDismissed`, `onModelSelected`) are not migrated to the sealed surface. [`#252`](../codebase/252.md) mounted the [`ThreadOverflowMenu`](thread-overflow-menu.md) inside `ThreadTopAppBar`'s `actions` slot — `ThreadScreen` hoists `var overflowExpanded by rememberSaveable { mutableStateOf(false) }`, the screen's `onOverflowClick: () -> Unit = {}` parameter was renamed in place to `onOverflowEvent: (ThreadEvent) -> Unit = {}`, and `MainActivity` binds `onOverflowEvent = vm::onOverflowEvent` at the destination block. The screen-level `(state, onEvent)` collapse for *every* event (rolling the six plain methods into `ThreadEvent` too) is option (iii) from #203's convention question and remains deferred. `connectionState` stays a flat `State` parameter — it's state, not an event; [`#407`](../codebase/407.md) added `isThinking: Boolean = false` on the same footing (a defaulted flat `State` sibling, after `modifier`); [`#396`](../codebase/396.md) added `isStalled: Boolean = false` likewise. [`#382`](../codebase/382.md) added a defaulted `onShowLiteralScreen: () -> Unit = {}` (forwarded through `ThreadTopAppBar` to [`ThreadOverflowMenu`](thread-overflow-menu.md)'s always-available "Show the literal screen" item) — another **flat callback, not a `ThreadEvent`**: it is pure navigation (`MainActivity` wires `{ navController.navigate("literal_screen/$conversationId") }`), so routing it through the sealed surface would have coupled a view-only action to the VM. Mirrors `onOpenAbout`; keeps `ThreadViewModel`/`ThreadEvent` untouched. [`#446`](../codebase/446.md) added `modalState: ModalUiState = ModalUiState.Hidden` on the same footing as `isThinking` / `isStalled` (a defaulted flat `State` sibling — the hoisted app-level `currentModal` from #445), plus two **inert** flat callbacks `onModalOption: (String) -> Unit = {}` / `onModalCancel: () -> Unit = {}` that the answering slice #444 wires to the VM; all defaulted, so no call-site cascade.
+`ThreadScreen`'s signature is **`(state, onBack, onSendMessage, connectionState, onRetry, modifier, isThinking, isStalled, onTitleClick, onOverflowEvent, onModelSelected, onWorkspaceChipTapped, onWorkspacePicked, onWorkspacePickerDismissed)` — mixed: one sealed-event sink (`onOverflowEvent`) alongside six flat callbacks, plus three flat `State` parameters (`connectionState`, `isThinking`, `isStalled`).** Every other VM-backed screen in the codebase uses `(state: UiState, onEvent: (Event) -> Unit)` once they have at least one VM-owned event. #188 added `onSendMessage`, #201 added `onRetry`, #137 added three workspace handlers, #145 added a hoisted `onExpandClick` placeholder that #254 deleted in favour of an internal `{ sheetVisible = true }` plus a new `onModelSelected: (Model) -> Unit` parameter bound to `vm::onModelSelected` ([#253](../codebase/253.md)) — all as flat callbacks rather than folding into a sealed `ThreadEvent`. [`#251`](../codebase/251.md) **introduced** the `sealed interface ThreadEvent` (co-located at the top of `ThreadViewModel.kt`) and a `ThreadViewModel.onOverflowEvent(event: ThreadEvent)` dispatcher, **scoped to overflow only**: the existing six plain handlers (`sendMessage`, `retry`, `onWorkspaceChipTapped`, `onWorkspacePicked`, `onWorkspacePickerDismissed`, `onModelSelected`) are not migrated to the sealed surface. [`#252`](../codebase/252.md) mounted the [`ThreadOverflowMenu`](thread-overflow-menu.md) inside `ThreadTopAppBar`'s `actions` slot — `ThreadScreen` hoists `var overflowExpanded by rememberSaveable { mutableStateOf(false) }`, the screen's `onOverflowClick: () -> Unit = {}` parameter was renamed in place to `onOverflowEvent: (ThreadEvent) -> Unit = {}`, and `MainActivity` binds `onOverflowEvent = vm::onOverflowEvent` at the destination block. The screen-level `(state, onEvent)` collapse for *every* event (rolling the six plain methods into `ThreadEvent` too) is option (iii) from #203's convention question and remains deferred. `connectionState` stays a flat `State` parameter — it's state, not an event; [`#407`](../codebase/407.md) added `isThinking: Boolean = false` on the same footing (a defaulted flat `State` sibling, after `modifier`); [`#396`](../codebase/396.md) added `isStalled: Boolean = false` likewise. [`#382`](../codebase/382.md) added a defaulted `onShowLiteralScreen: () -> Unit = {}` (forwarded through `ThreadTopAppBar` to [`ThreadOverflowMenu`](thread-overflow-menu.md)'s always-available "Show the literal screen" item) — another **flat callback, not a `ThreadEvent`**: it is pure navigation (`MainActivity` wires `{ navController.navigate("literal_screen/$conversationId") }`), so routing it through the sealed surface would have coupled a view-only action to the VM. Mirrors `onOpenAbout`; keeps `ThreadViewModel`/`ThreadEvent` untouched. [`#446`](../codebase/446.md) added `modalState: ModalUiState = ModalUiState.Hidden` on the same footing as `isThinking` / `isStalled` (a defaulted flat `State` sibling — the hoisted app-level `currentModal` from #445), plus two then-**inert** flat callbacks `onModalOption: (String) -> Unit = {}` / `onModalCancel: () -> Unit = {}`; all defaulted, so no call-site cascade. [`#452`](../codebase/452.md) **made those live** and added two more defaulted siblings — `armedOptionId: String? = null` (a flat `State` sibling, the VM-scoped armed option from #451) and `modalSendErrors: Flow<Unit> = emptyFlow()` (a payload-free one-shot) — with `MainActivity` collecting `vm.armedOptionId`, forwarding `vm.modalSendErrors` by reference, and binding `onModalOption`/`onModalCancel` to `vm::onModalOption`/`vm::onModalCancel`; still all flat (not folded into `ThreadEvent`), still no call-site cascade.
 
 ## How it works
 
@@ -795,12 +815,12 @@ Column {
 
 ### Permission-modal overlay placement (post-#446)
 
-[#446](../codebase/446.md) renders the hoisted app-level [`currentModal`](current-modal-state.md) (#445) as the **seventh `Scaffold` sibling** — a `when (modalState)` block after the `DeleteConfirmationDialog` block (`ThreadScreen.kt:314`), **outside** the content `Column` (it is a floating dialog window, not part of the thread layout). `MainActivity` collects `currentModal` via `collectAsStateWithLifecycle` and forwards it as the defaulted `modalState` param, exactly like `isThinking` / `isStalled`. Full doc: [Permission-modal overlay](permission-modal-overlay.md).
+[#446](../codebase/446.md) renders the hoisted app-level [`currentModal`](current-modal-state.md) (#445) as the **seventh `Scaffold` sibling** — a `when (modalState)` block after the `DeleteConfirmationDialog` block (`ThreadScreen.kt:314`), **outside** the content `Column` (it is a floating dialog window, not part of the thread layout). `MainActivity` collects `currentModal` (and, since [#452](../codebase/452.md), `armedOptionId`) via `collectAsStateWithLifecycle` and forwards them as the defaulted `modalState` / `armedOptionId` params, exactly like `isThinking` / `isStalled`; `modalSendErrors` is forwarded by reference and collected inside `ThreadScreen` (single-consumer; the snackbar is a screen concern). Full doc: [Permission-modal overlay](permission-modal-overlay.md).
 
-- **Separate surface, not a `LazyColumn` row.** `Open` → a private `PermissionModalOverlay` built on **`BasicAlertDialog`** (not the 2-button `AlertDialog` — the option count varies 4/2), rendering verbatim `title` / `prompt` / `options` (wire **array order**) and highlighting the fail-safe-deny `defaultOptionId` (filled `Button` vs `OutlinedButton` + a `stateDescription` semantics marker). `modalClass` is carried but not branched on. Render-only: the option-tap / cancel hooks are inert (#444 wires them).
+- **Separate surface, not a `LazyColumn` row.** `Open` → a private `PermissionModalOverlay` built on **`BasicAlertDialog`** (not the 2-button `AlertDialog` — the option count varies 4/2), rendering verbatim `title` / `prompt` / `options` (wire **array order**); `ModalOptionButton` is a stateless **3-way** ([#452](../codebase/452.md), `isArmed` precedence): the fail-safe-deny `defaultOptionId` → filled `Button`, the VM's armed non-default (`armedOptionId`) → `FilledTonalButton` (below the default's emphasis), else `OutlinedButton`, each with its `stateDescription` marker. `modalClass` is carried but not branched on. **Live since [#452](../codebase/452.md):** the option-tap forwards verbatim to `onModalOption` (the VM decides arm-vs-send, no UI-side arming), an explicit low-emphasis Cancel `TextButton` reaches `onModalCancel`, and `filterTouchesWhenObscured = true` on the dialog's own window adds a tapjacking net now that taps are live.
 - **App-level, not per-conversation.** Modal events carry no `conversation_id`, so there is one `currentModal` across the app and the overlay shows over **whichever thread is active** — no `conversationId` filter (contrast the per-conversation thread items).
 - **Dismiss = snackbar, not overlay.** `Dismissed` renders no overlay and fires a `LaunchedEffect(modalId)` snackbar surfacing a **mapped local** reason (`dismissReasonText`: remote/local/timeout + a generic forward-compat fallback). The Scaffold gains a `remember { SnackbarHostState() }` + `snackbarHost` (the only change to the existing Scaffold), mirroring the [`ArchivedDiscussionsScreen`](archived-discussions-screen.md) dismiss-reason precedent. Keying on `modalId` (a sticky terminal state in #445's fold) fires it exactly once per resolution.
-- **Security (this slice owns the render-time obligations #445 deferred).** Plain `Text` only (never [`MarkdownText`](markdown-text.md)/`SelectionContainer`), and `DialogProperties(securePolicy = SecureFlagPolicy.SecureOn)` sets `FLAG_SECURE` on the **dialog's own window** — the [#381](../codebase/381.md) [`LiteralScreenSurface`](literal-screen-surface.md) precedent flags the **Activity** window, which a dialog draws outside of, so `SecureOn` (not the default `Inherit`) is load-bearing. No modal text reaches `rememberSaveable` / saved-instance state; the mapped-not-echoed dismiss reason is a confidentiality requirement (the snackbar draws in the un-secured Activity window). `dismissOnBackPress`/`dismissOnClickOutside = false` — a permission gate ignores stray taps; the overlay is state-driven only.
+- **Security (this slice owns the render-time obligations #445 deferred).** Plain `Text` only (never [`MarkdownText`](markdown-text.md)/`SelectionContainer`), and `DialogProperties(securePolicy = SecureFlagPolicy.SecureOn)` sets `FLAG_SECURE` on the **dialog's own window** — the [#381](../codebase/381.md) [`LiteralScreenSurface`](literal-screen-surface.md) precedent flags the **Activity** window, which a dialog draws outside of, so `SecureOn` (not the default `Inherit`) is load-bearing. No modal text reaches `rememberSaveable` / saved-instance state; the mapped-not-echoed dismiss reason is a confidentiality requirement (the snackbar draws in the un-secured Activity window). `dismissOnBackPress`/`dismissOnClickOutside = false` — a permission gate ignores stray taps; cancel is the explicit Cancel button only. [#452](../codebase/452.md) adds the remaining live-tap obligations: **send-error confidentiality** (the `modalSendErrors` event is `Flow<Unit>` + a fixed local `modal_send_failed` string ⇒ structurally no payload reaches the snackbar) and **tapjacking** (`filterTouchesWhenObscured = true` on the dialog's own window, the View-level analog of `SecureOn`, different fabric from the second-confirm UX belt).
 
 ### `fun retry()` — non-suspend, VM owns the launch
 

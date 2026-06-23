@@ -4,10 +4,11 @@ The **interaction/behavior half of the permission/choice-modal surface**: how an
 the open modal becomes an outbound `modal_answer` / `modal_cancel` over the live encrypted wire, with the
 **fail-safe-deny single-tap / second-confirm** UX belt and a non-crashing error signal. Landed in
 [#451](../codebase/451.md) (split from #444, the interaction half of #439), part of the Phase 3
-permission-modal feature (epic pyrycode#597, ADR 025). This slice adds **no UI** — it drives the inert
-`onModalOption` / `onModalCancel` screen hooks from the ViewModel and exposes the arm + error signals for the
-**sibling render slice [#452](https://github.com/pyrycode/pyrycode-mobile/issues/452)** (`blockedBy` this) to
-draw.
+permission-modal feature (epic pyrycode#597, ADR 025). This slice adds **no UI** — it drives the
+`onModalOption` / `onModalCancel` screen hooks from the ViewModel and exposes the arm + error signals; the
+**sibling render slice [#452](../codebase/452.md)** (`blockedBy` this) then **shipped** the render half that
+draws the armed affordance off `armedOptionId`, surfaces `modalSendErrors` on the snackbar, and wires these
+hooks into the route host so the taps go live.
 
 It is the fourth and final half of the modal family:
 
@@ -25,7 +26,7 @@ slice is the **glue** from the screen hooks to those methods.
 ## The data path
 
 ```
-ThreadScreen onModalOption(optionId) / onModalCancel()   ◀── inert here; #452 forwards them
+ThreadScreen onModalOption(optionId) / onModalCancel()   ◀── route host wires them to the VM (#452)
         │  (UI passes only the tapped optionId — never a modalId)
         ▼
 ThreadViewModel.onModalOption / onModalCancel            ◀── reads modalId from its OWN currentModal.value
@@ -230,9 +231,10 @@ quartet for the passthrough (delegate-over-active-connection + no-connection-thr
 - [#451 implementation notes](../codebase/451.md) — files, line refs, the rework lesson.
 - [Current-modal state](current-modal-state.md) ([#445](../codebase/445.md)) — the hoisted `currentModal` /
   `Open.defaultOptionId` this reads at tap time; the projection half.
-- [Permission-modal overlay](permission-modal-overlay.md) ([#446](../codebase/446.md)) — the render of the
-  open overlay + dismiss snackbar; the render slice **#452** extends it with the armed affordance and wires
-  these VM hooks (`vm::onModalOption` / `vm::onModalCancel`) + `armedOptionId` / `modalSendErrors`.
+- [Permission-modal overlay](permission-modal-overlay.md) ([#446](../codebase/446.md) base + [#452](../codebase/452.md)
+  live) — the render of the open overlay + dismiss snackbar; the render slice **#452** extended it with the
+  armed affordance + Cancel button + send-error snackbar + tapjacking net and wired these VM hooks
+  (`vm::onModalOption` / `vm::onModalCancel`) + `armedOptionId` / `modalSendErrors` into the route host.
 - [Remote conversation repository § `answerModal` / `cancelModal`](remote-conversation-repository.md)
   ([#438](../codebase/438.md)) — the concrete outbound send methods the passthrough delegates to.
 - [Relay repository coordinator § Outbound modal-send passthrough](relay-repository-coordinator.md#outbound-modal-send-passthrough-451)
@@ -240,8 +242,8 @@ quartet for the passthrough (delegate-over-active-connection + no-connection-thr
 - [Modal events](modal-events.md) ([#437](../codebase/437.md)) — the upstream decode seam.
 - [Thread screen](thread-screen.md) — the `ThreadViewModel` host; `armedOptionId` / `modalSendErrors` join
   `currentModal` / `isThinking` / `isStalled` / `navigationEvents` as VM-exposed signals.
-- Sibling slices: **#452** the render of the armed/second-confirm affordance + snackbar + route-host forward
-  (`blockedBy` this) · **#440** read-only device mode (re-pointed onto #452).
+- Sibling slices: [**#452**](../codebase/452.md) the render of the armed/second-confirm affordance +
+  snackbar + route-host forward (shipped) · **#440** read-only device mode (`blockedBy` #452).
 - Producer SSOT: pyrycode#716 (fail-safe-deny `default_option_id`, no per-option destructive marker), #702
   (per-device answer gate) / #703 (first-answer-wins) / #706 (stale-id reject); ADR 025 § Phase 3 modals,
   EPIC pyrycode#597.
