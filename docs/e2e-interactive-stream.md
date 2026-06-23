@@ -23,8 +23,9 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    claude is swapped for #642's scripted `fakeclaude` backend replaying a fixed JSONL fixture. No real
    claude, **zero claude turns**; re-running back-to-back yields the same pass. Run it with
    `DETERMINISTIC=1` — see [Deterministic mode (rung 4)](#deterministic-mode-rung-4).
-5. **Broaden** — multi-delta stream render + thinking indicator **shipped (#454)** on rung 4; tool-use
-   steps (`mobile#455`, Layer 2c) and reconnect/replay (`mobile#436`, Layer 2b) ticketed.
+5. **Broaden** — multi-delta stream render + thinking indicator **shipped (#454)** and tool-use steps
+   (running → done, and failed) **shipped (#455, Layer 2c)** on rung 4; reconnect/replay (`mobile#436`,
+   Layer 2b) ticketed.
 
 ## Layer 1 — component render harness (rung 2)
 
@@ -182,8 +183,9 @@ non-empty text:
 {"type":"assistant","message":{"id":"ping-1","stop_reason":"end_turn","content":[{"type":"text","text":"ping"}]}}
 ```
 
-`#454` added the `stream` + `spinner` fixtures below; `#455` (tool steps) and `#436` (reconnect +
-replay) build their fixtures on this same shape.
+`#454` added the `stream` + `spinner` fixtures below; `#455` added the `tool-open` / `tool-done` /
+`tool-failed` tool-step fixtures (same shape, with `tool_use` / `tool_result` content blocks); `#436`
+(reconnect + replay) builds its fixtures on this same shape.
 
 ### Scenarios (#454)
 
@@ -197,11 +199,15 @@ preserves #431 unchanged). Each scenario maps to a single `@Test` method in
 | `ping` (default) | a single-line reply renders | `ping.jsonl` | one |
 | `stream` | a multi-`assistant_delta` reply assembles into **one** message | `stream.jsonl` | one |
 | `spinner` | the thinking spinner shows mid-turn, then clears at turn end | `spinner-open.jsonl` + `spinner-end.jsonl` | **two** |
+| `tool` (#455) | a tool step shows **running** in flight, then **done** after the result | `tool-open.jsonl` + `tool-done.jsonl` | **two** |
+| `tool-failed` (#455) | a failing tool step renders **failed** | `tool-failed.jsonl` | one |
 
 ```bash
-DETERMINISTIC=1 PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh                  # ping
-DETERMINISTIC=1 SCENARIO=stream  PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # stream
-DETERMINISTIC=1 SCENARIO=spinner PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # spinner
+DETERMINISTIC=1 PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh                      # ping
+DETERMINISTIC=1 SCENARIO=stream      PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # stream
+DETERMINISTIC=1 SCENARIO=spinner     PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # spinner
+DETERMINISTIC=1 SCENARIO=tool        PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # tool running→done
+DETERMINISTIC=1 SCENARIO=tool-failed PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # tool failed
 ```
 
 **`stream`** — `stream.jsonl` is three `text` lines with **distinct** `message.id`s, so the producer
@@ -228,6 +234,33 @@ growth injects no event; only drop B's line ends the turn. The two-drop watcher 
 background subshell (counting `send_message.enqueued` occurrences to tell the 1st enqueue from the 2nd),
 so one `kill` reaps it on teardown.
 
+**`tool`** — a tool step must render **running** in flight and **done** after the result. "Running" is
+transient (the fold flips the row to done the instant the correlated `tool_result` arrives), so it reuses
+the spinner's **two-drop causal fence**:
+
+1. **Drop A** (`tool-open.jsonl`, a lone `tool_use` line) fires on the **1st** `send_message.enqueued` →
+   the fold opens a `Running` `Role.Tool` row keyed by the `tool_use` id, held open (no `end_turn`).
+2. The test asserts the running content-description (`cd_tool_running`) is shown, then sends a **2nd**
+   message.
+3. **Drop B** (`tool-done.jsonl`, the correlated success `tool_result` (`is_error: false`) + a
+   turn-ending text line) fires on the **2nd** `send_message.enqueued` → the fold flips the row to
+   `Done` and closes the turn.
+
+`Done` has **no positive content-description** (the resolved icon's `contentDescription` is `null`), so
+"done" is asserted **indirectly**: the running CD that was present is now absent, the failed CD never
+appears, and the tool row is still on screen (the verbatim tool name `"Bash"`). That triad uniquely
+identifies a running → done resolution and never keys on timing. **Correlation is load-bearing:** drop
+A's `tool_use` `id` must equal drop B's `tool_result` `tool_use_id` (same literal id in both files) or
+the fold drops the result and the row never resolves.
+
+**`tool-failed`** — a failing tool step must render **failed**. The failed end state is stable (it does
+not auto-resolve), so it needs **no two-drop fence**: a single fixture (`tool-failed.jsonl`) carries
+`tool_use` → an error `tool_result` (`is_error: true`) → a turn-ending text line, all in one drop. The
+fold renders the row `Running` (briefly) → `Failed`; the test asserts only the terminal `cd_tool_failed`
+content-description (tolerant, stable). The `tool_use` line must precede the `tool_result` line so they
+correlate. Assertions never depend on the producer-derived `input_summary`/`result_summary` text — only
+the status CDs and the verbatim tool name.
+
 ## Verification status
 
 - **Verified here (host JVM, no device):** the #337 fold (full `RemoteConversationRepositoryTest`
@@ -236,7 +269,7 @@ so one `kill` reaps it on teardown.
   payload.
 - **Operator-run (needs your infra):** the actual headless-emulator + host-daemon run — for rung 3
   with real claude (`bash scripts/e2e-emulator.sh`), and for rung 4 with the scripted backend, each of
-  the three [scenarios](#scenarios-454) (`DETERMINISTIC=1 SCENARIO=ping|stream|spinner …
+  the five [scenarios](#scenarios-454) (`DETERMINISTIC=1 SCENARIO=ping|stream|spinner|tool|tool-failed …
   bash scripts/e2e-emulator.sh`, `DeterministicInteractiveStreamE2ETest`). That is the point of both
   rungs — prove the emulator↔host↔app chain end to end. Expect to tune on first run; these are
   hand-built first-green prototypes, not hardened gates. Re-running each rung-4 scenario back-to-back
@@ -266,19 +299,36 @@ These are grounded in the source but unverified end to end:
 - **ATD image vs Play services.** The paired happy path never opens the QR scanner, so `aosp-atd`
   (no Play services) should suffice. If something needs Play services, switch `systemImageSource` to
   `google-atd` in `app/build.gradle.kts` (still headless).
+- **Lone `tool_use` opens + holds a turn (#455 `tool` scenario).** Drop A (`tool-open.jsonl`) is a bare
+  `tool_use` line (no preceding `responding` text, no `end_turn`), mirroring how `spinner-open.jsonl` is
+  a bare `thinking` line. The producer is expected to emit the `tool_use` envelope and leave the turn
+  open. If the emitter instead requires a prior event to open the turn, the running-assert times out —
+  fix by prepending a `thinking` or short `text` line to `tool-open.jsonl` (it does not affect the
+  tool-row assertion, which keys on the tool CD, not the turn state).
+- **Claude-format tool field names (#455).** The `tool_use` block `{id, name, input}` and the `user`
+  `tool_result` block `{tool_use_id, content, is_error}` are the standard Anthropic transcript shape and
+  match pyrycode's tui-driver extractors (`ParseToolUse`/`ParseToolResult`; cf. pyrycode #382/#671).
+  Confirm against the operator's pyrycode HEAD on first run; if a field name differs, adjust the fixtures
+  only. Correlation is load-bearing: `tool-open.jsonl`'s `tool_use` `id` must equal `tool-done.jsonl`'s
+  `tool_result` `tool_use_id` (`toolu_e2e` in both) or the fold drops the result and the row never
+  resolves.
+- **`tool-failed` SCENARIO token.** The hyphen is fine in the `case` arm and on the CLI
+  (`SCENARIO=tool-failed`). If a future operator prefers no hyphen, rename to `toolfail` in lockstep in
+  the script `case` and this doc — the `@Test` method name is independent.
 
 ## Follow-ups to ticket
 
-- **Rung 4 (shipped, #431; extended #454):** deterministic host backend via #642's scripted
+- **Rung 4 (shipped, #431; extended #454, #455):** deterministic host backend via #642's scripted
   `fakeclaude` — see [Deterministic mode (rung 4)](#deterministic-mode-rung-4). #454 added the
-  multi-delta `stream` render + the `spinner` scenario (see [Scenarios](#scenarios-454)); `#455` (tool
-  steps, Layer 2c) and `#436` (reconnect + replay, Layer 2b) extend the same fixture format.
+  multi-delta `stream` render + the `spinner` scenario, and #455 added the `tool` / `tool-failed`
+  tool-step scenarios (see [Scenarios](#scenarios-454)); `#436` (reconnect + replay, Layer 2b) extends
+  the same fixture format.
 - **Rung 2 (Layer 1a shipped, #432):** the cheap Compose render harness — see
   [Layer 1 — component render harness (rung 2)](#layer-1--component-render-harness-rung-2). Layer 1b
   (#435, rides the same harness) adds tool rows, the session divider, and the connection banner.
 - **Coverage:** thinking indicator (hardest, screen-sourced) — **shipped (#454)**, alongside the
-  multi-delta `stream`-render scenario; tool-use event assertion (`mobile#455`, Layer 2c) and reconnect /
-  replay (`mobile#436`, Layer 2b) remain ticketed.
+  multi-delta `stream`-render scenario; tool-use event assertion (running → done, and failed) —
+  **shipped (#455, Layer 2c)**; reconnect / replay (`mobile#436`, Layer 2b) remains ticketed.
 - **#337 full scope:** `seq`-based ordering and replay de-dup across reconnect (a #402 concern; this
   fold concatenates in arrival order, correct within a single connection); and a `make`/Gradle wrapper
   for the orchestration plus fork-sync of any shared `bin/` script per the org convention.

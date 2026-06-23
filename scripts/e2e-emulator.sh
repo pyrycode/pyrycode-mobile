@@ -22,8 +22,9 @@
 #      swaps in E2eTestApplication, which pre-pairs the app and binds the relay-backed repository.
 #   4b. (DETERMINISTIC) A background watcher drops the JSONL fixture once the daemon logs the
 #       `send_message.enqueued` cursor-stamp fence, so the scripted reply tails the real producer
-#       mid-test. The `spinner` scenario (SCENARIO=spinner) drops twice — a 2nd, turn-ending fixture
-#       on the 2nd enqueue — to hold the thinking turn open long enough to observe the spinner.
+#       mid-test. The `spinner` and `tool` scenarios drop twice — a 2nd, turn-ending fixture on the 2nd
+#       enqueue — to hold the turn open long enough to observe the transient state (thinking spinner /
+#       running tool row).
 #   5. Tear everything down (trap on EXIT).
 #
 # Prerequisites (host):
@@ -44,6 +45,8 @@
 #   DETERMINISTIC=1 PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh                 # rung 4, ping
 #   DETERMINISTIC=1 SCENARIO=stream  PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, stream
 #   DETERMINISTIC=1 SCENARIO=spinner PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, spinner
+#   DETERMINISTIC=1 SCENARIO=tool        PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, tool running→done
+#   DETERMINISTIC=1 SCENARIO=tool-failed PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, tool failed
 # Tunables (env):
 #   PORT=8888  DEVICE=pixel2Api33Atd  PAIR_NAME=e2e-emulator  PYRY_NAME=e2e-emulator
 #   PYRY_BIN=pyry  RELAY_BIN=pyrycode-relay
@@ -87,9 +90,10 @@ PAIR_OUT="${WORK_DIR}/pair.out"
 PYRYCODE_SRC="${PYRYCODE_SRC:-}"              # local pyrycode checkout (to build fakeclaude)
 FAKE_CLAUDE_BIN="${FAKE_CLAUDE_BIN:-}"        # prebuilt fakeclaude path (overrides PYRYCODE_SRC build)
 FIXTURES_DIR="${REPO_ROOT}/scripts/e2e-fixtures"
-SCENARIO="${SCENARIO:-ping}"                  # which deterministic scenario (#454): ping | stream | spinner.
-                                              # Resolved to a @Test method + fixture(s) in the preflight
-                                              # below; bare DETERMINISTIC=1 (SCENARIO unset → ping) keeps #431.
+SCENARIO="${SCENARIO:-ping}"                  # which deterministic scenario: ping | stream | spinner (#454) |
+                                              # tool | tool-failed (#455). Resolved to a @Test method +
+                                              # fixture(s) in the preflight below; bare DETERMINISTIC=1
+                                              # (SCENARIO unset → ping) keeps #431.
 INITIAL_UUID="${INITIAL_UUID:-43143143-4314-4314-8314-431431431431}"  # bootstrap session JSONL stem
 CONV_UUID="${CONV_UUID:-c0a70431-0431-4031-8031-043104310431}"        # seeded channel id
 SEED_CHANNEL_NAME="${SEED_CHANNEL_NAME:-e2e-seed}"  # MUST equal DeterministicInteractiveStreamE2ETest.SEED_CHANNEL_NAME
@@ -147,8 +151,17 @@ if [ -n "${DETERMINISTIC}" ]; then
       FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/spinner-open.jsonl}"      # drop A: thinking, held open
       FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/spinner-end.jsonl}"  # drop B: ends the turn
       ;;
+    tool)
+      TEST_METHOD="interactiveTurn_seededChannel_toolStepRunsThenCompletes"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/tool-open.jsonl}"      # drop A: tool_use, held open
+      FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/tool-done.jsonl}"  # drop B: tool_result(done) + turn_end
+      ;;
+    tool-failed)
+      TEST_METHOD="interactiveTurn_seededChannel_failedToolStepRendersFailed"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/tool-failed.jsonl}"    # single terminal drop
+      ;;
     *)
-      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner)"
+      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner | tool | tool-failed)"
       ;;
   esac
   log "deterministic scenario: ${SCENARIO} → ${TEST_METHOD}"
@@ -313,18 +326,18 @@ log "daemon up (the test waits for the relay session to open before sending)."
 # file.
 if [ -n "${DETERMINISTIC}" ]; then
   if [ -n "${FIXTURE_FILE_2}" ]; then
-    # spinner scenario (#454): two causally-fenced drops. Drop A on the 1st enqueue opens a `thinking`
-    # turn and HOLDS it open (no end_turn) so the transient spinner is observable; the test, after
-    # asserting the spinner, sends a 2nd message whose enqueue triggers drop B, ending the turn and
-    # clearing the spinner. Count enqueues (not a one-shot grep) to tell the 1st from the 2nd. Drop B
-    # waits for the 2nd enqueue — long after fakeclaude consumed drop A's trigger — so it never clobbers
-    # an unconsumed A.
-    log "arming two-drop watcher (spinner: ${FIXTURE_FILE##*/} on enqueue #1, ${FIXTURE_FILE_2##*/} on #2)…"
+    # Two-drop scenarios (spinner #454, tool #455): two causally-fenced drops. Drop A on the 1st enqueue
+    # opens a turn and HOLDS it open (no end_turn) so the transient state is observable (thinking spinner
+    # / running tool row); the test, after asserting that state, sends a 2nd message whose enqueue
+    # triggers drop B, ending the turn and resolving the state. Count enqueues (not a one-shot grep) to
+    # tell the 1st from the 2nd. Drop B waits for the 2nd enqueue — long after fakeclaude consumed drop
+    # A's trigger — so it never clobbers an unconsumed A.
+    log "arming two-drop watcher (${FIXTURE_FILE##*/} on enqueue #1, ${FIXTURE_FILE_2##*/} on #2)…"
     (
       while [ "$(grep -cF 'send_message.enqueued' "${DAEMON_LOG}" 2>/dev/null || echo 0)" -lt 1 ]; do sleep 0.5; done
-      cp "${FIXTURE_FILE}" "${JSONL_TRIGGER}"        # drop A: turn_state(thinking), held open
+      cp "${FIXTURE_FILE}" "${JSONL_TRIGGER}"        # drop A: open + held (thinking / tool_use)
       while [ "$(grep -cF 'send_message.enqueued' "${DAEMON_LOG}" 2>/dev/null || echo 0)" -lt 2 ]; do sleep 0.5; done
-      cp "${FIXTURE_FILE_2}" "${JSONL_TRIGGER}"      # drop B: responding + turn_end, spinner clears
+      cp "${FIXTURE_FILE_2}" "${JSONL_TRIGGER}"      # drop B: turn-ending (responding / tool_result), state resolves
     ) &
     WATCHER_PID=$!
   else
