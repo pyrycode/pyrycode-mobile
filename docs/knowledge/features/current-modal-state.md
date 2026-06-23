@@ -5,8 +5,9 @@ lifecycle (`modal_shown` → `modal_dismissed`) is folded into a single hoisted 
 open" observable, `currentModal`, on [`ThreadViewModel`](thread-screen.md). Landed in
 [#445](../codebase/445.md) (split from #443, the render half of #439), part of the Phase 3 permission-modal
 feature (epic pyrycode#597, ADR 025). The visual overlay, the fail-safe-deny default highlight, the
-inert-text output-encoding, and the dismiss-reason UI are the **sibling render slice #446** (blocked by
-this one); answering / cancelling is **#444**. This slice adds **no UI** — all state is hoisted to the VM.
+inert-text output-encoding, and the dismiss-reason UI are the **sibling render slice #446**
+([shipped](permission-modal-overlay.md) — it consumes this `currentModal`); answering / cancelling is
+**#444**. This slice adds **no UI** — all state is hoisted to the VM.
 
 It is the **modal twin of [`isThinking`](turn-state-thinking-flag.md) ([#406](../codebase/406.md))**: the
 same coordinator-passthrough + sibling-`StateFlow` shape, with one load-bearing deviation — a `scan`
@@ -129,8 +130,9 @@ modal outstanding across the whole app.
   fold is total over the sealed `ModalEvent`. Absence of a live source is the empty flow ⇒ state stays
   `Hidden`. No `catch`, no result type.
 - **Disconnect/reconnect clear (deferred, no AC)** — the coordinator passthrough emits `emptyFlow()` on a
-  null repo but pushes **no "clear" event**, so a stale `Open` can persist across a connection drop. Owned
-  by the render slice #446 + the connection signal — not handled here.
+  null repo but pushes **no "clear" event**, so a stale `Open` can persist across a connection drop. The
+  render slice [#446](permission-modal-overlay.md) did **not** build it either (state-driven overlay only);
+  owned by #444 + the connection signal.
 
 ## Wiring
 
@@ -167,6 +169,8 @@ holds `Hidden` with no live daemon.
   passthrough seam (§ Modal event seam).
 - [Thread screen](thread-screen.md) — the `ThreadViewModel` host; `currentModal` joins `isThinking` /
   `isStalled` / `connectionState` as a sibling signal the stateless screen takes as a separate parameter.
-- Sibling slices: **#446** the render overlay (blocked by this) · **#444** answering / cancelling.
+- [Permission-modal overlay](permission-modal-overlay.md) ([#446](../codebase/446.md)) — the render slice
+  (shipped) that collects this `currentModal` in the route host and draws the overlay.
+- Sibling slices: **#446** the render overlay (shipped) · **#444** answering / cancelling.
 - Producer SSOT: pyrycode#716 (surfaces only `permission` / `trust` classes; fail-safe-deny
   `default_option_id`, no per-option destructive marker), ADR 025 § Phase 3 modals, EPIC pyrycode#597.
