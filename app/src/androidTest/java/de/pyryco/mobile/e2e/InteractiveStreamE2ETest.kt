@@ -111,6 +111,82 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /**
+     * Tool-use twin of the ping happy path (#481, Layer 3): a constrained prompt makes **real claude run
+     * a shell tool**, and we assert the tool step renders in the thread. The render path (`tool_use` →
+     * running row, `tool_result` → done — #387 correlation / #388 tool-row status UI) is already shipped
+     * and reviewed; this exercises it end to end against real claude.
+     *
+     * The load-bearing signal is the **durable** terminal one: the verbatim tool name [TOOL_NAME] sits in
+     * the collapsed tool-row header in all three states, carried verbatim through the #387 fold. We do
+     * **not** race the transient running spinner — rung 3 has no scripted backend to hold the turn open
+     * (that is what #455's two-drop fence is for), and chasing the transient over a real relay turn is
+     * exactly the "never on timing" failure the ladder forbids.
+     *
+     * [TOOL_PROMPT] deliberately contains neither "Bash" nor "bash", so [TOOL_NAME] is absent from
+     * everything on screen before claude responds (the echoed user bubble, the auto-derived thread title,
+     * the thinking spinner). A non-empty match can therefore only come from the rendered tool row — a
+     * presence check, not a count.
+     */
+    @Test
+    fun interactiveTurn_toolPrompt_rendersToolStepInThread() {
+        // 1. A paired launch lands on the channel list. The "New discussion" FAB is the list marker.
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // 2. Wait for the relay connection to open before creating a conversation.
+        awaitConnected()
+
+        // 3. Create a fresh discussion → the app navigates into its thread; the send button marks arrival.
+        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // 4. Type the tool-forcing prompt into the only editable field, then send.
+        composeTestRule.onNode(hasSetTextAction()).performTextInput(TOOL_PROMPT)
+        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+
+        // 5. Wait for the verbatim tool name to appear, then confirm it is on screen. Because the prompt
+        //    omits the token, the only source of a match is the rendered tool row's header.
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(TOOL_NAME, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule
+            .onAllNodesWithText(TOOL_NAME, substring = true)
+            .onFirst()
+            .assertIsDisplayed()
+    }
+
+    /**
+     * Negative control (manual) for the tool-use test. Un-ignore once to confirm the [TOOL_NAME] matcher
+     * is selective: it sends the same tool prompt but waits for [TOOL_NEVER_USED] — a real, distinct tool
+     * name the read-only echo prompt never asks claude to use. On a correct build this wait **times out
+     * and the test FAILS**, proving the positive assertion genuinely observes a rendered tool row rather
+     * than matching everything. Left `@Ignore` so it does not burn a claude turn on every suite run; the
+     * operator un-ignores it once to confirm, then re-ignores.
+     */
+    @Ignore("manual negative control — un-ignore to confirm the tool-name matcher is selective")
+    @Test
+    fun negativeControl_toolClaudeNeverUses_isNeverDisplayed() {
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
+        }
+        awaitConnected()
+        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasSetTextAction()).performTextInput(TOOL_PROMPT)
+        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+        // The prompt asks only for a read-only shell command, never a file edit, so "Edit" must never
+        // render a tool row → this wait must time out (→ fail).
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(TOOL_NEVER_USED, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
     /** Count the on-screen semantic nodes whose text contains "ping" (case-insensitive, substring). */
     private fun pingNodeCount(): Int =
         composeTestRule
@@ -134,6 +210,20 @@ class InteractiveStreamE2ETest {
         // Constrained prompt: real claude's output is predictable enough to assert against, while the
         // path stays fully real. "exactly the word: ping" is the determinism lever.
         const val PING_PROMPT = "Reply with exactly the word: ping (nothing else)."
+
+        // Tool-use determinism lever (#481): a direct imperative to RUN a shell command reliably makes
+        // real claude use its shell tool (claude names it "Bash"), where "what does X output?" might be
+        // answered inline. `echo <fixed string>` is read-only, side-effect-free, and harmless on the
+        // host. "then stop without commentary" keeps surrounding prose minimal. The prompt contains
+        // neither "Bash" nor "bash" so the asserted tool-name substring can only come from the tool row.
+        const val TOOL_PROMPT = "Run this exact shell command with your tools, then stop without commentary: echo pyry481"
+
+        // Claude's verbatim shell-tool name; renders in the tool-row header (#388) in all three states.
+        const val TOOL_NAME = "Bash"
+
+        // Negative control: a real, distinct tool name the read-only echo prompt never asks claude to
+        // use, so the matcher's selectivity is what is proven (not a nonsense string).
+        const val TOOL_NEVER_USED = "Edit"
 
         // Production UI strings (no test tags exist). Keep in sync with res/values/strings.xml:
         //   cd_new_discussion = "New discussion", cd_send_message = "Send message".
