@@ -1,5 +1,6 @@
 package de.pyryco.mobile.e2e
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
@@ -13,7 +14,9 @@ import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.repository.ConnectionStateSource
+import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -28,7 +31,7 @@ import org.koin.core.context.GlobalContext
  * `fakeclaude` backend (pyrycode #642) — **no real claude, zero claude turns** — and asserts a
  * scripted reply renders in the thread.
  *
- * Five scenarios, one per script invocation (the harness runs exactly one `@Test` method per run,
+ * Six scenarios, one per script invocation (the harness runs exactly one `@Test` method per run,
  * selected by `SCENARIO` in `scripts/e2e-emulator.sh`):
  *  - `ping` (default, #431) — a single-line reply renders.
  *  - `stream` (#454) — a multi-`assistant_delta` reply assembles into one message.
@@ -37,6 +40,9 @@ import org.koin.core.context.GlobalContext
  *  - `tool` (#455) — a tool step renders running mid-turn, then done after the result (two-fixture
  *    drop, same causal fence as the spinner; see the method KDoc).
  *  - `tool-failed` (#455) — a failing tool step renders failed (single terminal drop).
+ *  - `reconnect` (#476) — an in-flight reply survives a mid-turn relay-link drop: the turn is held
+ *    open (two-fixture drop, spinner-style), the phone's link is severed and restored across the gap,
+ *    and the reply renders exactly once after reconnect (see the method KDoc).
  *
  * It is a thin variant of [InteractiveStreamE2ETest] (rung 3). **One** step differs: instead of
  * tapping "New discussion" (which mints a *fresh* per-conversation claude session that `fakeclaude` —
@@ -220,6 +226,55 @@ class DeterministicInteractiveStreamE2ETest {
     }
 
     /**
+     * `reconnect` scenario (#476, Layer 2b) — an in-flight reply must survive a mid-turn relay-link
+     * drop. The turn is held open across the outage the same way the `spinner` scenario holds it: drop A
+     * (`reconnect-open.jsonl`, a `thinking`-only line) fires on the **1st** `send_message.enqueued` and
+     * leaves the turn streaming. While the turn is open the test severs the phone's relay link and
+     * restores it ([severAndRestoreLink]) — a **phone-side** drop only: the daemon stays up, so its
+     * in-ring event buffer survives and the reconnecting phone re-advertises its `last_event_id` (#416)
+     * rather than tripping the `resync`/gap path a daemon restart (#417) would. Only after the link is
+     * back does the test send a **2nd** message, whose `send_message.enqueued` triggers drop B
+     * (`reconnect-done.jsonl`, a complete reply + `end_turn`) completing the held-open turn to the
+     * reconnected phone. The 2nd prompt is inert (the scripted backend ignores its text); it only
+     * causally fences drop B, so the sever/restore injects no `send_message` and the two-drop watcher is
+     * reused unchanged.
+     *
+     * Drop A carries **no** partial text by design: on the drop the connection-scoped repo tears down
+     * (`currentRepository` → `null`) and the thread projection clears, so the **whole** reply arrives
+     * post-reconnect in drop B — "no missing text" holds by construction without depending on uncertain
+     * partial-turn replay semantics. The closing assert is the one deliberate count assertion in this
+     * suite: `assertCountEquals(1)` on the assembled reply text is the load-bearing dedup invariant (the
+     * `event_id` high-water + `message_id` upsert fold, #337/#385) — a re-delivered event must render the
+     * reply **exactly once**, no duplicate row and no missing text. This is the final assembled text, not
+     * a transient delta count, so it is stable; the ladder's "never on counts" rule targets delta/timing
+     * counts, not this terminal invariant. Tolerant otherwise (substring, generous timeouts).
+     */
+    @Test
+    fun interactiveTurn_seededChannel_replySurvivesMidTurnReconnect() {
+        arriveInSeededThread()
+
+        // Message #1 → drop A → turn_state(thinking), held open. The turn is now mid-stream (the spinner
+        // proves the turn is open at the moment we sever).
+        typeAndSend(SEND_PROMPT)
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(thinkingDescription)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodes(hasContentDescription(thinkingDescription)).onFirst().assertIsDisplayed()
+
+        // Sever the phone's relay link mid-turn and restore it. The daemon stays up (in-ring buffer
+        // intact); on reconnect the phone re-advertises last_event_id (#416) and the turn resumes.
+        severAndRestoreLink()
+
+        // Message #2 → drop B → the complete reply + turn_end streams to the reconnected phone.
+        typeAndSend(SECOND_PROMPT)
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(RECONNECT_REPLY_SUBSTRING, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        // Exactly once: the complete reply renders in a single node — no missing text, no duplicate row.
+        composeTestRule.onAllNodesWithText(RECONNECT_REPLY_SUBSTRING, substring = true).assertCountEquals(1)
+    }
+
+    /**
      * Steps shared by every scenario: a paired launch lands on the channel list → the host-seeded
      * promoted channel "e2e-seed" surfaces once `list_conversations` round-trips (so waiting on that
      * text implicitly waits for the connection + list response) → gate on [ConnectionState.Connected]
@@ -249,6 +304,39 @@ class DeterministicInteractiveStreamE2ETest {
         runBlocking {
             withTimeout(CONNECT_TIMEOUT_MS) {
                 source.observe().first { it is ConnectionState.Connected }
+            }
+        }
+    }
+
+    /**
+     * Sever the phone's relay link and restore it, proving the drop truly landed (the connection-scoped
+     * repository tore down to `null`) and the phone re-attached (a fresh Noise pump reached `Open`). The
+     * reusable harness primitive #477 (ordering) builds on.
+     *
+     * **Phone-side only.** [RelayConnectionSupervisor.close] cancels the supervision loop and closes the
+     * live socket at the transport layer; the daemon's relay session is independent and stays up, so its
+     * in-ring event buffer survives — this can never trip the `resync`/gap path a daemon restart (#417)
+     * would. [RelayConnectionSupervisor.connect] re-dials with a fresh Noise session whose `hello`
+     * re-advertises `last_event_id` (#416), read live off the coordinator's surviving `replayCursor`.
+     *
+     * **Race-free.** `close()` leaves the loop cancelled (no auto-redial racing the explicit drive), so
+     * the `currentRepository == null` phase is stable; the two `first { … }` awaits over the coordinator's
+     * `StateFlow` cannot be conflated away. Mirrors [awaitConnected]'s `runBlocking { withTimeout { … } }`
+     * idiom; both singletons resolve off Koin like [ConnectionStateSource].
+     */
+    private fun severAndRestoreLink() {
+        val supervisor = GlobalContext.get().get<RelayConnectionSupervisor>()
+        val coordinator = GlobalContext.get().get<RelayRepositoryCoordinator>()
+        runBlocking {
+            withTimeout(RECONNECT_TIMEOUT_MS) {
+                // Sever: cancel the loop + close the socket → the coordinator tears the per-connection repo
+                // down. Await null so we prove the drop landed (not a no-op).
+                supervisor.close()
+                coordinator.currentRepository.first { it == null }
+                // Restore: a fresh supervision loop → new dial → new Noise hello advertising last_event_id.
+                // Await non-null so the fresh pump reached Open before the step-5 sendMessage round-trips.
+                supervisor.connect()
+                coordinator.currentRepository.first { it != null }
             }
         }
     }
@@ -284,6 +372,12 @@ class DeterministicInteractiveStreamE2ETest {
         // "e2e-seed" rendered in the top bar.
         const val TOOL_NAME = "Bash"
 
+        // The reconnect scenario's drop-B reply text ("reconnected reply ok" in reconnect-done.jsonl); this
+        // substring is asserted to render exactly once after the mid-turn drop. A unique, self-documenting
+        // phrase that collides with nothing else on screen (the "e2e-seed" title, "ping", "Bash",
+        // "streamed world").
+        const val RECONNECT_REPLY_SUBSTRING = "reconnected reply"
+
         // Production UI string (no test tags exist). Keep in sync with res/values/strings.xml:
         //   cd_send_message = "Send message".
         const val CD_SEND_MESSAGE = "Send message"
@@ -291,6 +385,10 @@ class DeterministicInteractiveStreamE2ETest {
         const val LIST_TIMEOUT_MS = 30_000L
         const val CONNECT_TIMEOUT_MS = 30_000L
         const val THREAD_TIMEOUT_MS = 30_000L
+
+        // The two currentRepository awaits in severAndRestoreLink (drop-to-null, then reconnect-to-non-null);
+        // reuses the connect/thread wait budget — an immediate, test-triggered reconnect, not a backoff.
+        const val RECONNECT_TIMEOUT_MS = 30_000L
 
         // Generous: the fixture drop is fenced on send_message.enqueued, then tails the real producer
         // over the relay. Also used as the spinner scenario's presence/absence timeout.
