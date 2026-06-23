@@ -159,6 +159,32 @@ interface ConversationRepository {
      */
     suspend fun requestScreenSnapshot(conversationId: String): String =
         error("requestScreenSnapshot is not implemented for this ConversationRepository")
+
+    /**
+     * Drops a not-yet-drained message from [conversationId]'s queued backlog by sending a
+     * `dequeue_message` frame carrying the conversation id and the message's [queuedMessageId] (#466,
+     * ADR 025). [queuedMessageId] is the [QueuedMessage.id] the caller received from [observeQueue],
+     * passed back **verbatim**; it is the daemon's per-conversation `queued_msg_id` — a wire `uint64`,
+     * so a [Long] (not a `String`; the pyrycode#720 trap), the same width [observeQueue] decodes.
+     *
+     * **No projection side effect.** Success is "returned without throwing"; this slice mutates no
+     * local state. The backlog updates only by a subsequent `queue_state` snapshot on [observeQueue]
+     * (#460) — there is nothing to roll back on failure.
+     *
+     * Throws [IllegalArgumentException] for an unknown [conversationId] (the remote surfaces the
+     * server's `conversation.not_found` as that type). Throws on a server error
+     * ([de.pyryco.mobile.data.network.RelayErrorException]) — a stale / already-drained id surfaces
+     * generically there — or a not-connected session ([IllegalStateException]); the caller handles
+     * failure and leaves the backlog unchanged.
+     *
+     * Default throws — implementations without an interactive wire (the fake, inline test doubles)
+     * inherit it, so no test double needs to override it (the same cascade-avoidance as [delete] /
+     * [createWorkspaceFolder] / [requestScreenSnapshot]).
+     */
+    suspend fun dropQueuedMessage(
+        conversationId: String,
+        queuedMessageId: Long,
+    ): Unit = error("dropQueuedMessage is not implemented for this ConversationRepository")
 }
 
 enum class ConversationFilter { All, Channels, Discussions, Archived }

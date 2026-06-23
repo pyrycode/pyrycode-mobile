@@ -14,6 +14,7 @@ import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.ConversationsPayload
 import de.pyryco.mobile.data.network.CreateConversationPayloadDto
+import de.pyryco.mobile.data.network.DequeueMessagePayloadDto
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.ErrorPayload
 import de.pyryco.mobile.data.network.MessageChunkPayloadDto
@@ -1077,6 +1078,43 @@ class RemoteConversationRepository(
     }
 
     /**
+     * Drop a not-yet-drained message from [conversationId]'s queued backlog over v2 `dequeue_message`
+     * (#466, ADR 025): send `{conversation_id, queued_msg_id}` and await its correlated reply — an
+     * empty `ack` (the daemon removed the message) or an `error` (failure). [queuedMessageId] is the
+     * `QueuedMessage.id` the caller received from [observeQueue] (#460), echoed **verbatim** as the
+     * wire `queued_msg_id` (a `uint64` → [Long] JSON number, not a String — the pyrycode#720 trap);
+     * the daemon validates the `(conversation_id, queued_msg_id)` pair against its own per-conversation
+     * queue and stale-id rejects a mismatch — this method neither re-derives nor trusts it.
+     *
+     * A pure request/reply with **no** projection side effect — success is simply "returned without
+     * throwing", and the backlog updates only by a subsequent `queue_state` on [observeQueue], so there
+     * is nothing to mutate here and nothing to roll back on failure. Never logs the payload.
+     *
+     * Throws [IllegalArgumentException] for an unknown conversation (server `conversation.not_found`),
+     * [RelayErrorException] for any other server `error` (a stale / already-drained id surfaces
+     * generically here), and [IllegalStateException] when the session is not connected
+     * ([SessionPump.send] returns `false`) — none mutates any state (there is none).
+     */
+    override suspend fun dropQueuedMessage(
+        conversationId: String,
+        queuedMessageId: Long,
+    ) {
+        val request =
+            Envelope(
+                id = requestId.incrementAndGet(),
+                type = TYPE_DEQUEUE_MESSAGE,
+                ts = Clock.System.now().toString(),
+                payload =
+                    MobileJson.encodeToJsonElement(
+                        DequeueMessagePayloadDto(conversationId = conversationId, queuedMsgId = queuedMessageId),
+                    ),
+            )
+        // Throws on a server `error` / not-Open session; the empty `{}` ack carries nothing to map and
+        // no projection is mutated, so the returned reply is ignored.
+        sendAndAwaitReply(request)
+    }
+
+    /**
      * Register the phone's FCM push [token] with the paired daemon over v2 `register_push_token`
      * (#359) — so the daemon knows where to send a wake notification when the phone is backgrounded.
      * Encodes the request ([RegisterPushTokenPayloadDto]: `platform="fcm"`, the [token], and the
@@ -1292,6 +1330,14 @@ class RemoteConversationRepository(
          * current backlog (`msgqueue.Snapshot`) in FIFO order, each snapshot replacing the prior one.
          */
         const val TYPE_QUEUE_STATE = "queue_state"
+
+        /**
+         * Outbound queue control: the phone's request to drop a not-yet-drained message
+         * `{conversation_id, queued_msg_id}` from a conversation's backlog (#466, pyrycode#723, ADR
+         * 025) — the outbound peer of [TYPE_QUEUE_STATE]. Success is an empty `ack`; the backlog
+         * updates via the next `queue_state`, not a reply.
+         */
+        const val TYPE_DEQUEUE_MESSAGE = "dequeue_message"
 
         /**
          * Capability-gated modal event: a surfaced permission/choice modal
