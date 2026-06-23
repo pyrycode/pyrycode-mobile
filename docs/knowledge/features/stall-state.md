@@ -102,7 +102,7 @@ authenticated Noise channel. It is the **narrowest** of the interactive boundari
 no free-form text (no `text`/`summary`/`stop_reason`), so there is no verbatim-sensitive-content surface
 to mishandle, and the data layer surfaces only a `Boolean`. Memory posture is a `Set<String>` of
 conversation ids (membership, not accumulation) — the same per-conversation-id growth posture
-`lastMessages`/`messagesByConversation` already accept under the paired-daemon threat model, with the
+`lastMessages`/`threadByConversation` already accept under the paired-daemon threat model, with the
 lightest footprint. No payload logging; UI-leakage threats (screenshot/overlay of a stall banner) belong
 to #396 — and the [stall promotion banner](stall-promotion-banner.md) it shipped carries **no**
 sensitive content (only fixed copy + a CTA into the existing snapshot action), so there is nothing to

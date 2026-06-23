@@ -114,7 +114,8 @@ Fixtures use a fixed `Instant.parse("2026-05-17T14:32:00Z")` so previews are det
 - Spec: `docs/specs/architecture/135-session-boundary-delimiter.md`
 - Upstream:
   - [`#3`](../codebase/3.md) — `ThreadItem` / `SessionBoundary` / `BoundaryReason` definitions; the input contract this component consumes.
-  - [`#9`](../codebase/9.md) — `buildThreadItems` projection that emits `SessionBoundary` markers between session-id deltas.
+  - [`#9`](../codebase/9.md) — `buildThreadItems` projection that emits `SessionBoundary` markers between session-id deltas (the **Fake** producer, derived from full in-memory history).
+  - [Session-transition fold](./session-transition-fold.md) ([`#336`](../codebase/336.md)) — the **real-backend** producer: folds the capability-gated v2 `session_transition` event into the live thread as a `SessionBoundary` (live transitions only). This component renders those rows unchanged.
   - [`#192`](../codebase/192.md) — authored `reason` + `workspaceCwd` on the marker; without this ticket the delimiter could not distinguish the three variants. The seed channels now collectively exercise all three reasons so previews and integration tests have realistic data to render against.
 - Sibling component patterns: [`MarkdownText`](./markdown-text.md) (injectable-`UriHandler` worker pattern for testable URL side effects), [`ConnectionBanner`](./connection-banner.md) (stateless row primitive in the same package, file shape `constants → public @Composable → private content → preview matrix → preview wrappers`), [`MessageBubble`](./message-bubble.md) / [`ToolCallRow`](./tool-call-row.md) (file-private spacing constants).
 - Downstream / follow-ups:

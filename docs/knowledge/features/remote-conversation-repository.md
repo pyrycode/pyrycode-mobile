@@ -111,8 +111,8 @@ demultiplexes each envelope by `Envelope.type`:
 | `Envelope.type` | Handling |
 |---|---|
 | `"conversations"` | Decode `MobileJson.decodeFromJsonElement<ConversationsPayload>(payload).toConversations()` (#316) → assign to `projection`. A **full-list snapshot** — both the reply to our request and any unsolicited server change-push arrive this way, so re-emission needs **no `in_reply_to` correlation**. Decode is wrapped in a per-envelope `try/catch` (a malformed snapshot is dropped, the collector survives). |
-| `"message"` | Decode `MobileJson.decodeFromJsonElement<MessagePayloadDto>(payload)` (#317) → key by `conversation_id` (**read off the DTO before mapping** — the domain `Message` carries none) → `toMessage(envelope, sessionId = "")`, then **two folds** off the one decoded DTO: (a) the strictly-greater-by-`timestamp` `lastMessages` preview fold ([#329](../codebase/329.md)); (b) an arrival-order append into the `messagesByConversation` thread ([#313](../codebase/313.md)). Same per-envelope `try/catch` drop; **silent** (no payload logged, content may be sensitive). The singular live/echo `message`. See [`observeLastMessage`](#observelastmessageconversationid--the-live-last-message-preview-329) and [`observeMessages`](#observemessagesconversationid--the-live-thread-read-313) below. |
-| `"message_chunk"` | The `backfill_since` **response** body ([#313](../codebase/313.md)): `MobileJson.decodeFromJsonElement<MessageChunkPayloadDto>(payload)` → map **each** row via the same `toMessage(envelope, sessionId = "")` (one envelope `ts` covers every row) → append the whole batch into `messagesByConversation` in one atomic `update`. Each row **self-routes** by its own `conversation_id` — no `in_reply_to` correlation. A single bad row drops the **whole chunk** in one `catch (IllegalArgumentException)`; silent. |
+| `"message"` | Decode `MobileJson.decodeFromJsonElement<MessagePayloadDto>(payload)` (#317) → key by `conversation_id` (**read off the DTO before mapping** — the domain `Message` carries none) → `toMessage(envelope, sessionId = "")`, then **two folds** off the one decoded DTO: (a) the strictly-greater-by-`timestamp` `lastMessages` preview fold ([#329](../codebase/329.md)); (b) an arrival-order append into the `threadByConversation` thread ([#313](../codebase/313.md)). Same per-envelope `try/catch` drop; **silent** (no payload logged, content may be sensitive). The singular live/echo `message`. See [`observeLastMessage`](#observelastmessageconversationid--the-live-last-message-preview-329) and [`observeMessages`](#observemessagesconversationid--the-live-thread-read-313) below. |
+| `"message_chunk"` | The `backfill_since` **response** body ([#313](../codebase/313.md)): `MobileJson.decodeFromJsonElement<MessageChunkPayloadDto>(payload)` → map **each** row via the same `toMessage(envelope, sessionId = "")` (one envelope `ts` covers every row) → append the whole batch into `threadByConversation` in one atomic `update`. Each row **self-routes** by its own `conversation_id` — no `in_reply_to` correlation. A single bad row drops the **whole chunk** in one `catch (IllegalArgumentException)`; silent. |
 | `"ack"` / `"conversation_created"` / `"conversation_updated"` / `"screen_snapshot"` | Correlated **success** reply to an outgoing request, **one shared arm** ([#346](../codebase/346.md) / [#347](../codebase/347.md) / [#348](../codebase/348.md) / [#375](../codebase/375.md)): `envelope.inReplyTo?.let { pendingRequests[it]?.complete(envelope.payload) }`. An `ack` payload is the empty `{}` a bare-`ack` caller (`sendMessage`) ignores; a `conversation_created` (`createDiscussion`) / `conversation_updated` (`promote`) payload is the **bare conversation object** the mutation decodes for its typed return; a `screen_snapshot` (`requestScreenSnapshot`, #375) payload is the **rendered-screen object** the read decodes for its `text`. The payload is handed verbatim to the waiting suspend, which decodes (or ignores) it **in the caller's coroutine** — so a malformed reply never throws inside this collector. An `inReplyTo` matching no pending entry (or null) is a no-op; `complete` is idempotent (duplicate reply harmless). `screen_snapshot` is **always** a correlated reply (no unsolicited snapshot push), so an unmatched one is the same harmless no-op; `conversation_updated` is also the server's **unsolicited broadcast** on change (no `inReplyTo`), which must stay a harmless no-op here — the authoritative `conversations` snapshot, not this delta, drives an unsolicited list refresh. |
 | `"error"` | Correlated **failure** reply ([#346](../codebase/346.md)): `envelope.inReplyTo?.let { pendingRequests[it]?.completeExceptionally(mapError(envelope.payload)) }` — unblocks the waiter exceptionally with the mapped domain error. `mapError` **never throws** (a malformed payload yields a fallback exception), so the lone collector survives; `completeExceptionally` is idempotent and a no-op when no entry matches. |
 | anything else | **No-op** (intentional `else`, not a bug). `backfill_done` (`{delivered}`) needs no action — the `message_chunk` already delivered the history, the count is informational. **Unsolicited** single-row deltas (a server-pushed `conversation_created`/`conversation_updated` with no `inReplyTo` match) are caught by the success arm above and no-op there — merging them into the live projection is future work; the list refreshes on the next `conversations` snapshot. |
@@ -201,7 +201,7 @@ content (only `last_message_ts`, which maps to no domain field), the preview is 
 > **Cold-start gap (still open after #313).** With Design A a quiescent conversation's preview stays
 > empty until a live `message` arrives on **this** connection; it does not back-fill from history.
 > [#313](../codebase/313.md) landed the backfill plumbing (`backfill_since` → `message_chunk`) but feeds
-> it into the **thread** projection (`messagesByConversation`), **not** `lastMessages` — so the preview
+> it into the **thread** projection (`threadByConversation`), **not** `lastMessages` — so the preview
 > cold-start gap is unchanged. A later follow-up can fold `message_chunk` rows into `lastMessages` (the
 > chunk's one envelope `ts` covers every row, so it needs a most-recent-row reconciliation, not a
 > per-row `ts`). Until then the preview is a strict improvement over nothing: real content for any
@@ -209,28 +209,35 @@ content (only `last_message_ts`, which maps to no domain field), the preview is 
 
 ## `observeMessages(conversationId)` — the live thread read (#313)
 
-The conversation thread: a chronological `List<ThreadItem.MessageItem>` of **backfilled history merged
-ahead of the live `message` stream**, deduped by `message_id`, in wire/arrival order.
-[#313](../codebase/313.md) implements it over a third projection fed by the **same** single inbound
-collector:
+The conversation thread: a chronological `List<ThreadItem>` of **backfilled history merged ahead of the
+live `message` stream**, deduped by `message_id`, in wire/arrival order — with
+[`ThreadItem.SessionBoundary`](session-transition-fold.md) delimiters interleaved at session transitions
+since [#336](../codebase/336.md). [#313](../codebase/313.md) implements the message half over a third
+projection fed by the **same** single inbound collector; #336 unified that projection's element type so a
+non-`Message` boundary can interleave by arrival order (see [Thread store §
+below](#the-unified-thread-store-and-the-session_transition-fold-336)):
 
-- A third projection, `private val messagesByConversation = MutableStateFlow<Map<String,
-  List<Message>>>(emptyMap())`, holds each conversation's ordered, `message_id`-deduped thread. It is
-  written **only** by the one `init` collector, from **two** demux arms (see the table above): the
-  `message` arm appends each live message, and the `message_chunk` arm appends a whole backfill batch.
-  Both go through one accumulator:
+- A third projection, `private val threadByConversation = MutableStateFlow<Map<String,
+  List<ThreadItem>>>(emptyMap())`, holds each conversation's ordered thread rows — `message_id`-deduped
+  `MessageItem`s plus interleaved `SessionBoundary`s. It is written **only** by the one `init` collector,
+  from the `message` arm (appends each live message), the `message_chunk` arm (appends a whole backfill
+  batch), the structured-turn folds (#387 tool rows, #337 streaming deltas), and the #336 boundary fold.
+  The message rows go through one accumulator:
 
   ```kotlin
   private fun appendMessages(rows: List<Pair<String, Message>>) {  // (conversationId, Message)
       if (rows.isEmpty()) return
-      messagesByConversation.update { current -> /* per row: first-seen id appends at end;
-          repeat id replaces in place (indexOfFirst), position fixed at first occurrence */ }
+      threadByConversation.update { current -> /* per row: first-seen id appends at end as a
+          ThreadItem.MessageItem; repeat id replaces in place (is-MessageItem guard + indexOfFirst),
+          position fixed at first occurrence */ }
   }
   ```
 
   Dedup is **last-write-in-place**: a `message_id` seen in both the backfill chunk and a later live
-  `message` appears once, at its first position, with the later payload winning. Batching a whole chunk
-  into one atomic `update` avoids emitting an intermediate list per row.
+  `message` appears once, at its first position, with the later payload winning. The `is
+  ThreadItem.MessageItem` guard skips any interleaved boundary so a `message_id` never matches a boundary
+  row (boundaries carry no id). Batching a whole chunk into one atomic `update` avoids emitting an
+  intermediate list per row.
 
 - The method is a **cold** flow mirroring `observeConversations` exactly — issue the request, then fan
   out the per-conversation projection:
@@ -239,8 +246,8 @@ collector:
   override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
       flow {
           pump.send(backfillSinceRequest(conversationId))
-          emitAll(messagesByConversation
-              .map { it[conversationId].orEmpty().map(ThreadItem::MessageItem) }
+          emitAll(threadByConversation                       // store already holds ThreadItems (#336) —
+              .map { it[conversationId].orEmpty() }          //   no more `.map(MessageItem)` wrap
               .distinctUntilChanged())
       }
   ```
@@ -265,17 +272,59 @@ collector:
   arrival order yields history-then-live naturally. The encrypted stream cannot skip a frame — do not
   reorder around a gap.
 
-> **Two de-scopes, both blocked on a server-side v2 protocol addition — neither is a bug.** The thread
-> emits `ThreadItem.MessageItem`s **only**: the v2 wire has no session-transition representation, so
-> `ThreadItem.SessionBoundary` cannot be constructed ([#336](https://github.com/pyrycode/pyrycode-mobile/issues/336),
-> see [[phase4-v2-wire-no-session-boundary]]); and every message is *finished* (`isStreaming = false` via
-> #317's `toMessage`), so live token-streaming cannot be produced
-> ([#337](https://github.com/pyrycode/pyrycode-mobile/issues/337), see [[phase4-v2-wire-no-streaming]]).
+> **Session-boundary delimiters now fold in (#336, landed); the `message` path stays finished-only.**
+> #313 emitted `ThreadItem.MessageItem`s only because the v2 wire then carried no session-transition
+> representation. That gate closed (pyrycode#656/#657/#740/#741/#739), and
+> [#336](../codebase/336.md) folds the capability-gated `session_transition` event into the thread as a
+> `ThreadItem.SessionBoundary` — **live transitions only** (the `message_chunk` backfill carries no
+> boundaries; historical pre-connection boundaries remain out of scope, a deliberate fidelity gap vs the
+> fake). See [Session-transition fold](session-transition-fold.md) and the [Thread store §
+> below](#the-unified-thread-store-and-the-session_transition-fold-336). The `message` wire type itself is
+> still always *finished* (`isStreaming = false` via #317's `toMessage`) — live token-streaming rides the
+> separate structured `assistant_delta` stream (#385/#337), not this path.
 
 > **Known follow-up: `appendMessages` dedup is O(n²) over thread size** (`indexOfFirst` + `existing +
 > message` per row). Deferred by evidence — no live backfill yet (`max_messages` unexercised; the
 > backend dispatcher is pyrycode #248), no observed perf failure. Swap to a `LinkedHashMap<messageId,
 > Message>` accumulator when large-thread backfill goes live; the change is internal to `appendMessages`.
+
+## The unified thread store and the `session_transition` fold (#336)
+
+[#336](../codebase/336.md) closed #313's session-boundary de-scope. The decode boundary (DTO + mapper +
+reason mapping + the `workspaceCwd`-non-null-iff-`WorkspaceChange` invariant) lives in
+[Session-transition fold](session-transition-fold.md); this section records only how it attaches to the
+repository.
+
+- **The store was unified to `List<ThreadItem>`.** A `SessionBoundary` is a non-`Message` `ThreadItem`
+  that must interleave **in arrival order** with messages, and there is no shared ordering key to
+  re-interleave two separate stores (messages are id-fixed, boundaries have no id). So
+  `threadByConversation` moved from `Map<String, List<Message>>` to `Map<String, List<ThreadItem>>`, and
+  the five existing `Message.id`-keyed folds (`appendMessages`, `applyToolUse`, `applyToolResult`,
+  `applyAssistantDelta`, `finalizeAssistantTurn`) were lifted to `ThreadItem` **output-preserving** (the
+  existing suite is the guard). Four share a `private fun List<ThreadItem>.indexOfMessage(id, role): Int`
+  guard; `appendMessages` keeps an **inline id-only** `is ThreadItem.MessageItem` guard (message dedup is
+  role-agnostic — routing it through the role-taking helper would change semantics). `lastMessages` (the
+  messages-only preview) was **not** touched; `threadProjection` lost its `.map { MessageItem(it) }` wrap.
+- **Rides the single existing inbound collector.** A new `TYPE_SESSION_TRANSITION` arm joins the
+  `onInbound` demux, beside the `stall` / `queue_state` siblings — **no second subscription**. Gated
+  **identically** on `CAPABILITY_INTERACTIVE in negotiatedCapabilities()` (the **reused** #385 supplier —
+  no new capability), it calls `decodeSessionTransition(envelope)` (the `decodeStall`/`decodeQueueState`
+  `try/catch (IllegalArgumentException) { null }` drop idiom) and folds via `appendSessionBoundary`.
+- **Folds a thread row only — three deliberate non-actions.** Unlike the structured-stream arm it
+  surfaces **nothing** on [`liveSessionEvents`](#livesessionevents--the-v2-structured-stream-decode-seam-385)
+  (a boundary is a thread row, not a streaming event), does **not** clear a [stall](stall-state.md) (a
+  session transition is not turn forward-progress), and **does not dedup** — `appendSessionBoundary`
+  pure-appends in arrival order (the wire carries no row id; the repo is connection-scoped per #351, so
+  arrival order is correct — the same posture as `applyAssistantDelta`).
+- **Routes strictly by the payload's `conversation_id`** into `threadByConversation[conversationId]`, so
+  a boundary can only ever surface in `observeMessages(thatId)` — cross-routing is structurally
+  impossible (no "is this conversation observed?" guard; an unobserved id simply sits unread). This is
+  the fail-closed client mirror of the producer's server-side drop of unbindable transitions (#741).
+
+`security-sensitive`, but the repository stays plain orchestration: decode runs behind the authenticated
+Noise channel, and **nothing in the new arm or the drop branch logs the payload** — `conversation_id` /
+session ids / `workspace_cwd` are sensitive (a logged or mis-routed boundary is a cross-conversation
+leak). See [Session-transition fold § Trust boundary](session-transition-fold.md#trust-boundary--no-payload-logging).
 
 ## `sendMessage(conversationId, text)` — the first mutation (#346)
 
@@ -539,7 +588,7 @@ deferred) and no new error mapping.
    method, or DI reachability was added.
 2. **It mutates no projection.** Unlike `sendMessage` / `createDiscussion` / `promote`, this registers a
    token and produces **no domain object** — the success signal is simply "the call returned without
-   throwing". `projection` / `lastMessages` / `messagesByConversation` are untouched, so (unlike #346) no
+   throwing". `projection` / `lastMessages` / `threadByConversation` are untouched, so (unlike #346) no
    projection KDoc needed amending.
 
 The flow (the entire method, ≤ ~12 lines):
@@ -643,7 +692,7 @@ section records only how it attaches to the repository.
   **not** fold a thread row (modals are not rows and carry **no `conversation_id`**) and does **not** clear
   a [stall](stall-state.md) — a `modal_shown` means `claude` is *waiting* for input, **not** turn
   forward-progress (the inverse of every `LiveSessionEvent`, which clears a stall). It is the cleanest of
-  the interactive arms: one decode, one `tryEmit`, no side effects on `messagesByConversation` /
+  the interactive arms: one decode, one `tryEmit`, no side effects on `threadByConversation` /
   `stalledConversations`.
 - **A separate flow + family, not a sixth `LiveSessionEvent`.** Forced by the wire: modal payloads carry
   no `conversation_id` (`modalId` is the sole key), whereas every `LiveSessionEvent` subtype mandates
@@ -918,7 +967,7 @@ Correlate the v2 `tool_use` (start) / `tool_result` (completion)
 (`Running → Done`/`Failed`). [#387](../codebase/387.md) adds the correlation + status state machine;
 the onset/correlation model lives in [Live tool-call](live-tool-call.md), this section records only how
 it attaches to the repository. Unlike #395 (a *separate* `Set<String>` projection), a tool row **is** a
-thread row, so it folds into the **existing** `messagesByConversation` — see [Live tool-call § Chronological
+thread row, so it folds into the **existing** `threadByConversation` — see [Live tool-call § Chronological
 interleave](live-tool-call.md#chronological-interleave-ac-4--why-its-free).
 
 - **Two demux hooks, dispatched inside the existing `interactive` gated live-session arm.** The
@@ -935,20 +984,20 @@ interleave](live-tool-call.md#chronological-interleave-ac-4--why-its-free).
   ```
 
 - **`applyToolUse` (`:473`) — append a `Running` row, idempotent on a repeat id.** One atomic
-  `messagesByConversation.update {}`: if a row with `id == toolUseId && role == Role.Tool` already
+  `threadByConversation.update {}`: if a row with `id == toolUseId && role == Role.Tool` already
   exists, leave it untouched (a duplicate `tool_use` never adds a second row nor resets a finished one
   to `Running`); else append a `Role.Tool` `Message` with `id = toolUseId`, `content = name` (a
   non-empty fallback the UI ignores), `timestamp = Clock.System.now()`, and
   `ToolCall(name, inputSummary, output = "", status = Running)`. The `&& role == Role.Tool` namespaces
   the match so a `toolUseId` can never clobber a real `message_id` row.
 - **`applyToolResult` (`:510`) — update the matching row in place, or drop.** One atomic
-  `messagesByConversation.update {}`: find the row with `id == toolUseId && role == Role.Tool`; if
+  `threadByConversation.update {}`: find the row with `id == toolUseId && role == Role.Tool`; if
   absent, **no-op** (a `tool_result` with no prior `tool_use`, including a result-before-use, is dropped
   — no orphan half-row); if present, replace it (position + `timestamp` preserved) with its `toolCall`
   copied as `output = resultSummary`, `status = if (isError) Failed else Done`. A duplicate
   `tool_result` re-applies the same update (idempotent / last-write-wins). `row.toolCall?.copy(...)`
   handles the theoretical null gracefully — no `!!`.
-- **Why fold into `messagesByConversation`, not a separate flow.** The two folds write the **same**
+- **Why fold into `threadByConversation`, not a separate flow.** The two folds write the **same**
   `StateFlow` [`observeMessages`](#observemessagesconversationid--the-live-thread-read-313) reads, whose
   `threadProjection` preserves **arrival order with no re-sort** — so a tool row interleaves
   chronologically with messages for free (AC #4); a ViewModel-side merge cannot, because ordering is a
@@ -956,7 +1005,7 @@ interleave](live-tool-call.md#chronological-interleave-ac-4--why-its-free).
   unequal → `distinctUntilChanged` re-emits the `Running → Done/Failed` transition. **Not folded into
   `lastMessages`** — a tool invocation never becomes a conversation-list preview.
 - **Single writer, no race.** Both folds run on the lone `init` inbound collector (the sole writer of
-  `messagesByConversation` alongside `sendMessage`'s `update {}` insert), in wire arrival order, so
+  `threadByConversation` alongside `sendMessage`'s `update {}` insert), in wire arrival order, so
   insert-then-update never races; an out-of-order result simply finds no row and drops.
 
 `security-sensitive`, but the repository stays plain orchestration: no new parse point (consumes the
@@ -1103,12 +1152,12 @@ this implementation's surface. All three read paths are now **cold flows that de
 ## State & concurrency model
 
 - **Five `StateFlow` projections — `projection` (the conversation list, #312), `lastMessages` (#329's
-  per-conversation most-recent `Message`), `messagesByConversation` (#313's per-conversation ordered
+  per-conversation most-recent `Message`), `threadByConversation` (#313's per-conversation ordered
   thread), `stalledConversations` (#395's per-conversation stall `Set<String>`), and `queuedByConversation`
   (#460's per-conversation queued backlog `Map<String, List<QueuedMessage>>`) — fed by one inbound
   collector** launched on the injected connection `scope`. No second collector or scope is added per
   slice; a single `message` envelope can update **two** projections (`lastMessages` +
-  `messagesByConversation`), and a single decoded `LiveSessionEvent` both `tryEmit`s on `liveSessionEvents`
+  `threadByConversation`), and a single decoded `LiveSessionEvent` both `tryEmit`s on `liveSessionEvents`
   and clears `stalledConversations` for its conversation (#395). `stalledConversations` is **single-writer**
   on this collector (onset on a `stall` arm, clearing on the live-session arm — never from a caller
   coroutine), so onset and clearing cannot race. The scope (and thus the collector) is cancelled by its
@@ -1122,7 +1171,7 @@ this implementation's surface. All three read paths are now **cold flows that de
   `ReplayGap` on `liveSessionEvents`.
 - **Two-or-more writers per projection, still data-safe (#346 / #347 / #348).** The mutations relaxed
   each projection from single-writer to **collector + confirmed fold(s)**: `sendMessage` (#346) is the
-  second writer of `lastMessages` and `messagesByConversation`; `createDiscussion` (#347) and `promote`
+  second writer of `lastMessages` and `threadByConversation`; `createDiscussion` (#347) and `promote`
   ([#348](../codebase/348.md)) both write the list `projection` via `upsertConversation`. Data-safety
   holds in every case: each write goes through an atomic `MutableStateFlow.update {}` (CAS) over a **pure**
   fold (`recordLastMessage`'s strictly-greater rule / `appendMessages`'s id-dedup / `upsertConversation`'s
@@ -1152,7 +1201,7 @@ this implementation's surface. All three read paths are now **cold flows that de
 | Failure mode | Result |
 |---|---|
 | Malformed `conversations` payload | `IllegalArgumentException` caught per-envelope (covers both #316 families — `MissingFieldException` ⊂ `SerializationException`, and the kotlinx-datetime bad-timestamp throw); envelope **dropped**; collector survives; projection unchanged |
-| Malformed `message` payload (missing field / unmappable role e.g. `system` / bad `ts`) | `IllegalArgumentException` caught per-envelope (covers the #317 `SerializationException` decode failure and the `Instant.parse(ts)` throw); envelope **dropped silently** (no payload logged — content may be sensitive); collector survives; `lastMessages` **and** `messagesByConversation` unchanged ([#329](../codebase/329.md) / [#313](../codebase/313.md)) |
+| Malformed `message` payload (missing field / unmappable role e.g. `system` / bad `ts`) | `IllegalArgumentException` caught per-envelope (covers the #317 `SerializationException` decode failure and the `Instant.parse(ts)` throw); envelope **dropped silently** (no payload logged — content may be sensitive); collector survives; `lastMessages` **and** `threadByConversation` unchanged ([#329](../codebase/329.md) / [#313](../codebase/313.md)) |
 | Malformed `message_chunk` (any one row bad) | the **whole chunk** dropped in one `catch (IllegalArgumentException)` (decode + map-all under one `try`); collector survives; thread unchanged ([#313](../codebase/313.md)) |
 | `pump.send` returns `false` (session not `Open`) | request (`list_conversations` or `backfill_since`) silently not sent (no throw); the projection stays empty until a later subscribe succeeds or a push arrives — the live stream still fills the thread, and the next subscribe re-issues |
 | `pump.inbound` completes (teardown) | collector completes; last projections retained; live `StateFlow` collectors simply stop receiving updates (do not complete) |
@@ -1304,7 +1353,7 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   [Queued backlog](queued-backlog.md)), [#387](../codebase/387.md) (`applyToolUse`/`applyToolResult`,
   **landed** — correlate `tool_use`/`tool_result` into one evolving `Role.Tool` row keyed by
   `toolUseId`; a `when (event)` dispatch folded into #385's live-session arm mutates the existing
-  `messagesByConversation` so tool rows interleave by arrival order, the inverse choice from #395's
+  `threadByConversation` so tool rows interleave by arrival order, the inverse choice from #395's
   separate projection — see [Live tool-call](live-tool-call.md)), [#417](../codebase/417.md) (the
   **`resync` arm**, **landed** — `reset()`s the [`ReplayCursor`](replay-cursor.md) #412 records + #416
   advertises and `tryEmit`s a control-derived [`LiveSessionEvent.ReplayGap`](live-session-events.md) on

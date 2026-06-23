@@ -155,7 +155,7 @@ queued-message content** (potentially sensitive) and is carried **verbatim, neve
 discipline #385/#387 apply to `assistant_delta` / tool summaries; `decodeQueueState` logs nothing on the
 drop path. The data layer surfaces only a `List<QueuedMessage>`, never an error or a raw `JsonElement`.
 Memory posture is bounded by **replacement** (each snapshot overwrites a conversation's backlog, never
-accumulates), the same daemon-supplied-id growth posture `lastMessages` / `messagesByConversation` /
+accumulates), the same daemon-supplied-id growth posture `lastMessages` / `threadByConversation` /
 `stalledConversations` already accept under the paired-daemon threat model. `queued_msg_id` is a
 per-conversation counter, not a nonce (no constant-time-compare concern). UI-leakage threats
 (screenshot/overlay of the rendered backlog text) were forwarded to **#461** (the visible render) and
