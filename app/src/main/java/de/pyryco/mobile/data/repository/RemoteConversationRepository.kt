@@ -32,11 +32,13 @@ import de.pyryco.mobile.data.network.ReplayCursor
 import de.pyryco.mobile.data.network.RequestSnapshotPayloadDto
 import de.pyryco.mobile.data.network.ScreenSnapshotPayloadDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
+import de.pyryco.mobile.data.network.SessionTransitionPayloadDto
 import de.pyryco.mobile.data.network.StallPayloadDto
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
 import de.pyryco.mobile.data.network.ToolUsePayloadDto
 import de.pyryco.mobile.data.network.TurnEndPayloadDto
 import de.pyryco.mobile.data.network.TurnStatePayloadDto
+import de.pyryco.mobile.data.network.toBoundary
 import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.network.toConversations
 import de.pyryco.mobile.data.network.toEvent
@@ -153,16 +155,18 @@ class RemoteConversationRepository(
     private val lastMessages = MutableStateFlow<Map<String, Message>>(emptyMap())
 
     /**
-     * `conversationId -> ordered, message_id-deduped thread` of every [Message] seen for the
-     * conversation — backfilled history (`message_chunk`) plus live `message`s, in wire/arrival
-     * order (#313). Written by the single [init] inbound collector **and** by [sendMessage]'s
+     * `conversationId -> ordered thread rows` ([ThreadItem.MessageItem] + [ThreadItem.SessionBoundary])
+     * for the conversation — backfilled history (`message_chunk`) plus live `message`s and structured
+     * turns, deduped by `message_id`, interleaved in wire/arrival order with `session_transition`
+     * boundaries (#313, #336). Written by the single [init] inbound collector **and** by [sendMessage]'s
      * confirmed insert (#346) — two writers, but every write goes through the atomic
-     * [appendMessages] / [MutableStateFlow.update] fold, so concurrent updates retry-merge correctly.
-     * [observeMessages] fans out from it. Each value is order-preserving: first insertion fixes a
-     * message's position, a repeat `message_id` updates it in place (the dedup rule), so the thread
-     * is complete-on-first-emission once backfill arrives and live messages append after.
+     * [appendMessages] / [appendSessionBoundary] / [MutableStateFlow.update] fold, so concurrent updates
+     * retry-merge correctly. [observeMessages] fans out from it. Message rows are order-preserving: first
+     * insertion fixes a message's position, a repeat `message_id` updates it in place (the dedup rule);
+     * boundaries pure-append in arrival order (they carry no id, so no dedup). The thread is
+     * complete-on-first-emission once backfill arrives and live rows append after.
      */
-    private val messagesByConversation = MutableStateFlow<Map<String, List<Message>>>(emptyMap())
+    private val threadByConversation = MutableStateFlow<Map<String, List<ThreadItem>>>(emptyMap())
 
     /**
      * The set of conversation ids currently in a stall (#395) — membership = stalled. Written **only**
@@ -352,7 +356,7 @@ class RemoteConversationRepository(
                         // is a no-op, so clearing rides every live event harmlessly. Symmetric with the
                         // onset arm below — both are inside the same `interactive` gate.
                         stalledConversations.update { it - event.conversationId }
-                        // Fold the structured turn into the same `messagesByConversation` the live
+                        // Fold the structured turn into the same `threadByConversation` the live
                         // `message` arm writes, so every row interleaves by arrival order (AC #4): a
                         // `tool_use`/`tool_result` pair into one evolving tool row (#387), and the
                         // `assistant_delta` stream into one streaming assistant row that `turn_end`
@@ -396,6 +400,25 @@ class RemoteConversationRepository(
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     decodeQueueState(envelope)?.let { (conversationId, queue) ->
                         queuedByConversation.update { it + (conversationId to queue) }
+                    }
+                }
+            }
+            TYPE_SESSION_TRANSITION -> {
+                // A session boundary (#336, pyrycode#656/#657/#740). Same `interactive` gate as the
+                // live-session / `stall` / `queue_state` siblings: a non-interactive phone never decodes a
+                // spurious `session_transition` from a buggy/hostile daemon that ignored the server-side
+                // fan-out gate (fail-closed, defence in depth — the client mirror of the producer's
+                // server-side drop of unbindable transitions). Decode-or-drop (AC #3/#5): a malformed
+                // payload or an unknown reason yields null → drop one envelope, the lone collector
+                // survives. Routes strictly by the payload's conversation_id, so the boundary structurally
+                // cannot cross-route into another thread (AC #1) — an id no collector observes simply sits
+                // unread in the map. Unlike the structured-stream arm this folds a thread row only:
+                // surfaces NOTHING on liveSessionEvents (a boundary is not a streaming event) and does NOT
+                // clear a stall (a session transition is not turn forward-progress). Drop silently —
+                // conversation_id / session ids / workspace_cwd are sensitive; nothing here logs the payload.
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    decodeSessionTransition(envelope)?.let { (conversationId, boundary) ->
+                        appendSessionBoundary(conversationId, boundary)
                     }
                 }
             }
@@ -518,6 +541,27 @@ class RemoteConversationRepository(
         }
 
     /**
+     * Decode one v2 `session_transition` envelope (#336) to its routing [conversationId] and the mapped
+     * [ThreadItem.SessionBoundary], or **null** when it cannot be folded. Decodes the untrusted
+     * [Envelope.payload] through the single configured [MobileJson] and maps via `toBoundary()`. The whole
+     * body is one `try`/`catch (IllegalArgumentException)`
+     * ([kotlinx.serialization.SerializationException] ⊂ [IllegalArgumentException]), so a malformed payload
+     * — a missing/wrong-typed required field or an unparseable `occurred_at` — yields `null`, dropping the
+     * one envelope while the lone inbound collector survives (AC #5). An **unrecognized `reason`** is a
+     * distinct path: `toBoundary()` returns `null` (no throw), so the one envelope drops the same way
+     * (AC #3). Mirrors [decodeStall] / [decodeQueueState]'s drop idiom — **nothing here logs the payload**
+     * (conversation_id / session ids / workspace_cwd are sensitive; a logged or mis-routed boundary is a
+     * cross-conversation leak).
+     */
+    private fun decodeSessionTransition(envelope: Envelope): Pair<String, ThreadItem.SessionBoundary>? =
+        try {
+            val dto = MobileJson.decodeFromJsonElement<SessionTransitionPayloadDto>(envelope.payload)
+            dto.toBoundary()?.let { dto.conversationId to it }
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+
+    /**
      * Decode one v2 modal envelope (#437) to its typed [ModalEvent], or **null** when it cannot be
      * surfaced. Selects the DTO by [Envelope.type], decodes the untrusted [Envelope.payload] through the
      * single configured [MobileJson], and maps via `toEvent()`. The whole body is one `try`/`catch
@@ -617,24 +661,37 @@ class RemoteConversationRepository(
     }
 
     /**
-     * Append [rows] (`conversationId -> Message`) into [messagesByConversation] in one atomic
-     * [MutableStateFlow.update], preserving order and deduping by `message_id`: a first-seen id is
-     * appended at the end, a repeat id replaces the existing row **in place** (position fixed at
-     * first occurrence, last write wins). Batching a whole chunk into one update avoids emitting an
-     * intermediate list per row. No-op on an empty batch so a malformed/empty chunk never re-emits.
+     * Index of the [ThreadItem.MessageItem] in this thread whose [Message.id] is [id] and [Message.role]
+     * is [role], or -1 if none — the row guard shared by the four id+role folds (tool / assistant). The
+     * `is ThreadItem.MessageItem` type-guard namespaces message rows from [ThreadItem.SessionBoundary]
+     * rows, so a fold never mistakes a boundary for a message (and the `as` after a hit is always safe).
+     */
+    private fun List<ThreadItem>.indexOfMessage(
+        id: String,
+        role: Role,
+    ): Int = indexOfFirst { it is ThreadItem.MessageItem && it.message.id == id && it.message.role == role }
+
+    /**
+     * Append [rows] (`conversationId -> Message`) into [threadByConversation] as [ThreadItem.MessageItem]
+     * rows in one atomic [MutableStateFlow.update], preserving order and deduping by `message_id`: a
+     * first-seen id is appended at the end, a repeat id replaces the existing message row **in place**
+     * (position fixed at first occurrence, last write wins). The `is ThreadItem.MessageItem` guard skips
+     * any interleaved [ThreadItem.SessionBoundary] so a message_id never matches a boundary row. Batching
+     * a whole chunk into one update avoids emitting an intermediate list per row. No-op on an empty batch
+     * so a malformed/empty chunk never re-emits.
      */
     private fun appendMessages(rows: List<Pair<String, Message>>) {
         if (rows.isEmpty()) return
-        messagesByConversation.update { current ->
+        threadByConversation.update { current ->
             val updated = current.toMutableMap()
             for ((conversationId, message) in rows) {
                 val existing = updated[conversationId].orEmpty()
-                val index = existing.indexOfFirst { it.id == message.id }
+                val index = existing.indexOfFirst { it is ThreadItem.MessageItem && it.message.id == message.id }
                 updated[conversationId] =
                     if (index >= 0) {
-                        existing.toMutableList().apply { this[index] = message }
+                        existing.toMutableList().apply { this[index] = ThreadItem.MessageItem(message) }
                     } else {
-                        existing + message
+                        existing + ThreadItem.MessageItem(message)
                     }
             }
             updated
@@ -642,10 +699,26 @@ class RemoteConversationRepository(
     }
 
     /**
+     * Append [boundary] to [conversationId]'s thread in one atomic [MutableStateFlow.update] (#336): a
+     * pure end-append in arrival order, **no dedup** — a `session_transition` carries no row id and the
+     * repository is connection-scoped (#351), so within a connection arrival order is correct (the same
+     * posture as [applyAssistantDelta]'s arrival-order concatenation; cross-reconnect replay dedup is a
+     * #402 concern, deferred). Routes strictly into [conversationId]'s slice, so a boundary can only ever
+     * surface in `observeMessages(conversationId)` — never cross-routed (AC #1). The session ids /
+     * `workspaceCwd` are carried inside the typed [boundary] and never logged here (Security review).
+     */
+    private fun appendSessionBoundary(
+        conversationId: String,
+        boundary: ThreadItem.SessionBoundary,
+    ) {
+        threadByConversation.update { it + (conversationId to (it[conversationId].orEmpty() + boundary)) }
+    }
+
+    /**
      * Open a live tool-call row for a `tool_use` (#387): append a `Running` [Role.Tool] [Message]
      * carrying the tool name + input, keyed by [LiveSessionEvent.ToolUse.toolUseId] (the correlation
      * handle and the row's [Message.id]). One atomic [MutableStateFlow.update] into the same
-     * [messagesByConversation] the live `message` arm writes, so the row interleaves by **arrival
+     * [threadByConversation] the live `message` arm writes, so the row interleaves by **arrival
      * order** with messages (AC #4). **Idempotent on a repeat id:** if a [Role.Tool] row with this id
      * already exists (possibly already completed by an earlier `tool_result`), it is left untouched —
      * a duplicate `tool_use` never adds a second row nor resets a finished one to `Running` (AC #3).
@@ -656,9 +729,9 @@ class RemoteConversationRepository(
      * name/input/output are carried **verbatim** — never trimmed, parsed, or logged (Security review).
      */
     private fun applyToolUse(event: LiveSessionEvent.ToolUse) {
-        messagesByConversation.update { current ->
+        threadByConversation.update { current ->
             val existing = current[event.conversationId].orEmpty()
-            if (existing.any { it.id == event.toolUseId && it.role == Role.Tool }) {
+            if (existing.indexOfMessage(event.toolUseId, Role.Tool) >= 0) {
                 current
             } else {
                 val row =
@@ -677,7 +750,7 @@ class RemoteConversationRepository(
                                 status = ToolCallStatus.Running,
                             ),
                     )
-                current + (event.conversationId to (existing + row))
+                current + (event.conversationId to (existing + ThreadItem.MessageItem(row)))
             }
         }
     }
@@ -693,13 +766,13 @@ class RemoteConversationRepository(
      * is carried **verbatim** — never trimmed, parsed, or logged (Security review).
      */
     private fun applyToolResult(event: LiveSessionEvent.ToolResult) {
-        messagesByConversation.update { current ->
+        threadByConversation.update { current ->
             val existing = current[event.conversationId].orEmpty()
-            val index = existing.indexOfFirst { it.id == event.toolUseId && it.role == Role.Tool }
+            val index = existing.indexOfMessage(event.toolUseId, Role.Tool)
             if (index < 0) {
                 current
             } else {
-                val row = existing[index]
+                val row = (existing[index] as ThreadItem.MessageItem).message
                 val updated =
                     row.copy(
                         toolCall =
@@ -708,7 +781,7 @@ class RemoteConversationRepository(
                                 status = if (event.isError) ToolCallStatus.Failed else ToolCallStatus.Done,
                             ),
                     )
-                current + (event.conversationId to existing.toMutableList().apply { this[index] = updated })
+                current + (event.conversationId to existing.toMutableList().apply { this[index] = ThreadItem.MessageItem(updated) })
             }
         }
     }
@@ -718,7 +791,7 @@ class RemoteConversationRepository(
      * first delta of a turn opens a [Role.Assistant] [Message] keyed by
      * [LiveSessionEvent.AssistantDelta.turnId] with [Message.isStreaming] `= true`; each later delta
      * for that turn **appends** its text in place, keeping the row's id and position. One atomic
-     * [MutableStateFlow.update] into the same [messagesByConversation] the live `message` and tool
+     * [MutableStateFlow.update] into the same [threadByConversation] the live `message` and tool
      * arms write, so the assistant text interleaves by **arrival order** with messages and tool rows
      * (AC #4). The `&& role == Role.Assistant` match namespaces this row so a `turnId` can never
      * clobber a `message_id` or `toolUseId` row.
@@ -736,13 +809,13 @@ class RemoteConversationRepository(
      * echo to de-dup against.
      */
     private fun applyAssistantDelta(event: LiveSessionEvent.AssistantDelta) {
-        messagesByConversation.update { current ->
+        threadByConversation.update { current ->
             val existing = current[event.conversationId].orEmpty()
-            val index = existing.indexOfFirst { it.id == event.turnId && it.role == Role.Assistant }
+            val index = existing.indexOfMessage(event.turnId, Role.Assistant)
             if (index >= 0) {
-                val row = existing[index]
+                val row = (existing[index] as ThreadItem.MessageItem).message
                 val updated = row.copy(content = row.content + event.text)
-                current + (event.conversationId to existing.toMutableList().apply { this[index] = updated })
+                current + (event.conversationId to existing.toMutableList().apply { this[index] = ThreadItem.MessageItem(updated) })
             } else {
                 val row =
                     Message(
@@ -753,7 +826,7 @@ class RemoteConversationRepository(
                         timestamp = Clock.System.now(),
                         isStreaming = true,
                     )
-                current + (event.conversationId to (existing + row))
+                current + (event.conversationId to (existing + ThreadItem.MessageItem(row)))
             }
         }
     }
@@ -769,17 +842,21 @@ class RemoteConversationRepository(
      * (turn-outcome mapping is a later consumer concern).
      */
     private fun finalizeAssistantTurn(event: LiveSessionEvent.TurnEnd) {
-        messagesByConversation.update { current ->
+        threadByConversation.update { current ->
             val existing = current[event.conversationId].orEmpty()
-            val index = existing.indexOfFirst { it.id == event.turnId && it.role == Role.Assistant }
+            val index = existing.indexOfMessage(event.turnId, Role.Assistant)
             if (index < 0) {
                 current
             } else {
-                val row = existing[index]
+                val row = (existing[index] as ThreadItem.MessageItem).message
                 if (!row.isStreaming) {
                     current
                 } else {
-                    current + (event.conversationId to existing.toMutableList().apply { this[index] = row.copy(isStreaming = false) })
+                    current +
+                        (
+                            event.conversationId to
+                                existing.toMutableList().apply { this[index] = ThreadItem.MessageItem(row.copy(isStreaming = false)) }
+                        )
                 }
             }
         }
@@ -876,16 +953,15 @@ class RemoteConversationRepository(
         }
 
     /**
-     * Cold per-conversation thread view: the ordered, deduped [ThreadItem.MessageItem] list for
-     * [conversationId]. [distinctUntilChanged] means a change to **another** conversation's slot
-     * does not re-emit this flow (AC #3). A `StateFlow` always has a value, so a fresh collector
-     * receives the current thread (empty until backfill/live arrives) on subscription.
+     * Cold per-conversation thread view: the ordered [ThreadItem] list ([ThreadItem.MessageItem] rows
+     * deduped by `message_id` + interleaved [ThreadItem.SessionBoundary] rows) for [conversationId].
+     * The store already holds [ThreadItem]s, so this is a plain per-conversation slice — no row wrap.
+     * [distinctUntilChanged] means a change to **another** conversation's slot does not re-emit this
+     * flow (AC #3). A `StateFlow` always has a value, so a fresh collector receives the current thread
+     * (empty until backfill/live arrives) on subscription.
      */
     private fun threadProjection(conversationId: String): Flow<List<ThreadItem>> =
-        messagesByConversation
-            .map { byConversation ->
-                byConversation[conversationId].orEmpty().map { message -> ThreadItem.MessageItem(message) }
-            }.distinctUntilChanged()
+        threadByConversation.map { it[conversationId].orEmpty() }.distinctUntilChanged()
 
     /**
      * Most-recent live [Message] for [conversationId] (#329), a pure cold projection of the shared
@@ -1356,6 +1432,15 @@ class RemoteConversationRepository(
          * current backlog (`msgqueue.Snapshot`) in FIFO order, each snapshot replacing the prior one.
          */
         const val TYPE_QUEUE_STATE = "queue_state"
+
+        /**
+         * Capability-gated thread event: a session transition `{conversation_id, previous_session_id,
+         * new_session_id, reason, occurred_at, workspace_cwd}` (#336, pyrycode#656/#657/#740) — folds a
+         * [ThreadItem.SessionBoundary] into the conversation thread (keyed by `conversation_id`) in
+         * arrival order at a `/clear` / idle-evict / workspace-change transition. `reason` ∈ {`clear`,
+         * `idle_evict`, `workspace_change`}; `workspace_cwd` is non-null only for `workspace_change`.
+         */
+        const val TYPE_SESSION_TRANSITION = "session_transition"
 
         /**
          * Outbound queue control: the phone's request to drop a not-yet-drained message

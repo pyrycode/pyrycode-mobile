@@ -3,7 +3,9 @@ package de.pyryco.mobile.data.network
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.ModalOption
+import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.QueuedMessage
+import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -206,3 +208,63 @@ internal fun ModalShownPayloadDto.toEvent(): ModalEvent =
 
 /** Total field copy: [outcome] and [source] pass through verbatim (consumers map the wire values). */
 internal fun ModalDismissedPayloadDto.toEvent(): ModalEvent = ModalEvent.Dismissed(modalId, outcome, source)
+
+/**
+ * The `session_transition` thread event (#336, pyrycode#656/#657/#740): a session boundary
+ * `{conversation_id, previous_session_id, new_session_id, reason, occurred_at, workspace_cwd}`, emitted
+ * live and capability-gated, folded into the conversation thread as a [ThreadItem.SessionBoundary] at a
+ * `/clear` / idle-evict / workspace-change transition. Decode-only — the phone never sends one. Always
+ * decode through [MobileJson].
+ *
+ * Wire SSOT: pyrycode `docs/protocol-mobile.md` § Interactive events (v2); #656/#740. Every field is
+ * **required, non-null** except [workspaceCwd] — the one documented nullable (`null` for `clear` /
+ * `idle_evict`, non-null only for `workspace_change`). Default it `= null` (the single-field latitude of
+ * [QueueStatePayloadDto.queued]) so both a present-`null` and a (future) omitted key map to `null`
+ * without throwing ([MobileJson] sets no `coerceInputValues`); every other field stays strict so a
+ * missing/wrong-typed field fails the structural decode and the one envelope is dropped (AC #5). [reason]
+ * is a plain `String` (not an enum): an unrecognized value is a *mapper* drop (see [toBoundary]), not a
+ * decode failure — the [TurnStatePayloadDto.state] posture.
+ *
+ * Unlike the five live-session DTOs this is **not** a [LiveSessionEvent] — it produces a [ThreadItem], so
+ * it has no `toEvent()` and never lands on the live-event stream (boundaries are thread rows, not
+ * streaming events; the thinking-indicator / tool-timeline consumers must not see them).
+ */
+@Serializable
+internal data class SessionTransitionPayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    @SerialName("previous_session_id") val previousSessionId: String,
+    @SerialName("new_session_id") val newSessionId: String,
+    val reason: String,
+    @SerialName("occurred_at") val occurredAt: String,
+    @SerialName("workspace_cwd") val workspaceCwd: String? = null,
+)
+
+/**
+ * Map a decoded [SessionTransitionPayloadDto] to a [ThreadItem.SessionBoundary], or **null** when
+ * [reason] is not one of `clear` / `idle_evict` / `workspace_change` (AC #3 — the unknown-value drop is a
+ * mapper concern, like [TurnStatePayloadDto.toEvent], distinct from a malformed envelope). [occurredAt]
+ * parses via [Instant.parse], which throws [IllegalArgumentException] on a malformed timestamp — caught
+ * at the decode boundary and dropped (AC #5). [workspaceCwd] passes through **verbatim**: the
+ * workspaceCwd-non-null-iff-`WorkspaceChange` invariant is a wire guarantee asserted in tests, not
+ * enforced here (the [ThreadItem.SessionBoundary] KDoc: "not enforced at construction"). On `idle_evict`
+ * the wire carries the evicted id in both [previousSessionId] and [newSessionId]; both copy verbatim,
+ * no special-casing.
+ */
+internal fun SessionTransitionPayloadDto.toBoundary(): ThreadItem.SessionBoundary? =
+    reason.toBoundaryReason()?.let { boundaryReason ->
+        ThreadItem.SessionBoundary(
+            previousSessionId = previousSessionId,
+            newSessionId = newSessionId,
+            reason = boundaryReason,
+            occurredAt = Instant.parse(occurredAt),
+            workspaceCwd = workspaceCwd,
+        )
+    }
+
+private fun String.toBoundaryReason(): BoundaryReason? =
+    when (this) {
+        "clear" -> BoundaryReason.Clear
+        "idle_evict" -> BoundaryReason.IdleEvict
+        "workspace_change" -> BoundaryReason.WorkspaceChange
+        else -> null
+    }

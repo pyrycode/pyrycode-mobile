@@ -2847,6 +2847,212 @@ class RemoteConversationRepositoryTest {
             assertFalse(assistant.isStreaming)
         }
 
+    // ---- #336: fold session_transition into the thread as ThreadItem.SessionBoundary ------------
+
+    // AC #1: a session_transition folds a SessionBoundary between message runs, in arrival order,
+    // without disturbing message ordering.
+    @Test
+    fun sessionTransition_foldsBoundaryBetweenMessagesInArrivalOrder() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(messageEnvelope("c1", "m1", "user", "first", "2026-05-31T10:00:00Z"))
+            runCurrent()
+            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear"))
+            runCurrent()
+            pump.push(messageEnvelope("c1", "m2", "assistant", "second", "2026-05-31T10:01:00Z"))
+            runCurrent()
+
+            assertEquals(listOf("m1", "boundary:Clear", "m2"), threadShape(emissions.last()))
+        }
+
+    // AC #1: a boundary routes strictly by its payload conversation_id — a session_transition for "c2"
+    // never appears in "c1"'s thread, and surfaces only in "c2"'s.
+    @Test
+    fun sessionTransition_routesByConversationId_neverCrossRoutes() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val c1 = collectMessages(repo, "c1")
+            val c2 = collectMessages(repo, "c2")
+            runCurrent()
+
+            pump.push(sessionTransitionEnvelope("c2", "s1", "s2", "clear"))
+            runCurrent()
+
+            assertEquals(emptyList<String>(), threadShape(c1.last()))
+            assertEquals(listOf("boundary:Clear"), threadShape(c2.last()))
+        }
+
+    // AC #2 (fail-closed): without `interactive` negotiated, a well-formed session_transition folds nothing.
+    @Test
+    fun sessionTransition_capabilityGateClosed_foldsNothing() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { emptySet() })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear"))
+            runCurrent()
+
+            assertEquals(emptyList<String>(), threadShape(emissions.last()))
+        }
+
+    // AC #2 (fail-closed): a non-`interactive` capability set also folds nothing.
+    @Test
+    fun sessionTransition_capabilityGateUnrelated_foldsNothing() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("something_else") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear"))
+            runCurrent()
+
+            assertEquals(emptyList<String>(), threadShape(emissions.last()))
+        }
+
+    // AC #3: each reason maps to its BoundaryReason.
+    @Test
+    fun sessionTransition_reasonMapsToBoundaryReason() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear"))
+            pump.push(sessionTransitionEnvelope("c1", "s2", "s3", "idle_evict"))
+            pump.push(sessionTransitionEnvelope("c1", "s3", "s4", "workspace_change", workspaceCwd = "/w"))
+            runCurrent()
+
+            assertEquals(
+                listOf(BoundaryReason.Clear, BoundaryReason.IdleEvict, BoundaryReason.WorkspaceChange),
+                boundariesOf(emissions.last()).map { it.reason },
+            )
+        }
+
+    // AC #3: an unrecognized reason drops the one envelope (no boundary) without killing the collector —
+    // a later valid session_transition still folds.
+    @Test
+    fun sessionTransition_unknownReason_droppedCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "bogus"))
+            runCurrent()
+            assertEquals(emptyList<String>(), threadShape(emissions.last()))
+
+            pump.push(sessionTransitionEnvelope("c1", "s2", "s3", "clear"))
+            runCurrent()
+            assertEquals(listOf("boundary:Clear"), threadShape(emissions.last()))
+        }
+
+    // AC #4: the workspaceCwd-non-null-iff-WorkspaceChange invariant holds, and on idle_evict the evicted
+    // id is carried verbatim in both previous and new.
+    @Test
+    fun sessionTransition_workspaceCwdInvariantAndEvictionIdsVerbatim() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear"))
+            pump.push(sessionTransitionEnvelope("c1", "ev", "ev", "idle_evict"))
+            pump.push(sessionTransitionEnvelope("c1", "s2", "s3", "workspace_change", workspaceCwd = "/x"))
+            runCurrent()
+
+            val boundaries = boundariesOf(emissions.last())
+            assertNull(boundaries[0].workspaceCwd)
+            assertNull(boundaries[1].workspaceCwd)
+            assertEquals("/x", boundaries[2].workspaceCwd)
+            assertEquals("ev", boundaries[1].previousSessionId)
+            assertEquals("ev", boundaries[1].newSessionId)
+        }
+
+    // AC #4: occurred_at parses to the SessionBoundary.occurredAt Instant.
+    @Test
+    fun sessionTransition_occurredAtParsesToInstant() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear", occurredAt = "2026-06-23T12:34:56Z"))
+            runCurrent()
+
+            assertEquals(Instant.parse("2026-06-23T12:34:56Z"), boundariesOf(emissions.last()).single().occurredAt)
+        }
+
+    // AC #5: a malformed payload (missing required field) and an unparseable occurred_at are each dropped
+    // without crashing the lone collector — a later valid envelope still folds.
+    @Test
+    fun sessionTransition_malformedDropped_collectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            // Missing the required new_session_id → SerializationException → dropped.
+            pump.push(
+                Envelope(
+                    id = 1L,
+                    type = "session_transition",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"c1","previous_session_id":"s1","reason":"clear","occurred_at":"$TS","workspace_cwd":null}""",
+                        ),
+                ),
+            )
+            // Unparseable occurred_at → Instant.parse throws → dropped.
+            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear", occurredAt = "not-a-timestamp"))
+            runCurrent()
+            assertEquals(emptyList<String>(), threadShape(emissions.last()))
+
+            pump.push(sessionTransitionEnvelope("c1", "s2", "s3", "clear"))
+            runCurrent()
+            assertEquals(listOf("boundary:Clear"), threadShape(emissions.last()))
+        }
+
+    // AC #5: round-trip against the v2 server message set — backfill chunk, then live messages
+    // interleaved with session_transitions across two conversations, yields the expected ordered
+    // List<ThreadItem> with boundaries folded into the matching conversation only.
+    @Test
+    fun sessionTransition_roundTripAgainstV2MessageSet() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val c1 = collectMessages(repo, "c1")
+            val c2 = collectMessages(repo, "c2")
+            runCurrent()
+
+            pump.push(messageChunkEnvelope(listOf(chunkRow("c1", "h1", "user", "history"))))
+            runCurrent()
+            pump.push(messageEnvelope("c1", "m1", "assistant", "hi", "2026-05-31T10:00:00Z"))
+            runCurrent()
+            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear"))
+            runCurrent()
+            pump.push(sessionTransitionEnvelope("c2", "x1", "x2", "idle_evict"))
+            runCurrent()
+            pump.push(messageEnvelope("c1", "m2", "user", "again", "2026-05-31T10:02:00Z"))
+            runCurrent()
+
+            assertEquals(listOf("h1", "m1", "boundary:Clear", "m2"), threadShape(c1.last()))
+            assertEquals(listOf("boundary:IdleEvict"), threadShape(c2.last()))
+        }
+
     // ---- #412: replay-cursor recording on the inbound path --------------------------------------
 
     // AC #2: each interactive structured frame's event_id advances the high-water mark; an
@@ -3644,6 +3850,19 @@ class RemoteConversationRepositoryTest {
 
     private fun messageIds(thread: List<ThreadItem>): List<String> = thread.map { (it as ThreadItem.MessageItem).message.id }
 
+    /** Arrival-order shape of a mixed thread (#336): a message row → its id, a boundary → "boundary:<reason>". */
+    private fun threadShape(thread: List<ThreadItem>): List<String> =
+        thread.map {
+            when (it) {
+                is ThreadItem.MessageItem -> it.message.id
+                is ThreadItem.SessionBoundary -> "boundary:${it.reason}"
+            }
+        }
+
+    /** Every [ThreadItem.SessionBoundary] in [thread], in order (#336). */
+    private fun boundariesOf(thread: List<ThreadItem>): List<ThreadItem.SessionBoundary> =
+        thread.filterIsInstance<ThreadItem.SessionBoundary>()
+
     /** The [ToolCall] of the [Role.Tool] thread row with [id] in [thread], or null if absent (#387). */
     private fun toolCallOf(
         thread: List<ThreadItem>,
@@ -3751,6 +3970,32 @@ class RemoteConversationRepositoryTest {
             type = "queue_state",
             ts = TS,
             payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId","queued":[$queued]}"""),
+        )
+    }
+
+    /**
+     * A `session_transition` envelope `{conversation_id, previous_session_id, new_session_id, reason,
+     * occurred_at, workspace_cwd}` (#336). [workspaceCwd] emits `"workspace_cwd":null` when null (the
+     * `clear` / `idle_evict` shape) and a quoted string otherwise (the `workspace_change` shape).
+     */
+    private fun sessionTransitionEnvelope(
+        conversationId: String,
+        previousSessionId: String,
+        newSessionId: String,
+        reason: String,
+        occurredAt: String = TS,
+        workspaceCwd: String? = null,
+        id: Long = 1L,
+    ): Envelope {
+        val cwd = workspaceCwd?.let { "\"$it\"" } ?: "null"
+        return Envelope(
+            id = id,
+            type = "session_transition",
+            ts = TS,
+            payload =
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"$conversationId","previous_session_id":"$previousSessionId","new_session_id":"$newSessionId","reason":"$reason","occurred_at":"$occurredAt","workspace_cwd":$cwd}""",
+                ),
         )
     }
 
