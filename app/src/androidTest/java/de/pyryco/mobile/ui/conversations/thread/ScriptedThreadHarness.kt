@@ -38,7 +38,7 @@ import java.util.UUID
  * The single shared entry point sibling **#435** (Layer 1b: tool rows, session divider, connection
  * banner) extends — it injects the real graph in the constructor, so new scenarios add scripting
  * methods on top without re-deriving the stream → fold → render wiring. Keep the scripting surface
- * minimal: only the two render cases (text, spinner) are wired here.
+ * minimal: text/spinner (#432), the interrupt affordance (#459), and tool rows (#472) are wired here.
  *
  * Construct, then [start] (from `@Before`), script via the `push*` methods (each a thin `pump.push`),
  * and [close] (from `@After`) to cancel [scope]. The `FakeSessionPump` and envelope builders are ported
@@ -124,6 +124,26 @@ class ScriptedThreadHarness(
         turnId: String,
         stopReason: String = "end_turn",
     ) = pump.push(turnEndEnvelope(conversationId, turnId, stopReason))
+
+    /** Script one `tool_use` — opens a `Running` tool row keyed by [toolUseId] (#387). */
+    fun pushToolUse(
+        turnId: String,
+        toolUseId: String,
+        name: String,
+        inputSummary: String,
+    ) = pump.push(toolUseEnvelope(conversationId, turnId, toolUseId, name, inputSummary))
+
+    /**
+     * Script one `tool_result` — flips the row whose `tool_use_id` matches [toolUseId] to `Failed`
+     * when [isError], else `Done` (#387). The [toolUseId] MUST match a prior [pushToolUse]'s id or the
+     * fold drops the result (no row to correlate) and the row never resolves.
+     */
+    fun pushToolResult(
+        turnId: String,
+        toolUseId: String,
+        isError: Boolean,
+        resultSummary: String,
+    ) = pump.push(toolResultEnvelope(conversationId, turnId, toolUseId, isError, resultSummary))
 
     /** Cancel [scope] — stops the inbound collector and the DataStore scope. Call from `@After`. */
     fun close() {
@@ -237,6 +257,40 @@ private fun turnEndEnvelope(
         payload =
             MobileJson.parseToJsonElement(
                 """{"conversation_id":"$conversationId","turn_id":"$turnId","stop_reason":"$stopReason"}""",
+            ),
+    )
+
+private fun toolUseEnvelope(
+    conversationId: String,
+    turnId: String,
+    toolUseId: String,
+    name: String,
+    inputSummary: String,
+): Envelope =
+    Envelope(
+        id = 1L,
+        type = "tool_use",
+        ts = TS,
+        payload =
+            MobileJson.parseToJsonElement(
+                """{"conversation_id":"$conversationId","turn_id":"$turnId","tool_use_id":"$toolUseId","name":"$name","input_summary":"$inputSummary"}""",
+            ),
+    )
+
+private fun toolResultEnvelope(
+    conversationId: String,
+    turnId: String,
+    toolUseId: String,
+    isError: Boolean,
+    resultSummary: String,
+): Envelope =
+    Envelope(
+        id = 1L,
+        type = "tool_result",
+        ts = TS,
+        payload =
+            MobileJson.parseToJsonElement(
+                """{"conversation_id":"$conversationId","turn_id":"$turnId","tool_use_id":"$toolUseId","is_error":$isError,"result_summary":"$resultSummary"}""",
             ),
     )
 
