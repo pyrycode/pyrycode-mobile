@@ -20,7 +20,9 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
 3. **Emulator + host daemon + real constrained claude** ← **what this directory ships.** The real app
    on a headless emulator connects to a host `pyry` + relay, sends "reply with exactly: ping", and
    asserts "ping" renders. Also covers a **tool-use** scenario (#481): a constrained prompt makes real
-   claude run a shell tool and asserts the tool step renders. Semi-deterministic.
+   claude run a shell tool and asserts the tool step renders; and a **thinking-spinner** scenario (#482,
+   the flakiest — ships `@Ignore`-gated / manual): a pure-reasoning prompt makes real claude think a beat
+   and asserts the spinner shows mid-turn. Semi-deterministic.
 4. **Emulator + deterministic host** ← **shipped (#431).** The same real app + Noise/relay path, but
    claude is swapped for #642's scripted `fakeclaude` backend replaying a fixed JSONL fixture. No real
    claude, **zero claude turns**; re-running back-to-back yields the same pass. Run it with
@@ -83,13 +85,28 @@ unshipped #336 fold) is still ticketed.
 | The instrumented test | `app/src/androidTest/.../e2e/InteractiveStreamE2ETest.kt` |
 | Host orchestration | `scripts/e2e-emulator.sh` |
 
-Rung 3 covers two scenarios on this one harness: the **ping** happy path (a constrained reply renders)
-and a **tool-use** scenario (#481 — a constrained prompt makes real claude run a shell tool, asserting
-the tool step renders, keyed tolerantly on the verbatim tool name `"Bash"` in the tool-row header). The
+Rung 3 covers three scenarios on this one harness: the **ping** happy path (a constrained reply renders);
+a **tool-use** scenario (#481 — a constrained prompt makes real claude run a shell tool, asserting the
+tool step renders, keyed tolerantly on the verbatim tool name `"Bash"` in the tool-row header); and a
+**thinking-spinner** scenario (#482 — a pure-reasoning prompt makes real claude think a beat, asserting
+the spinner is displayed mid-turn, keyed tolerantly on the `cd_thread_thinking` content-description). The
 tool-use test asserts the **durable** terminal signal — the tool name in the resolved row — not the
 transient running spinner: rung 3 has no scripted backend to hold the turn open, so racing the spinner
 over a real relay turn is the "never on timing" failure the [Constraints](#constraints) forbid (it is
 why rung 4's `tool` scenario needed a two-drop fence).
+
+The **thinking-spinner** scenario (#482) is the **flakiest** rung-3 scenario and ships **`@Ignore`-gated /
+manual**: the spinner has **no durable equivalent** of the tool name — once real claude emits its first
+token, `turn_state` flips to `responding`, `isThinking` goes false, and `ThinkingIndicator` early-returns,
+leaving nothing on screen. With no scripted backend to hold the turn open and no way to imperatively pause
+real claude (the levers rung 4's two-drop fence and the #432 component twin's `pushTurnState` have), the
+mid-turn window cannot be made deterministic, so the developer cannot prove reliability without operator
+infra. It therefore lands as a documented manual case (presence-only, tolerant, keyed on
+`cd_thread_thinking`; **no** absence-after-end assertion that would race a 2nd turn, and **no** negative
+control — the asserted token is a production content-description, not a claude-output substring). The
+operator un-ignores to attempt the run and may promote it to always-on if a pure-reasoning prompt yields a
+catchable window; otherwise it stays manual. See the
+[Assumptions](#assumptions-to-confirm-on-first-run) entry on the screen-sourced thinking window.
 
 ### The render gap fixed first (#337)
 
@@ -474,6 +491,20 @@ These are grounded in the source but unverified end to end:
   no-flaky-always-on rule rather than leaving a flaky always-on test. The exact wording is the
   developer's to tune on first run; the design depends only on "compels one shell tool call" + "omits the
   asserted tool-name token".
+- **Screen-sourced thinking window (`thinking-spinner` #482, the chief unknown — why it ships
+  `@Ignore`d).** The spinner shows only during `turn_state(thinking)`, the gap between send and real
+  claude's first `assistant_delta`, derived by the daemon from claude's live TUI screen. `THINK_PROMPT`
+  (`"Without using any tools, … reason this through silently, then reply with only the single word:
+  ready. …"`) aims to widen that gap: no tool call (so the #428 permission modal never interposes, unlike
+  the tool prompt) plus a beat of internal reasoning before a short-token answer. **Unverifiable from this
+  repo** — whether the window is long enough to lay out and poll the spinner over the relay depends on how
+  pyrycode's daemon maps claude's pre-output state and on claude's own latency. If real claude answers too
+  fast to catch, **keep the test `@Ignore`d** (the default) and record that the promote attempt failed — a
+  valid documented manual outcome, **not** a build failure. If claude streams its reasoning as *visible*
+  text, `turn_state` flips to `responding` immediately and the spinner clears at once — the "reply with
+  only a short token after thinking" framing is the lever; tune the prompt on first run. The prompt is the
+  developer's to tune; correctness does not depend on the window being reliably catchable (that is why the
+  test is gated).
 
 ## Follow-ups to ticket
 
@@ -491,7 +522,10 @@ These are grounded in the source but unverified end to end:
   **shipped (#476, Layer 2b)**; reconnect **ordering** (events buffered while offline replay in order) —
   **shipped (#477, Layer 2d)**; Layer-3 (real claude) tool-use renders — **shipped (#481)** (the
   tool-use path is now covered at all three layers: component #472, rung-4 deterministic #455, rung-3
-  real-claude #481).
+  real-claude #481); Layer-3 (real claude) thinking spinner — **shipped (#482), `@Ignore`-gated manual**
+  (the spinner path is now covered at all three layers: component #432, rung-4 deterministic #454, rung-3
+  real-claude #482 — the last gated behind a manual switch because the transient spinner has no durable
+  artifact and rung 3 cannot hold the turn open).
 - **#337 full scope:** `seq`-based ordering and replay de-dup across reconnect (a #402 concern; this
   fold concatenates in arrival order, correct within a single connection); and a `make`/Gradle wrapper
   for the orchestration plus fork-sync of any shared `bin/` script per the org convention.

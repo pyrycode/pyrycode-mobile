@@ -9,7 +9,9 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.MainActivity
+import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import kotlinx.coroutines.flow.first
@@ -47,6 +49,15 @@ import org.koin.core.context.GlobalContext
 class InteractiveStreamE2ETest {
     @get:Rule
     val composeTestRule = createAndroidComposeRule<MainActivity>()
+
+    // The thinking spinner's content-description (production UI string, no test tags). Copied from
+    // DeterministicInteractiveStreamE2ETest (the rung-4 twin). Keep in sync with res/values/strings.xml:
+    //   cd_thread_thinking = "Agent is thinking".
+    private val thinkingDescription: String =
+        InstrumentationRegistry
+            .getInstrumentation()
+            .targetContext
+            .getString(R.string.cd_thread_thinking)
 
     @Test
     fun interactiveTurn_pingPrompt_streamsPingReplyIntoThread() {
@@ -187,6 +198,76 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /**
+     * Thinking-spinner twin of the ping happy path (#482, Layer 3): a **pure-reasoning** prompt makes
+     * **real claude think for a beat**, and we assert the thinking spinner is displayed while the turn is
+     * active. The render path (`turn_state(thinking)` →
+     * [de.pyryco.mobile.ui.conversations.thread.ThreadViewModel.isThinking] → `ThinkingIndicator`, #406) is
+     * already shipped and reviewed; this exercises it end to end against real claude — the only layer that
+     * catches real claude changing the screen text the screen-sourced spinner is matched from. Real-claude
+     * twin of #454 (rung 4 scripted) and #432 (Layer 1a component).
+     *
+     * **`@Ignore`d by default — a documented manual case (AC #3), not a flaky always-on test.** This is the
+     * flakiest scenario on the ladder. Unlike #481's tool row — whose verbatim tool name [TOOL_NAME] is a
+     * **durable** terminal signal that survives turn-end — the spinner leaves **no durable artifact**: the
+     * instant real claude emits its first token the daemon flips `turn_state` to `responding`, `isThinking`
+     * goes false, and `ThinkingIndicator` early-returns, so the node disappears with no trace. Rung 3 has no
+     * scripted backend to hold the turn open and cannot imperatively pause real claude (the levers #454's
+     * two-drop fence and #432's `pushTurnState` give the twins), so the spinner's presence mid-turn cannot
+     * be made deterministic here. The operator un-ignores to attempt the run; if a pure-reasoning prompt
+     * yields a `turn_state(thinking)` window long enough to observe over the relay, the operator may
+     * promote it to always-on — otherwise it stays a documented manual case. See
+     * `docs/e2e-interactive-stream.md`.
+     *
+     * **Presence-only, mid-turn — no absence-after-end assertion.** Asserting the spinner *cleared* would
+     * need the scripted two-drop fence to make the transition deterministic; at rung 3 a second real-claude
+     * turn would itself re-enter `thinking` and re-show the spinner, so an absence check would race a 2nd
+     * turn — exactly the "never on timing" failure the ladder forbids (AC #2). The single load-bearing
+     * assertion catches the spinner content-description while the turn is in its thinking phase, tolerantly,
+     * never on counts or timing.
+     *
+     * **No negative control (deliberate divergence from the ping / tool-use siblings).** Those assert on
+     * claude *output* substrings and each ship an `@Ignore`d control to prove the matcher is selective. Here
+     * the asserted token is the production content-description [thinkingDescription] (`cd_thread_thinking`),
+     * which never appears in any user bubble, auto-derived title, or claude output — there is nothing for a
+     * negative control to disprove. This `@Ignore`d positive test *is* the manual case.
+     */
+    @Ignore("manual — transient spinner; un-ignore to attempt promotion, see KDoc")
+    @Test
+    fun interactiveTurn_thinkPrompt_showsThinkingSpinnerDuringTurn() {
+        // 1. A paired launch lands on the channel list. The "New discussion" FAB is the list marker.
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // 2. Wait for the relay connection to open before creating a conversation.
+        awaitConnected()
+
+        // 3. Create a fresh discussion → the app navigates into its thread; the send button marks arrival.
+        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // 4. Type the pure-reasoning prompt into the only editable field, then send. The prompt forbids
+        //    tool use (so the #428 permission modal never interposes) and asks claude to reason a beat
+        //    before answering with only a short token, widening the transient thinking window.
+        composeTestRule.onNode(hasSetTextAction()).performTextInput(THINK_PROMPT)
+        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+
+        // 5. Catch the thinking spinner mid-turn, then confirm it is on screen. Presence only — the spinner
+        //    is transient and leaves no durable artifact once the turn moves on, so we never assert it
+        //    cleared (that would race a 2nd turn). The matched content-description is emitted only by
+        //    ThinkingIndicator, so a non-empty match can only be the live spinner.
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(thinkingDescription)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule
+            .onAllNodes(hasContentDescription(thinkingDescription))
+            .onFirst()
+            .assertIsDisplayed()
+    }
+
     /** Count the on-screen semantic nodes whose text contains "ping" (case-insensitive, substring). */
     private fun pingNodeCount(): Int =
         composeTestRule
@@ -224,6 +305,15 @@ class InteractiveStreamE2ETest {
         // Negative control: a real, distinct tool name the read-only echo prompt never asks claude to
         // use, so the matcher's selectivity is what is proven (not a nonsense string).
         const val TOOL_NEVER_USED = "Edit"
+
+        // Pure-reasoning determinism lever (#482): keeps real claude *thinking* (no tool call → the #428
+        // permission modal never interposes, unlike TOOL_PROMPT) and asks it to reason a beat before
+        // replying with only a short token, widening the transient turn_state(thinking) window the spinner
+        // shows during. Correctness does NOT depend on the window being reliably catchable — that is why
+        // the test ships @Ignore'd; the exact wording is the developer's to tune on first operator run.
+        const val THINK_PROMPT =
+            "Without using any tools, take a moment to reason this through silently, then reply with only " +
+                "the single word: ready. (Reason through first: what is the 12th prime number?)"
 
         // Production UI strings (no test tags exist). Keep in sync with res/values/strings.xml:
         //   cd_new_discussion = "New discussion", cd_send_message = "Send message".
