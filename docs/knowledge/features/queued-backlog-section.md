@@ -1,10 +1,11 @@
 # Queued backlog section — `QueuedBacklog`
 
-The **UI half of the queued-message backlog** ([#461](../codebase/461.md), split from #429): a stateless
-composable that, while the active conversation's agent is busy and the daemon is buffering the user's
-turns, renders the ordered backlog of **messages still waiting to send** as a **de-emphasized foot-of-list
-section** below the thread — so the user knows what is queued instead of wondering whether the turns they
-fired during a long response were dropped.
+The **UI half of the queued-message backlog** ([#461](../codebase/461.md) render + [#467](../codebase/467.md)
+drop affordance, split from #429): a stateless composable that, while the active conversation's agent is busy
+and the daemon is buffering the user's turns, renders the ordered backlog of **messages still waiting to
+send** as a **de-emphasized foot-of-list section** below the thread — so the user knows what is queued
+instead of wondering whether the turns they fired during a long response were dropped — and lets the user
+**drop** any of them before they send.
 
 The signal it renders is the **data half** — [`observeQueue(conversationId)`](queued-backlog.md)
 ([#460](../codebase/460.md)), surfaced onto [`ThreadViewModel`'s `ThreadUiState.queuedMessages`](thread-screen.md).
@@ -12,8 +13,10 @@ This component adds **no data access** and **no new data path**: it receives the
 `List<QueuedMessage>` as hoisted state and renders it. It is the render-after-decode twin of
 [`ThinkingIndicator`](thinking-indicator.md) (#407) and [`StallPromotionBanner`](stall-promotion-banner.md)
 (#396) — same component shape, but hoisted onto `ThreadUiState` rather than a sibling `StateFlow` (see
-[Wiring](#wiring)). Read-only: the per-row **drop** affordance is the next slice, #467 — its data-layer
-send (`dropQueuedMessage` → `dequeue_message`) already shipped in [#466](../codebase/466.md).
+[Wiring](#wiring)). Each row also carries a **per-row drop affordance** ([#467](../codebase/467.md)) — a
+trailing close button that lets the user un-queue a message before it sends; its `onDrop(id)` hoists to
+[`ThreadViewModel.onDropQueued`](#wiring), which fires the data-layer send
+(`dropQueuedMessage` → `dequeue_message`, [#466](../codebase/466.md)).
 
 Package: `de.pyryco.mobile.ui.conversations.components`
 (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). File: `QueuedBacklog.kt`.
@@ -24,14 +27,16 @@ Package: `de.pyryco.mobile.ui.conversations.components`
 @Composable
 fun QueuedBacklog(
     queued: List<QueuedMessage>,
+    onDrop: (Long) -> Unit,
     modifier: Modifier = Modifier,
 )
 ```
 
-The one load-bearing param (`queued`) carries no default. The composable is a **pure function of the
-list** — no `ViewModel` reference, no flow collection, no `remember`, no `LaunchedEffect`, no callback (the
-drop affordance is #467; its `dropQueuedMessage` send shipped in #466). Statelessness is an AC (#4), not a
-style choice.
+The two load-bearing params (`queued` + `onDrop`) carry no default — `onDrop` is **required** (#467), called
+with the row's [`QueuedMessage.id`](queued-backlog.md) (a `Long`) when its drop affordance is tapped. The
+composable stays **stateless**: no `ViewModel` reference, no flow collection, no `remember`, no
+`LaunchedEffect`, no internal mutable state — it hoists the drop to the ViewModel exactly as it hoists the
+list in. Statelessness is an AC (#4), not a style choice.
 
 ## What it does
 
@@ -52,21 +57,34 @@ style choice.
   - a `Surface` bubble in the **same rounded user shape** (`bottomEnd = 6.dp` notch) and the same
     `primaryContainer` / `onPrimaryContainer` colour family as [`UserMessageBubble`](message-bubble.md),
     holding **plain** `Text(entry.text, bodyMedium)` — **never `MarkdownText`**, matching
-    `UserMessageBubble`, since this is un-sent user *input*.
+    `UserMessageBubble`, since this is un-sent user *input*;
+  - a **trailing drop affordance** (#467) — `IconButton(onClick = { onDrop(id) })` holding
+    `Icon(Icons.Outlined.Close, tint = onSurfaceVariant)` with `contentDescription` from
+    `cd_thread_queued_drop`. `Close` (×, *un-queue*) over `Delete` (trash, *delete*): a queued message is
+    un-queued, not destroyed. The button sits **inside** the `.alpha(QUEUED_ALPHA)` scope (it reads as a
+    secondary action on a not-yet-sent row) but stays interactive while dimmed; `IconButton` supplies the
+    ≥48dp tap target.
 - **Accessibility** — the `Column` carries `Modifier.semantics(mergeDescendants = true) { contentDescription
   = … }` sourced from `cd_thread_queued_backlog` ("Queued messages waiting to send"). Merging descendants
-  makes TalkBack announce the section once as a single node; it is also the Compose-test handle.
+  makes TalkBack announce the section once as a single node; it is also the Compose-test handle. The
+  per-row drop `IconButton` is a **clickable**, so it forms its **own** semantics merge boundary and is
+  **not** absorbed by the section merge — each drop affordance stays individually addressable (via
+  `cd_thread_queued_drop`) in the unmerged tree, the same `useUnmergedTree = true` access the per-row text
+  assertions use.
 
 ### Styling (design-owed)
 
 Queued entries deliberately read as **not yet sent**: the `primaryContainer` user-bubble shape/colour at
 `QUEUED_ALPHA = 0.6f` (in the spirit of [`ThreadScreen`](thread-screen.md)'s `ABOVE_DELIMITER_ALPHA = 0.55f`
 de-emphasis), plus the leading waiting glyph and the "Queued" caption, distinguish them from the
-full-opacity sent / streamed bubbles. The Figma `16-8` frame has **no backlog treatment drawn yet** (same
-design-owed status as the sibling stream-UI tickets #386 / #388 / [#396](../codebase/396.md)); until it
-lands the visual follows the app's existing message-row idiom, exactly as `ThinkingIndicator` /
+full-opacity sent / streamed bubbles. The trailing **drop affordance** (#467) is likewise an M3 default —
+the conventional "remove from a list" trailing `Icons.Outlined.Close` `IconButton`. The Figma `16-8` frame
+has **no backlog treatment and no drop affordance drawn yet** (same design-owed status as the sibling
+stream-UI tickets #386 / #388 / [#396](../codebase/396.md); code-review re-confirmed the node at #467); until
+it lands the visual follows the app's existing message-row idiom, exactly as `ThinkingIndicator` /
 `StallPromotionBanner` shipped their M3 defaults. When the frame arrives, re-tune alpha / glyph / caption /
-spacing here — no contract change.
+spacing / drop-icon here — no contract change. One open visual question deferred to that point: whether the
+drop button should lift out of the `QUEUED_ALPHA` dim for stronger tap affordance (default keeps it inside).
 
 ### Constants
 
@@ -88,7 +106,11 @@ Column {
     StallPromotionBanner(isStalled = isStalled, onShowLiteralScreen = onShowLiteralScreen)
     // optional WorkspaceChip …
     if (!state.hasMessages) EmptyThreadState(…) else LazyColumn(reverseLayout = true, …) { … }  // weight(1f)
-    QueuedBacklog(queued = state.queuedMessages, modifier = Modifier.fillMaxWidth())            // NEW (#461)
+    QueuedBacklog(                                                                              // #461 + onDrop (#467)
+        queued = state.queuedMessages,
+        onDrop = onDropQueued,
+        modifier = Modifier.fillMaxWidth(),
+    )
     ThinkingIndicator(isThinking = isThinking, modifier = Modifier.fillMaxWidth())              // unchanged
 }
 ```
@@ -133,10 +155,22 @@ render twins:
   [`StableConversationRepository`](stable-conversation-repository.md) facade the VM already holds. Both
   combine inputs seed immediately (the `threadItems` `scan` seeds `emptyList()`; `observeQueue` seeds
   `emptyList()`) and each carries `distinctUntilChanged`, so the combine never stalls.
-- **`ThreadScreen`** needs **no new parameter** — `queuedMessages` rides the already-collected `state`.
-- **`MainActivity`** is **untouched** — the key contrast with `isStalled` / `isThinking`, each of which
-  added a `ThreadScreen` param + a `collectAsStateWithLifecycle()` wiring line. Surfacing content onto the
-  state avoids that call-site cascade entirely.
+- **`ThreadScreen`** needs **no new parameter for the queue *content*** — `queuedMessages` rides the
+  already-collected `state`. The drop **action** (#467), being a callback rather than state, does add one
+  defaulted param: `onDropQueued: (Long) -> Unit = {}`, passed to `QueuedBacklog(onDrop = onDropQueued)`.
+  Defaulted, so the screen previews + the Compose test stay untouched.
+- **`MainActivity`** stayed **untouched while the section was read-only** ([#461](../codebase/461.md), the key
+  contrast with `isStalled` / `isThinking` which each added a param + a `collectAsStateWithLifecycle()` line);
+  the drop action (#467) added exactly **one** wiring line — `onDropQueued = vm::onDropQueued` — alongside the
+  existing `onModalOption = vm::onModalOption` (the queue list data still rides `state` with no wiring).
+- **`ThreadViewModel.onDropQueued(queuedMessageId: Long)`** (#467) is the event handler: a
+  `viewModelScope.launch` that calls `repository.dropQueuedMessage(conversationId, queuedMessageId)` on the
+  facade it already holds — **no new ctor param** (drop is a [`ConversationRepository`](conversation-repository.md)
+  interface method, the [#466](../codebase/466.md) `requestScreenSnapshot` placement). It mutates **no**
+  `state.queuedMessages` (no optimistic removal — AC #3) and mirrors
+  [`sendInterrupt`](interrupt-send-path.md)'s catch contract: rethrow `CancellationException` **first** (it
+  extends `IllegalStateException` on the JVM), then swallow `RelayErrorException` (server error) /
+  `IllegalStateException` (not connected) so a failed drop is inert (AC #4) — no error surface.
 
 ### Why a `ThreadUiState` field, not a sibling `StateFlow`
 
@@ -150,9 +184,11 @@ conversation content → `ThreadUiState`. (Code review endorsed the call.)
 ## Recomposition / stability
 
 - `queued: List<QueuedMessage>` is a stable read (`QueuedMessage` is a `Long`/`String`/`Instant` data
-  class) ⇒ `QueuedBacklog` is **restartable + skippable** and recomposes only when the list changes. No
-  lambda capture (read-only — no callbacks this slice), no internal mutable state, no `remember`, no side
-  effect, no coroutine — pure projection of the list to a rendered (or absent) section.
+  class) and `onDrop: (Long) -> Unit` is bound to the stable method reference `vm::onDropQueued` ⇒
+  `QueuedBacklog` is **restartable + skippable** and recomposes only when the list changes. The per-row
+  `{ onDrop(id) }` lambda allocates in a wrap-content `Column` (not a recycling `LazyColumn`), so there is no
+  `key()` concern. No internal mutable state, no `remember`, no side effect, no coroutine — pure projection of
+  the list to a rendered (or absent) section, with the drop hoisted out as an event.
 - A public composable with a raw `List<…>` param raises the `ComposeUnstableCollections` Compose-lint
   **Warning** (non-fatal; pre-existing convention here — `ChannelListScreen` / `WorkspacePickerSheet` /
   `ChannelInfoSheet` all carry it; the project ships no immutable-collections dependency). Not a defect.
@@ -161,24 +197,26 @@ conversation content → `ThreadUiState`. (Code review endorsed the call.)
 
 `QueuedBacklog.kt` ships two `@Preview`s, one per theme (`showBackground = true`, `widthDp = 412`; the dark
 variant adds `uiMode = Configuration.UI_MODE_NIGHT_YES`), each wrapping `PyrycodeMobileTheme(darkTheme = …)
-{ Surface { QueuedBacklog(queued = previewQueue()) } }` with a 3-entry fixture. [`ThreadScreen`](thread-screen.md)
-also adds an in-file dark preview of the whole thread with a non-empty queue.
+{ Surface { QueuedBacklog(queued = previewQueue(), onDrop = {}) } }` with a 3-entry fixture (`onDrop = {}`
+since #467). [`ThreadScreen`](thread-screen.md) also adds an in-file dark preview of the whole thread with a
+non-empty queue.
 
 ## Configuration
 
 - **No new dependencies.** Existing Compose Material 3 + `material-icons-extended` (already present) only.
   No `gradle/libs.versions.toml` edits.
-- **Two new string resources** in `res/values/strings.xml`: `thread_queued_backlog_label` ("Queued", the
-  section caption) and `cd_thread_queued_backlog` ("Queued messages waiting to send", content description /
-  test anchor). No server text is placed in a string resource — `entry.text` renders only through the bubble
-  `Text`.
+- **Three string resources** in `res/values/strings.xml`: `thread_queued_backlog_label` ("Queued", the
+  section caption), `cd_thread_queued_backlog` ("Queued messages waiting to send", section content
+  description / test anchor), and `cd_thread_queued_drop` ("Drop this queued message", the per-row drop
+  affordance content description / test anchor — added #467). No server text is placed in a string resource —
+  `entry.text` renders only through the bubble `Text`.
 
 ## Edge cases / limitations
 
-- **Visual is design-owed.** The backlog treatment is **not yet drawn** in
+- **Visual is design-owed.** Neither the backlog treatment nor the drop affordance is **drawn yet** in
   [`16-8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8). Until it lands the visual
-  follows the app's M3 message-row idiom (de-emphasized user bubble + waiting glyph + "Queued" caption);
-  re-tune when the frame arrives — no contract change.
+  follows the app's M3 message-row idiom (de-emphasized user bubble + waiting glyph + "Queued" caption +
+  trailing `Close` drop button); re-tune when the frame arrives — no contract change.
 - **Tall backlogs not capped.** `QueuedBacklog` is a wrap-content `Column`; the list's `weight(1f)` absorbs
   its height and real backlogs are short (server-side `msgqueue` cap). If a future observation shows the
   queue crowding the composer, cap with `heightIn(max = …)` + internal scroll — **deferred** (no observed
@@ -214,9 +252,11 @@ also adds an in-file dark preview of the whole thread with a non-empty queue.
   — foot-of-list, sibling `StateFlow`), [Stall promotion banner](stall-promotion-banner.md) (#396 — top
   banner, sibling `StateFlow`). Both design-owed M3 defaults against the same un-drawn `16-8` frame.
 - Parent: split from [#429](https://github.com/pyrycode/pyrycode-mobile/issues/429); epic pyrycode#597
-  Phase 3. Drop loop: the `dequeue_message` send shipped in **[#466](../codebase/466.md)**
-  ([`dropQueuedMessage`](queued-backlog.md)); the per-row drop **affordance** that calls it is **#467**
-  (blockedBy #466).
+  Phase 3. Drop loop **complete**: the `dequeue_message` send shipped in **[#466](../codebase/466.md)**
+  ([`dropQueuedMessage`](queued-backlog.md)) and the per-row drop **affordance** that calls it shipped in
+  **[#467](../codebase/467.md)** (this component's trailing close button → `ThreadViewModel.onDropQueued`).
+- Error-contract twin (the drop handler mirrors it): [Interrupt send path](interrupt-send-path.md)
+  ([#458](../codebase/458.md)) — fire-and-forget swallow-on-failure + cancellation-rethrow-first.
 - Server SSOT: pyrycode#705/#720 (`queue_state` wire type), #722 (producer), `docs/protocol-mobile.md`
   § Queue (v2), ADR 025.
 </content>

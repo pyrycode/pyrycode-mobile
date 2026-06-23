@@ -244,6 +244,7 @@ fun ThreadScreen(
     modalSendErrors: Flow<Unit> = emptyFlow(),        // new in #452 — payload-free one-shot send-failure (#451)
     onModalOption: (String) -> Unit = {},             // new in #446 — LIVE since #452 → vm::onModalOption (passes ModalOption.id)
     onModalCancel: () -> Unit = {},                   // new in #446 — LIVE since #452 → vm::onModalCancel
+    onDropQueued: (Long) -> Unit = {},                // new in #467 — LIVE → vm::onDropQueued (passes QueuedMessage.id); drives QueuedBacklog onDrop
 ) {
     var sheetVisible by rememberSaveable { mutableStateOf(false) }   // new in #254
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }   // new in #252

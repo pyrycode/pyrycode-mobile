@@ -504,6 +504,33 @@ class ThreadViewModel(
         }
     }
 
+    /**
+     * Drop queued message [queuedMessageId] from this conversation's backlog (#467) — fire the #466
+     * `dequeue_message` send through the facade. Reachable as a [ConversationRepository] interface method
+     * on the already-injected [repository], so — unlike interrupt/answerModal/cancelModal — there is no new
+     * constructor lambda. Always passes the VM's own [conversationId] (never a caller-supplied id; the
+     * screen forwards only the row's [Long] queued-message id).
+     *
+     * **No optimistic removal** (AC #3): the row leaves only on the next `queue_state` ([observeQueue]),
+     * so this holds no state to roll back and a failed drop is inert (AC #4). The catch contract mirrors
+     * [sendInterrupt] exactly: the [CancellationException] rethrow **MUST precede** the typed catches
+     * (`j.u.c.CancellationException` extends `IllegalStateException` on the JVM) so structured cancellation
+     * is never swallowed; the server-error and not-connected throws are swallowed with no error surface.
+     */
+    fun onDropQueued(queuedMessageId: Long) {
+        viewModelScope.launch {
+            try {
+                repository.dropQueuedMessage(conversationId, queuedMessageId)
+            } catch (e: CancellationException) {
+                throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
+            } catch (e: RelayErrorException) {
+                // Inert: server error (stale / already-drained id) swallowed (AC #4).
+            } catch (e: IllegalStateException) {
+                // Inert: not-connected / pre-Open send fails silently (AC #4).
+            }
+        }
+    }
+
     fun onModelSelected(model: Model) {
         modelOverride.value = model
     }

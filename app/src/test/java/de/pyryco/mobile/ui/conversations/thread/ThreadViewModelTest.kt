@@ -676,6 +676,115 @@ class ThreadViewModelTest {
             // No crash, no leaked exception: structured cancellation preserved.
         }
 
+    // ---- #467: onDropQueued — drop a queued-backlog message via the #466 facade send -----------
+
+    @Test
+    fun onDropQueued_routesOwnConversationIdAndIdVerbatimToRepository() =
+        runTest {
+            val repo = QueueControllableRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, repo)
+            advanceUntilIdle()
+
+            vm.onDropQueued(42L)
+            advanceUntilIdle()
+
+            // AC #2: exactly one drop, carrying the VM's own conversation id and the queued-message id
+            // passed straight through (never a caller-supplied conversation id).
+            assertEquals(listOf(ACTIVE_CONV to 42L), repo.dropCalls)
+        }
+
+    @Test
+    fun onDropQueued_doesNotMutateBacklog_rowLeavesOnlyOnNextQueueState() =
+        runTest {
+            val repo = QueueControllableRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            val a = QueuedMessage(1L, "a", Instant.parse("2026-06-23T10:00:00Z"))
+            val b = QueuedMessage(2L, "b", Instant.parse("2026-06-23T10:00:01Z"))
+            repo.queue.value = listOf(a, b)
+            advanceUntilIdle()
+            assertEquals(listOf(a, b), vm.state.value.queuedMessages)
+
+            // AC #3: no optimistic removal — the drop fires but the backlog is unchanged afterwards.
+            vm.onDropQueued(a.id)
+            advanceUntilIdle()
+            assertEquals(listOf(ACTIVE_CONV to 1L), repo.dropCalls)
+            assertEquals(listOf(a, b), vm.state.value.queuedMessages)
+
+            // AC #5 (disappears half): the row leaves only when the daemon broadcasts the next queue_state.
+            repo.queue.value = listOf(b)
+            advanceUntilIdle()
+            assertEquals(listOf(b), vm.state.value.queuedMessages)
+            collector.cancel()
+        }
+
+    @Test
+    fun onDropQueued_whenDropFailsInert_isSwallowedWithoutCrashing() =
+        runTest {
+            // AC #4: both inert throws — not-connected (IllegalStateException) and a server-error reply
+            // (RelayErrorException) — are swallowed: the attempt is made, the throw never escapes. A
+            // `dropCalls.size == 1` assertion alone would false-green (the throw escapes the launched
+            // coroutine into the default handler, not runTest), so capture uncaught exceptions and assert
+            // none fired — the only proof the typed catch actually ran. Mirrors the #458 swallow test.
+            val uncaught = mutableListOf<Throwable>()
+            val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
+            try {
+                val failures =
+                    listOf<Throwable>(
+                        IllegalStateException("not connected"),
+                        RelayErrorException(code = "server.error", retryable = false, message = "no"),
+                    )
+                for (failure in failures) {
+                    val repo = QueueControllableRepo(onDrop = { throw failure })
+                    val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+                    val vm = makeVm(handle, repo)
+                    advanceUntilIdle()
+
+                    vm.onDropQueued(7L)
+                    advanceUntilIdle()
+
+                    assertEquals(listOf(ACTIVE_CONV to 7L), repo.dropCalls) // the attempt was made
+                }
+                assertTrue("drop failures must be swallowed, not propagated: $uncaught", uncaught.isEmpty())
+            } finally {
+                Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+            }
+        }
+
+    @Test
+    fun onDropQueued_scopeCancellationMidSend_propagatesCancellationInert() =
+        runTest {
+            // Structured-cancellation guard mirroring #458: `catch (CancellationException) { throw e }` MUST
+            // precede the typed `catch (IllegalStateException)` — j.u.c.CancellationException extends ISE on
+            // the JVM. The drop suspends mid-send; viewModelScope teardown must neither crash nor swallow the
+            // cancellation (runTest fails otherwise).
+            val gate = CompletableDeferred<Unit>() // never completes — the send stays suspended in-flight
+            val entered = CompletableDeferred<Unit>()
+            val repo =
+                QueueControllableRepo(
+                    onDrop = {
+                        entered.complete(Unit)
+                        gate.await()
+                    },
+                )
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, repo)
+            val store = ViewModelStore().apply { put("vm", vm) }
+
+            vm.onDropQueued(1L)
+            advanceUntilIdle()
+            assertTrue("the send must be in-flight", entered.isCompleted)
+
+            store.clear() // cancels viewModelScope → the awaiting drop throws CancellationException
+            advanceUntilIdle()
+            // No crash, no leaked exception: structured cancellation preserved.
+        }
+
     // ---- #396: isStalled projection over repository.observeStall ------------------------------
 
     @Test
@@ -2169,18 +2278,31 @@ class ThreadViewModelTest {
 
     /**
      * Delegates the whole [ConversationRepository] surface to a seeded [FakeConversationRepository]
-     * (so the VM's `state` pipeline stays populated) and overrides only [observeQueue] with a
-     * controllable [MutableStateFlow], recording each observed id for the routing assertion (#461).
+     * (so the VM's `state` pipeline stays populated) and overrides [observeQueue] with a controllable
+     * [MutableStateFlow] (#461) plus [dropQueuedMessage] to record each call and optionally run [onDrop]
+     * after recording (#467) — the analog of [InterruptRecorder], but on the repo double since drop is a
+     * facade method. [onDrop] defaults to a no-op, so the existing `QueueControllableRepo()` callers stay
+     * inert; the swallow test passes a throwing body and the cancellation test a suspending gate.
      */
     private class QueueControllableRepo(
         private val delegate: FakeConversationRepository = FakeConversationRepository(),
+        private val onDrop: suspend () -> Unit = {},
     ) : ConversationRepository by delegate {
         val queue = MutableStateFlow<List<QueuedMessage>>(emptyList())
         val observedIds = mutableListOf<String>()
+        val dropCalls = mutableListOf<Pair<String, Long>>()
 
         override fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> {
             observedIds += conversationId
             return queue
+        }
+
+        override suspend fun dropQueuedMessage(
+            conversationId: String,
+            queuedMessageId: Long,
+        ) {
+            dropCalls += conversationId to queuedMessageId
+            onDrop()
         }
     }
 
