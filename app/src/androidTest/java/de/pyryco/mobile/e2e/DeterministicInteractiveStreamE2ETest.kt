@@ -28,12 +28,15 @@ import org.koin.core.context.GlobalContext
  * `fakeclaude` backend (pyrycode #642) — **no real claude, zero claude turns** — and asserts a
  * scripted reply renders in the thread.
  *
- * Three scenarios, one per script invocation (the harness runs exactly one `@Test` method per run,
+ * Five scenarios, one per script invocation (the harness runs exactly one `@Test` method per run,
  * selected by `SCENARIO` in `scripts/e2e-emulator.sh`):
  *  - `ping` (default, #431) — a single-line reply renders.
  *  - `stream` (#454) — a multi-`assistant_delta` reply assembles into one message.
  *  - `spinner` (#454) — the thinking spinner shows mid-turn, then clears at turn end (a two-fixture
  *    drop holds the turn open so the transient state is observable; see the method KDoc).
+ *  - `tool` (#455) — a tool step renders running mid-turn, then done after the result (two-fixture
+ *    drop, same causal fence as the spinner; see the method KDoc).
+ *  - `tool-failed` (#455) — a failing tool step renders failed (single terminal drop).
  *
  * It is a thin variant of [InteractiveStreamE2ETest] (rung 3). **One** step differs: instead of
  * tapping "New discussion" (which mints a *fresh* per-conversation claude session that `fakeclaude` —
@@ -71,6 +74,23 @@ class DeterministicInteractiveStreamE2ETest {
             .getInstrumentation()
             .targetContext
             .getString(R.string.cd_thread_thinking)
+
+    // The tool-row status content-descriptions (production UI strings, no test tags). Read the same way
+    // as thinkingDescription. Keep in sync with res/values/strings.xml:
+    //   cd_tool_running = "Tool call running", cd_tool_failed = "Tool call failed".
+    // Done has no positive CD (its icon's contentDescription is null), so "done" is asserted indirectly
+    // (running CD gone + failed CD absent + tool name still on screen) — see the method KDoc.
+    private val toolRunningDescription: String =
+        InstrumentationRegistry
+            .getInstrumentation()
+            .targetContext
+            .getString(R.string.cd_tool_running)
+
+    private val toolFailedDescription: String =
+        InstrumentationRegistry
+            .getInstrumentation()
+            .targetContext
+            .getString(R.string.cd_tool_failed)
 
     @Test
     fun interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread() {
@@ -144,6 +164,62 @@ class DeterministicInteractiveStreamE2ETest {
     }
 
     /**
+     * `tool` scenario — a tool step must render **running** while the tool is in flight and **done**
+     * after the result. "Running" is transient (the row flips to done the instant the correlated
+     * `tool_result` folds in), so — exactly like the spinner — the harness holds the turn open across
+     * two causally-fenced drops: drop A (`tool-open.jsonl`, a lone `tool_use`) fires on the **1st**
+     * `send_message.enqueued`, opening a `Running` tool row that persists; only after this test asserts
+     * the running CD does it send a **2nd** message, whose enqueue triggers drop B (`tool-done.jsonl`,
+     * the correlated success `tool_result` + a turn-ending text line), flipping the row to `Done`.
+     * Because drop B is gated on the 2nd send, the running window is arbitrarily long — no timing
+     * dependency, no race. `Done` has no positive content-description, so it is asserted **indirectly**:
+     * the running CD that was present is now absent, the failed CD never appears, and the tool row is
+     * still on screen (the verbatim tool name) — a triad that uniquely identifies a running → done
+     * resolution. Tolerant (presence → absence + verbatim name, generous timeout); never on timing.
+     */
+    @Test
+    fun interactiveTurn_seededChannel_toolStepRunsThenCompletes() {
+        arriveInSeededThread()
+
+        // Message #1 → drop A → tool_use, held open. The tool row appears Running and stays.
+        typeAndSend(SEND_PROMPT)
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(toolRunningDescription)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodes(hasContentDescription(toolRunningDescription)).onFirst().assertIsDisplayed()
+
+        // Message #2 → drop B → tool_result(done) + turn end. The row resolves Running → Done in place.
+        // The 2nd prompt is inert for the reply (the scripted backend ignores it); it only causally
+        // fences drop B.
+        typeAndSend(SECOND_PROMPT)
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(toolRunningDescription)).fetchSemanticsNodes().isEmpty()
+        }
+        // Resolved to done, not failed (no failed glyph), and the row is still present (tool name shown).
+        composeTestRule.onNode(hasContentDescription(toolFailedDescription)).assertDoesNotExist()
+        composeTestRule.onAllNodesWithText(TOOL_NAME, substring = true).onFirst().assertIsDisplayed()
+    }
+
+    /**
+     * `tool-failed` scenario — a failing tool step must render **failed**. The failed end state is
+     * stable (it does not auto-resolve), so it needs no held-open two-drop fence: a single fixture
+     * (`tool-failed.jsonl`) carries `tool_use` → an error `tool_result` (`is_error: true`) → a
+     * turn-ending text line. The fold renders the row `Running` (briefly) → `Failed`; the test asserts
+     * only the terminal `Failed` content-description. Tolerant (presence, generous timeout).
+     */
+    @Test
+    fun interactiveTurn_seededChannel_failedToolStepRendersFailed() {
+        arriveInSeededThread()
+
+        // The single fixture drops tool_use + error tool_result + turn end; the row settles on Failed.
+        typeAndSend(SEND_PROMPT)
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(toolFailedDescription)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodes(hasContentDescription(toolFailedDescription)).onFirst().assertIsDisplayed()
+    }
+
+    /**
      * Steps shared by every scenario: a paired launch lands on the channel list → the host-seeded
      * promoted channel "e2e-seed" surfaces once `list_conversations` round-trips (so waiting on that
      * text implicitly waits for the connection + list response) → gate on [ConnectionState.Connected]
@@ -201,6 +277,12 @@ class DeterministicInteractiveStreamE2ETest {
         // the 2nd→3rd delta boundary, so matching it proves the deltas concatenated into one message.
         // Neither word collides with the seeded channel name "e2e-seed" rendered in the top bar.
         const val STREAMED_SUBSTRING = "streamed world"
+
+        // The tool scenarios' verbatim tool name (carried through the fold from the envelope `name`,
+        // ToolCallRow renders it in the collapsed header). Asserted in the running → done case to prove
+        // the row resolved in place rather than vanishing. Does not collide with the seeded channel name
+        // "e2e-seed" rendered in the top bar.
+        const val TOOL_NAME = "Bash"
 
         // Production UI string (no test tags exist). Keep in sync with res/values/strings.xml:
         //   cd_send_message = "Send message".
