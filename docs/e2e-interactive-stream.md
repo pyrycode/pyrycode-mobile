@@ -14,8 +14,10 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
 3. **Emulator + host daemon + real constrained claude** ← **what this directory ships.** The real app
    on a headless emulator connects to a host `pyry` + relay, sends "reply with exactly: ping", and
    asserts "ping" renders. Semi-deterministic.
-4. **Emulator + deterministic host** — swap real claude for #642's scripted structured backend for a
-   fully-deterministic gate. (Ticketed.)
+4. **Emulator + deterministic host** ← **shipped (#431).** The same real app + Noise/relay path, but
+   claude is swapped for #642's scripted `fakeclaude` backend replaying a fixed JSONL fixture. No real
+   claude, **zero claude turns**; re-running back-to-back yields the same pass. Run it with
+   `DETERMINISTIC=1` — see [Deterministic mode (rung 4)](#deterministic-mode-rung-4).
 5. **Broaden** — tool-use event, thinking indicator, reconnect/replay (`mobile#402`). (Ticketed.)
 
 ## What rung 3 is made of
@@ -77,20 +79,86 @@ The script: starts the relay → mints a device token with `pyry pair` and parse
 the daemon (`PYRY_MOBILE_V2=1`, pointed at the loopback relay) → runs `pixel2Api33AtdDebugAndroidTest`
 with the four values injected as instrumentation arguments → tears everything down.
 
+## Deterministic mode (rung 4)
+
+`DETERMINISTIC=1` swaps real claude for the scripted `fakeclaude` backend (pyrycode #642), which
+replays a fixed claude-format JSONL fixture. The emulator app and the Noise/relay path stay real;
+**only claude is scripted**, so the run spawns no real claude and consumes **zero claude turns** —
+cheap enough to run often, and deterministic enough to re-run back-to-back for the same pass.
+
+```bash
+DETERMINISTIC=1 PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh
+```
+
+Extra prerequisites (on top of the rung-3 list, minus the claude-auth one — rung 4 needs no claude):
+
+- Either `PYRYCODE_SRC` (a local pyrycode checkout) **+ `go`** to build `fakeclaude` from
+  `internal/e2e/internal/fakeclaude`, **or** `FAKE_CLAUDE_BIN` pointing at a prebuilt binary.
+- The `ping` fixture at `scripts/e2e-fixtures/ping.jsonl` (override with `FIXTURE_FILE`).
+
+### Why a seeded channel, not "New discussion"
+
+The rung-3 test taps "New discussion" → `create_conversation`, which mints a **fresh** per-conversation
+claude session (a new random UUID, passed to claude as `--session-id`). The daemon's structured-turn
+producer then tails *that* conversation's transcript **by that id** (no latest-file fallback). Real
+claude honours `--session-id` and writes `<freshId>.jsonl`, so rung 3 aligns — but `fakeclaude` is
+**env-only**: it ignores `--session-id` and always writes `<PYRY_FAKE_CLAUDE_INITIAL_UUID>.jsonl`. A
+created-discussion turn would land in a file the producer never tails, and the scripted reply would
+never reach the phone.
+
+So deterministic mode (mirroring #642's bootstrap-bound model through the real UI) pre-seeds **one
+promoted conversation** (a Channel) bound to the bootstrap session id, and a thin test variant taps
+**that seeded channel** instead of creating a discussion. One conversation, one session, one fixture
+file → the producer tails exactly the file `fakeclaude` writes.
+
+### What the host does (deterministic seams)
+
+1. **Isolated HOME** — pairs and runs the daemon under a short `/tmp/pyry-e2e-det.*` HOME so the
+   scripted `.pyry/<name>/` + `.claude/projects/` never touch the operator's real profile (and the
+   daemon's unix control socket stays under the ~104-char `sun_path` limit).
+2. **Pre-seed** (after `pyry pair`, before daemon start): build/locate `fakeclaude`; compute the
+   sessions dir `<HOME>/.claude/projects/<encode(HOME)>` (the daemon's exact tail dir, `/` and `.`
+   both → `-`); pre-create `<INITIAL_UUID>.jsonl` (avoids the cold-start tail race); write one
+   promoted row to `conversations.json` with `current_session_id == INITIAL_UUID`,
+   `is_promoted: true`, `name: "e2e-seed"` (deliberately **not** `"…ping…"`: the seeded channel name
+   renders verbatim in the thread top bar, and the reply is asserted as a `"ping"` substring — a
+   `"ping"`-bearing channel name would false-green the test on the title alone).
+3. **Daemon** — adds `-pyry-claude=<fakeclaude>`, `-pyry-workdir=<HOME>`, and the
+   `PYRY_FAKE_CLAUDE_*` env (`TUI=1`, `INITIAL_UUID`, `SESSIONS_DIR`, `JSONL_TRIGGER`).
+4. **Fixture-drop watcher** — a background job waits for the `send_message.ack` line in `daemon.log`
+   (the cursor-stamp fence), then copies `ping.jsonl` onto the JSONL trigger. `fakeclaude` appends it
+   verbatim to the live session JSONL; the real producer tails it → `turn_state(responding)` →
+   `assistant_delta("ping")` → `turn_end` → `turn_state(idle)` → the phone's #337 fold renders "ping".
+
+### The fixture format (extension point for #433/#436)
+
+`scripts/e2e-fixtures/ping.jsonl` is a real file (not inlined), so sibling scenarios can be added. One
+claude-format line per turn-event, trailing newline; the daemon's structured producer tails it
+line-delimited. The "ping" fixture is a single `assistant` line with `stop_reason: "end_turn"` and
+non-empty text:
+
+```json
+{"type":"assistant","message":{"id":"ping-1","stop_reason":"end_turn","content":[{"type":"text","text":"ping"}]}}
+```
+
+`#433` (spinner + tool steps) and `#436` (reconnect + replay) build their fixtures on this same shape.
+
 ## Verification status
 
 - **Verified here (host JVM, no device):** the #337 fold (full `RemoteConversationRepositoryTest`
   suite is green), the whole unit suite stays green, and all androidTest sources compile
   (`compileDebugAndroidTestKotlin`). The pairing-payload parser is unit-checked against a synthetic
   payload.
-- **Operator-run (needs your infra):** the actual headless-emulator + host-daemon + real-claude run.
-  That is the point of rung 3 — prove the emulator↔host↔app chain end to end. Expect to tune on first
-  run; this is a hand-built first-green prototype, not a hardened gate.
+- **Operator-run (needs your infra):** the actual headless-emulator + host-daemon run — for rung 3
+  with real claude (`bash scripts/e2e-emulator.sh`), and for rung 4 with the scripted backend
+  (`DETERMINISTIC=1 … bash scripts/e2e-emulator.sh`, `DeterministicInteractiveStreamE2ETest`). That is
+  the point of both rungs — prove the emulator↔host↔app chain end to end. Expect to tune on first run;
+  these are hand-built first-green prototypes, not hardened gates. Re-running rung 4 back-to-back must
+  yield the same pass — that determinism is the whole point and the thing to confirm once on real infra.
 - **Negative control:** `InteractiveStreamE2ETest.negativeControl_wordClaudeNeverSays_isNeverDisplayed`
   is `@Ignore`d. Un-ignore it once to confirm the positive assertion can fail (it waits for a word
-  claude is never asked to say, so it must time out). Re-ignore after, so it does not burn a turn.
-- **Flakiness:** re-run 3–5 times to gauge it before deciding whether rung 4 (deterministic backend)
-  is worth building next.
+  claude is never asked to say, so it must time out). Re-ignore after, so it does not burn a turn. Rung
+  4 needs no negative control: the scripted backend makes the positive assertion deterministic.
 
 ## Assumptions to confirm on first run
 
@@ -111,8 +179,9 @@ These are grounded in the source but unverified end to end:
 
 ## Follow-ups to ticket
 
-- **Rung 4:** deterministic host backend (reuse/extend #642's scripted-JSONL harness) for a no-claude,
-  fully-deterministic emulator gate.
+- **Rung 4 (shipped, #431):** deterministic host backend via #642's scripted `fakeclaude` — see
+  [Deterministic mode (rung 4)](#deterministic-mode-rung-4). `#433` (spinner + tool steps) and `#436`
+  (reconnect + replay) extend its fixture format.
 - **Rung 2:** the cheap Compose render component test.
 - **Coverage:** tool-use event assertion; thinking indicator (hardest, screen-sourced); reconnect /
   replay once `mobile#402` lands.
