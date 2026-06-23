@@ -116,6 +116,10 @@ where it is actually rendered, in [`LiteralScreenSurface`](literal-screen-surfac
   projection, the onset arm, and the clearing hook.
 - [Live-session events](live-session-events.md) (#385) — every decoded event is the forward-progress
   signal that clears a stall; the gate + single-collector substrate this reuses.
+- [Queued backlog](queued-backlog.md) (#460) — the structural twin: the same decode→state→observe shape
+  and `interactive` gate, but a **full-snapshot** ordered list with no onset/clearing edge. A stalled
+  conversation will typically also have a non-empty queue; the two states are exposed **independently**
+  (any combined "stalled with N waiting" view is a UI derivation, not a data-layer concern).
 - [ConversationRepository](conversation-repository.md) — the interface the defaulted `observeStall`
   joins; [`StableConversationRepository`](stable-conversation-repository.md) — the facade that makes it
   reach the thread ViewModel.
