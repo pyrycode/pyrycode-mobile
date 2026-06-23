@@ -4,6 +4,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModelStore
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
@@ -23,6 +24,7 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -542,6 +544,42 @@ class ThreadViewModelTest {
 
             assertEquals(ModalUiState.Hidden, vm.currentModal.value)
             assertNull(vm.armedOptionId.value)
+        }
+
+    @Test
+    fun modalSend_scopeCancellationMidSend_doesNotEmitErrorSignal() =
+        runTest {
+            // Regression guard (#451 rework): on the JVM `kotlinx.coroutines.CancellationException` is a
+            // typealias for `j.u.c.CancellationException`, which extends `IllegalStateException` — so a bare
+            // `catch (IllegalStateException)` would swallow `viewModelScope` teardown mid-send and fire a
+            // spurious error. The `catch (CancellationException) { throw e }` rethrow prevents that.
+            val gate = CompletableDeferred<Unit>() // never completes — the send stays suspended in-flight
+            val modals = MutableSharedFlow<ModalEvent>()
+            val vm =
+                makeVm(
+                    SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV)),
+                    FakeConversationRepository(),
+                    modalEvents = modals,
+                    answerModal = { _, _ -> gate.await() },
+                )
+            // Host the VM in a store so store.clear() cancels its viewModelScope — the real teardown path.
+            val store = ViewModelStore().apply { put("vm", vm) }
+            val errors = mutableListOf<Unit>()
+            val errorCollector = launch { vm.modalSendErrors.collect { errors += it } }
+            advanceUntilIdle()
+
+            modals.emit(modalShown(modalId = "m1")) // default = reject_once
+            advanceUntilIdle()
+            vm.onModalOption("reject_once") // single-tap send; suspends on `gate`
+            advanceUntilIdle()
+            assertTrue("the send must still be suspended in-flight", errors.isEmpty())
+
+            store.clear() // cancels viewModelScope → the awaiting send throws CancellationException
+            advanceUntilIdle()
+
+            // The rethrow keeps cancellation structured: no spurious error signal fires (AC #4 invariant).
+            assertTrue("VM-scope cancellation mid-send must not emit an error signal", errors.isEmpty())
+            errorCollector.cancel()
         }
 
     // ---- #396: isStalled projection over repository.observeStall ------------------------------

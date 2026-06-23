@@ -18,6 +18,7 @@ import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -422,6 +423,8 @@ class ThreadViewModel(
         viewModelScope.launch {
             try {
                 answerModal(modalId, optionId)
+            } catch (e: CancellationException) {
+                throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
             } catch (e: RelayErrorException) {
                 modalSendErrorChannel.trySend(Unit)
             } catch (e: IllegalStateException) {
@@ -436,6 +439,8 @@ class ThreadViewModel(
         viewModelScope.launch {
             try {
                 cancelModal(modalId)
+            } catch (e: CancellationException) {
+                throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
             } catch (e: RelayErrorException) {
                 modalSendErrorChannel.trySend(Unit)
             } catch (e: IllegalStateException) {
