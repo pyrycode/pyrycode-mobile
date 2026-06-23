@@ -116,6 +116,11 @@ class StableConversationRepository(
 
     override suspend fun requestScreenSnapshot(conversationId: String): String = live.requestScreenSnapshot(conversationId)
 
+    override suspend fun dropQueuedMessage(
+        conversationId: String,
+        queuedMessageId: Long,
+    ): Unit = live.dropQueuedMessage(conversationId, queuedMessageId)
+
     private companion object {
         const val NOT_CONNECTED = "No live relay connection"
     }

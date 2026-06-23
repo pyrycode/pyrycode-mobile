@@ -1542,6 +1542,132 @@ class RemoteConversationRepositoryTest {
             assertTrue(cancel().exceptionOrNull() is IllegalStateException)
         }
 
+    // ---- dropQueuedMessage (#466): dequeue_message request → ack/error correlation ----------------
+
+    // AC #1, #5: the sent dequeue_message payload matches the two-key wire contract
+    // {conversation_id, queued_msg_id}; queued_msg_id is a JSON NUMBER (the uint64), not a quoted
+    // string, and no extra keys are present.
+    @Test
+    fun dropQueuedMessage_sendsDequeueMessageMatchingWireContract() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val drop = startDropQueuedMessage(repo, "c-1", 42L)
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "dequeue_message" }
+            assertEquals(
+                MobileJson.parseToJsonElement("""{"conversation_id":"c-1","queued_msg_id":42}"""),
+                sent.payload,
+            )
+
+            // Resolve so the awaiting coroutine completes cleanly.
+            pump.push(ackEnvelope(sent.id))
+            runCurrent()
+            assertTrue(drop().isSuccess)
+        }
+
+    // AC #2: an empty ack completes the drop successfully and writes NO local projection — the backlog
+    // is owned by observeQueue (#460) and updated only by a later queue_state, never by this send.
+    @Test
+    fun dropQueuedMessage_onAck_succeedsWithoutMutatingProjection() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val queue = collectQueue(repo, "c-1")
+            val messages = collectMessages(repo, "c-1")
+            val lastMessage = collectLastMessage(repo, "c-1")
+            runCurrent()
+
+            val drop = startDropQueuedMessage(repo, "c-1", 42L)
+            runCurrent()
+            val sent = pump.sent.single { it.type == "dequeue_message" }
+            pump.push(ackEnvelope(sent.id))
+            runCurrent()
+
+            assertTrue(drop().isSuccess)
+            // No projection write: each stream shows only its initial empty/null emission.
+            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
+            assertEquals(listOf(emptyList<ThreadItem>()), messages)
+            assertEquals(listOf<Message?>(null), lastMessage)
+        }
+
+    // AC #3: a correlated server error surfaces as RelayErrorException exposing code + retryable (a
+    // stale / already-drained id surfaces generically here — no bespoke queue-error mapping).
+    @Test
+    fun dropQueuedMessage_onServerError_throwsRelayErrorExposingCode() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val drop = startDropQueuedMessage(repo, "c-1", 42L)
+            runCurrent()
+            val sent = pump.sent.single { it.type == "dequeue_message" }
+            pump.push(errorEnvelope(sent.id, code = "queue.stale_id", retryable = false))
+            runCurrent()
+
+            val ex = drop().exceptionOrNull()
+            assertTrue("expected RelayErrorException, got $ex", ex is RelayErrorException)
+            assertEquals("queue.stale_id", (ex as RelayErrorException).code)
+            assertFalse(ex.retryable)
+        }
+
+    // AC #3: an unknown conversation (server conversation.not_found) throws IllegalArgumentException,
+    // consistent with sendMessage / requestScreenSnapshot.
+    @Test
+    fun dropQueuedMessage_onConversationNotFound_throwsIllegalArgument() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val drop = startDropQueuedMessage(repo, "ghost", 42L)
+            runCurrent()
+            val sent = pump.sent.single { it.type == "dequeue_message" }
+            pump.push(errorEnvelope(sent.id, code = "conversation.not_found", message = "no such conversation"))
+            runCurrent()
+
+            assertTrue(drop().exceptionOrNull() is IllegalArgumentException)
+        }
+
+    // AC #4: a not-Open session (pump.send returns false) fails fast with IllegalStateException; no
+    // reply ever arrives, yet the call has already completed exceptionally (it does not hang).
+    @Test
+    fun dropQueuedMessage_whenSendReturnsFalse_throwsIllegalStateAndDoesNotHang() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val drop = startDropQueuedMessage(repo, "c-1", 42L)
+            runCurrent()
+
+            assertTrue(drop().exceptionOrNull() is IllegalStateException)
+        }
+
+    // #720 width guard: a queued_msg_id near Long.MAX_VALUE encodes as a bare JSON number (a uint64),
+    // never a quoted string — the round-trip is Long → number with no precision loss.
+    @Test
+    fun dropQueuedMessage_largeQueuedMsgId_encodesAsBareNumber() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val drop = startDropQueuedMessage(repo, "c-1", 9223372036854775807L)
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "dequeue_message" }
+            assertEquals(
+                MobileJson.parseToJsonElement("""{"conversation_id":"c-1","queued_msg_id":9223372036854775807}"""),
+                sent.payload,
+            )
+
+            pump.push(ackEnvelope(sent.id))
+            runCurrent()
+            assertTrue(drop().isSuccess)
+        }
+
     // ---- requestScreenSnapshot (#375): request_snapshot request → screen_snapshot correlation ----
 
     // AC #2 + happy path: the sent envelope matches the request_snapshot wire contract
@@ -3376,6 +3502,21 @@ class RemoteConversationRepositoryTest {
         var outcome: Result<Unit>? = null
         backgroundScope.launch { outcome = runCatching { repo.cancelModal(modalId) } }
         return { requireNotNull(outcome) { "cancelModal has not completed" } }
+    }
+
+    /**
+     * Launch [RemoteConversationRepository.dropQueuedMessage] on [backgroundScope] and return a getter
+     * for its eventual [Result], mirroring [startCancelModal]. The not-Open path completes
+     * synchronously, before any reply.
+     */
+    private fun TestScope.startDropQueuedMessage(
+        repo: RemoteConversationRepository,
+        conversationId: String,
+        queuedMessageId: Long,
+    ): () -> Result<Unit> {
+        var outcome: Result<Unit>? = null
+        backgroundScope.launch { outcome = runCatching { repo.dropQueuedMessage(conversationId, queuedMessageId) } }
+        return { requireNotNull(outcome) { "dropQueuedMessage has not completed" } }
     }
 
     /** A correlated `conversation_created` reply carrying a bare conversation object (#347). */

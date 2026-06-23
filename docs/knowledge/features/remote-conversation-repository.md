@@ -1009,6 +1009,45 @@ override suspend fun requestScreenSnapshot(conversationId: String): String {
   `mapError` is reused unchanged. `TYPE_REQUEST_SNAPSHOT` / `TYPE_SCREEN_SNAPSHOT` join the full `TYPE_*`
   companion registry (every wire type is a named constant here).
 
+## `dropQueuedMessage(conversationId, queuedMessageId)` — the `dequeue_message` outbound send (#466)
+
+The **outbound peer** of the inbound `queue_state` decode ([`observeQueue`](#observequeueconversationid--the-thread-observable-queued-backlog-460), #460): sends a
+`dequeue_message` frame so the daemon removes a not-yet-drained message from a conversation's backlog. A
+pure request/reply on the **reused** `sendAndAwaitReply` (#346) primitive — the `requestScreenSnapshot`
+send-template minus the reply decode (the ack is empty), and **unlike** it, mutates **no** projection
+([#466](../codebase/466.md)).
+
+```kotlin
+override suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long) {
+    val request = Envelope(
+        id = requestId.incrementAndGet(),
+        type = TYPE_DEQUEUE_MESSAGE, ts = Clock.System.now().toString(),
+        payload = MobileJson.encodeToJsonElement(
+            DequeueMessagePayloadDto(conversationId = conversationId, queuedMsgId = queuedMessageId),
+        ),
+    )
+    sendAndAwaitReply(request)   // throws on server `error` / not-Open; the empty {} ack carries nothing → ignored
+}
+```
+
+- **No new collector arm, no new projection.** Success is the empty `{}` ack the success-arm already
+  routes; the reply is **ignored** (no decode), and the backlog updates only via the next `queue_state` on
+  the `queuedByConversation` projection — this send writes no state and has nothing to roll back. The one
+  new bit is the outbound DTO + the companion const `TYPE_DEQUEUE_MESSAGE = "dequeue_message"`.
+- **Encodes `DequeueMessagePayloadDto` (`{conversation_id, queued_msg_id}`)** through `MobileJson`;
+  `queuedMsgId: Long` encodes to a JSON **number** (the wire `uint64`), symmetric with the inbound
+  `QueuedMessageDto.queuedMsgId` — not a String (the pyrycode#720 trap). The caller echoes the
+  `QueuedMessage.id` it got from `observeQueue` verbatim.
+- **No `try`/`catch`, no new error mapping** — `sendAndAwaitReply` + `mapError` are reused verbatim:
+  `conversation.not_found` → `IllegalArgumentException`, any other code (a stale / already-drained id, e.g.
+  `queue.stale_id`) → `RelayErrorException(code, retryable)`, malformed → fallback `RelayErrorException`
+  (never hangs), not-`Open` send → `IllegalStateException`. The no-catch path also preserves structured
+  cancellation (the `catch(IllegalStateException)`-swallows-`CancellationException` trap does not apply).
+- **`security-sensitive` → never-log + no idempotency key.** The frame has no text field; the request,
+  envelope, ids, and reply are all unlogged (structural — the layer has no logger). No token/nonce: a
+  monotonic `queued_msg_id` is never recycled, so a replayed drop hits an already-consumed id → a benign
+  daemon stale-id reject (the `modal_cancel` no-token posture). Authorization is daemon-side.
+
 ## Stubs — the full interface compiles; later slices replace what they own
 
 Every method other than the three live read paths and the now-live `sendMessage` (#346) /
@@ -1094,6 +1133,7 @@ this implementation's surface. All three read paths are now **cold flows that de
 | `promote` — `pump.send` returns `false` (not `Open`, #348) | `IllegalStateException` from `sendAndAwaitReply`'s `check`; no request awaited, no projection mutated |
 | `promote` — malformed `conversation_updated` reply (#348) | the #318 decode boundary's `SerializationException` / `IllegalArgumentException`, propagated to the caller; decode precedes `upsertConversation`, so **no projection mutated** (no partial promote) |
 | `requestScreenSnapshot` — server `error` `conversation.not_found` / any other / not-`Open` send / malformed `screen_snapshot` reply (#375) | `IllegalArgumentException` / `RelayErrorException` / `IllegalStateException` respectively via the shared `mapError` + `sendAndAwaitReply`'s `check`; a malformed reply throws the #374 `SerializationException` (⊂ `IllegalArgumentException`) **caller-side** after `sendAndAwaitReply` returns. A pure read — **nothing mutated** on any path; nothing logged |
+| `dropQueuedMessage` — server `error` `conversation.not_found` / any other (a stale / already-drained id, e.g. `queue.stale_id`) / not-`Open` send (#466) | `IllegalArgumentException` / `RelayErrorException(code, retryable)` / `IllegalStateException` respectively via the shared `mapError` + `sendAndAwaitReply`'s `check`. The empty `{}` ack carries nothing to decode and is ignored. A pure send — **no projection mutated** on any path (the backlog updates only via a later `queue_state`); nothing to roll back; nothing logged |
 | Malformed `stall` payload (missing / wrong-typed `conversation_id`, #395) | `decodeStall` catches `IllegalArgumentException` (⊃ `SerializationException`) → `null` → the one envelope dropped, **single inbound collector survives** (AC #3); `stalledConversations` unchanged; nothing logged. A later valid `stall` still flips state |
 | `stall` on a non-`interactive` connection (#395) | dropped **before** decode by the `TYPE_STALL` capability gate — never surfaces (fail-closed, defence in depth on the server-side fan-out gate) |
 | Malformed `queue_state` payload (bad `conversation_id`, a bad item — `queued_msg_id` as a string, missing `text`, unparseable `ts`, #460) | `decodeQueueState` catches `IllegalArgumentException` (⊃ `SerializationException`, + the per-item `Instant.parse`) → `null` → the one envelope dropped, **collector survives** (AC #4); `queuedByConversation` unchanged; nothing logged. **One bad item drops the whole snapshot.** A later valid `queue_state` still surfaces |

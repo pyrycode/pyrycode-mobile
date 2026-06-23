@@ -173,6 +173,7 @@ class StableConversationRepositoryTest {
             assertTrue(runCatching { facade.sendMessage("c1", "hi") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.promote("c1", "Name", null) }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.requestScreenSnapshot("c1") }.exceptionOrNull() is IllegalStateException)
+            assertTrue(runCatching { facade.dropQueuedMessage("c1", 42L) }.exceptionOrNull() is IllegalStateException)
         }
 
     // ---- AC #4: one-shots delegate verbatim to the live repo (args + return value) ---------------
@@ -192,10 +193,12 @@ class StableConversationRepositoryTest {
             val createResult = facade.createDiscussion("/ws")
             val sendResult = facade.sendMessage("c1", "hi")
             val snapshotResult = facade.requestScreenSnapshot("c9")
+            facade.dropQueuedMessage("c7", 99L)
 
             assertEquals(listOf<String?>("/ws"), repoA.createDiscussionCalls)
             assertEquals(listOf("c1" to "hi"), repoA.sendMessageCalls)
             assertEquals(listOf("c9"), repoA.requestScreenSnapshotCalls)
+            assertEquals(listOf("c7" to 99L), repoA.dropQueuedMessageCalls)
             assertSame(created, createResult)
             assertSame(sent, sendResult)
             assertEquals("screen!", snapshotResult)
@@ -308,6 +311,7 @@ class StableConversationRepositoryTest {
         val createDiscussionCalls = mutableListOf<String?>()
         val sendMessageCalls = mutableListOf<Pair<String, String>>()
         val requestScreenSnapshotCalls = mutableListOf<String>()
+        val dropQueuedMessageCalls = mutableListOf<Pair<String, Long>>()
 
         var createDiscussionResult: Conversation = conversation("created")
         var sendMessageResult: Message = message("sent")
@@ -357,6 +361,13 @@ class StableConversationRepositoryTest {
         override suspend fun requestScreenSnapshot(conversationId: String): String {
             requestScreenSnapshotCalls += conversationId
             return requestScreenSnapshotResult
+        }
+
+        override suspend fun dropQueuedMessage(
+            conversationId: String,
+            queuedMessageId: Long,
+        ) {
+            dropQueuedMessageCalls += (conversationId to queuedMessageId)
         }
 
         override suspend fun archive(conversationId: String): Unit = throw UnsupportedOperationException("archive stub")
