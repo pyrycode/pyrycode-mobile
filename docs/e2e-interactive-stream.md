@@ -23,7 +23,8 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    claude is swapped for #642's scripted `fakeclaude` backend replaying a fixed JSONL fixture. No real
    claude, **zero claude turns**; re-running back-to-back yields the same pass. Run it with
    `DETERMINISTIC=1` — see [Deterministic mode (rung 4)](#deterministic-mode-rung-4).
-5. **Broaden** — tool-use event, thinking indicator, reconnect/replay (`mobile#402`). (Ticketed.)
+5. **Broaden** — multi-delta stream render + thinking indicator **shipped (#454)** on rung 4; tool-use
+   steps (`mobile#455`, Layer 2c) and reconnect/replay (`mobile#436`, Layer 2b) ticketed.
 
 ## Layer 1 — component render harness (rung 2)
 
@@ -162,14 +163,17 @@ file → the producer tails exactly the file `fakeclaude` writes.
    `"ping"`-bearing channel name would false-green the test on the title alone).
 3. **Daemon** — adds `-pyry-claude=<fakeclaude>`, `-pyry-workdir=<HOME>`, and the
    `PYRY_FAKE_CLAUDE_*` env (`TUI=1`, `INITIAL_UUID`, `SESSIONS_DIR`, `JSONL_TRIGGER`).
-4. **Fixture-drop watcher** — a background job waits for the `send_message.ack` line in `daemon.log`
-   (the cursor-stamp fence), then copies `ping.jsonl` onto the JSONL trigger. `fakeclaude` appends it
-   verbatim to the live session JSONL; the real producer tails it → `turn_state(responding)` →
-   `assistant_delta("ping")` → `turn_end` → `turn_state(idle)` → the phone's #337 fold renders "ping".
+4. **Fixture-drop watcher** — a background job waits for the `send_message.enqueued` line in
+   `daemon.log` (the cursor-stamp fence: `router.Route` stamps the producer cursor, *then* logs
+   `send_message.enqueued`), then copies the scenario's fixture onto the JSONL trigger. `fakeclaude`
+   appends it verbatim to the live session JSONL; the real producer tails it → `turn_state(responding)`
+   → `assistant_delta(…)` → `turn_end` → `turn_state(idle)` → the phone's #337 fold renders the reply.
+   The `spinner` scenario drops **twice** (see [Scenarios](#scenarios-454)). (Older daemons may emit a
+   different fence token — confirm on first operator run.)
 
-### The fixture format (extension point for #433/#436)
+### The fixture format (extension point for #454/#436)
 
-`scripts/e2e-fixtures/ping.jsonl` is a real file (not inlined), so sibling scenarios can be added. One
+`scripts/e2e-fixtures/*.jsonl` are real files (not inlined), so sibling scenarios can be added. One
 claude-format line per turn-event, trailing newline; the daemon's structured producer tails it
 line-delimited. The "ping" fixture is a single `assistant` line with `stop_reason: "end_turn"` and
 non-empty text:
@@ -178,7 +182,51 @@ non-empty text:
 {"type":"assistant","message":{"id":"ping-1","stop_reason":"end_turn","content":[{"type":"text","text":"ping"}]}}
 ```
 
-`#433` (spinner + tool steps) and `#436` (reconnect + replay) build their fixtures on this same shape.
+`#454` added the `stream` + `spinner` fixtures below; `#455` (tool steps) and `#436` (reconnect +
+replay) build their fixtures on this same shape.
+
+### Scenarios (#454)
+
+`DETERMINISTIC=1` runs **one scenario per invocation**, selected by `SCENARIO` (default `ping`, which
+preserves #431 unchanged). Each scenario maps to a single `@Test` method in
+`DeterministicInteractiveStreamE2ETest` and its own fixture(s); the script runs exactly that one method
+(`-Pandroid.testInstrumentationRunnerArguments.class=<class>#<method>`):
+
+| `SCENARIO` | asserts | fixture(s) | drops |
+| --- | --- | --- | --- |
+| `ping` (default) | a single-line reply renders | `ping.jsonl` | one |
+| `stream` | a multi-`assistant_delta` reply assembles into **one** message | `stream.jsonl` | one |
+| `spinner` | the thinking spinner shows mid-turn, then clears at turn end | `spinner-open.jsonl` + `spinner-end.jsonl` | **two** |
+
+```bash
+DETERMINISTIC=1 PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh                  # ping
+DETERMINISTIC=1 SCENARIO=stream  PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # stream
+DETERMINISTIC=1 SCENARIO=spinner PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh # spinner
+```
+
+**`stream`** — `stream.jsonl` is three `text` lines with **distinct** `message.id`s, so the producer
+emits three `assistant_delta` envelopes (same `turn_id`, `seq` 0/1/2); the last line's
+`stop_reason: end_turn` + non-empty text also yields `turn_end`. The phone's #337 fold concatenates the
+three deltas (keyed by `turn_id`) into the single message `"Hello, streamed world"`. The test asserts
+the cross-delta-boundary substring `"streamed world"`, present only if the deltas assembled into one
+message (never on delta count or the streaming caret).
+
+**`spinner`** — the thinking state is transient: a single fixture with `thinking` then `end_turn` would
+flip `isThinking` true→false within one tail cycle, before Compose ever lays out the spinner — an
+unobservable race. So the harness holds the turn open and ends it on a **causal** fence, with two drops:
+
+1. **Drop A** (`spinner-open.jsonl`, a `thinking`-only line) fires on the **1st** `send_message.enqueued`
+   → `turn_state(thinking)`, held → the spinner stays on indefinitely (no `end_turn`).
+2. The test asserts the spinner is shown, then sends a **2nd** message.
+3. **Drop B** (`spinner-end.jsonl`, a normal end-of-turn text line) fires on the **2nd**
+   `send_message.enqueued` → `turn_state(responding)` (spinner clears) → `turn_end` → `turn_state(idle)`.
+
+Because drop B is gated on the 2nd enqueue — which happens only after the presence-assert passed — the
+thinking window is arbitrarily long. There is **no timing dependency and no fixed host delay**; a slow
+phone cannot clear the spinner before the presence-assert catches it. The 2nd message's inert transcript
+growth injects no event; only drop B's line ends the turn. The two-drop watcher stays a single
+background subshell (counting `send_message.enqueued` occurrences to tell the 1st enqueue from the 2nd),
+so one `kill` reaps it on teardown.
 
 ## Verification status
 
@@ -187,11 +235,12 @@ non-empty text:
   (`compileDebugAndroidTestKotlin`). The pairing-payload parser is unit-checked against a synthetic
   payload.
 - **Operator-run (needs your infra):** the actual headless-emulator + host-daemon run — for rung 3
-  with real claude (`bash scripts/e2e-emulator.sh`), and for rung 4 with the scripted backend
-  (`DETERMINISTIC=1 … bash scripts/e2e-emulator.sh`, `DeterministicInteractiveStreamE2ETest`). That is
-  the point of both rungs — prove the emulator↔host↔app chain end to end. Expect to tune on first run;
-  these are hand-built first-green prototypes, not hardened gates. Re-running rung 4 back-to-back must
-  yield the same pass — that determinism is the whole point and the thing to confirm once on real infra.
+  with real claude (`bash scripts/e2e-emulator.sh`), and for rung 4 with the scripted backend, each of
+  the three [scenarios](#scenarios-454) (`DETERMINISTIC=1 SCENARIO=ping|stream|spinner …
+  bash scripts/e2e-emulator.sh`, `DeterministicInteractiveStreamE2ETest`). That is the point of both
+  rungs — prove the emulator↔host↔app chain end to end. Expect to tune on first run; these are
+  hand-built first-green prototypes, not hardened gates. Re-running each rung-4 scenario back-to-back
+  must yield the same pass — that determinism is the whole point and the thing to confirm on real infra.
 - **Negative control:** `InteractiveStreamE2ETest.negativeControl_wordClaudeNeverSays_isNeverDisplayed`
   is `@Ignore`d. Un-ignore it once to confirm the positive assertion can fail (it waits for a word
   claude is never asked to say, so it must time out). Re-ignore after, so it does not burn a turn. Rung
@@ -201,6 +250,10 @@ non-empty text:
 
 These are grounded in the source but unverified end to end:
 
+- **Fixture-drop fence token.** The watcher fences on the `send_message.enqueued` line in `daemon.log`
+  (current pyrycode HEAD: `router.Route` stamps the producer cursor, then logs `send_message.enqueued`).
+  If the operator runs an older daemon that logs a different token, the fixture never drops and the test
+  times out — confirm the actual `daemon.log` token on first run and adjust the watcher grep.
 - **`pyry pair` before daemon start.** The script mints the token before starting the daemon, so the
   daemon loads it on boot. If the daemon does not recognise the token, try pairing after the daemon is
   up, or restart the daemon after pairing.
@@ -216,14 +269,16 @@ These are grounded in the source but unverified end to end:
 
 ## Follow-ups to ticket
 
-- **Rung 4 (shipped, #431):** deterministic host backend via #642's scripted `fakeclaude` — see
-  [Deterministic mode (rung 4)](#deterministic-mode-rung-4). `#433` (spinner + tool steps) and `#436`
-  (reconnect + replay) extend its fixture format.
+- **Rung 4 (shipped, #431; extended #454):** deterministic host backend via #642's scripted
+  `fakeclaude` — see [Deterministic mode (rung 4)](#deterministic-mode-rung-4). #454 added the
+  multi-delta `stream` render + the `spinner` scenario (see [Scenarios](#scenarios-454)); `#455` (tool
+  steps, Layer 2c) and `#436` (reconnect + replay, Layer 2b) extend the same fixture format.
 - **Rung 2 (Layer 1a shipped, #432):** the cheap Compose render harness — see
   [Layer 1 — component render harness (rung 2)](#layer-1--component-render-harness-rung-2). Layer 1b
   (#435, rides the same harness) adds tool rows, the session divider, and the connection banner.
-- **Coverage:** tool-use event assertion; thinking indicator (hardest, screen-sourced); reconnect /
-  replay once `mobile#402` lands.
+- **Coverage:** thinking indicator (hardest, screen-sourced) — **shipped (#454)**, alongside the
+  multi-delta `stream`-render scenario; tool-use event assertion (`mobile#455`, Layer 2c) and reconnect /
+  replay (`mobile#436`, Layer 2b) remain ticketed.
 - **#337 full scope:** `seq`-based ordering and replay de-dup across reconnect (a #402 concern; this
   fold concatenates in arrival order, correct within a single connection); and a `make`/Gradle wrapper
   for the orchestration plus fork-sync of any shared `bin/` script per the org convention.
