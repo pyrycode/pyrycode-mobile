@@ -12,7 +12,8 @@ This component adds **no data access** and **no new data path**: it receives the
 `List<QueuedMessage>` as hoisted state and renders it. It is the render-after-decode twin of
 [`ThinkingIndicator`](thinking-indicator.md) (#407) and [`StallPromotionBanner`](stall-promotion-banner.md)
 (#396) — same component shape, but hoisted onto `ThreadUiState` rather than a sibling `StateFlow` (see
-[Wiring](#wiring)). Read-only: the per-row **drop** affordance (`dequeue_message`) is the next slice, #462.
+[Wiring](#wiring)). Read-only: the per-row **drop** affordance is the next slice, #467 — its data-layer
+send (`dropQueuedMessage` → `dequeue_message`) already shipped in [#466](../codebase/466.md).
 
 Package: `de.pyryco.mobile.ui.conversations.components`
 (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). File: `QueuedBacklog.kt`.
@@ -29,7 +30,8 @@ fun QueuedBacklog(
 
 The one load-bearing param (`queued`) carries no default. The composable is a **pure function of the
 list** — no `ViewModel` reference, no flow collection, no `remember`, no `LaunchedEffect`, no callback (the
-drop affordance is #462). Statelessness is an AC (#4), not a style choice.
+drop affordance is #467; its `dropQueuedMessage` send shipped in #466). Statelessness is an AC (#4), not a
+style choice.
 
 ## What it does
 
@@ -212,7 +214,9 @@ also adds an in-file dark preview of the whole thread with a non-empty queue.
   — foot-of-list, sibling `StateFlow`), [Stall promotion banner](stall-promotion-banner.md) (#396 — top
   banner, sibling `StateFlow`). Both design-owed M3 defaults against the same un-drawn `16-8` frame.
 - Parent: split from [#429](https://github.com/pyrycode/pyrycode-mobile/issues/429); epic pyrycode#597
-  Phase 3. Next: **#462** (per-row drop affordance via `dequeue_message`, blockedBy #461).
+  Phase 3. Drop loop: the `dequeue_message` send shipped in **[#466](../codebase/466.md)**
+  ([`dropQueuedMessage`](queued-backlog.md)); the per-row drop **affordance** that calls it is **#467**
+  (blockedBy #466).
 - Server SSOT: pyrycode#705/#720 (`queue_state` wire type), #722 (producer), `docs/protocol-mobile.md`
   § Queue (v2), ADR 025.
 </content>

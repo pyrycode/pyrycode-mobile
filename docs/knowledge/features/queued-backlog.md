@@ -4,11 +4,14 @@ A per-conversation **ordered list** the thread layer observes to learn which mes
 **queued** while claude is busy — so the phone can render the backlog instead of silently dropping the
 turns the user fired during a long response. Landed in [#460](../codebase/460.md) (the data substrate,
 split from #429). The **visible** render (the backlog list UI) shipped in
-[#461](../codebase/461.md) → [`QueuedBacklog`](queued-backlog-section.md); dropping a queued entry
-(`dequeue_message`) is **#462** (blockedBy #461).
+[#461](../codebase/461.md) → [`QueuedBacklog`](queued-backlog-section.md); the **outbound** drop send
+(`dequeue_message`) shipped in [#466](../codebase/466.md) → [`dropQueuedMessage`](#dropping-a-queued-entry-dequeue_message-466),
+and the per-row drop **affordance** that calls it is **#467** (blockedBy #466).
 
-This is the **data layer only**: decode the inbound `queue_state` snapshot into observable state. It
-renders nothing — the [queued backlog section](queued-backlog-section.md) (#461) is what shows it.
+This is the **data layer**: decode the inbound `queue_state` snapshot into observable state (#460), and
+send the outbound `dequeue_message` drop (#466). It renders nothing — the
+[queued backlog section](queued-backlog-section.md) (#461) is what shows the backlog, and #467 is the
+visible drop affordance.
 
 ## The signal
 
@@ -26,8 +29,8 @@ data class QueuedMessage(val id: Long, val text: String, val timestamp: Instant)
   wakes this collector (AC #3).
 - `QueuedMessage.id` is the daemon's per-conversation `queued_msg_id` — a wire **`uint64`** monotonic
   counter, decoded as a `Long` (same posture as `Envelope.eventId`; a `String` is wrong, pyrycode#720
-  flags it). It is a plain ordinal, **not a secret/nonce**; #462 echoes it back verbatim to drop an entry.
-  `timestamp` is enqueue time.
+  flags it). It is a plain ordinal, **not a secret/nonce**; [`dropQueuedMessage`](#dropping-a-queued-entry-dequeue_message-466)
+  (#466) echoes it back verbatim to drop an entry. `timestamp` is enqueue time.
 - **On the interface, with a `flowOf(emptyList())` default** — the same surfacing decision as
   [`observeStall`](stall-state.md). The thread ViewModel reaches the backlog through the
   [`StableConversationRepository`](stable-conversation-repository.md) facade it already holds, and the
@@ -68,6 +71,46 @@ Connection-scoped, in-memory: a fresh repo per connection (#351) starts empty, s
 survives a reconnect** — it re-derives from the next live `queue_state`. A backlog is a transient "right
 now" condition, not durable state.
 
+## Dropping a queued entry (`dequeue_message`, #466)
+
+The **outbound** half: `dropQueuedMessage(conversationId: String, queuedMessageId: Long)` sends a
+`dequeue_message` frame `{conversation_id, queued_msg_id}` so the daemon removes a not-yet-drained message
+before it reaches claude. It is the outbound **peer** of the inbound `queue_state` decode.
+
+```kotlin
+// ConversationRepository — beside requestScreenSnapshot, with a throwing default
+suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long): Unit =
+    error("dropQueuedMessage is not implemented for this ConversationRepository")
+```
+
+- **A pure request/reply with no observable-state effect.** Success is an empty `ack` — the method just
+  returns. It mutates **no** `StateFlow`, mints no domain object, and is invisible to `observeQueue` /
+  `observeMessages` / `observeLastMessage`. The backlog updates later, for free, when the daemon broadcasts
+  the next `queue_state` on the `observeQueue` path above — so there is **nothing to roll back** on failure
+  and **no optimistic mutation** to undo. The send surfaces the outcome; #467's UI handles it.
+- **`queuedMessageId` is the `QueuedMessage.id` echoed back verbatim** — a `Long` (the wire `uint64`),
+  encoded by `DequeueMessagePayloadDto` to a JSON **number**, not a String (the pyrycode#720 trap). The
+  daemon validates the `(conversation_id, queued_msg_id)` pair against its own per-conversation queue and
+  stale-id rejects a mismatch; this slice neither re-derives nor trusts the id.
+- **On the interface with a throwing default — the [`requestScreenSnapshot`](remote-conversation-repository.md)
+  (#375) precedent, NOT the `answerModal`/`cancelModal` injected lambda.** Because the drop carries a
+  `conversation_id` it is a **per-conversation** op the thread already reaches through the
+  [`StableConversationRepository`](stable-conversation-repository.md) facade — so it needs no new ViewModel
+  ctor param, no coordinator passthrough, no Koin wiring (modals, keyed by `modal_id` only, are app-level and
+  fetched off the concrete coordinator instead). The fake and inline test doubles inherit the throwing
+  default; only the [live remote repo](remote-conversation-repository.md) and the facade override it.
+- **Reuses `sendAndAwaitReply` (#346) verbatim — no new error mapping.** Empty `ack` ⇒ success; `error`
+  ⇒ caller-visible failure (`conversation.not_found` → `IllegalArgumentException`, any other code →
+  `RelayErrorException(code, retryable)`, malformed → fallback `RelayErrorException`, never hangs); not
+  connected ⇒ `IllegalStateException`. A stale / already-drained id (observed code `queue.stale_id`)
+  surfaces **generically** as `RelayErrorException` — no bespoke queue-error mapping is pre-built (deferred
+  to #467 if it ever needs to distinguish "already gone" visually).
+- **No idempotency key** (unlike `modal_answer`) — `queued_msg_id` is a monotonic per-conversation ordinal,
+  never recycled, so a replayed drop targets an already-consumed id → a benign daemon stale-id reject, no
+  double-effect hazard. The `modal_cancel` no-token posture.
+
+See [#466](../codebase/466.md) for the files, the `DequeueMessagePayloadDto` encode DTO, and verification.
+
 ## Capability gate (fail-closed)
 
 The `TYPE_QUEUE_STATE` arm sits inside `CAPABILITY_INTERACTIVE in negotiatedCapabilities()` — the same gate
@@ -79,7 +122,8 @@ and never surfaces it.
 
 > The separate ADR-025 statement that "viewing/dequeuing is *ungated* for any paired phone" is the
 > **authorization** model — it means no extra per-device answer-gate like permission modals need — and is
-> the **outbound `dequeue_message`** concern of #462. It does **not** loosen this inbound decode gate.
+> the **outbound [`dequeue_message`](#dropping-a-queued-entry-dequeue_message-466)** concern (#466). It
+> does **not** loosen this inbound decode gate.
 
 ## Edge cases & limitations
 
@@ -118,9 +162,11 @@ screen-capture surface — see [#461](../codebase/461.md). #461 is therefore **n
 
 ## Related
 
-- [#460 implementation notes](../codebase/460.md) — files, line refs, lessons, verification.
+- [#460 implementation notes](../codebase/460.md) (inbound decode) / [#466 implementation notes](../codebase/466.md)
+  (outbound `dropQueuedMessage` send) — files, line refs, lessons, verification.
 - [Remote conversation repository](remote-conversation-repository.md) — hosts the `queuedByConversation`
-  projection, the `TYPE_QUEUE_STATE` arm, and the `observeQueue` projection.
+  projection, the `TYPE_QUEUE_STATE` arm, the `observeQueue` projection, and the outbound `dropQueuedMessage`
+  send.
 - [Stall state](stall-state.md) (#395) — the structural twin: the decode→state→observe shape, gate, and
   test harness this reuses; the onset-only counterpoint to this full-snapshot model.
 - [Live-session events](live-session-events.md) (#385) / [Modal events](modal-events.md) (#437) — the other
@@ -129,6 +175,8 @@ screen-capture surface — see [#461](../codebase/461.md). #461 is therefore **n
   [`StableConversationRepository`](stable-conversation-repository.md) — the facade that makes it reach the
   thread ViewModel.
 - Consumers: **#461** (render the backlog list — **shipped**, [`QueuedBacklog`](queued-backlog-section.md) /
-  [codebase #461](../codebase/461.md)), **#462** (drop a queued entry via `dequeue_message`, blockedBy #461).
+  [codebase #461](../codebase/461.md)), **#466** (drop a queued entry via `dequeue_message` — **shipped**,
+  [`dropQueuedMessage`](#dropping-a-queued-entry-dequeue_message-466) / [codebase #466](../codebase/466.md)),
+  **#467** (the per-row drop affordance, Figma 16-8, blockedBy #466).
 - Server SSOT: pyrycode#705/#720 (`queue_state` / `dequeue_message` wire types, `queued_msg_id` `uint64`),
-  #722 (producer), #723 (`dequeue_message` handler), `docs/protocol-mobile.md` § Queue (v2), ADR 025.
+  #722 (producer), #723 (`dequeue_message` handler, live), `docs/protocol-mobile.md` § Queue (v2), ADR 025.
