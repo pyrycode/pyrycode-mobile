@@ -16,6 +16,7 @@ import androidx.compose.material3.AlertDialogDefaults
 import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
@@ -26,6 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -33,18 +35,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.compose.ui.window.SecureFlagPolicy
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
@@ -72,7 +77,9 @@ import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
 import de.pyryco.mobile.ui.settings.label
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 
@@ -99,12 +106,21 @@ fun ThreadScreen(
     onWorkspacePicked: (String) -> Unit = {},
     onWorkspacePickerDismissed: () -> Unit = {},
     modalState: ModalUiState = ModalUiState.Hidden,
-    onModalOption: (String) -> Unit = {}, // INERT in this slice; #444 wires it (passes ModalOption.id)
-    onModalCancel: () -> Unit = {}, // INERT in this slice; #444 wires it
+    armedOptionId: String? = null, // #452: the open modal's armed non-default option, or null (VM-scoped, #451)
+    modalSendErrors: Flow<Unit> = emptyFlow(), // #452: payload-free one-shot modal send-failure signal (#451)
+    onModalOption: (String) -> Unit = {}, // #452: wired by MainActivity → vm::onModalOption (passes ModalOption.id)
+    onModalCancel: () -> Unit = {}, // #452: wired by MainActivity → vm::onModalCancel
 ) {
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
+    // #452: surface a failed modal send as a transient snackbar. The event is payload-free (Unit, #451) and
+    // the message is a fixed local string, so nothing modal-derived (command / path) can reach the
+    // un-secured Activity window the snackbar draws in. Same VM-event→snackbar idiom as ArchivedDiscussionsScreen.
+    val modalSendFailedMessage = stringResource(R.string.modal_send_failed)
+    LaunchedEffect(modalSendErrors, snackbarHostState) {
+        modalSendErrors.collect { snackbarHostState.showSnackbar(modalSendFailedMessage) }
+    }
     Scaffold(
         modifier = modifier,
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -318,6 +334,7 @@ fun ThreadScreen(
         is ModalUiState.Open ->
             PermissionModalOverlay(
                 open = modalState,
+                armedOptionId = armedOptionId,
                 onOption = onModalOption,
                 onCancel = onModalCancel,
             )
@@ -347,14 +364,21 @@ fun ThreadScreen(
  *   window (a host-Activity flag would not cover it; the host carries no `FLAG_SECURE`). `SecureOn`, not
  *   the default `Inherit`, is load-bearing.
  * - **No persistence** — no modal-derived text reaches `rememberSaveable` / saved-instance state.
+ * - **Tapjacking** (#452, now that the taps are live) — `filterTouchesWhenObscured` on the dialog's **own**
+ *   window drops touches delivered while another window obscures it. A deterministic View-level net (min
+ *   SDK 33), *different fabric* from the second-confirm UX belt (#451).
  *
- * Non-dismissable here: a permission gate must not treat a stray back-press / outside-tap as an implicit
- * answer, and answering/cancelling is the sibling slice #444 — [onOption] / [onCancel] are inert.
+ * Live in #452: [onOption] forwards every tapped option id verbatim — the VM decides arm-vs-send; the UI
+ * never re-derives the arm. [armedOptionId] reflects the VM's armed non-default option (#451), drawing the
+ * second-confirm affordance on that one option. [onCancel] is reached only via the explicit low-emphasis
+ * Cancel button; back-press / outside-tap dismissal stay disabled (#446) so a permission gate never reads a
+ * stray gesture as an implicit answer.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PermissionModalOverlay(
     open: ModalUiState.Open,
+    armedOptionId: String?,
     onOption: (String) -> Unit,
     onCancel: () -> Unit,
 ) {
@@ -367,6 +391,11 @@ private fun PermissionModalOverlay(
                 dismissOnClickOutside = false,
             ),
     ) {
+        // The taps now answer a high-consequence permission gate, so harden the dialog's own window against
+        // tapjacking: drop touches delivered while another window obscures it. No Compose-test semantics
+        // node ⇒ verified by inspection (matches #446's treatment of SecureOn).
+        val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+        SideEffect { dialogWindow?.decorView?.filterTouchesWhenObscured = true }
         Surface(
             shape = AlertDialogDefaults.shape,
             color = AlertDialogDefaults.containerColor,
@@ -381,15 +410,21 @@ private fun PermissionModalOverlay(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    // Iterate in array order (the canonical display/selection order). The highlight is
-                    // driven solely by id == defaultOptionId — no option-id semantics are interpreted.
+                    // Iterate in array order (the canonical display/selection order). isDefault drives the
+                    // fail-safe-deny highlight; isArmed reflects the VM's armed non-default option — no
+                    // option-id semantics are interpreted, every tap forwards verbatim.
                     open.options.forEach { option ->
                         ModalOptionButton(
                             label = option.label,
                             isDefault = option.id == open.defaultOptionId,
+                            isArmed = option.id == armedOptionId,
                             onClick = { onOption(option.id) },
                         )
                     }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                TextButton(onClick = onCancel, modifier = Modifier.align(Alignment.End)) {
+                    Text(stringResource(R.string.modal_cancel))
                 }
             }
         }
@@ -397,30 +432,46 @@ private fun PermissionModalOverlay(
 }
 
 /**
- * One modal option. The fail-safe-deny default ([isDefault]) renders as a high-emphasis filled [Button];
- * non-defaults render as [OutlinedButton] — so the visually prominent button is always the producer's
- * deny/safe option. The default also carries an accessible + test-observable `stateDescription` marker
- * (a screen reader announces "default"; the AC#5 test locates it by this, not by colour inspection).
+ * One modal option — a **stateless** pure function of [label] / [isDefault] / [isArmed]; it holds no
+ * `remember`-based arm state (the arm lives on the VM, #451; this slice only renders [armedOptionId]).
+ * Three disjoint renders, [isArmed] taking precedence:
+ * - [isArmed] (an armed non-default awaiting its second confirm, #452) → a [FilledTonalButton], kept
+ *   **below** the default's filled emphasis so the safe default stays visually dominant, plus the
+ *   `modal_armed_option_desc` `stateDescription` ("Tap again to confirm").
+ * - [isDefault] (the fail-safe-deny default) → a high-emphasis filled [Button] + the
+ *   `modal_default_option_desc` marker, so the visually prominent button is always the producer's
+ *   deny/safe option (it answers on a single tap).
+ * - neither → an [OutlinedButton], no marker (a first tap arms it via the VM).
+ *
+ * The `stateDescription` markers are accessible + test-observable (a screen reader announces them; the AC#4
+ * test locates the armed / default option by these, not by colour). Only the local markers are added — the
+ * verbatim server [label] stays the sole server text, rendered through plain [Text].
  */
 @Composable
 private fun ModalOptionButton(
     label: String,
     isDefault: Boolean,
+    isArmed: Boolean,
     onClick: () -> Unit,
 ) {
     val defaultDesc = stringResource(R.string.modal_default_option_desc)
+    val armedDesc = stringResource(R.string.modal_armed_option_desc)
     val modifier =
-        if (isDefault) {
-            Modifier
-                .fillMaxWidth()
-                .semantics { stateDescription = defaultDesc }
-        } else {
-            Modifier.fillMaxWidth()
+        when {
+            isArmed ->
+                Modifier
+                    .fillMaxWidth()
+                    .semantics { stateDescription = armedDesc }
+            isDefault ->
+                Modifier
+                    .fillMaxWidth()
+                    .semantics { stateDescription = defaultDesc }
+            else -> Modifier.fillMaxWidth()
         }
-    if (isDefault) {
-        Button(onClick = onClick, modifier = modifier) { Text(label) }
-    } else {
-        OutlinedButton(onClick = onClick, modifier = modifier) { Text(label) }
+    when {
+        isArmed -> FilledTonalButton(onClick = onClick, modifier = modifier) { Text(label) }
+        isDefault -> Button(onClick = onClick, modifier = modifier) { Text(label) }
+        else -> OutlinedButton(onClick = onClick, modifier = modifier) { Text(label) }
     }
 }
 
