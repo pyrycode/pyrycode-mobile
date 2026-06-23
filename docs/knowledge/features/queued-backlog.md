@@ -6,11 +6,12 @@ turns the user fired during a long response. Landed in [#460](../codebase/460.md
 split from #429). The **visible** render (the backlog list UI) shipped in
 [#461](../codebase/461.md) → [`QueuedBacklog`](queued-backlog-section.md); the **outbound** drop send
 (`dequeue_message`) shipped in [#466](../codebase/466.md) → [`dropQueuedMessage`](#dropping-a-queued-entry-dequeue_message-466),
-and the per-row drop **affordance** that calls it is **#467** (blockedBy #466).
+and the per-row drop **affordance** that fires it shipped in [#467](../codebase/467.md) (the
+[`QueuedBacklog`](queued-backlog-section.md) trailing close button → `ThreadViewModel.onDropQueued`).
 
 This is the **data layer**: decode the inbound `queue_state` snapshot into observable state (#460), and
 send the outbound `dequeue_message` drop (#466). It renders nothing — the
-[queued backlog section](queued-backlog-section.md) (#461) is what shows the backlog, and #467 is the
+[queued backlog section](queued-backlog-section.md) (#461) shows the backlog and (#467) the
 visible drop affordance.
 
 ## The signal
@@ -87,7 +88,8 @@ suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long): Un
   returns. It mutates **no** `StateFlow`, mints no domain object, and is invisible to `observeQueue` /
   `observeMessages` / `observeLastMessage`. The backlog updates later, for free, when the daemon broadcasts
   the next `queue_state` on the `observeQueue` path above — so there is **nothing to roll back** on failure
-  and **no optimistic mutation** to undo. The send surfaces the outcome; #467's UI handles it.
+  and **no optimistic mutation** to undo. The send surfaces the outcome; the [#467](../codebase/467.md) drop
+  affordance fires it and swallows any failure **inert** (no user-visible error surface — AC #4 there).
 - **`queuedMessageId` is the `QueuedMessage.id` echoed back verbatim** — a `Long` (the wire `uint64`),
   encoded by `DequeueMessagePayloadDto` to a JSON **number**, not a String (the pyrycode#720 trap). The
   daemon validates the `(conversation_id, queued_msg_id)` pair against its own per-conversation queue and
@@ -103,8 +105,9 @@ suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long): Un
   ⇒ caller-visible failure (`conversation.not_found` → `IllegalArgumentException`, any other code →
   `RelayErrorException(code, retryable)`, malformed → fallback `RelayErrorException`, never hangs); not
   connected ⇒ `IllegalStateException`. A stale / already-drained id (observed code `queue.stale_id`)
-  surfaces **generically** as `RelayErrorException` — no bespoke queue-error mapping is pre-built (deferred
-  to #467 if it ever needs to distinguish "already gone" visually).
+  surfaces **generically** as `RelayErrorException` — no bespoke queue-error mapping is pre-built, and the
+  [#467](../codebase/467.md) drop affordance confirmed it: that slice swallows the error inert (no
+  "already gone" visual), so no distinction was ever needed.
 - **No idempotency key** (unlike `modal_answer`) — `queued_msg_id` is a monotonic per-conversation ordinal,
   never recycled, so a replayed drop targets an already-consumed id → a benign daemon stale-id reject, no
   double-effect hazard. The `modal_cancel` no-token posture.
@@ -177,6 +180,8 @@ screen-capture surface — see [#461](../codebase/461.md). #461 is therefore **n
 - Consumers: **#461** (render the backlog list — **shipped**, [`QueuedBacklog`](queued-backlog-section.md) /
   [codebase #461](../codebase/461.md)), **#466** (drop a queued entry via `dequeue_message` — **shipped**,
   [`dropQueuedMessage`](#dropping-a-queued-entry-dequeue_message-466) / [codebase #466](../codebase/466.md)),
-  **#467** (the per-row drop affordance, Figma 16-8, blockedBy #466).
+  **#467** (the per-row drop affordance — **shipped**, the [`QueuedBacklog`](queued-backlog-section.md)
+  trailing close button → `ThreadViewModel.onDropQueued` → this `dropQueuedMessage` send /
+  [codebase #467](../codebase/467.md)).
 - Server SSOT: pyrycode#705/#720 (`queue_state` / `dequeue_message` wire types, `queued_msg_id` `uint64`),
   #722 (producer), #723 (`dequeue_message` handler, live), `docs/protocol-mobile.md` § Queue (v2), ADR 025.
