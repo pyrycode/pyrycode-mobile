@@ -82,4 +82,9 @@
     <string name="literal_screen_error_unknown_conversation">This conversation couldn\'t be found.</string>
     <string name="literal_screen_error_server">Couldn\'t load the screen. Try again.</string>
     <string name="literal_screen_error_not_connected">Not connected. Reconnect to load the screen.</string>
+    <string name="modal_default_option_desc">Default</string>
+    <string name="modal_dismissed_remote">Resolved on another device</string>
+    <string name="modal_dismissed_local">Resolved on this device</string>
+    <string name="modal_dismissed_timeout">Request timed out</string>
+    <string name="modal_dismissed_resolved">Request resolved</string>
 </resources>

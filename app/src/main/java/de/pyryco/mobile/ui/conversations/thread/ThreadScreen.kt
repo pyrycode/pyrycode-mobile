@@ -1,16 +1,27 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AlertDialogDefaults
+import androidx.compose.material3.BasicAlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -29,8 +40,12 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.SecureFlagPolicy
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
@@ -83,11 +98,16 @@ fun ThreadScreen(
     onWorkspaceChipTapped: () -> Unit = {},
     onWorkspacePicked: (String) -> Unit = {},
     onWorkspacePickerDismissed: () -> Unit = {},
+    modalState: ModalUiState = ModalUiState.Hidden,
+    onModalOption: (String) -> Unit = {}, // INERT in this slice; #444 wires it (passes ModalOption.id)
+    onModalCancel: () -> Unit = {}, // INERT in this slice; #444 wires it
 ) {
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
     Scaffold(
         modifier = modifier,
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             ThreadTopAppBar(
                 title = state.displayName,
@@ -291,7 +311,133 @@ fun ThreadScreen(
             onDismiss = { onOverflowEvent(ThreadEvent.DeleteDismiss) },
         )
     }
+    // App-level permission/choice modal overlay (#446). Hoisted single source = ThreadViewModel.currentModal
+    // (#445), forwarded verbatim. Open → separate-surface overlay; Dismissed → surface the resolution reason
+    // once and remove the overlay. Modal events carry no conversation_id, so this is not scoped per thread.
+    when (modalState) {
+        is ModalUiState.Open ->
+            PermissionModalOverlay(
+                open = modalState,
+                onOption = onModalOption,
+                onCancel = onModalCancel,
+            )
+        is ModalUiState.Dismissed -> {
+            val reason = dismissReasonText(modalState.source)
+            // Keyed on modalId: Dismissed is a sticky terminal state (#445's fold), so this fires exactly
+            // once per resolution and never re-fires on unrelated recomposition.
+            LaunchedEffect(modalState.modalId) {
+                snackbarHostState.showSnackbar(reason)
+            }
+        }
+        ModalUiState.Hidden -> Unit
+    }
 }
+
+/**
+ * The permission/choice modal overlay (#446) — a separate-surface M3 dialog floating over the active
+ * thread, **not** a row in the thread [LazyColumn]. Renders the verbatim [title][ModalUiState.Open.title],
+ * [prompt][ModalUiState.Open.prompt], and [options][ModalUiState.Open.options] (in wire array order) and
+ * highlights the producer's fail-safe-deny [defaultOptionId][ModalUiState.Open.defaultOptionId].
+ *
+ * Security (this slice owns the render-time obligations #445 deferred):
+ * - **Inert output-encoding** — every server string renders through plain [Text] (literal, no
+ *   markup/HTML/active content; never [de.pyryco.mobile.ui.conversations.components.MarkdownText], no
+ *   `SelectionContainer` clipboard path) — the values may name a sensitive command or path.
+ * - **Screen-capture hardening** — [SecureFlagPolicy.SecureOn] sets `FLAG_SECURE` on the dialog's **own**
+ *   window (a host-Activity flag would not cover it; the host carries no `FLAG_SECURE`). `SecureOn`, not
+ *   the default `Inherit`, is load-bearing.
+ * - **No persistence** — no modal-derived text reaches `rememberSaveable` / saved-instance state.
+ *
+ * Non-dismissable here: a permission gate must not treat a stray back-press / outside-tap as an implicit
+ * answer, and answering/cancelling is the sibling slice #444 — [onOption] / [onCancel] are inert.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PermissionModalOverlay(
+    open: ModalUiState.Open,
+    onOption: (String) -> Unit,
+    onCancel: () -> Unit,
+) {
+    BasicAlertDialog(
+        onDismissRequest = onCancel,
+        properties =
+            DialogProperties(
+                securePolicy = SecureFlagPolicy.SecureOn,
+                dismissOnBackPress = false,
+                dismissOnClickOutside = false,
+            ),
+    ) {
+        Surface(
+            shape = AlertDialogDefaults.shape,
+            color = AlertDialogDefaults.containerColor,
+            tonalElevation = AlertDialogDefaults.TonalElevation,
+        ) {
+            Column(modifier = Modifier.padding(24.dp)) {
+                Text(text = open.title, style = MaterialTheme.typography.headlineSmall)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(text = open.prompt, style = MaterialTheme.typography.bodyMedium)
+                Spacer(modifier = Modifier.height(16.dp))
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    // Iterate in array order (the canonical display/selection order). The highlight is
+                    // driven solely by id == defaultOptionId — no option-id semantics are interpreted.
+                    open.options.forEach { option ->
+                        ModalOptionButton(
+                            label = option.label,
+                            isDefault = option.id == open.defaultOptionId,
+                            onClick = { onOption(option.id) },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One modal option. The fail-safe-deny default ([isDefault]) renders as a high-emphasis filled [Button];
+ * non-defaults render as [OutlinedButton] — so the visually prominent button is always the producer's
+ * deny/safe option. The default also carries an accessible + test-observable `stateDescription` marker
+ * (a screen reader announces "default"; the AC#5 test locates it by this, not by colour inspection).
+ */
+@Composable
+private fun ModalOptionButton(
+    label: String,
+    isDefault: Boolean,
+    onClick: () -> Unit,
+) {
+    val defaultDesc = stringResource(R.string.modal_default_option_desc)
+    val modifier =
+        if (isDefault) {
+            Modifier
+                .fillMaxWidth()
+                .semantics { stateDescription = defaultDesc }
+        } else {
+            Modifier.fillMaxWidth()
+        }
+    if (isDefault) {
+        Button(onClick = onClick, modifier = modifier) { Text(label) }
+    } else {
+        OutlinedButton(onClick = onClick, modifier = modifier) { Text(label) }
+    }
+}
+
+/**
+ * Maps the verbatim [Dismissed.source][ModalUiState.Dismissed.source] to a **local** string resource —
+ * never echoing the raw wire token (the snackbar draws in the un-secured Activity window, so the mapping
+ * is a confidentiality requirement, not only UX). Unknown forward-compat values fall back to a generic
+ * "resolved" message (AC #3).
+ */
+@Composable
+private fun dismissReasonText(source: String): String =
+    when (source) {
+        "remote" -> stringResource(R.string.modal_dismissed_remote)
+        "local" -> stringResource(R.string.modal_dismissed_local)
+        "timeout" -> stringResource(R.string.modal_dismissed_timeout)
+        else -> stringResource(R.string.modal_dismissed_resolved)
+    }
 
 @Composable
 private fun DeleteConfirmationDialog(
