@@ -147,5 +147,9 @@ inert — `isThinking` honestly holds `false` with no live daemon.
 - Precedent: `connectionStatus` injected into [`SettingsViewModel`](settings-viewmodel.md)
   ([#398](../codebase/398.md)); `registerPushToken` reached through the concrete repo
   ([#365](../codebase/365.md)). See [[post-352-connection-scoped-repo-behind-facade]].
+- Render regression coverage: [#432 scripted-stream thread harness](../codebase/432.md) — the Layer-1a
+  `ScriptedThreadHarness` scripts `turn_state("thinking")` → `turn_end` through this reduction and asserts
+  the `cd_thread_thinking` indicator appears then clears (the spinner case). Subscribe-before-push is
+  load-bearing: `isThinking` is sourced only from the `replay = 0` `liveSessionEvents`.
 - Server SSOT: pyrycode#607 (`turn_state` wire), #616 (capability-gated fan-out), ADR 025 § Phase 2
   structured streaming, EPIC pyrycode#596.

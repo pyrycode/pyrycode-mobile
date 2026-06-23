@@ -9,8 +9,13 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
 1. **Wire-level Go test** (`pyrycode#642`) — no emulator. Daemon → relay → simulated phone receives the
    structured stream. The steadiest rung; the future deterministic backend for rung 3/4. Lives in
    pyrycode, not here.
-2. **Compose render test** — component level, deterministic, no daemon. Feed the thread a streamed
-   "ping" and assert it renders. (Ticketed; not built yet.)
+2. **Compose render test** — component level, deterministic, no daemon. Feed the thread a scripted
+   structured-event stream and assert the assembled thread renders. **Layer 1a shipped (#432):** the
+   reusable `ScriptedThreadHarness` drives the scripted stream through the **real**
+   `RemoteConversationRepository` fold → `ThreadViewModel` → `ThreadScreen`, plus the first two render
+   cases (text deltas → finalized message; `turn_state` → thinking spinner). Layer 1b (#435, rides the
+   same harness) adds tool rows, the session divider, and the connection banner. See
+   [Layer 1 — component render harness (rung 2)](#layer-1--component-render-harness-rung-2).
 3. **Emulator + host daemon + real constrained claude** ← **what this directory ships.** The real app
    on a headless emulator connects to a host `pyry` + relay, sends "reply with exactly: ping", and
    asserts "ping" renders. Semi-deterministic.
@@ -19,6 +24,38 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    claude, **zero claude turns**; re-running back-to-back yields the same pass. Run it with
    `DETERMINISTIC=1` — see [Deterministic mode (rung 4)](#deterministic-mode-rung-4).
 5. **Broaden** — tool-use event, thinking indicator, reconnect/replay (`mobile#402`). (Ticketed.)
+
+## Layer 1 — component render harness (rung 2)
+
+The cheap rung: a Compose render test with **no network, daemon, or emulator-host**, fast enough to gate
+every change. It joins the two halves that the rest of the suite covers separately — the **fold**
+(scripted events → `List<ThreadItem>`, unit-tested in `RemoteConversationRepositoryTest`) and the
+**render** (`ThreadScreen`, component-tested from a hand-built state in `ThinkingIndicatorTest`) — by
+driving a scripted event stream through the real fold and rendering the result.
+
+| Piece | File |
+| --- | --- |
+| Reusable harness — wires the real graph (`FakeSessionPump` → `RemoteConversationRepository` → `ThreadViewModel` → `ThreadScreen`), exposes `push*` scripting + `awaitReady()` | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#432) |
+| The two render cases (text concatenation→finalize; `turn_state`→spinner) | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadRenderTest.kt` (#432) |
+
+Key facts (see [`codebase/432.md`](knowledge/codebase/432.md) for the full notes):
+
+- **Drives the REAL repository fold, not the dormant ViewModel fold.** The #337 `assistant_delta` fold
+  lives in both `RemoteConversationRepository` (canonical — the live app renders it) and
+  `ThreadViewModel.threadItems` (suppressed by a `turnId` render guard whenever the repo already produced
+  the row, which it always does live). A fake-repo harness would exercise only the dormant path, so the
+  harness wires the **real** repo; the only seam is `FakeSessionPump`.
+- **Capability gate open** — built with `negotiatedCapabilities = { setOf("interactive") }`, or the fold
+  produces nothing.
+- **Subscribe-before-push** — `liveSessionEvents` is `replay = 0`, and `isThinking` is sourced only from
+  it, so `awaitReady()` blocks every live push until the VM's collectors have subscribed (proven by the
+  seeded channel name rendering in the top bar). That seed name must not be a substring of any asserted
+  text (the #431 `e2e-ping`→`e2e-seed` false-green lesson, applied here as `"Harness channel"`).
+- **Tolerant asserts only** (substring / presence, generous `waitUntil`) per the Constraints below; the
+  text case asserts after `turn_end` (the streaming body reveals progressively and carries the caret).
+
+Layer 1b (**#435**, blocked on #432) extends the same harness with tool rows, the session divider, and
+the connection banner — additive scripting methods, no re-wiring.
 
 ## What rung 3 is made of
 
@@ -182,7 +219,9 @@ These are grounded in the source but unverified end to end:
 - **Rung 4 (shipped, #431):** deterministic host backend via #642's scripted `fakeclaude` — see
   [Deterministic mode (rung 4)](#deterministic-mode-rung-4). `#433` (spinner + tool steps) and `#436`
   (reconnect + replay) extend its fixture format.
-- **Rung 2:** the cheap Compose render component test.
+- **Rung 2 (Layer 1a shipped, #432):** the cheap Compose render harness — see
+  [Layer 1 — component render harness (rung 2)](#layer-1--component-render-harness-rung-2). Layer 1b
+  (#435, rides the same harness) adds tool rows, the session divider, and the connection banner.
 - **Coverage:** tool-use event assertion; thinking indicator (hardest, screen-sourced); reconnect /
   replay once `mobile#402` lands.
 - **#337 full scope:** `seq`-based ordering and replay de-dup across reconnect (a #402 concern; this
