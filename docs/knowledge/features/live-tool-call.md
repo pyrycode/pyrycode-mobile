@@ -61,11 +61,12 @@ crash, a duplicate row, or an orphan:
 
 ## Chronological interleave (AC #4) — why it's free
 
-Tool rows **are** thread rows, so they fold into the **same** `messagesByConversation` the live
-`message` arm writes. [`observeMessages`](remote-conversation-repository.md#observemessagesconversationid--the-live-thread-read-313)'s
-projection maps that list to `ThreadItem.MessageItem`s **in arrival order, with no re-sort** — so a
-tool row interleaves chronologically with messages by **arrival position**, with **no merge, no second
-flow, no timestamp sort**. A ViewModel-side merge could not satisfy AC #4 because ordering is owned by
+Tool rows **are** thread rows, so they fold into the **same** `threadByConversation` the live
+`message` arm writes (a tool row is a `ThreadItem.MessageItem` wrapping a `Role.Tool` `Message`).
+[`observeMessages`](remote-conversation-repository.md#observemessagesconversationid--the-live-thread-read-313)'s
+projection exposes that `List<ThreadItem>` **in arrival order, with no re-sort** (since #336 the store
+already holds `ThreadItem`s — no per-row wrap) — so a tool row interleaves chronologically with
+messages by **arrival position**, with **no merge, no second flow, no timestamp sort**. A ViewModel-side merge could not satisfy AC #4 because ordering is owned by
 the repository surface; this is the structural reason the correlation lives in the repository, not a
 composable or ViewModel. Because `ThreadItem.MessageItem` is a `data class`, the in-place
 `Running → Done/Failed` flip makes the projected list structurally unequal → `distinctUntilChanged`
@@ -77,7 +78,7 @@ All of the behaviour lives in [`RemoteConversationRepository`](remote-conversati
 on the **single existing** inbound collector — see that doc for the dispatch and the two folds. In
 short: the `tool_use`/`tool_result` dispatch is folded into the **existing** #385 live-session demux
 arm (alongside the unchanged #395 stall-clear and the #385 `tryEmit` — **no second subscription**), and
-each fold is one atomic `messagesByConversation.update {}`. The `Clock.System.now()` timestamp is the
+each fold is one atomic `threadByConversation.update {}`. The `Clock.System.now()` timestamp is the
 established locally-assembled-row clock (`sendMessage`); the `tool_result` update preserves the
 original `tool_use` timestamp. Connection-scoped, in-memory: a fresh repo per connection (#351) starts
 empty, so live tool rows are re-derived from the live stream on reconnect — transient "right now"

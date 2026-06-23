@@ -214,7 +214,7 @@ as the control-derived `ReplayGap` member — #417 — but via the resync arm, n
 > **`tool_use`↔`tool_result` correlation landed in [#387](../codebase/387.md).** It is the first
 > *consumer* of the `ToolUse`/`ToolResult` events: the [Live tool-call](live-tool-call.md) slice
 > correlates the pair (by `toolUseId`) into one evolving `Role.Tool` thread row carrying a status
-> (`Running → Done`/`Failed`), folded into `messagesByConversation` on the **same gated demux arm** (a
+> (`Running → Done`/`Failed`), folded into `threadByConversation` on the **same gated demux arm** (a
 > `when (event)` dispatch alongside the #395 stall-clear and the `tryEmit` — no second subscription).
 > The events are carried **verbatim** into the row's `ToolCall` fields; output-encoding remains the
 > rendering consumer's job (#388). The turn-state phase reduction is [#406](../codebase/406.md)'s
