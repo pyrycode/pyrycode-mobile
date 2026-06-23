@@ -1212,6 +1212,32 @@ class RemoteConversationRepository(
     }
 
     /**
+     * Send the bare v2 `interrupt` control frame (#458) — the wire half of pressing **Esc** on a
+     * running turn. Unlike [cancelModal], interrupt is **fire-and-forget**: the daemon sends no reply
+     * (no ack/error/broadcast), so this uses plain [SessionPump.send] and never [sendAndAwaitReply],
+     * which would hang awaiting a reply that never comes. The frame is connection-level ("the one
+     * running turn") and carries **no payload** — no `conversation_id`, no idempotency token: it is
+     * replay-safe (a replayed Esc with no running turn is a daemon-side no-op). The `interactive`
+     * capability is enforced server-side, so the phone always sends.
+     *
+     * Throws [IllegalStateException] when the session is not connected ([SessionPump.send] returns
+     * `false`), mirroring [sendAndAwaitReply]'s line-612 not-connected behaviour so the caller can
+     * swallow it.
+     */
+    suspend fun interrupt() {
+        check(pump.send(interruptRequest())) { "$TYPE_INTERRUPT not sent: session not connected" }
+    }
+
+    /** The bare `interrupt` control frame (#458): empty payload, no correlation key — see [interrupt]. */
+    private fun interruptRequest(): Envelope =
+        Envelope(
+            id = requestId.incrementAndGet(),
+            type = TYPE_INTERRUPT,
+            ts = Clock.System.now().toString(),
+            payload = JsonObject(emptyMap()),
+        )
+
+    /**
      * Mint the `answer_token` for a `modal_answer`: a deterministic, collision-free encoding of the
      * answer's identity `(modalId, optionId)` (pyrycode#701 — uniqueness + stability matter, secrecy
      * does not). A **pure** function: no stored state, no random, no clock — purity is what gives the
@@ -1368,6 +1394,12 @@ class RemoteConversationRepository(
          * modal is a stale-`modal_id` reject the daemon handles.
          */
         const val TYPE_MODAL_CANCEL = "modal_cancel"
+
+        /**
+         * Outbound control: the phone's bare `interrupt` (#458, pyrycode#707) — the wire half of Esc.
+         * No payload, no reply, interactive-gated server-side, permission-gate-exempt; replay-safe.
+         */
+        const val TYPE_INTERRUPT = "interrupt"
 
         /**
          * Capability-gated control marker: a replay resync `{conversation_id}`, no `event_id` (#417,

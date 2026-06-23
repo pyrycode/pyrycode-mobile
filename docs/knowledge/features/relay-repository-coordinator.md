@@ -70,6 +70,7 @@ class RelayRepositoryCoordinator(
     val modalEvents: Flow<ModalEvent>                         // (#445) reconnection-surviving #437 modal-event seam (mirror of liveSessionEvents)
     suspend fun answerModal(modalId: String, optionId: String)  // (#451) outbound modal_answer passthrough — the modalEvents mirror, but a call not a flow
     suspend fun cancelModal(modalId: String)                    // (#451) outbound modal_cancel passthrough
+    suspend fun interrupt()                                     // (#458) outbound bare interrupt passthrough — the cancelModal mirror, fire-and-forget
     fun start()   // idempotent — launches the single connections collector on the coordinator scope
     fun close()   // tears down the active connection (wiping pump keys) + cancels the coordinator scope
 }
@@ -321,6 +322,30 @@ suspend fun answerModal(modalId: String, optionId: String) {
   `AppModule` `ThreadViewModel` factory as suspend **method references**
   (`answerModal = coordinator::answerModal`) — **no new Koin binding**, exactly like the inbound seams.
 
+## Outbound interrupt passthrough (#458)
+
+The third outbound control passthrough, the exact `cancelModal` mirror for the bare `interrupt` frame (the
+remote-Esc wire half — see [Interrupt send path](interrupt-send-path.md), [#458](../codebase/458.md)). It
+reaches the same private `activeRemoteRepo` mirror (**no new field**):
+
+```kotlin
+suspend fun interrupt() {
+    val repo = activeRemoteRepo.value ?: throw IllegalStateException("no active connection")
+    repo.interrupt()
+}
+```
+
+- **Null-guard only**, identical to `cancelModal`: between connections the guard throws; a connection that
+  exists but whose pump is pre-`Open` surfaces as the concrete
+  [`RemoteConversationRepository.interrupt`](remote-conversation-repository.md)'s `check(pump.send(...))` →
+  `IllegalStateException`. No redundant `Open` gate. Never logs.
+- **No `optionId`/`modalId` — interrupt is connection-level and bare.** Unlike the modal passthroughs it
+  takes no arguments; the frame carries no `conversation_id` ("the one running turn").
+- Bound at the `AppModule` `ThreadViewModel` factory as a suspend **method reference** (`interrupt =
+  coordinator::interrupt`) into the VM's defaulted `interrupt` lambda — **no new Koin binding**, exactly like
+  the modal seams. The consumer is [`ThreadViewModel.onInterrupt` / `sendInterrupt`](interrupt-send-path.md);
+  unlike `sendCancel` its catches are **empty** (interrupt is inert on failure — no error channel, no log).
+
 ## Reconnect-spanning replay cursor (#412)
 
 The coordinator owns the [`ReplayCursor`](replay-cursor.md) ([#412](../codebase/412.md)) — the durable
@@ -455,7 +480,9 @@ correlation mirrors `RemoteConversationRepositoryTest`'s #359 shape.
   [#445](../codebase/445.md) — the reconnection-surviving [`modalEvents`](modal-events.md) seam (mirror of
   `liveSessionEvents`; consumer: [`ThreadViewModel.currentModal`](current-modal-state.md)) ·
   [#451](../codebase/451.md) — the **outbound** `answerModal` / `cancelModal` passthrough (the modalEvents
-  mirror, but a suspend call; consumer: [`ThreadViewModel` modal answer flow](modal-answer-flow.md)).
+  mirror, but a suspend call; consumer: [`ThreadViewModel` modal answer flow](modal-answer-flow.md)) ·
+  [#458](../codebase/458.md) — the **outbound** `interrupt` passthrough (the `cancelModal` mirror,
+  fire-and-forget; consumer: [`ThreadViewModel.onInterrupt`](interrupt-send-path.md)).
 - Two-part status: [Connection status](connection-status.md) (`ConnectionStatus` + `PyrycodeLinkStatus`,
   [#392](../codebase/392.md)) — derived/published here; relay leg from
   [`relayStatus`](relay-link-status.md) ([#391](../codebase/391.md)); consumed by the Settings status

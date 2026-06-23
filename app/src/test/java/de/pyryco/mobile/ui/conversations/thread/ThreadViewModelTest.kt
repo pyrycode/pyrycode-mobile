@@ -583,6 +583,99 @@ class ThreadViewModelTest {
             errorCollector.cancel()
         }
 
+    // ---- #458: onInterrupt outbound send path -------------------------------------------------
+
+    @Test
+    fun onInterrupt_sendsInterruptExactlyOnce() =
+        runTest {
+            val recorder = InterruptRecorder()
+            val vm =
+                makeVm(
+                    SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV)),
+                    FakeConversationRepository(),
+                    interrupt = recorder.interrupt,
+                )
+            advanceUntilIdle()
+
+            vm.onInterrupt()
+            advanceUntilIdle()
+
+            // AC #4 happy path: the injected send is invoked exactly once.
+            assertEquals(1, recorder.count)
+        }
+
+    @Test
+    fun onInterrupt_whenSendFailsInert_isSwallowedWithoutCrashing() =
+        runTest {
+            // AC #4: both inert throws — not-connected (IllegalStateException) and the retained relay-error
+            // path (RelayErrorException, unreachable on the real fire-and-forget path but caught for parity)
+            // — are swallowed: the attempt is made, the throw never escapes, no error signal exists.
+            //
+            // A throw that escaped the launched coroutine would NOT fail runTest (viewModelScope is a
+            // separate SupervisorJob scope, not the test's), so a `count == 1` assertion alone would
+            // false-green. Capture uncaught coroutine exceptions via the default handler (the
+            // Unconfined-Main coroutine reports through `currentThread().uncaughtExceptionHandler`) and
+            // assert none fired — the only signal that the typed catch actually ran.
+            val uncaught = mutableListOf<Throwable>()
+            val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
+            try {
+                val failures =
+                    listOf<Throwable>(
+                        IllegalStateException("not connected"),
+                        RelayErrorException(code = "server.error", retryable = false, message = "no"),
+                    )
+                for (failure in failures) {
+                    val recorder = InterruptRecorder(failWith = failure)
+                    val vm =
+                        makeVm(
+                            SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV)),
+                            FakeConversationRepository(),
+                            interrupt = recorder.interrupt,
+                        )
+                    advanceUntilIdle()
+
+                    vm.onInterrupt()
+                    advanceUntilIdle()
+
+                    assertEquals(1, recorder.count) // the attempt was made
+                }
+                assertTrue("interrupt failures must be swallowed, not propagated: $uncaught", uncaught.isEmpty())
+            } finally {
+                Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+            }
+        }
+
+    @Test
+    fun onInterrupt_scopeCancellationMidSend_propagatesCancellationInert() =
+        runTest {
+            // AC #3 structured-cancellation guard mirroring #451: `catch (CancellationException) { throw e }`
+            // MUST precede the typed `catch (IllegalStateException)` — on the JVM j.u.c.CancellationException
+            // extends IllegalStateException. Interrupt's catches are empty (no error channel), so teardown
+            // mid-send is inert; this exercises the real viewModelScope teardown path and asserts it neither
+            // crashes nor leaks an exception (runTest fails otherwise).
+            val gate = CompletableDeferred<Unit>() // never completes — the send stays suspended in-flight
+            val entered = CompletableDeferred<Unit>()
+            val vm =
+                makeVm(
+                    SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV)),
+                    FakeConversationRepository(),
+                    interrupt = {
+                        entered.complete(Unit)
+                        gate.await()
+                    },
+                )
+            val store = ViewModelStore().apply { put("vm", vm) }
+
+            vm.onInterrupt()
+            advanceUntilIdle()
+            assertTrue("the send must be in-flight", entered.isCompleted)
+
+            store.clear() // cancels viewModelScope → the awaiting send throws CancellationException
+            advanceUntilIdle()
+            // No crash, no leaked exception: structured cancellation preserved.
+        }
+
     // ---- #396: isStalled projection over repository.observeStall ------------------------------
 
     @Test
@@ -1846,7 +1939,9 @@ class ThreadViewModelTest {
         modalEvents: Flow<ModalEvent> = emptyFlow(),
         answerModal: suspend (String, String) -> Unit = { _, _ -> },
         cancelModal: suspend (String) -> Unit = { _ -> },
-    ): ThreadViewModel = ThreadViewModel(handle, repository, source, prefs, liveSessionEvents, modalEvents, answerModal, cancelModal)
+        interrupt: suspend () -> Unit = { },
+    ): ThreadViewModel =
+        ThreadViewModel(handle, repository, source, prefs, liveSessionEvents, modalEvents, answerModal, cancelModal, interrupt)
 
     /** A VM whose active conversation is [ACTIVE_CONV], wired to a controllable live-event source. */
     private fun TestScope.vmWithLiveEvents(events: Flow<LiveSessionEvent>): ThreadViewModel =
@@ -1877,6 +1972,20 @@ class ThreadViewModelTest {
             answerModal = recorder.answer,
             cancelModal = recorder.cancel,
         )
+
+    /** Records the outbound interrupt calls (#458), optionally throwing [failWith] after recording to
+     *  exercise the inert-swallow path. */
+    private class InterruptRecorder(
+        private val failWith: Throwable? = null,
+    ) {
+        var count = 0
+            private set
+
+        val interrupt: suspend () -> Unit = {
+            count++
+            failWith?.let { throw it }
+        }
+    }
 
     /** Records the outbound modal answer/cancel calls (#451), optionally throwing [failWith] after
      *  recording to exercise the caught-error path. */
