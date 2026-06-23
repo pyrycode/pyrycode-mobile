@@ -21,7 +21,9 @@
 #      instrumentation arguments. The custom runner (E2eInstrumentationRunner) sees `relayUrl` and
 #      swaps in E2eTestApplication, which pre-pairs the app and binds the relay-backed repository.
 #   4b. (DETERMINISTIC) A background watcher drops the JSONL fixture once the daemon logs the
-#       `send_message.ack` fence, so the scripted reply tails the real producer mid-test.
+#       `send_message.enqueued` cursor-stamp fence, so the scripted reply tails the real producer
+#       mid-test. The `spinner` scenario (SCENARIO=spinner) drops twice — a 2nd, turn-ending fixture
+#       on the 2nd enqueue — to hold the thinking turn open long enough to observe the spinner.
 #   5. Tear everything down (trap on EXIT).
 #
 # Prerequisites (host):
@@ -39,12 +41,14 @@
 #
 # Usage:
 #   bash scripts/e2e-emulator.sh                 # rung 3 (real claude)
-#   DETERMINISTIC=1 PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4 (scripted)
+#   DETERMINISTIC=1 PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh                 # rung 4, ping
+#   DETERMINISTIC=1 SCENARIO=stream  PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, stream
+#   DETERMINISTIC=1 SCENARIO=spinner PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, spinner
 # Tunables (env):
 #   PORT=8888  DEVICE=pixel2Api33Atd  PAIR_NAME=e2e-emulator  PYRY_NAME=e2e-emulator
 #   PYRY_BIN=pyry  RELAY_BIN=pyrycode-relay
-#   DETERMINISTIC=  PYRYCODE_SRC=  FAKE_CLAUDE_BIN=  FIXTURE_FILE=  INITIAL_UUID=  CONV_UUID=
-#   SEED_CHANNEL_NAME=e2e-seed
+#   DETERMINISTIC=  SCENARIO=ping  PYRYCODE_SRC=  FAKE_CLAUDE_BIN=  FIXTURE_FILE=  FIXTURE_FILE_2=
+#   INITIAL_UUID=  CONV_UUID=  SEED_CHANNEL_NAME=e2e-seed
 
 set -euo pipefail
 
@@ -82,7 +86,10 @@ PAIR_OUT="${WORK_DIR}/pair.out"
 # Deterministic-mode (rung 4) tunables / paths.
 PYRYCODE_SRC="${PYRYCODE_SRC:-}"              # local pyrycode checkout (to build fakeclaude)
 FAKE_CLAUDE_BIN="${FAKE_CLAUDE_BIN:-}"        # prebuilt fakeclaude path (overrides PYRYCODE_SRC build)
-FIXTURE_FILE="${FIXTURE_FILE:-${REPO_ROOT}/scripts/e2e-fixtures/ping.jsonl}"
+FIXTURES_DIR="${REPO_ROOT}/scripts/e2e-fixtures"
+SCENARIO="${SCENARIO:-ping}"                  # which deterministic scenario (#454): ping | stream | spinner.
+                                              # Resolved to a @Test method + fixture(s) in the preflight
+                                              # below; bare DETERMINISTIC=1 (SCENARIO unset → ping) keeps #431.
 INITIAL_UUID="${INITIAL_UUID:-43143143-4314-4314-8314-431431431431}"  # bootstrap session JSONL stem
 CONV_UUID="${CONV_UUID:-c0a70431-0431-4031-8031-043104310431}"        # seeded channel id
 SEED_CHANNEL_NAME="${SEED_CHANNEL_NAME:-e2e-seed}"  # MUST equal DeterministicInteractiveStreamE2ETest.SEED_CHANNEL_NAME
@@ -122,7 +129,32 @@ command -v python3        >/dev/null 2>&1 || die "python3 not found (needed to d
 [ -x "${GRADLEW}" ] || die "gradlew not found/executable at ${GRADLEW}"
 
 if [ -n "${DETERMINISTIC}" ]; then
+  # Resolve SCENARIO → the single @Test method this invocation runs + its fixture(s) (#454). One
+  # scenario per run, mirroring #431's one-fixture→one-turn→one-scenario model. Only `spinner` uses a
+  # 2nd (turn-ending) drop; FIXTURE_FILE / FIXTURE_FILE_2 stay env-overridable for first-run tuning.
+  FIXTURE_FILE_2="${FIXTURE_FILE_2:-}"
+  case "${SCENARIO}" in
+    ping)
+      TEST_METHOD="interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/ping.jsonl}"
+      ;;
+    stream)
+      TEST_METHOD="interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/stream.jsonl}"
+      ;;
+    spinner)
+      TEST_METHOD="interactiveTurn_seededChannel_showsThinkingSpinnerDuringTurn"
+      FIXTURE_FILE="${FIXTURE_FILE:-${FIXTURES_DIR}/spinner-open.jsonl}"      # drop A: thinking, held open
+      FIXTURE_FILE_2="${FIXTURE_FILE_2:-${FIXTURES_DIR}/spinner-end.jsonl}"  # drop B: ends the turn
+      ;;
+    *)
+      die "unknown SCENARIO='${SCENARIO}' (expected: ping | stream | spinner)"
+      ;;
+  esac
+  log "deterministic scenario: ${SCENARIO} → ${TEST_METHOD}"
   [ -f "${FIXTURE_FILE}" ] || die "deterministic mode: fixture not found at ${FIXTURE_FILE} (set FIXTURE_FILE)"
+  [ -z "${FIXTURE_FILE_2}" ] || [ -f "${FIXTURE_FILE_2}" ] \
+    || die "deterministic mode: 2nd fixture not found at ${FIXTURE_FILE_2} (set FIXTURE_FILE_2)"
   if [ -n "${FAKE_CLAUDE_BIN}" ]; then
     [ -x "${FAKE_CLAUDE_BIN}" ] || die "FAKE_CLAUDE_BIN='${FAKE_CLAUDE_BIN}' is not an executable"
   elif [ -n "${PYRYCODE_SRC}" ]; then
@@ -271,32 +303,61 @@ kill -0 "${DAEMON_PID}" 2>/dev/null || { cat "${DAEMON_LOG}" >&2; die "daemon ex
 log "daemon up (the test waits for the relay session to open before sending)."
 
 # ---- 4b. fixture-drop watcher (rung 4 only) ---------------------------------------------------
-# The fixture must drop AFTER the turn is acked: the ack stamps the producer cursor; dropping earlier
-# lets the producer tail PAST the fixture (cold-start race) → the phone gets zero envelopes. The
-# host-observable fence is the `send_message.ack` line in daemon.log. Run as a background job so it can
-# fire concurrently with the foreground gradle run (which sends the prompt mid-test). Poll the (tiny)
-# log rather than `tail -F | grep` so a single kill of this subshell fully reaps the watcher on EXIT —
-# no orphaned `tail` left following a deleted file.
+# The fixture must drop AFTER the producer cursor is stamped: `router.Route` stamps it, then logs
+# `send_message.enqueued` (pyrycode send_message.go); dropping earlier lets the producer tail PAST the
+# fixture (cold-start race) → the phone gets zero envelopes. So the host-observable fence is the
+# `send_message.enqueued` line in daemon.log (the post-#704/#721 token — confirm on first operator run
+# if the daemon is older). Run as a background job so it can fire concurrently with the foreground
+# gradle run (which sends the prompt mid-test). Poll the (tiny) log rather than `tail -F | grep` so a
+# single kill of this subshell fully reaps the watcher on EXIT — no orphaned `tail` following a deleted
+# file.
 if [ -n "${DETERMINISTIC}" ]; then
-  log "arming fixture-drop watcher (waits for send_message.ack, then drops ${FIXTURE_FILE##*/})…"
-  (
-    while ! grep -qF 'send_message.ack' "${DAEMON_LOG}" 2>/dev/null; do
-      sleep 0.5
-    done
-    cp "${FIXTURE_FILE}" "${JSONL_TRIGGER}"
-  ) &
-  WATCHER_PID=$!
+  if [ -n "${FIXTURE_FILE_2}" ]; then
+    # spinner scenario (#454): two causally-fenced drops. Drop A on the 1st enqueue opens a `thinking`
+    # turn and HOLDS it open (no end_turn) so the transient spinner is observable; the test, after
+    # asserting the spinner, sends a 2nd message whose enqueue triggers drop B, ending the turn and
+    # clearing the spinner. Count enqueues (not a one-shot grep) to tell the 1st from the 2nd. Drop B
+    # waits for the 2nd enqueue — long after fakeclaude consumed drop A's trigger — so it never clobbers
+    # an unconsumed A.
+    log "arming two-drop watcher (spinner: ${FIXTURE_FILE##*/} on enqueue #1, ${FIXTURE_FILE_2##*/} on #2)…"
+    (
+      while [ "$(grep -cF 'send_message.enqueued' "${DAEMON_LOG}" 2>/dev/null || echo 0)" -lt 1 ]; do sleep 0.5; done
+      cp "${FIXTURE_FILE}" "${JSONL_TRIGGER}"        # drop A: turn_state(thinking), held open
+      while [ "$(grep -cF 'send_message.enqueued' "${DAEMON_LOG}" 2>/dev/null || echo 0)" -lt 2 ]; do sleep 0.5; done
+      cp "${FIXTURE_FILE_2}" "${JSONL_TRIGGER}"      # drop B: responding + turn_end, spinner clears
+    ) &
+    WATCHER_PID=$!
+  else
+    log "arming fixture-drop watcher (waits for send_message.enqueued, then drops ${FIXTURE_FILE##*/})…"
+    (
+      while ! grep -qF 'send_message.enqueued' "${DAEMON_LOG}" 2>/dev/null; do
+        sleep 0.5
+      done
+      cp "${FIXTURE_FILE}" "${JSONL_TRIGGER}"
+    ) &
+    WATCHER_PID=$!
+  fi
 fi
 
 # ---- 4. run the managed-device instrumented test ----------------------------------------------
-log "running ${DEVICE}DebugAndroidTest (headless emulator: boot → install → ${TEST_CLASS} → teardown)…"
+# Deterministic mode runs exactly the scenario's one method (class#method); rung 3 runs the whole class.
+if [ -n "${DETERMINISTIC}" ]; then
+  TEST_TARGET="${TEST_CLASS}#${TEST_METHOD}"
+else
+  TEST_TARGET="${TEST_CLASS}"
+fi
+log "running ${DEVICE}DebugAndroidTest (headless emulator: boot → install → ${TEST_TARGET} → teardown)…"
 log "  phone relayUrl = ${PHONE_RELAY_URL}"
 "${GRADLEW}" -p "${REPO_ROOT}" "${DEVICE}DebugAndroidTest" \
-  -Pandroid.testInstrumentationRunnerArguments.class="${TEST_CLASS}" \
+  -Pandroid.testInstrumentationRunnerArguments.class="${TEST_TARGET}" \
   -Pandroid.testInstrumentationRunnerArguments.relayUrl="${PHONE_RELAY_URL}" \
   -Pandroid.testInstrumentationRunnerArguments.token="${TOKEN}" \
   -Pandroid.testInstrumentationRunnerArguments.serverId="${SERVER_ID}" \
   -Pandroid.testInstrumentationRunnerArguments.serverStaticPublicKey="${SERVER_STATIC_PUBKEY}" \
   --console=plain
 
-log "PASS — the headless emulator connected, sent the prompt, and 'ping' rendered in the thread."
+if [ -n "${DETERMINISTIC}" ]; then
+  log "PASS — scenario '${SCENARIO}' green: the emulator connected, sent the prompt, and the scripted reply rendered."
+else
+  log "PASS — the headless emulator connected, sent the prompt, and 'ping' rendered in the thread."
+fi

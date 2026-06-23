@@ -9,7 +9,9 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.MainActivity
+import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import kotlinx.coroutines.flow.first
@@ -23,8 +25,15 @@ import org.koin.core.context.GlobalContext
 /**
  * Deterministic end-to-end test for the mobile interactive event stream (#431 rung 4, ADR 025): the
  * **real** app on a headless emulator connects to a host `pyry` + relay backed by the scripted
- * `fakeclaude` backend (pyrycode #642) — **no real claude, zero claude turns** — and asserts the
- * scripted "ping" reply renders in the thread.
+ * `fakeclaude` backend (pyrycode #642) — **no real claude, zero claude turns** — and asserts a
+ * scripted reply renders in the thread.
+ *
+ * Three scenarios, one per script invocation (the harness runs exactly one `@Test` method per run,
+ * selected by `SCENARIO` in `scripts/e2e-emulator.sh`):
+ *  - `ping` (default, #431) — a single-line reply renders.
+ *  - `stream` (#454) — a multi-`assistant_delta` reply assembles into one message.
+ *  - `spinner` (#454) — the thinking spinner shows mid-turn, then clears at turn end (a two-fixture
+ *    drop holds the turn open so the transient state is observable; see the method KDoc).
  *
  * It is a thin variant of [InteractiveStreamE2ETest] (rung 3). **One** step differs: instead of
  * tapping "New discussion" (which mints a *fresh* per-conversation claude session that `fakeclaude` —
@@ -35,7 +44,8 @@ import org.koin.core.context.GlobalContext
  *
  * Driven by `DETERMINISTIC=1 bash scripts/e2e-emulator.sh`, which seeds the channel, pre-creates the
  * session JSONL, starts the daemon with `-pyry-claude=<fakeclaude>`, mints a device token with
- * `pyry pair`, and — after the `send_message` ack fence — drops the fixed `ping.jsonl` fixture.
+ * `pyry pair`, and — after the `send_message.enqueued` cursor-stamp fence — drops the scenario's
+ * fixture(s).
  * [E2eInstrumentationRunner] swaps in [E2eTestApplication] (paired + relay-backed) from the same
  * instrumentation args as rung 3.
  *
@@ -53,34 +63,26 @@ class DeterministicInteractiveStreamE2ETest {
     @get:Rule
     val composeTestRule = createAndroidComposeRule<MainActivity>()
 
+    // The spinner's content-description (production UI string, no test tags). Copied from
+    // ScriptedThreadRenderTest (the Layer-1 twin). Keep in sync with res/values/strings.xml:
+    //   cd_thread_thinking = "Agent is thinking".
+    private val thinkingDescription: String =
+        InstrumentationRegistry
+            .getInstrumentation()
+            .targetContext
+            .getString(R.string.cd_thread_thinking)
+
     @Test
     fun interactiveTurn_seededChannel_streamsScriptedPingReplyIntoThread() {
-        // 1. A paired launch lands on the channel list. The host-seeded promoted channel "e2e-seed"
-        //    surfaces once list_conversations round-trips, so waiting for that text node implicitly
-        //    waits for the connection + list response.
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(SEED_CHANNEL_NAME).fetchSemanticsNodes().isNotEmpty()
-        }
+        arriveInSeededThread()
 
-        // 2. Explicit connection gate before sending — tapping the channel and sending the prompt both
-        //    round-trip to the daemon, so the relay session must be Open first.
-        awaitConnected()
+        // Type a non-"ping" prompt into the only editable field, then send. The scripted backend replies
+        // "ping" regardless, so the prompt text never contributes a "ping" node.
+        typeAndSend(SEND_PROMPT)
 
-        // 3. Tap the seeded channel row → the app navigates into its thread. The send button (only on
-        //    the thread) is the marker that we have arrived.
-        composeTestRule.onAllNodesWithText(SEED_CHANNEL_NAME).onFirst().performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
-        }
-
-        // 4. Type a non-"ping" prompt into the only editable field, then send. The scripted backend
-        //    replies "ping" regardless, so the prompt text never contributes a "ping" node.
-        composeTestRule.onNode(hasSetTextAction()).performTextInput(SEND_PROMPT)
-        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
-
-        // 5. Wait (tolerantly) for the scripted reply to render, then confirm it is on screen. Generous
-        //    timeout: the fixture drop is fenced on the host-observed send_message ack, then tails the
-        //    real producer → Noise/relay → phone fold.
+        // Wait (tolerantly) for the scripted reply to render, then confirm it is on screen. Generous
+        // timeout: the fixture drop is fenced on the host-observed send_message.enqueued line, then tails
+        // the real producer → Noise/relay → phone fold.
         composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(PING, substring = true, ignoreCase = true).fetchSemanticsNodes().isNotEmpty()
         }
@@ -88,6 +90,81 @@ class DeterministicInteractiveStreamE2ETest {
             .onAllNodesWithText(PING, substring = true, ignoreCase = true)
             .onFirst()
             .assertIsDisplayed()
+    }
+
+    /**
+     * `stream` scenario — a reply that arrives over three `assistant_delta` chunks (fixture
+     * `stream.jsonl`) must render as **one** assembled assistant message. Asserting a substring that
+     * spans the 2nd→3rd delta boundary ("streamed world") proves the deltas concatenated into a single
+     * message rather than rendering as separate rows. Tolerant (substring, generous timeout); never on
+     * delta count or the streaming caret.
+     */
+    @Test
+    fun interactiveTurn_seededChannel_streamsMultiDeltaReplyIntoThread() {
+        arriveInSeededThread()
+        typeAndSend(SEND_PROMPT)
+
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(STREAMED_SUBSTRING, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule
+            .onAllNodesWithText(STREAMED_SUBSTRING, substring = true)
+            .onFirst()
+            .assertIsDisplayed()
+    }
+
+    /**
+     * `spinner` scenario — the thinking spinner must show **while** the turn is active and clear
+     * **after** it ends. The thinking state is transient, so the harness holds the turn open: drop A
+     * (`spinner-open.jsonl`, a `thinking`-only line) fires on the **1st** `send_message.enqueued` and
+     * leaves the turn open with `isThinking == true` indefinitely. Only after this test asserts the
+     * spinner is shown does it send a **2nd** message, whose `send_message.enqueued` triggers drop B
+     * (`spinner-end.jsonl`, an end-of-turn text line) which ends the turn and clears the spinner.
+     * Because drop B is causally gated on the 2nd send, the thinking window is arbitrarily long — no
+     * timing dependency, no race. Tolerant (presence → absence, generous timeout); never on timing.
+     */
+    @Test
+    fun interactiveTurn_seededChannel_showsThinkingSpinnerDuringTurn() {
+        arriveInSeededThread()
+
+        // Message #1 → drop A → turn_state(thinking), held open. The spinner appears and stays.
+        typeAndSend(SEND_PROMPT)
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(thinkingDescription)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodes(hasContentDescription(thinkingDescription)).onFirst().assertIsDisplayed()
+
+        // Message #2 → drop B → responding + turn_end, which clears the spinner. The 2nd prompt is inert
+        // for the reply (the scripted backend ignores it); it only causally fences drop B.
+        typeAndSend(SECOND_PROMPT)
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(thinkingDescription)).fetchSemanticsNodes().isEmpty()
+        }
+        composeTestRule.onNode(hasContentDescription(thinkingDescription)).assertDoesNotExist()
+    }
+
+    /**
+     * Steps shared by every scenario: a paired launch lands on the channel list → the host-seeded
+     * promoted channel "e2e-seed" surfaces once `list_conversations` round-trips (so waiting on that
+     * text implicitly waits for the connection + list response) → gate on [ConnectionState.Connected]
+     * (tapping and sending both round-trip to the daemon, so the relay session must be Open) → tap the
+     * channel into its thread, marked arrived by the thread-only send button.
+     */
+    private fun arriveInSeededThread() {
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(SEED_CHANNEL_NAME).fetchSemanticsNodes().isNotEmpty()
+        }
+        awaitConnected()
+        composeTestRule.onAllNodesWithText(SEED_CHANNEL_NAME).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /** Type [prompt] into the only editable field and tap send. The input bar clears after each send. */
+    private fun typeAndSend(prompt: String) {
+        composeTestRule.onNode(hasSetTextAction()).performTextInput(prompt)
+        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
     }
 
     /** Block until the relay connection reports [ConnectionState.Connected], or fail after a timeout. */
@@ -112,8 +189,18 @@ class DeterministicInteractiveStreamE2ETest {
         const val SEED_CHANNEL_NAME = "e2e-seed"
 
         // A non-"ping" prompt: the scripted backend ignores it and always replies "ping", so the only
-        // on-screen "ping" is the scripted reply — no baseline/count dance needed.
+        // on-screen "ping" is the scripted reply — no baseline/count dance needed. Reused as the first
+        // prompt of every scenario (the scripted reply is prompt-independent).
         const val SEND_PROMPT = "hello"
+
+        // The spinner scenario's 2nd prompt. Its only role is to causally fence drop B (the turn-ending
+        // fixture) on the 2nd send_message.enqueued — its text is inert (the scripted reply ignores it).
+        const val SECOND_PROMPT = "bye"
+
+        // The `stream` fixture's three deltas assemble into "Hello, streamed world"; this substring spans
+        // the 2nd→3rd delta boundary, so matching it proves the deltas concatenated into one message.
+        // Neither word collides with the seeded channel name "e2e-seed" rendered in the top bar.
+        const val STREAMED_SUBSTRING = "streamed world"
 
         // Production UI string (no test tags exist). Keep in sync with res/values/strings.xml:
         //   cd_send_message = "Send message".
@@ -123,7 +210,8 @@ class DeterministicInteractiveStreamE2ETest {
         const val CONNECT_TIMEOUT_MS = 30_000L
         const val THREAD_TIMEOUT_MS = 30_000L
 
-        // Generous: the fixture drop is fenced on the ack, then tails the real producer over the relay.
+        // Generous: the fixture drop is fenced on send_message.enqueued, then tails the real producer
+        // over the relay. Also used as the spinner scenario's presence/absence timeout.
         const val REPLY_TIMEOUT_MS = 90_000L
     }
 }
