@@ -23,3 +23,6 @@ local.properties
 # defensively before the same chain bites this repo.
 .codegraph
 .dispatcher.lock
+
+# IntelliJ / Android Studio project files
+.idea/
