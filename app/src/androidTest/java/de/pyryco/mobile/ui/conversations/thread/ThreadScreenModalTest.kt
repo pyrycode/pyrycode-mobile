@@ -17,6 +17,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ModalOption
+import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow

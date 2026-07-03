@@ -3,6 +3,8 @@ package de.pyryco.mobile.data.repository
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.LiveSessionEvent
+import de.pyryco.mobile.data.model.ModalOption
+import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
@@ -612,6 +614,68 @@ class RelayRepositoryCoordinatorTest {
             env.coordinator.close()
         }
 
+    // ---- #492: the "current modal" projection is folded once at the process-scoped coordinator ---
+
+    // AC #4 (the regression): a modal_shown that arrives with NO collector on currentModal is still
+    // accumulated — the Eagerly, process-scoped fold ran before any thread screen subscribed. Reading
+    // `.value` with no subscriber is the proof (contrast the liveSessionEvents cold-flow test, which needs a
+    // backgroundScope collector). This is precisely the drop the old per-ThreadViewModel fold suffered:
+    // the coordinator's modal seam is `replay = 0`, so an event fired before the VM subscribed was lost.
+    @Test
+    fun currentModal_accumulatesModalShownBeforeAnySubscriber() =
+        runTest {
+            val env = newEnv()
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            val pump = env.pumps.single()
+            pump.open(capabilities = setOf(CAPABILITY_INTERACTIVE))
+            runCurrent()
+
+            // No collector on currentModal — mirrors "no thread screen on the back stack".
+            pump.push(modalShownEnvelope("m1"))
+            runCurrent()
+
+            assertEquals(
+                ModalUiState.Open(
+                    modalId = "m1",
+                    modalClass = "permission",
+                    title = "Allow?",
+                    prompt = "Run rm -rf build/?",
+                    options = listOf(ModalOption("allow", "Allow"), ModalOption("deny", "Deny")),
+                    defaultOptionId = "deny",
+                ),
+                env.coordinator.currentModal.value,
+            )
+
+            env.coordinator.close()
+        }
+
+    // The process-scoped fold sits downstream of the `flatMapLatest` seam, so a connection drop does not
+    // restart the `scan`: a still-Open modal is RETAINED, not reset to Hidden (documents the teardown
+    // decision — the answer path is guarded by the deterministic answerModal/cancelModal null-guard, never
+    // by this UI projection, so retaining a stale Open cannot send an answer on a dead connection).
+    @Test
+    fun currentModal_retainsOpenModalAcrossConnectionDrop() =
+        runTest {
+            val env = newEnv()
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            val pump = env.pumps.single()
+            pump.open(capabilities = setOf(CAPABILITY_INTERACTIVE))
+            runCurrent()
+            pump.push(modalShownEnvelope("m1"))
+            runCurrent()
+            assertTrue(env.coordinator.currentModal.value is ModalUiState.Open)
+
+            // Connection drops (teardownActive nulls activeRemoteRepo → emptyFlow); the scan holds its value.
+            env.connections.value = null
+            runCurrent()
+
+            assertEquals("m1", (env.coordinator.currentModal.value as ModalUiState.Open).modalId)
+
+            env.coordinator.close()
+        }
+
     // #412 AC #4: the replay cursor is coordinator-scoped, so it survives connection churn — a fresh
     // per-connection repo keeps recording into the same high-water mark the prior connection advanced.
     @Test
@@ -847,6 +911,28 @@ class RelayRepositoryCoordinatorTest {
             payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId","state":"$state"}"""),
             eventId = eventId,
         )
+
+    /** A `modal_shown` envelope (#437/#492) — mirrors RemoteConversationRepositoryTest's wire shape; the
+     *  fields default to a two-option permission modal so the projection test asserts verbatim carry. */
+    private fun modalShownEnvelope(
+        modalId: String,
+        modalClass: String = "permission",
+        title: String = "Allow?",
+        prompt: String = "Run rm -rf build/?",
+        options: List<Pair<String, String>> = listOf("allow" to "Allow", "deny" to "Deny"),
+        defaultOptionId: String = "deny",
+    ): Envelope {
+        val optionsJson = options.joinToString(",") { (id, label) -> """{"id":"$id","label":"$label"}""" }
+        return Envelope(
+            id = 1L,
+            type = "modal_shown",
+            ts = TS,
+            payload =
+                MobileJson.parseToJsonElement(
+                    """{"modal_id":"$modalId","class":"$modalClass","title":"$title","prompt":"$prompt","options":[$optionsJson],"default_option_id":"$defaultOptionId"}""",
+                ),
+        )
+    }
 
     /** Empty-`ack` reply correlated to [inReplyTo] — the register_push_token success signal. */
     private fun ackEnvelope(inReplyTo: Long): Envelope =

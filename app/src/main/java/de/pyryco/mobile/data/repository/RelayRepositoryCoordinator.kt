@@ -3,8 +3,10 @@ package de.pyryco.mobile.data.repository
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalEvent
+import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
+import de.pyryco.mobile.data.model.reduce
 import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.RelayTransport
 import de.pyryco.mobile.data.network.ReplayCursor
@@ -25,6 +27,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
@@ -164,12 +167,45 @@ class RelayRepositoryCoordinator(
      *  off the connection-scoped concrete [RemoteConversationRepository] — a byte-for-byte mirror of the
      *  [liveSessionEvents] seam. Like it, modal events live on the concrete repo, not the
      *  [ConversationRepository] interface, so this reaches them through [activeRemoteRepo]. A cold `Flow`
-     *  (events, `replay = 0`, no "current value" → no [stateIn]; folding "which modal is open" is the #445
-     *  ViewModel projection's job); [flatMapLatest] switches to the fresh repo's stream on each connection
-     *  and cancels the prior, so the seam survives reconnection. Empty between connections. */
+     *  (events, `replay = 0`, no "current value" → no [stateIn]); [flatMapLatest] switches to the fresh
+     *  repo's stream on each connection and cancels the prior, so the seam survives reconnection. Empty
+     *  between connections. **Private** (#492): its sole consumer is [currentModal], which folds it into the
+     *  process-scoped "which modal is open" projection — no consumer reads the raw event stream. */
     @OptIn(ExperimentalCoroutinesApi::class)
-    val modalEvents: Flow<ModalEvent> =
+    private val modalEvents: Flow<ModalEvent> =
         activeRemoteRepo.flatMapLatest { repo -> repo?.modalEvents ?: emptyFlow() }
+
+    /**
+     * The single hoisted "current modal" projection (#492): which permission/choice modal is currently
+     * outstanding, folded **once at this process-scoped layer** from the `replay = 0` [modalEvents] stream
+     * (#437) via [ModalUiState.reduce] (`Shown` → `Open`; matching `Dismissed` → `Dismissed`; non-matching
+     * `Dismissed` → no-op; last-shown wins). Because modal events carry **no** `conversation_id`
+     * ([ModalEvent] keys on `modalId` only), this is **app-level** — a single active modal across the app.
+     *
+     * **Hoisted from [ThreadViewModel] (#492).** The fold used to live per-thread-screen inside the
+     * ViewModel, whose collection only began when a thread screen was navigated into. A `modal_shown` fired
+     * before any subscriber existed was dropped ([modalEvents] is `replay = 0`), so an outstanding prompt
+     * stayed stuck daemon-side while the phone showed nothing. Folding here — on the process-scoped [scope]
+     * that already owns the reconnection-surviving seam and outlives any screen — accumulates the projection
+     * whether or not a thread screen is subscribed; the ViewModel re-exposes this instead. It sits downstream
+     * of the [flatMapLatest] in [modalEvents], so across a reconnect the inner source switches but this
+     * outer `scan` is **not** restarted — the accumulator survives connection churn (a still-`Open` modal is
+     * **retained**, not reset to `Hidden`: the answer path is guarded by the deterministic
+     * [answerModal]/[cancelModal] null-guard, never by this projection).
+     *
+     * **Started [SharingStarted.Eagerly], mirroring [currentRepository] / [connectionStatus].** `scan`
+     * re-emits its initial accumulator on every fresh upstream collection; under `WhileSubscribed` a
+     * resubscription past the stop window would restart the `scan` and overwrite a retained `Open` with
+     * `Hidden`, and because [modalEvents] is `replay = 0` the prior events do not replay to rebuild it — a
+     * still-open modal would silently clear. `Eagerly` on the process-scoped [scope] runs the accumulator
+     * exactly once for the process lifetime, so `.value` is always the true current projection. Cost is
+     * negligible — modals are one-at-a-time, user-driven, low-rate. Adds **no log**: the moved [reduce] and
+     * this `stateIn` both emit nothing (the modal fields may name a sensitive command/path).
+     */
+    val currentModal: StateFlow<ModalUiState> =
+        modalEvents
+            .scan<ModalEvent, ModalUiState>(ModalUiState.Hidden) { state, event -> state.reduce(event) }
+            .stateIn(scope, SharingStarted.Eagerly, ModalUiState.Hidden)
 
     /** The combined two-part status (#392) #390 consumes off this concrete singleton: the supervisor's
      *  relay leg zipped with the derived pyrycode leg. `Eagerly` so `.value` is correct at any glance;

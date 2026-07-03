@@ -10,8 +10,8 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
-import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.ModalOption
+import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.network.RelayErrorException
@@ -32,6 +32,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
@@ -406,137 +407,46 @@ class ThreadViewModelTest {
             collector.cancel()
         }
 
-    // ---- #445: currentModal projection over the modal-event stream ------------------------------
+    // ---- #492: currentModal is the hoisted projection injected from the coordinator -------------
+    // The fold itself moved to the process-scoped coordinator: the pure-fold behaviours (Shown→Open,
+    // matching/non-matching Dismissed, last-shown-wins) are covered by ModalUiStateTest, and the
+    // pre-subscriber accumulation by RelayRepositoryCoordinatorTest. Here the VM only re-exposes it.
 
     @Test
     fun currentModal_initialValue_isHiddenWithNoModalSource() =
         runTest {
             val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
-            // 5-arg makeVm (no modal source) holds Hidden — the inert empty-flow default (AC #5).
+            // 6-arg makeVm (no modal source) → the inert MutableStateFlow(Hidden) default (AC #3).
             val vm = makeVm(handle, FakeConversationRepository())
             assertEquals(ModalUiState.Hidden, vm.currentModal.value)
         }
 
     @Test
-    fun currentModal_shown_becomesOpenVerbatim() =
+    fun currentModal_reExposesInjectedProjection() =
         runTest {
-            val modals = MutableSharedFlow<ModalEvent>()
-            val vm = vmWithModalEvents(modals)
-            advanceUntilIdle()
-
-            val options =
-                listOf(
-                    ModalOption("allow_once", "Allow once"),
-                    ModalOption("allow_always", "Allow always"),
-                    ModalOption("reject_once", "Reject once"),
-                    ModalOption("reject_always", "Reject always"),
-                )
-            modals.emit(
-                modalShown(
-                    modalId = "m1",
-                    modalClass = "permission",
-                    title = "Run command?",
-                    prompt = "rm -rf /tmp/build",
-                    options = options,
-                    defaultOptionId = "reject_once",
-                ),
-            )
-            advanceUntilIdle()
-
-            assertEquals(
-                ModalUiState.Open(
-                    modalId = "m1",
-                    modalClass = "permission",
-                    title = "Run command?",
-                    prompt = "rm -rf /tmp/build",
-                    options = options,
-                    defaultOptionId = "reject_once",
-                ),
-                vm.currentModal.value,
-            )
-            // Option list carried verbatim, in array order (AC #1).
-            assertEquals(options, (vm.currentModal.value as ModalUiState.Open).options)
-        }
-
-    @Test
-    fun currentModal_matchingDismiss_clearsWithVerbatimSource() =
-        runTest {
-            // Every source value — the closed set plus a forward-compat value — is carried verbatim (AC #2).
-            for (source in listOf("remote", "local", "timeout", "future_source_v3")) {
-                val modals = MutableSharedFlow<ModalEvent>()
-                val vm = vmWithModalEvents(modals)
-                advanceUntilIdle()
-
-                modals.emit(modalShown(modalId = "m1"))
-                advanceUntilIdle()
-                modals.emit(ModalEvent.Dismissed(modalId = "m1", outcome = "allow_once", source = source))
-                advanceUntilIdle()
-
-                assertEquals(
-                    ModalUiState.Dismissed(modalId = "m1", outcome = "allow_once", source = source),
-                    vm.currentModal.value,
-                )
-            }
-        }
-
-    @Test
-    fun currentModal_nonMatchingDismiss_isNoOp() =
-        runTest {
-            val modals = MutableSharedFlow<ModalEvent>()
-            val vm = vmWithModalEvents(modals)
-            advanceUntilIdle()
-
-            modals.emit(modalShown(modalId = "m1"))
-            advanceUntilIdle()
-            // A dismiss for a different modalId must not clear the open modal (AC #2 / spoofed-dismiss safety).
-            modals.emit(ModalEvent.Dismissed(modalId = "m2", outcome = "reject_once", source = "remote"))
-            advanceUntilIdle()
-
-            assertEquals("m1", (vm.currentModal.value as ModalUiState.Open).modalId)
-        }
-
-    @Test
-    fun currentModal_dismissFromHidden_staysHidden() =
-        runTest {
-            val modals = MutableSharedFlow<ModalEvent>()
-            val vm = vmWithModalEvents(modals)
-            advanceUntilIdle()
-
-            modals.emit(ModalEvent.Dismissed(modalId = "m1", outcome = "reject_once", source = "remote"))
-            advanceUntilIdle()
-
+            // The VM consumes the coordinator's hoisted StateFlow rather than folding a raw event stream
+            // (AC #3): whatever the injected projection holds surfaces verbatim on vm.currentModal.
+            val modal = MutableStateFlow<ModalUiState>(ModalUiState.Hidden)
+            val vm = vmWithModal(modal)
             assertEquals(ModalUiState.Hidden, vm.currentModal.value)
-        }
 
-    @Test
-    fun currentModal_shownSupersedesShown() =
-        runTest {
-            val modals = MutableSharedFlow<ModalEvent>()
-            val vm = vmWithModalEvents(modals)
-            advanceUntilIdle()
-
-            modals.emit(modalShown(modalId = "m1"))
-            advanceUntilIdle()
-            // A later Shown supersedes any open modal — last-shown wins (AC #3).
-            modals.emit(modalShown(modalId = "m2"))
-            advanceUntilIdle()
-
-            assertEquals("m2", (vm.currentModal.value as ModalUiState.Open).modalId)
+            val open = openModal(modalId = "m1")
+            modal.value = open
+            assertEquals(open, vm.currentModal.value)
         }
 
     // ---- #451: modal answer/cancel + arming/second-confirm + error → live send path -------------
+    // The open modal is established by setting the injected StateFlow's `.value` directly (#492) — the VM
+    // no longer folds a raw event stream, so there is no Shown to emit. arm/answer/cancel is unchanged.
 
     @Test
     fun onModalOption_default_sendsAnswerOnSingleTap() =
         runTest {
-            val modals = MutableSharedFlow<ModalEvent>()
+            val modal = MutableStateFlow<ModalUiState>(openModal(modalId = "m1")) // default = reject_once
             val recorder = ModalSendRecorder()
-            val vm = vmWithModalSendPath(modals, recorder)
+            val vm = vmWithModalSendPath(modal, recorder)
             val errors = mutableListOf<Unit>()
             val errorCollector = launch { vm.modalSendErrors.collect { errors += it } }
-            advanceUntilIdle()
-
-            modals.emit(modalShown(modalId = "m1")) // default = reject_once
             advanceUntilIdle()
 
             vm.onModalOption("reject_once")
@@ -553,12 +463,9 @@ class ThreadViewModelTest {
     @Test
     fun onModalOption_nonDefault_armsWithoutSending() =
         runTest {
-            val modals = MutableSharedFlow<ModalEvent>()
+            val modal = MutableStateFlow<ModalUiState>(openModal(modalId = "m1"))
             val recorder = ModalSendRecorder()
-            val vm = vmWithModalSendPath(modals, recorder)
-            advanceUntilIdle()
-
-            modals.emit(modalShown(modalId = "m1"))
+            val vm = vmWithModalSendPath(modal, recorder)
             advanceUntilIdle()
 
             vm.onModalOption("allow_once")
@@ -572,12 +479,9 @@ class ThreadViewModelTest {
     @Test
     fun onModalOption_secondTapOfArmedOption_sendsAndClears() =
         runTest {
-            val modals = MutableSharedFlow<ModalEvent>()
+            val modal = MutableStateFlow<ModalUiState>(openModal(modalId = "m1"))
             val recorder = ModalSendRecorder()
-            val vm = vmWithModalSendPath(modals, recorder)
-            advanceUntilIdle()
-
-            modals.emit(modalShown(modalId = "m1"))
+            val vm = vmWithModalSendPath(modal, recorder)
             advanceUntilIdle()
 
             vm.onModalOption("allow_once") // arm
@@ -593,12 +497,9 @@ class ThreadViewModelTest {
     @Test
     fun onModalOption_reTapDifferentOption_reArmsWithoutSending() =
         runTest {
-            val modals = MutableSharedFlow<ModalEvent>()
+            val modal = MutableStateFlow<ModalUiState>(openModal(modalId = "m1", options = fourOptions))
             val recorder = ModalSendRecorder()
-            val vm = vmWithModalSendPath(modals, recorder)
-            advanceUntilIdle()
-
-            modals.emit(modalShown(modalId = "m1", options = fourOptions))
+            val vm = vmWithModalSendPath(modal, recorder)
             advanceUntilIdle()
 
             vm.onModalOption("allow_once") // arm
@@ -613,13 +514,11 @@ class ThreadViewModelTest {
     @Test
     fun onModalCancel_sendsCancelAndClearsArm() =
         runTest {
-            val modals = MutableSharedFlow<ModalEvent>()
+            val modal = MutableStateFlow<ModalUiState>(openModal(modalId = "m1"))
             val recorder = ModalSendRecorder()
-            val vm = vmWithModalSendPath(modals, recorder)
+            val vm = vmWithModalSendPath(modal, recorder)
             advanceUntilIdle()
 
-            modals.emit(modalShown(modalId = "m1"))
-            advanceUntilIdle()
             vm.onModalOption("allow_once") // arm
             advanceUntilIdle()
 
@@ -642,14 +541,11 @@ class ThreadViewModelTest {
                     IllegalStateException("not connected"),
                 )
             for (failure in failures) {
-                val modals = MutableSharedFlow<ModalEvent>()
+                val modal = MutableStateFlow<ModalUiState>(openModal(modalId = "m1"))
                 val recorder = ModalSendRecorder(failWith = failure)
-                val vm = vmWithModalSendPath(modals, recorder)
+                val vm = vmWithModalSendPath(modal, recorder)
                 val errors = mutableListOf<Unit>()
                 val errorCollector = launch { vm.modalSendErrors.collect { errors += it } }
-                advanceUntilIdle()
-
-                modals.emit(modalShown(modalId = "m1"))
                 advanceUntilIdle()
 
                 vm.onModalOption("reject_once") // default → single-tap answer that fails
@@ -665,19 +561,17 @@ class ThreadViewModelTest {
     @Test
     fun staleArm_cannotPreArmAFreshModal() =
         runTest {
-            val modals = MutableSharedFlow<ModalEvent>()
+            val modal = MutableStateFlow<ModalUiState>(openModal(modalId = "m1", options = fourOptions))
             val recorder = ModalSendRecorder()
-            val vm = vmWithModalSendPath(modals, recorder)
+            val vm = vmWithModalSendPath(modal, recorder)
             advanceUntilIdle()
 
-            modals.emit(modalShown(modalId = "m1", options = fourOptions))
-            advanceUntilIdle()
             vm.onModalOption("allow_once") // arm on m1
             advanceUntilIdle()
             assertEquals("allow_once", vm.armedOptionId.value)
 
             // A fresh modal supersedes m1; the m1 arm is scoped to m1, so it never surfaces on m2.
-            modals.emit(modalShown(modalId = "m2", options = fourOptions))
+            modal.value = openModal(modalId = "m2", options = fourOptions)
             advanceUntilIdle()
             assertNull("the m1 arm does not pre-arm m2", vm.armedOptionId.value)
 
@@ -712,12 +606,12 @@ class ThreadViewModelTest {
             // `catch (IllegalStateException)` would swallow `viewModelScope` teardown mid-send and fire a
             // spurious error. The `catch (CancellationException) { throw e }` rethrow prevents that.
             val gate = CompletableDeferred<Unit>() // never completes — the send stays suspended in-flight
-            val modals = MutableSharedFlow<ModalEvent>()
+            val modal = MutableStateFlow<ModalUiState>(openModal(modalId = "m1")) // default = reject_once
             val vm =
                 makeVm(
                     SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV)),
                     FakeConversationRepository(),
-                    modalEvents = modals,
+                    currentModal = modal,
                     answerModal = { _, _ -> gate.await() },
                 )
             // Host the VM in a store so store.clear() cancels its viewModelScope — the real teardown path.
@@ -726,8 +620,6 @@ class ThreadViewModelTest {
             val errorCollector = launch { vm.modalSendErrors.collect { errors += it } }
             advanceUntilIdle()
 
-            modals.emit(modalShown(modalId = "m1")) // default = reject_once
-            advanceUntilIdle()
             vm.onModalOption("reject_once") // single-tap send; suspends on `gate`
             advanceUntilIdle()
             assertTrue("the send must still be suspended in-flight", errors.isEmpty())
@@ -2301,12 +2193,12 @@ class ThreadViewModelTest {
         source: ConnectionStateSource = FakeConnectionStateSource(),
         prefs: AppPreferences = AppPreferences(newDataStore()),
         liveSessionEvents: Flow<LiveSessionEvent> = emptyFlow(),
-        modalEvents: Flow<ModalEvent> = emptyFlow(),
+        currentModal: StateFlow<ModalUiState> = MutableStateFlow(ModalUiState.Hidden),
         answerModal: suspend (String, String) -> Unit = { _, _ -> },
         cancelModal: suspend (String) -> Unit = { _ -> },
         interrupt: suspend () -> Unit = { },
     ): ThreadViewModel =
-        ThreadViewModel(handle, repository, source, prefs, liveSessionEvents, modalEvents, answerModal, cancelModal, interrupt)
+        ThreadViewModel(handle, repository, source, prefs, liveSessionEvents, currentModal, answerModal, cancelModal, interrupt)
 
     /** A VM whose active conversation is [ACTIVE_CONV], wired to a controllable live-event source. */
     private fun TestScope.vmWithLiveEvents(events: Flow<LiveSessionEvent>): ThreadViewModel =
@@ -2316,24 +2208,24 @@ class ThreadViewModelTest {
             liveSessionEvents = events,
         )
 
-    /** A VM whose active conversation is [ACTIVE_CONV], wired to a controllable modal-event source (#445). */
-    private fun TestScope.vmWithModalEvents(events: Flow<ModalEvent>): ThreadViewModel =
+    /** A VM whose active conversation is [ACTIVE_CONV], wired to a hoisted current-modal projection (#492). */
+    private fun TestScope.vmWithModal(currentModal: StateFlow<ModalUiState>): ThreadViewModel =
         makeVm(
             SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV)),
             FakeConversationRepository(),
-            modalEvents = events,
+            currentModal = currentModal,
         )
 
-    /** A VM (#451) wired to a controllable modal-event source plus a [recorder] capturing the outbound
+    /** A VM (#451) wired to a hoisted current-modal projection plus a [recorder] capturing the outbound
      *  answer/cancel send path. */
     private fun TestScope.vmWithModalSendPath(
-        events: Flow<ModalEvent>,
+        currentModal: StateFlow<ModalUiState>,
         recorder: ModalSendRecorder,
     ): ThreadViewModel =
         makeVm(
             SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV)),
             FakeConversationRepository(),
-            modalEvents = events,
+            currentModal = currentModal,
             answerModal = recorder.answer,
             cancelModal = recorder.cancel,
         )
@@ -2379,7 +2271,7 @@ class ThreadViewModelTest {
             ModalOption("reject_always", "Reject always"),
         )
 
-    private fun modalShown(
+    private fun openModal(
         modalId: String,
         modalClass: String = "permission",
         title: String = "Run command?",
@@ -2390,7 +2282,7 @@ class ThreadViewModelTest {
                 ModalOption("reject_once", "Reject once"),
             ),
         defaultOptionId: String = "reject_once",
-    ): ModalEvent = ModalEvent.Shown(modalId, modalClass, title, prompt, options, defaultOptionId)
+    ): ModalUiState.Open = ModalUiState.Open(modalId, modalClass, title, prompt, options, defaultOptionId)
 
     private fun turnState(
         conversationId: String,
