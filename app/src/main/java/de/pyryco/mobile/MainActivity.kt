@@ -43,8 +43,8 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
-import de.pyryco.mobile.data.crypto.PairedServerStoreException
 import de.pyryco.mobile.data.network.PairingParseResult
+import de.pyryco.mobile.data.network.RelayConnectionController
 import de.pyryco.mobile.data.network.parsePairingPayload
 import de.pyryco.mobile.data.network.serverKeyFingerprint
 import de.pyryco.mobile.data.preferences.AppPreferences
@@ -68,6 +68,7 @@ import de.pyryco.mobile.ui.onboarding.ScannerScreen
 import de.pyryco.mobile.ui.onboarding.ScannerUiState
 import de.pyryco.mobile.ui.onboarding.ScannerViewModel
 import de.pyryco.mobile.ui.onboarding.WelcomeScreen
+import de.pyryco.mobile.ui.onboarding.confirmPairingAndConnect
 import de.pyryco.mobile.ui.settings.AboutScreen
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsEvent
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsScreen
@@ -152,6 +153,7 @@ private fun PyryNavHost(
         composable(Routes.SCANNER) {
             val context = LocalContext.current
             val pairedServerStore = koinInject<PairedServerStore>()
+            val connectionController = koinInject<RelayConnectionController>()
             val scope = rememberCoroutineScope()
             val vm = koinViewModel<ScannerViewModel>()
             val state by vm.state.collectAsStateWithLifecycle()
@@ -162,21 +164,29 @@ private fun PyryNavHost(
 
             // The ONLY scan-path persist (#343): runs solely behind the Confirm button, after the
             // user has compared the fingerprint. The rewired Decoded effect below no longer saves —
-            // it derives the fingerprint and parks in AwaitingConfirm. Same try/save/navigate/catch
-            // shape as stubPairAndNavigate; a store failure routes to the Error surface so nothing
-            // half-persists. The save reuses the lifecycle-scoped `scope` (cancelled on screen exit).
+            // it derives the fingerprint and parks in AwaitingConfirm. A store failure routes to the
+            // Error surface so nothing half-persists. The save reuses the lifecycle-scoped `scope`
+            // (cancelled on screen exit). #489: on a successful persist, confirmPairingAndConnect also
+            // starts the relay loop (before navigating) so the connection comes up immediately, without
+            // a background→foreground cycle; connect() runs on the supervisor's own scope, so popping
+            // the Scanner here does not cancel it.
             val confirmPairAndNavigate: (PairedServer) -> Unit = { server ->
                 scope.launch {
-                    try {
-                        pairedServerStore.save(server)
-                        navController.navigate(Routes.CHANNEL_LIST) {
-                            popUpTo(Routes.SCANNER) { inclusive = true }
-                            launchSingleTop = true
-                        }
-                    } catch (e: PairedServerStoreException) {
-                        Log.w(TAG, "paired-server save failed: ${e.javaClass.simpleName}")
-                        vm.onEvent(ScannerEvent.PairingFailed(SAVE_FAILED_MSG))
-                    }
+                    confirmPairingAndConnect(
+                        server = server,
+                        store = pairedServerStore,
+                        controller = connectionController,
+                        onPersisted = {
+                            navController.navigate(Routes.CHANNEL_LIST) {
+                                popUpTo(Routes.SCANNER) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        },
+                        onFailed = { e ->
+                            Log.w(TAG, "paired-server save failed: ${e.javaClass.simpleName}")
+                            vm.onEvent(ScannerEvent.PairingFailed(SAVE_FAILED_MSG))
+                        },
+                    )
                 }
             }
 

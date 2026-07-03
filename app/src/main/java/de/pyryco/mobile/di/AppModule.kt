@@ -15,6 +15,7 @@ import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.NoiseSessionFactory
 import de.pyryco.mobile.data.network.NoiseSessionPump
 import de.pyryco.mobile.data.network.OkHttpRelayTransport
+import de.pyryco.mobile.data.network.RelayConnectionController
 import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.network.RelayTransportFactory
 import de.pyryco.mobile.data.preferences.AppPreferences
@@ -37,6 +38,7 @@ import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.Module
 import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.bind
+import org.koin.dsl.binds
 import org.koin.dsl.module
 
 val appModule =
@@ -75,7 +77,11 @@ val appModule =
         // (#350), which flag-selects this Fake (the default) or the StableConversationRepository facade.
         single { FakeConversationRepository() }
         // #307: real WS-backed source. Bound but dormant — #302's driver drives the first connect().
-        single { RelayConnectionSupervisor(get(), get()) } bind ConnectionStateSource::class
+        // #489: also expose the narrow RelayConnectionController seam so the Scanner confirm/paste flow
+        // can connect() right after a pairing persists (the concrete get<RelayConnectionSupervisor>()
+        // registration at :84/:95-96 is unchanged, so those resolutions still work).
+        single { RelayConnectionSupervisor(get(), get()) } binds
+            arrayOf(ConnectionStateSource::class, RelayConnectionController::class)
         // #302: process-lifecycle driver. Eagerly created at startKoin (Application.onCreate, main
         // thread) so it registers as a ProcessLifecycleOwner observer immediately; resolvable so a
         // future FCM service can get() it for onPushWake(). Reuses the dormant supervisor singleton.
