@@ -16,8 +16,10 @@ out of scope:
   (#439 split into the projection **#445** + the render overlay #446); answering / cancelling is **#444**;
 - the **read-only-when-ungranted** mode — **#440**;
 - folding `Shown`/`Dismissed` into a **"which modal is currently open"** projection — **landed** in
-  [`ThreadViewModel.currentModal`](current-modal-state.md) ([#445](../codebase/445.md)), deliberately
-  **not** held here (see [Why a `SharedFlow`, not held state](#why-a-sharedflow-not-held-state)).
+  [`currentModal`](current-modal-state.md) ([#445](../codebase/445.md)), and **hoisted to the
+  process-scoped coordinator** in [#492](../codebase/492.md) (so it accumulates before any thread screen
+  subscribes); deliberately **not** held here (see
+  [Why a `SharedFlow`, not held state](#why-a-sharedflow-not-held-state)).
 
 It follows the established v2 decode-slice pattern of [Live-session events](live-session-events.md)
 ([#385](../codebase/385.md)) — same three layers, same single-collector demux arm, same fail-closed
@@ -70,7 +72,7 @@ ModalEvent { Shown, Dismissed } + ModalOption    (data/model/ModalEvent.kt — p
         ▼
 val modalEvents: SharedFlow<ModalEvent>   (RemoteConversationRepository, concrete)
         ▼
-consumer: #445 ThreadViewModel.currentModal folds Shown/Dismissed → ModalUiState (then #446 renders / #440 read-only)
+consumer: #445 currentModal folds Shown/Dismissed → ModalUiState — #492 hoists the fold to the coordinator (then #446 renders / #440 read-only)
 ```
 
 ### 1. DTOs — `data/network/InteractivePayloads.kt` (`internal`)
@@ -194,19 +196,26 @@ TYPE_MODAL_SHOWN, TYPE_MODAL_DISMISSED -> {
 
 ### Why a `SharedFlow`, not held state
 
-`replay = 0`: these are **events**, not current-value state. "Which modal is currently open" is the
-consumer's projection — **landed** in [`ThreadViewModel.currentModal`](current-modal-state.md)
-([#445](../codebase/445.md)), which folds `Shown`/`Dismissed` into its own `StateFlow<ModalUiState>`,
-mirroring #385's "holding latest is a consumer concern." The bounded `extraBufferCapacity = 64` +
-`DROP_OLDEST` make `tryEmit` **infallible and non-blocking** — the load-bearing invariant is that a slow
-modal consumer can never back-pressure the shared `pump.inbound` collector and stall the connection's
-`conversations`/`message`/`ack` processing. Modals are inherently low-rate (one outstanding at a time,
-user-driven), so the bound is never realistically hit. Late subscribers get no history (`replay = 0`) —
-the late-subscriber-while-a-modal-is-open case (e.g. a re-created ViewModel collecting after
-`modal_shown`) is the consumer's lifecycle concern, and #445 resolved it **exactly as predicted here**:
-consumer-side `stateIn` with `SharingStarted.Eagerly` (a VM-lifetime eager collector so the `scan`
-accumulator runs once and never re-emits `Hidden` over a retained `Open`) — **not** by widening this seam.
-The data layer still does not hold the current modal.
+`replay = 0`: these are **events**, not current-value state. "Which modal is currently open" is a downstream
+projection — **landed** in [`currentModal`](current-modal-state.md) ([#445](../codebase/445.md)), which
+folds `Shown`/`Dismissed` into a `StateFlow<ModalUiState>`, mirroring #385's "holding latest is a consumer
+concern." The bounded `extraBufferCapacity = 64` + `DROP_OLDEST` make `tryEmit` **infallible and
+non-blocking** — the load-bearing invariant is that a slow modal consumer can never back-pressure the
+shared `pump.inbound` collector and stall the connection's `conversations`/`message`/`ack` processing.
+Modals are inherently low-rate (one outstanding at a time, user-driven), so the bound is never
+realistically hit. Late subscribers get no history (`replay = 0`), so **where** the fold's eager collector
+lives decides which events it catches:
+
+- #445 folded at the **screen-scoped ViewModel** with `stateIn(SharingStarted.Eagerly)` — the `scan`
+  accumulator runs once for the VM's life and never re-emits `Hidden` over a retained `Open` on a
+  *within-VM* resubscription.
+- But because the VM's collector only starts when a thread screen mounts, a `modal_shown` fired **before any
+  thread screen existed** was still dropped. [#492](../codebase/492.md) resolved *that* by **hoisting the
+  eager collector to the process-scoped coordinator** — the fold now runs from coordinator construction,
+  before any screen, so a genuinely-pre-subscriber modal is accumulated (`.value` holds it the moment a
+  thread screen opens). The seam itself was **not** widened; this data layer still holds no *upstream*
+  current-modal state — the projection is folded on the process-lived coordinator, downstream of this
+  `replay = 0` seam.
 
 ### Why on the concrete repo, not the interface (AC #4)
 
@@ -220,8 +229,9 @@ tripping the ≥5 split gate) for plumbing this decode slice doesn't use. This i
 a concrete handle ([the coordinator](relay-repository-coordinator.md) holds the repo). Facade/coordinator
 reachability for the consumer was **downstream consumer-slice work** — exactly as `liveSessionEvents`' UI
 reachability was deferred to (and realized in) [#406](../codebase/406.md), and now **realized for modals
-in [#445](../codebase/445.md)** via the coordinator's [`modalEvents`](relay-repository-coordinator.md#modal-event-seam-445)
-passthrough seam (the byte-for-byte mirror of the `liveSessionEvents` seam).
+in [#445](../codebase/445.md)** via the coordinator's [`modalEvents`](relay-repository-coordinator.md#modal-event-seam-445-and-the-hoisted-currentmodal-fold-492)
+passthrough seam (the byte-for-byte mirror of the `liveSessionEvents` seam; the fold over it was hoisted
+into the coordinator in [#492](../codebase/492.md)).
 
 > **Contrast with [Stall state](stall-state.md) (#395), which went on the interface.** A `stall` is
 > *current-value state the thread needs through the facade*, so `observeStall` is an interface method with
@@ -312,11 +322,14 @@ options[].id` invariant (producer-owned; a #446 default-to-first render fallback
 - [Live tool-call](live-tool-call.md) ([#387](../codebase/387.md)) — the fold-into-the-thread inverse
   (a tool row *is* a thread row; a modal is not).
 - [Relay repository coordinator](relay-repository-coordinator.md) — wires the `negotiatedCapabilities`
-  supplier the gate reuses; the [`modalEvents`](relay-repository-coordinator.md#modal-event-seam-445)
-  passthrough seam for UI reachability landed here in [#445](../codebase/445.md).
-- [Current-modal state](current-modal-state.md) ([#445](../codebase/445.md)) — the **consumer projection**
-  that folds this stream into the hoisted `ThreadViewModel.currentModal`; realizes the
-  "which-modal-is-open is a consumer concern" deferral above.
+  supplier the gate reuses; the [`modalEvents` passthrough seam + the hoisted `currentModal`
+  fold](relay-repository-coordinator.md#modal-event-seam-445-and-the-hoisted-currentmodal-fold-492)
+  live here (seam in [#445](../codebase/445.md); fold hoisted in [#492](../codebase/492.md), which also
+  demoted `modalEvents` to `private`).
+- [Current-modal state](current-modal-state.md) ([#445](../codebase/445.md) / [#492](../codebase/492.md)) —
+  the projection that folds this stream into `currentModal`, hoisted in #492 to the process-scoped
+  coordinator (the ViewModel re-exposes it); realizes the "which-modal-is-open is a downstream projection"
+  deferral above.
 - [Mobile Protocol v2 wire layer](mobile-protocol-v2-wire-layer.md) — `MobileJson`, `Envelope`,
   `@SerialName` Go-interop.
 - Sibling slices: **#438** answer/cancel send (**landed** — [`answerModal` / `cancelModal`](remote-conversation-repository.md#answermodal--cancelmodal--the-v2-modal-answercancel-control-send-438),

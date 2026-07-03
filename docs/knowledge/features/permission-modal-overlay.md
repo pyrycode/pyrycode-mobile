@@ -49,7 +49,9 @@ two signals **verbatim — no UI-side re-derivation**:
 All in `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt` (private composables,
 inline per the `DeleteConfirmationDialog` precedent — **not** a new file): `PermissionModalOverlay`,
 `ModalOptionButton`, `dismissReasonText`. The state type is [`ModalUiState`](current-modal-state.md)
-(`ModalUiState.kt`, from #445). Collected in the route host at
+(`data/model/ModalUiState.kt`, from #445 — moved from `ui/conversations/thread/` to `data/model` in
+[#492](../codebase/492.md) when the fold hoisted to the coordinator, so `ThreadScreen` now imports it).
+Collected in the route host at
 [`MainActivity.kt`](thread-screen.md#destination-block). Strings in `res/values/strings.xml`
 (`modal_*`). See [Thread screen](thread-screen.md) for how it sits among the other `Scaffold` siblings.
 

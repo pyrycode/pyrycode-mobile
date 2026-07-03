@@ -67,8 +67,8 @@ class RelayRepositoryCoordinator(
     val currentRepository: StateFlow<ConversationRepository?>  // live repo, or null between connections
     val connectionStatus: StateFlow<ConnectionStatus>         // (#392) combined {relay, pyrycode} two-part status
     val liveSessionEvents: Flow<LiveSessionEvent>             // (#406) reconnection-surviving #385 live-event seam
-    val modalEvents: Flow<ModalEvent>                         // (#445) reconnection-surviving #437 modal-event seam (mirror of liveSessionEvents)
-    suspend fun answerModal(modalId: String, optionId: String)  // (#451) outbound modal_answer passthrough — the modalEvents mirror, but a call not a flow
+    val currentModal: StateFlow<ModalUiState>                // (#492) the process-scoped "which modal is open" projection, folded here (Eagerly) off a now-PRIVATE #437 modal-event seam
+    suspend fun answerModal(modalId: String, optionId: String)  // (#451) outbound modal_answer passthrough — the inbound-modal mirror, but a call not a flow
     suspend fun cancelModal(modalId: String)                    // (#451) outbound modal_cancel passthrough
     suspend fun interrupt()                                     // (#458) outbound bare interrupt passthrough — the cancelModal mirror, fire-and-forget
     fun start()   // idempotent — launches the single connections collector on the coordinator scope
@@ -266,29 +266,49 @@ val liveSessionEvents: Flow<LiveSessionEvent> =
   re-plumbing this layer. Each fetches it off the concrete coordinator singleton at the `AppModule`
   factory — **no new Koin binding** — exactly like `connectionStatus`.
 
-## Modal event seam (#445)
+## Modal event seam (#445) and the hoisted currentModal fold (#492)
 
 The decoded [`ModalEvent`](modal-events.md) stream ([#437](../codebase/437.md)) lives on the **concrete**
 `RemoteConversationRepository.modalEvents` (`replay = 0`, connection-scoped, **not** on the interface) —
 the same posture as `liveSessionEvents`, so a UI ViewModel cannot reach it directly. The coordinator
 threads it up as a **byte-for-byte mirror** of the live-session seam, reusing the same private
-`activeRemoteRepo` mirror (**no new field**):
+`activeRemoteRepo` mirror (**no new field**), and — as of [#492](../codebase/492.md) — **folds it here**
+into the single process-scoped "which modal is open" projection:
 
 ```kotlin
+// #492: PRIVATE — its sole consumer is currentModal below.
 @OptIn(ExperimentalCoroutinesApi::class)
-val modalEvents: Flow<ModalEvent> =
+private val modalEvents: Flow<ModalEvent> =
     activeRemoteRepo.flatMapLatest { repo -> repo?.modalEvents ?: emptyFlow() }
+
+// #492: the single hoisted projection, folded once at this process-scoped layer.
+val currentModal: StateFlow<ModalUiState> =
+    modalEvents
+        .scan<ModalEvent, ModalUiState>(ModalUiState.Hidden) { state, event -> state.reduce(event) }
+        .stateIn(scope, SharingStarted.Eagerly, ModalUiState.Hidden)
 ```
 
-- **Cold, not `stateIn`'d** — events, no current value. "Which modal is currently open" is folded
-  downstream by the consumer ([`ThreadViewModel.currentModal`](current-modal-state.md), #445), *forced* to
-  be the consumer's job because the source is `replay = 0` (no held current-modal state upstream).
-- **Reconnection-surviving** — `flatMapLatest` switches to the fresh repo's `modalEvents` on each new
-  connection and cancels the prior; `emptyFlow()` between connections. (Out of scope, flagged in #445:
-  the passthrough pushes **no "clear" event** on a null repo, so a stale open modal can persist across a
-  drop — owned by the render slice #446 + the connection signal, not this seam.)
-- The first (and only) consumer is `currentModal`, fetched off the concrete coordinator singleton at the
-  `AppModule` `ThreadViewModel` factory — **no new Koin binding**, exactly like `liveSessionEvents`.
+- **`modalEvents` is cold and now `private`** — events, no current value. The fold that holds "which modal
+  is currently open" moved here in #492 from [`ThreadViewModel`](current-modal-state.md): folding it at a
+  screen-scoped VM dropped any `modal_shown` fired before a thread screen subscribed (the source is
+  `replay = 0`), so an outstanding prompt stayed stuck daemon-side while the phone rendered nothing. After
+  the hoist nothing outside the coordinator reads the raw event stream, so it was demoted to `private`.
+- **`currentModal` mirrors `currentRepository` / `connectionStatus`** — accumulate a `replay = 0`-derived
+  stream `Eagerly` on the coordinator `scope` so `.value` is always the true current projection. Started
+  `Eagerly` (not `WhileSubscribed`) is load-bearing: `scan` re-emits its seed on every fresh collection, so
+  a resubscribe past a stop window would overwrite a retained `Open` with `Hidden`, and the `replay = 0`
+  source won't replay to rebuild it (full rationale in [Current-modal state](current-modal-state.md#why-eagerly-not-whilesubscribed)).
+  The pure `ModalUiState.reduce` lives in `data/model` (moved there in #492 so this `data`-layer coordinator
+  can see it) and emits **no log** (modal fields may name a sensitive command/path).
+- **Reconnection-surviving; retains across teardown.** `flatMapLatest` switches to the fresh repo's
+  `modalEvents` on each new connection and cancels the prior; `emptyFlow()` between connections. The `.scan`
+  sits **downstream** of `flatMapLatest`, so a connection drop does **not** restart it — a still-`Open`
+  modal is **retained**, not reset to `Hidden` (the #492 teardown decision: the answer path is guarded by
+  the deterministic `answerModal`/`cancelModal` null-guard, never by this UI projection, so retaining a
+  stale `Open` can't send an answer on a dead connection).
+- The sole consumer is `ThreadViewModel`, which re-exposes `currentModal` verbatim (fetched off the
+  concrete coordinator singleton at the `AppModule` `ThreadViewModel` factory — **no new Koin binding**,
+  exactly like `liveSessionEvents`).
 
 ## Outbound modal-send passthrough (#451)
 
@@ -478,7 +498,10 @@ correlation mirrors `RemoteConversationRepositoryTest`'s #359 shape.
   [#406](../codebase/406.md) — the reconnection-surviving [`liveSessionEvents`](live-session-events.md)
   seam (first consumer: [`ThreadViewModel.isThinking`](turn-state-thinking-flag.md)) ·
   [#445](../codebase/445.md) — the reconnection-surviving [`modalEvents`](modal-events.md) seam (mirror of
-  `liveSessionEvents`; consumer: [`ThreadViewModel.currentModal`](current-modal-state.md)) ·
+  `liveSessionEvents`) · [#492](../codebase/492.md) — **hoists** the
+  [`currentModal`](current-modal-state.md) fold to this process-scoped layer (`modalEvents` demoted to
+  `private`; the ViewModel now re-exposes `currentModal`), so a `modal_shown` fired before any thread
+  screen subscribes is no longer dropped ·
   [#451](../codebase/451.md) — the **outbound** `answerModal` / `cancelModal` passthrough (the modalEvents
   mirror, but a suspend call; consumer: [`ThreadViewModel` modal answer flow](modal-answer-flow.md)) ·
   [#458](../codebase/458.md) — the **outbound** `interrupt` passthrough (the `cancelModal` mirror,
