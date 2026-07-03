@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.network
 
+import android.util.Log
 import de.pyryco.mobile.data.crypto.PairedServer
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.trySendBlocking
@@ -134,6 +135,10 @@ class OkHttpRelayTransport(
         reason: String,
         cause: Throwable,
     ) {
+        Log.w(
+            PYRYDBG,
+            "ws failLocally closeCode=$closeCode reason=$reason cause=${cause.javaClass.simpleName}:${cause.message}",
+        )
         webSocket.close(closeCode, reason)
         terminate(TransportEvent.Down(code = null, reason = reason, cause = cause))
     }
@@ -143,6 +148,7 @@ class OkHttpRelayTransport(
             webSocket: WebSocket,
             response: Response,
         ) {
+            Log.i(PYRYDBG, "ws onOpen httpCode=${response.code} -> TransportEvent.Up")
             eventsChannel.trySend(TransportEvent.Up)
         }
 
@@ -190,6 +196,7 @@ class OkHttpRelayTransport(
             code: Int,
             reason: String,
         ) {
+            Log.w(PYRYDBG, "ws onClosing code=$code reason=$reason")
             // Acknowledge the server's close to complete the WS closing handshake; onClosed follows.
             webSocket.close(WS_NORMAL_CLOSURE, null)
         }
@@ -199,6 +206,7 @@ class OkHttpRelayTransport(
             code: Int,
             reason: String,
         ) {
+            Log.w(PYRYDBG, "ws onClosed code=$code reason=$reason -> TransportEvent.Down")
             terminate(TransportEvent.Down(code = code, reason = reason, cause = null))
         }
 
@@ -207,12 +215,19 @@ class OkHttpRelayTransport(
             t: Throwable,
             response: Response?,
         ) {
+            Log.w(
+                PYRYDBG,
+                "ws onFailure httpCode=${response?.code} ex=${t.javaClass.simpleName}:${t.message} -> TransportEvent.Down",
+            )
             // reason is category-only (no dial URL / token); the full Throwable rides in cause.
             terminate(TransportEvent.Down(code = response?.code, reason = t.javaClass.simpleName, cause = t))
         }
     }
 
     companion object {
+        // TEMPORARY debug tag (revert after diagnosis).
+        private const val PYRYDBG = "PYRYDBG"
+
         /**
          * Max inbound WS text-frame length. The wire contract caps plaintext at 65519 B; the wire
          * [InnerFrameV2] (base64 of plaintext+16 plus JSON envelope) is ≈ 87.5 KB at the maximum. The

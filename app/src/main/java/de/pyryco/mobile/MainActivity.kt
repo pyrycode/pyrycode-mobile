@@ -16,13 +16,18 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -151,23 +156,9 @@ private fun PyryNavHost(
             val vm = koinViewModel<ScannerViewModel>()
             val state by vm.state.collectAsStateWithLifecycle()
 
-            // Stub-pair-and-navigate, unchanged from the Phase-0 stub: persist the throwaway
-            // PairedServer and advance to the channel list; on store failure stay put so the user
-            // can re-tap. Not routed through the VM Error state (preserves #295 behavior; the
-            // QR-scanning ticket owns real PairedServer handling).
-            val stubPairAndNavigate: () -> Unit = {
-                scope.launch {
-                    try {
-                        pairedServerStore.save(STUB_PAIRED_SERVER)
-                        navController.navigate(Routes.CHANNEL_LIST) {
-                            popUpTo(Routes.SCANNER) { inclusive = true }
-                            launchSingleTop = true
-                        }
-                    } catch (e: PairedServerStoreException) {
-                        Log.w(TAG, "stub paired-server save failed: ${e.javaClass.simpleName}")
-                    }
-                }
-            }
+            var showPasteDialog by remember { mutableStateOf(false) }
+            var pasteText by remember { mutableStateOf("") }
+            var pasteError by remember { mutableStateOf<String?>(null) }
 
             // The ONLY scan-path persist (#343): runs solely behind the Confirm button, after the
             // user has compared the fingerprint. The rewired Decoded effect below no longer saves —
@@ -259,7 +250,11 @@ private fun PyryNavHost(
                         ),
                     )
                 },
-                onPasteCode = stubPairAndNavigate,
+                onPasteCode = {
+                    pasteText = ""
+                    pasteError = null
+                    showPasteDialog = true
+                },
                 // Confirm reads the CURRENT collected state: if back/decline already moved it off
                 // AwaitingConfirm, the cast is null and confirm is a no-op — a save cannot fire after
                 // the gate closed. Persists exactly the parsed record the displayed fingerprint was
@@ -277,6 +272,42 @@ private fun PyryNavHost(
                     }
                 },
             )
+
+            if (showPasteDialog) {
+                AlertDialog(
+                    onDismissRequest = { showPasteDialog = false },
+                    title = { Text("Enter pairing code") },
+                    text = {
+                        OutlinedTextField(
+                            value = pasteText,
+                            onValueChange = { pasteText = it },
+                            label = { Text("Pairing code") },
+                            isError = pasteError != null,
+                            supportingText = pasteError?.let { { Text(it) } },
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            when (val result = parsePairingPayload(pasteText.trim())) {
+                                is PairingParseResult.Success -> {
+                                    showPasteDialog = false
+                                    confirmPairAndNavigate(result.server)
+                                }
+                                is PairingParseResult.Failure -> {
+                                    pasteError = "Invalid pairing code"
+                                }
+                            }
+                        }) {
+                            Text("Pair")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showPasteDialog = false }) {
+                            Text("Cancel")
+                        }
+                    },
+                )
+            }
         }
         composable(Routes.CHANNEL_LIST) {
             val vm = koinViewModel<ChannelListViewModel>()
@@ -403,6 +434,13 @@ private fun PyryNavHost(
         }
         composable(Routes.SETTINGS) {
             val vm = koinViewModel<SettingsViewModel>()
+            val pairedServerStore = koinInject<PairedServerStore>()
+            var serverLabel by remember { mutableStateOf("…") }
+            LaunchedEffect(Unit) {
+                serverLabel =
+                    pairedServerStore.load()?.let { "${it.serverId.take(12)} · ${it.relayUrl}" }
+                        ?: "Not paired"
+            }
             val connectionStatus by vm.connectionStatus.collectAsStateWithLifecycle()
             val themeMode by vm.themeMode.collectAsStateWithLifecycle()
             val useWallpaperColors by vm.useWallpaperColors.collectAsStateWithLifecycle()
@@ -415,6 +453,7 @@ private fun PyryNavHost(
             val workspacePickerVisible by vm.workspacePickerVisible.collectAsStateWithLifecycle()
             SettingsScreen(
                 connectionStatus = connectionStatus,
+                serverLabel = serverLabel,
                 themeMode = themeMode,
                 useWallpaperColors = useWallpaperColors,
                 archivedDiscussionCount = archivedDiscussionCount,
@@ -472,20 +511,6 @@ private const val PARSE_FAILED_MSG =
     "That QR code isn't a valid pyrycode pairing code. Scan the code shown by `pyry pair`."
 
 private const val SAVE_FAILED_MSG = "Couldn't save the pairing. Please try again."
-
-// Placeholder paired-server record persisted by the Scanner stub tap until QR pairing lands; the
-// downstream QR-scanning ticket overwrites it with the scanned record (last-writer-wins). These are
-// wire-shaped throwaways, not real credentials: the relay is non-routable (`.invalid`, RFC 2606)
-// and the token / static pubkey are public constants that grant no access. The store does no
-// field-shape validation, so the exact bytes are non-load-bearing — they only keep the persisted
-// record structurally indistinguishable from a real one for the dormant #275/#276 consumers.
-private val STUB_PAIRED_SERVER =
-    PairedServer(
-        serverId = "placeholder-server",
-        token = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-        relayUrl = "wss://relay.invalid/v1/client",
-        serverStaticPublicKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-    )
 
 private object Routes {
     const val WELCOME = "welcome"

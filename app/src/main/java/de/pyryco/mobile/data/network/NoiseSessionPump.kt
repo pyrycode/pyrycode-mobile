@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.network
 
+import android.util.Log
 import de.pyryco.mobile.data.repository.ManagedSessionPump
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -122,6 +123,7 @@ class NoiseSessionPump(
 
     /** Phone steps 3–6: drive the handshake to Open, then run the open-state dispatch loop. */
     private suspend fun drive() {
+        Log.i(PYRYDBG, "pump state -> Handshaking (drive() started)")
         val session =
             try {
                 sessionFactory.create()
@@ -162,6 +164,7 @@ class NoiseSessionPump(
                 return
             }
         mutableState.value = PumpState.Open(connId, session.negotiatedCapabilities)
+        Log.i(PYRYDBG, "pump state -> Open connId=$connId capabilities=${session.negotiatedCapabilities}")
         rebaseRekeyTimer() // arm the 1-hour re-key cadence at handshake completion (#304)
 
         // Steps 5–6: the single inbound collector decrypts each open-state noise_msg. Completes when
@@ -261,6 +264,10 @@ class NoiseSessionPump(
      */
     private fun teardown(cause: Throwable?) {
         if (!terminated.compareAndSet(false, true)) return
+        Log.w(
+            PYRYDBG,
+            "pump state -> Closed cause=${cause?.javaClass?.simpleName ?: "null(clean-down/close)"} msg=${cause?.message}",
+        )
         mutableState.value = PumpState.Closed(cause)
         inboundChannel.close()
         session?.close() // wipes the transport ciphers (AC 5)
@@ -269,6 +276,9 @@ class NoiseSessionPump(
     }
 
     private companion object {
+        // TEMPORARY debug tag (revert after diagnosis).
+        const val PYRYDBG = "PYRYDBG"
+
         /** Protocol step 4: await `noise_resp` within 10 seconds. */
         const val HANDSHAKE_TIMEOUT_MS = 10_000L
 

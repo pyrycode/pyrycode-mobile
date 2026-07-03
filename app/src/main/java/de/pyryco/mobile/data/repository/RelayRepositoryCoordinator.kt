@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.repository
 
+import android.util.Log
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalEvent
@@ -28,6 +29,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
+
+// TEMPORARY debug tag (revert after diagnosis).
+private const val PYRYDBG = "PYRYDBG"
 
 /**
  * Stands up the per-connection chain that turns a live relay socket into a working remote
@@ -202,7 +206,11 @@ class RelayRepositoryCoordinator(
      */
     private fun onConnection(transport: RelayTransport?) {
         teardownActive()
-        if (transport == null) return
+        if (transport == null) {
+            Log.i(PYRYDBG, "coordinator onConnection: transport=null (between connections)")
+            return
+        }
+        Log.i(PYRYDBG, "coordinator onConnection: new transport bound, starting fresh pump")
         val childScope = CoroutineScope(SupervisorJob(job) + dispatcher)
         val pump = createPump(transport).also { it.start() }
         active = Connection(pump, childScope)
@@ -265,6 +273,12 @@ class RelayRepositoryCoordinator(
         activeRemoteRepo.value = null
         activePumpFlow.value = null
         val current = active ?: return
+        val closedCause = (current.pump.state.value as? PumpState.Closed)?.cause
+        Log.w(
+            PYRYDBG,
+            "coordinator teardownActive: closing active pump pumpState=${current.pump.state.value.javaClass.simpleName} " +
+                "closedCause=${closedCause?.javaClass?.simpleName}:${closedCause?.message}",
+        )
         active = null
         current.scope.cancel()
         current.pump.close()

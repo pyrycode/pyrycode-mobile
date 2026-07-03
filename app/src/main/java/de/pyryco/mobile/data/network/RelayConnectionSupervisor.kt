@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.network
 
+import android.util.Log
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.RelayLinkStatus
@@ -133,6 +134,7 @@ class RelayConnectionSupervisor(
         var attempt = 0 // consecutive failures since the last ≥60 s-stable connection
         while (isActive) {
             state.value = RelayLinkStatus.Connecting
+            Log.i(PYRYDBG, "supervisor connect attempt=${attempt + 1} (dialing relay)")
             val transport = transportFactory.create(paired)
             var sawUp = false
             var daemonAbsent = false
@@ -143,6 +145,7 @@ class RelayConnectionSupervisor(
                 transport.events.collect { event ->
                     when (event) {
                         TransportEvent.Up -> {
+                            Log.i(PYRYDBG, "supervisor event=Up (socket connected)")
                             sawUp = true
                             liveConnection.value = transport
                             state.value = RelayLinkStatus.Connected
@@ -153,6 +156,11 @@ class RelayConnectionSupervisor(
                                 }
                         }
                         is TransportEvent.Down -> {
+                            Log.w(
+                                PYRYDBG,
+                                "supervisor event=Down code=${event.code} reason=${event.reason} " +
+                                    "cause=${event.cause?.javaClass?.simpleName}:${event.cause?.message}",
+                            )
                             // #308 seam: a 4404 "no server" close (relay reachable, no daemon
                             // registered) branches to DaemonAbsent; every other code — incl. 4401
                             // auth-reject and a null dial failure — stays on the uniform retry path
@@ -172,6 +180,11 @@ class RelayConnectionSupervisor(
             }
             if (sawUp && stableReached.get()) attempt = 0
             attempt += 1
+            Log.w(
+                PYRYDBG,
+                "supervisor disconnected sawUp=$sawUp stable=${stableReached.get()} daemonAbsent=$daemonAbsent " +
+                    "-> backoff attempt=$attempt",
+            )
             backoff(attempt, daemonAbsent)
         }
     }
@@ -182,6 +195,7 @@ class RelayConnectionSupervisor(
     ) {
         val base = backoffBaseSeconds(attempt)
         val intervalMs = jitteredBackoffMs(attempt, random)
+        Log.i(PYRYDBG, "supervisor backoff attempt=$attempt delayMs=$intervalMs daemonAbsent=$daemonAbsent")
         if (daemonAbsent) {
             // Relay reachable, no daemon: a steady, distinct DaemonAbsent (no per-second countdown) on
             // the SAME backoff schedule as any other drop, so the leg flips off the instant a daemon
@@ -211,6 +225,9 @@ class RelayConnectionSupervisor(
     private suspend fun collapsibleWait(ms: Long): Boolean = withTimeoutOrNull(ms) { retrySignal.receive() } != null
 
     private companion object {
+        // TEMPORARY debug tag (revert after diagnosis).
+        const val PYRYDBG = "PYRYDBG"
+
         const val CAP_SECONDS = 30
         const val STABLE_THRESHOLD_MS = 60_000L
 

@@ -52,6 +52,7 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 @Composable
 fun SettingsScreen(
     connectionStatus: ConnectionStatus,
+    serverLabel: String,
     themeMode: ThemeMode,
     useWallpaperColors: Boolean,
     archivedDiscussionCount: Int,
@@ -146,7 +147,7 @@ fun SettingsScreen(
             SettingsSectionHeader("Connection")
             SettingsRow(
                 headline = "Server",
-                supporting = "juhana-mac-2026",
+                supporting = serverLabel,
                 trailing = { ChevronIcon() },
                 onClick = {},
             )
@@ -340,6 +341,7 @@ private fun SettingsScreenLightPreview() {
         SettingsScreen(
             connectionStatus =
                 ConnectionStatus(RelayLinkStatus.DaemonAbsent, PyrycodeLinkStatus.Down),
+            serverLabel = "abc123 · wss://relay…",
             themeMode = ThemeMode.SYSTEM,
             useWallpaperColors = false,
             archivedDiscussionCount = 11,
@@ -372,6 +374,7 @@ private fun SettingsScreenDarkPreview() {
         SettingsScreen(
             connectionStatus =
                 ConnectionStatus(RelayLinkStatus.DaemonAbsent, PyrycodeLinkStatus.Down),
+            serverLabel = "abc123 · wss://relay…",
             themeMode = ThemeMode.SYSTEM,
             useWallpaperColors = false,
             archivedDiscussionCount = 11,
