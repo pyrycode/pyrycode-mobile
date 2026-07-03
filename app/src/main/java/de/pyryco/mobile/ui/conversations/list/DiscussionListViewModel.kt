@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -100,7 +101,7 @@ class DiscussionListViewModel(
     private fun confirmPromotion() {
         val snapshot = pendingPromotion.value ?: return
         pendingPromotion.value = null
-        viewModelScope.launch {
+        launchGuardedRepoCall {
             repository.promote(
                 conversationId = snapshot.conversationId,
                 name = derivedChannelName(snapshot.sourceName),

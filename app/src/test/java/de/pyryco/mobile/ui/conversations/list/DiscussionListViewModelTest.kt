@@ -4,9 +4,11 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Session
+import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.conversations.ThrowingConversationRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -346,6 +348,43 @@ class DiscussionListViewModelTest {
                 (state as DiscussionListUiState.Error).message.isNotBlank(),
             )
             collector.cancel()
+        }
+
+    // ---- #490: one-shot repository-call guard (launchGuardedRepoCall) --------------------------
+
+    @Test
+    fun confirmPromotion_whenPromoteThrowsEachHandledType_isSwallowedWithoutCrashing() =
+        runTest {
+            // AC #2/#3: confirmPromotion's one-shot promote launch swallows the three relay failure types. A
+            // throw escaping the launched coroutine reaches the default handler, not runTest (viewModelScope
+            // is a separate SupervisorJob), so capture uncaught throws and assert none fired.
+            val uncaught = mutableListOf<Throwable>()
+            val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
+            try {
+                val failures =
+                    listOf<Throwable>(
+                        IllegalStateException("not connected"),
+                        RelayErrorException(code = "server.error", retryable = false, message = "no"),
+                        UnsupportedOperationException("not wired"),
+                    )
+                for (failure in failures) {
+                    val vm = DiscussionListViewModel(ThrowingConversationRepository(failure))
+                    val collector = launch { vm.state.collect { } }
+                    advanceUntilIdle()
+
+                    // Open the promotion dialog on a seeded discussion so confirmPromotion has a pending target.
+                    vm.onEvent(DiscussionListEvent.SaveAsChannelRequested("seed-discussion-a"))
+                    advanceUntilIdle()
+                    vm.onEvent(DiscussionListEvent.PromoteConfirmed)
+                    advanceUntilIdle()
+
+                    collector.cancel()
+                }
+                assertTrue("promote failures must be swallowed, not propagated: $uncaught", uncaught.isEmpty())
+            } finally {
+                Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+            }
         }
 
     // --- helpers ---

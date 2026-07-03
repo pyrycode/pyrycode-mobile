@@ -117,7 +117,7 @@ class ThreadViewModel(
 
     fun sendMessage(text: String) {
         if (text.isBlank()) return
-        viewModelScope.launch {
+        launchGuardedRepoCall {                 // guarded #490 (was viewModelScope.launch)
             repository.sendMessage(state.value.conversationId, text)
         }
     }
@@ -126,7 +126,7 @@ class ThreadViewModel(
 
 `repository` is promoted from an unmarked constructor parameter to `private val repository` so the new method can call it (the pre-#188 VM only referenced `repository` inline inside the `state` initializer). The `if (text.isBlank()) return` early-return is the VM half of belt-and-suspenders blank rejection — UI disables the button, VM double-checks. The repository contract explicitly disclaims trim/blank validation (see [Conversation repository](conversation-repository.md)).
 
-Fire-and-forget by design. `repository.sendMessage` returns the persisted `Message`, but the UI re-renders from the [conversation repository](conversation-repository.md) flows (the eventual `observeMessages` subscription #128 will wire), so the return value is discarded here. The only documented failure mode is `IllegalArgumentException` on unknown conversation id, which cannot happen at this call site — the VM only ever passes its own observed `conversationId`. Phase 4 will add user-visible error surfacing when the real network client lands; Phase 0 lets the coroutine fail silently per the spec.
+Fire-and-forget by design. `repository.sendMessage` returns the persisted `Message`, but the UI re-renders from the [conversation repository](conversation-repository.md) flows (the eventual `observeMessages` subscription #128 will wire), so the return value is discarded here. **Guarded since #490** — the launch routes through [`launchGuardedRepoCall`](guarded-repo-launch.md), which inertly swallows the three relay failure types (`RelayErrorException` / `IllegalStateException` / `UnsupportedOperationException`) so a failed send under the relay repository can't crash the process. The `IllegalArgumentException`-on-unknown-id failure mode cannot happen at this call site (the VM only ever passes its own observed `conversationId`) and the guard deliberately leaves IAE uncaught anyway (fail-fast). Phase 4 still owes the **user-visible error surface**; the guard is crash-safety only — a swallowed send fails quietly.
 
 `viewModelScope.launch` defaults to `Dispatchers.Main.immediate`. `FakeConversationRepository.sendMessage` does no I/O (the `state.update` CAS is non-suspending), so no `withContext(Dispatchers.IO)` is needed. The Phase 4 Ktor-backed impl will dispatch its own I/O internally; the VM does not switch contexts.
 
@@ -169,7 +169,7 @@ Three new entries added in #188:
 
 ## Error handling
 
-Out of scope at Phase 0. The only documented failure mode of `repository.sendMessage` is `IllegalArgumentException` on unknown conversation id, which cannot happen at this call site (the VM observed the id at construction and the navigation entry passes the same id). If `repository.sendMessage` does throw, the coroutine fails silently. Phase 4 adds user-visible error surfacing when the Ktor-backed remote client lands.
+**Crash-guarded since #490; no user-facing surface yet.** The launch routes through [`launchGuardedRepoCall`](guarded-repo-launch.md), which inertly swallows the three relay failure types (`RelayErrorException` / `IllegalStateException` / `UnsupportedOperationException`) so a failed send under the relay repository fails **quietly** instead of killing the process. The `IllegalArgumentException`-on-unknown-id mode cannot happen here (the VM observed the id at construction; the navigation entry passes the same id) and the guard leaves IAE uncaught by design (fail-fast). Phase 4 still adds the **user-visible** error surfacing when the real client lands.
 
 ## Testing
 
@@ -197,7 +197,7 @@ The existing `ThreadScreenLightPreview` / `ThreadScreenDarkPreview` in `ThreadSc
 
 ## Edge cases / limitations
 
-- **No error surfacing.** A `repository.sendMessage` failure is silent at Phase 0. Phase 4 fixes this when the real network client lands and errors become user-visible.
+- **No error *surface* (but crash-guarded since #490).** A `repository.sendMessage` failure is swallowed quietly by [`launchGuardedRepoCall`](guarded-repo-launch.md) — no crash, no user-visible message. Phase 4 adds the user-visible surfacing when the real network client lands.
 - **No optimistic echo of the sent message in the UI.** `ThreadScreen` does not yet render the thread (no `observeMessages` subscription on `ThreadViewModel`) — the user sees an empty body before *and* after sending. #128 wires the message list; once it lands, the appended `Message` will re-emit through the flow and the user will see their text appear. Until then, the only feedback that send fired is the cleared input field.
 - **The mic button is a stub.** It only shows a Toast. Real voice input ships in Phase 6 and will replace the `onClick` body — likely with an event routed through the ViewModel and a new `Activity` or modal flow.
 - **`maxLines = 5` is a soft cap on visible lines, not on content length.** The user can paste 50 lines; only 5 are visible and the field scrolls internally. No character cap on `text` is enforced anywhere in the stack.

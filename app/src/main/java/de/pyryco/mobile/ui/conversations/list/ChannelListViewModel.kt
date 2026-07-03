@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -22,7 +23,6 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.launch
 
 sealed interface ChannelListUiState {
     data object Loading : ChannelListUiState
@@ -128,7 +128,7 @@ class ChannelListViewModel(
     fun onEvent(event: ChannelListEvent) {
         when (event) {
             ChannelListEvent.CreateDiscussionTapped ->
-                viewModelScope.launch {
+                launchGuardedRepoCall {
                     val workspace = appPreferences.defaultWorkspace.first()
                     val conversation = repository.createDiscussion(workspace = workspace)
                     navigationChannel.send(ChannelListNavigation.ToThread(conversation.id))
@@ -137,7 +137,7 @@ class ChannelListViewModel(
                 pendingWorkspacePicker.value = true
             is ChannelListEvent.WorkspacePicked -> {
                 pendingWorkspacePicker.value = false
-                viewModelScope.launch {
+                launchGuardedRepoCall {
                     val conversation = repository.createDiscussion(workspace = event.workspace)
                     navigationChannel.send(ChannelListNavigation.ToThread(conversation.id))
                 }

@@ -19,6 +19,7 @@ import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -423,7 +424,7 @@ class ThreadViewModel(
 
     fun sendMessage(text: String) {
         if (text.isBlank()) return
-        viewModelScope.launch {
+        launchGuardedRepoCall {
             repository.sendMessage(state.value.conversationId, text)
         }
     }
@@ -438,7 +439,7 @@ class ThreadViewModel(
 
     fun onWorkspacePicked(path: String) {
         pendingWorkspacePicker.value = false
-        viewModelScope.launch {
+        launchGuardedRepoCall {
             repository.changeWorkspace(conversationId, path)
         }
     }
@@ -592,7 +593,7 @@ class ThreadViewModel(
         when (event) {
             ThreadEvent.Archive -> {
                 pendingChannelInfo.value = false
-                viewModelScope.launch {
+                launchGuardedRepoCall {
                     repository.archive(state.value.conversationId)
                     navigationChannel.send(ThreadNavigation.PopBack)
                 }
@@ -601,7 +602,7 @@ class ThreadViewModel(
             ThreadEvent.DeleteConfirm -> {
                 pendingDeleteConfirm.value = false
                 pendingChannelInfo.value = false
-                viewModelScope.launch {
+                launchGuardedRepoCall {
                     repository.delete(state.value.conversationId)
                     navigationChannel.send(ThreadNavigation.PopBack)
                 }
@@ -610,7 +611,7 @@ class ThreadViewModel(
             ThreadEvent.Rename -> pendingRenameDialog.value = true
             is ThreadEvent.RenameSubmit -> {
                 pendingRenameDialog.value = false
-                viewModelScope.launch {
+                launchGuardedRepoCall {
                     repository.rename(state.value.conversationId, event.name)
                 }
             }
@@ -620,7 +621,7 @@ class ThreadViewModel(
                     SaveAsChannelDialogState(initialName = AUTO_SUGGESTED_CHANNEL_NAME)
             is ThreadEvent.SaveAsChannelSubmit -> {
                 pendingSaveAsChannelDialog.value = null
-                viewModelScope.launch {
+                launchGuardedRepoCall {
                     repository.promote(
                         state.value.conversationId,
                         event.name,
