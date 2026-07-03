@@ -411,6 +411,22 @@ private suspend fun sendAndAwaitReply(request: Envelope): JsonElement {
   scope), not the connection scope. Caller cancellation → `CancellationException` → the `finally`
   removes the entry (no leak). The reply is delivered by the collector coroutine;
   `complete`/`completeExceptionally` are thread-safe and idempotent across the two coroutines.
+- **On teardown, every pending deferred is failed — not left to hang ([#488](../codebase/488.md)).** The
+  single `init` collector's body is wrapped in `try { … } finally { failAllPending() }`. When the connection
+  tears down — the primary trigger is [`RelayRepositoryCoordinator.teardownActive()`](relay-repository-coordinator.md)
+  cancelling the collector's scope (`CancellationException` at the `collect` suspension), and the `finally`
+  also covers `pump.inbound` completing or throwing — `failAllPending()` completes **every** still-registered
+  deferred exceptionally with a plain `IllegalStateException("connection torn down before reply")` and clears
+  the map. So an awaiting `sendAndAwaitReply` caller (a tapped permission answer, a sent message, a promote,
+  …) throws **promptly** instead of suspending forever (the pre-#488 behaviour was a **silent answer-drop**
+  that blocked flipping `USE_RELAY_REPOSITORY` on). The exception type deliberately **matches the
+  not-connected `check(...)` above** (one failure mode for every caller) and is deliberately **not** a
+  `CancellationException` (which `extends IllegalStateException` on the JVM), so `await()` surfaces a real
+  error rather than reading as the caller's own scope dying. The sweep is **non-suspending** (so it runs to
+  completion inside the cancelling coroutine) and **logs nothing** (the message is a static const; the swept
+  reply payloads are discarded). It uses the values iterator's `remove()` (not `map.clear()`), so a request
+  registered concurrently *during* the sweep is never wiped without completion — `ConcurrentHashMap`-safe +
+  idempotent. See [#488](../codebase/488.md).
 
 `mapError(payload): Throwable` turns a server `error` into the thrown domain exception: decode
 `ErrorPayload` through `MobileJson`; `conversation.not_found` → `IllegalArgumentException("Unknown
