@@ -8,7 +8,7 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
-import de.pyryco.mobile.data.model.ModalEvent
+import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.preferences.AppPreferences
@@ -116,9 +116,12 @@ class ThreadViewModel(
     // #406: the coordinator's reconnection-surviving live-event seam, reduced to [isThinking]. Defaulted
     // to an empty flow so the fake-backed graph + existing tests stay inert (the flag holds `false`).
     liveSessionEvents: Flow<LiveSessionEvent> = emptyFlow(),
-    // #445: the coordinator's reconnection-surviving modal-event seam (#437), folded to [currentModal].
-    // Defaulted to an empty flow so the fake-backed graph + existing tests stay inert (state holds Hidden).
-    modalEvents: Flow<ModalEvent> = emptyFlow(),
+    // #492: the coordinator's process-scoped, reconnection-surviving "current modal" projection (#437/#445),
+    // folded once at the coordinator layer (no longer per-thread-screen) and re-exposed here verbatim as
+    // [currentModal]. Defaulted to a fresh MutableStateFlow(Hidden) so the fake-backed Koin graph + non-modal
+    // tests stay inert — exactly as the old empty-flow default did. As a `val` ctor property it *is* the
+    // exposed StateFlow (no wrapping); the arm/answer/cancel logic reads its `.value` unchanged (AC #3).
+    val currentModal: StateFlow<ModalUiState> = MutableStateFlow(ModalUiState.Hidden),
     // #451: the outbound modal-send path → the coordinator's passthrough to the connection-scoped concrete
     // repo (RelayRepositoryCoordinator.answerModal / cancelModal). Defaulted no-ops so the fake-backed Koin
     // graph + existing ThreadViewModel tests stay inert. The VM holds only these two suspend lambdas, never
@@ -327,33 +330,6 @@ class ThreadViewModel(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
                 initialValue = false,
-            )
-
-    /**
-     * The single hoisted "current modal" projection (#445): which permission/choice modal is currently
-     * outstanding, folded from the `replay = 0` [modalEvents] stream (#437) via [ModalUiState.reduce]
-     * (`Shown` → `Open`; matching `Dismissed` → `Dismissed`; non-matching `Dismissed` → no-op; last-shown
-     * wins). A sibling [StateFlow] beside [isThinking] / [isStalled] (not a [ThreadUiState] field), taken
-     * as a separate parameter by the stateless render screen (#446). Because modal events carry **no**
-     * `conversation_id` ([ModalEvent] keys on `modalId` only), this is **app-level** — a single active
-     * modal across the app — so there is no per-[conversationId] filter (contrast [thinkingTransition]).
-     *
-     * **Started [SharingStarted.Eagerly], a deliberate deviation from the `WhileSubscribed` siblings.**
-     * `scan` re-emits its initial accumulator on every fresh upstream collection; under `WhileSubscribed`
-     * a resubscription past the stop window would restart the `scan` and overwrite a retained `Open` with
-     * `Hidden`, and because [modalEvents] is `replay = 0` the prior events do not replay to rebuild it — a
-     * still-open modal would silently clear. `Eagerly` collects for the VM lifetime, so the accumulator
-     * runs exactly once and `.value` is always the true current projection (the coordinator's
-     * accumulate-a-`replay=0`-stream precedent: `currentRepository` / `connectionStatus`). Cost is
-     * negligible — modals are one-at-a-time, user-driven, low-rate.
-     */
-    val currentModal: StateFlow<ModalUiState> =
-        modalEvents
-            .scan<ModalEvent, ModalUiState>(ModalUiState.Hidden) { state, event -> state.reduce(event) }
-            .stateIn(
-                scope = viewModelScope,
-                started = SharingStarted.Eagerly,
-                initialValue = ModalUiState.Hidden,
             )
 
     /**

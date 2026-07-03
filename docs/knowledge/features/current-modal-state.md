@@ -1,21 +1,25 @@
-# Current-modal state — `currentModal` on the thread ViewModel
+# Current-modal state — the hoisted `currentModal` projection
 
 The **state/projection half of the permission/choice-modal UI surface**: how the daemon's decoded modal
-lifecycle (`modal_shown` → `modal_dismissed`) is folded into a single hoisted "which modal is currently
-open" observable, `currentModal`, on [`ThreadViewModel`](thread-screen.md). Landed in
-[#445](../codebase/445.md) (split from #443, the render half of #439), part of the Phase 3 permission-modal
-feature (epic pyrycode#597, ADR 025). The visual overlay, the fail-safe-deny default highlight, the
-inert-text output-encoding, and the dismiss-reason UI are the **sibling render slice #446**
-([shipped](permission-modal-overlay.md) — it consumes this `currentModal`); answering / cancelling is
-**#444**, split into the behavior half [#451](../codebase/451.md) ([shipped](modal-answer-flow.md) — the
-fail-safe-deny answer/cancel decision logic + outbound send) and the render half #452 (the armed affordance
-+ snackbar + route-host forward, `blockedBy` #451). This slice adds **no UI** — all state is hoisted to the
-VM.
+lifecycle (`modal_shown` → `modal_dismissed`) is folded into a single "which modal is currently open"
+observable, `currentModal: StateFlow<ModalUiState>`. Introduced in [#445](../codebase/445.md) (split from
+#443, the render half of #439), part of the Phase 3 permission-modal feature (epic pyrycode#597, ADR 025).
 
-It is the **modal twin of [`isThinking`](turn-state-thinking-flag.md) ([#406](../codebase/406.md))**: the
-same coordinator-passthrough + sibling-`StateFlow` shape, with one load-bearing deviation — a `scan`
-accumulator under `SharingStarted.Eagerly`, not a `mapNotNull` transition under `WhileSubscribed` (see
-[Why `Eagerly`](#why-eagerly-not-whilesubscribed)).
+**As of [#492](../codebase/492.md) the fold is hoisted to the process-scoped
+[`RelayRepositoryCoordinator`](relay-repository-coordinator.md).** It used to fold per-thread-screen inside
+[`ThreadViewModel`](thread-screen.md), whose collection only began on navigating into a thread — so a
+`modal_shown` fired **before any subscriber existed** was dropped by the `replay = 0`
+[`modalEvents`](modal-events.md) seam, leaving the prompt stuck daemon-side while the phone showed nothing.
+The coordinator outlives any screen and already owns the reconnection-surviving seam, so folding there
+accumulates the projection whether or not a thread screen is subscribed; **the ViewModel now re-exposes the
+coordinator's `StateFlow<ModalUiState>` verbatim instead of folding the raw stream itself.** This closed a
+`USE_RELAY_REPOSITORY` blocker (the bug manifests only with the relay repository live).
+
+The visual overlay, the fail-safe-deny default highlight, the inert-text output-encoding, and the
+dismiss-reason UI are the **sibling render slice #446** ([shipped](permission-modal-overlay.md) — it
+consumes this `currentModal`); answering / cancelling is **#444**, split into the behavior half
+[#451](../codebase/451.md) ([shipped](modal-answer-flow.md)) and the render half #452 (the armed affordance
++ snackbar + route-host forward).
 
 ## The data path
 
@@ -24,54 +28,57 @@ modal_shown / modal_dismissed  ──(#437 decode, capability-gated)──▶  M
         │                                                                  on RemoteConversationRepository
         │                                                                  .modalEvents (concrete, per-connection, replay=0)
         ▼
-RelayRepositoryCoordinator.modalEvents : Flow<ModalEvent>   ◀── #445 seam (reconnection-surviving, mirror of liveSessionEvents)
+RelayRepositoryCoordinator.modalEvents : Flow<ModalEvent>   ◀── #445 seam, now #492-PRIVATE (reconnection-surviving)
+        │  scan + ModalUiState.reduce (modalId-keyed, last-shown-wins), stateIn(scope, Eagerly)   ◀── #492 fold (hoisted here)
+        ▼
+RelayRepositoryCoordinator.currentModal : StateFlow<ModalUiState>   ◀── #492 the single process-scoped projection
         │  injected at the AppModule ThreadViewModel factory (no new Koin binding)
         ▼
-ThreadViewModel.currentModal : StateFlow<ModalUiState>   ◀── #445 fold (scan, modalId-keyed, last-shown-wins)
+ThreadViewModel.currentModal : StateFlow<ModalUiState>   ◀── #492 re-exposed verbatim (a `val` ctor property, no re-fold)
         │  separate parameter beside `state` / `isThinking` / `isStalled`
         ▼
 ThreadScreen → modal overlay (#446 renders it; #451 answers it, #452 renders the armed affordance)
 ```
 
-Two hops, both reusing the established [`liveSessionEvents`](live-session-events.md) precedent — but note
-the projection is **app-level**, not per-conversation: modal events carry **no `conversation_id`**
+Note the projection is **app-level**, not per-conversation: modal events carry **no `conversation_id`**
 ([Modal events](modal-events.md)), so `modalId` is the sole correlation key and there is **one** active
-modal across the app (not one per thread).
+modal across the app (not one per thread). This is *why* it hoists cleanly to the app-level coordinator.
 
-### 1. The coordinator seam (reconnection-surviving)
+### 1. The coordinator seam (reconnection-surviving) → the hoisted fold
 
 The decoded events live on the **concrete** `RemoteConversationRepository.modalEvents` — a `SharedFlow`
 that is **connection-scoped** (rebuilt per connection, absent between) and deliberately **not** on the
 `ConversationRepository` interface the thread ViewModel consumes (the
 [Why on the concrete repo](modal-events.md#why-on-the-concrete-repo-not-the-interface-ac-4) posture). So
 the ViewModel cannot reach it directly. [`RelayRepositoryCoordinator`](relay-repository-coordinator.md)
-exposes a stable public flow over it (see [§ Modal event seam](relay-repository-coordinator.md#modal-event-seam-445)),
-a byte-for-byte mirror of the `liveSessionEvents` seam:
+threads it up (a byte-for-byte mirror of the `liveSessionEvents` seam) **and folds it** into the current
+projection:
 
 ```kotlin
-val modalEvents: Flow<ModalEvent> =
+// #492: modalEvents is now PRIVATE — its sole consumer is currentModal.
+@OptIn(ExperimentalCoroutinesApi::class)
+private val modalEvents: Flow<ModalEvent> =
     activeRemoteRepo.flatMapLatest { repo -> repo?.modalEvents ?: emptyFlow() }
-```
 
-`flatMapLatest` switches to the fresh connection's repo and cancels the prior on reconnect; `emptyFlow()`
-covers between-connections. Cold `Flow`, **no `stateIn`** — these are *events* with no current value
-("which modal is open" is held downstream, in `currentModal`, because the source is `replay = 0`).
-
-### 2. The ViewModel fold (`scan`, `modalId`-keyed, last-shown-wins)
-
-`ThreadViewModel` takes the coordinator flow as a **defaulted** trailing ctor param
-(`modalEvents: Flow<ModalEvent> = emptyFlow()` — so the fake-backed graph and the existing tests stay
-inert, holding `Hidden`) and folds it into a sibling `StateFlow`:
-
-```kotlin
+// #492: the single hoisted "which modal is open" projection, folded once at this process-scoped layer.
 val currentModal: StateFlow<ModalUiState> =
     modalEvents
         .scan<ModalEvent, ModalUiState>(ModalUiState.Hidden) { state, event -> state.reduce(event) }
-        .stateIn(viewModelScope, SharingStarted.Eagerly, ModalUiState.Hidden)
+        .stateIn(scope, SharingStarted.Eagerly, ModalUiState.Hidden)
 ```
 
-The pure, side-effect-free `ModalUiState.reduce` (co-located in `ModalUiState.kt`, **no logging** of any
-field) folds one event into the next state:
+`flatMapLatest` switches to the fresh connection's repo and cancels the prior on reconnect; `emptyFlow()`
+covers between-connections. The `.scan` sits **downstream** of `flatMapLatest`, so across a reconnect the
+inner source switches but the outer `scan` is **not** restarted — the accumulator survives connection churn
+(see [Lifecycle, errors, edge cases](#lifecycle-errors-edge-cases) for the retain-on-teardown decision).
+`modalEvents` was demoted to `private` in #492 because after the hoist nothing outside the coordinator
+reads the raw event stream.
+
+### 2. The fold (`scan`, `modalId`-keyed, last-shown-wins) + the ViewModel re-exposure
+
+The fold uses the pure, side-effect-free `ModalUiState.reduce` — as of #492 co-located with the
+`ModalUiState` type in **`data/model/ModalUiState.kt`** (moved from `ui/conversations/thread/` so the `data`-layer
+coordinator can see it; `reduce` has no Android/UI dependency), **no logging** of any field:
 
 | receiver → event | result | why |
 |---|---|---|
@@ -85,94 +92,131 @@ field-for-field (`modalId`, `modalClass`, `title`, `prompt`, `options: List<Moda
 order, `defaultOptionId`); `Dismissed` mirrors `ModalEvent.Dismissed` (`modalId`, `outcome`, `source`).
 Every field is carried **verbatim** — no parsing, enum-coercion, trimming, or reordering (preserves
 #437's forward-compat posture). It reuses `data.model.ModalOption` (no parallel option type). `Hidden` is
-the initial / resolved-and-cleared state and does double duty as the inert empty-flow default.
+the initial / resolved-and-cleared state and does double duty as the inert default.
+
+`ThreadViewModel` takes the coordinator's already-folded projection as a **defaulted** `val` ctor property
+and re-exposes it with **no wrapping**:
+
+```kotlin
+class ThreadViewModel(
+    …,
+    // #492: the coordinator's process-scoped, reconnection-surviving "current modal" projection,
+    // folded once at the coordinator (no longer per-thread-screen) and re-exposed here verbatim.
+    // Default = a fresh MutableStateFlow(Hidden) so the fake-backed Koin graph + non-modal tests stay inert.
+    val currentModal: StateFlow<ModalUiState> = MutableStateFlow(ModalUiState.Hidden),
+    …,
+)
+```
+
+As a `val` ctor property it **is** the exposed `currentModal` — the VM does not re-derive it. The
+`armedOptionId` / `onModalOption` / `onModalCancel` / `sendAnswer` / `sendCancel` logic reads
+`currentModal` / `currentModal.value` unchanged — a `StateFlow` still satisfies them, which is the
+structural mechanism by which the arm/answer/cancel behaviour (and its tests) stays unchanged.
 
 ## Why `Eagerly`, not `WhileSubscribed`
 
-This is the **load-bearing design call** of the slice — a deliberate deviation from the
-`WhileSubscribed(5_000)` of the sibling signals (`isThinking`, `isStalled`, `connectionState`):
+This is the **load-bearing design call** of the fold — a deliberate deviation from the
+`WhileSubscribed(5_000)` of the sibling signals (`isThinking`, `isStalled`, `connectionState`). Its
+rationale moved verbatim from the VM to the coordinator in #492 (the reasoning is now the coordinator's):
 
 - `scan` **re-emits its initial accumulator on every fresh upstream collection.** Under `WhileSubscribed`,
-  when the screen is gone past the stop timeout the upstream cancels; on return `scan` restarts and emits
+  when collection stops past the timeout the upstream cancels; on resubscription `scan` restarts and emits
   `Hidden`, **overwriting a retained `Open`**. Because the source `modalEvents` is `replay = 0`, the prior
   events do **not** replay to rebuild the accumulator — a still-open modal would silently clear. This is a
   deterministic consequence of `scan` + `replay = 0`, not a speculative guard.
-- `Eagerly` collects for the VM lifetime, so the `scan` accumulator runs **exactly once** and is
-  monotonic; `.value` is always the true current projection. This matches the coordinator's
-  accumulate-a-`replay=0`-stream precedent (`currentRepository` / `connectionStatus`, both `Eagerly`).
-  Cost is negligible — modals are one-at-a-time, user-driven, low-rate.
+- `Eagerly` collects for the **coordinator's process lifetime** (the `scope` is `SupervisorJob() +
+  dispatcher`, created at `createdAtStart` Koin init and cancelled only by `close()`), so the `scan`
+  accumulator runs **exactly once** and is monotonic; `.value` is always the true current projection. This
+  matches the coordinator's own accumulate-a-`replay=0`-stream precedent (`currentRepository` /
+  `connectionStatus`, both `Eagerly`). Cost is negligible — modals are one-at-a-time, user-driven, low-rate.
+  **Collection begins at coordinator construction — before any thread screen — which is precisely why a
+  pre-subscriber `modal_shown` is no longer dropped.**
 - The sibling `isThinking` is safe under `WhileSubscribed` **only because `mapNotNull` never re-emits a
   stale value on resubscription** (a non-matching event produces no emission, so `.value` is retained).
   The same policy is wrong for a `scan` accumulator. Pick the started policy from the operator
   (`scan` accumulates vs `mapNotNull` transitions), not from the sibling.
 
 > **Kotlin gotcha:** `scan`'s accumulator type is inferred from the initial value, so
-> `scan(ModalUiState.Hidden) { … }` infers `R = ModalUiState.Hidden` (the `data object`'s singleton type)
-> and rejects a lambda returning `ModalUiState.Open`. Type it explicitly:
-> `scan<ModalEvent, ModalUiState>(ModalUiState.Hidden)`.
+> `scan(ModalUiState.Hidden) { … }` infers `R = ModalUiState.Hidden` (the singleton type) and rejects a
+> lambda returning `ModalUiState.Open`. Type it explicitly: `scan<ModalEvent, ModalUiState>(ModalUiState.Hidden)`.
 
 ## Why a sibling `StateFlow`, not a `ThreadUiState` field
 
 `currentModal` mirrors `isThinking` / `isStalled` / `connectionState`: a transient, cross-cutting signal
 with a distinct source, taken by the stateless `ThreadScreen` as a **separate** parameter beside `state`.
 Folding it into the `state` `combine` would force a restructure and touch its `initialValue`. The render
-slice **#446** (blocked by this one) consumes it the same way — a separate `(state, currentModal, onEvent)`
-parameter on the stateless screen.
-
-It is **app-level**, not per-conversation: there is **no `conversationId` filter** (contrast
-[`thinkingTransition`](turn-state-thinking-flag.md)'s `conversationId` guard) because modal events carry
-no `conversation_id`. The fold routes on `modalId` only, so a single `currentModal` represents the one
-modal outstanding across the whole app.
+slice **#446** consumes it the same way — a separate `(state, currentModal, onEvent)` parameter on the
+stateless screen. It is **app-level**, not per-conversation: there is **no `conversationId` filter**
+(contrast [`thinkingTransition`](turn-state-thinking-flag.md)'s guard) because modal events carry no
+`conversation_id`.
 
 ## Lifecycle, errors, edge cases
 
-- **Lifecycle** — `stateIn(viewModelScope, Eagerly, Hidden)`; collects for the VM lifetime on the
-  Main-bound `viewModelScope`, cancelled on VM clear. The fold is pure (no dispatcher switch).
+- **Lifecycle** — `stateIn(scope, Eagerly, Hidden)` on the coordinator's **process-lived** scope (not
+  `viewModelScope` any more): collects for the coordinator's lifetime, cancelled only by `close()`. The VM's
+  `currentModal` is just a reference to that one `StateFlow`; no parallel mutable modal state exists. The
+  fold is pure (no dispatcher switch).
 - **Errors** — none. `modalEvents` is a `SharedFlow` that never completes-with-error; malformed envelopes
   are already dropped at the #437 decode boundary, so every event reaching the fold is well-typed and the
   fold is total over the sealed `ModalEvent`. Absence of a live source is the empty flow ⇒ state stays
   `Hidden`. No `catch`, no result type.
-- **Disconnect/reconnect clear (deferred, no AC)** — the coordinator passthrough emits `emptyFlow()` on a
-  null repo but pushes **no "clear" event**, so a stale `Open` can persist across a connection drop. The
-  render slice [#446](permission-modal-overlay.md) did **not** build it either (state-driven overlay only).
-  [#451](modal-answer-flow.md) did not build it either: answering a stale `Open` is rejected server-side
-  (stale `modalId`) and surfaces via #451's error signal, so a proactive stale-clear is a UX nicety, not a
-  correctness requirement (the daemon validation is the deterministic backstop). Deferred to #452 + the
-  connection signal if ever needed.
+- **Connection teardown = RETAIN, not reset (the #492 security-relevant decision).** On a connection drop
+  `activeRemoteRepo` goes `null → emptyFlow()`, so no event flows and the `scan` **holds its last
+  accumulator** — a still-`Open` modal is retained, *not* reset to `Hidden`. This is safe because the answer
+  path is guarded by **deterministic code**, never by this projection: `coordinator.answerModal` /
+  `cancelModal` throw `IllegalStateException` on no active connection (surfaced as a one-shot
+  `modalSendErrors` snackbar), and `modalId`s are unique per instance so a stale answer can't match a fresh
+  modal on a new connection (daemon rejects → `RelayErrorException` → same one-shot error). Belt-and-
+  suspenders with **different fabric**: the projection is UI state, the guard is deterministic code (the
+  [#490](../codebase/490.md) pairing pattern). **Clearing would be worse** — absent a *confirmed* daemon
+  replay-on-reconnect (the replay cursor advances past seen events, so re-raise is not guaranteed), a reset
+  would blank a still-outstanding modal and it would not come back, re-introducing the exact bug #492 fixes.
+  Net effect of a stale `Open` is at worst a cosmetic lingering prompt superseded by the next
+  `Shown`/`Dismissed`. If a future wire signal *guarantees* re-raise-or-dismiss on reconnect, a follow-up
+  could switch to clear-on-teardown (out of scope — don't build for an unobserved failure).
 
 ## Wiring
 
-`AppModule` fetches the seam off the already-registered concrete coordinator singleton at the
-`ThreadViewModel` factory — **no new Koin binding** — mirroring the `liveSessionEvents` arg:
+`AppModule` fetches the **folded projection** off the already-registered concrete coordinator singleton at
+the `ThreadViewModel` factory — **no new Koin binding** — mirroring the `liveSessionEvents` arg:
 
 ```kotlin
 viewModel {
     ThreadViewModel(
         get(), get(), get(), get(),
-        get<RelayRepositoryCoordinator>().liveSessionEvents,
-        get<RelayRepositoryCoordinator>().modalEvents,
+        coordinator.liveSessionEvents,
+        // #492: the process-scoped "current modal" projection, folded once at the coordinator.
+        coordinator.currentModal,
+        answerModal = coordinator::answerModal,
+        cancelModal = coordinator::cancelModal,
+        …,
     )
 }
 ```
 
 In the default debug build (`USE_RELAY_REPOSITORY` OFF, fake repository) no live coordinator event source
-reaches this factory path and the defaulted empty-flow keeps the state inert — `currentModal` honestly
-holds `Hidden` with no live daemon.
+reaches this factory path; the defaulted `MutableStateFlow(Hidden)` keeps the state inert — `currentModal`
+honestly holds `Hidden` with no live daemon.
 
 ## Related
 
-- [#445 implementation notes](../codebase/445.md) — files, line refs, lessons.
+- [#492 implementation notes](../codebase/492.md) — the hoist: files, the layering + teardown decisions,
+  lessons.
+- [#445 implementation notes](../codebase/445.md) — the original projection this hoists (the fold as it
+  first landed inside the ViewModel).
 - [Modal events](modal-events.md) ([#437](../codebase/437.md)) — the decode seam that produces the
   `ModalEvent` stream; this slice realizes its "folding into a current-modal state is the consumer's
-  projection" deferral.
+  projection" deferral (now folded at the coordinator).
+- [Relay repository coordinator](relay-repository-coordinator.md) — owns + publishes the `modalEvents`
+  seam (now private) and the hoisted `currentModal` fold (§ Modal event seam).
 - [Turn-state thinking flag](turn-state-thinking-flag.md) ([#406](../codebase/406.md)) — the `isThinking`
-  projection slice this is the **modal twin** of (same coordinator-passthrough + sibling-`StateFlow`
-  shape); contrast the `scan`/`Eagerly` vs `mapNotNull`/`WhileSubscribed` choice and the app-level vs
-  per-conversation routing.
+  projection this is the **modal twin** of; contrast the `scan`/`Eagerly` vs `mapNotNull`/`WhileSubscribed`
+  choice and the app-level vs per-conversation routing. (`isThinking` remains folded in the VM — it is
+  per-conversation and screen-scoped; the modal projection is app-level, hence the hoist.)
 - [Stall state](stall-state.md) ([#395](../codebase/395.md)) — the other sibling transient signal
   (`isStalled`).
-- [Relay repository coordinator](relay-repository-coordinator.md) — owns + publishes the `modalEvents`
-  passthrough seam (§ Modal event seam).
+- [Guarded repo launch](guarded-repo-launch.md) ([#490](../codebase/490.md)) — the deterministic
+  answer/cancel guard that makes the retain-on-teardown decision safe.
 - [Thread screen](thread-screen.md) — the `ThreadViewModel` host; `currentModal` joins `isThinking` /
   `isStalled` / `connectionState` as a sibling signal the stateless screen takes as a separate parameter.
 - [Permission-modal overlay](permission-modal-overlay.md) ([#446](../codebase/446.md)) — the render slice

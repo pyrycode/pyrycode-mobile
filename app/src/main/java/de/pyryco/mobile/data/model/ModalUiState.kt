@@ -1,7 +1,4 @@
-package de.pyryco.mobile.ui.conversations.thread
-
-import de.pyryco.mobile.data.model.ModalEvent
-import de.pyryco.mobile.data.model.ModalOption
+package de.pyryco.mobile.data.model
 
 /**
  * The hoisted "current modal" projection (#445): which permission/choice modal — if any — is currently

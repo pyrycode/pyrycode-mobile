@@ -126,7 +126,8 @@ val appModule =
                 get(),
                 get(),
                 coordinator.liveSessionEvents,
-                coordinator.modalEvents,
+                // #492: the process-scoped "current modal" projection, folded once at the coordinator.
+                coordinator.currentModal,
                 // #451: bind the outbound modal-send path to the coordinator's passthrough.
                 answerModal = coordinator::answerModal,
                 cancelModal = coordinator::cancelModal,

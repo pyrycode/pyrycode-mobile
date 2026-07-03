@@ -187,7 +187,7 @@ viewModel {
     ThreadViewModel(
         get(), get(), get(), get(),
         coordinator.liveSessionEvents,
-        coordinator.modalEvents,
+        coordinator.currentModal, // #492: the hoisted projection (was coordinator.modalEvents)
         answerModal = coordinator::answerModal,
         cancelModal = coordinator::cancelModal,
     )
@@ -216,8 +216,10 @@ a VM with no modal source no-op via the `as? Open ?: return` guard.
 
 Unit only (`./gradlew testDebugUnitTest --tests "…ThreadViewModelTest"` /
 `"…RelayRepositoryCoordinatorTest"`; bare `test --tests` is rejected — [[gradle-single-test-class-task]]). No
-instrumented test (no UI). `ThreadViewModelTest` drives an `Open` modal via the #445 `vmWithModalEvents` +
-`modalShown(...)` helpers, captures the send path with recording lambdas (`vmWithModalSendPath`), and asserts
+instrumented test (no UI). `ThreadViewModelTest` drives an `Open` modal by setting the injected
+`StateFlow<ModalUiState>`'s `.value` directly (via the `vmWithModal` / `openModal(...)` helpers — renamed in
+[#492](../codebase/492.md) from the pre-hoist `vmWithModalEvents` / `modalShown` that emitted a raw
+`ModalEvent.Shown`), captures the send path with recording lambdas (`vmWithModalSendPath`), and asserts
 `armedOptionId.value` + collects `modalSendErrors` (the `navigationEvents` pattern): default→answer,
 non-default→arm, second-tap→send+clear, re-tap→re-arm, cancel→cancel+clear, failure→error-signal, stale-arm
 scoping, inert-with-no-modal, and the `modalSend_scopeCancellationMidSend_doesNotEmitErrorSignal` regression
@@ -238,7 +240,7 @@ quartet for the passthrough (delegate-over-active-connection + no-connection-thr
 - [Remote conversation repository § `answerModal` / `cancelModal`](remote-conversation-repository.md)
   ([#438](../codebase/438.md)) — the concrete outbound send methods the passthrough delegates to.
 - [Relay repository coordinator § Outbound modal-send passthrough](relay-repository-coordinator.md#outbound-modal-send-passthrough-451)
-  — hosts the passthrough; the outbound mirror of its [§ Modal event seam](relay-repository-coordinator.md#modal-event-seam-445).
+  — hosts the passthrough; the outbound mirror of its [§ Modal event seam](relay-repository-coordinator.md#modal-event-seam-445-and-the-hoisted-currentmodal-fold-492).
 - [Modal events](modal-events.md) ([#437](../codebase/437.md)) — the upstream decode seam.
 - [Thread screen](thread-screen.md) — the `ThreadViewModel` host; `armedOptionId` / `modalSendErrors` join
   `currentModal` / `isThinking` / `isStalled` / `navigationEvents` as VM-exposed signals.
