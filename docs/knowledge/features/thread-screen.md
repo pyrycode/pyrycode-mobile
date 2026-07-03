@@ -159,7 +159,7 @@ class ThreadViewModel(
 
     fun sendMessage(text: String) {
         if (text.isBlank()) return
-        viewModelScope.launch {
+        launchGuardedRepoCall {                           // guarded #490
             repository.sendMessage(state.value.conversationId, text)
         }
     }
@@ -174,7 +174,7 @@ class ThreadViewModel(
 
     fun onWorkspacePicked(path: String) {                  // new in #137
         pendingWorkspacePicker.value = false
-        viewModelScope.launch {
+        launchGuardedRepoCall {                            // guarded #490
             repository.changeWorkspace(conversationId, path)
         }
     }
@@ -632,7 +632,7 @@ WorkspacePicker(
 
 The picker's `ModalBottomSheet` lives in its own window, so source-order placement doesn't affect Z-order — sibling-to-Scaffold mirrors [`ChannelListScreen.kt:180-184`](channel-list-screen.md) exactly (the canonical wiring shape from [#221](../codebase/221.md)). #208 will reuse this exact host call by routing its overflow tap to the same `pendingWorkspacePicker.value = true` flag; no second `WorkspacePicker` invocation needed.
 
-The three VM handlers (`onWorkspaceChipTapped`, `onWorkspacePicked`, `onWorkspacePickerDismissed`) all mirror `ChannelListViewModel`'s picker-trigger handlers. `onWorkspacePicked(path)` clears the flag *then* launches `repository.changeWorkspace(conversationId, path)` on `viewModelScope`; the returned `Session` is discarded — the `Conversation.cwd` update propagates back via the `observeConversations` re-emission to the `combine` arm, and `workspaceLabel` recomputes automatically. `onWorkspacePickerDismissed` clears the flag only — no repository call. See [`WorkspaceChip`](workspace-chip.md) for the full data-flow.
+The three VM handlers (`onWorkspaceChipTapped`, `onWorkspacePicked`, `onWorkspacePickerDismissed`) all mirror `ChannelListViewModel`'s picker-trigger handlers. `onWorkspacePicked(path)` clears the flag *then* launches `repository.changeWorkspace(conversationId, path)` via [`launchGuardedRepoCall`](guarded-repo-launch.md) (guarded since [#490](../codebase/490.md) — `changeWorkspace` is one of the not-yet-wired remote methods that throw `UnsupportedOperationException`, so the guard swallows that plus the not-connected / server-error cases); the returned `Session` is discarded — the `Conversation.cwd` update propagates back via the `observeConversations` re-emission to the `combine` arm, and `workspaceLabel` recomputes automatically. `onWorkspacePickerDismissed` clears the flag only — no repository call. See [`WorkspaceChip`](workspace-chip.md) for the full data-flow.
 
 ### Empty-state branch (post-#138)
 
