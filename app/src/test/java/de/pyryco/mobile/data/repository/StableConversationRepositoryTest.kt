@@ -14,6 +14,7 @@ import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -294,6 +295,40 @@ class StableConversationRepositoryTest {
             runCurrent()
             assertEquals(listOf(emptyList(), backlog, emptyList()), queues)
         }
+
+    // ---- #507: mutationsSupported capability — delegates to the live value, fail-safe-deny false --
+
+    @Test
+    fun mutationsSupported_whileAbsent_isFalse() {
+        val current = MutableStateFlow<ConversationRepository?>(null)
+        val facade = StableConversationRepository(current)
+
+        assertFalse("no connection live → fail-safe-deny false", facade.mutationsSupported)
+    }
+
+    @Test
+    fun mutationsSupported_delegatesToLiveValue_andReReadsAcrossChurn() {
+        // A live repo that inherits the interface default (true), and one that overrides to false
+        // (the relay's shape). The getter must reflect whichever is currently published.
+        val supporting = RecordingConversationRepository()
+        val notSupporting =
+            object : ConversationRepository by RecordingConversationRepository() {
+                override val mutationsSupported: Boolean = false
+            }
+        val current = MutableStateFlow<ConversationRepository?>(null)
+        val facade = StableConversationRepository(current)
+
+        assertFalse("absent → false", facade.mutationsSupported)
+
+        current.value = supporting
+        assertTrue("delegates to a mutation-supporting live repo", facade.mutationsSupported)
+
+        current.value = notSupporting
+        assertFalse("delegates to a non-supporting live repo (relay shape)", facade.mutationsSupported)
+
+        current.value = null
+        assertFalse("getter re-reads .value live → back to false when the connection drops", facade.mutationsSupported)
+    }
 
     // ---- fakes / builders ------------------------------------------------------------------------
 

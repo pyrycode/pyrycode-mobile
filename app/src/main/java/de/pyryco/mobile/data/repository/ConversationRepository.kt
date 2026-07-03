@@ -54,6 +54,18 @@ interface ConversationRepository {
      */
     fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> = flowOf(emptyList())
 
+    /**
+     * Whether this repository can actually perform the conversation-mutation actions
+     * ([archive] / [unarchive] / [rename] / [startNewSession] / [changeWorkspace] / [delete]).
+     * A UI gating consumer reads this to stop offering actions the backend cannot service.
+     *
+     * Default `true` — implementations that support every mutation (the fake, inline test doubles)
+     * inherit "supported" and need no override, the same cascade-avoidance as [observeStall] /
+     * [observeQueue] / [delete]. [RemoteConversationRepository] overrides it to `false` alongside its
+     * throwing mutation methods (relay has no v2 wire message for these mutations yet).
+     */
+    val mutationsSupported: Boolean get() = true
+
     suspend fun createDiscussion(workspace: String? = null): Conversation
 
     suspend fun promote(

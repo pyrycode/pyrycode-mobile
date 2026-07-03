@@ -90,6 +90,40 @@ class ThreadViewModelTest {
             )
         }
 
+    // ---- #507: mutationsSupported capability snapshotted from the repository into ThreadUiState ----
+
+    @Test
+    fun mutationsSupported_fromFakeRepository_isTrueInInitialValueAndCombine() =
+        runTest {
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, FakeConversationRepository())
+            // initialValue path (no collector) — the fake inherits the interface default true.
+            assertTrue(vm.state.value.mutationsSupported)
+            // combine path (after subscription) — the captured snapshot rides the recomputed state.
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertTrue(vm.state.value.mutationsSupported)
+            collector.cancel()
+        }
+
+    @Test
+    fun mutationsSupported_fromNonSupportingRepository_isFalse() =
+        runTest {
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            // A relay-shaped repo: delegates every read to a seeded fake (so the state pipeline still
+            // assembles) but reports mutationsSupported = false, as RemoteConversationRepository does.
+            val repo =
+                object : ConversationRepository by FakeConversationRepository() {
+                    override val mutationsSupported: Boolean = false
+                }
+            val vm = makeVm(handle, repo)
+            assertFalse(vm.state.value.mutationsSupported) // initialValue
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertFalse(vm.state.value.mutationsSupported) // combine
+            collector.cancel()
+        }
+
     @Test
     fun connectionState_initialValue_isConnected() =
         runTest {
