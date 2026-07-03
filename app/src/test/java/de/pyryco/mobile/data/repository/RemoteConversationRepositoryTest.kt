@@ -14,7 +14,11 @@ import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.ReplayCursor
 import de.pyryco.mobile.data.network.ScreenSnapshotPayloadDto
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -745,6 +749,51 @@ class RemoteConversationRepositoryTest {
             runCurrent()
 
             assertTrue(send().exceptionOrNull() is RelayErrorException)
+        }
+
+    // ---- teardown (#488): in-flight requests fail fast when the connection tears down -----------
+
+    // AC #2, #3: a request awaiting in sendAndAwaitReply throws promptly when the collector scope is
+    // cancelled mid-request (teardownActive()'s current.scope.cancel(), the primary trigger) — with
+    // the same IllegalStateException the not-connected path surfaces, deliberately NOT a
+    // CancellationException (which would read as the caller's own scope dying).
+    @Test
+    fun teardown_scopeCancelledMidRequest_awaitingCallerThrowsIllegalState() =
+        runTest {
+            val pump = FakeSessionPump()
+            // A cancellable repo scope on the test scheduler, separate from backgroundScope: cancelling
+            // it simulates current.scope.cancel() without tearing the test itself down.
+            val repoScope = CoroutineScope(coroutineContext + Job())
+            val repo = RemoteConversationRepository(pump, repoScope)
+
+            val send = startSend(repo, "c1", "hi")
+            runCurrent() // caller registers its deferred, pump.send returns true, suspends on await()
+            assertTrue("request should be in-flight", pump.sent.any { it.type == "send_message" })
+
+            repoScope.cancel() // teardownActive()'s current.scope.cancel()
+            runCurrent() // finally → failAllPending → await throws → runCatching captures
+
+            val error = send().exceptionOrNull()
+            assertTrue("expected IllegalStateException, got $error", error is IllegalStateException)
+            assertFalse("must not be a CancellationException", error is CancellationException)
+        }
+
+    // AC #1 ("or pump.inbound completes"): closing the pump's inbound stream ends the collector and
+    // runs the same failAllPending sweep, so the awaiting caller throws IllegalStateException.
+    @Test
+    fun teardown_inboundCompletes_awaitingCallerThrowsIllegalState() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val send = startSend(repo, "c1", "hi")
+            runCurrent()
+            assertTrue("request should be in-flight", pump.sent.any { it.type == "send_message" })
+
+            pump.close() // inbound channel closes → receiveAsFlow completes → collect returns → finally
+            runCurrent()
+
+            assertTrue(send().exceptionOrNull() is IllegalStateException)
         }
 
     // ---- createDiscussion (#347): create_conversation request → conversation_created reply ------
@@ -4194,6 +4243,11 @@ class RemoteConversationRepositoryTest {
 
         fun push(envelope: Envelope) {
             inboundChannel.trySend(envelope)
+        }
+
+        /** Closes the inbound stream so `receiveAsFlow()` completes — simulates session teardown (#488). */
+        fun close() {
+            inboundChannel.close()
         }
     }
 
