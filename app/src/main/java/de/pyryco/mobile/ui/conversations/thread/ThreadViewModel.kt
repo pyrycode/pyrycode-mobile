@@ -101,6 +101,7 @@ data class ThreadUiState(
     val tokenPercent: Int = 0,
     val tokensUsed: Int = 0,
     val tokensTotal: Int = 0,
+    val mutationsSupported: Boolean = true,
 )
 
 data class SaveAsChannelDialogState(
@@ -131,6 +132,12 @@ class ThreadViewModel(
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
+
+    // #507: snapshot the repository's mutation-capability once at construction (the mode is static per
+    // build config — a Koin fake-vs-relay swap, never a runtime toggle). Reading through the facade here
+    // is where its null-connection → false fail-safe-deny takes effect. Captured once so the combine value
+    // and the initialValue can never disagree.
+    private val mutationsSupported: Boolean = repository.mutationsSupported
 
     private val pendingWorkspacePicker = MutableStateFlow(false)
 
@@ -243,6 +250,7 @@ class ThreadViewModel(
                 tokenPercent = STUB_TOKEN_PERCENT,
                 tokensUsed = STUB_TOKENS_USED,
                 tokensTotal = STUB_TOKENS_TOTAL,
+                mutationsSupported = mutationsSupported,
             )
         }.stateIn(
             scope = viewModelScope,
@@ -251,6 +259,7 @@ class ThreadViewModel(
                 ThreadUiState(
                     conversationId = conversationId,
                     displayName = conversationId,
+                    mutationsSupported = mutationsSupported,
                 ),
         )
 

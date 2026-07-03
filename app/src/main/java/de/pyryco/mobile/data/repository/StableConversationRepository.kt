@@ -76,6 +76,16 @@ class StableConversationRepository(
     override fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> =
         switchToLive(emptyList()) { it.observeQueue(conversationId) }
 
+    /**
+     * Delegates the capability to the live repository's value, reporting `false` when no connection is
+     * live (fail-safe-deny — the safe answer for a gating consumer is "hide the actions"). This is the
+     * plain-`Boolean` analog of [observeStall]'s `switchToLive(false)`: a getter that re-reads
+     * [currentRepository] `.value` on every access, like [live], so a connection landing after facade
+     * construction is reflected — never a construction-time snapshot.
+     */
+    override val mutationsSupported: Boolean
+        get() = currentRepository.value?.mutationsSupported ?: false
+
     override fun recentWorkspaces(): Flow<List<String>> = switchToLive(emptyList()) { it.recentWorkspaces() }
 
     override suspend fun createDiscussion(workspace: String?): Conversation = live.createDiscussion(workspace)

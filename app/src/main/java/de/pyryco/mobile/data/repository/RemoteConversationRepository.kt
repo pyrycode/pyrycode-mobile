@@ -1368,6 +1368,9 @@ class RemoteConversationRepository(
         optionId: String,
     ): String = "${modalId.length}:$modalId:$optionId"
 
+    /** `false`: the relay has no v2 wire message for the throwing mutation methods below yet (#507). */
+    override val mutationsSupported: Boolean = false
+
     override suspend fun archive(conversationId: String): Unit =
         throw UnsupportedOperationException("archive: no v2 wire message defined (follow-up specs the wire contract)")
 

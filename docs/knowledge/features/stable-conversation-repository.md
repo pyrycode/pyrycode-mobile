@@ -51,13 +51,14 @@ class StableConversationRepository(
 ) : ConversationRepository
 ```
 
-It overrides **all 16** interface members — the 5 stream-shaped reads (`observeConversations`,
-`observeMessages`, `observeLastMessage`, `observeStall` (#395), **and** `recentWorkspaces`) and the 11
+It overrides **all** interface members — the 5 stream-shaped reads (`observeConversations`,
+`observeMessages`, `observeLastMessage`, `observeStall` (#395), **and** `recentWorkspaces`), the 11
 suspend one-shots (`createDiscussion`, `promote`, `archive`, `unarchive`, `delete`, `rename`,
-`startNewSession`, `changeWorkspace`, `sendMessage`, `createWorkspaceFolder`, `requestScreenSnapshot`) —
-including the five that ship a default body on the interface (`recentWorkspaces`, `createWorkspaceFolder`,
-`delete`, `requestScreenSnapshot`; #375, **and** `observeStall`; #395), so delegation is faithful and
-nothing silently falls back to a default.
+`startNewSession`, `changeWorkspace`, `sendMessage`, `createWorkspaceFolder`, `requestScreenSnapshot`),
+**and** the one capability property `mutationsSupported` (#507) — including every member that ships a
+default body on the interface (`recentWorkspaces`, `createWorkspaceFolder`, `delete`,
+`requestScreenSnapshot`; #375, `observeStall`; #395, **and** `mutationsSupported`; #507), so delegation is
+faithful and nothing silently falls back to a default.
 
 ## How it works
 
@@ -111,6 +112,31 @@ a throwing stub (`archive`/`unarchive`/`rename`/`startNewSession`/`changeWorkspa
 `UnsupportedOperationException` on the remote repo), and a wired error (`RelayErrorException`,
 `IllegalArgumentException`) all propagate **verbatim** — the facade adds, suppresses, and translates
 nothing.
+
+### Capability reads — answer `false`, never throw (`mutationsSupported`, #507)
+
+`mutationsSupported` is a third delegation posture, distinct from both the cold-read empty projection and
+the one-shot throw:
+
+```kotlin
+override val mutationsSupported: Boolean
+    get() = currentRepository.value?.mutationsSupported ?: false
+```
+
+A capability query must **always** return an answer — so, unlike the one-shots, it does **not** throw
+`IllegalStateException` when no connection is live; it answers **fail-safe-deny `false`** (a gating consumer
+should hide the impossible mutation actions rather than offer them). The `?: false` on the `.value` read is
+the plain-`Boolean` analog of `observeStall`'s `switchToLive(false)` — the same *conceptual* "no connection
+reports capability off" model, but `switchToLive` is `Flow`-typed and can't be reused for a scalar.
+
+**It is a getter, not an initializer** — deliberately, for the same reason as [`live`](#one-shots--snapshot-or-throw):
+the facade is a process-lifetime singleton constructed while `currentRepository.value` is `null`, so an
+`override val mutationsSupported = currentRepository.value?.mutationsSupported ?: false` initializer would
+latch `false` **forever** and never reflect a relay that connects later. The getter re-reads `.value` on
+every access — the churn-back-to-`null` test proves it re-reads rather than snapshotting. Note the sole
+consumer today, [`ThreadViewModel`](thread-screen.md), reads it **once at construction** (the mode is static
+per build config), so a connection landing after the VM is built won't flip the captured snapshot — an
+accepted, documented limitation, not this facade's concern. See [`../codebase/507.md`](../codebase/507.md).
 
 ### The not-connected contract
 
@@ -217,4 +243,6 @@ pass-through. The eight tests map to the ACs, the key one being
 - Delegated observable: [Stall state](stall-state.md) ([#395](../codebase/395.md)) — the `observeStall`
   read this facade forwards with `whenAbsent = false`, the reachability path that lets the thread
   ViewModel observe the live repo's stall state through this facade.
+- Delegated capability: `mutationsSupported` ([#507](../codebase/507.md)) — the fail-safe-deny `false`
+  delegation (the third not-connected posture: answer, don't throw); consumed by no composable yet (#508).
 - DI: [Dependency injection](dependency-injection.md).

@@ -1165,6 +1165,13 @@ defaults (error / empty flow per the [contract](conversation-repository.md)) and
 this implementation's surface. All three read paths are now **cold flows that defer work to collection**
 (the eager expression-body `throw` shape #312's NIT flagged is gone with the last read stub).
 
+Because those mutations throw, this repo advertises the capability off:
+`override val mutationsSupported: Boolean = false` (#507), placed immediately above the throwing overrides so
+the one capability claim stays adjacent to the exact methods it describes. A class **has** a backing field,
+so an initializer is fine here (unlike the [interface](conversation-repository.md), whose default must be a
+`get()`). A UI gating consumer reads it (through the [facade](stable-conversation-repository.md)) to hide
+these actions rather than let a user invoke a method that throws. See [`../codebase/507.md`](../codebase/507.md).
+
 ## State & concurrency model
 
 - **Five `StateFlow` projections — `projection` (the conversation list, #312), `lastMessages` (#329's
