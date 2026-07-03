@@ -6,11 +6,13 @@ import androidx.datastore.preferences.core.Preferences
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Session
+import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.conversations.ThrowingConversationRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -471,6 +473,73 @@ class ChannelListViewModelTest {
             val beforeIds = before.map(Conversation::id).toSet()
             val created = (after - before.toSet()).single { it.id !in beforeIds }
             assertEquals("~/projects/user-pick", created.cwd)
+        }
+
+    // ---- #490: one-shot repository-call guard (launchGuardedRepoCall) --------------------------
+
+    @Test
+    fun createDiscussionPaths_whenCreateThrowsEachHandledType_areSwallowedWithoutCrashing() =
+        runTest(dispatcher) {
+            // AC #2/#3: both create-discussion launches (CreateDiscussionTapped, WorkspacePicked) swallow the
+            // three relay failure types. A throw escaping the launched coroutine reaches the default handler,
+            // not runTest (viewModelScope is a separate SupervisorJob), so capture uncaught throws and assert
+            // none fired — the only proof the typed catch ran.
+            val uncaught = mutableListOf<Throwable>()
+            val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
+            try {
+                val failures =
+                    listOf<Throwable>(
+                        IllegalStateException("not connected"),
+                        RelayErrorException(code = "server.error", retryable = false, message = "no"),
+                        UnsupportedOperationException("not wired"),
+                    )
+                // One shared DataStore across iterations — newDataStore() reuses a fixed filename, so a
+                // per-iteration prefs would collide on tmp.newFile.
+                val prefs = AppPreferences(newDataStore())
+                for (failure in failures) {
+                    val vm = makeVm(ThrowingConversationRepository(failure), prefs)
+                    advanceUntilIdle()
+
+                    vm.onEvent(ChannelListEvent.CreateDiscussionTapped)
+                    vm.onEvent(ChannelListEvent.WorkspacePicked("pyry-workspace/app"))
+                    advanceUntilIdle()
+                }
+                assertTrue("create-discussion failures must be swallowed, not propagated: $uncaught", uncaught.isEmpty())
+            } finally {
+                Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+            }
+        }
+
+    @Test
+    fun createDiscussionPaths_whenCreateThrows_doNotNavigateToThread() =
+        runTest(dispatcher) {
+            // AC #4: the follow-on navigationChannel.send(ToThread) sits inside the guarded block, after the
+            // repo call, so a throwing createDiscussion jumps to the catch and no navigation fires.
+            val uncaught = mutableListOf<Throwable>()
+            val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
+            try {
+                val vm =
+                    makeVm(
+                        ThrowingConversationRepository(
+                            RelayErrorException(code = "server.error", retryable = false, message = "no"),
+                        ),
+                    )
+                val nav = mutableListOf<ChannelListNavigation>()
+                val navCollector = launch { vm.navigationEvents.collect { nav += it } }
+                advanceUntilIdle()
+
+                vm.onEvent(ChannelListEvent.CreateDiscussionTapped)
+                vm.onEvent(ChannelListEvent.WorkspacePicked("pyry-workspace/app"))
+                advanceUntilIdle()
+
+                assertTrue("a failed create must not navigate to a thread: $nav", nav.isEmpty())
+                assertTrue("create failures must be swallowed: $uncaught", uncaught.isEmpty())
+                navCollector.cancel()
+            } finally {
+                Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+            }
         }
 
     // --- helpers ---

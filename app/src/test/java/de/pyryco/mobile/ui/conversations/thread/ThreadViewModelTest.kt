@@ -25,6 +25,7 @@ import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.conversations.ThrowingConversationRepository
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -905,6 +906,105 @@ class ThreadViewModelTest {
             store.clear() // cancels viewModelScope → the awaiting drop throws CancellationException
             advanceUntilIdle()
             // No crash, no leaked exception: structured cancellation preserved.
+        }
+
+    // ---- #490: one-shot repository-call guard (launchGuardedRepoCall) --------------------------
+
+    @Test
+    fun guardedRepoCalls_whenRepositoryThrowsEachHandledType_areSwallowedWithoutCrashing() =
+        runTest {
+            // AC #2/#3: every one-shot repo launch in this VM (sendMessage, onWorkspacePicked, and the
+            // Archive / DeleteConfirm / RenameSubmit / SaveAsChannelSubmit overflow arms) swallows the three
+            // relay failure types. A throw escaping the launched coroutine reaches the default handler (not
+            // runTest — viewModelScope is a separate SupervisorJob), so capture uncaught throws and assert
+            // none fired: the only proof the typed catch ran. Mirrors onDropQueued_whenDropFailsInert.
+            val uncaught = mutableListOf<Throwable>()
+            val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
+            try {
+                val failures =
+                    listOf<Throwable>(
+                        IllegalStateException("not connected"),
+                        RelayErrorException(code = "server.error", retryable = false, message = "no"),
+                        UnsupportedOperationException("not wired"),
+                    )
+                for (failure in failures) {
+                    val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+                    val vm = makeVm(handle, ThrowingConversationRepository(failure))
+                    advanceUntilIdle()
+
+                    vm.sendMessage("hi")
+                    vm.onWorkspacePicked("pyry-workspace/app")
+                    vm.onOverflowEvent(ThreadEvent.Archive)
+                    vm.onOverflowEvent(ThreadEvent.DeleteConfirm)
+                    vm.onOverflowEvent(ThreadEvent.RenameSubmit("new name"))
+                    vm.onOverflowEvent(ThreadEvent.SaveAsChannelSubmit("chan", WorkspaceChoice.SCRATCH))
+                    advanceUntilIdle()
+                }
+                assertTrue("guarded repo-call failures must be swallowed, not propagated: $uncaught", uncaught.isEmpty())
+            } finally {
+                Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+            }
+        }
+
+    @Test
+    fun guardedRepoCalls_whenArchiveOrDeleteThrows_doNotPopBack() =
+        runTest {
+            // AC #4: the follow-on navigationChannel.send(PopBack) sits inside the guarded block, after the
+            // repo call, so a throwing archive/delete jumps to the catch and the pop-back is skipped. Also
+            // assert no uncaught throw escaped — the failure is quiet, not a crash.
+            val uncaught = mutableListOf<Throwable>()
+            val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
+            try {
+                val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+                val vm =
+                    makeVm(
+                        handle,
+                        ThrowingConversationRepository(
+                            RelayErrorException(code = "server.error", retryable = false, message = "no"),
+                        ),
+                    )
+                val nav = mutableListOf<ThreadNavigation>()
+                val navCollector = launch { vm.navigationEvents.collect { nav += it } }
+                advanceUntilIdle()
+
+                vm.onOverflowEvent(ThreadEvent.Archive)
+                vm.onOverflowEvent(ThreadEvent.DeleteConfirm)
+                advanceUntilIdle()
+
+                assertTrue("a failed archive/delete must not pop back: $nav", nav.isEmpty())
+                assertTrue("archive/delete failures must be swallowed: $uncaught", uncaught.isEmpty())
+                navCollector.cancel()
+            } finally {
+                Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+            }
+        }
+
+    @Test
+    fun guardedRepoCall_scopeCancellationMidCall_propagatesCancellationInert() =
+        runTest {
+            // AC #3 (the guard is shared, so one path proves the ordering for all): `catch
+            // (CancellationException) { throw e }` MUST precede the typed `catch (IllegalStateException)` —
+            // j.u.c.CancellationException extends ISE on the JVM (the #451 rework). An archive suspends
+            // mid-call; viewModelScope teardown must neither crash nor let the PopBack side effect fire.
+            val gate = CompletableDeferred<Unit>() // never completes — the archive stays suspended in-flight
+            val entered = CompletableDeferred<Unit>()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, GatingArchiveRepo(gate = gate, entered = entered))
+            val nav = mutableListOf<ThreadNavigation>()
+            val navCollector = launch { vm.navigationEvents.collect { nav += it } }
+            val store = ViewModelStore().apply { put("vm", vm) }
+
+            vm.onOverflowEvent(ThreadEvent.Archive)
+            advanceUntilIdle()
+            assertTrue("the archive must be in-flight", entered.isCompleted)
+
+            store.clear() // cancels viewModelScope → the awaiting archive throws CancellationException
+            advanceUntilIdle()
+            // No crash, no leaked exception (runTest fails otherwise), and the guarded side effect is skipped.
+            assertTrue("cancellation must skip the PopBack side effect: $nav", nav.isEmpty())
+            navCollector.cancel()
         }
 
     // ---- #396: isStalled projection over repository.observeStall ------------------------------
@@ -2425,6 +2525,22 @@ class ThreadViewModelTest {
         ) {
             dropCalls += conversationId to queuedMessageId
             onDrop()
+        }
+    }
+
+    /**
+     * Delegates the whole [ConversationRepository] surface to a seeded [FakeConversationRepository] and
+     * overrides only [archive] to signal [entered] then suspend on a never-completing [gate] — so a test
+     * can cancel viewModelScope while a guarded one-shot repo call is in-flight (#490 AC #3).
+     */
+    private class GatingArchiveRepo(
+        private val gate: CompletableDeferred<Unit>,
+        private val entered: CompletableDeferred<Unit>,
+        private val delegate: FakeConversationRepository = FakeConversationRepository(),
+    ) : ConversationRepository by delegate {
+        override suspend fun archive(conversationId: String) {
+            entered.complete(Unit)
+            gate.await()
         }
     }
 
