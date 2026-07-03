@@ -278,6 +278,65 @@ class RelayConnectionSupervisorTest {
             supervisor.close()
         }
 
+    // ---- #489 AC 2: each dial re-reads the store, so a re-pair switches the dialed server ---------
+
+    @Test
+    fun reloadPerDial_reReadsStore_soRepairSwitchesServer() =
+        runTest {
+            val factory = FakeRelayTransportFactory()
+            val supervisor =
+                RelayConnectionSupervisor(
+                    transportFactory = factory,
+                    // A returns first, then B after the re-pair — the loop must pick up B on redial.
+                    pairedServerStore = ScriptedPairedServerStore(listOf(PAIRED, PAIRED_B)),
+                    dispatcher = StandardTestDispatcher(testScheduler),
+                    random = Random(SEED),
+                )
+
+            supervisor.connect()
+            runCurrent()
+            assertEquals(PAIRED, factory.createdWith[0]) // dial 0 targets the originally-paired server
+
+            factory.created[0].emitUp()
+            runCurrent()
+            factory.created[0].emitDown()
+            runCurrent()
+            advanceUntilIdle() // backoff elapses -> redial re-reads the store, now returning B
+
+            assertEquals(2, factory.createdWith.size)
+            assertEquals(PAIRED_B, factory.createdWith[1]) // dial 1 targets the newly-paired server
+
+            supervisor.close()
+        }
+
+    // ---- #489 AC 3: a later-iteration null read idles at Connected without dialing ----------------
+
+    @Test
+    fun reloadPerDial_laterNullRead_idlesAtConnectedWithoutDialing() =
+        runTest {
+            val factory = FakeRelayTransportFactory()
+            val supervisor =
+                RelayConnectionSupervisor(
+                    transportFactory = factory,
+                    // Paired on the first dial, then unpaired (or an undecryptable read) on the second.
+                    pairedServerStore = ScriptedPairedServerStore(listOf(PAIRED, null)),
+                    dispatcher = StandardTestDispatcher(testScheduler),
+                    random = Random(SEED),
+                )
+
+            supervisor.connect()
+            runCurrent()
+            factory.created[0].emitDown()
+            runCurrent()
+            advanceUntilIdle() // backoff elapses -> redial reads null -> idle at Connected, loop ends
+
+            assertEquals(ConnectionState.Connected, supervisor.state())
+            assertEquals(1, factory.created.size) // no second dial
+            assertNull(supervisor.currentConnection.value)
+
+            supervisor.close()
+        }
+
     // ---- AC 4: close() tears down the live transport and stops the loop --------------------------
 
     @Test
@@ -495,6 +554,15 @@ class RelayConnectionSupervisorTest {
                 relayUrl = "ws://localhost/relay",
                 serverStaticPublicKey = "key",
             )
+
+        // A distinct second server, so a re-pair test can assert the next dial switched targets.
+        val PAIRED_B =
+            PairedServer(
+                serverId = "srv-2",
+                token = "tok-2",
+                relayUrl = "ws://localhost/relay-2",
+                serverStaticPublicKey = "key-2",
+            )
     }
 }
 
@@ -538,13 +606,32 @@ private class FakeRelayTransport : RelayTransport {
 private class FakeRelayTransportFactory : RelayTransportFactory {
     val created = mutableListOf<FakeRelayTransport>()
 
-    override fun create(pairedServer: PairedServer): RelayTransport = FakeRelayTransport().also { created += it }
+    // The PairedServer each dial targeted, so a test can assert which server dial N read from the store.
+    val createdWith = mutableListOf<PairedServer>()
+
+    override fun create(pairedServer: PairedServer): RelayTransport =
+        FakeRelayTransport().also {
+            created += it
+            createdWith += pairedServer
+        }
 }
 
 private class StubPairedServerStore(
     private val paired: PairedServer?,
 ) : PairedServerStore {
     override suspend fun load(): PairedServer? = paired
+
+    override suspend fun save(record: PairedServer) = error("save is not exercised by the supervisor")
+}
+
+/** Returns [records] in order across successive [load] calls, clamping to the last once exhausted —
+ *  so a test can script the paired record changing (or vanishing) between dials. */
+private class ScriptedPairedServerStore(
+    private val records: List<PairedServer?>,
+) : PairedServerStore {
+    private var index = 0
+
+    override suspend fun load(): PairedServer? = records[minOf(index++, records.lastIndex)]
 
     override suspend fun save(record: PairedServer) = error("save is not exercised by the supervisor")
 }

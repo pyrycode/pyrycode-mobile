@@ -24,7 +24,8 @@ immediately. Instead:
    verbatim (monospace, selectable/copyable, content-described) with copy telling the user to compare it
    against their other device, plus Confirm and Decline buttons.
 4. **Confirm** → the route-scope `confirmPairAndNavigate(state.server)` saves and navigates to the
-   channel list. **This is the only `save` on the scan path.**
+   channel list (since [#489](../codebase/489.md) it also starts the relay connection between the save
+   and the navigate — `save → connect → navigate`). **This is the only `save` on the scan path.**
 5. **Decline / system Back** → `ScannerEvent.DeclinePairing` → `ReadyToScan` — persists nothing and
    re-arms the scanner.
 

@@ -123,15 +123,17 @@ class RelayConnectionSupervisor(
     }
 
     private suspend fun CoroutineScope.runLoop() {
-        val paired = pairedServerStore.load()
-        if (paired == null) {
-            // Benign-unpaired: no dial, stay Connected so the banner stays hidden (AC 3).
-            state.value = RelayLinkStatus.Connected
-            return
-        }
-
         var attempt = 0 // consecutive failures since the last ≥60 s-stable connection
         while (isActive) {
+            // Re-read the paired record every dial (#489): a re-pair to another server is picked up on
+            // the next dial rather than dialing the record captured once at loop start. A null read
+            // (unpaired, or an undecryptable record) idles at Connected so the banner stays hidden and
+            // ends the loop — a later connect()/retry() starts a fresh loop that re-reads the store.
+            val paired = pairedServerStore.load()
+            if (paired == null) {
+                state.value = RelayLinkStatus.Connected
+                return
+            }
             state.value = RelayLinkStatus.Connecting
             val transport = transportFactory.create(paired)
             var sawUp = false

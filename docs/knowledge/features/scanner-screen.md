@@ -7,7 +7,7 @@ QR-pairing screen — visually a "premium developer-tool" scanning moment (Figma
 - Requests the `CAMERA` runtime permission **on entry** (#326). Granted → the locked viewport with a live camera; denied → the existing [Scanner Denied screen](scanner-denied-screen.md) (#61), rendered in-route (no new route). On camera-bind failure the `ScannerErrorContent` recovery surface renders the `Error` state — whose live producer is now the [Camera preview](camera-preview.md) (#334).
 - In the granted (`ReadyToScan`) state, renders a 412×892 dark-surface pairing screen with a M3 top app bar (`"Pair with pyrycode"` + back-arrow), a full-height rounded camera-viewport panel showing the **live back-camera feed**, and a `"Trouble scanning? Paste the pairing code instead"` `TextButton` below.
 - The viewport stacks (back-to-front): the **live CameraX preview** (`ReadyToScan` only; the [Camera preview](camera-preview.md) composable injected through a slot), then dual radial gradients (cool-blue at 30% w / 40% h, soft-coral at 70% w / 70% h) painted in a `matchParentSize` overlay child, a 1-px-every-7-dp horizontal atmospheric stripe overlay drawn in a single `Canvas`, a 248dp four-corner reticle with a glowing horizontal scan line through its middle, and a translucent hint card pinned to the viewport's bottom that reads `Run pyry pair on your pyrycode server to generate a QR code.` (the `pyry pair` token in `FontFamily.Monospace` + `colorScheme.tertiary` coral). The `Box`'s `surfaceContainerLowest` background is now a fallback fill behind the camera. **The atmosphere/reticle/hint overlay is pixel-identical to the locked #60/#121 design — #334 changed no overlay pixels, only what fills the dark region behind it.**
-- A **decoded QR** (not a tap) drives pairing: the analyzer's once-per-scan callback → `QrDecoded` → `Decoded`, which the route reacts to (`LaunchedEffect(state)`) by running `parsePairingPayload(payload)` (#320 — the [Pairing payload parser](pairing-payload-parser.md)). **Since #343, on `Success` it does not persist** — it derives the fingerprint (`serverKeyFingerprint`, #342) and fires `ScannerEvent.PairingPrepared(fp, server)` → `AwaitingConfirm`, which renders the confirm surface. The **only** scan-path `PairedServerStore.save(...)` runs behind the Confirm button (`confirmPairAndNavigate`), then navigates to `channel_list` with the scanner popped from the back stack. A parse failure (or the structurally-unreachable derive-`null`) fires `PairingFailed(msg)` → `Error`; a `PairedServerStoreException` on the confirm save likewise → `Error`. Decline / system Back → `DeclinePairing` → `ReadyToScan` (nothing persisted). **The decoded payload IS read** (the stub write moved off this path — `STUB_PAIRED_SERVER` now only backs the out-of-scope paste fallback).
+- A **decoded QR** (not a tap) drives pairing: the analyzer's once-per-scan callback → `QrDecoded` → `Decoded`, which the route reacts to (`LaunchedEffect(state)`) by running `parsePairingPayload(payload)` (#320 — the [Pairing payload parser](pairing-payload-parser.md)). **Since #343, on `Success` it does not persist** — it derives the fingerprint (`serverKeyFingerprint`, #342) and fires `ScannerEvent.PairingPrepared(fp, server)` → `AwaitingConfirm`, which renders the confirm surface. The **only** scan-path `PairedServerStore.save(...)` runs behind the Confirm button (`confirmPairAndNavigate`), which — since #489 — delegates to the Android-free `confirmPairingAndConnect` (`save → connect → navigate`), so a **successful** persist also starts the relay supervision loop immediately (no background→foreground cycle) before navigating to `channel_list` with the scanner popped from the back stack. A parse failure (or the structurally-unreachable derive-`null`) fires `PairingFailed(msg)` → `Error`; a `PairedServerStoreException` on the confirm save likewise → `Error`. Decline / system Back → `DeclinePairing` → `ReadyToScan` (nothing persisted). **The decoded payload IS read** (the stub write moved off this path — `STUB_PAIRED_SERVER` now only backs the out-of-scope paste fallback).
 - The back-arrow `IconButton` now **pops** (`popBackStack` → Welcome); the "Trouble scanning?" `TextButton` runs the **stub-pair** as a manual paste fallback (a real paste-input flow is a separate ticket; only the scanned `Decoded` path parses). The whole-surface tap-to-pair from #326 is **removed** (AC3) — pairing requires a real QR in frame.
 
 ## How it works
@@ -105,20 +105,27 @@ composable(Routes.SCANNER) {
     }
 
     // #343: the ONLY scan-path persist — runs solely behind the Confirm button, after the user has
-    // compared the fingerprint. Mirrors stubPairAndNavigate's try/save/navigate/catch shape; reuses
-    // the lifecycle-scoped `scope`. A store failure routes to Error so nothing half-persists.
+    // compared the fingerprint; reuses the lifecycle-scoped `scope`. #489: delegates to the Android-free
+    // confirmPairingAndConnect free function, which orders save → connect → navigate — so a SUCCESSFUL
+    // persist also starts the relay loop immediately (no background→foreground cycle). A store failure
+    // routes to Error so nothing half-persists, and connect() never fires on a failed persist.
     val confirmPairAndNavigate: (PairedServer) -> Unit = { server ->
         scope.launch {
-            try {
-                pairedServerStore.save(server)
-                navController.navigate(Routes.CHANNEL_LIST) {
-                    popUpTo(Routes.SCANNER) { inclusive = true }
-                    launchSingleTop = true
-                }
-            } catch (e: PairedServerStoreException) {
-                Log.w(TAG, "paired-server save failed: ${e.javaClass.simpleName}")
-                vm.onEvent(ScannerEvent.PairingFailed(SAVE_FAILED_MSG))
-            }
+            confirmPairingAndConnect(
+                server = server,
+                store = pairedServerStore,
+                controller = connectionController,           // koinInject<RelayConnectionController>() (#489)
+                onPersisted = {
+                    navController.navigate(Routes.CHANNEL_LIST) {
+                        popUpTo(Routes.SCANNER) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                },
+                onFailed = { e ->
+                    Log.w(TAG, "paired-server save failed: ${e.javaClass.simpleName}")
+                    vm.onEvent(ScannerEvent.PairingFailed(SAVE_FAILED_MSG))
+                },
+            )
         }
     }
 
@@ -180,7 +187,7 @@ Notes:
 
 - **Route owns the VM + the permission API + the camera; the screen is stateless.** `koinViewModel<ScannerViewModel>()` + `collectAsStateWithLifecycle()`, consistent with every other destination. The runtime permission launcher, `checkSelfPermission`, and the live [Camera preview](camera-preview.md) all live here — the VM stays Android-free (and unit-testable), and the camera feeds it only through `onEvent(QrDecoded | CameraError)`. The #295-era "destination-block-scoped Koin + `rememberCoroutineScope`" stub pattern is retained *for the persist side-effect only*; the screen's state now comes from the VM.
 - **The camera slot is gated on `ReadyToScan`.** Binding only in that state means `PermissionRequesting` (behind the system dialog) and `Decoded` (handing off) render the viewport with an empty slot — no camera bound when there shouldn't be one.
-- **Decode drives pairing via `LaunchedEffect(state)`; the persist is gated (#343).** The terminal `Decoded` state runs `parsePairingPayload` (#320 — the [Pairing payload parser](pairing-payload-parser.md)) and, on `Success`, derives the fingerprint (`serverKeyFingerprint`) and fires `PairingPrepared → AwaitingConfirm` — **this effect never persists**. The save moved to `confirmPairAndNavigate`, the route-scope lambda wired to `onConfirmPairing` and gated by the Confirm button; `popUpTo(SCANNER){inclusive=true}` on the navigate removes the destination so nothing re-fires. A parse/derive failure routes through `ScannerEvent.PairingFailed → Error` (state flips off `Decoded`, so the keyed effect re-runs as a no-op). The orchestration stays in the composable — the VM remains a pure synchronous state machine, so the parse+derive sit at the call site and the suspend save stays a callback rather than splitting into the VM. See the [Pairing confirm gate](pairing-confirm-gate.md). (`stubPairAndNavigate` survives only for the out-of-scope `onPasteCode` fallback — still ungated.)
+- **Decode drives pairing via `LaunchedEffect(state)`; the persist is gated (#343).** The terminal `Decoded` state runs `parsePairingPayload` (#320 — the [Pairing payload parser](pairing-payload-parser.md)) and, on `Success`, derives the fingerprint (`serverKeyFingerprint`) and fires `PairingPrepared → AwaitingConfirm` — **this effect never persists**. The save moved to `confirmPairAndNavigate`, the route-scope lambda wired to `onConfirmPairing` and gated by the Confirm button; since #489 it delegates to the Android-free `confirmPairingAndConnect` free function (`save → connect → navigate`), which starts the relay loop on a **successful** persist — `connect()` runs **before** the navigate callback so the loop (on the supervisor's own scope) is launched even as the navigate pops the Scanner and cancels this composable's scope. `popUpTo(SCANNER){inclusive=true}` on the navigate removes the destination so nothing re-fires. A parse/derive failure routes through `ScannerEvent.PairingFailed → Error` (state flips off `Decoded`, so the keyed effect re-runs as a no-op). The orchestration stays in the composable — the VM remains a pure synchronous state machine, so the parse+derive sit at the call site and the suspend save stays a callback rather than splitting into the VM. See the [Pairing confirm gate](pairing-confirm-gate.md). (`stubPairAndNavigate` survives only for the out-of-scope `onPasteCode` fallback — still ungated.)
 - **Back arrow pops to Welcome.** `onNavigateBack = { navController.popBackStack() }` — Welcome is the only entry to `SCANNER`, matching the `AboutScreen` back pattern. (#334 replaced #326's back-arrow-fires-`onTap` stub.)
 - **`stubPairAndNavigate` is annotated `: () -> Unit`.** A `val` lambda whose last expression is `scope.launch { … }` infers `() -> Job` and won't satisfy a `() -> Unit` parameter — the explicit annotation coerces it. (Lesson from #326; see [`codebase/326.md`](../codebase/326.md).)
 - **`scope.launch { save(record); navigate(...) }` is sequential.** Awaiting the DataStore write before navigating matters because the start-destination gate reads it (`PairedServerStore.load()`, #295) — fire-and-forget would race the next composition. The `PairedServerStoreException` catch (added in #295) is preserved; the failure stays a `Log.w` + stay-put, **not** routed through the VM `Error` state.
@@ -220,7 +227,7 @@ Notes:
 
 - Issues: https://github.com/pyrycode/pyrycode-mobile/issues/12 (stub), https://github.com/pyrycode/pyrycode-mobile/issues/60 (Figma polish), https://github.com/pyrycode/pyrycode-mobile/issues/326 (stateful + permission flow), https://github.com/pyrycode/pyrycode-mobile/issues/333 (decode core), https://github.com/pyrycode/pyrycode-mobile/issues/334 (live CameraX preview), https://github.com/pyrycode/pyrycode-mobile/issues/320 (parse → real `PairedServer` + persist), https://github.com/pyrycode/pyrycode-mobile/issues/343 (fingerprint confirm gate)
 - Specs: `docs/specs/architecture/12-stub-scanner-screen.md`, `docs/specs/architecture/60-scanner-screen-figma-polish.md`, `docs/specs/architecture/326-stateful-scanner-permission-flow.md`, `docs/specs/architecture/333-mlkit-qr-decode-pipeline.md`, `docs/specs/architecture/334-camerax-live-preview-scanner.md`, `docs/specs/architecture/320-qr-payload-parse-persist.md`, `docs/specs/architecture/343-pairing-fingerprint-confirm-gate.md`
-- Ticket notes: `../codebase/12.md`, `../codebase/60.md`, `../codebase/326.md`, `../codebase/333.md`, `../codebase/334.md`, `../codebase/320.md`, `../codebase/343.md`
+- Ticket notes: `../codebase/12.md`, `../codebase/60.md`, `../codebase/326.md`, `../codebase/333.md`, `../codebase/334.md`, `../codebase/320.md`, `../codebase/343.md`, [`../codebase/489.md`](../codebase/489.md) (connect-on-pairing via `confirmPairingAndConnect`)
 - Figma node: `13:2` (no confirm-pairing surface drawn — `AwaitingConfirm` is design-later)
 - Upstream: #8 (NavHost), #295 (stub-pair persist + start-destination gate this screen preserves — the stub now backs only the paste fallback), #60/#121 (locked viewport visual reused verbatim), #61 (denied screen reused as the `Denied` state), #326 (stateful + permission), #333 (decode core), #320 (parse the `Decoded` payload → real `PairedServer`; the `PairingFailed → Error` route), #342 (`staticKeyFingerprint`, derived in the rewired `Decoded` effect), #343 (the confirm gate — `AwaitingConfirm` state, `PairingConfirmContent`, the gated persist)
 - Downstream: the failed-pair → re-scan loop is **landed** in #343 (Decline / Back → `ReadyToScan`); the still-ungated paste path is the only remaining pairing-flow gap (a future real-paste ticket routes paste through the same confirm gate)

@@ -60,6 +60,15 @@ supervisor gains the interface in its header and `override` on its two existing 
 > supervisor with the #307 fakes + the `runCurrent`/`advanceTimeBy` clock dance. Matches the project's
 > fakes-over-MockK idiom.
 
+> **Since [#489](../codebase/489.md): the Scanner is a second live consumer of this seam.** The pairing
+> confirm/paste flow injects `RelayConnectionController` and calls `connect()` right after a fresh pairing
+> persists, so a first pairing comes up **immediately** instead of waiting for the next foreground
+> `onStart`. Because `connect()` is idempotent, the two callers never conflict. This is also why #489
+> added an **explicit** Koin bind for the interface (`AppModule.kt`,
+> `single { … } binds arrayOf(ConnectionStateSource::class, RelayConnectionController::class)`) — the
+> driver here still resolves the **concrete** supervisor and upcasts (unchanged), but the Scanner needs
+> the interface resolvable directly. See [`codebase/489.md`](../codebase/489.md).
+
 ### 2. `LifecycleConnectionDriver` — the driver
 
 The only new `androidx.lifecycle.*` site. **Stateless**: it forwards lifecycle edges to the controller
@@ -180,6 +189,6 @@ the observer.
 - Drives: [Relay reconnect supervisor](relay-reconnect-supervisor.md) ([#307](../codebase/307.md)) via the new `RelayConnectionController` seam — its `connect()`/`close()` (idempotent start / full teardown), unchanged.
 - State surface: [Connection state](connection-state.md) ([#196](../codebase/196.md)) — unchanged; `close()` → `Connected` is **why** a background close is not `Offline`.
 - Consumer (UI): [`ConnectionBanner`](connection-banner.md) (#200) via `ThreadViewModel` (#201) — visuals unchanged; only *which* state is published across lifecycle edges changes.
-- Siblings: **#309** (Noise session pump — re-handshakes on each fresh socket this driver reopens), **#308** (relay auth-gate), **future FCM ticket** (push-token registration → calls `onPushWake()`; owns the push-opened-connection re-close decision).
+- Siblings: **#309** (Noise session pump — re-handshakes on each fresh socket this driver reopens), **#308** (relay auth-gate), **[#489](../codebase/489.md)** (the Scanner as a second `RelayConnectionController` caller — `connect()` on a fresh pairing; also added the explicit interface bind), **future FCM ticket** (push-token registration → calls `onPushWake()`; owns the push-opened-connection re-close decision).
 </content>
 </invoke>

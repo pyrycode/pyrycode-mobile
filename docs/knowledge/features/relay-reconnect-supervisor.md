@@ -62,7 +62,7 @@ class RelayConnectionSupervisor(
     dispatcher: CoroutineDispatcher = Dispatchers.Default,      // injection seam (test clock)
     random: Random = Random.Default,                            // jitter source; seed in tests
 ) : ConnectionStateSource {
-    fun connect()                                  // start the supervision loop (idempotent); driven by #302
+    fun connect()                                  // start the supervision loop (idempotent); driven by #302, and by the Scanner on a fresh pairing (#489)
     fun close()                                    // stop the loop, tear down the socket, go idle
     override fun observe(): Flow<ConnectionState>  // legacy surface, DERIVED per-collector from relayStatus (#391)
     override suspend fun retry()                   // force an immediate reconnect; never throws
@@ -93,12 +93,10 @@ supervision loop runs as one child `loopJob` of an app-singleton
 `CoroutineScope(SupervisorJob() + dispatcher)`.
 
 ```
-load PairedServer
-  └─ null → state = Connected; return        // benign-unpaired: no dial, banner hidden
-  └─ present → run the loop:
-
 attempt = 0                                   // consecutive failures since the last ≥60 s-stable connection
 while active:
+  load PairedServer                           // re-read EVERY dial (#489) — a re-pair to B is picked up on the next dial
+    └─ null → state = Connected; return       // unpaired / un-paired mid-loop / undecryptable: no dial, banner hidden, loop ends
   state = Connecting                          // a dial is in flight
   transport = factory.create(paired); transport.connect()
   collect transport.events until it completes (terminal Down):
@@ -113,6 +111,18 @@ while active:
 
 `daemonAbsent` is a per-dial-iteration `var` (same closure-capture pattern as `sawUp`), set from the
 relay's WS close code in the `#308 seam` Down arm and threaded into `backoff()`.
+
+> **Since [#489](../codebase/489.md): the `load()` is per-dial, not once at loop start.** The
+> `pairedServerStore.load()` + `null → Connected; return` guard moved from **before** `while (isActive)`
+> to the **top of the loop body**, so every dial re-reads the paired record. A loop started against
+> server A therefore picks up a re-pair to B on its **next** dial (when A's socket drops), instead of
+> dialing the A record captured once at loop start. `var attempt` stays before the loop (escalation spans
+> dials). The `null` branch still `return`s (ends the job) — **not** `continue`, which would busy-spin;
+> a later `connect()`/`retry()` starts a fresh loop that re-reads the store. The old benign-unpaired
+> behaviour is unchanged — it's now just the first-iteration case of a guard that applies every dial.
+> Re-pair-**while-connected** does not converge until A's socket drops (`connect()` is idempotent, so a
+> second `connect()` no-ops); an *immediate* teardown-and-reconnect on re-pair is out of scope (a PO
+> follow-up). See [`codebase/489.md`](../codebase/489.md).
 
 **Relay-leg → banner mapping** (the leg has 5 cases; `observe()` derives the legacy `ConnectionState`):
 
@@ -243,7 +253,10 @@ untrusted-relay boundary:
 ## Edge cases & limitations
 
 - **Benign-unpaired** — no stored `PairedServer` → no dial, stays `Connected` (banner hidden), and a
-  tap-to-retry re-checks and stays idle. Never regresses into a spurious `Offline`/error.
+  tap-to-retry re-checks and stays idle. Never regresses into a spurious `Offline`/error. Since
+  [#489](../codebase/489.md) this guard is evaluated **every dial**, so an un-pair (or an undecryptable
+  read) on a *later* iteration idles at `Connected` and ends the loop the same way — not only on the
+  first iteration.
 - **`Offline` is not terminal** — the loop keeps redialing every ~30 s at the cap.
 - **`DaemonAbsent` is not terminal either** (#391) — the relay is reachable but no daemon is registered;
   the loop keeps redialling on the same schedule, so the leg flips off the moment a daemon registers.
@@ -282,7 +295,8 @@ legacy-derivation regression guard.
 
 - Ticket notes: [`../codebase/307.md`](../codebase/307.md) (original supervisor) ·
   [`../codebase/391.md`](../codebase/391.md) (relay-leg `RelayLinkStatus` + the `4404` → `DaemonAbsent`
-  branch) — files/line refs, patterns, lessons.
+  branch) · [`../codebase/489.md`](../codebase/489.md) (per-dial `load()` reload + connect-on-pairing via
+  the Scanner) — files/line refs, patterns, lessons.
 - Relay-leg model: [Relay link status](relay-link-status.md) ([#391](../codebase/391.md)) — the
   `RelayLinkStatus` source of truth this supervisor produces (`relayStatus`) and derives
   `ConnectionState` from.
