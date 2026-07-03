@@ -260,8 +260,15 @@ class RemoteConversationRepository(
     init {
         // The single consumer of the hot, single-consumer inbound stream. Cancelled by its owner
         // (#279/#302) when the connection ends; the pump completing `inbound` on teardown also ends it.
+        // On any collector-termination mode (scope cancel — the primary teardown trigger — inbound
+        // completing, or inbound throwing) the `finally` sweeps still-registered pending requests so
+        // an awaiting caller fails fast instead of hanging forever (#488).
         scope.launch {
-            pump.inbound.collect { envelope -> onInbound(envelope) }
+            try {
+                pump.inbound.collect { envelope -> onInbound(envelope) }
+            } finally {
+                failAllPending()
+            }
         }
     }
 
@@ -657,6 +664,32 @@ class RemoteConversationRepository(
             deferred.await()
         } finally {
             pendingRequests.remove(request.id)
+        }
+    }
+
+    /**
+     * Teardown sweep (#488): complete every still-registered [pendingRequests] deferred exceptionally
+     * and remove it, so an awaiting [sendAndAwaitReply] caller (a tapped permission answer, a sent
+     * message, a promote, …) throws **promptly** instead of suspending forever once the connection
+     * tears down. Runs in the [init] collector's `finally`, on scope cancellation (the primary trigger,
+     * [RelayRepositoryCoordinator.teardownActive]) or `pump.inbound` completing.
+     *
+     * Fails with a plain [IllegalStateException] — the exact type [sendAndAwaitReply]'s not-connected
+     * `check(...)` already surfaces, so every caller handles teardown-mid-await through the one failure
+     * mode it already has. Deliberately **not** a [kotlinx.coroutines.CancellationException] (which
+     * `extends IllegalStateException` on the JVM): completing with cancellation would make `await()`
+     * read as the caller's own scope dying, losing the surfaceable error. **Non-suspending**
+     * ([CompletableDeferred.completeExceptionally] returns `Boolean`), so it runs to completion even
+     * inside the cancelling collector coroutine, and idempotent against the caller's own
+     * `finally { remove }` (completing an already-removed deferred is a no-op). Emits **no log**: the
+     * swept reply payloads are discarded and the message is a static literal (never-log contract).
+     */
+    private fun failAllPending() {
+        val cause = IllegalStateException(PENDING_REQUEST_TORN_DOWN)
+        val iterator = pendingRequests.values.iterator()
+        while (iterator.hasNext()) {
+            iterator.next().completeExceptionally(cause)
+            iterator.remove()
         }
     }
 
@@ -1505,6 +1538,13 @@ class RemoteConversationRepository(
 
         /** Client-side synthetic code for an undecodable `error` payload (#346 fallback, never hangs). */
         const val ERROR_MALFORMED_REPLY = "error.malformed_reply"
+
+        /**
+         * Static, payload-free message for the [IllegalStateException] [failAllPending] fails every
+         * in-flight request with on teardown (#488). Carries no request content, `modalId`, or ids —
+         * the never-log contract holds by construction.
+         */
+        const val PENDING_REQUEST_TORN_DOWN = "connection torn down before reply"
 
         /**
          * RFC-3339 epoch cursor for "all history on first load" — `backfill_since.since_ts` is a
