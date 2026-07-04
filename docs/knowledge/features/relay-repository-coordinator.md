@@ -94,10 +94,12 @@ emission, run by one collector launched in `start()`:
    child scope, then close the pump** — order matters (see below).
 2. **If `transport == null`**, return — this is the between-connections state.
 3. **Else build a fresh connection**: a per-connection `childScope` (child of the coordinator job),
-   `pump = createPump(transport).also { it.start() }`, retain `(pump, childScope)`, publish
-   `RemoteConversationRepository(pump, childScope, deviceName, negotiatedCapabilities = { … })` on
-   `currentRepository`, then `childScope.launch { … }` the connect-time push-token re-registration
-   hook (#365, below). `launch` returns immediately, so `onConnection` stays non-suspending.
+   `pump = createPump(transport).also { it.start() }`, and
+   `repo = RemoteConversationRepository(pump, childScope, deviceName, negotiatedCapabilities = { … })`,
+   then publish the whole connection as **one object** — `activeConnection.value = Connection(pump,
+   childScope, repo)`, the single source every derived seam (including the Open-gated `currentRepository`)
+   projects from — and `childScope.launch { … }` the connect-time push-token re-registration hook (#365,
+   below). `launch` returns immediately, so `onConnection` stays non-suspending.
 
    The fourth argument is the **capability supplier** [#385](../codebase/385.md) wired to gate the
    repo's [`liveSessionEvents`](remote-conversation-repository.md) decode seam on the negotiated
@@ -112,12 +114,66 @@ emission, run by one collector launched in `start()`:
 currentConnection :  null → T1 → null → T2 → …
         ▼
 onConnection (single collector, sequential, non-suspending)
-   T1 ─▶ pump1 = create(T1).start();  repo1 = Remote(pump1, scope1, name);  currentRepository = repo1
+   T1 ─▶ pump1 = create(T1).start();  repo1 = Remote(pump1, scope1, name);  activeConnection = Connection(pump1, scope1, repo1)
          scope1.launch { reregisterPushTokenOnOpen(pump1, repo1) }   (#365, off the critical path)
- null ─▶ scope1.cancel(); pump1.close()  (keys wiped);               currentRepository = null
-   T2 ─▶ pump2 = create(T2).start();  repo2 = Remote(pump2, scope2, name);  currentRepository = repo2
+ null ─▶ activeConnection = null;  scope1.cancel(); pump1.close()  (keys wiped)
+   T2 ─▶ pump2 = create(T2).start();  repo2 = Remote(pump2, scope2, name);  activeConnection = Connection(pump2, scope2, repo2)
          scope2.launch { reregisterPushTokenOnOpen(pump2, repo2) }
 ```
+
+### The single connection source and the Open-gated `currentRepository` (#421 / #493)
+
+There is **one** connection-state holder — `private val activeConnection = MutableStateFlow<Connection?>(null)`
+— carrying the pump + child scope + concrete repo of the connection currently being served, or `null` between
+connections. **Every** connection-derived seam is a projection of this one `StateFlow`: `currentRepository`,
+`pyrycodeStatus`, `liveSessionEvents`, `modalEvents`/`currentModal`, `connectionStatus`, and the outbound
+`answerModal`/`cancelModal`/`interrupt` passthroughs (which read its `.value`). It is written **only** on the
+non-suspending `onConnection`/`teardownActive` path (plus the idempotent `close()`); the pump/repo references
+stay *inside* it (single-owner) — only *derived* signals are ever exposed, never the pump reference itself.
+
+`currentRepository` is **Open-gated**: it exposes the live repo only once the connection's Noise pump reaches
+`PumpState.Open`, and `null` again between connections. This gate is the **#421 fix**. Exposing the repo at
+bare socket-up (repo built but the pump still `Handshaking`) made the conversation list never load: the #352
+facade subscribes to `RemoteConversationRepository.observeConversations` the moment a non-null repo appears,
+and that subscription fires a **one-shot** `list_conversations` via `pump.send` — which returns `false` and is
+**dropped** pre-`Open`, never re-issued after the handshake. The daemon never receives the request, never
+replies with a `conversations` snapshot, and the list spins forever (the "New discussion" FAB, gated on the
+first snapshot, never appears). Gating behind `Open` — mirroring `pyrycodeStatus` and the connect-time
+push-token hook, which already await `Open` — means the facade subscribes, and the list send fires, only once
+`pump.send` will succeed.
+
+```kotlin
+// #493: repo AND pump-state derive from the SAME switched value — one flatMapLatest over the one source.
+val currentRepository: StateFlow<ConversationRepository?> =
+    activeConnection
+        .flatMapLatest { conn ->
+            conn?.pump?.state?.map { if (it is PumpState.Open) conn.repo else null } ?: flowOf(null)
+        }.stateIn(scope, SharingStarted.Eagerly, null)
+```
+
+**Why one source, not two (#493).** The gate previously `combine`d **two independently-mutated `StateFlow`s** —
+a repo holder (`mutableRepository`) and a `flatMapLatest` over a *separate* pump holder (`activePumpFlow`). On a
+**direct A→B reconnect** (the supervisor emits transport B while A is still live, with **no** interposed `null`),
+`combine` collects its inputs on separate coroutines: the direct repo emission (`repoB`) arrives in one hop,
+while the pump-state input must cancel pumpA's `state` collector and subscribe to pumpB's — one *extra* hop.
+In that window `combine`'s cached pump-state is still **pumpA's `Open`** (and `ManagedSessionPump.close()`
+leaves `state` at its last value, so nothing corrects it), so it transiently emits `(repoB, Open) → repoB`:
+**the new connection's repo is exposed while its own pump is still `Handshaking`** — the facade's one-shot
+`list_conversations` fires pre-`Open` and is dropped, **re-introducing #421**. Deriving repo *and* pump-state
+from one switched `Connection` closes that window **structurally**: the inner lambda **closes over `conn`**, so
+the mapped `conn.repo` and `conn.pump.state` are always the *same* connection's. Switching to connection B
+yields `connB.pump.state.value` (`Handshaking`) → `null` first, and there is no path that pairs `connB.repo`
+with any pump but B's own. (The `if (Open) conn.repo else null` widens `RemoteConversationRepository` to
+`ConversationRepository?` via `Flow`/`StateFlow` covariance; the declared type stays
+`StateFlow<ConversationRepository?>`.) The settled `.value` on a full drain is `null` on both the old and new
+code — the bug is a **transient emission**, observable only by *collecting* `currentRepository`, not by
+reading `.value` (the shape of the #493 regression test).
+
+> **History.** #421 added the Open-gate; #493 kept the gate but replaced its plumbing — collapsing the four
+> holders (`mutableRepository`, `activePumpFlow`, `activeRemoteRepo`, and a plain `active: Connection?` var)
+> into the single `activeConnection` and deriving the gate from it. The consolidation is a strict reduction of
+> mutable state (4 → 1), not added machinery. See [#493](../codebase/493.md) /
+> [#421](https://github.com/pyrycode/pyrycode-mobile/issues/421).
 
 ### Scope ownership (three distinct scopes)
 
@@ -202,15 +258,16 @@ closing the false green that bit live testing on 2026-06-08. See
 
 It is **pure derivation** — no new mutable status state:
 
-- A private `activePumpFlow: MutableStateFlow<ManagedSessionPump?>` mirrors the live pump, written in
-  **lock-step with `mutableRepository`** inside the non-suspending `onConnection`/`teardownActive`
-  critical section (set to the fresh pump on connect, `null` on teardown). It stays **private** — only
-  the *derived* readiness is exposed, never the pump reference (the pump is single-owner).
-- A private `pyrycodeStatus: Flow<PyrycodeLinkStatus>` = `activePumpFlow.flatMapLatest { it?.state ?:
-  flowOf(null) }.map { it.toPyrycodeLinkStatus() }` — the same `flatMapLatest`-over-a-live-child idiom
-  [`StableConversationRepository`](stable-conversation-repository.md) uses for `currentRepository`. It
-  tracks the **current** pump across reconnects with no carryover (`flatMapLatest` cancels the prior
-  pump's `state` collection); "no pump" maps through `null` to the `Down` floor.
+- The live pump is reached through the single [`activeConnection`](#the-single-connection-source-and-the-open-gated-currentrepository-421--493)
+  source (`conn?.pump`), written on the non-suspending `onConnection`/`teardownActive` critical section (the
+  fresh `Connection` on connect, `null` on teardown). The pump reference stays **inside** `activeConnection` —
+  only the *derived* readiness is exposed, never the pump itself (the pump is single-owner).
+- A private `pyrycodeStatus: Flow<PyrycodeLinkStatus>` = `activeConnection.flatMapLatest { conn ->
+  conn?.pump?.state ?: flowOf(null) }.map { it.toPyrycodeLinkStatus() }` — the same
+  `flatMapLatest`-over-a-live-child idiom [`StableConversationRepository`](stable-conversation-repository.md)
+  uses for `currentRepository`. It tracks the **current** pump across reconnects with no carryover
+  (`flatMapLatest` cancels the prior pump's `state` collection); "no connection" maps through `null` to the
+  `Down` floor.
 - The public `connectionStatus: StateFlow<ConnectionStatus>` = `combine(relayStatus, pyrycodeStatus) {
   relay, pyrycode -> ConnectionStatus(relay, pyrycode) }.stateIn(scope, SharingStarted.Eagerly, …)` on
   the coordinator's **existing** `scope` (cancelled by `close()`, so it doesn't hang `runTest`).
@@ -225,9 +282,10 @@ the combined model with **no new binding**, passing `get<RelayRepositoryCoordina
 straight into the `SettingsViewModel` constructor at the `AppModule` factory.
 
 > **Init-order gotcha.** `stateIn(scope, Eagerly, …)` runs at *property initialization*, so
-> `connectionStatus`/`pyrycodeStatus` must be declared **after** `scope` and `activePumpFlow` in the
-> class body — referencing an earlier-declared field is a construction-time NPE (not a compile error).
-> Placing them beside `mutableRepository` (already below `scope`) satisfies this.
+> `connectionStatus`/`pyrycodeStatus` (and `currentRepository`/`currentModal`) must be declared **after**
+> `scope` and `activeConnection` in the class body — referencing an earlier-declared field is a
+> construction-time NPE (not a compile error). `activeConnection` sits just below `scope` (where the old
+> holders were), so every deriver below it satisfies this.
 
 ## Live-session event seam (#406)
 
@@ -235,24 +293,24 @@ The decoded [`LiveSessionEvent`](live-session-events.md) stream ([#385](../codeb
 the **concrete** `RemoteConversationRepository.liveSessionEvents` — connection-scoped and **not** on the
 `ConversationRepository` interface — so a UI ViewModel cannot reach it. The coordinator owns the
 connection-scoped repository, so it threads that non-interface surface up exactly as `pyrycodeStatus`
-reaches the concrete pump through `activePumpFlow` (and as `registerPushToken` reaches the concrete repo
+reaches the concrete pump through `activeConnection` (and as `registerPushToken` reaches the concrete repo
 through the construction-time handle):
 
 ```kotlin
-// private mirror of the live concrete repo, written lock-step with mutableRepository / activePumpFlow
-private val activeRemoteRepo = MutableStateFlow<RemoteConversationRepository?>(null)
-
 val liveSessionEvents: Flow<LiveSessionEvent> =
-    activeRemoteRepo.flatMapLatest { repo -> repo?.liveSessionEvents ?: emptyFlow() }
+    activeConnection.flatMapLatest { conn -> conn?.repo?.liveSessionEvents ?: emptyFlow() }
 ```
 
-- `activeRemoteRepo.value = repo` is set in `onConnection` (alongside `mutableRepository.value = repo`)
-  and `= null` in `teardownActive` — both **non-suspending** writes inside the same critical section, so
-  the cancellation-atomicity invariant is preserved. It stays **private**: only the *derived* event flow
-  is exposed, never the concrete repo reference.
+- The concrete `repo` is reached through the single `activeConnection` source (`conn?.repo`) — its
+  `Connection.repo` field is set as part of `activeConnection.value = Connection(pump, scope, repo)` in
+  `onConnection` and cleared to `null` in `teardownActive`, both **non-suspending** writes inside the same
+  critical section, so the cancellation-atomicity invariant is preserved. The repo reference stays **inside**
+  `activeConnection`: only the *derived* event flow is exposed, never the concrete repo reference. (Before
+  [#493](../codebase/493.md) this was a separate private `activeRemoteRepo` mirror; the consolidation folded
+  it into the one source.)
 - **Cold, not `stateIn`'d.** Unlike `connectionStatus` (current-value state), these are *events* with no
   "current value", so `liveSessionEvents` is a cold `Flow` with no scope of its own. Each consumer's
-  collection independently observes `activeRemoteRepo` (a `StateFlow`) and subscribes to the current
+  collection independently observes `activeConnection` (a `StateFlow`) and subscribes to the current
   repo's `SharedFlow` (both multi-subscriber-safe) — no `shareIn`. (A code-review NIT flagged that
   per-subscriber `flatMapLatest` re-derivation is fine at today's consumer count; revisit only if the
   count grows.)
@@ -271,15 +329,15 @@ val liveSessionEvents: Flow<LiveSessionEvent> =
 The decoded [`ModalEvent`](modal-events.md) stream ([#437](../codebase/437.md)) lives on the **concrete**
 `RemoteConversationRepository.modalEvents` (`replay = 0`, connection-scoped, **not** on the interface) —
 the same posture as `liveSessionEvents`, so a UI ViewModel cannot reach it directly. The coordinator
-threads it up as a **byte-for-byte mirror** of the live-session seam, reusing the same private
-`activeRemoteRepo` mirror (**no new field**), and — as of [#492](../codebase/492.md) — **folds it here**
-into the single process-scoped "which modal is open" projection:
+threads it up as a **byte-for-byte mirror** of the live-session seam — switching off the same single
+`activeConnection` source (`conn?.repo`) — and, as of [#492](../codebase/492.md), **folds it here** into
+the single process-scoped "which modal is open" projection:
 
 ```kotlin
 // #492: PRIVATE — its sole consumer is currentModal below.
 @OptIn(ExperimentalCoroutinesApi::class)
 private val modalEvents: Flow<ModalEvent> =
-    activeRemoteRepo.flatMapLatest { repo -> repo?.modalEvents ?: emptyFlow() }
+    activeConnection.flatMapLatest { conn -> conn?.repo?.modalEvents ?: emptyFlow() }
 
 // #492: the single hoisted projection, folded once at this process-scoped layer.
 val currentModal: StateFlow<ModalUiState> =
@@ -316,19 +374,19 @@ The **outbound mirror** of the inbound `modalEvents` seam: where `modalEvents` s
 to the ViewModel, the answer/cancel passthrough sends the user's decision *down* to the connection-scoped
 concrete [`RemoteConversationRepository.answerModal` / `cancelModal`](remote-conversation-repository.md)
 ([#438](../codebase/438.md)). The asymmetry is correct: inbound is a stream (`Flow`); an answer/cancel is a
-request/reply control **call**, so these are **suspend methods, not flows**. Both reach the same private
-`activeRemoteRepo` mirror (**no new field**):
+request/reply control **call**, so these are **suspend methods, not flows**. Both read the concrete repo off
+the single `activeConnection` source (`activeConnection.value?.repo`):
 
 ```kotlin
 suspend fun answerModal(modalId: String, optionId: String) {
-    val repo = activeRemoteRepo.value ?: throw IllegalStateException("no active connection")
+    val repo = activeConnection.value?.repo ?: throw IllegalStateException("no active connection")
     repo.answerModal(modalId, optionId)
 }
 // cancelModal(modalId) is identical, minus the optionId.
 ```
 
 - **Null-guard only — both not-connected paths funnel to `IllegalStateException`.** When
-  `activeRemoteRepo.value == null` (between connections) the guard throws. When a connection exists but the
+  `activeConnection.value == null` (between connections) the guard throws. When a connection exists but the
   pump is still pre-`Open` (Handshaking), `repo.answerModal` → `sendAndAwaitReply` → `pump.send` returns
   false → `IllegalStateException` (the #438 precedent). So the passthrough needs **only** the null-guard — a
   redundant `Open` gate (like `currentRepository`'s, which exists for a different reason: facade
@@ -346,11 +404,11 @@ suspend fun answerModal(modalId: String, optionId: String) {
 
 The third outbound control passthrough, the exact `cancelModal` mirror for the bare `interrupt` frame (the
 remote-Esc wire half — see [Interrupt send path](interrupt-send-path.md), [#458](../codebase/458.md)). It
-reaches the same private `activeRemoteRepo` mirror (**no new field**):
+reads the concrete repo off the same single `activeConnection` source:
 
 ```kotlin
 suspend fun interrupt() {
-    val repo = activeRemoteRepo.value ?: throw IllegalStateException("no active connection")
+    val repo = activeConnection.value?.repo ?: throw IllegalStateException("no active connection")
     repo.interrupt()
 }
 ```
@@ -489,6 +547,15 @@ registers once with the live `device_name` (AC #1, exact-payload assertion), a n
 the connection (AC #4), and a pre-`Open` `Closed` registers nothing (boundary). The `ack`/`error`
 correlation mirrors `RemoteConversationRepositoryTest`'s #359 shape.
 
+[#493](../codebase/493.md) added three reconnect-gating tests that **collect every `currentRepository`
+emission** across a **direct A→B** reconnect (no interposed `null`): with connection A `Open` and B's fresh
+pump left at `Handshaking`, B's repo must never appear (`reconnect_directAtoB_neverExposesRepoWhileNewPumpHandshaking`
+— confirmed RED against the pre-fix two-`StateFlow` gate, since the transient is caught by *collecting*, not
+by the settled `.value` which is `null` on both); B's repo appears only once `pumps[1].open()`
+(`…exposesRepoOnlyOnceNewPumpReachesOpen`); and post-reconnect the facade's one-shot `list_conversations`
+reaches `pumps[1].sent` and the list loads (`reconnect_afterOpen_listConversationsSucceedsAndListLoads`).
+The existing key-wipe / single-use-pump / no-carryover tests pass **unmodified**.
+
 ## Related
 
 - Tickets: [#351](../codebase/351.md) — the coordinator + `ManagedSessionPump` (files, line refs,
@@ -505,7 +572,12 @@ correlation mirrors `RemoteConversationRepositoryTest`'s #359 shape.
   [#451](../codebase/451.md) — the **outbound** `answerModal` / `cancelModal` passthrough (the modalEvents
   mirror, but a suspend call; consumer: [`ThreadViewModel` modal answer flow](modal-answer-flow.md)) ·
   [#458](../codebase/458.md) — the **outbound** `interrupt` passthrough (the `cancelModal` mirror,
-  fire-and-forget; consumer: [`ThreadViewModel.onInterrupt`](interrupt-send-path.md)).
+  fire-and-forget; consumer: [`ThreadViewModel.onInterrupt`](interrupt-send-path.md)) ·
+  [#493](../codebase/493.md) — **consolidates** the four connection-state holders (`mutableRepository`,
+  `activePumpFlow`, `activeRemoteRepo`, the plain `active` var) into the single `activeConnection`, closing
+  the direct-A→B-reconnect race that re-exposed a pre-`Open` repo and
+  [re-introduced #421](https://github.com/pyrycode/pyrycode-mobile/issues/421)
+  ("list never loads"). Every seam above now switches off that one source.
 - Two-part status: [Connection status](connection-status.md) (`ConnectionStatus` + `PyrycodeLinkStatus`,
   [#392](../codebase/392.md)) — derived/published here; relay leg from
   [`relayStatus`](relay-link-status.md) ([#391](../codebase/391.md)); consumed by the Settings status

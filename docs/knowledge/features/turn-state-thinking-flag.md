@@ -45,7 +45,7 @@ per-connection pump and repository — exposes a stable public flow over it (see
 
 ```kotlin
 val liveSessionEvents: Flow<LiveSessionEvent> =
-    activeRemoteRepo.flatMapLatest { repo -> repo?.liveSessionEvents ?: emptyFlow() }
+    activeConnection.flatMapLatest { conn -> conn?.repo?.liveSessionEvents ?: emptyFlow() }
 ```
 
 `flatMapLatest` switches to the fresh connection's repo and cancels the prior on reconnect (AC #1

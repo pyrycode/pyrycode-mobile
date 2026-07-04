@@ -58,7 +58,7 @@ projection:
 // #492: modalEvents is now PRIVATE — its sole consumer is currentModal.
 @OptIn(ExperimentalCoroutinesApi::class)
 private val modalEvents: Flow<ModalEvent> =
-    activeRemoteRepo.flatMapLatest { repo -> repo?.modalEvents ?: emptyFlow() }
+    activeConnection.flatMapLatest { conn -> conn?.repo?.modalEvents ?: emptyFlow() }
 
 // #492: the single hoisted "which modal is open" projection, folded once at this process-scoped layer.
 val currentModal: StateFlow<ModalUiState> =
@@ -161,7 +161,7 @@ stateless screen. It is **app-level**, not per-conversation: there is **no `conv
   fold is total over the sealed `ModalEvent`. Absence of a live source is the empty flow ⇒ state stays
   `Hidden`. No `catch`, no result type.
 - **Connection teardown = RETAIN, not reset (the #492 security-relevant decision).** On a connection drop
-  `activeRemoteRepo` goes `null → emptyFlow()`, so no event flows and the `scan` **holds its last
+  `activeConnection` goes `null → emptyFlow()`, so no event flows and the `scan` **holds its last
   accumulator** — a still-`Open` modal is retained, *not* reset to `Hidden`. This is safe because the answer
   path is guarded by **deterministic code**, never by this projection: `coordinator.answerModal` /
   `cancelModal` throw `IllegalStateException` on no active connection (surfaced as a one-shot

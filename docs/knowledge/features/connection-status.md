@@ -62,10 +62,10 @@ so it is where the pyrycode leg is derived and the combined model published (not
 
 ```
                                  RelayRepositoryCoordinator
-RelayConnectionSupervisor          activePumpFlow (private mirror of the live pump, or null)
+RelayConnectionSupervisor          activeConnection (single source: pump + scope + repo, or null)
   ├─ currentConnection ──▶ onConnection ──▶ createPump ──┘  │
   │                                                          ▼
-  │                          flatMapLatest{ pump.state ?: null } ──▶ toPyrycodeLinkStatus()
+  │                          flatMapLatest{ conn?.pump?.state ?: null } ──▶ toPyrycodeLinkStatus()
   │                                                          │
   │                                          pyrycodeStatus (private: Handshaking/Connected/Down)
   │                                                          │
@@ -77,10 +77,11 @@ RelayConnectionSupervisor          activePumpFlow (private mirror of the live pu
 - **`PumpState? → PyrycodeLinkStatus`** is a total `internal` mapping fun
   (`toPyrycodeLinkStatus()`, bottom of `RelayRepositoryCoordinator.kt`): `null`/`Closed → Down`,
   `Handshaking → Handshaking`, `Open → Connected`. `Open.connId` and `Closed.cause` are **discarded**.
-- **`activePumpFlow`** is a private `MutableStateFlow<ManagedSessionPump?>`, written in lock-step with
-  the live repository mirror inside the coordinator's non-suspending critical section. `flatMapLatest`
-  over it tracks the **current** pump across reconnects with no carryover (`Connected` → drop `Down` →
-  fresh pump `Handshaking` → `Connected`).
+- **The live pump** is reached through the coordinator's single `activeConnection` source (`conn?.pump`),
+  written on its non-suspending critical section — [#493](../codebase/493.md) consolidated the former
+  separate `activePumpFlow`/`activeRemoteRepo` mirrors into this one source. `flatMapLatest` over it tracks
+  the **current** pump across reconnects with no carryover (`Connected` → drop `Down` → fresh pump
+  `Handshaking` → `Connected`).
 - **`connectionStatus`** = `combine(relayStatus, pyrycodeStatus)` lifted to a hot `StateFlow` via
   `stateIn(scope, SharingStarted.Eagerly, …)`. The combined model is **pure derivation** — no
   hand-maintained joined state. The pyrycode leg stays **private**; only the combined model is public.

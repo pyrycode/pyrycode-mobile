@@ -197,7 +197,8 @@ coordinator holds the repo). Surfacing it through a coordinator seam for the UI 
 **consumer-slice wiring**, deferred to #386/#387/#337 — now realized in
 [#406](../codebase/406.md): the [coordinator](relay-repository-coordinator.md) exposes a generic,
 reconnection-surviving `liveSessionEvents: Flow<LiveSessionEvent>` over the connection-scoped concrete
-repo (`activeRemoteRepo.flatMapLatest { it?.liveSessionEvents ?: emptyFlow() }`), and
+repo (`activeConnection.flatMapLatest { it?.repo?.liveSessionEvents ?: emptyFlow() }` — the concrete repo
+is reached through the coordinator's single `activeConnection` source since [#493](../codebase/493.md)), and
 [`ThreadViewModel.isThinking`](turn-state-thinking-flag.md) is its first consumer. See
 [[post-352-connection-scoped-repo-behind-facade]].
 
