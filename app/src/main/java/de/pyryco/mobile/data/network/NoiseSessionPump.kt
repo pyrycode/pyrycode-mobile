@@ -53,6 +53,7 @@ class NoiseSessionPump(
     dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val handshakeTimeoutMs: Long = HANDSHAKE_TIMEOUT_MS,
     private val rekeyIntervalMs: Long = REKEY_INTERVAL_MS,
+    private val rekeyRespTimeoutMs: Long = REKEY_RESP_TIMEOUT_MS,
 ) : ManagedSessionPump {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
 
@@ -85,6 +86,16 @@ class NoiseSessionPump(
 
     /** The one-shot 1-hour timer; only the drive coroutine assigns it (arm-on-Open, re-arm-on-swap). */
     private var rekeyTimerJob: Job? = null
+
+    /**
+     * The bounded re-key response watchdog (#495): armed with [rekeyInFlight] after the re-key
+     * `noise_init` is sent, cancelled when the completing `noise_resp` arrives. If the resp never comes
+     * it funnels to [teardown] so a single dropped frame can't wedge [rekeyInFlight] true forever. Same
+     * cross-coroutine posture as [rekeyInFlight] — assigned under [rekeyMutex] in [initiateRekey],
+     * cancelled on the drive coroutine in [onOpenFrame].
+     */
+    @Volatile
+    private var rekeyRespTimeoutJob: Job? = null
 
     /** Launches the single session-drive coroutine. Single-use: a second call is a caller bug. */
     override fun start() {
@@ -200,6 +211,7 @@ class NoiseSessionPump(
                 // instead of tearing down. A resp with no re-key in flight is a protocol violation.
                 val session = this.session ?: throw NoiseSessionException("session is not available")
                 if (!rekeyInFlight) throw NoiseSessionException("unexpected noise_resp with no re-key in flight")
+                rekeyRespTimeoutJob?.cancel() // the swap is completing — disarm the response watchdog (#495)
                 session.readRekeyResp(base64StdDecode(frame.data)) // MAC failure → NoiseSessionException → teardown
                 rekeyInFlight = false
                 rebaseRekeyTimer() // re-base the cadence from the swap moment
@@ -245,6 +257,15 @@ class NoiseSessionPump(
                 val initBytes = session.writeRekeyInit(s) // session.pendingRekey now holds the only live copy of s
                 rekeyInFlight = true // set BEFORE the send: the resp can only arrive after the server reads init
                 transport.send(InnerFrameV2(type = TYPE_NOISE_INIT, data = base64StdEncode(initBytes)))
+                // Arm the bounded response watchdog AFTER the init is on the wire and INSIDE the try, so a
+                // racing-teardown IllegalStateException never arms one and only a sent init starts the clock.
+                // A lost noise_resp funnels to teardown → the supervisor rebuilds a fresh pump on fresh keys,
+                // rather than wedging rekeyInFlight true forever (#495). Cancelled by the resp in onOpenFrame.
+                rekeyRespTimeoutJob =
+                    scope.launch {
+                        delay(rekeyRespTimeoutMs)
+                        teardown(NoiseSessionException("re-key noise_resp not received before the deadline"))
+                    }
             } catch (e: IllegalStateException) {
                 // Racing teardown closed the session, or a session-level re-key is already in flight — skip.
             } finally {
@@ -274,6 +295,14 @@ class NoiseSessionPump(
 
         /** `protocol-mobile.md` § Re-key: time-based re-key fires every 1 hour of session uptime. */
         const val REKEY_INTERVAL_MS = 3_600_000L
+
+        /**
+         * Bounded deadline for the re-key `noise_resp` after a re-key `noise_init` is sent. Mirrors the
+         * Go initiator's WS-4426 reply timeout (pyrycode #450): if the peer never answers, the pump tears
+         * the session down so the reconnect supervisor yields a fresh handshake on fresh keys — rather
+         * than wedging `rekeyInFlight` true forever and running on un-rotated keys.
+         */
+        const val REKEY_RESP_TIMEOUT_MS = 30_000L
 
         const val TYPE_NOISE_INIT = "noise_init"
         const val TYPE_NOISE_RESP = "noise_resp"
