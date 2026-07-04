@@ -182,6 +182,52 @@ class RelayConnectionSupervisorTest {
             supervisor.close()
         }
 
+    // ---- #498 AC 1: a retry() while Connected must not pre-collapse the next drop's backoff -------
+    //
+    // retry() writes into the CONFLATED retrySignal. Issued while the loop sits inside events.collect
+    // (Connected, no wait in progress), the Unit buffers with no receiver. Without the drain at the top
+    // of backoff(), the next drop's first collapsibleWait would consume that stale signal and re-dial
+    // instantly — shortening a backoff that should have waited its full jittered interval.
+    @Test
+    fun retryWhileConnected_doesNotShortenFirstBackoffAfterLaterDrop() =
+        runTest {
+            val (factory, supervisor) = newPairedSupervisor()
+            val interval = intervalsFor(1).first()
+
+            supervisor.connect()
+            runCurrent()
+            factory.created[0].emitUp()
+            runCurrent()
+            assertEquals(ConnectionState.Connected, supervisor.state())
+
+            // retry() while Connected: connect() is idempotent (loop already running) and the signal
+            // buffers with no receiver — so no re-dial, still Connected.
+            supervisor.retry()
+            runCurrent()
+            assertEquals(ConnectionState.Connected, supervisor.state())
+            assertEquals(1, factory.created.size)
+
+            // A later drop starts a fresh backoff; the stale buffered signal must not shorten it.
+            factory.created[0].emitDown()
+            runCurrent()
+            assertEquals(
+                ConnectionState.Reconnecting(ceil(interval / 1000.0).toInt()),
+                supervisor.state(),
+            )
+
+            advanceTimeBy(interval - 1)
+            runCurrent()
+            assertEquals(ConnectionState.Reconnecting(1), supervisor.state()) // still waiting
+            assertEquals(1, factory.created.size) // not re-dialled
+
+            advanceTimeBy(1)
+            runCurrent()
+            assertEquals(ConnectionState.Connecting, supervisor.state()) // re-dialled at the full interval
+            assertEquals(2, factory.created.size)
+
+            supervisor.close()
+        }
+
     // ---- AC 5: a ≥60 s stable connection resets the backoff escalation ---------------------------
 
     @Test
