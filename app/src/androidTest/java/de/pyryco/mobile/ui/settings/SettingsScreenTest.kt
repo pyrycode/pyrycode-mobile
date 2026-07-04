@@ -31,6 +31,7 @@ class SettingsScreenTest {
                 SettingsScreen(
                     connectionStatus =
                         ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down),
+                    serverLabel = "abc123 · wss://relay…",
                     themeMode = ThemeMode.SYSTEM,
                     useWallpaperColors = false,
                     archivedDiscussionCount = 0,
@@ -69,6 +70,7 @@ class SettingsScreenTest {
                 SettingsScreen(
                     connectionStatus =
                         ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down),
+                    serverLabel = "abc123 · wss://relay…",
                     themeMode = ThemeMode.SYSTEM,
                     useWallpaperColors = false,
                     archivedDiscussionCount = 11,
@@ -108,6 +110,7 @@ class SettingsScreenTest {
                 SettingsScreen(
                     connectionStatus =
                         ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down),
+                    serverLabel = "abc123 · wss://relay…",
                     themeMode = ThemeMode.SYSTEM,
                     useWallpaperColors = false,
                     archivedDiscussionCount = 0,
