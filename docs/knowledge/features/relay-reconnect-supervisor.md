@@ -106,7 +106,7 @@ while active:
   finally: cancel stability timer (before reading the flag); currentConnection = null IFF still this loop's own transport (#496 identity compare-and-clear); transport.close() (always)
   if (sawUp && stableReached) attempt = 0     // ≥60 s stable → reset escalation
   attempt += 1
-  backoff(attempt, daemonAbsent)              // DaemonAbsent | Reconnecting countdown | Offline; collapsible by retry()
+  backoff(attempt, daemonAbsent)              // drains a stale pre-drop retry signal FIRST (#498), then: DaemonAbsent | Reconnecting countdown | Offline; each wait collapsible by retry()
 ```
 
 `daemonAbsent` is a per-dial-iteration `var` (same closure-capture pattern as `sawUp`), set from the
@@ -181,6 +181,22 @@ It is **non-blocking and never throws** — failures surface only as `Connection
 **Decision:** `retry()` does **not** reset `attempt` — escalation tracks sustained unavailability, and a
 manual retry that immediately re-fails must not let the user hammer the relay from 1 s (an anti-storm
 property, see § Security posture).
+
+> **Since [#498](../codebase/498.md): `backoff()` drains a stale `retrySignal` before its first wait.** The
+> CONFLATED channel *retains* an un-consumed `Unit`, so a `retry()` fired while the loop is inside
+> `events.collect` (**`Connected`** — no receiver parked) or during the `Connecting` window leaves a stale
+> signal buffered with nothing to collapse. Without a drain, the *next* drop's first `collapsibleWait`
+> `receive()` consumed that stale `Unit` and re-dialled instantly — shortening a backoff that should have
+> waited its full jittered interval. `backoff()` now runs `while (retrySignal.tryReceive().isSuccess) {}` at
+> its **top**, before the `daemonAbsent`/sub-cap/cap branches, so it drops exactly the pre-drop signals and
+> nothing else. Placement is load-bearing: the drain is **not** inside `collapsibleWait` (which runs
+> per-second in the sub-cap countdown and would swallow a legitimate *in-progress* retry) — at the top of
+> `backoff()` it runs once per drop, before the first `receive()`, so a `retry()` arriving *during* a wait
+> still collapses it (it's `trySend`'d after the drain). LOW/self-correcting; `USE_RELAY_REPOSITORY`-only.
+> A narrow multi-threaded-dispatcher window (a `trySend` racing into the gap between `events.collect`
+> completing and the drain) is knowingly left undefended per Evidence-Based Fix Selection — the gentler,
+> same-class edge, non-reproducing on the single-threaded test dispatcher. See
+> [`codebase/498.md`](../codebase/498.md).
 
 ## Cross-sibling seams (the two "architect's call" decisions)
 
@@ -309,7 +325,12 @@ interleaving test (`closeThenConnect_oldLoopFinally_doesNotClearNewLoopConnectio
 holds the old loop's cancellation in a `NonCancellable` cleanup gate **past** the point the new loop reaches
 `Up` and publishes, then releases it, asserting `currentConnection` still holds the **new** transport (a naive
 single-`runCurrent()` interleaving is false-green — see [`codebase/496.md`](../codebase/496.md) § Lessons
-learned).
+learned). **[#498](../codebase/498.md) added** `retryWhileConnected_doesNotShortenFirstBackoffAfterLaterDrop`:
+a `retry()` issued *while Connected* buffers a stale signal, then a later `emitDown()` starts a fresh backoff
+that must **not** be pre-collapsed — `advanceTimeBy(intervalsFor(1).first() - 1)` → still `Reconnecting`/one
+dial, `advanceTimeBy(1)` → re-dialled (exact ms, since `retry()` draws no jitter `random`). RED without the
+top-of-`backoff()` drain (would be `Connecting`/two dials). The AC#2 guard
+`retry_collapsesPendingBackoffWithoutThrowing` stays green (a retry *during* the wait still collapses).
 
 ## Related
 
@@ -317,7 +338,9 @@ learned).
   [`../codebase/391.md`](../codebase/391.md) (relay-leg `RelayLinkStatus` + the `4404` → `DaemonAbsent`
   branch) · [`../codebase/489.md`](../codebase/489.md) (per-dial `load()` reload + connect-on-pairing via
   the Scanner) · [`../codebase/496.md`](../codebase/496.md) (the `finally`'s identity compare-and-clear of
-  `currentConnection` — closes the close-then-connect race) — files/line refs, patterns, lessons.
+  `currentConnection` — closes the close-then-connect race) · [`../codebase/498.md`](../codebase/498.md)
+  (drains a stale `retrySignal` at the top of `backoff()` — a retry while healthy no longer pre-collapses the
+  next drop's first wait) — files/line refs, patterns, lessons.
 - Relay-leg model: [Relay link status](relay-link-status.md) ([#391](../codebase/391.md)) — the
   `RelayLinkStatus` source of truth this supervisor produces (`relayStatus`) and derives
   `ConnectionState` from.
