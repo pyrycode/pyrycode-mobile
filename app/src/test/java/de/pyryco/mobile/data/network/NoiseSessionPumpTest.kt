@@ -339,7 +339,9 @@ class NoiseSessionPumpTest {
             assertEquals(1, f.transport.sentFrames.size)
 
             // On fire: exactly one fresh noise_init the responder accepts (recovering empty early-data).
-            advanceUntilIdle()
+            // Bounded advance reaches the timer but not the newly-armed response watchdog (#495).
+            advanceTimeBy(REKEY_MS)
+            runCurrent()
             assertEquals(2, f.transport.sentFrames.size)
             val init = f.transport.sentFrames[1]
             assertEquals("noise_init", init.type)
@@ -360,7 +362,8 @@ class NoiseSessionPumpTest {
             val f = fixture()
             val os = openSession(f, rekeyIntervalMs = REKEY_MS)
 
-            advanceUntilIdle() // timer fires → re-key noise_init
+            advanceTimeBy(REKEY_MS) // fire the re-key timer without reaching the response watchdog (#495)
+            runCurrent()
             val leg = f.responder.rekey(base64StdDecode(f.transport.sentFrames[1].data))
             f.transport.pushInbound(InnerFrameV2(type = "noise_resp", data = base64StdEncode(leg.resp)))
             runCurrent()
@@ -385,7 +388,8 @@ class NoiseSessionPumpTest {
             val f = fixture()
             val os = openSession(f, rekeyIntervalMs = REKEY_MS)
 
-            advanceUntilIdle() // re-key #1 noise_init
+            advanceTimeBy(REKEY_MS) // fire re-key #1's timer without reaching the response watchdog (#495)
+            runCurrent()
             val leg = f.responder.rekey(base64StdDecode(f.transport.sentFrames[1].data))
             f.transport.pushInbound(InnerFrameV2(type = "noise_resp", data = base64StdEncode(leg.resp)))
             runCurrent()
@@ -396,8 +400,9 @@ class NoiseSessionPumpTest {
             runCurrent()
             assertEquals(2, f.transport.sentFrames.size)
 
-            // Past the re-based interval: re-key #2 fires.
-            advanceUntilIdle()
+            // Past the re-based interval: re-key #2 fires (bounded advance keeps its watchdog dormant).
+            advanceTimeBy(REKEY_MS)
+            runCurrent()
             assertEquals(3, f.transport.sentFrames.size)
             assertEquals("noise_init", f.transport.sentFrames[2].type)
 
@@ -410,7 +415,8 @@ class NoiseSessionPumpTest {
             val f = fixture()
             val os = openSession(f, rekeyIntervalMs = REKEY_MS)
 
-            advanceUntilIdle()
+            advanceTimeBy(REKEY_MS) // fire the re-key timer without reaching the response watchdog (#495)
+            runCurrent()
             val leg = f.responder.rekey(base64StdDecode(f.transport.sentFrames[1].data))
             f.transport.pushInbound(InnerFrameV2(type = "noise_resp", data = base64StdEncode(leg.resp)))
             runCurrent() // process the resp without advancing the clock past the re-based timer
@@ -430,7 +436,7 @@ class NoiseSessionPumpTest {
 
             val req = envelope(id = 9L, type = "rekey_request", payload = """{"reason":"scheduled"}""")
             f.transport.pushInbound(noiseMsg(os.responderPair, req))
-            advanceUntilIdle()
+            runCurrent() // the rekey_request path is scope.launch{…} at current time — no clock advance (#495)
 
             // The control envelope is intercepted at the producer — never surfaced to the inbound consumer.
             assertTrue(os.received.isEmpty())
@@ -476,7 +482,8 @@ class NoiseSessionPumpTest {
             val f = fixture()
             val os = openSession(f, rekeyIntervalMs = REKEY_MS)
 
-            advanceUntilIdle() // re-key in flight
+            advanceTimeBy(REKEY_MS) // fire the re-key timer without the watchdog preempting the MAC-fail (#495)
+            runCurrent()
             assertEquals(2, f.transport.sentFrames.size)
 
             // A well-formed re-key noise_resp from an INDEPENDENT static (rotated rs / relay MITM).
@@ -509,7 +516,8 @@ class NoiseSessionPumpTest {
             val f = fixture()
             val os = openSession(f, rekeyIntervalMs = REKEY_MS)
 
-            advanceUntilIdle() // re-key in flight (noise_init sent, awaiting noise_resp)
+            advanceTimeBy(REKEY_MS) // fire the re-key timer without the watchdog preempting the close() (#495)
+            runCurrent()
             assertEquals(2, f.transport.sentFrames.size)
 
             os.pump.close()
@@ -520,12 +528,49 @@ class NoiseSessionPumpTest {
             assertFalse(os.pump.send(envelope())) // session wiped
         }
 
+    // ---- #495: re-key response watchdog — recover when a re-key noise_resp is lost --------------
+
+    @Test
+    fun timerRekey_respTimeoutTearsDownWhenRespNeverArrives() =
+        runTest {
+            val f = fixture()
+            val os = openSession(f, rekeyIntervalMs = REKEY_MS, rekeyRespTimeoutMs = REKEY_RESP_MS)
+
+            // Fire the re-key timer without reaching the response watchdog: a re-key noise_init goes out
+            // and the pump stays Open, awaiting the noise_resp that will never come.
+            advanceTimeBy(REKEY_MS)
+            runCurrent()
+            assertEquals(2, f.transport.sentFrames.size)
+            assertEquals(
+                "noise_init",
+                f.transport.sentFrames
+                    .last()
+                    .type,
+            )
+            assertTrue(os.pump.state.value is PumpState.Open)
+
+            // The noise_resp never arrives; only the watchdog deadline elapses.
+            advanceTimeBy(REKEY_RESP_MS)
+            runCurrent()
+
+            // Recovery: the pump tears down (fault cause) instead of wedging rekeyInFlight true forever,
+            // so the reconnect supervisor rebuilds a fresh handshake on fresh keys.
+            val state = os.pump.state.value
+            assertTrue(state is PumpState.Closed)
+            assertTrue((state as PumpState.Closed).cause is NoiseSessionException)
+            assertTrue(f.transport.closeCalls >= 1)
+            assertFalse(os.pump.send(envelope())) // session wiped → no longer Open, so it cannot wedge
+
+            advanceUntilIdle()
+            assertTrue(os.collector.isCompleted) // inbound completed → no leaked collector
+        }
+
     /** A `rekey_request` with [payloadJson] triggers exactly one re-key and is never forwarded. */
     private fun TestScope.assertRekeyRequestTriggersRekey(payloadJson: String) {
         val f = fixture()
         val os = openSession(f)
         f.transport.pushInbound(noiseMsg(os.responderPair, envelope(id = 5L, type = "rekey_request", payload = payloadJson)))
-        advanceUntilIdle()
+        runCurrent() // the rekey_request path is scope.launch{…} at current time — no clock advance (#495)
 
         assertEquals(2, f.transport.sentFrames.size)
         assertEquals(
@@ -574,13 +619,28 @@ class NoiseSessionPumpTest {
                 ioDispatcher = dispatcher,
             )
 
-        /** [rekeyIntervalMs] `null` keeps the pump's real 1-hour default; tests inject a small value. */
-        fun newPump(rekeyIntervalMs: Long? = null) =
-            if (rekeyIntervalMs == null) {
-                NoiseSessionPump(transport, factory, dispatcher = dispatcher)
-            } else {
+        /**
+         * [rekeyIntervalMs] / [rekeyRespTimeoutMs] `null` keep the pump's real (1-hour / 30-second) ctor
+         * defaults; tests inject a small value to drive the timer / response-watchdog on the virtual clock.
+         * Only the #495 regression injects both; every other re-key test injects the interval alone.
+         */
+        fun newPump(
+            rekeyIntervalMs: Long? = null,
+            rekeyRespTimeoutMs: Long? = null,
+        ) = when {
+            rekeyIntervalMs != null && rekeyRespTimeoutMs != null ->
+                NoiseSessionPump(
+                    transport,
+                    factory,
+                    dispatcher = dispatcher,
+                    rekeyIntervalMs = rekeyIntervalMs,
+                    rekeyRespTimeoutMs = rekeyRespTimeoutMs,
+                )
+            rekeyIntervalMs != null ->
                 NoiseSessionPump(transport, factory, dispatcher = dispatcher, rekeyIntervalMs = rekeyIntervalMs)
-            }
+            else ->
+                NoiseSessionPump(transport, factory, dispatcher = dispatcher)
+        }
     }
 
     private class OpenSession(
@@ -595,8 +655,9 @@ class NoiseSessionPumpTest {
         f: Fixture,
         connId: String = "conn-xyz",
         rekeyIntervalMs: Long? = null,
+        rekeyRespTimeoutMs: Long? = null,
     ): OpenSession {
-        val pump = f.newPump(rekeyIntervalMs)
+        val pump = f.newPump(rekeyIntervalMs, rekeyRespTimeoutMs)
         val received = mutableListOf<Envelope>()
         // A foreground child of the test scope (not backgroundScope): advanceUntilIdle() fully drains
         // it and runTest's structured concurrency enforces it completes — both real leak checks. Every
@@ -772,6 +833,10 @@ class NoiseSessionPumpTest {
 
         /** A small re-key interval so the virtual clock drives the timer in a single `advanceUntilIdle`. */
         const val REKEY_MS = 20L
+
+        /** A short re-key response deadline (> [REKEY_MS]) so the watchdog is unambiguously ordered after
+         *  the timer fires, and both are drivable on the virtual clock (#495). */
+        const val REKEY_RESP_MS = 50L
 
         /** Mints a raw 32-byte X25519 private key (as the device keystore hands out), for the foreign re-key. */
         fun newPrivateKey(): ByteArray {
