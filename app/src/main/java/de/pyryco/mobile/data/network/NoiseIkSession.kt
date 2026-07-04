@@ -52,9 +52,11 @@ class NoiseSessionException(
  * **Threading.** The expected usage is a single WS message pump (one outbound and one inbound op
  * at a time), so concurrent same-direction calls should not occur. As a deterministic backstop
  * against the catastrophic, silent nonce-reuse a same-direction race would cause under
- * ChaCha20-Poly1305, [encrypt]/[decrypt]/[close] are `@Synchronized` — as are [writeRekeyInit] and
- * [readRekeyResp], so the re-key CipherState swap cannot interleave with an in-flight same-direction
- * AEAD op. The lock is the floor, not a license to fan out — keep to the single-pump contract.
+ * ChaCha20-Poly1305, [writeInit]/[readResp]/[encrypt]/[decrypt]/[close] are `@Synchronized` — as are
+ * [writeRekeyInit] and [readRekeyResp] — so a teardown [close] firing mid-handshake cannot destroy the
+ * `handshake` out from under an in-flight [writeInit]/[readResp], and the re-key CipherState swap
+ * cannot interleave with an in-flight same-direction AEAD op. The lock is the floor, not a license to
+ * fan out — keep to the single-pump contract.
  *
  * Not resumable: a failed or closed session is discarded and re-created (Noise ephemerals are
  * per-handshake).
@@ -122,6 +124,7 @@ class NoiseIkSession(
      * early-data. Returns the raw frame bytes for the WS client to base64-wrap and send.
      * Valid once, from NEW. → AWAITING_RESP.
      */
+    @Synchronized
     fun writeInit(): ByteArray {
         check(state == State.NEW) { "writeInit() is valid once, before readResp()" }
         val hs = handshake ?: throw IllegalStateException("session is closed")
@@ -139,6 +142,7 @@ class NoiseIkSession(
      * Throws [NoiseSessionException] on a handshake MAC failure (wrong `rs` / suite / tampered msg2)
      * or a malformed `hello_ack`.
      */
+    @Synchronized
     fun readResp(resp: ByteArray): String {
         check(state == State.AWAITING_RESP) { "readResp() requires exactly one prior writeInit()" }
         val hs = handshake ?: throw IllegalStateException("session is closed")

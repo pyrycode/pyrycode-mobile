@@ -13,6 +13,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.lang.reflect.Modifier
 import javax.crypto.BadPaddingException
 
 /**
@@ -417,6 +418,34 @@ class NoiseIkSessionTest {
 
         assertThrows(IllegalStateException::class.java) { established.session.encrypt(byteArrayOf(1)) }
         assertThrows(IllegalStateException::class.java) { established.session.decrypt(ByteArray(16)) }
+    }
+
+    // ---- #497: handshake-phase methods join the @Synchronized set --------------
+
+    @Test
+    fun synchronizedSet_coversHandshakeLifecycleAndRekeyMethods() {
+        // Executable form of the Threading-KDoc invariant: writeInit/readResp (#497) join the
+        // already-synchronized established/lifecycle/re-key set on the same instance monitor, so a
+        // teardown close() cannot wipe `handshake` out from under an in-flight handshake step.
+        // Kotlin @Synchronized sets the JVM ACC_SYNCHRONIZED method flag (not a monitorenter block),
+        // so Modifier.isSynchronized observes it via reflection — deterministic, no threads, not flaky.
+        val cls = NoiseIkSession::class.java
+        val synchronizedMethods =
+            listOf(
+                cls.getDeclaredMethod("writeInit"),
+                cls.getDeclaredMethod("readResp", ByteArray::class.java),
+                cls.getDeclaredMethod("encrypt", ByteArray::class.java),
+                cls.getDeclaredMethod("decrypt", ByteArray::class.java),
+                cls.getDeclaredMethod("close"),
+                cls.getDeclaredMethod("writeRekeyInit", ByteArray::class.java),
+                cls.getDeclaredMethod("readRekeyResp", ByteArray::class.java),
+            )
+        for (method in synchronizedMethods) {
+            assertTrue(
+                "${method.name} must be @Synchronized (ACC_SYNCHRONIZED) — same monitor as close()",
+                Modifier.isSynchronized(method.modifiers),
+            )
+        }
     }
 
     // ---- Helpers ---------------------------------------------------------------
