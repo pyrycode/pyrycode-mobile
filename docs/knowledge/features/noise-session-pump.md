@@ -56,6 +56,7 @@ class NoiseSessionPump(
     dispatcher: CoroutineDispatcher = Dispatchers.Default,  // crypto is CPU-bound; create() switches to IO itself
     handshakeTimeoutMs: Long = 10_000,                      // protocol step 4: the noise_resp deadline
     rekeyIntervalMs: Long = 3_600_000,                      // #304: the 1-hour re-key cadence; injected small in tests
+    rekeyRespTimeoutMs: Long = 30_000,                      // #495: bounded re-key noise_resp deadline (Go WS-4426 mirror)
 ) : ManagedSessionPump {                     // #351: inbound/send (SessionPump) + start/close (the lifecycle view)
     val state: StateFlow<PumpState>          // handshake-completion + lifecycle signal (pump-specific, not in the contract)
     val inbound: Flow<Envelope>              // hot, single-consumer, decrypted app frames
@@ -125,10 +126,11 @@ the pump scope that:
   fails AEAD in `decrypt` and can never reach a consumer (see § Re-key triggers for why `rekey_request`
   is intercepted at the producer).
 - **`"noise_resp"`** (#304) → the re-key handshake reply. A raw handshake frame (not a `noise_msg`), so it
-  arrives here rather than as decrypted app traffic. If `rekeyInFlight`, route the bytes to
-  `session.readRekeyResp(base64StdDecode(data))` (atomic CipherState swap), clear the flag, and re-base
-  the timer. A `noise_resp` with **no re-key in flight** is a protocol violation → teardown; a
-  `readRekeyResp` MAC failure (rotated `rs` / MITM) → teardown (see § Re-key triggers).
+  arrives here rather than as decrypted app traffic. If `rekeyInFlight`, **cancel the response watchdog**
+  (#495 — the swap is completing), route the bytes to `session.readRekeyResp(base64StdDecode(data))` (atomic
+  CipherState swap), clear the flag, and re-base the timer. A `noise_resp` with **no re-key in flight** is a
+  protocol violation → teardown; a `readRekeyResp` MAC failure (rotated `rs` / MITM) → teardown (see § Re-key
+  triggers).
 - **`else`** → teardown. The ordered encrypted stream **cannot skip a frame**, so a genuinely unknown type
   — or a base64 / `decrypt` / `Envelope`-parse failure on a `noise_msg` — tears the session down rather
   than dropping the frame.
@@ -195,19 +197,38 @@ rekeyInFlight`:
    transport-AEAD payload, so it is outside the wire-order==nonce-order invariant the lock protects, and
    ordinary `noise_msg` traffic may interleave on the **current** keys until the swap.
 
-**Completion** routes through the `noise_resp` branch (above): `readRekeyResp` swaps in the new keys
-atomically (#303's `@Synchronized` — no mixed-key / nonce-reuse window), clears `rekeyInFlight`, and
-re-bases the timer. **No `rekey_ack` is sent** — the next successful AEAD round-trip on the new keys is the
-implicit ack. A MAC failure (the responder is not the pinned `rs` → rotated key or relay MITM) throws →
-teardown → #307 reconnects with a fresh full handshake; #303's **fail-RETAIN** keeps the old keys valid
-right up to `session.close()`, so **no half-swapped state is observable**.
+**Completion** routes through the `noise_resp` branch (above): the response watchdog is **cancelled** (#495),
+`readRekeyResp` swaps in the new keys atomically (#303's `@Synchronized` — no mixed-key / nonce-reuse
+window), clears `rekeyInFlight`, and re-bases the timer. **No `rekey_ack` is sent** — the next successful
+AEAD round-trip on the new keys is the implicit ack. A MAC failure (the responder is not the pinned `rs` →
+rotated key or relay MITM) throws → teardown → #307 reconnects with a fresh full handshake; #303's
+**fail-RETAIN** keeps the old keys valid right up to `session.close()`, so **no half-swapped state is
+observable**.
 
-> **Why no phone-side re-key reply timeout** (unlike Go #450's 30 s window). The phone is the *initiator*;
-> after it sends a re-key `noise_init`, a missing `noise_resp` cannot strand the session on a reliable
-> ordered WS/TCP transport — either the server answers (swap completes), or the connection closes
-> (`inbound` completes → teardown → reconnect), or a lost/late swap desyncs the keys and the **next** AEAD
-> frame in either direction MAC-fails → teardown. All paths converge on teardown→reconnect without an
-> explicit timer; one is deferred until a stuck re-key is actually observed (evidence-based).
+**The bounded response watchdog ([#495](../codebase/495.md)).** `rekeyInFlight` is set *before* the
+`noise_init` send and was cleared *only* by the completing `noise_resp` — and the one-shot timer that fired
+this re-key had already finished its `delay`. So a **single lost `noise_resp`** wedged `rekeyInFlight` `true`
+forever: every future `initiateRekey` hit the coalesce guard and silently skipped, and the transport ran
+indefinitely on **un-rotated keys**. To close that, `initiateRekey` arms a finite `rekeyRespTimeoutJob`
+(`scope.launch { delay(rekeyRespTimeoutMs); teardown(…) }`, default `REKEY_RESP_TIMEOUT_MS = 30_000` ms)
+**immediately after** the `noise_init` is sent and **inside** the send `try` (so a racing-teardown
+`IllegalStateException` never arms an orphan, and only a sent init starts the clock). The completing
+`noise_resp` cancels it; on timeout it funnels to the existing `teardown`, so #307 rebuilds a fresh pump →
+fresh handshake → fresh keys → cadence re-armed. **Recovery is teardown, not same-session retry**, because
+`writeRekeyInit`'s `check(pendingRekey == null)` can't be re-satisfied without a `session.close()`; given the
+single-re-key-in-flight invariant there is no in-session state worth salvaging (see
+[`codebase/495.md`](../codebase/495.md) § Why teardown). This is the mobile mirror of the Go initiator's
+WS-4426 reply deadline (`pyrycode` #450). The watchdog **only** calls `teardown` — it never re-arms the
+1-hour timer, so `rekeyTimerJob`'s drive-coroutine-only invariant is untouched. Job-cancellation alone is
+sufficient (no generation counter): the single-in-flight invariant guarantees watchdog A is cancelled by
+resp A before re-key B can arm watchdog B.
+
+> **History (#304 → #495).** #304 originally shipped **without** a phone-side reply timeout, on the
+> evidence-based argument that on a reliable ordered WS/TCP every re-key failure converges on
+> teardown→reconnect anyway. The Cross-Repo Code Review 2026-07-03 refuted that for one case: a *lost*
+> `noise_resp` (frame dropped, connection still up) desyncs nothing on the wire yet wedges `rekeyInFlight`
+> deterministically — the next re-key is skipped, and traffic keeps flowing on the old keys with no
+> teardown trigger. #495 landed the bounded window #304 had named as the deferred fix.
 
 `NoiseSessionFactory.reloadDeviceStaticKey()` (added by #304) is the re-supply seam #303's design (B)
 named: it re-loads `s` fresh per re-key (mirroring `create()`'s load + zero discipline) rather than
@@ -218,9 +239,10 @@ hourly rotation.
 
 - **One connection-scoped scope** (`CoroutineScope(SupervisorJob() + dispatcher)`, `Dispatchers.Default`
   in production). The session-drive coroutine is the long-lived one; #304's re-key adds children — the
-  one-shot timer `delay` and each launched `initiateRekey` — **all** children of this same scope. No
-  `GlobalScope`, no application scope — `teardown`'s `scope.cancel()` cancels the timer and any in-flight
-  re-key, so nothing outlives the connection.
+  one-shot timer `delay`, each launched `initiateRekey`, and #495's `rekeyRespTimeoutJob` response watchdog
+  — **all** children of this same scope. No `GlobalScope`, no application scope — `teardown`'s
+  `scope.cancel()` cancels the timer, any in-flight re-key, and the watchdog, so nothing outlives the
+  connection (and no non-watchdog teardown path needs to cancel the watchdog explicitly).
 - **Re-key concurrency (#304) — one new lock, no ordering hazard.** `rekeyMutex` serialises the two
   initiation paths (timer vs `rekey_request`) so `writeRekeyInit`'s `check(pendingRekey == null)` can't
   trip from a double-initiate; it **does not nest** with `outboundLock` or the session monitor (the re-key
@@ -230,6 +252,13 @@ hourly rotation.
   by wire causality (the resp can't arrive before the server reads the init) + `@Volatile`. The CipherState
   swap's atomicity is **#303's `@Synchronized`**, not re-implemented here. `rekeyTimerJob` is touched only
   by the drive coroutine → single-threaded, no race.
+- **Re-key response watchdog (#495) — same cross-coroutine posture as `rekeyInFlight`, no new lock.**
+  `rekeyRespTimeoutJob` is `@Volatile`, assigned under `rekeyMutex` in `initiateRekey` (armed after the
+  `noise_init` send, inside the send `try`) and cancelled on the drive coroutine in `onOpenFrame` (before
+  `readRekeyResp`). It **only** calls `teardown` — never re-arms `rekeyTimerJob` — so the drive-coroutine-only
+  single-writer invariant on the 1-hour timer is preserved. Job-cancellation is sufficient without a
+  generation counter: the single-re-key-in-flight invariant means watchdog A is cancelled by resp A before
+  re-key B can arm watchdog B, so a stale watchdog never fires during a later re-key.
 - **Single state source** — one `MutableStateFlow<PumpState>(Handshaking)`; only the drive coroutine
   writes `Open`, only `teardown` writes `Closed`, `send` reads it.
 - **`inbound`** — `Channel<Envelope>(BUFFERED)` exposed as `receiveAsFlow()`: hot (the collector runs
@@ -272,6 +301,12 @@ review against the diff:
   handshake; a forged/rotated `noise_resp` MAC-fails → teardown (no swap to attacker keys). The inbound
   `rekey_request` arrives **already AEAD-authenticated** (only the trusted peer can nudge a re-key) and the
   action it nudges (re-key) is benign.
+- **A withheld re-key `noise_resp` is now fail-safe, not a silent wedge** ([#495](../codebase/495.md)) — a
+  slow/hostile relay that swallows the re-key reply can no longer hold the session on un-rotated keys
+  indefinitely; the bounded response watchdog forces a fresh handshake within `rekeyRespTimeoutMs` (default
+  30 s, the Go WS-4426 mirror). This is a **hardening** of the 1-hour key-rotation guarantee, and it *narrows*
+  the #298 device-key RAM window on the lost-resp path (teardown promptly wipes `pendingRekey`'s copy of `s`,
+  where today's wedge would keep it resident for the whole remaining session).
 - **Ordering discipline** — the `outboundLock` spans the full encrypt→enqueue pair (a reorder is an
   availability bug → session death → reconnect, not a confidentiality break); the re-key `noise_init` is
   **outside** the lock (it carries no transport-AEAD payload, so it is outside the nonce-order invariant).
@@ -296,9 +331,13 @@ review against the diff:
   → `Closed`; the supervisor reconnects with a fresh handshake (#304, see § Re-key triggers). A device-key
   re-load failure (not paired / key unavailable) instead **skips** the re-key silently — transport stays
   live on the current keys.
-- **Typed wire↔domain mapping, a `4421`-carrying protocol-violation close, a phone-side re-key reply
-  timeout** — all out of scope (#278 / a future transport-surface extension / deferred-until-observed),
-  named in the spec's § Open questions.
+- **Lost re-key `noise_resp`** (frame dropped, connection still up) → the bounded response watchdog
+  ([#495](../codebase/495.md)) fires after `rekeyRespTimeoutMs` (default 30 s) → `Closed` → the supervisor
+  reconnects with a fresh handshake on fresh keys. Without it, a single dropped frame would wedge
+  `rekeyInFlight` `true` forever and run the session on un-rotated keys indefinitely (see § Re-key triggers).
+- **Typed wire↔domain mapping, a `4421`-carrying protocol-violation close** — out of scope (#278 / a future
+  transport-surface extension), named in the spec's § Open questions. (The phone-side re-key reply timeout,
+  formerly listed here as deferred, **shipped in #495**.)
 - **`last_seen_ts` backfill** — `writeInit` is called as-is (#303's `HelloClientPayload` carries no
   `last_seen_ts`); backfill is a future #303/#278 concern.
 
@@ -310,22 +349,29 @@ as [`NoiseIkSessionTest`](noise-ik-session.md) / [`RelayConnectionSupervisorTest
 Test doubles live in-file: a `Channel`-backed `FakeRelayTransport` (`pushInbound` / `completeInbound` /
 captured `sentFrames`; **`connect()` `error()`s** — the pump must never dial), a real IK `TestResponder`
 (copied from `NoiseIkSessionTest`) so the session is exercised against a real peer, and a
-`NoiseSessionFactory` over fake stores pinned to the responder's static key. **26 `@Test`** — 14 from
+`NoiseSessionFactory` over fake stores pinned to the responder's static key. **28 `@Test`** — 14 from
 #309 (handshake→`Open` with the encrypted `hello` asserted, timeout, MAC failure, wrong/unknown frame
 type, inbound decrypt→`Envelope`, fail-closed teardown on every bad frame, outbound round-trip, `Down` /
 idempotent-`close()` lifecycle + no-leak, `start()`-twice throws), **1 from [#401](../codebase/401.md)**
 (a `hello_ack` echoing `["interactive"]` surfaces `setOf("interactive")` on `PumpState.Open` — asserted
-via the `noiseResp`/`ackEnvelope` helpers, which gained a `capabilities` parameter), plus **11 re-key
-scenarios from [#304](../codebase/304.md)**: timer fires only after the interval, re-key completes + traffic continues on
+via the `noiseResp`/`ackEnvelope` helpers, which gained a `capabilities` parameter), **11 re-key
+scenarios from [#304](../codebase/304.md)** (timer fires only after the interval, re-key completes + traffic continues on
 new keys, timer re-based by a completed re-key, completion sends no ack + stays `Open`, inbound
 `rekey_request` triggers re-key + not forwarded, forward-compat `reason` ×3, rotated-`rs`/MITM teardown
-without half-swap, stray `noise_resp` teardown, close-mid-re-key no-leak. The `TestResponder` gained a
-**re-key leg** (`rekey(init)` re-using the responder's own static so the pinned-`rs` continuity holds);
-`rekeyIntervalMs` is injected small so the virtual clock drives the timer. **Two re-key test gotchas** —
-the `FakeDeviceStaticKeyStore` must hand out a **fresh copy per call** (the per-re-key re-load would
-otherwise get the scalar `create()` already zeroed), and `runCurrent()` (not `advanceUntilIdle()`) settles
-a `noise_resp` when asserting "no extra frame" (an over-advance re-fires the re-based timer); see
-[`codebase/304.md`](../codebase/304.md) § Lessons learned.
+without half-swap, stray `noise_resp` teardown, close-mid-re-key no-leak), plus the
+**[#495](../codebase/495.md) response-watchdog regression** `timerRekey_respTimeoutTearsDownWhenRespNeverArrives`
+(fire the re-key timer, deliver **no** `noise_resp`, advance past `rekeyRespTimeoutMs`, assert the pump
+tears down with a fault cause + wipes the session, so it recovers instead of wedging `rekeyInFlight` true
+forever). The `TestResponder` gained a **re-key leg** (`rekey(init)` re-using the responder's own static so
+the pinned-`rs` continuity holds); `rekeyIntervalMs` (and, for #495, `rekeyRespTimeoutMs = REKEY_RESP_MS =
+50L > REKEY_MS = 20L`) is injected small so the virtual clock drives the timer/watchdog. **Three re-key test
+gotchas** — the `FakeDeviceStaticKeyStore` must hand out a **fresh copy per call** (the per-re-key re-load
+would otherwise get the scalar `create()` already zeroed); `runCurrent()` (not `advanceUntilIdle()`) settles
+a `noise_resp` when asserting "no extra frame" (an over-advance re-fires the re-based timer); and, since
+#495, **every re-key test that fires a re-key then waits must use a bounded `advanceTimeBy(REKEY_MS);
+runCurrent()`, never `advanceUntilIdle()`** — the latter now fast-forwards through the armed response
+watchdog and tears the session down (see [`codebase/495.md`](../codebase/495.md) § Lessons learned and
+[`codebase/304.md`](../codebase/304.md) § Lessons learned).
 
 > **Test-harness note (reusable):** a "no leaked coroutine" assertion that collects `inbound` and checks
 > `job.isCompleted` must launch the collector as a **foreground child of the test scope** (not
@@ -337,10 +383,12 @@ a `noise_resp` when asserting "no extra frame" (an over-advance re-fires the re-
 
 - Ticket notes: [`../codebase/401.md`](../codebase/401.md) (the `PumpState.Open.capabilities` surfacing) +
   [`../codebase/309.md`](../codebase/309.md) (the pump itself) +
-  [`../codebase/304.md`](../codebase/304.md) (the re-key triggers built on it) — files/line refs,
+  [`../codebase/304.md`](../codebase/304.md) (the re-key triggers built on it) +
+  [`../codebase/495.md`](../codebase/495.md) (the bounded re-key response watchdog) — files/line refs,
   patterns, lessons, verification.
 - Specs: `docs/specs/architecture/309-noise-session-pump.md` + `docs/specs/architecture/304-noise-ik-rekey-triggers.md`
-  (§ Design, § State + concurrency model, § Error handling, § Security review — both Verdict PASS).
+  + `docs/specs/architecture/495-rekey-response-watchdog.md`
+  (§ Design, § State + concurrency model, § Error handling, § Security review — all Verdict PASS).
 - Sits on: [Relay WebSocket transport](relay-ws-transport.md) ([#306](../codebase/306.md)) — collects
   `inbound`, sends `InnerFrameV2`, keys off `inbound` completion for `Down`; never `events`.
   [Noise_IK session](noise-ik-session.md) ([#303](../codebase/303.md)/[#298](../codebase/298.md)) via
