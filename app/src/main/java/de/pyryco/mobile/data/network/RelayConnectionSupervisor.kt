@@ -186,6 +186,12 @@ class RelayConnectionSupervisor(
         attempt: Int,
         daemonAbsent: Boolean,
     ) {
+        // Drain any stale retry signal buffered while no wait was in progress (#498): a retry() issued
+        // during a healthy connection (loop inside events.collect) leaves a Unit in the CONFLATED
+        // retrySignal with no receiver. Discarding it here — before the first collapsibleWait — stops
+        // it pre-collapsing this fresh backoff. A retry() arriving *during* a wait lands after this
+        // drain, so it still collapses the wait as intended (AC#2).
+        while (retrySignal.tryReceive().isSuccess) { /* discard a stale pre-drop signal */ }
         val base = backoffBaseSeconds(attempt)
         val intervalMs = jitteredBackoffMs(attempt, random)
         if (daemonAbsent) {
