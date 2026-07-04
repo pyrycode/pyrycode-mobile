@@ -31,6 +31,7 @@ fun ThreadTopAppBar(
     onShowLiteralScreen: () -> Unit,
     isPromoted: Boolean,
     modifier: Modifier = Modifier,
+    mutationsSupported: Boolean = true,
 ) {
     TopAppBar(
         modifier = modifier,
@@ -62,6 +63,7 @@ fun ThreadTopAppBar(
                 ThreadOverflowMenu(
                     expanded = overflowExpanded,
                     isPromoted = isPromoted,
+                    mutationsSupported = mutationsSupported,
                     onDismiss = onOverflowDismiss,
                     onEvent = onOverflowEvent,
                     onShowLiteralScreen = onShowLiteralScreen,

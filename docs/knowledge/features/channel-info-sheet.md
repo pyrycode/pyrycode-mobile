@@ -29,9 +29,12 @@ internal fun ChannelInfoSheet(
     onInstallMemoryPlugin: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    mutationsSupported: Boolean = true,               // new in #508 — false in relay mode hides the whole Actions section
     sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
 )
 ```
+
+- **`mutationsSupported` ([#508](../codebase/508.md))** is defaulted `= true` and forwarded verbatim into the `ChannelInfoSheetContent` body (which also takes a trailing `mutationsSupported: Boolean = true` — its gate site). It sits **after** `modifier` on the shell (before the also-defaulted `sheetState`) to satisfy Lint `ComposeParameterOrder` (defaulted-after-`modifier`; see [[compose-parameter-order-lint-defaulted-after-modifier]]) — `ChannelInfoSheetContent` has no `modifier` param, so its trailing defaulted param is fine. The default is a preview/test seam only — production threads `state.mutationsSupported` from [`ThreadScreen`](thread-screen.md). **It is a param, deliberately not a `ChannelInfoUiModel` field** — the model is pure display content; a capability flag is a separate concern, and putting it on the model would drag `toChannelInfoUiModel()` + `ThreadScreenMapperTest` into scope for no benefit.
 
 - **`internal`** — consumed only within the module; same posture as [`WorkspacePickerSheet`](./workspace-picker-sheet.md) / `ThemePickerDialog`.
 - **`sheetState` defaulted but exposed** — host (follow-up ticket) needs to drive `sheetState.hide()` for animated-close before invoking `onDismiss`; defaulting keeps the preview / one-off uses one-line. `skipPartiallyExpanded = true` because the content height is bounded.
@@ -48,7 +51,7 @@ Single `Column(fillMaxWidth)` inside the `ModalBottomSheet`:
 2. **`SectionHeader("About")`** — `labelLarge` on `onSurfaceVariant`, `padding(start = 24, end = 16, top = 12, bottom = 4)`. Identical helper shape to `WorkspacePickerSheet.SectionHeader`; deliberately not extracted into a shared file in this ticket — touch only this file.
 3. **Five `AboutRow`s**: `Workspace` (with `valueIsPath = true`), `Created`, `Last activity`, `Total sessions`, `Total messages`. See "Row contracts" below.
 4. **`SectionHeader("Memory")`** then **`MemoryRow(plugins, onInstall)`**. See "Memory row" below.
-5. **`SectionHeader("Actions")`** then **`ActionsGrid`** — `Column(padding(start = 16, end = 16, top = 4), spacedBy(8.dp))` over two `Row(fillMaxWidth, spacedBy(8.dp))`s: row 1 = `Rename` | `Change workspace`, row 2 = `Archive` | `Delete`. Each cell is `FilledTonalButton(onClick = …, modifier = Modifier.weight(1f))` with `Text(labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)`.
+5. **`SectionHeader("Actions")`** then **`ActionsGrid`** — `Column(padding(start = 16, end = 16, top = 4), spacedBy(8.dp))` over two `Row(fillMaxWidth, spacedBy(8.dp))`s: row 1 = `Rename` | `Change workspace`, row 2 = `Archive` | `Delete`. Each cell is `FilledTonalButton(onClick = …, modifier = Modifier.weight(1f))` with `Text(labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)`. **Since [#508](../codebase/508.md) the header + grid are wrapped together in `if (mutationsSupported) { … }`** — in relay mode all four cells hit unimplemented mutations (`rename` / `changeWorkspace` / `archive` throw, `delete` inherits the throwing default), so the **entire Actions section is hidden** rather than the header floating over four inert cells. About / Memory / the Channel-ID footer stay, so the sheet remains viewable as read-only info (the "Channel info" overflow entry that opens it also remains). This is the sheet-surface half of the same relay-mode gate applied to the [`ThreadOverflowMenu`](thread-overflow-menu.md)'s four mutation items; the treatment is **hide** on both (AC#5).
 6. **`Footer(channelId)`** — see "Footer + clipboard" below.
 7. **`Spacer(height = 24.dp)`** — bottom inner padding above the system-inset that `ModalBottomSheet` already applies. Same trailing-spacer pattern as `WorkspacePickerSheetContent`.
 
@@ -115,7 +118,7 @@ Two `@Preview`s, one per theme, both `widthDp = 412` and `showBackground = true`
 
 ## Tests
 
-None in #217 — that AC required only a `@Preview`. The precedent for stateless-component tests in this package is [`WorkspacePickerSheetTest.kt`](./workspace-picker-sheet.md#tests) (five `androidTest/` Compose UI tests targeting the `*Content` seam). The host-side coverage landed with the [#226](../codebase/226.md) thread-overflow host: a JVM unit test over the host's pure `ThreadUiState.toChannelInfoUiModel(now)` mapper (`ThreadScreenMapperTest` — labels, counts, em-dash fallbacks, with an injected `now`) and an instrumented `ThreadScreenChannelInfoTest` that renders this sheet with `channelInfoOpen = true` and asserts the per-button event dispatch. Since [#227](../codebase/227.md) the **Archive** button emits `ThreadEvent.Archive` and **Delete** emits `ThreadEvent.Delete` (Rename / Change workspace still emit-then-dismiss; close still dismiss-only) — and three new dialog tests cover the `DeleteConfirmationDialog` (title + interpolated-body display, confirm **Delete** → `DeleteConfirm`, **Cancel** → `DeleteDismiss`).
+None in #217 — that AC required only a `@Preview`. The precedent for stateless-component tests in this package is [`WorkspacePickerSheetTest.kt`](./workspace-picker-sheet.md#tests) (five `androidTest/` Compose UI tests targeting the `*Content` seam). The host-side coverage landed with the [#226](../codebase/226.md) thread-overflow host: a JVM unit test over the host's pure `ThreadUiState.toChannelInfoUiModel(now)` mapper (`ThreadScreenMapperTest` — labels, counts, em-dash fallbacks, with an injected `now`) and an instrumented `ThreadScreenChannelInfoTest` that renders this sheet with `channelInfoOpen = true` and asserts the per-button event dispatch. Since [#227](../codebase/227.md) the **Archive** button emits `ThreadEvent.Archive` and **Delete** emits `ThreadEvent.Delete` (Rename / Change workspace still emit-then-dismiss; close still dismiss-only) — and three new dialog tests cover the `DeleteConfirmationDialog` (title + interpolated-body display, confirm **Delete** → `DeleteConfirm`, **Cancel** → `DeleteDismiss`). [#508](../codebase/508.md) adds `actions_section_is_hidden_when_mutations_unsupported` to `ThreadScreenChannelInfoTest` — drives `ThreadScreen` with `channelInfoOpen = true` and `channelInfoState().copy(mutationsSupported = false)`, asserts `"Actions"` / `"Rename"` / `"Change workspace"` / `"Archive"` / `"Delete"` each `assertDoesNotExist()` and `"About"` + the workspace path `assertIsDisplayed()` (read-only info survives). The existing tests use the state default `mutationsSupported = true` and continue to see the Actions section — no edit needed.
 
 ## Edge cases / limitations
 
@@ -128,8 +131,8 @@ None in #217 — that AC required only a `@Preview`. The precedent for stateless
 
 ## Related
 
-- Ticket notes: [`../codebase/217.md`](../codebase/217.md)
-- Spec: `docs/specs/architecture/217-channelinfosheet-stateless-composable.md`
+- Ticket notes: [`../codebase/217.md`](../codebase/217.md) (stateless composable), [`../codebase/226.md`](../codebase/226.md) (thread-overflow host), [`../codebase/227.md`](../codebase/227.md) (Archive/Delete wiring), [`../codebase/508.md`](../codebase/508.md) (`mutationsSupported` relay-mode gate hiding the Actions section)
+- Spec: `docs/specs/architecture/217-channelinfosheet-stateless-composable.md`, `docs/specs/architecture/508-hide-unavailable-conversation-actions.md`
 - Parent: split from [#144](https://github.com/pyrycode/pyrycode-mobile/issues/144) (Channel Info bottom sheet — host + sheet bundle).
 - Sibling sheet: [`WorkspacePickerSheet`](./workspace-picker-sheet.md) (#212) — same `ModalBottomSheet` shell + `*Content` body split, same `internal` visibility posture, same preview wrap. Worth reading first if you're picking up this file.
 - Sibling stateless-component conventions: [`ConversationRow`](./conversation-row.md) (precedent for the `combinedClickable` long-press shape used by `Footer`), [`ConnectionBanner`](./connection-banner.md), [`ToolCallRow`](./tool-call-row.md).

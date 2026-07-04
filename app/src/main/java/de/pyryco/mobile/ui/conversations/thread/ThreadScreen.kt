@@ -142,6 +142,7 @@ fun ThreadScreen(
                 onOverflowEvent = onOverflowEvent,
                 onShowLiteralScreen = onShowLiteralScreen,
                 isPromoted = state.isPromoted,
+                mutationsSupported = state.mutationsSupported,
             )
         },
         bottomBar = {
@@ -326,6 +327,7 @@ fun ThreadScreen(
     if (state.channelInfoOpen) {
         ChannelInfoSheet(
             model = state.toChannelInfoUiModel(),
+            mutationsSupported = state.mutationsSupported,
             onRename = {
                 onOverflowEvent(ThreadEvent.Rename)
                 onOverflowEvent(ThreadEvent.ChannelInfoDismiss)

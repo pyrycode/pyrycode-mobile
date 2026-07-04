@@ -81,6 +81,22 @@ class ThreadScreenChannelInfoTest {
     }
 
     @Test
+    fun actions_section_is_hidden_when_mutations_unsupported() {
+        setContent(mutableListOf(), state = channelInfoState().copy(mutationsSupported = false))
+
+        // The whole Actions section is gated out in relay mode (AC#2).
+        composeTestRule.onNodeWithText("Actions").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Rename").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Change workspace").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Archive").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Delete").assertDoesNotExist()
+
+        // The sheet stays viewable as read-only info (AC#2).
+        composeTestRule.onNodeWithText("About").assertIsDisplayed()
+        composeTestRule.onNodeWithText("~/Workspace/Projects/KitchenClaw").assertIsDisplayed()
+    }
+
+    @Test
     fun tapping_rename_emits_rename_then_dismiss() {
         val events = mutableListOf<ThreadEvent>()
         setContent(events)
