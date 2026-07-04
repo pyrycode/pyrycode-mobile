@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -169,7 +170,10 @@ class RelayConnectionSupervisor(
                 // Runs on a normal Down and on cancellation (close()): always release the socket,
                 // including a transport cancelled mid-dial before it ever reached Up.
                 stabilityTimer?.cancel() // cancel before reading the flag (no late write)
-                liveConnection.value = null
+                // Compare-and-clear on identity (#496): a cancelled loop's finally runs OUTSIDE the
+                // @Synchronized close()/connect() lock, so it must clear liveConnection only when it
+                // still holds *this* loop's transport — never a value a newer loop already published.
+                liveConnection.update { current -> if (current === transport) null else current }
                 transport.close()
             }
             if (sawUp && stableReached.get()) attempt = 0

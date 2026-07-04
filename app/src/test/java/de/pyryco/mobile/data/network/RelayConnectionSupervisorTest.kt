@@ -4,11 +4,15 @@ import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.RelayLinkStatus
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -16,6 +20,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
@@ -364,6 +369,58 @@ class RelayConnectionSupervisorTest {
             supervisor.close() // idempotent
         }
 
+    // ---- #496 AC 1, 2, 5: a cancelled old loop's finally must not clear the NEW loop's connection --
+    //
+    // The interleaving a naive test misses: StandardTestDispatcher resumes the cancelled old loop FIFO
+    // *before* the new loop publishes, so its finally would run harmlessly on an already-null field. To
+    // reproduce the bug we hold the old loop's cancellation in a NonCancellable cleanup gate PAST the
+    // point the new loop reaches Up and publishes its transport, then release it — so the old finally
+    // runs last and must leave currentConnection on the new transport (never null).
+    @Test
+    fun closeThenConnect_oldLoopFinally_doesNotClearNewLoopConnection() =
+        runTest {
+            val release = CompletableDeferred<Unit>()
+            val gated = GatedRelayTransport(release)
+            val fresh = FakeRelayTransport()
+            val factory = ScriptedRelayTransportFactory(listOf(gated, fresh))
+            val supervisor =
+                RelayConnectionSupervisor(
+                    transportFactory = factory,
+                    pairedServerStore = StubPairedServerStore(PAIRED),
+                    dispatcher = StandardTestDispatcher(testScheduler),
+                    random = Random(SEED),
+                )
+
+            // Old loop dials the gated transport, reaches Up, and publishes it.
+            supervisor.connect()
+            runCurrent()
+            assertSame(gated, supervisor.currentConnection.value)
+            assertEquals(ConnectionState.Connected, supervisor.state())
+
+            // close() cancels the old loop and synchronously nulls the live connection; connect()
+            // immediately starts a fresh loop before the cancelled loop's finally has run.
+            supervisor.close()
+            supervisor.connect()
+            runCurrent() // old loop parks in its NonCancellable gate; new loop dials `fresh`, awaits Up
+            assertNull(supervisor.currentConnection.value)
+
+            // New loop reaches Up and publishes its transport — while the old loop's finally is held.
+            fresh.emitUp()
+            runCurrent()
+            assertSame(fresh, supervisor.currentConnection.value)
+
+            // Release the old loop's held finally. On the un-guarded finally this nulls the field,
+            // wiping the new loop's live connection; the compare-and-clear guard leaves it intact.
+            release.complete(Unit)
+            runCurrent()
+            assertSame(fresh, supervisor.currentConnection.value)
+
+            // AC 3: the old loop still released its own socket unconditionally in finally.
+            assertTrue(gated.closeCalls >= 1)
+
+            supervisor.close()
+        }
+
     // ---- #391 AC 2: a 4404 close maps to DaemonAbsent, distinct from Offline ----------------------
 
     @Test
@@ -601,6 +658,48 @@ private class FakeRelayTransport : RelayTransport {
         eventsChannel.trySend(TransportEvent.Down(code, reason, cause))
         eventsChannel.close() // single terminal Down completes the stream (#306 contract)
     }
+}
+
+/**
+ * A transport for the #496 interleaving test whose cancellation is held open until the test completes
+ * [release]. On [Up][TransportEvent.Up] it publishes to the supervisor's `liveConnection`; when the
+ * supervision loop is cancelled it parks in a `NonCancellable` finally so the supervisor's own finally
+ * (the compare-and-clear fix site) is deferred past the point the *new* loop publishes its transport —
+ * the exact race window the guard closes.
+ */
+private class GatedRelayTransport(
+    private val release: CompletableDeferred<Unit>,
+) : RelayTransport {
+    override val inbound: Flow<InnerFrameV2> = emptyFlow()
+    override val events: Flow<TransportEvent> =
+        flow {
+            emit(TransportEvent.Up)
+            try {
+                awaitCancellation()
+            } finally {
+                withContext(NonCancellable) { release.await() }
+            }
+        }
+
+    var closeCalls = 0
+        private set
+
+    override fun connect() {}
+
+    override fun send(frame: InnerFrameV2): Boolean = true
+
+    override fun close() {
+        closeCalls++
+    }
+}
+
+/** Serves pre-built [transports] in order across successive [create] calls (one per dial). */
+private class ScriptedRelayTransportFactory(
+    private val transports: List<RelayTransport>,
+) : RelayTransportFactory {
+    private var index = 0
+
+    override fun create(pairedServer: PairedServer): RelayTransport = transports[index++]
 }
 
 private class FakeRelayTransportFactory : RelayTransportFactory {
