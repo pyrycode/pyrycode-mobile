@@ -103,7 +103,7 @@ while active:
       Up   → state = Connected; currentConnection = transport
              launch stability timer (delay 60 s → stableReached = true)
       Down → daemonAbsent = (event.code == 4404)   // #308 seam: read-only, never logged; else false
-  finally: cancel stability timer (before reading the flag); currentConnection = null; transport.close()
+  finally: cancel stability timer (before reading the flag); currentConnection = null IFF still this loop's own transport (#496 identity compare-and-clear); transport.close() (always)
   if (sawUp && stableReached) attempt = 0     // ≥60 s stable → reset escalation
   attempt += 1
   backoff(attempt, daemonAbsent)              // DaemonAbsent | Reconnecting countdown | Offline; collapsible by retry()
@@ -210,7 +210,22 @@ so the supervisor's internal construction doesn't preclude it.
   `connect()`/`close()` are `@Synchronized`.
 - **`try/finally` releases the socket** on **both** a normal `Down` and loop cancellation — including a
   transport cancelled mid-dial **before** `Up` (which `currentConnection.close()` alone would miss, since
-  `currentConnection` is only set on `Up`).
+  `currentConnection` is only set on `Up`). **`transport.close()` is unconditional** — every loop always
+  releases its own socket.
+- **Since [#496](../codebase/496.md): the `finally`'s `currentConnection` clear is an identity
+  compare-and-clear, not an unconditional null.** `connect()`/`close()` are `@Synchronized` and so cannot
+  interleave with **each other**, but a cancelled loop's `finally` runs **outside** that lock (cancellation is
+  cooperative — the `finally` fires at the loop's next checkpoint, which can be *after* a fresh `connect()` has
+  already started a new loop that reached `Up` and published its transport). An unconditional
+  `liveConnection.value = null` there would wipe the **new** loop's live connection, leaving
+  `currentConnection` `null` over an open socket so the [coordinator](relay-repository-coordinator.md) never
+  builds a pump — silently dead until the next reconnect. The `finally` now clears **only when
+  `liveConnection` still referentially holds *this* loop's `transport`**
+  (`liveConnection.update { if (it === transport) null else it }` — atomic, because the scope is
+  multi-threaded `Dispatchers.Default`), so a loop can only ever retract the value it itself published.
+  `close()`'s own synchronous clear stays **unscoped** (a second `close()` legitimately clears whatever is
+  current). Same race *class* as [#493](../codebase/493.md) (an async clear outliving the state it was scoped
+  to), one layer down.
 - **Stability flag is an `AtomicBoolean`** — written by the timer child, read by the loop **after**
   `stabilityTimer.cancel()`. Under a multi-threaded dispatcher, `cancel()` is not a memory barrier, so a
   plain `var` read could be stale; the atomic guarantees the loop sees the write. The boundary case
@@ -289,14 +304,20 @@ redialling + flips to `Connected` when a daemon registers; repeated `4404` stays
 **unchanged** base-2 jitter band; non-`4404` (`1006`/`4401`/`1000`) → `Reconnecting`, never
 `DaemonAbsent`; `null` dial failure → `Reconnecting`→`Offline`, never `DaemonAbsent`; a direct
 `toConnectionState()` map test. The six pre-existing tests (reading the derived `observe()`) are the
-legacy-derivation regression guard.
+legacy-derivation regression guard. **[#496](../codebase/496.md) added** the deterministic close-then-connect
+interleaving test (`closeThenConnect_oldLoopFinally_doesNotClearNewLoopConnection`): a `GatedRelayTransport`
+holds the old loop's cancellation in a `NonCancellable` cleanup gate **past** the point the new loop reaches
+`Up` and publishes, then releases it, asserting `currentConnection` still holds the **new** transport (a naive
+single-`runCurrent()` interleaving is false-green — see [`codebase/496.md`](../codebase/496.md) § Lessons
+learned).
 
 ## Related
 
 - Ticket notes: [`../codebase/307.md`](../codebase/307.md) (original supervisor) ·
   [`../codebase/391.md`](../codebase/391.md) (relay-leg `RelayLinkStatus` + the `4404` → `DaemonAbsent`
   branch) · [`../codebase/489.md`](../codebase/489.md) (per-dial `load()` reload + connect-on-pairing via
-  the Scanner) — files/line refs, patterns, lessons.
+  the Scanner) · [`../codebase/496.md`](../codebase/496.md) (the `finally`'s identity compare-and-clear of
+  `currentConnection` — closes the close-then-connect race) — files/line refs, patterns, lessons.
 - Relay-leg model: [Relay link status](relay-link-status.md) ([#391](../codebase/391.md)) — the
   `RelayLinkStatus` source of truth this supervisor produces (`relayStatus`) and derives
   `ConnectionState` from.
