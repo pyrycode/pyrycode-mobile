@@ -15,6 +15,7 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okio.ByteString
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -220,6 +221,64 @@ class OkHttpRelayTransportTest {
                 withTimeout(TIMEOUT_MS) { transport.events.first { it is TransportEvent.Down } }
             } as TransportEvent.Down
         assertNotNull(down.cause)
+    }
+
+    // ---- Design: binary inbound frame is rejected at the untrusted boundary -----
+
+    @Test
+    fun inbound_binaryFrameTearsDownWithDownAndDeliversNothing() {
+        server.enqueue(
+            MockResponse().withWebSocketUpgrade(
+                object : ClosingServerListener() {
+                    override fun onOpen(
+                        webSocket: WebSocket,
+                        response: Response,
+                    ) {
+                        // Any binary frame routes to onMessage(_, bytes) -> failLocally; content is irrelevant.
+                        webSocket.send(ByteString.of(1.toByte()))
+                    }
+                },
+            ),
+        )
+
+        val transport = newTransport()
+        transport.connect()
+
+        runBlocking {
+            // Terminal Down proves the socket was torn down rather than the frame processed.
+            withTimeout(TIMEOUT_MS) { transport.events.first { it is TransportEvent.Down } }
+            // terminate() closed inboundChannel with nothing delivered, so the stream completes empty.
+            withTimeout(TIMEOUT_MS) { assertTrue(transport.inbound.toList().isEmpty()) }
+        }
+    }
+
+    // ---- Design: oversize inbound text frame is rejected at the untrusted boundary
+
+    @Test
+    fun inbound_oversizeTextFrameTearsDownWithDownAndDeliversNothing() {
+        // Strictly greater than the cap (the guard is `>`): 131_073 chars trips it; exactly the cap is accepted.
+        // Non-JSON content is intentional — the size check runs before any JSON decode.
+        val oversize = "a".repeat(OkHttpRelayTransport.MAX_INBOUND_FRAME_CHARS + 1)
+        server.enqueue(
+            MockResponse().withWebSocketUpgrade(
+                object : ClosingServerListener() {
+                    override fun onOpen(
+                        webSocket: WebSocket,
+                        response: Response,
+                    ) {
+                        webSocket.send(oversize)
+                    }
+                },
+            ),
+        )
+
+        val transport = newTransport()
+        transport.connect()
+
+        runBlocking {
+            withTimeout(TIMEOUT_MS) { transport.events.first { it is TransportEvent.Down } }
+            withTimeout(TIMEOUT_MS) { assertTrue(transport.inbound.toList().isEmpty()) }
+        }
     }
 
     // ---- State guards: connect() twice throws; send() after close() is false ----
