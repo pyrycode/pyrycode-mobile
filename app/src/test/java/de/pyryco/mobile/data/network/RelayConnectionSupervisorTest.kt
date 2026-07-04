@@ -317,6 +317,8 @@ class RelayConnectionSupervisorTest {
             supervisor.connect()
             advanceUntilIdle()
             assertEquals(ConnectionState.Connected, supervisor.state())
+            // #499 AC#1: the relay leg is Idle (not the live-socket Connected) while unpaired.
+            assertEquals(RelayLinkStatus.Idle, supervisor.relayStatus.value)
             assertEquals(0, factory.created.size)
             assertNull(supervisor.currentConnection.value)
 
@@ -324,6 +326,7 @@ class RelayConnectionSupervisorTest {
             supervisor.retry()
             advanceUntilIdle()
             assertEquals(ConnectionState.Connected, supervisor.state())
+            assertEquals(RelayLinkStatus.Idle, supervisor.relayStatus.value)
             assertEquals(0, factory.created.size)
 
             supervisor.close()
@@ -379,9 +382,11 @@ class RelayConnectionSupervisorTest {
             runCurrent()
             factory.created[0].emitDown()
             runCurrent()
-            advanceUntilIdle() // backoff elapses -> redial reads null -> idle at Connected, loop ends
+            advanceUntilIdle() // backoff elapses -> redial reads null -> idle, loop ends
 
             assertEquals(ConnectionState.Connected, supervisor.state())
+            // #499 AC#1/#2: the later null read idles the relay leg, not a live-socket Connected.
+            assertEquals(RelayLinkStatus.Idle, supervisor.relayStatus.value)
             assertEquals(1, factory.created.size) // no second dial
             assertNull(supervisor.currentConnection.value)
 
@@ -406,6 +411,8 @@ class RelayConnectionSupervisorTest {
             assertNull(supervisor.currentConnection.value)
             assertTrue(factory.created[0].closeCalls >= 1)
             assertEquals(ConnectionState.Connected, supervisor.state())
+            // #499 AC#2: close() is an intentional disconnect — the relay leg goes Idle, not Connected.
+            assertEquals(RelayLinkStatus.Idle, supervisor.relayStatus.value)
 
             // Loop stopped: nothing re-dials over time.
             val dials = factory.created.size
@@ -623,7 +630,17 @@ class RelayConnectionSupervisorTest {
         assertEquals(ConnectionState.Reconnecting(7), RelayLinkStatus.Reconnecting(7).toConnectionState())
         assertEquals(ConnectionState.Offline, RelayLinkStatus.Offline.toConnectionState())
         assertEquals(ConnectionState.Offline, RelayLinkStatus.DaemonAbsent.toConnectionState())
+        // #499 AC#3: idle derives to Connected so the banner stays hidden while unpaired/idle.
+        assertEquals(ConnectionState.Connected, RelayLinkStatus.Idle.toConnectionState())
     }
+
+    // ---- #499 AC 2: the pre-connect() seed reads Idle on the relay leg (never a live-socket Connected)
+    @Test
+    fun initialState_beforeConnect_relayLegIsIdle() =
+        runTest {
+            val (_, supervisor) = newPairedSupervisor()
+            assertEquals(RelayLinkStatus.Idle, supervisor.relayStatus.value)
+        }
 
     // ---- helpers ---------------------------------------------------------------------------------
 

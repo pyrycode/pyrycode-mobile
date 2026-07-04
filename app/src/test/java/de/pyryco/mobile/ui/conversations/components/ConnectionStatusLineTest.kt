@@ -54,6 +54,16 @@ class ConnectionStatusLineTest {
         )
     }
 
+    /** AC#1: idle (unpaired / initial / closed) is a not-connected, non-green state — a distinct
+     *  "Not connected" label under the Down category, never the green "Connected" of a live socket. */
+    @Test
+    fun relayIdle_mapsToDown_notConnected() {
+        assertEquals(
+            ConnectionLegVisual(ConnectionLegCategory.Down, "Not connected", "Relay: not connected"),
+            RelayLinkStatus.Idle.toLegVisual(),
+        )
+    }
+
     // --- Pyrycode leg (PyrycodeLinkStatus) ---
 
     @Test

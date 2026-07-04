@@ -36,7 +36,8 @@ interface RelayConnectionController {
     /** Idempotent supervision-loop start (app foreground / push-wake). */
     fun connect()
 
-    /** Full teardown → idle [ConnectionState.Connected] (app background) — an intentional disconnect. */
+    /** Full teardown → idle [RelayLinkStatus.Idle] (app background) — an intentional disconnect; the
+     *  derived banner state stays [ConnectionState.Connected] (hidden). */
     fun close()
 }
 
@@ -53,8 +54,8 @@ interface RelayConnectionController {
  * here.
  *
  * `connect()` / `close()` are the lifecycle seam for #302 (process-lifecycle close/reconnect); nothing
- * in this ticket calls them, so the bound instance sits dormant at [ConnectionState.Connected] (banner
- * hidden) until #302 drives the first `connect()`.
+ * in this ticket calls them, so the bound instance sits dormant at [RelayLinkStatus.Idle] — which
+ * derives to [ConnectionState.Connected] (banner hidden) — until #302 drives the first `connect()`.
  *
  * `Connected` here means **socket-open** (transport `Up`), not Noise-session-open. Gating on #309's
  * handshake-completion signal would couple this layer to #309 (which has no blocker relationship) and
@@ -74,7 +75,7 @@ class RelayConnectionSupervisor(
 ) : ConnectionStateSource,
     RelayConnectionController {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
-    private val state = MutableStateFlow<RelayLinkStatus>(RelayLinkStatus.Connected)
+    private val state = MutableStateFlow<RelayLinkStatus>(RelayLinkStatus.Idle)
 
     // CONFLATED: a burst of retry() calls collapses to one pending wake-up.
     private val retrySignal = Channel<Unit>(Channel.CONFLATED)
@@ -104,15 +105,16 @@ class RelayConnectionSupervisor(
         loopJob = scope.launch { runLoop() }
     }
 
-    /** Stops the loop, tears down the live socket, and goes idle (back to [ConnectionState.Connected]
-     *  — an intentional disconnect, not an error, so the banner stays hidden). */
+    /** Stops the loop, tears down the live socket, and goes [RelayLinkStatus.Idle] — an intentional
+     *  disconnect, not an error, so the derived banner state stays [ConnectionState.Connected] (hidden)
+     *  while the Settings relay leg reads honestly not-connected. */
     @Synchronized
     override fun close() {
         loopJob?.cancel()
         loopJob = null
         liveConnection.value?.close()
         liveConnection.value = null
-        state.value = RelayLinkStatus.Connected
+        state.value = RelayLinkStatus.Idle
     }
 
     /** Forces an immediate reconnect, collapsing any pending backoff wait. Starts the loop if idle
@@ -128,11 +130,12 @@ class RelayConnectionSupervisor(
         while (isActive) {
             // Re-read the paired record every dial (#489): a re-pair to another server is picked up on
             // the next dial rather than dialing the record captured once at loop start. A null read
-            // (unpaired, or an undecryptable record) idles at Connected so the banner stays hidden and
-            // ends the loop — a later connect()/retry() starts a fresh loop that re-reads the store.
+            // (unpaired, or an undecryptable record) goes Idle — dialing nothing, so the banner stays
+            // hidden (idle derives to Connected) yet Settings reads not-connected — and ends the loop; a
+            // later connect()/retry() starts a fresh loop that re-reads the store.
             val paired = pairedServerStore.load()
             if (paired == null) {
-                state.value = RelayLinkStatus.Connected
+                state.value = RelayLinkStatus.Idle
                 return
             }
             state.value = RelayLinkStatus.Connecting
@@ -233,12 +236,15 @@ class RelayConnectionSupervisor(
 
 /**
  * Derives the legacy single-signal [ConnectionState] from the relay leg [RelayLinkStatus]: identity for
- * the four shared cases; [RelayLinkStatus.DaemonAbsent] collapses to [ConnectionState.Offline] (the
- * relay is up but unusable end-to-end) until #392's combined banner gives DaemonAbsent its own copy.
+ * the four shared cases; [RelayLinkStatus.Idle] (deliberately not dialing) maps to
+ * [ConnectionState.Connected] so the banner stays hidden while idle; [RelayLinkStatus.DaemonAbsent]
+ * collapses to [ConnectionState.Offline] (the relay is up but unusable end-to-end) until #392's combined
+ * banner gives DaemonAbsent its own copy.
  */
 internal fun RelayLinkStatus.toConnectionState(): ConnectionState =
     when (this) {
         RelayLinkStatus.Connected -> ConnectionState.Connected
+        RelayLinkStatus.Idle -> ConnectionState.Connected
         RelayLinkStatus.Connecting -> ConnectionState.Connecting
         is RelayLinkStatus.Reconnecting -> ConnectionState.Reconnecting(secondsRemaining)
         RelayLinkStatus.DaemonAbsent -> ConnectionState.Offline

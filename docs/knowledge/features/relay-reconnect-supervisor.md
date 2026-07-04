@@ -9,7 +9,7 @@ Phase-2 `FakeConnectionStateSource` in the Koin graph.
 > **Since [#391](../codebase/391.md): the source of truth is the relay-leg model, not
 > `ConnectionState`.** The supervisor's single hot state is now a `MutableStateFlow<RelayLinkStatus>`
 > (the [relay link status](relay-link-status.md) — the four `ConnectionState` cases **plus**
-> `DaemonAbsent`), exposed read-only as `val relayStatus: StateFlow<RelayLinkStatus>`. The legacy 4-case
+> `DaemonAbsent` (#391) and `Idle` (#499)), exposed read-only as `val relayStatus: StateFlow<RelayLinkStatus>`. The legacy 4-case
 > [`ConnectionState`](connection-state.md) surface is **derived per-collector** from it, so every
 > existing consumer is untouched. The `#308 seam` Down arm now branches the relay's `4404 "no server"`
 > close into `DaemonAbsent` (relay reachable, no daemon registered) while every other code retries as
@@ -26,7 +26,7 @@ via #306.
 > **which implementation** feeds them. The binding is **app-wired**; the
 > [lifecycle connection driver](lifecycle-connection-driver.md) ([#302](../codebase/302.md), landed) calls
 > `connect()` on foreground / push-wake and `close()` on background — until the first foreground the
-> supervisor sits dormant at `Connected` (banner hidden).
+> supervisor sits dormant at `Idle` (#499), which derives to `Connected` (banner hidden).
 
 ## Where it sits in the Phase 4 stack
 
@@ -86,8 +86,9 @@ a lambda closing over the shared `WebSocket.Factory` ([`defaultClient()`](relay-
 
 ## The state machine
 
-A single `MutableStateFlow<RelayLinkStatus>` (initial value **`Connected`**) is the only state source
-(since [#391](../codebase/391.md); was `ConnectionState` before). `relayStatus` exposes it via
+A single `MutableStateFlow<RelayLinkStatus>` (initial value **`Idle`** since [#499](../codebase/499.md);
+was `Connected`, and `ConnectionState` before [#391](../codebase/391.md)) is the only state source.
+`relayStatus` exposes it via
 `asStateFlow()`; the legacy `observe()` derives the 4-case `ConnectionState` from it per-collector. The
 supervision loop runs as one child `loopJob` of an app-singleton
 `CoroutineScope(SupervisorJob() + dispatcher)`.
@@ -96,7 +97,7 @@ supervision loop runs as one child `loopJob` of an app-singleton
 attempt = 0                                   // consecutive failures since the last ≥60 s-stable connection
 while active:
   load PairedServer                           // re-read EVERY dial (#489) — a re-pair to B is picked up on the next dial
-    └─ null → state = Connected; return       // unpaired / un-paired mid-loop / undecryptable: no dial, banner hidden, loop ends
+    └─ null → state = Idle; return            // unpaired / un-paired mid-loop / undecryptable: no dial, Idle→banner hidden, loop ends (#499)
   state = Connecting                          // a dial is in flight
   transport = factory.create(paired); transport.connect()
   collect transport.events until it completes (terminal Down):
@@ -113,7 +114,7 @@ while active:
 relay's WS close code in the `#308 seam` Down arm and threaded into `backoff()`.
 
 > **Since [#489](../codebase/489.md): the `load()` is per-dial, not once at loop start.** The
-> `pairedServerStore.load()` + `null → Connected; return` guard moved from **before** `while (isActive)`
+> `pairedServerStore.load()` + `null → Idle; return` guard (`Idle` since #499) moved from **before** `while (isActive)`
 > to the **top of the loop body**, so every dial re-reads the paired record. A loop started against
 > server A therefore picks up a re-pair to B on its **next** dial (when A's socket drops), instead of
 > dialing the A record captured once at loop start. `var attempt` stays before the loop (escalation spans
@@ -128,14 +129,19 @@ relay's WS close code in the `#308 seam` Down arm and threaded into `backoff()`.
 
 | `RelayLinkStatus` | When | Derived `ConnectionState` | Banner |
 |---|---|---|---|
+| `Idle` | **deliberately not dialing** (#499): initial seed, unpaired branch, `close()` | `Connected` | hidden |
 | `Connecting` | a dial is in flight | `Connecting` | `"Connecting…"` |
 | `Connected` | transport `Up` (**socket-open** — see § Cross-sibling seams A) | `Connected` | hidden |
 | `Reconnecting(secondsRemaining)` | counting down a **sub-cap** backoff interval (per-second) | `Reconnecting(secondsRemaining)` | `"Reconnecting in Ns"` |
 | `DaemonAbsent` | a `4404` close: **relay reachable, no daemon registered** (steady, no countdown) | `Offline` | `"Offline — tap to retry"` (until #392's combined banner) |
 | `Offline` | backoff escalated to the **30 s cap** (sustained unavailability) | `Offline` | `"Offline — tap to retry"` |
 
-`DaemonAbsent` derives to `Offline` (nearest legacy meaning — the relay is up but unusable
-end-to-end); #392's combined banner gives it its own copy. The AC-observed transition on an
+`Idle` derives to `Connected` **for the banner only** (idle is not an error, so it stays hidden) — but
+the Settings status line's `toLegVisual()` maps the *same* `Idle` to a non-green "Not connected"
+(`Down`), the whole point of [#499](../codebase/499.md): the two exhaustive mappers **diverge** on
+`Idle` so the banner stays hidden while the Settings relay leg reads honestly, instead of a false green
+"Connected" while unpaired/idle. `DaemonAbsent` derives to `Offline` (nearest legacy meaning — the relay
+is up but unusable end-to-end); #392's combined banner gives it its own copy. The AC-observed transition on an
 unexpected (non-4404) drop is
 **`Connected → Reconnecting(secondsRemaining) → Connecting → Connected`** (`backoff()` emits
 `Reconnecting` before the loop re-sets `Connecting`, with no spurious intermediate state).
@@ -247,7 +253,8 @@ so the supervisor's internal construction doesn't preclude it.
   plain `var` read could be stale; the atomic guarantees the loop sees the write. The boundary case
   (write lands at ~exactly 60 s as we cancel) is benign — either answer to "was it ≥60 s stable?" is
   acceptable.
-- **`close()`** sets `state = Connected` (intentional disconnect, not an error → banner hidden);
+- **`close()`** sets `state = Idle` (#499 — intentional disconnect, not an error; `Idle` still derives
+  to `Connected` so the banner stays hidden, while the Settings relay leg reads "Not connected");
   cancellation skips the post-`finally` code, so the loop can't overwrite it.
 
 ## Security posture
@@ -283,10 +290,11 @@ untrusted-relay boundary:
 
 ## Edge cases & limitations
 
-- **Benign-unpaired** — no stored `PairedServer` → no dial, stays `Connected` (banner hidden), and a
-  tap-to-retry re-checks and stays idle. Never regresses into a spurious `Offline`/error. Since
+- **Benign-unpaired** — no stored `PairedServer` → no dial, goes `Idle` (#499 — derives to `Connected`,
+  so the banner stays hidden; the Settings relay leg reads "Not connected"), and a tap-to-retry
+  re-checks and stays idle. Never regresses into a spurious `Offline`/error. Since
   [#489](../codebase/489.md) this guard is evaluated **every dial**, so an un-pair (or an undecryptable
-  read) on a *later* iteration idles at `Connected` and ends the loop the same way — not only on the
+  read) on a *later* iteration goes `Idle` and ends the loop the same way — not only on the
   first iteration.
 - **`Offline` is not terminal** — the loop keeps redialing every ~30 s at the cap.
 - **`DaemonAbsent` is not terminal either** (#391) — the relay is reachable but no daemon is registered;
@@ -331,6 +339,13 @@ that must **not** be pre-collapsed — `advanceTimeBy(intervalsFor(1).first() - 
 dial, `advanceTimeBy(1)` → re-dialled (exact ms, since `retry()` draws no jitter `random`). RED without the
 top-of-`backoff()` drain (would be `Connecting`/two dials). The AC#2 guard
 `retry_collapsesPendingBackoffWithoutThrowing` stays green (a retry *during* the wait still collapses).
+**[#499](../codebase/499.md) added** `initialState_beforeConnect_relayLegIsIdle` and **strengthened** the
+three idle-behaviour tests (`benignUnpaired…`, `reloadPerDial_laterNullRead…`,
+`close_tearsDownTransportAndStopsLoop`) to pin `relayStatus.value == RelayLinkStatus.Idle` **alongside**
+their existing `ConnectionState.Connected` (banner-unchanged) assertions, plus
+`toConnectionState_…` extended with `Idle → Connected`. The live-socket `emitUp() → Connected`
+assertion is the AC#4 regression guard, untouched. (The Settings-line half — `Idle → Down`/"Not
+connected" — is tested in `ConnectionStatusLineTest.relayIdle_mapsToDown_notConnected`.)
 
 ## Related
 
@@ -340,7 +355,9 @@ top-of-`backoff()` drain (would be `Connecting`/two dials). The AC#2 guard
   the Scanner) · [`../codebase/496.md`](../codebase/496.md) (the `finally`'s identity compare-and-clear of
   `currentConnection` — closes the close-then-connect race) · [`../codebase/498.md`](../codebase/498.md)
   (drains a stale `retrySignal` at the top of `backoff()` — a retry while healthy no longer pre-collapses the
-  next drop's first wait) — files/line refs, patterns, lessons.
+  next drop's first wait) · [`../codebase/499.md`](../codebase/499.md) (the `Idle` case — the three idle
+  sites stop overloading `Connected`, so the Settings relay leg no longer reads a false green while
+  unpaired/idle) — files/line refs, patterns, lessons.
 - Relay-leg model: [Relay link status](relay-link-status.md) ([#391](../codebase/391.md)) — the
   `RelayLinkStatus` source of truth this supervisor produces (`relayStatus`) and derives
   `ConnectionState` from.
