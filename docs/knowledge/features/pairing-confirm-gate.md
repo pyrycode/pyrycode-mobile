@@ -111,11 +111,12 @@ to Welcome. Disabled otherwise, so Back pops normally.
 
 ## Security properties
 
-- **Nothing persists before the human confirms.** The store is touched in exactly two places:
-  `confirmPairAndNavigate` (gated behind the Confirm button) and the out-of-scope paste stub
-  (`stubPairAndNavigate`). The rewired `Decoded` effect touches the store **never**. Parse failures,
-  derive failures, Decline, and Back all persist nothing — #320's never-throw / nothing-persisted-on-
-  failure boundary stays intact.
+- **Nothing persists before the human confirms.** The store is touched in exactly **one** place:
+  `confirmPairAndNavigate`, gated behind the Confirm button — and since [#501](../codebase/501.md)
+  **both** entry paths (QR scan and manual paste) reach it the same way (each produces a raw payload →
+  `QrDecoded → Decoded → AwaitingConfirm`). The rewired `Decoded` effect touches the store **never**.
+  Parse failures, derive failures, Decline, and Back all persist nothing — #320's never-throw /
+  nothing-persisted-on-failure boundary stays intact.
 - **No shown-vs-saved gap.** See the fingerprint↔record binding above — the display and the persist read
   the same immutable object.
 - **Confirm-after-close is a no-op by construction.** `onConfirmPairing` reads the *current* collected
@@ -148,9 +149,13 @@ to Welcome. Disabled otherwise, so Back pops normally.
   (heavily gated on this min-SDK-33 target). The correct mitigation — obscured-touch filtering at the
   Activity-window level — is a cross-cutting hardening, **not a one-composable bolt-on**; a
   security-hardening follow-up is recommended for it (and any future sensitive confirm).
-- **The paste path remains ungated.** `onPasteCode = stubPairAndNavigate` still persists the stub with no
-  confirm gate; per #320 the real paste-input UI doesn't exist. A future real-paste ticket routes paste
-  through `parsePairingPayload → serverKeyFingerprint →` this same gate.
+- **The paste path is now gated too (since [#501](../codebase/501.md)).** The manual paste dialog
+  ([`PasteCodeDialog`](paste-code-dialog.md)) is store-free: on a valid parse it hands the raw payload
+  to `MainActivity`, which feeds it to the same `ScannerEvent.QrDecoded` the camera uses, so paste
+  flows through **this exact gate** before any persist. (This note earlier predicted a future
+  real-paste ticket would do this; [#503](https://github.com/pyrycode/pyrycode-mobile/issues/503)
+  shipped the dialog *without* the gate as an explicit operator decision, and #501 closed the gap. The
+  `stubPairAndNavigate` stub older notes reference was removed in [#489](../codebase/489.md).)
 - **TalkBack reads the raw colon-hex.** Whether TalkBack should spell the fingerprint group-by-group for
   easier audible verification is a design-time polish item for the owed Figma retrofit, not a blocker —
   the fingerprint is selectable/copyable today.
