@@ -16,12 +16,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -63,6 +59,7 @@ import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.onboarding.CameraPreview
+import de.pyryco.mobile.ui.onboarding.PasteCodeDialog
 import de.pyryco.mobile.ui.onboarding.ScannerEvent
 import de.pyryco.mobile.ui.onboarding.ScannerScreen
 import de.pyryco.mobile.ui.onboarding.ScannerUiState
@@ -159,17 +156,16 @@ private fun PyryNavHost(
             val state by vm.state.collectAsStateWithLifecycle()
 
             var showPasteDialog by remember { mutableStateOf(false) }
-            var pasteText by remember { mutableStateOf("") }
-            var pasteError by remember { mutableStateOf<String?>(null) }
 
-            // The ONLY scan-path persist (#343): runs solely behind the Confirm button, after the
-            // user has compared the fingerprint. The rewired Decoded effect below no longer saves —
-            // it derives the fingerprint and parks in AwaitingConfirm. A store failure routes to the
-            // Error surface so nothing half-persists. The save reuses the lifecycle-scoped `scope`
-            // (cancelled on screen exit). #489: on a successful persist, confirmPairingAndConnect also
-            // starts the relay loop (before navigating) so the connection comes up immediately, without
-            // a background→foreground cycle; connect() runs on the supervisor's own scope, so popping
-            // the Scanner here does not cancel it.
+            // The ONLY persist (#343/#501): runs solely behind the Confirm button, after the user has
+            // compared the fingerprint. BOTH entry paths — the QR camera and the manual paste dialog —
+            // reach it the same way: each produces a raw payload → ScannerEvent.QrDecoded → the Decoded
+            // effect below derives the fingerprint and parks in AwaitingConfirm (it never saves) → the
+            // user confirms. A store failure routes to the Error surface so nothing half-persists. The
+            // save reuses the lifecycle-scoped `scope` (cancelled on screen exit). #489: on a successful
+            // persist, confirmPairingAndConnect also starts the relay loop (before navigating) so the
+            // connection comes up immediately, without a background→foreground cycle; connect() runs on
+            // the supervisor's own scope, so popping the Scanner here does not cancel it.
             val confirmPairAndNavigate: (PairedServer) -> Unit = { server ->
                 scope.launch {
                     confirmPairingAndConnect(
@@ -260,11 +256,7 @@ private fun PyryNavHost(
                         ),
                     )
                 },
-                onPasteCode = {
-                    pasteText = ""
-                    pasteError = null
-                    showPasteDialog = true
-                },
+                onPasteCode = { showPasteDialog = true },
                 // Confirm reads the CURRENT collected state: if back/decline already moved it off
                 // AwaitingConfirm, the cast is null and confirm is a no-op — a save cannot fire after
                 // the gate closed. Persists exactly the parsed record the displayed fingerprint was
@@ -283,38 +275,15 @@ private fun PyryNavHost(
                 },
             )
 
+            // A valid paste is not persisted here — it feeds the raw payload into the same
+            // QrDecoded event the camera path uses, so paste routes through the identical
+            // fingerprint-confirm gate (Decoded → AwaitingConfirm) before any persist (#501).
             if (showPasteDialog) {
-                AlertDialog(
-                    onDismissRequest = { showPasteDialog = false },
-                    title = { Text("Enter pairing code") },
-                    text = {
-                        OutlinedTextField(
-                            value = pasteText,
-                            onValueChange = { pasteText = it },
-                            label = { Text("Pairing code") },
-                            isError = pasteError != null,
-                            supportingText = pasteError?.let { { Text(it) } },
-                        )
-                    },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            when (val result = parsePairingPayload(pasteText.trim())) {
-                                is PairingParseResult.Success -> {
-                                    showPasteDialog = false
-                                    confirmPairAndNavigate(result.server)
-                                }
-                                is PairingParseResult.Failure -> {
-                                    pasteError = "Invalid pairing code"
-                                }
-                            }
-                        }) {
-                            Text("Pair")
-                        }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showPasteDialog = false }) {
-                            Text("Cancel")
-                        }
+                PasteCodeDialog(
+                    onDismiss = { showPasteDialog = false },
+                    onValidPayload = { payload ->
+                        showPasteDialog = false
+                        vm.onEvent(ScannerEvent.QrDecoded(payload))
                     },
                 )
             }
