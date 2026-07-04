@@ -18,6 +18,9 @@ fun ThreadOverflowMenu(
     onEvent: (ThreadEvent) -> Unit,
     onShowLiteralScreen: () -> Unit,
     modifier: Modifier = Modifier,
+    // Gated on the thread state's "mutations supported" signal (#507): false in relay mode, where these
+    // actions throw or no-op. Defaulted for previews/tests only — production always threads the real value.
+    mutationsSupported: Boolean = true,
 ) {
     val uriHandler = LocalUriHandler.current
     DropdownMenu(
@@ -43,34 +46,36 @@ fun ThreadOverflowMenu(
                 },
             )
         }
-        DropdownMenuItem(
-            text = { Text(stringResource(R.string.thread_overflow_new_session)) },
-            onClick = {
-                onDismiss()
-                onEvent(ThreadEvent.NewSession)
-            },
-        )
-        DropdownMenuItem(
-            text = { Text(stringResource(R.string.thread_overflow_rename)) },
-            onClick = {
-                onDismiss()
-                onEvent(ThreadEvent.Rename)
-            },
-        )
-        DropdownMenuItem(
-            text = { Text(stringResource(R.string.thread_overflow_change_workspace)) },
-            onClick = {
-                onDismiss()
-                onEvent(ThreadEvent.ChangeWorkspace)
-            },
-        )
-        DropdownMenuItem(
-            text = { Text(stringResource(R.string.thread_overflow_archive)) },
-            onClick = {
-                onDismiss()
-                onEvent(ThreadEvent.Archive)
-            },
-        )
+        if (mutationsSupported) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.thread_overflow_new_session)) },
+                onClick = {
+                    onDismiss()
+                    onEvent(ThreadEvent.NewSession)
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.thread_overflow_rename)) },
+                onClick = {
+                    onDismiss()
+                    onEvent(ThreadEvent.Rename)
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.thread_overflow_change_workspace)) },
+                onClick = {
+                    onDismiss()
+                    onEvent(ThreadEvent.ChangeWorkspace)
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.thread_overflow_archive)) },
+                onClick = {
+                    onDismiss()
+                    onEvent(ThreadEvent.Archive)
+                },
+            )
+        }
         DropdownMenuItem(
             text = { Text(stringResource(R.string.thread_overflow_channel_info)) },
             onClick = {

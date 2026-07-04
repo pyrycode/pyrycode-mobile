@@ -68,6 +68,9 @@ internal fun ChannelInfoSheet(
     onInstallMemoryPlugin: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    // Gated on the thread state's "mutations supported" signal (#507): false in relay mode, where the
+    // Actions are unavailable. Defaulted for previews/tests only — production threads the real value.
+    mutationsSupported: Boolean = true,
     sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
 ) {
     ModalBottomSheet(
@@ -83,6 +86,7 @@ internal fun ChannelInfoSheet(
             onDelete = onDelete,
             onInstallMemoryPlugin = onInstallMemoryPlugin,
             onDismiss = onDismiss,
+            mutationsSupported = mutationsSupported,
         )
     }
 }
@@ -96,6 +100,7 @@ internal fun ChannelInfoSheetContent(
     onDelete: () -> Unit,
     onInstallMemoryPlugin: () -> Unit,
     onDismiss: () -> Unit,
+    mutationsSupported: Boolean = true,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         TitleRow(title = model.conversationName, onClose = onDismiss)
@@ -110,13 +115,15 @@ internal fun ChannelInfoSheetContent(
         SectionHeader(text = "Memory")
         MemoryRow(plugins = model.memoryPlugins, onInstall = onInstallMemoryPlugin)
 
-        SectionHeader(text = "Actions")
-        ActionsGrid(
-            onRename = onRename,
-            onChangeWorkspace = onChangeWorkspace,
-            onArchive = onArchive,
-            onDelete = onDelete,
-        )
+        if (mutationsSupported) {
+            SectionHeader(text = "Actions")
+            ActionsGrid(
+                onRename = onRename,
+                onChangeWorkspace = onChangeWorkspace,
+                onArchive = onArchive,
+                onDelete = onDelete,
+            )
+        }
 
         Footer(channelId = model.channelId)
         Spacer(modifier = Modifier.height(24.dp))

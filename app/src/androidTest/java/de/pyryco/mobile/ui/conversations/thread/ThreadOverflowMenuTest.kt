@@ -84,6 +84,33 @@ class ThreadOverflowMenuTest {
     }
 
     @Test
+    fun mutation_actions_are_hidden_when_mutations_unsupported() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadOverflowMenu(
+                    expanded = true,
+                    isPromoted = true,
+                    mutationsSupported = false,
+                    onDismiss = {},
+                    onEvent = {},
+                    onShowLiteralScreen = {},
+                )
+            }
+        }
+
+        // Relay mode can't perform these mutations, so they must be non-invocable (AC#1).
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_new_session)).assertDoesNotExist()
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_rename)).assertDoesNotExist()
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).assertDoesNotExist()
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_archive)).assertDoesNotExist()
+
+        // The non-mutating entries survive the gate (AC#1).
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_show_literal_screen)).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_channel_info)).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.thread_overflow_install_memory_plugin)).assertIsDisplayed()
+    }
+
+    @Test
     fun tapping_show_literal_screen_dismisses_then_invokes_callback() {
         val log = mutableListOf<String>()
         composeTestRule.setContent {
