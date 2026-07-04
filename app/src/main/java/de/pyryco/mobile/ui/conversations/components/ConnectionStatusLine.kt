@@ -64,6 +64,8 @@ internal fun RelayLinkStatus.toLegVisual(): ConnectionLegVisual =
             ConnectionLegVisual(ConnectionLegCategory.Up, "Reachable", "Relay: reachable, no daemon")
         RelayLinkStatus.Offline ->
             ConnectionLegVisual(ConnectionLegCategory.Down, "Offline", "Relay: offline")
+        RelayLinkStatus.Idle ->
+            ConnectionLegVisual(ConnectionLegCategory.Down, "Not connected", "Relay: not connected")
     }
 
 /** Maps the pyrycode leg ([PyrycodeLinkStatus]) to its presentation triple. */

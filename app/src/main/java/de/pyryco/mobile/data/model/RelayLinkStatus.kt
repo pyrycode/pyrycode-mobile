@@ -14,6 +14,11 @@ sealed class RelayLinkStatus {
     /** Relay reachable and the socket is up. */
     data object Connected : RelayLinkStatus()
 
+    /** Deliberately not dialing: initial (pre-connect), unpaired, or intentionally closed. Distinct
+     *  from [Connected] so the two derived surfaces can diverge — the banner stays hidden (idle is not
+     *  an error) while the Settings status line reads honestly not-connected rather than green. */
+    data object Idle : RelayLinkStatus()
+
     /** A dial is in progress. */
     data object Connecting : RelayLinkStatus()
 
