@@ -16,6 +16,7 @@ Compose-Multiplatform-safe.
 ```kotlin
 sealed class RelayLinkStatus {
     data object Connected : RelayLinkStatus()              // relay reachable + socket up
+    data object Idle : RelayLinkStatus()                   // deliberately not dialing (#499)
     data object Connecting : RelayLinkStatus()             // a dial is in progress
     data class Reconnecting(val secondsRemaining: Int) : RelayLinkStatus()
     data object DaemonAbsent : RelayLinkStatus()           // relay reachable, no daemon (the 4404 close)
@@ -23,10 +24,31 @@ sealed class RelayLinkStatus {
 }
 ```
 
-It mirrors `ConnectionState`'s four cases and adds the fifth, `DaemonAbsent`. `DaemonAbsent` is a
-static `data object` carrying **no relay-supplied text** — the relay's `reason` string / `cause` never
-flow into it; the only relay datum that crosses into this model is the integer close `code`, compared
-once against `4404` (see [Security](#security)).
+It mirrors `ConnectionState`'s four cases and adds `DaemonAbsent` (#391) and `Idle` (#499). Both are
+static `data object`s carrying **no relay-supplied text**: for `DaemonAbsent` the relay's `reason`
+string / `cause` never flow into it — the only relay datum that crosses into this model is the integer
+close `code`, compared once against `4404` (see [Security](#security)); `Idle` carries no data at all.
+
+## `Idle` — deliberately not dialing (#499)
+
+`Idle` is the state where the supervisor is **not dialing anything on purpose**, distinct from a live
+socket. It covers three situations that all previously overloaded `Connected`: the **initial**
+pre-`connect()` seed, the **unpaired** branch (paired store returns `null` → idle, end the loop), and
+**`close()`** (intentional background disconnect). It is named for the *situation*, not a cause —
+`close()` was paired and the initial seed predates any pairing check, so a pairing-specific name would be
+wrong for two of the three.
+
+The point of the separate case is that the two derived surfaces **diverge** on it (both mappers are
+exhaustive `when`s, so the compiler forces each to decide):
+
+- **banner** ([`toConnectionState()`](relay-reconnect-supervisor.md)): `Idle → ConnectionState.Connected`
+  — the banner stays hidden (idle is not an error), exactly as when it overloaded `Connected`.
+- **Settings line** ([`toLegVisual()`](connection-status-line.md)): `Idle → Down`/"Not connected" — a
+  non-green, honest label, so the Settings relay leg no longer reads a false "Connected" while unpaired.
+
+Before #499 both idle and live-socket reused `Connected`, which was harmless while the banner was the
+only consumer but leaked a false green once the Settings line began reading a *positive* claim off the
+same value. See [`../codebase/499.md`](../codebase/499.md).
 
 ## Why a new type instead of a fifth `ConnectionState` case
 
@@ -44,15 +66,15 @@ The [`RelayConnectionSupervisor`](relay-reconnect-supervisor.md) ([#391](../code
 sole producer:
 
 - **Single source of truth** — the supervisor's backing `MutableStateFlow` is typed `RelayLinkStatus`
-  (initial `Connected`), exposed read-only as `val relayStatus: StateFlow<RelayLinkStatus>` (mirroring
+  (initial `Idle` since #499), exposed read-only as `val relayStatus: StateFlow<RelayLinkStatus>` (mirroring
   `currentConnection` — a plain public property on the concrete supervisor, **no interface, no DI
   change**).
 - **Legacy `ConnectionState` is derived per-collector** —
   `override fun observe(): Flow<ConnectionState> = state.map { it.toConnectionState() }`, so every
   existing consumer is untouched. `toConnectionState()` is an `internal` top-level mapping fun:
-  identity for the four shared cases, and **`DaemonAbsent → ConnectionState.Offline`** (the relay is up
-  but unusable end-to-end — the nearest legacy banner meaning until #392 gives `DaemonAbsent` its own
-  copy).
+  identity for the four shared cases, **`Idle → ConnectionState.Connected`** (#499 — deliberately idle,
+  banner stays hidden), and **`DaemonAbsent → ConnectionState.Offline`** (the relay is up but unusable
+  end-to-end — the nearest legacy banner meaning until #392 gives `DaemonAbsent` its own copy).
 
 ```
             ┌─ relayStatus (asStateFlow) ─────────▶ #392 combined {relay, pyrycode}
@@ -94,7 +116,9 @@ branch — out of scope here.
 
 ## Related
 
-- Ticket notes: [`../codebase/391.md`](../codebase/391.md) — files/line refs, patterns, lessons.
+- Ticket notes: [`../codebase/391.md`](../codebase/391.md) (the type + `DaemonAbsent`) ·
+  [`../codebase/499.md`](../codebase/499.md) (the `Idle` sixth case + the divergent banner/Settings
+  mapping) — files/line refs, patterns, lessons.
 - Spec: `docs/specs/architecture/391-relay-leg-daemon-absent-status.md` (§ Design, § Security review —
   Verdict PASS).
 - Producer: [Relay reconnect supervisor](relay-reconnect-supervisor.md) ([#391](../codebase/391.md)) —

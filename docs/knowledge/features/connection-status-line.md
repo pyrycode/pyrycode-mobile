@@ -37,7 +37,7 @@ internal data class ConnectionLegVisual(
     val contentDescription: String, // leg + state for TalkBack, e.g. "Relay: connected"
 )
 
-internal fun RelayLinkStatus.toLegVisual(): ConnectionLegVisual      // 5 cases
+internal fun RelayLinkStatus.toLegVisual(): ConnectionLegVisual      // 6 cases
 internal fun PyrycodeLinkStatus.toLegVisual(): ConnectionLegVisual   // 3 cases
 ```
 
@@ -53,6 +53,7 @@ Relay leg ([`RelayLinkStatus`](relay-link-status.md)):
 | case | category | label | contentDescription |
 |---|---|---|---|
 | `Connected` | `Up` (green) | `"Connected"` | `"Relay: connected"` |
+| **`Idle`** | **`Down` (red)** | `"Not connected"` | `"Relay: not connected"` |
 | `Connecting` | `InProgress` (amber) | `"Connecting…"` | `"Relay: connecting"` |
 | `Reconnecting(s)` | `InProgress` (amber) | `"Reconnecting"` | `"Relay: reconnecting"` |
 | **`DaemonAbsent`** | **`Up` (green)** | `"Reachable"` | `"Relay: reachable, no daemon"` |
@@ -69,7 +70,14 @@ Pyrycode leg (`PyrycodeLinkStatus`):
 **`DaemonAbsent → Up` is the load-bearing invariant** (the ticket's AC#2): the relay is reachable —
 the missing daemon is the *pyrycode* leg's story, not a relay failure, so the Relay dot stays green.
 A distinct `"Reachable"` label (vs `"Connected"`) keeps the text/a11y channel honest while staying
-green. The `Reconnecting(secondsRemaining)` countdown is **not** surfaced in the label (design-owed
+green.
+
+**`Idle → Down` is the mirror invariant ([#499](../codebase/499.md)):** the deliberately-not-dialing
+state (initial / unpaired / `close()`) reads a non-green "Not connected" here, **diverging** from the
+banner mapper's `Idle → ConnectionState.Connected` (banner hidden). Same `Down` category as `Offline`
+but a distinct label — the exact "share the category, diverge on the text" pattern `Connected` and
+`DaemonAbsent` use to share `Up`. This is what stopped the Settings relay leg reading a false green
+"Connected" while unpaired. See [Relay link status](relay-link-status.md) § `Idle`. The `Reconnecting(secondsRemaining)` countdown is **not** surfaced in the label (design-owed
 placement); fold `s` into both label and cd together if it is ever adopted, so the per-case test
 stays deterministic.
 
@@ -127,8 +135,9 @@ Light + Dark `@Preview` pair at `widthDp = 412` (the `ConnectionBanner` idiom):
 
 Unit-only (`./gradlew test`, JVM, no device), `ConnectionStatusLineTest.kt` — plain `org.junit` +
 `assertEquals`, the [`ThreadScreenMapperTest`](thread-screen.md) idiom. One `@Test` per sealed case
-(all 8), each asserting the **full triple** so a copy change is caught and moved deliberately; the
-AC#2 invariant is its own named test (`relayDaemonAbsent_mapsToUp_neverDown`). The trivial
+(all 9 — the 6 relay cases incl. #499's `Idle`, plus the 3 pyrycode cases), each asserting the **full
+triple** so a copy change is caught and moved deliberately; the AC#2 invariant is its own named test
+(`relayDaemonAbsent_mapsToUp_neverDown`), and #499's is `relayIdle_mapsToDown_notConnected`. The trivial
 category→token resolver and the layout are **preview-verified**, not instrumented — matching
 `ConnectionBanner` (no unit test there either). The pure mapper carries the test weight.
 
@@ -162,6 +171,8 @@ in that build; against a live, paired daemon the dots reflect reality.
 - Component idioms followed: [Connection banner](connection-banner.md) (stateless-over-a-sealed-type
   + private preview-matrix), [Thread status row](thread-status-row.md) (category→token resolver).
 - Implementation notes: [`codebase/397.md`](../codebase/397.md) (build slice),
-  [`codebase/398.md`](../codebase/398.md) (live wiring).
+  [`codebase/398.md`](../codebase/398.md) (live wiring),
+  [`codebase/499.md`](../codebase/499.md) (the `Idle → Down`/"Not connected" mapping — closes the false
+  green on the relay leg while unpaired/idle).
 - Live consumer (shipped): [Settings ViewModel](settings-viewmodel.md) +
   [Settings screen](settings-screen.md) via [#398](../codebase/398.md) (`blockedBy #397`).
