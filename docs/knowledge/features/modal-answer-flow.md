@@ -36,7 +36,7 @@ sendAnswer / sendCancel  ──▶  answerModal / cancelModal  (defaulted suspen
         │                          = coordinator::answerModal / ::cancelModal  (AppModule)
         ▼
 RelayRepositoryCoordinator.answerModal / cancelModal     ◀── #451 outbound passthrough (null-guard only)
-        │  reaches the connection-scoped concrete repo via activeRemoteRepo
+        │  reaches the connection-scoped concrete repo via activeConnection.value?.repo
         ▼
 RemoteConversationRepository.answerModal / cancelModal   ◀── #438 (mints answer_token, awaits ack/error, throws)
 ```
@@ -158,19 +158,20 @@ rework defect; see [[catch-illegalstate-swallows-cancellation]]. A broad `catch 
 ## The coordinator passthrough
 
 [`RelayRepositoryCoordinator`](relay-repository-coordinator.md#outbound-modal-send-passthrough-451) gains two
-**suspend** methods reaching the connection-scoped concrete repo through the existing private
-`activeRemoteRepo` (no new field) — the outbound mirror of the inbound `modalEvents` seam:
+**suspend** methods reaching the connection-scoped concrete repo through the coordinator's single
+`activeConnection` source (`activeConnection.value?.repo`; [#493](../codebase/493.md) consolidated the former
+`activeRemoteRepo` mirror into it) — the outbound mirror of the inbound `modalEvents` seam:
 
 ```kotlin
 suspend fun answerModal(modalId: String, optionId: String) {
-    val repo = activeRemoteRepo.value ?: throw IllegalStateException("no active connection")
+    val repo = activeConnection.value?.repo ?: throw IllegalStateException("no active connection")
     repo.answerModal(modalId, optionId)
 }
 // cancelModal is the same, minus optionId.
 ```
 
 It needs **only the null-guard** — both not-connected paths funnel to `IllegalStateException`: when
-`activeRemoteRepo.value == null` (between connections) the guard throws; when a connection exists but the
+`activeConnection.value == null` (between connections) the guard throws; when a connection exists but the
 pump is pre-`Open`, the concrete `answerModal` → `sendAndAwaitReply` → `pump.send` returns false →
 `IllegalStateException` already (the #438 precedent). A redundant `Open` gate would be needless complexity. A
 server `error` propagates as `RelayErrorException` unchanged. **No log** — the `modalId`/`optionId` may name

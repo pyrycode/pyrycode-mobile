@@ -41,7 +41,7 @@ ThreadViewModel.onInterrupt()           # the action #459's affordance calls (no
   `IllegalStateException` when the pump is not `Open`, reusing the not-connected idiom so the caller can
   swallow it. Companion const `TYPE_INTERRUPT = "interrupt"`. See
   [Remote conversation repository § `interrupt()`](remote-conversation-repository.md).
-- **`RelayRepositoryCoordinator.interrupt()`** — the exact `cancelModal` mirror: `activeRemoteRepo.value ?:
+- **`RelayRepositoryCoordinator.interrupt()`** — the exact `cancelModal` mirror: `activeConnection.value?.repo ?:
   throw IllegalStateException("no active connection")`, then `repo.interrupt()`. Null-guard only; never logs.
   See [Relay repository coordinator § Outbound interrupt passthrough](relay-repository-coordinator.md#outbound-interrupt-passthrough-458).
 - **DI** — `AppModule` binds `interrupt = coordinator::interrupt` in the `ThreadViewModel` factory, alongside
@@ -73,7 +73,7 @@ ThreadViewModel.onInterrupt()           # the action #459's affordance calls (no
 
 | Failure | Surfaces at | Result |
 |---|---|---|
-| No active connection (`activeRemoteRepo == null`) | coordinator `interrupt()` | `IllegalStateException` → VM swallows → **inert** |
+| No active connection (`activeConnection.value == null`) | coordinator `interrupt()` | `IllegalStateException` → VM swallows → **inert** |
 | Connected but pump pre-`Open` (`pump.send` → `false`) | repo `check(pump.send(...))` | `IllegalStateException` → VM swallows → **inert** |
 | Relay/server `error` | not reachable (no reply awaited) | catch retained for parity + AC #4 test → **inert** |
 | `viewModelScope` cancelled mid-send | `CancellationException` | rethrown **before** typed catches → propagates (structured cancellation preserved) |
