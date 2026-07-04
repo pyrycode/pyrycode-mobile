@@ -35,6 +35,7 @@ import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -254,6 +255,129 @@ class RelayRepositoryCoordinatorTest {
             backgroundScope.launch { repo2.observeConversations(ConversationFilter.All).collect { list2 += it } }
             runCurrent()
             assertEquals(emptyList<List<Conversation>>(), list2)
+
+            env.coordinator.close()
+        }
+
+    // ---- #493: the reconnect gating race must not re-expose #421 ---------------------------------
+
+    // AC #1 (regression, must be RED against pre-fix `main`): on a DIRECT A→B reconnect (no interposed
+    // `null`), the new connection's repo must never be exposed while B's own pump is still Handshaking.
+    // The old two-StateFlow `combine` gate paired B's fresh repo (delivered directly off
+    // `mutableRepository`) with A's stale cached `Open` pump-state (the `flatMapLatest` over
+    // `activePumpFlow` lags a coroutine hop), transiently emitting B's repo pre-Open — exactly #421's
+    // "list never loads" (the facade's one-shot `list_conversations` fires and is dropped). The transient
+    // is caught by COLLECTING every emission (the settled `.value` is `null` on both pre- and post-fix,
+    // since a full `runCurrent()` drains to `(repoB, Handshaking) → null`).
+    @Test
+    fun reconnect_directAtoB_neverExposesRepoWhileNewPumpHandshaking() =
+        runTest {
+            val env = newEnv()
+
+            // Record EVERY emission of currentRepository across the reconnect.
+            val emissions = mutableListOf<ConversationRepository?>()
+            backgroundScope.launch { env.coordinator.currentRepository.collect { emissions += it } }
+
+            // Connection A reaches Open → its repo is exposed.
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            env.pumps[0].open()
+            runCurrent()
+            val repoA = requireNotNull(env.coordinator.currentRepository.value)
+            assertSame("A's repo is exposed once its own pump is Open", repoA, emissions.last())
+
+            // Direct A→B reconnect: DO NOT interpose a `null` (with its own runCurrent), and DO NOT open
+            // pumps[1] — leave B's fresh pump at Handshaking.
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+
+            // The only non-null repo ever observed is A's; B's repo is never exposed pre-Open.
+            assertEquals(
+                "B's repo must never be exposed while its own pump is Handshaking",
+                emptyList<ConversationRepository>(),
+                emissions.filterNotNull().filter { it !== repoA },
+            )
+            assertNull("settled currentRepository is null while B handshakes", env.coordinator.currentRepository.value)
+
+            env.coordinator.close()
+        }
+
+    // AC #2: across the same direct A→B reconnect, B's repo appears in currentRepository only once B's OWN
+    // pump reaches Open — never during the Handshaking window. The two distinct non-null repos ever
+    // exposed are exactly [repoA, repoB], in that order.
+    @Test
+    fun reconnect_directAtoB_exposesRepoOnlyOnceNewPumpReachesOpen() =
+        runTest {
+            val env = newEnv()
+
+            val emissions = mutableListOf<ConversationRepository?>()
+            backgroundScope.launch { env.coordinator.currentRepository.collect { emissions += it } }
+
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            env.pumps[0].open()
+            runCurrent()
+            val repoA = requireNotNull(env.coordinator.currentRepository.value)
+
+            // Direct A→B reconnect; leave B at Handshaking → B's repo stays hidden.
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            assertNull("B's repo hidden while its pump handshakes", env.coordinator.currentRepository.value)
+
+            // B's own pump reaches Open → B's repo is exposed for the first time, distinct from A's.
+            env.pumps[1].open()
+            runCurrent()
+            val repoB = requireNotNull(env.coordinator.currentRepository.value)
+            assertNotSame("a distinct repo per connection", repoA, repoB)
+            assertSame("the newly-exposed repo is B's own", repoB, emissions.last())
+            assertEquals(
+                "B appears only from Open onward — the only non-null repos exposed are A then B",
+                listOf(repoA, repoB),
+                emissions.filterNotNull().distinct(),
+            )
+
+            env.coordinator.close()
+        }
+
+    // AC #3: after a disconnect→reconnect where the new pump reaches Open, the one-shot list_conversations
+    // SUCCEEDS over connection B (not dropped pre-Open as in #421) and the list loads rather than spinning.
+    @Test
+    fun reconnect_afterOpen_listConversationsSucceedsAndListLoads() =
+        runTest {
+            val env = newEnv()
+
+            // Connection A up and Open.
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            env.pumps[0].open()
+            runCurrent()
+
+            // Disconnect, then reconnect over a fresh transport; drive B's pump to Open.
+            env.connections.value = null
+            runCurrent()
+            env.connections.value = StubRelayTransport()
+            runCurrent()
+            env.pumps[1].open()
+            runCurrent()
+
+            val repo2 = requireNotNull(env.coordinator.currentRepository.value)
+            val pump2 = env.pumps[1]
+
+            // The facade subscribes on the freshly-exposed repo → one list_conversations reaches pump B's
+            // send (post-Open, so the send succeeded rather than being silently dropped).
+            val emissions = mutableListOf<List<Conversation>>()
+            backgroundScope.launch { repo2.observeConversations(ConversationFilter.All).collect { emissions += it } }
+            runCurrent()
+            assertEquals("list_conversations", pump2.sent.single().type)
+
+            // The daemon replies with a snapshot → the list loads.
+            pump2.push(
+                conversationsEnvelope(
+                    """{"conversations":[{"id":"c9","name":"Nine","is_promoted":true,"cwd":"/c9","last_message_ts":"2026-05-08T09:00:00Z","last_used_at":"2026-05-08T09:00:00Z"}]}""",
+                ),
+            )
+            runCurrent()
+            assertEquals(listOf("c9"), emissions.last().map { it.id })
 
             env.coordinator.close()
         }
