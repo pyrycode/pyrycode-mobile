@@ -114,6 +114,7 @@ fun ThreadScreen(
     modalState: ModalUiState = ModalUiState.Hidden,
     armedOptionId: String? = null, // #452: the open modal's armed non-default option, or null (VM-scoped, #451)
     modalSendErrors: Flow<Unit> = emptyFlow(), // #452: payload-free one-shot modal send-failure signal (#451)
+    newSessionErrors: Flow<Unit> = emptyFlow(), // #540: payload-free one-shot new-session send-failure signal
     onModalOption: (String) -> Unit = {}, // #452: wired by MainActivity → vm::onModalOption (passes ModalOption.id)
     onModalCancel: () -> Unit = {}, // #452: wired by MainActivity → vm::onModalCancel
     onDropQueued: (Long) -> Unit = {}, // #467: wired by MainActivity → vm::onDropQueued (passes QueuedMessage.id)
@@ -127,6 +128,13 @@ fun ThreadScreen(
     val modalSendFailedMessage = stringResource(R.string.modal_send_failed)
     LaunchedEffect(modalSendErrors, snackbarHostState) {
         modalSendErrors.collect { snackbarHostState.showSnackbar(modalSendFailedMessage) }
+    }
+    // #540: surface a failed "New session" send as a transient snackbar. Same payload-free (Unit) one-shot
+    // idiom as the modal path — the fixed local string keeps anything exception-derived out of the
+    // un-secured Activity window the snackbar draws in.
+    val newSessionFailedMessage = stringResource(R.string.new_session_failed)
+    LaunchedEffect(newSessionErrors, snackbarHostState) {
+        newSessionErrors.collect { snackbarHostState.showSnackbar(newSessionFailedMessage) }
     }
     Scaffold(
         modifier = modifier,

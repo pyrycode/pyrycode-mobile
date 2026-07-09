@@ -365,6 +365,18 @@ class ThreadViewModel(
      */
     val modalSendErrors: Flow<Unit> = modalSendErrorChannel.receiveAsFlow()
 
+    private val newSessionErrorChannel = Channel<Unit>(capacity = Channel.BUFFERED)
+
+    /**
+     * One-shot "starting a new session failed" signal (#540) — the [modalSendErrors] one-shot idiom, cloned
+     * for the overflow "New session" action. Carries **no** payload (just [Unit]), so nothing sensitive can
+     * leak through it; the render slice shows a transient snackbar with a **fixed local string**, never an
+     * exception message. Fires exactly once per caught not-connected failure ([IllegalStateException] from
+     * the fire-and-forget `new_session` send's `check(pump.send(...))`, #539). Success is passive — no
+     * signal fires; the #336 fold renders the session-boundary delimiter when `session_transition` arrives.
+     */
+    val newSessionErrors: Flow<Unit> = newSessionErrorChannel.receiveAsFlow()
+
     /**
      * Folds one live event to the next [isThinking] value, or `null` to leave the flag unchanged. Routes
      * by [conversationId] first (AC #3 — other conversations never move the flag), then maps the turn
@@ -536,6 +548,33 @@ class ThreadViewModel(
     }
 
     /**
+     * Route the overflow "New session" tap (#540) to [ConversationRepository.startNewSession] — the bare
+     * fire-and-forget `new_session` v2 send (#539). The **surfacing** twin of [sendInterrupt]: it always
+     * passes the VM's own [conversationId] (never a caller-supplied id) with `workspace` defaulted, and
+     * **discards** the returned placeholder [Session] — success is passive, the #336 fold renders the
+     * delimiter when `session_transition` arrives.
+     *
+     * Only **two** catches, unlike the interrupt/drop swallow twins: `new_session` is fire-and-forget (no
+     * awaited reply), so a correlated server `error` — hence [RelayErrorException] — can never originate;
+     * adding that branch would be dead code routing a never-thrown error to the UI (evidence-based fix
+     * selection). The not-connected [IllegalStateException] is the sole client-observable failure and is
+     * surfaced via [newSessionErrorChannel]. The [CancellationException] rethrow **MUST precede** the typed
+     * catch (`j.u.c.CancellationException` extends `IllegalStateException` on the JVM) so structured
+     * cancellation on screen-exit teardown is never masked as a not-connected failure.
+     */
+    private fun sendNewSession() {
+        viewModelScope.launch {
+            try {
+                repository.startNewSession(conversationId)
+            } catch (e: CancellationException) {
+                throw e // MUST precede the typed catch: j.u.c.CancellationException extends ISE on the JVM
+            } catch (e: IllegalStateException) {
+                newSessionErrorChannel.trySend(Unit)
+            }
+        }
+    }
+
+    /**
      * Drop queued message [queuedMessageId] from this conversation's backlog (#467) — fire the #466
      * `dequeue_message` send through the facade. Reachable as a [ConversationRepository] interface method
      * on the already-injected [repository], so — unlike interrupt/answerModal/cancelModal — there is no new
@@ -618,7 +657,7 @@ class ThreadViewModel(
             ThreadEvent.ChannelInfo -> pendingChannelInfo.value = true
             ThreadEvent.ChannelInfoDismiss -> pendingChannelInfo.value = false
             ThreadEvent.ChangeWorkspace -> pendingWorkspacePicker.value = true
-            ThreadEvent.NewSession -> Unit
+            ThreadEvent.NewSession -> sendNewSession()
         }
     }
 
