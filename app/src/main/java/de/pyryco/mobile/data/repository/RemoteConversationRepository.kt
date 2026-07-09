@@ -88,9 +88,9 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * Every interface method other than [observeConversations] is a not-yet-implemented stub that the
  * sibling slices replace in this same class: thread reads (#313), last-message (#329), mutations
- * (#314), and the methods with no documented v2 wire message (`archive` / `unarchive` / `rename` /
- * `startNewSession` / `changeWorkspace`). [delete], [recentWorkspaces], and [createWorkspaceFolder]
- * keep their interface defaults — intentionally outside this slice's surface.
+ * (#314), and the methods still awaiting a documented v2 wire message (`archive` / `unarchive` /
+ * `changeWorkspace`). [delete], [recentWorkspaces], and [createWorkspaceFolder] keep their interface
+ * defaults — intentionally outside this slice's surface.
  */
 class RemoteConversationRepository(
     private val pump: SessionPump,
@@ -1419,10 +1419,48 @@ class RemoteConversationRepository(
         return conversation
     }
 
+    /**
+     * Send the bare v2 `new_session` control frame (#539, pyrycode#831) — the wire half of pressing
+     * "New session" (the `/clear` equivalent). A line-for-line mirror of [interrupt]: **fire-and-forget**,
+     * so the daemon sends no reply (no ack/error/broadcast) and this uses plain [SessionPump.send], never
+     * [sendAndAwaitReply] (which would hang awaiting a reply that never comes). The frame is
+     * connection-level — it carries **no payload**: no `conversation_id`, no `workspace` (the daemon
+     * operates on the single live claude; per-conversation scoping is a future server ticket). The
+     * `interactive` capability is enforced server-side, so the phone always sends.
+     *
+     * The `conversationId` / `workspace` args are **not** sent on the wire; they are vestigial for the
+     * remote impl (meaningful only to the fake, which mints per-conversation). Throws
+     * [IllegalStateException] when the session is not connected ([SessionPump.send] returns `false`),
+     * mirroring [interrupt], so the caller can surface the failure.
+     *
+     * The interface forces a [Session] return, but a fire-and-forget frame yields no session identity —
+     * the real one arrives later via the out-of-scope `session_transition` marker (#336 fold). So the
+     * returned placeholder's identity fields (`id`, `claudeSessionUuid`) are **explicitly unassigned**
+     * (empty strings, not a fabricated-to-look-real UUID); it is never persisted, never enters
+     * [projection], and the #540 consumer discards it.
+     */
     override suspend fun startNewSession(
         conversationId: String,
         workspace: String?,
-    ): Session = throw UnsupportedOperationException("startNewSession: no v2 wire message defined (follow-up specs the wire contract)")
+    ): Session {
+        check(pump.send(newSessionFrame())) { "$TYPE_NEW_SESSION not sent: session not connected" }
+        return Session(
+            id = "",
+            conversationId = conversationId,
+            claudeSessionUuid = "",
+            startedAt = Clock.System.now(),
+            endedAt = null,
+        )
+    }
+
+    /** The bare `new_session` control frame (#539): empty payload, no correlation key — see [startNewSession]. */
+    private fun newSessionFrame(): Envelope =
+        Envelope(
+            id = requestId.incrementAndGet(),
+            type = TYPE_NEW_SESSION,
+            ts = Clock.System.now().toString(),
+            payload = JsonObject(emptyMap()),
+        )
 
     override suspend fun changeWorkspace(
         conversationId: String,
@@ -1561,6 +1599,12 @@ class RemoteConversationRepository(
          * No payload, no reply, interactive-gated server-side, permission-gate-exempt; replay-safe.
          */
         const val TYPE_INTERRUPT = "interrupt"
+
+        /**
+         * Outbound control: the phone's bare `new_session` (#539, pyrycode#831) — the wire half of
+         * "New session" (/clear). No payload, no reply, interactive-gated server-side; replay-safe.
+         */
+        const val TYPE_NEW_SESSION = "new_session"
 
         /**
          * Capability-gated control marker: a replay resync `{conversation_id}`, no `event_id` (#417,
