@@ -1201,16 +1201,60 @@ private fun interruptRequest(): Envelope = Envelope(
   non-interactive connection's interrupt is dropped daemon-side. **Permission-gate-exempt.** `security-sensitive`,
   PASS: outbound-only, no untrusted parse, the empty payload has no injection surface, never logs.
 
+## `startNewSession()` — the bare v2 `new_session` control-send ([#539](../codebase/539.md))
+
+The **outbound, fire-and-forget** wire half of the "New session" (`/clear`) affordance: a bare
+`new_session` control frame the daemon routes to `supervisor.StartNewSession()` best-effort, **no
+ack, no reply, no broadcast owed** (pyrycode#831, split from #534 — the #534 body's "daemon acks"
+premise was wrong, corrected at split). A **line-for-line mirror of [`interrupt()`](#interrupt--the-bare-v2-interrupt-control-send-458)**, one verb over, on the
+**interface** (not concrete-only like `interrupt`/`answerModal`/`cancelModal`) because `startNewSession`
+is already an interface method the fake also implements.
+
+```kotlin
+override suspend fun startNewSession(conversationId: String, workspace: String?): Session {
+    check(pump.send(newSessionFrame())) { "$TYPE_NEW_SESSION not sent: session not connected" }
+    return Session(id = "", conversationId = conversationId, claudeSessionUuid = "",
+        startedAt = Clock.System.now(), endedAt = null)
+}
+private fun newSessionFrame(): Envelope = Envelope(
+    id = requestId.incrementAndGet(), type = TYPE_NEW_SESSION,
+    ts = Clock.System.now().toString(), payload = JsonObject(emptyMap()),   // bare — no payload
+)
+```
+
+- **Bare connection-level frame — `conversationId`/`workspace` args are vestigial for this impl.** The
+  daemon operates on the single live claude (per-conversation scoping is a deferred *server* ticket), so
+  neither arg reaches the wire; they're meaningful only to the [fake](conversation-repository.md), which
+  mints per-conversation. **Replay-safe** — a replayed `new_session` with no running turn is a daemon-side
+  no-op — so, like `interrupt`, the frame carries no idempotency token by design.
+- **Fire-and-forget — plain `pump.send`, never `sendAndAwaitReply`** (which would hang awaiting a reply the
+  daemon never sends). The `check` throws `IllegalStateException` when not `Open`, the same `interrupt`
+  idiom. New companion const `TYPE_NEW_SESSION = "new_session"` beside `TYPE_INTERRUPT`.
+- **Placeholder `Session` return — the interface forces a `Session`, the wire yields no identity.** Success
+  (and the real session identity) is observed later via the pre-existing `session_transition` marker
+  (`reason: "clear"`, the [#336 fold](../codebase/336.md)) — **out of scope for this send-only slice**. The
+  returned placeholder's `id`/`claudeSessionUuid` are empty-string "not-yet-assigned" sentinels (not a
+  fabricated-to-look-real UUID); `conversationId` is the arg, `startedAt` is the send moment. Never
+  persisted, never enters `projection`; the #540 UI-wire consumer (not yet landed) discards it.
+  Considered-and-rejected alternative: narrowing the interface return type to `Unit` — ripples to the fake +
+  facade + interface for an XS slice, deferred.
+- **`mutationsSupported` stays `false`** — its siblings `archive`/`unarchive`/`changeWorkspace` still throw,
+  so flipping the one coarse flag would un-hide them in `ThreadOverflowMenu`. Menu reachability is a later
+  coarse-flag milestone's concern (see the #537 family — "gate cleared ≠ buildable").
+- `security-sensitive`, PASS: outbound-only, constant `{}` payload (no caller-derived data), the single ISE
+  message is a static string, no logging, authorization is server-side (`interactive`, mirrors `interrupt`).
+
 ## Stubs — the full interface compiles; later slices replace what they own
 
 Every method other than the three live read paths and the now-live `sendMessage` (#346) /
-`createDiscussion` (#347) / `promote` (#348) / `rename` ([#530](../codebase/530.md)) throws
-`UnsupportedOperationException` with a message naming the owning follow-up, so the class compiles the full
-interface today and each slice replaces only the methods it owns:
+`createDiscussion` (#347) / `promote` (#348) / `rename` ([#530](../codebase/530.md)) /
+`startNewSession` ([#539](../codebase/539.md)) throws `UnsupportedOperationException` with a message
+naming the owning follow-up, so the class compiles the full interface today and each slice replaces only
+the methods it owns:
 
 | Method(s) | Owner |
 |---|---|
-| `archive`, `unarchive`, `startNewSession`, `changeWorkspace` | follow-up (no v2 wire message defined yet) |
+| `archive`, `unarchive`, `changeWorkspace` | follow-up (no v2 wire message defined yet) |
 
 `delete`, `recentWorkspaces`, and `createWorkspaceFolder` are **not overridden** — they have interface
 defaults (error / empty flow per the [contract](conversation-repository.md)) and are intentionally outside
