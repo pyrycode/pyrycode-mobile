@@ -582,6 +582,58 @@ The `upsertConversation` upsert **replaces the existing unpromoted discussion en
 > #348's tests for the first time. The confirmed-upsert is the trust property (mirrors #346/#347): the
 > list never shows a promote the server did not perform, by construction.
 
+## `rename(conversationId, name)` — the fourth mutation (#530)
+
+Renames an existing conversation (channel or discussion) over v2 `rename_conversation`, and returns the
+renamed `Conversation`. [#530](../codebase/530.md) is `promote` ([#348](../codebase/348.md)) **minus
+`cwd`** — otherwise byte-for-byte the same build-request → `sendAndAwaitReply` → decode-reply →
+confirmed-fold → return shape, and pure composition: it reuses #346's `sendAndAwaitReply` + `mapError`,
+#318's `ConversationResponseDto.toConversation()`, and #347's `upsertConversation`, adding only a new
+`rename_conversation` request encoder (`RenameConversationPayloadDto`).
+
+The flow (≤ ~10 lines):
+
+```kotlin
+override suspend fun rename(conversationId: String, name: String): Conversation {
+    val request = Envelope(
+        id = requestId.incrementAndGet(),
+        type = TYPE_RENAME_CONVERSATION, ts = Clock.System.now().toString(),
+        payload = MobileJson.encodeToJsonElement(
+            RenameConversationPayloadDto(conversationId = conversationId, name = name),
+        ),
+    )
+    val reply = sendAndAwaitReply(request)              // throws on server `error` / not-Open; the decode below is unreachable on failure
+    val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
+    upsertConversation(conversation)                    // confirmed-upsert — ONLY after a successful decode
+    return conversation
+}
+```
+
+- **No `cwd` — the one structural delta from `promote`.** The wire SSOT
+  (`RenameConversationPayload`, server #820) is deliberately **not** a reuse of
+  `PromoteConversationPayloadDto`: a rename neither has nor means a `cwd`. `RenameConversationPayloadDto`
+  carries exactly `conversation_id` / `name`, both required.
+- **The reply is `conversation_updated`**, routed into the **same** success arm `promote`'s reply already
+  uses (added by #348) — no `onInbound` change needed. Decoded through the **same** #318
+  `ConversationResponseDto`. A malformed reply throws the #318 decode exception in the caller's coroutine
+  **before** `upsertConversation` runs, so the projection is never mutated by a garbage success reply.
+- **`name` is forwarded verbatim.** The `RenameDialog` is the sole trim authority; the daemon re-validates
+  and rejects empty/whitespace titles server-side (`protocol.malformed`), surfaced as an ordinary
+  `RelayErrorException` — no second client-side validation surface is added.
+- **The returned `name` is server-authoritative** (the reply's value, not the request's) — identical to
+  `promote`'s "return the reply's cwd, not the input" discipline.
+- **`conversation.not_found` → `IllegalArgumentException`**, reusing `mapError` unchanged. Reachable only
+  if the conversation is deleted server-side between opening the thread and renaming — the call site
+  (`ThreadViewModel`'s `RenameSubmit`) always passes the currently-open, hence server-known,
+  `conversationId`, matching `promote`'s reachability profile. The [`#490`](../codebase/490.md) guard
+  deliberately does **not** catch `IllegalArgumentException` (crash-as-programming-bug-signal), so this
+  path is unreachable-by-construction from the shipped UI, not silently swallowed.
+
+The `upsertConversation` upsert **replaces the existing conversation entry in place** (same `id`), so
+`observeConversations` re-emits with the new name in whichever tier (Channels/Discussions) it already sits
+in, and the thread top bar's `displayName` (derived from the same projection) re-emits too — both AC
+surfaces from one fold, no ViewModel change.
+
 ## `registerPushToken(token)` — the device-concern push registration (#359)
 
 Registers the phone's FCM push token with the paired daemon over v2 `register_push_token`, so the daemon
@@ -1152,13 +1204,13 @@ private fun interruptRequest(): Envelope = Envelope(
 ## Stubs — the full interface compiles; later slices replace what they own
 
 Every method other than the three live read paths and the now-live `sendMessage` (#346) /
-`createDiscussion` (#347) / `promote` ([#348](../codebase/348.md) — the last #314 mutation) throws
+`createDiscussion` (#347) / `promote` (#348) / `rename` ([#530](../codebase/530.md)) throws
 `UnsupportedOperationException` with a message naming the owning follow-up, so the class compiles the full
 interface today and each slice replaces only the methods it owns:
 
 | Method(s) | Owner |
 |---|---|
-| `archive`, `unarchive`, `rename`, `startNewSession`, `changeWorkspace` | follow-up (no v2 wire message defined yet) |
+| `archive`, `unarchive`, `startNewSession`, `changeWorkspace` | follow-up (no v2 wire message defined yet) |
 
 `delete`, `recentWorkspaces`, and `createWorkspaceFolder` are **not overridden** — they have interface
 defaults (error / empty flow per the [contract](conversation-repository.md)) and are intentionally outside

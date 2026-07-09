@@ -28,6 +28,7 @@ import de.pyryco.mobile.data.network.PromoteConversationPayloadDto
 import de.pyryco.mobile.data.network.QueueStatePayloadDto
 import de.pyryco.mobile.data.network.RegisterPushTokenPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
+import de.pyryco.mobile.data.network.RenameConversationPayloadDto
 import de.pyryco.mobile.data.network.ReplayCursor
 import de.pyryco.mobile.data.network.RequestSnapshotPayloadDto
 import de.pyryco.mobile.data.network.ScreenSnapshotPayloadDto
@@ -1377,10 +1378,46 @@ class RemoteConversationRepository(
     override suspend fun unarchive(conversationId: String): Unit =
         throw UnsupportedOperationException("unarchive: no v2 wire message defined (follow-up specs the wire contract)")
 
+    /**
+     * Rename an existing conversation (channel or discussion) to [name] over v2 `rename_conversation`
+     * (#530, server #820). Encodes the request ([RenameConversationPayloadDto]: `{conversation_id, name}`,
+     * both required — no `cwd`, contrast [promote]), sends it, and awaits its correlated
+     * `conversation_updated` reply — the **typed** bare-conversation payload. Decodes the reply through
+     * the #318 [ConversationResponseDto] boundary, so a malformed reply throws before any state
+     * mutation, then **confirmed-upserts** the returned [Conversation] into [projection] — only after
+     * the reply decodes — so [observeConversations] re-emits with the new name (and the thread top bar,
+     * derived from the same projection). The returned `name` is the **server-authoritative** reply
+     * value, not the request's.
+     *
+     * [name] is forwarded **verbatim** — the `RenameDialog` is the sole trim authority; the daemon
+     * re-validates and rejects empty/whitespace titles server-side (`protocol.malformed`), surfaced
+     * here as an ordinary [RelayErrorException]. Throws [IllegalArgumentException] for an unknown
+     * conversation (server `conversation.not_found`, mirroring the fake's type), [RelayErrorException]
+     * for any other server `error`, [IllegalStateException] when the session is not connected, and the
+     * #318 decode exception ([kotlinx.serialization.SerializationException] / [IllegalArgumentException])
+     * for a malformed reply — none of which mutate [projection] (AC #3).
+     */
     override suspend fun rename(
         conversationId: String,
         name: String,
-    ): Conversation = throw UnsupportedOperationException("rename: no v2 wire message defined (follow-up specs the wire contract)")
+    ): Conversation {
+        val request =
+            Envelope(
+                id = requestId.incrementAndGet(),
+                type = TYPE_RENAME_CONVERSATION,
+                ts = Clock.System.now().toString(),
+                payload =
+                    MobileJson.encodeToJsonElement(
+                        RenameConversationPayloadDto(conversationId = conversationId, name = name),
+                    ),
+            )
+        // Throws on a server `error` / not-Open session; the decode + confirmed upsert below are
+        // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
+        val reply = sendAndAwaitReply(request)
+        val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
+        upsertConversation(conversation)
+        return conversation
+    }
 
     override suspend fun startNewSession(
         conversationId: String,
@@ -1428,6 +1465,9 @@ class RemoteConversationRepository(
 
         /** Request: promote an existing conversation to a named channel (#348, #274 `PromoteConversationPayload`). */
         const val TYPE_PROMOTE_CONVERSATION = "promote_conversation"
+
+        /** Request: rename an existing conversation (#530, #820 `RenameConversationPayload`). Reply is `conversation_updated`. */
+        const val TYPE_RENAME_CONVERSATION = "rename_conversation"
 
         /**
          * Correlated success reply carrying the bare promoted conversation object (#348, #274) — also

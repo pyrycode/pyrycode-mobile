@@ -45,7 +45,7 @@ invisible. Under the relay repository (behind `USE_RELAY_REPOSITORY`) each can t
 | --- | --- | --- |
 | Server error | `RelayErrorException` | a crafted `error` frame ([`MobileWireModels.kt`](mobile-protocol-v2-wire-layer.md)) — extends `Exception`, carries the server-supplied `message` |
 | Not connected | `IllegalStateException` | [`StableConversationRepository`](stable-conversation-repository.md)'s `live` getter throws `NOT_CONNECTED` |
-| Not-yet-wired method | `UnsupportedOperationException` | [`RemoteConversationRepository`](remote-conversation-repository.md) `archive` / `rename` / `changeWorkspace` |
+| Not-yet-wired method | `UnsupportedOperationException` | [`RemoteConversationRepository`](remote-conversation-repository.md) `archive` / `changeWorkspace` (`rename` wired live since [#530](../codebase/530.md) — now only reachable via ISE / `RelayErrorException` / IAE) |
 | Not-wired interface default | `IllegalStateException` | the `delete` / `dropQueuedMessage` interface-default `error(…)` |
 
 An uncaught throw in `viewModelScope` reaches the default uncaught-exception handler and **kills the process**.
