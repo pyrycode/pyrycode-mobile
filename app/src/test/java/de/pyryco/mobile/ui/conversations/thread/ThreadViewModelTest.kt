@@ -834,6 +834,95 @@ class ThreadViewModelTest {
             // No crash, no leaked exception: structured cancellation preserved.
         }
 
+    // ---- #540: onNewSession — route New session to startNewSession + surface not-connected -----
+
+    @Test
+    fun onNewSession_routesOwnConversationIdToRepositoryAndSurfacesNoError() =
+        runTest {
+            val repo = NewSessionControllableRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, repo)
+            val errors = mutableListOf<Unit>()
+            val errorCollector = launch { vm.newSessionErrors.collect { errors += it } }
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.NewSession)
+            advanceUntilIdle()
+
+            // AC #1: exactly one startNewSession, carrying the VM's own conversation id (never a
+            // caller-supplied id) with workspace defaulted null.
+            assertEquals(listOf(ACTIVE_CONV to null), repo.startCalls)
+            // AC #4: success surfaces nothing — the #336 fold renders the delimiter, not this slice.
+            assertTrue("a successful new session must not emit an error signal: $errors", errors.isEmpty())
+            errorCollector.cancel()
+        }
+
+    @Test
+    fun onNewSession_whenNotConnected_emitsErrorSurfaceWithoutCrashing() =
+        runTest {
+            // AC #2/#3/#5: startNewSession throws not-connected (IllegalStateException). Unlike the
+            // interrupt/drop swallow twins, this SURFACES — newSessionErrors emits exactly once — and the
+            // throw never escapes the launched coroutine. A `startCalls.size == 1` assertion alone would
+            // false-green: a leaked throw reaches the default handler, not runTest (viewModelScope is a
+            // separate SupervisorJob), so also capture uncaught exceptions and assert none fired — the only
+            // proof the typed catch ran.
+            val uncaught = mutableListOf<Throwable>()
+            val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
+            try {
+                val repo = NewSessionControllableRepo(onStart = { throw IllegalStateException("not connected") })
+                val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+                val vm = makeVm(handle, repo)
+                val errors = mutableListOf<Unit>()
+                val errorCollector = launch { vm.newSessionErrors.collect { errors += it } }
+                advanceUntilIdle()
+
+                vm.onOverflowEvent(ThreadEvent.NewSession)
+                advanceUntilIdle()
+
+                assertEquals(listOf(ACTIVE_CONV to null), repo.startCalls) // the attempt was made
+                assertEquals("not-connected must surface exactly one error signal", 1, errors.size)
+                assertTrue("the not-connected throw must be caught, not propagated: $uncaught", uncaught.isEmpty())
+                errorCollector.cancel()
+            } finally {
+                Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+            }
+        }
+
+    @Test
+    fun onNewSession_scopeCancellationMidSend_doesNotEmitErrorSignal() =
+        runTest {
+            // Structured-cancellation guard mirroring #451/#458: `catch (CancellationException) { throw e }`
+            // MUST precede the typed `catch (IllegalStateException)` — on the JVM j.u.c.CancellationException
+            // extends IllegalStateException. The send suspends mid-flight; viewModelScope teardown must
+            // neither crash, leak, nor fire a spurious not-connected error signal.
+            val gate = CompletableDeferred<Unit>() // never completes — the send stays suspended in-flight
+            val entered = CompletableDeferred<Unit>()
+            val repo =
+                NewSessionControllableRepo(
+                    onStart = {
+                        entered.complete(Unit)
+                        gate.await()
+                    },
+                )
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, repo)
+            val store = ViewModelStore().apply { put("vm", vm) }
+            val errors = mutableListOf<Unit>()
+            val errorCollector = launch { vm.newSessionErrors.collect { errors += it } }
+
+            vm.onOverflowEvent(ThreadEvent.NewSession)
+            advanceUntilIdle()
+            assertTrue("the send must be in-flight", entered.isCompleted)
+
+            store.clear() // cancels viewModelScope → the awaiting send throws CancellationException
+            advanceUntilIdle()
+
+            // The rethrow keeps cancellation structured: no spurious error signal fires.
+            assertTrue("VM-scope cancellation mid-send must not emit an error signal: $errors", errors.isEmpty())
+            errorCollector.cancel()
+        }
+
     // ---- #490: one-shot repository-call guard (launchGuardedRepoCall) --------------------------
 
     @Test
@@ -2339,6 +2428,7 @@ class ThreadViewModelTest {
         val deleteCalls = mutableListOf<String>()
         val renameCalls = mutableListOf<Pair<String, String>>()
         val promoteCalls = mutableListOf<Triple<String, String, String?>>()
+        val startNewSessionCalls = mutableListOf<Pair<String, String?>>()
 
         override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = flowOf(emptyList())
 
@@ -2394,7 +2484,16 @@ class ThreadViewModelTest {
         override suspend fun startNewSession(
             conversationId: String,
             workspace: String?,
-        ): Session = TODO("not used")
+        ): Session {
+            startNewSessionCalls += conversationId to workspace
+            return Session(
+                id = "$conversationId-new",
+                conversationId = conversationId,
+                claudeSessionUuid = "uuid",
+                startedAt = Instant.parse("2026-05-17T00:00:00Z"),
+                endedAt = null,
+            )
+        }
 
         override suspend fun changeWorkspace(
             conversationId: String,
@@ -2451,6 +2550,37 @@ class ThreadViewModelTest {
         ) {
             dropCalls += conversationId to queuedMessageId
             onDrop()
+        }
+    }
+
+    /**
+     * Delegates the whole [ConversationRepository] surface to a seeded [FakeConversationRepository] (so the
+     * VM's `state` pipeline stays populated) and overrides only [startNewSession] to record each call and
+     * optionally run [onStart] after recording (#540) — the [QueueControllableRepo] analog for new-session.
+     * [onStart] defaults to a no-op (the success path returns a placeholder [Session] the VM discards); the
+     * failure test passes a throwing body and the cancellation test a suspending gate. The return is a
+     * synthetic [Session] rather than a delegate mint so the (unseeded) [ACTIVE_CONV] id never trips the
+     * fake's "unknown conversation" [IllegalArgumentException].
+     */
+    private class NewSessionControllableRepo(
+        private val delegate: FakeConversationRepository = FakeConversationRepository(),
+        private val onStart: suspend () -> Unit = {},
+    ) : ConversationRepository by delegate {
+        val startCalls = mutableListOf<Pair<String, String?>>()
+
+        override suspend fun startNewSession(
+            conversationId: String,
+            workspace: String?,
+        ): Session {
+            startCalls += conversationId to workspace
+            onStart()
+            return Session(
+                id = "$conversationId-new",
+                conversationId = conversationId,
+                claudeSessionUuid = "uuid",
+                startedAt = Instant.parse("2026-07-09T00:00:00Z"),
+                endedAt = null,
+            )
         }
     }
 
