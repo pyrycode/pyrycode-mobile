@@ -248,11 +248,11 @@ class RemoteConversationRepositoryTest {
             val repo = RemoteConversationRepository(FakeSessionPump(), backgroundScope)
 
             // observeLastMessage (#329), observeMessages (#313), sendMessage (#346),
-            // createDiscussion (#347), promote (#348), and rename (#530) are now all implemented; only
-            // the remaining mutation / no-wire methods are still stubs. Suspend stubs throw when invoked.
+            // createDiscussion (#347), promote (#348), rename (#530), and startNewSession (#539) are now
+            // all implemented; only the remaining mutation / no-wire methods are still stubs. Suspend
+            // stubs throw when invoked.
             assertUnsupported { repo.archive("c") }
             assertUnsupported { repo.unarchive("c") }
-            assertUnsupported { repo.startNewSession("c") }
             assertUnsupported { repo.changeWorkspace("c", "/p") }
         }
 
@@ -1801,6 +1801,38 @@ class RemoteConversationRepositoryTest {
             val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
 
             val outcome = runCatching { repo.interrupt() }
+
+            assertTrue(outcome.exceptionOrNull() is IllegalStateException)
+        }
+
+    // ---- startNewSession (#539): bare fire-and-forget control frame --------------------------------
+
+    // AC #1, wire contract: startNewSession emits exactly one bare `new_session` frame whose payload is
+    // the empty object `{}` (no conversation_id / no other keys). Fire-and-forget: no reply is awaited.
+    // The returned placeholder Session carries the arg conversationId (identity fields are unassigned).
+    @Test
+    fun startNewSession_sendsBareNewSessionMatchingWireContract() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+
+            val session = repo.startNewSession("c-1", null)
+
+            val sent = pump.sent.single { it.type == "new_session" }
+            assertEquals(MobileJson.parseToJsonElement("{}"), sent.payload)
+            assertEquals("c-1", session.conversationId)
+        }
+
+    // AC #2, #3: a not-Open session (pump.send returns false) fails fast with IllegalStateException and
+    // does not hang (no awaited reply).
+    @Test
+    fun startNewSession_whenSendReturnsFalse_throwsIllegalStateAndDoesNotHang() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+
+            val outcome = runCatching { repo.startNewSession("c-1", null) }
 
             assertTrue(outcome.exceptionOrNull() is IllegalStateException)
         }
