@@ -248,11 +248,10 @@ class RemoteConversationRepositoryTest {
             val repo = RemoteConversationRepository(FakeSessionPump(), backgroundScope)
 
             // observeLastMessage (#329), observeMessages (#313), sendMessage (#346),
-            // createDiscussion (#347), and promote (#348) are now all implemented; only the remaining
-            // mutation / no-wire methods are still stubs. Suspend stubs throw when invoked.
+            // createDiscussion (#347), promote (#348), and rename (#530) are now all implemented; only
+            // the remaining mutation / no-wire methods are still stubs. Suspend stubs throw when invoked.
             assertUnsupported { repo.archive("c") }
             assertUnsupported { repo.unarchive("c") }
-            assertUnsupported { repo.rename("c", "name") }
             assertUnsupported { repo.startNewSession("c") }
             assertUnsupported { repo.changeWorkspace("c", "/p") }
         }
@@ -1294,6 +1293,191 @@ class RemoteConversationRepositoryTest {
             runCurrent()
 
             assertEquals("disc", promote().getOrThrow().id)
+        }
+
+    // ---- rename (#530): rename_conversation request → conversation_updated/error correlation -----
+
+    // AC #1: the sent envelope matches the rename_conversation wire contract {conversation_id, name}
+    // — exactly two keys, no cwd (contrast promote). The name is forwarded verbatim.
+    @Test
+    fun rename_sendsRenameConversationWithConversationIdAndName() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            startRename(repo, "chan", "Renamed Channel")
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "rename_conversation" }
+            assertEquals(
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"chan","name":"Renamed Channel"}""",
+                ),
+                sent.payload,
+            )
+
+            // Unblock the launched coroutine so backgroundScope completes cleanly.
+            pump.push(conversationUpdatedEnvelope(inReplyTo = sent.id, id = "chan", name = "Renamed Channel", cwd = "/p/chan"))
+            runCurrent()
+        }
+
+    // AC #1: the returned Conversation carries the server's reply name, not the request's — the reply
+    // is the authority (feed a reply whose name differs from the request to prove it).
+    @Test
+    fun rename_onUpdatedReply_returnsConversationWithServerName() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val rename = startRename(repo, "chan", "requested-name")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "rename_conversation" }.id
+            pump.push(
+                conversationUpdatedEnvelope(
+                    inReplyTo = sentId,
+                    id = "chan",
+                    isPromoted = true,
+                    name = "server-name",
+                    cwd = "/p/chan",
+                    lastUsedAt = "2026-05-08T10:34:30Z",
+                ),
+            )
+            runCurrent()
+
+            val conversation = rename().getOrThrow()
+            assertEquals("chan", conversation.id)
+            // The server-authoritative name from the reply, not the request's "requested-name".
+            assertEquals("server-name", conversation.name)
+        }
+
+    // AC #1: a successful rename folds the renamed record into the list projection in place (the new
+    // name appears in observeConversations, no duplicate, list count unchanged).
+    @Test
+    fun rename_onSuccess_foldsRenamedConversationIntoList() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+            assertEquals("Channel", all.last().single { it.id == "chan" }.name)
+
+            val rename = startRename(repo, "chan", "Renamed Channel")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "rename_conversation" }.id
+            pump.push(conversationUpdatedEnvelope(inReplyTo = sentId, id = "chan", name = "Renamed Channel", cwd = "/p/chan"))
+            runCurrent()
+            rename().getOrThrow()
+
+            // Folded in place: still two entries; chan now shows the new name.
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+            assertEquals("Renamed Channel", all.last().single { it.id == "chan" }.name)
+        }
+
+    // AC #2, #3: a not-Open session (pump.send returns false) throws IllegalStateException; no fold.
+    @Test
+    fun rename_whenSendReturnsFalse_throwsIllegalStateAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val rename = startRename(repo, "chan", "Renamed Channel")
+            runCurrent()
+
+            assertTrue(rename().exceptionOrNull() is IllegalStateException)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+            assertEquals("Channel", all.last().single { it.id == "chan" }.name)
+        }
+
+    // AC #2, #3: a conversation.not_found error surfaces as IllegalArgumentException; list unchanged.
+    @Test
+    fun rename_onConversationNotFound_throwsIllegalArgumentAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val rename = startRename(repo, "missing", "n")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "rename_conversation" }.id
+            pump.push(errorEnvelope(sentId, code = "conversation.not_found"))
+            runCurrent()
+
+            val ex = rename().exceptionOrNull()
+            assertTrue("expected IllegalArgumentException, got $ex", ex is IllegalArgumentException)
+            assertFalse("conversation.not_found must not be a RelayErrorException", ex is RelayErrorException)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+        }
+
+    // AC #2, #3: any other server error (e.g. protocol.malformed for an empty title) surfaces as
+    // RelayErrorException carrying the code; list unchanged.
+    @Test
+    fun rename_onOtherServerError_throwsRelayErrorAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val rename = startRename(repo, "chan", "n")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "rename_conversation" }.id
+            pump.push(errorEnvelope(sentId, code = "protocol.malformed"))
+            runCurrent()
+
+            val ex = rename().exceptionOrNull()
+            assertTrue("expected RelayErrorException, got $ex", ex is RelayErrorException)
+            assertEquals("protocol.malformed", (ex as RelayErrorException).code)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+            assertEquals("Channel", all.last().single { it.id == "chan" }.name)
+        }
+
+    // A malformed conversation_updated success reply (missing required field) throws the #318 decode
+    // exception before the fold, so a garbage success reply cannot inject a partial rename.
+    @Test
+    fun rename_onMalformedUpdatedReply_throwsAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val rename = startRename(repo, "chan", "n")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "rename_conversation" }.id
+            // Payload omits the required `cwd` → ConversationResponseDto decode throws.
+            pump.push(
+                Envelope(
+                    id = 99L,
+                    type = "conversation_updated",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"id":"chan","name":"n","is_promoted":true,"last_used_at":"2026-05-08T10:00:00Z"}""",
+                        ),
+                    inReplyTo = sentId,
+                ),
+            )
+            runCurrent()
+
+            // SerializationException is an IllegalArgumentException subtype.
+            assertTrue(rename().exceptionOrNull() is IllegalArgumentException)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+            assertEquals("Channel", all.last().single { it.id == "chan" }.name)
         }
 
     // ---- registerPushToken (#359): register_push_token request → ack/error correlation ---------
@@ -3743,6 +3927,21 @@ class RemoteConversationRepositoryTest {
         var outcome: Result<Conversation>? = null
         backgroundScope.launch { outcome = runCatching { repo.promote(conversationId, name, workspace) } }
         return { requireNotNull(outcome) { "promote has not completed" } }
+    }
+
+    /**
+     * Launch [RemoteConversationRepository.rename] on [backgroundScope] (it suspends awaiting the
+     * conversation_updated/error reply) and return a getter for its eventual [Result]. Read the result
+     * only after the correlated reply has been pushed and [runCurrent] has drained the cascade.
+     */
+    private fun TestScope.startRename(
+        repo: RemoteConversationRepository,
+        conversationId: String,
+        name: String,
+    ): () -> Result<Conversation> {
+        var outcome: Result<Conversation>? = null
+        backgroundScope.launch { outcome = runCatching { repo.rename(conversationId, name) } }
+        return { requireNotNull(outcome) { "rename has not completed" } }
     }
 
     /**
