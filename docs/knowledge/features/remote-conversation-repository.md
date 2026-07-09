@@ -1235,7 +1235,7 @@ private fun newSessionFrame(): Envelope = Envelope(
   (`reason: "clear"`, the [#336 fold](../codebase/336.md)) — **out of scope for this send-only slice**. The
   returned placeholder's `id`/`claudeSessionUuid` are empty-string "not-yet-assigned" sentinels (not a
   fabricated-to-look-real UUID); `conversationId` is the arg, `startedAt` is the send moment. Never
-  persisted, never enters `projection`; the #540 UI-wire consumer (not yet landed) discards it.
+  persisted, never enters `projection`; the [#540](../codebase/540.md) UI-wire consumer discards it.
   Considered-and-rejected alternative: narrowing the interface return type to `Unit` — ripples to the fake +
   facade + interface for an XS slice, deferred.
 - **`mutationsSupported` stays `false`** — its siblings `archive`/`unarchive`/`changeWorkspace` still throw,
