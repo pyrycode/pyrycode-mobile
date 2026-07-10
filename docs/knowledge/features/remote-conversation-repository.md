@@ -745,6 +745,65 @@ private suspend fun sendArchiveToggle(conversationId: String, type: String) {
   fresh list snapshot until a verb reply re-folds it locally. Not part of this slice; see
   [`../codebase/549.md`](../codebase/549.md) § Lessons learned.
 
+## `delete(conversationId)` — the eighth mutation, first REMOVE-shaped one ([#532](../codebase/532.md))
+
+Permanently deletes an existing conversation over v2 `delete_conversation` (server pyrycode#822, PR #884),
+replacing the interface-default throw this method carried since #312. Diverges from every prior mutation
+in two ways: the reply is a **dedicated** ack (`conversation_deleted`, bare `{id}`), not a reused
+`conversation_updated`; and the fold **removes** rather than upserts.
+
+```kotlin
+override suspend fun delete(conversationId: String) {
+    val request = Envelope(
+        id = requestId.incrementAndGet(), type = TYPE_DELETE_CONVERSATION, ts = Clock.System.now().toString(),
+        payload = MobileJson.encodeToJsonElement(DeleteConversationPayloadDto(conversationId = conversationId)),
+    )
+    val reply = try {
+        sendAndAwaitReply(request)
+    } catch (alreadyGone: IllegalArgumentException) {
+        // mapError maps conversation.not_found → IAE and nothing else — the delete contract is
+        // *tolerant* of unknown ids, so already-gone converges as success (the deliberate divergence
+        // from rename/archive's IAE-crash-on-not-found). Catch is scoped to the await only.
+        removeConversation(conversationId)
+        return
+    }
+    MobileJson.decodeFromJsonElement<ConversationDeletedPayloadDto>(reply)  // #318 shape-validate, discard
+    removeConversation(conversationId)                                     // REMOVE, only after a well-formed ack
+}
+```
+
+- **New reply type, so the inbound demux needed a real change — the load-bearing delta from rename/
+  archive.** `rename`/`archive`/`unarchive` all reuse the pre-existing `conversation_updated` success arm.
+  Delete's reply is genuinely new (`conversation_deleted`), so `onInbound`'s correlated-reply `when` arm
+  (the same one `TYPE_ACK` / `TYPE_CONVERSATION_UPDATED` / `TYPE_SESSION_SETTINGS_UPDATED` share) had to
+  add `TYPE_CONVERSATION_DELETED`. Skipping this would leave the ack unrouted (falls to the `else`
+  no-op arm), so the pending `CompletableDeferred` would never complete and `sendAndAwaitReply` would
+  suspend until connection teardown — a silent-forever no-op, not a crash.
+- **The ack carries `id`, not `conversation_id` — and its value is discarded.** `ConversationDeletedPayloadDto`
+  decodes `{id}` purely to validate the reply shape (the `SessionSettingsUpdatedPayloadDto` posture); the
+  repository removes the id it *sent*, never the id the reply echoes, so a lying relay cannot redirect the
+  removal to a different conversation.
+- **REMOVE, not upsert — `removeConversation` clears all three projections.** The contrast to
+  `upsertConversation`: filters the id out of `projection` (the list), `threadByConversation`, and
+  `lastMessages`. The remote holds these as three separate `StateFlow`s (unlike the fake's unified
+  `state: Map<id, ConversationRecord>`, where removing one map entry empties list/messages/last-message at
+  once), so a list-only removal would leave `observeMessages`/`observeLastMessage` still serving a
+  hard-deleted conversation's rows — a contract violation of the interface's documented three-stream
+  post-condition. `List.filterNot` / `Map - missingKey` are element-equal on an absent id, so `StateFlow`
+  conflation makes a repeat or already-gone delete a no-op re-emit.
+- **`conversation.not_found` converges as success — do not clone rename/archive's IAE-crash path.** The
+  `ConversationRepository.delete` contract is explicitly tolerant of unknown ids (unlike archive/rename,
+  which throw on unknown ids and rely on the [`#490`](../codebase/490.md) guard's deliberate
+  IAE-doesn't-catch crash posture). Delete catches the same `mapError`-produced `IllegalArgumentException`
+  locally and converges by removing the id and returning normally — an already-deleted id is success, not
+  a bug signal. The catch is scoped to `sendAndAwaitReply` only (not the decode line below it), so a
+  malformed-ack `SerializationException` (⊂ `IllegalArgumentException`) still propagates and is never
+  mis-read as "already gone."
+- **No return value** — the `ConversationRepository` contract's `delete` is `Unit`, like archive/unarchive.
+- **`mutationsSupported` stays `false`, untouched** — same family posture as archive/unarchive; the
+  affordance is dormant-but-ready. The operator-facing rung-3 e2e is
+  [#554](https://github.com/pyrycode/pyrycode-mobile/issues/554) (Inbox, blocked by this ticket).
+
 ## `registerPushToken(token)` — the device-concern push registration (#359)
 
 Registers the phone's FCM push token with the paired daemon over v2 `register_push_token`, so the daemon
@@ -1361,18 +1420,18 @@ private fun newSessionFrame(): Envelope = Envelope(
 Every method other than the three live read paths and the now-live `sendMessage` (#346) /
 `createDiscussion` (#347) / `promote` (#348) / `rename` ([#530](../codebase/530.md)) /
 `startNewSession` ([#539](../codebase/539.md)) / `setSessionSettings` ([#543](../codebase/543.md)) /
-`archive` / `unarchive` ([#549](../codebase/549.md)) throws `UnsupportedOperationException` with a message
-naming the owning follow-up, so the class compiles the full interface today and each slice replaces only
-the methods it owns:
+`archive` / `unarchive` ([#549](../codebase/549.md)) / `delete` ([#532](../codebase/532.md)) throws
+`UnsupportedOperationException` with a message naming the owning follow-up, so the class compiles the full
+interface today and each slice replaces only the methods it owns:
 
 | Method(s) | Owner |
 |---|---|
 | `changeWorkspace` | follow-up (no v2 wire message defined yet) |
 
-`delete`, `recentWorkspaces`, and `createWorkspaceFolder` are **not overridden** — they have interface
-defaults (error / empty flow per the [contract](conversation-repository.md)) and are intentionally outside
-this implementation's surface. All three read paths are now **cold flows that defer work to collection**
-(the eager expression-body `throw` shape #312's NIT flagged is gone with the last read stub).
+`recentWorkspaces` and `createWorkspaceFolder` are **not overridden** — they have interface defaults
+(empty flow per the [contract](conversation-repository.md)) and are intentionally outside this
+implementation's surface. All three read paths are now **cold flows that defer work to collection** (the
+eager expression-body `throw` shape #312's NIT flagged is gone with the last read stub).
 
 Because those mutations throw, this repo advertises the capability off:
 `override val mutationsSupported: Boolean = false` (#507), placed immediately above the throwing overrides so
@@ -1613,7 +1672,13 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   add one shared `ArchiveConversationPayloadDto` + a private `sendArchiveToggle` helper both overrides
   delegate to, and extend `ConversationResponseDto` with a defaulted `is_archived` field so the fold
   actually moves the conversation between tiers — data-layer slice of the #531 split; #550 wires the
-  ViewModel surfacing, #551 the rung-3 e2e).
+  ViewModel surfacing, #551 the rung-3 e2e), [#532](../codebase/532.md) (`delete`, **landed** — the eighth
+  mutation and the **first REMOVE-shaped** one; replaces the interface-default throw, adds a genuinely
+  **new** reply type (`conversation_deleted`, requiring an `onInbound` demux registration rename/archive
+  didn't need), and folds via a new `removeConversation` helper that clears all three read projections
+  rather than upserting one. `conversation.not_found` converges as success — the deliberate divergence
+  from rename/archive's IAE-crash-on-not-found. `mutationsSupported` stays `false`; the rung-3 e2e is
+  #554, Inbox, blocked by this ticket).
 - Connection wiring: [`RelayRepositoryCoordinator`](relay-repository-coordinator.md)
   ([#351](../codebase/351.md), **landed**) — constructs this repository per live connection against the
   pump + a child scope, made `NoiseSessionPump : ManagedSessionPump : SessionPump`, and publishes the
