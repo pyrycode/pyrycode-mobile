@@ -17,6 +17,7 @@ import de.pyryco.mobile.data.network.ConversationDeletedPayloadDto
 import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.ConversationsPayload
 import de.pyryco.mobile.data.network.CreateConversationPayloadDto
+import de.pyryco.mobile.data.network.CreateWorkspaceFolderPayloadDto
 import de.pyryco.mobile.data.network.DeleteConversationPayloadDto
 import de.pyryco.mobile.data.network.DequeueMessagePayloadDto
 import de.pyryco.mobile.data.network.Envelope
@@ -45,6 +46,7 @@ import de.pyryco.mobile.data.network.ToolResultPayloadDto
 import de.pyryco.mobile.data.network.ToolUsePayloadDto
 import de.pyryco.mobile.data.network.TurnEndPayloadDto
 import de.pyryco.mobile.data.network.TurnStatePayloadDto
+import de.pyryco.mobile.data.network.WorkspaceFolderCreatedPayloadDto
 import de.pyryco.mobile.data.network.toBoundary
 import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.network.toConversations
@@ -336,7 +338,7 @@ class RemoteConversationRepository(
                 appendMessages(rows)
             }
             TYPE_ACK, TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_UPDATED, TYPE_CONVERSATION_DELETED,
-            TYPE_SCREEN_SNAPSHOT, TYPE_SESSION_SETTINGS_UPDATED,
+            TYPE_SCREEN_SNAPSHOT, TYPE_SESSION_SETTINGS_UPDATED, TYPE_WORKSPACE_FOLDER_CREATED,
             ->
                 // Success reply to a correlated request, handed verbatim to the waiter. An `ack`
                 // (#346) carries the empty `{}` the bare-ack waiter ignores; a `conversation_created`
@@ -346,13 +348,16 @@ class RemoteConversationRepository(
                 // decodes for its `text`; a `session_settings_updated` (#543) carries the bare
                 // `{session_id}` ack the [setSessionSettings] waiter decodes for reply-shape validation;
                 // a `conversation_deleted` (#532) carries the bare `{id}` ack the [delete] waiter decodes
-                // for reply-shape validation. An `inReplyTo` matching no pending entry (or null) is a
+                // for reply-shape validation; a `workspace_folder_created` (#564) carries the bare
+                // `{path}` the [createWorkspaceFolder] waiter decodes for its return (the created
+                // folder's canonical path). An `inReplyTo` matching no pending entry (or null) is a
                 // no-op: `list_conversations` / `backfill_since` draw no reply here; `screen_snapshot` /
-                // `session_settings_updated` / `conversation_deleted` are always correlated replies (the
-                // daemon never broadcasts them), so an unmatched one is harmless; `conversation_updated`
-                // is also the server's unsolicited broadcast on change (no `inReplyTo`), which must stay a
-                // harmless no-op (the authoritative `conversations` snapshot drives an unsolicited list
-                // refresh, not this delta); and `complete` is idempotent so a duplicate reply is harmless.
+                // `session_settings_updated` / `conversation_deleted` / `workspace_folder_created` are
+                // always correlated replies (the daemon never broadcasts them), so an unmatched one is
+                // harmless; `conversation_updated` is also the server's unsolicited broadcast on change
+                // (no `inReplyTo`), which must stay a harmless no-op (the authoritative `conversations`
+                // snapshot drives an unsolicited list refresh, not this delta); and `complete` is
+                // idempotent so a duplicate reply is harmless.
                 envelope.inReplyTo?.let { id -> pendingRequests[id]?.complete(envelope.payload) }
             TYPE_ERROR ->
                 // Failure reply to a correlated request (#346): unblock the waiter exceptionally with
@@ -1683,6 +1688,51 @@ class RemoteConversationRepository(
         )
     }
 
+    /**
+     * Create a new workspace folder named [name] under the fixed client root over v2
+     * `create_workspace_folder` (#564, server #887), returning the daemon's canonical created path.
+     * The leanest write-verb: it names no conversation, carries no `conversation_id`, touches **no**
+     * projection, and — unlike [rename] / [changeWorkspace] — its return value (the created path) is
+     * the sole effect (it flows to the Workspace Picker's `onPicked` and becomes the selected
+     * workspace). A direct analogue of [rename] (encode → [sendAndAwaitReply] → typed-decode) **minus
+     * the state fold**, plus a client-side blank-name guard.
+     *
+     * The interface passes only [name]; the wire request carries a **parent path and a name**
+     * ([CreateWorkspaceFolderPayloadDto]). This sends `parent = `[WORKSPACE_FOLDER_PARENT]` (the fixed
+     * `~/pyry-workspace` root, tilde-anchored so the daemon resolves it against **its** `$HOME` — a
+     * relative `pyry-workspace` would resolve against the daemon's process cwd) and `name = name.trim()`.
+     * Both are **untrusted** path components forwarded verbatim — no client-side validation,
+     * canonicalisation, or `$HOME` check, and the phone never touches the filesystem with them:
+     * confinement is the daemon's job (fail-closed, symlink-resolved, before `MkdirAll`), which also
+     * rejects a `name` that is not a clean single element (empty / absolute / separator / `..`),
+     * surfaced here as an ordinary [RelayErrorException]. The returned `path` is the
+     * **server-authoritative** canonical realpath, not a client-derived join.
+     *
+     * Throws [IllegalArgumentException] for a blank/whitespace-only [name] (checked **before** any
+     * send — no request reaches the wire, mirroring the fake's contract), [IllegalStateException] when
+     * the session is not connected, [RelayErrorException] for any server `error` (create has **no**
+     * `conversation.not_found` path — every reject is `protocol.malformed`), and the #318 decode
+     * exception ([kotlinx.serialization.SerializationException] / [IllegalArgumentException]) for a
+     * malformed reply. No projection is folded on any path — a failure leaves no partial state.
+     */
+    override suspend fun createWorkspaceFolder(name: String): String {
+        require(name.isNotBlank()) { "name must not be blank" }
+        val request =
+            Envelope(
+                id = requestId.incrementAndGet(),
+                type = TYPE_CREATE_WORKSPACE_FOLDER,
+                ts = Clock.System.now().toString(),
+                payload =
+                    MobileJson.encodeToJsonElement(
+                        CreateWorkspaceFolderPayloadDto(parent = WORKSPACE_FOLDER_PARENT, name = name.trim()),
+                    ),
+            )
+        // Throws on a server `error` / not-Open session before the decode below. The reply is the bare
+        // {path} object (#318 decodes it); a malformed reply throws here. No state is folded.
+        val reply = sendAndAwaitReply(request)
+        return MobileJson.decodeFromJsonElement<WorkspaceFolderCreatedPayloadDto>(reply).path
+    }
+
     private companion object {
         /** Request: list the conversations (payload `{}` per protocol). */
         const val TYPE_LIST_CONVERSATIONS = "list_conversations"
@@ -1734,6 +1784,20 @@ class RemoteConversationRepository(
 
         /** Request: change a conversation's workspace `cwd` (#560, #823 `ChangeWorkspacePayload`). Reply is `conversation_updated`. */
         const val TYPE_CHANGE_WORKSPACE = "change_workspace"
+
+        /** Request: create a new workspace folder (#564, #887 `CreateWorkspaceFolderPayload`). Reply is [TYPE_WORKSPACE_FOLDER_CREATED]. */
+        const val TYPE_CREATE_WORKSPACE_FOLDER = "create_workspace_folder"
+
+        /** Correlated reply for [TYPE_CREATE_WORKSPACE_FOLDER] carrying the created folder's canonical path (#564, #887). */
+        const val TYPE_WORKSPACE_FOLDER_CREATED = "workspace_folder_created"
+
+        /**
+         * The fixed client parent root for [TYPE_CREATE_WORKSPACE_FOLDER] (#564). Tilde-anchored so the
+         * daemon resolves it against **its** `$HOME` (a relative `pyry-workspace` would resolve against
+         * the daemon's process cwd); matches the daemon's golden fixture and the Figma trigger row
+         * ("…under pyry-workspace").
+         */
+        const val WORKSPACE_FOLDER_PARENT = "~/pyry-workspace"
 
         /** Correlated ack for [TYPE_DELETE_CONVERSATION] carrying only `{id}` (#532, #822). */
         const val TYPE_CONVERSATION_DELETED = "conversation_deleted"

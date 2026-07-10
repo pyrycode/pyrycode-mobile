@@ -8,6 +8,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.flow.first
@@ -71,6 +72,44 @@ class WorkspacePickerTest {
         assertEquals(0, dismissed)
         composeTestRule.onNode(hasText("Choose workspace")).assertIsDisplayed()
         composeTestRule.onNode(hasText("Create workspace")).assertDoesNotExist()
+    }
+
+    // #564: a failing createWorkspaceFolder (here a not-connected session) surfaces a generic error
+    // message instead of crashing, and does NOT invoke onPicked. The message dismisses on OK. Because
+    // the surface lives in the shared picker, this holds identically from all three entry points.
+    @Test
+    fun create_failure_shows_generic_message_without_crashing_or_picking() {
+        val picked = mutableListOf<String>()
+        // Delegate every ConversationRepository member to a real fake, overriding only the create
+        // call to throw (FakeConversationRepository is final, so interface delegation, not subclassing).
+        val throwingRepo =
+            object : ConversationRepository by FakeConversationRepository() {
+                override suspend fun createWorkspaceFolder(name: String): String = throw IllegalStateException("not connected")
+            }
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                WorkspacePickerInternal(
+                    repository = throwingRepo,
+                    onPicked = { picked += it },
+                    onDismiss = {},
+                )
+            }
+        }
+
+        composeTestRule
+            .onNode(hasText("Create new folder under pyry-workspace…"))
+            .performClick()
+        composeTestRule.onNode(hasSetTextAction()).performTextInput("my-workspace")
+        composeTestRule.onNodeWithText("Create").performClick()
+        composeTestRule.waitForIdle()
+
+        // No crash, generic message shown, onPicked never fired.
+        composeTestRule.onNode(hasText("Couldn't create folder")).assertIsDisplayed()
+        assertEquals(emptyList<String>(), picked)
+
+        // OK dismisses the message.
+        composeTestRule.onNodeWithText("OK").performClick()
+        composeTestRule.onNode(hasText("Couldn't create folder")).assertDoesNotExist()
     }
 
     @Test

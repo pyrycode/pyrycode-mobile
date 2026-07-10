@@ -860,6 +860,66 @@ override suspend fun changeWorkspace(conversationId: String, workspace: String):
   the data path doesn't flip the coarse UI-gating flag. The operator-facing rung-3 e2e is
   [#562](https://github.com/pyrycode/pyrycode-mobile/issues/562) (Inbox, family-gated by #537).
 
+## `createWorkspaceFolder(name)` — the tenth mutation, leanest write-verb, first override of a previously-defaulted read/write pair ([#564](../codebase/564.md))
+
+Creates a new workspace folder on the daemon over v2 `create_workspace_folder` (server pyrycode#887),
+overriding the interface's throwing default (`error(...)`) this method inherited unchanged since #312.
+Unlike every prior mutation it **names no conversation** — no `conversation_id` field, no projection
+fold — and its reply is a **new** type (`workspace_folder_created`), not a reuse of
+`conversation_updated`. Its return value (the created path) is the sole effect:
+
+```kotlin
+override suspend fun createWorkspaceFolder(name: String): String {
+    require(name.isNotBlank()) { "name must not be blank" }
+    val request = Envelope(
+        id = requestId.incrementAndGet(), type = TYPE_CREATE_WORKSPACE_FOLDER, ts = Clock.System.now().toString(),
+        payload = MobileJson.encodeToJsonElement(
+            CreateWorkspaceFolderPayloadDto(parent = WORKSPACE_FOLDER_PARENT, name = name.trim()),
+        ),
+    )
+    val reply = sendAndAwaitReply(request)   // throws on server `error` / not-Open before any decode
+    return MobileJson.decodeFromJsonElement<WorkspaceFolderCreatedPayloadDto>(reply).path
+}
+```
+
+- **The interface passes only `name`; the wire needs a parent + name.** The client sends a **fixed**
+  `parent = "~/pyry-workspace"` constant (`WORKSPACE_FOLDER_PARENT`) alongside the trimmed `name`. The
+  tilde prefix is load-bearing: the daemon resolves `parent` against **its own** `$HOME` before joining
+  `name` — a bare relative `"pyry-workspace"` would resolve against the daemon process's cwd instead
+  (unpredictable). Verified byte-for-byte against the daemon's golden fixture
+  (`testdata/create_workspace_folder.json` → `{"parent":"~/pyry-workspace","name":"new-project"}`) and
+  matches the Figma trigger row ("…under pyry-workspace") and the fake's `pyry-workspace/$name`
+  convention (a benign fake≠remote divergence — the fake returns a relative path, the remote the
+  daemon's absolute realpath; both satisfy "the created path becomes the selected workspace").
+- **New reply type, new demux arm — the same delete-family hazard, closed the same way.** `onInbound`'s
+  correlated-reply `when` arm gained `TYPE_WORKSPACE_FOLDER_CREATED` alongside `TYPE_CONVERSATION_DELETED`
+  et al. Skipping this would leave `workspace_folder_created` unrouted (falls to `else -> Unit`), so the
+  pending deferred would never complete — the same [`delete`](#deleteconversationid--the-eighth-mutation-first-remove-shaped-one-532)
+  hazard, not the `changeWorkspace` case (which reused an already-routed type and needed no demux edit).
+- **No fold at all — the first mutation with zero projection writes.** `delete` removes from three
+  streams, every upsert-shaped mutation writes one; `createWorkspaceFolder` touches **none**. The daemon
+  creates a directory and replies to the requester only — no broadcast, no registry entry, no session
+  transition. The returned `path` is handed straight to the picker's `onPicked`; nothing is stored in
+  `projection`/`threadByConversation`/`lastMessages`.
+- **No `conversation.not_found` path exists for this verb** (it names no conversation), so unlike every
+  other write-verb `mapError`'s `IllegalArgumentException` branch is never reached from the server here —
+  every server reject (malformed / empty-parent / bad-name / rejected-target) is `protocol.malformed` →
+  `RelayErrorException`. The only `IllegalArgumentException` on this path is the client-side blank-name
+  guard, thrown **before** any send.
+- **The returned `path` is server-authoritative and untouched by the phone.** Both outbound path
+  components (the fixed `parent`, the untrusted `name`) and the inbound `path` are wire strings only —
+  the phone never opens, joins, or canonicalises any of them. `$HOME` confinement and name validation
+  (non-empty / not absolute / no separator / no `..`) are entirely server-side, fail-closed, before the
+  daemon's `MkdirAll`.
+- **The picker's failure surface is the actual crash fix.** Before this ticket `WorkspacePicker.kt`'s
+  create-launch had no `try`/`catch`, so any throw here (not-connected, server error, malformed reply)
+  crashed the app — reproducing identically from the thread workspace flow, the settings default-workspace
+  row, and the FAB long-press picker (all three share this one host). See
+  [`WorkspacePicker`](workspace-picker.md) § Error handling for the fix.
+- **`mutationsSupported` stays irrelevant here** — this affordance is not gated by that flag (it's not a
+  conversation-scoped mutation the #537 family covers); the picker is reachable today from all three entry
+  points regardless of the coarse flag's value.
+
 ## `registerPushToken(token)` — the device-concern push registration (#359)
 
 Registers the phone's FCM push token with the paired daemon over v2 `register_push_token`, so the daemon
@@ -1477,15 +1537,19 @@ private fun newSessionFrame(): Envelope = Envelope(
 The three live read paths plus `sendMessage` (#346) / `createDiscussion` (#347) / `promote` (#348) /
 `rename` ([#530](../codebase/530.md)) / `startNewSession` ([#539](../codebase/539.md)) /
 `setSessionSettings` ([#543](../codebase/543.md)) / `archive` / `unarchive` ([#549](../codebase/549.md)) /
-`delete` ([#532](../codebase/532.md)) / `changeWorkspace` ([#560](../codebase/560.md)) cover every method
-the interface declares that this repository overrides — `changeWorkspace` was the **last**
-`UnsupportedOperationException` stub (#549's doc named it as the "remaining throwing sibling"). No method
-on this class throws an unimplemented-stub exception any more.
+`delete` ([#532](../codebase/532.md)) / `changeWorkspace` ([#560](../codebase/560.md)) /
+`createWorkspaceFolder` ([#564](../codebase/564.md)) cover every method the interface declares that this
+repository overrides — `changeWorkspace` was the **last** `UnsupportedOperationException` stub (#549's
+doc named it as the "remaining throwing sibling"); `createWorkspaceFolder` was a separate,
+interface-default (not throwing-stub) method that #564 later gave a live override. No method on this
+class throws an unimplemented-stub exception any more.
 
-`recentWorkspaces` and `createWorkspaceFolder` are **not overridden** — they have interface defaults
-(empty flow per the [contract](conversation-repository.md)) and are intentionally outside this
-implementation's surface. All three read paths are now **cold flows that defer work to collection** (the
-eager expression-body `throw` shape #312's NIT flagged is gone with the last read stub).
+`recentWorkspaces` is the **only** method still **not overridden** — it has the interface default (empty
+flow per the [contract](conversation-repository.md)) and is intentionally outside this implementation's
+surface; its sibling #565 wires `recent_workspaces` separately (no `codebase/565.md` yet — check the
+[directory listing](../codebase/) for its landing status). All three read paths
+are now **cold flows that defer work to collection** (the eager expression-body `throw` shape #312's NIT
+flagged is gone with the last read stub).
 
 `override val mutationsSupported: Boolean = false` (#507) still hardcodes the capability off even though
 every mutation is now wired live ([#560](../codebase/560.md) closed the last stub) — flipping it is a
