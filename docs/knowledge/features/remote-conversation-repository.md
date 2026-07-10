@@ -737,7 +737,8 @@ private suspend fun sendArchiveToggle(conversationId: String, type: String) {
   is folded but discarded.
 - **`mutationsSupported` is untouched, stays `false`** — it gates the LIVE UI affordance ([#507](../codebase/507.md))
   and the [#551](https://github.com/pyrycode/pyrycode-mobile/issues/551) e2e; wiring the data path doesn't
-  flip it. The remaining throwing sibling is `changeWorkspace`. Surfacing (no crash, no silent no-op) is
+  flip it. (At the time of this ticket `changeWorkspace` was still the remaining throwing stub; it was
+  wired by [#560](../codebase/560.md).) Surfacing (no crash, no silent no-op) is
   [#550](https://github.com/pyrycode/pyrycode-mobile/issues/550)'s concern.
 - **Out of scope, flagged not fixed:** the list-read path (`ConversationsPayload` /
   `ConversationSummaryDto.toConversation()`) also hardcodes `archived = false` and drops the `is_archived`
@@ -803,6 +804,61 @@ override suspend fun delete(conversationId: String) {
 - **`mutationsSupported` stays `false`, untouched** — same family posture as archive/unarchive; the
   affordance is dormant-but-ready. The operator-facing rung-3 e2e is
   [#554](https://github.com/pyrycode/pyrycode-mobile/issues/554) (Inbox, blocked by this ticket).
+
+## `changeWorkspace(conversationId, workspace)` — the ninth mutation, last stub filled ([#560](../codebase/560.md))
+
+Changes an existing conversation's workspace over v2 `change_workspace` (server pyrycode#823), replacing
+the `UnsupportedOperationException` throw this method carried since #312 — and, per [#549](../codebase/549.md)'s
+note naming it "the remaining throwing sibling," the **last** stub on this class. "Workspace" **is** the
+conversation's `cwd`; there is no separate workspace-id concept. Byte-for-byte the [`rename`](#renameconversationid-name--the-fourth-mutation-530)
+shape with a `cwd` payload instead of `name`:
+
+```kotlin
+override suspend fun changeWorkspace(conversationId: String, workspace: String): Session {
+    val request = Envelope(
+        id = requestId.incrementAndGet(), type = TYPE_CHANGE_WORKSPACE, ts = Clock.System.now().toString(),
+        payload = MobileJson.encodeToJsonElement(ChangeWorkspacePayloadDto(conversationId = conversationId, cwd = workspace)),
+    )
+    val reply = sendAndAwaitReply(request)              // throws on server `error` / not-Open; the decode below is unreachable on failure
+    val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
+    upsertConversation(conversation)                    // confirmed-upsert — ONLY after a successful decode
+    return Session(id = "", conversationId = conversationId, claudeSessionUuid = "",
+        startedAt = Clock.System.now(), endedAt = null)
+}
+```
+
+- **The reply is `conversation_updated`**, the same success arm `rename`/`promote`/`archive` already use
+  — no `onInbound` change needed (unlike [`delete`](#deleteconversationid--the-eighth-mutation-first-remove-shaped-one-532),
+  whose reply type was genuinely new). Decoded through the same #318 `ConversationResponseDto`; a
+  malformed reply throws before `upsertConversation` runs.
+- **The path is forwarded verbatim, untrusted.** The mobile side does not validate, canonicalise, or
+  open the path — the daemon confines it to `$HOME` (fail-closed, strict non-creating confiner) *before*
+  storing the resolved realpath, and rejects an empty / out-of-`$HOME` / undecodable path with
+  `protocol.malformed`, surfaced here as an ordinary `RelayErrorException`. A client-side `$HOME` check
+  would be false assurance (the phone cannot know the daemon's `$HOME`).
+- **The folded `cwd` is server-authoritative** (the reply's value — the daemon's resolved realpath — not
+  the request's), identical to `rename`'s "return the reply's name, not the input" discipline.
+- **`conversation.not_found` → `IllegalArgumentException`**, reusing `mapError` unchanged, same
+  reachability profile as `rename`: the call site (`ThreadViewModel.onWorkspacePicked`) always passes the
+  currently-open, hence server-known, `conversationId`, and the [`#490`](../codebase/490.md) guard
+  deliberately does not catch IAE — unreachable-by-construction from the shipped UI, not silently
+  swallowed.
+- **Signature stays `: Session` — the load-bearing decision.** The reply carries no session identity
+  (`toConversation()` always sets `currentSessionId = ""`), and `change_workspace` performs **no session
+  transition** (pyrycode#823 Out-of-Scope) — the new folder only takes effect on the conversation's next
+  fresh session spawn, so there is no `session_transition` (#336) fold and no session-boundary delimiter
+  here. Rather than cascade the return type to `Conversation`/`Unit` (a 22-site fan-out: interface +
+  `FakeConversationRepository` body + facade + 18 test-double overrides), the method returns the same
+  vestigial placeholder shape [`startNewSession`](#startnewsession--the-bare-v2-new_session-control-send-539)
+  established — empty `id`/`claudeSessionUuid`, never persisted, never entering `projection`; the sole
+  caller discards it.
+- **`FakeConversationRepository.changeWorkspace` is left deliberately unaligned** — it mints a fresh
+  session (`mintNewSession`), a transition the real daemon does not perform. An evidence-based
+  divergence, not a bug: aligning it costs the same 22-site fan-out for no in-scope benefit. See
+  [`../codebase/560.md`](../codebase/560.md) § Lessons learned.
+- **`mutationsSupported` stays `false`, untouched** — same posture as archive/unarchive/delete; wiring
+  the data path doesn't flip the coarse UI-gating flag. The operator-facing rung-3 e2e is
+  [#562](https://github.com/pyrycode/pyrycode-mobile/issues/562) (Inbox, family-gated by #537).
 
 ## `registerPushToken(token)` — the device-concern push registration (#359)
 
@@ -1408,37 +1464,35 @@ private fun newSessionFrame(): Envelope = Envelope(
   persisted, never enters `projection`; the [#540](../codebase/540.md) UI-wire consumer discards it.
   Considered-and-rejected alternative: narrowing the interface return type to `Unit` — ripples to the fake +
   facade + interface for an XS slice, deferred.
-- **`mutationsSupported` stays `false`** — its remaining sibling `changeWorkspace` still throws (`archive`/
-  `unarchive` were wired live by [#549](../codebase/549.md)), so flipping the one coarse flag would
-  un-hide it in `ThreadOverflowMenu`. Menu reachability is a later coarse-flag milestone's concern (see the
-  #537 family — "gate cleared ≠ buildable").
+- **`mutationsSupported` stays `false`** — at the time of this ticket its remaining sibling
+  `changeWorkspace` still threw (`archive`/`unarchive` were wired live by [#549](../codebase/549.md);
+  `changeWorkspace` itself was wired by [#560](../codebase/560.md), closing out the stubs), so flipping
+  the one coarse flag would un-hide these actions in `ThreadOverflowMenu`. Menu reachability is a later
+  coarse-flag milestone's concern (see the #537 family — "gate cleared ≠ buildable").
 - `security-sensitive`, PASS: outbound-only, constant `{}` payload (no caller-derived data), the single ISE
   message is a static string, no logging, authorization is server-side (`interactive`, mirrors `interrupt`).
 
-## Stubs — the full interface compiles; later slices replace what they own
+## Stubs — none remain; every mutation is now live
 
-Every method other than the three live read paths and the now-live `sendMessage` (#346) /
-`createDiscussion` (#347) / `promote` (#348) / `rename` ([#530](../codebase/530.md)) /
-`startNewSession` ([#539](../codebase/539.md)) / `setSessionSettings` ([#543](../codebase/543.md)) /
-`archive` / `unarchive` ([#549](../codebase/549.md)) / `delete` ([#532](../codebase/532.md)) throws
-`UnsupportedOperationException` with a message naming the owning follow-up, so the class compiles the full
-interface today and each slice replaces only the methods it owns:
-
-| Method(s) | Owner |
-|---|---|
-| `changeWorkspace` | follow-up (no v2 wire message defined yet) |
+The three live read paths plus `sendMessage` (#346) / `createDiscussion` (#347) / `promote` (#348) /
+`rename` ([#530](../codebase/530.md)) / `startNewSession` ([#539](../codebase/539.md)) /
+`setSessionSettings` ([#543](../codebase/543.md)) / `archive` / `unarchive` ([#549](../codebase/549.md)) /
+`delete` ([#532](../codebase/532.md)) / `changeWorkspace` ([#560](../codebase/560.md)) cover every method
+the interface declares that this repository overrides — `changeWorkspace` was the **last**
+`UnsupportedOperationException` stub (#549's doc named it as the "remaining throwing sibling"). No method
+on this class throws an unimplemented-stub exception any more.
 
 `recentWorkspaces` and `createWorkspaceFolder` are **not overridden** — they have interface defaults
 (empty flow per the [contract](conversation-repository.md)) and are intentionally outside this
 implementation's surface. All three read paths are now **cold flows that defer work to collection** (the
 eager expression-body `throw` shape #312's NIT flagged is gone with the last read stub).
 
-Because those mutations throw, this repo advertises the capability off:
-`override val mutationsSupported: Boolean = false` (#507), placed immediately above the throwing overrides so
-the one capability claim stays adjacent to the exact methods it describes. A class **has** a backing field,
-so an initializer is fine here (unlike the [interface](conversation-repository.md), whose default must be a
-`get()`). A UI gating consumer reads it (through the [facade](stable-conversation-repository.md)) to hide
-these actions rather than let a user invoke a method that throws. See [`../codebase/507.md`](../codebase/507.md).
+`override val mutationsSupported: Boolean = false` (#507) still hardcodes the capability off even though
+every mutation is now wired live ([#560](../codebase/560.md) closed the last stub) — flipping it is a
+deliberate, separate coarse-flag milestone (the #537 family: "gate cleared ≠ buildable"; each
+mutation-consuming affordance needs its own reachability check before the flag can safely flip). A UI
+gating consumer reads it (through the [facade](stable-conversation-repository.md)) to hide these actions
+until that milestone lands. See [`../codebase/507.md`](../codebase/507.md).
 
 ## State & concurrency model
 
