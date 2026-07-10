@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.ModalEvent
@@ -31,6 +32,7 @@ import de.pyryco.mobile.data.network.ModalDismissedPayloadDto
 import de.pyryco.mobile.data.network.ModalShownPayloadDto
 import de.pyryco.mobile.data.network.PromoteConversationPayloadDto
 import de.pyryco.mobile.data.network.QueueStatePayloadDto
+import de.pyryco.mobile.data.network.RecentWorkspacesListPayloadDto
 import de.pyryco.mobile.data.network.RegisterPushTokenPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RenameConversationPayloadDto
@@ -61,6 +63,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filterNotNull
@@ -97,7 +100,7 @@ import java.util.concurrent.atomic.AtomicLong
  * Every interface method other than [observeConversations] is a not-yet-implemented stub that the
  * sibling slices replace in this same class: thread reads (#313), last-message (#329), mutations
  * (#314), and the methods still awaiting a documented v2 wire message (`archive` / `unarchive` /
- * `changeWorkspace`). [delete], [recentWorkspaces], and [createWorkspaceFolder] keep their interface
+ * `changeWorkspace`). [delete] and [createWorkspaceFolder] keep their interface
  * defaults — intentionally outside this slice's surface.
  */
 class RemoteConversationRepository(
@@ -339,6 +342,7 @@ class RemoteConversationRepository(
             }
             TYPE_ACK, TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_UPDATED, TYPE_CONVERSATION_DELETED,
             TYPE_SCREEN_SNAPSHOT, TYPE_SESSION_SETTINGS_UPDATED, TYPE_WORKSPACE_FOLDER_CREATED,
+            TYPE_RECENT_WORKSPACES_LIST,
             ->
                 // Success reply to a correlated request, handed verbatim to the waiter. An `ack`
                 // (#346) carries the empty `{}` the bare-ack waiter ignores; a `conversation_created`
@@ -350,10 +354,13 @@ class RemoteConversationRepository(
                 // a `conversation_deleted` (#532) carries the bare `{id}` ack the [delete] waiter decodes
                 // for reply-shape validation; a `workspace_folder_created` (#564) carries the bare
                 // `{path}` the [createWorkspaceFolder] waiter decodes for its return (the created
-                // folder's canonical path). An `inReplyTo` matching no pending entry (or null) is a
+                // folder's canonical path); a `recent_workspaces_list` (#565) carries the
+                // `{workspaces:[…]}` the [recentWorkspaces] waiter decodes for its path list. An
+                // `inReplyTo` matching no pending entry (or null) is a
                 // no-op: `list_conversations` / `backfill_since` draw no reply here; `screen_snapshot` /
-                // `session_settings_updated` / `conversation_deleted` / `workspace_folder_created` are
-                // always correlated replies (the daemon never broadcasts them), so an unmatched one is
+                // `session_settings_updated` / `conversation_deleted` / `workspace_folder_created` /
+                // `recent_workspaces_list` are always correlated replies (the daemon never broadcasts
+                // them), so an unmatched one is
                 // harmless; `conversation_updated` is also the server's unsolicited broadcast on change
                 // (no `inReplyTo`), which must stay a harmless no-op (the authoritative `conversations`
                 // snapshot drives an unsolicited list refresh, not this delta); and `complete` is
@@ -977,6 +984,43 @@ class RemoteConversationRepository(
         Envelope(
             id = requestId.incrementAndGet(),
             type = TYPE_LIST_CONVERSATIONS,
+            ts = Clock.System.now().toString(),
+            payload = JsonObject(emptyMap()),
+        )
+
+    /**
+     * Recently-used workspace folders (#565), a **one-shot request/reply** read verb modeled on
+     * [observeConversations]'s `list_conversations` but **without** a push projection — #888 is one-shot
+     * daemon-side (no live re-emit on change exists to subscribe to). Each collection issues one
+     * `recent_workspaces` request (empty `{}` payload) and awaits the correlated `recent_workspaces_list`
+     * reply via [sendAndAwaitReply], so a fresh picker open re-fetches (cold, per-collector; no caching,
+     * no cross-collection dedup, no projection touched).
+     *
+     * Emits the reply's paths in **wire order** — ordering and dedup are daemon-authoritative (#888), so
+     * the client does **not** re-sort — after excluding the two "no bound workspace" sentinels the
+     * interface contract mandates: the empty string `""` (via [String.isNotBlank], a safe superset the
+     * daemon already trims) and [DEFAULT_SCRATCH_CWD] (load-bearing — #888 folds distinct `Cwd` values
+     * and does **not** strip scratch).
+     *
+     * Fails **closed to empty**: `.catch { emit(emptyList()) }` degrades every non-cancellation throwable
+     * to one empty emission (AC #4) — the not-`Open` [IllegalStateException] from [sendAndAwaitReply]'s
+     * `check`, a server [RelayErrorException] (this verb names no conversation, so there is **no**
+     * `not_found` path), a teardown-mid-await [IllegalStateException] (#488 `failAllPending`), and a
+     * malformed-reply decode exception. [kotlinx.coroutines.flow.catch] is cancellation-transparent — it
+     * does not swallow the [kotlinx.coroutines.CancellationException] a lifecycle-STOP / sheet-dismiss
+     * raises — so a cancelled collect stops cleanly with no spurious empty emit.
+     */
+    override fun recentWorkspaces(): Flow<List<String>> =
+        flow {
+            val reply = sendAndAwaitReply(recentWorkspacesRequest())
+            val list = MobileJson.decodeFromJsonElement<RecentWorkspacesListPayloadDto>(reply)
+            emit(list.workspaces.map { it.path }.filter { it.isNotBlank() && it != DEFAULT_SCRATCH_CWD })
+        }.catch { emit(emptyList()) }
+
+    private fun recentWorkspacesRequest(): Envelope =
+        Envelope(
+            id = requestId.incrementAndGet(),
+            type = TYPE_RECENT_WORKSPACES,
             ts = Clock.System.now().toString(),
             payload = JsonObject(emptyMap()),
         )
@@ -1739,6 +1783,17 @@ class RemoteConversationRepository(
 
         /** Response/push: a full-list `{conversations:[…]}` snapshot — also unsolicited on change. */
         const val TYPE_CONVERSATIONS = "conversations"
+
+        /** Request: list recently-used workspace folders (#565, #888). Empty `{}` payload; reply is [TYPE_RECENT_WORKSPACES_LIST]. */
+        const val TYPE_RECENT_WORKSPACES = "recent_workspaces"
+
+        /**
+         * Correlated reply for [TYPE_RECENT_WORKSPACES] (#565, #888): the distinct recent-workspace
+         * paths, most-recent-first, daemon-ordered (the client does not re-sort or re-dedup). A **new**
+         * reply type — not a reused `conversations`/`conversation_updated` — so it must be registered in
+         * the [onInbound] success-reply arm, or its pending deferred hangs (the delete/create-family hazard).
+         */
+        const val TYPE_RECENT_WORKSPACES_LIST = "recent_workspaces_list"
 
         /**
          * Live/echo single-`message` payload (#317) — feeds both the last-message preview (#329) and

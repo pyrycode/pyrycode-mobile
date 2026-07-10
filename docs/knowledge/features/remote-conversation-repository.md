@@ -920,6 +920,66 @@ override suspend fun createWorkspaceFolder(name: String): String {
   conversation-scoped mutation the #537 family covers); the picker is reachable today from all three entry
   points regardless of the coarse flag's value.
 
+## `recentWorkspaces()` — the fourth read verb, leanest of the family, no fold ([#565](../codebase/565.md))
+
+Lists recently-used workspace folders over v2 `recent_workspaces` (server pyrycode#888, the recents
+half of the #825 split whose create half is [#564](../codebase/564.md)), overriding the interface's
+`flowOf(emptyList())` default this method inherited unchanged since #312. Unlike `observeConversations`
+/ `observeLastMessage` / `observeMessages` there is **no push projection to subscribe to** — #888 is a
+**one-shot** request/reply, so this is a cold flow that issues one request and awaits one correlated
+reply **per collection**, not a flow over a `StateFlow` fed by the always-running inbound collector:
+
+```kotlin
+override fun recentWorkspaces(): Flow<List<String>> =
+    flow {
+        val reply = sendAndAwaitReply(recentWorkspacesRequest())
+        val list = MobileJson.decodeFromJsonElement<RecentWorkspacesListPayloadDto>(reply)
+        emit(list.workspaces.map { it.path }.filter { it.isNotBlank() && it != DEFAULT_SCRATCH_CWD })
+    }.catch { emit(emptyList()) }
+
+private fun recentWorkspacesRequest(): Envelope =
+    Envelope(
+        id = requestId.incrementAndGet(), type = TYPE_RECENT_WORKSPACES, ts = Clock.System.now().toString(),
+        payload = JsonObject(emptyMap()),
+    )
+```
+
+- **Cold, per-collection — a fresh picker open re-fetches.** No caching, no cross-collection dedup,
+  and (the structural delta from every mutation in this file) **zero projection writes**: `projection`,
+  `lastMessages`, and `threadByConversation` are all untouched. The method's only effect is its single
+  emission.
+- **New reply type, new demux arm — the same delete/create-family hazard, closed the same way.**
+  `onInbound`'s correlated-reply `when` arm gained `TYPE_RECENT_WORKSPACES_LIST` alongside
+  `TYPE_WORKSPACE_FOLDER_CREATED` et al. Skipping this would leave `recent_workspaces_list` unrouted
+  (falls to `else -> Unit`), so the pending deferred would never complete — the same hazard as
+  [`delete`](#deleteconversationid--the-eighth-mutation-first-remove-shaped-one-532) and
+  [`createWorkspaceFolder`](#createworkspacefoldername--the-tenth-mutation-leanest-write-verb-first-override-of-a-previously-defaulted-readwrite-pair-564)
+  before it.
+- **No client re-sort or re-dedup — ordering is daemon-authoritative.** The handler folds the
+  conversations registry's distinct non-empty `Cwd` values, most-recent-first, and the client preserves
+  wire order verbatim. Verified by a test that pushes deliberately non-alphabetical paths and asserts
+  the emission matches wire order exactly.
+- **Client filters two "no bound workspace" sentinels, one load-bearing.** The interface contract
+  ([`ConversationRepository.recentWorkspaces`](conversation-repository.md)) excludes both `""` and
+  [`DEFAULT_SCRATCH_CWD`](conversation-repository.md). The daemon already skips empty/whitespace `Cwd`
+  server-side, so the `isNotBlank()` filter is belt-and-suspenders there — but the daemon does **not**
+  strip `DEFAULT_SCRATCH_CWD` (a conversation bound to the scratch dir would otherwise surface it), so
+  the `!= DEFAULT_SCRATCH_CWD` clause is the one genuinely load-bearing client-side rule this method
+  applies.
+- **Fails closed to empty, not to an exception — the structural delta from every mutation.** Every prior
+  mutation propagates its failure to the caller (a thrown `IllegalStateException` /
+  `RelayErrorException` / decode exception). This read verb instead wraps its `flow { }` in
+  `.catch { emit(emptyList()) }`, degrading not-connected, any server `error` (there is **no**
+  `conversation.not_found` path — the verb names no conversation), and a malformed-reply decode
+  exception all to one empty emission — matching the AC's "the Recent section degrades to empty rather
+  than erroring the collector." `Flow.catch` is **cancellation-transparent** (it does not swallow
+  `CancellationException`), so a lifecycle-STOP / sheet-dismiss cancelling the
+  `collectAsStateWithLifecycle` collector still propagates normally and stops the collection cleanly —
+  the first verb in the family to lean on that distinction.
+- **The picker needed no change.** [`WorkspacePicker`](workspace-picker.md) already collected and
+  rendered `recentWorkspaces()` from the moment it was written (against the interface default, always
+  empty); this ticket closes the loop purely in the data layer.
+
 ## `registerPushToken(token)` — the device-concern push registration (#359)
 
 Registers the phone's FCM push token with the paired daemon over v2 `register_push_token`, so the daemon
@@ -1532,24 +1592,20 @@ private fun newSessionFrame(): Envelope = Envelope(
 - `security-sensitive`, PASS: outbound-only, constant `{}` payload (no caller-derived data), the single ISE
   message is a static string, no logging, authorization is server-side (`interactive`, mirrors `interrupt`).
 
-## Stubs — none remain; every mutation is now live
+## Stubs — none remain; every method is now live
 
 The three live read paths plus `sendMessage` (#346) / `createDiscussion` (#347) / `promote` (#348) /
 `rename` ([#530](../codebase/530.md)) / `startNewSession` ([#539](../codebase/539.md)) /
 `setSessionSettings` ([#543](../codebase/543.md)) / `archive` / `unarchive` ([#549](../codebase/549.md)) /
 `delete` ([#532](../codebase/532.md)) / `changeWorkspace` ([#560](../codebase/560.md)) /
-`createWorkspaceFolder` ([#564](../codebase/564.md)) cover every method the interface declares that this
-repository overrides — `changeWorkspace` was the **last** `UnsupportedOperationException` stub (#549's
-doc named it as the "remaining throwing sibling"); `createWorkspaceFolder` was a separate,
-interface-default (not throwing-stub) method that #564 later gave a live override. No method on this
-class throws an unimplemented-stub exception any more.
-
-`recentWorkspaces` is the **only** method still **not overridden** — it has the interface default (empty
-flow per the [contract](conversation-repository.md)) and is intentionally outside this implementation's
-surface; its sibling #565 wires `recent_workspaces` separately (no `codebase/565.md` yet — check the
-[directory listing](../codebase/) for its landing status). All three read paths
-are now **cold flows that defer work to collection** (the eager expression-body `throw` shape #312's NIT
-flagged is gone with the last read stub).
+`createWorkspaceFolder` ([#564](../codebase/564.md)) / `recentWorkspaces` ([#565](../codebase/565.md))
+cover every method the interface declares that this repository overrides — `changeWorkspace` was the
+**last** `UnsupportedOperationException` stub (#549's doc named it as the "remaining throwing sibling");
+`createWorkspaceFolder` and `recentWorkspaces` were separate, interface-default (not throwing-stub)
+methods that #564 and #565 respectively later gave live overrides. No method on this class throws an
+unimplemented-stub exception, and no method still falls back to an interface default, any more. All
+three read paths are **cold flows that defer work to collection** (the eager expression-body `throw`
+shape #312's NIT flagged is gone with the last read stub).
 
 `override val mutationsSupported: Boolean = false` (#507) still hardcodes the capability off even though
 every mutation is now wired live ([#560](../codebase/560.md) closed the last stub) — flipping it is a
