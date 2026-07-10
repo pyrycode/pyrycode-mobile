@@ -107,6 +107,13 @@ class StableConversationRepository(
         name: String,
     ): Conversation = live.rename(conversationId, name)
 
+    override suspend fun setSessionSettings(
+        sessionId: String,
+        model: String?,
+        effort: String?,
+        yolo: Boolean?,
+    ) = live.setSessionSettings(sessionId, model, effort, yolo)
+
     override suspend fun startNewSession(
         conversationId: String,
         workspace: String?,

@@ -95,6 +95,12 @@ data class ThreadUiState(
     val workspacePath: String = "",
     val lastUsedAt: Instant? = null,
     val sessionCount: Int = 0,
+    // #544: the routing key for session-scoped settings mutations — Conversation.currentSessionId (not
+    // the conversation id; this is the first session-scoped mobile mutation). A routing field carried on
+    // the state (sourced from the fetched conversation), not rendered by any composable — the same posture
+    // as mutationsSupported. Empty until the conversation is resolved (and empty on the live path, where
+    // the v2 wire carries no session id yet — a send then fail-safes to session.not_found → revert).
+    val currentSessionId: String = "",
     val selectedModel: Model = Model.OPUS_4_7,
     val selectedEffort: Effort = Effort.HIGH,
     val yoloEnabled: Boolean = false,
@@ -247,6 +253,7 @@ class ThreadViewModel(
                 workspacePath = conv?.cwd ?: "",
                 lastUsedAt = conv?.lastUsedAt,
                 sessionCount = conv?.sessionHistory?.size ?: 0,
+                currentSessionId = conv?.currentSessionId ?: "",
                 selectedModel = runConfig.model,
                 selectedEffort = runConfig.effort,
                 yoloEnabled = runConfig.yoloEnabled,
@@ -407,6 +414,23 @@ class ThreadViewModel(
      * the workspace chip re-labels itself (list-driven) while the user stays on the thread.
      */
     val changeWorkspaceErrors: Flow<Unit> = changeWorkspaceErrorChannel.receiveAsFlow()
+
+    private val sessionSettingsErrorChannel = Channel<Unit>(capacity = Channel.BUFFERED)
+
+    /**
+     * One-shot "applying a Status-sheet run-configuration change (model / effort / YOLO) failed" signal
+     * (#544) — the [changeWorkspaceErrors] one-shot idiom, cloned for the Status-sheet controls. Carries
+     * **no** payload (just [Unit]), so nothing sensitive — least of all the server-supplied
+     * [RelayErrorException.message] — can leak through it; the render slice shows a transient snackbar with
+     * a **fixed local string**, never an exception message. Fires exactly once per caught failure:
+     * [RelayErrorException] from a server `error` reply (set_session_settings is request/reply, so a
+     * correlated server error — `session.not_found` / `protocol.malformed` / `server.binary_offline`, all
+     * `RelayErrorException`, #543 confirmed no IAE path — is reachable), or [IllegalStateException] from a
+     * not-connected send. On each failure the changed control is reverted to its last-known value (the
+     * `revert` lambda passed to [sendSessionSettings]) so the sheet never settles on a value the daemon did
+     * not confirm; success is passive — no signal fires and the optimistic value stays.
+     */
+    val sessionSettingsErrors: Flow<Unit> = sessionSettingsErrorChannel.receiveAsFlow()
 
     /**
      * Folds one live event to the next [isThinking] value, or `null` to leave the flag unchanged. Routes
@@ -709,16 +733,79 @@ class ThreadViewModel(
         }
     }
 
+    /**
+     * Apply a Status-sheet model change (#544): optimistically move the control, send only the changed
+     * field to the current session, and revert on failure. No-op if [model] already matches the displayed
+     * value — a radio `onClick` fires even when the option is already selected, and a redundant round-trip
+     * would be wasteful. Captures the *previous nullable* [modelOverride] (not the resolved [Model]) so a
+     * revert restores the pre-existing "null = track the app-preferences default" semantics.
+     */
     fun onModelSelected(model: Model) {
+        if (model == state.value.selectedModel) return
+        val previous = modelOverride.value
         modelOverride.value = model
+        sendSessionSettings(model = model.wire()) { modelOverride.value = previous }
     }
 
+    /** The [onModelSelected] twin for effort (#544). Same optimistic-then-revert shape over [effortOverride];
+     *  `effort.wire()` is `Effort.name.lowercase()`, the exact daemon `validEffort` vocabulary. */
     fun onEffortSelected(effort: Effort) {
+        if (effort == state.value.selectedEffort) return
+        val previous = effortOverride.value
         effortOverride.value = effort
+        sendSessionSettings(effort = effort.wire()) { effortOverride.value = previous }
     }
 
+    /** The [onModelSelected] twin for YOLO (#544). [yoloEnabled] is a raw [Boolean] source (not derived from
+     *  a preference default), so the guard and the revert both compare/restore its `.value` directly. */
     fun onYoloToggled(enabled: Boolean) {
+        if (enabled == yoloEnabled.value) return
+        val previous = yoloEnabled.value
         yoloEnabled.value = enabled
+        sendSessionSettings(yolo = enabled) { yoloEnabled.value = previous }
+    }
+
+    /**
+     * The shared outbound path for the three Status-sheet controls (#544): send only the changed field(s)
+     * to [ThreadUiState.currentSessionId] and, on failure, run [revert] to restore the control and surface a
+     * one-shot [sessionSettingsErrors] signal. The catch triad clones [sendChangeWorkspace] (set_session_settings
+     * is request/reply, so a server `error` reply is reachable) with the two failure catches gaining the
+     * [revert] call:
+     *
+     *  - success is **passive** — the optimistic value already displayed stays (the daemon's ack does not
+     *    echo the settings, so "confirmed" means "the value that was sent and acked").
+     *  - [RelayErrorException] (`session.not_found` / `protocol.malformed` / `server.binary_offline`; all
+     *    map here — #543 confirmed no IAE path) → [revert] + signal. The caught `message` is **never** read.
+     *  - [IllegalStateException] (facade `live` getter throws when not connected, or the pump-not-Open
+     *    `check`) → [revert] + signal.
+     *
+     * The session id is snapshotted at entry (the same idiom as [conversationId] routing elsewhere). The
+     * [CancellationException] rethrow **MUST precede** the typed catches (`j.u.c.CancellationException`
+     * extends [IllegalStateException] on the JVM) so screen-exit teardown mid-send neither reverts nor
+     * signals — the VM is dying and the optimistic value dies with it (a fresh VM re-seeds `override = null`).
+     * The [IllegalArgumentException] / decode exceptions are **not** caught — a malformed ack is a fail-loud
+     * protocol violation (parity with [sendArchive] / [sendChangeWorkspace]).
+     */
+    private fun sendSessionSettings(
+        model: String? = null,
+        effort: String? = null,
+        yolo: Boolean? = null,
+        revert: () -> Unit,
+    ) {
+        val sessionId = state.value.currentSessionId
+        viewModelScope.launch {
+            try {
+                repository.setSessionSettings(sessionId, model, effort, yolo)
+            } catch (e: CancellationException) {
+                throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
+            } catch (e: RelayErrorException) {
+                revert()
+                sessionSettingsErrorChannel.trySend(Unit)
+            } catch (e: IllegalStateException) {
+                revert()
+                sessionSettingsErrorChannel.trySend(Unit)
+            }
+        }
     }
 
     fun onOverflowEvent(event: ThreadEvent) {
@@ -822,6 +909,23 @@ private fun String.toChannelSlug(): String =
         .replace(Regex("[^a-z0-9-]"), "")
         .trim('-')
         .ifEmpty { "channel" }
+
+// ---- #544: Model / Effort → set_session_settings wire strings (file-private) ---------------------
+//
+// Kept here (not on Model.kt / Effort.kt) to hold the ticket's production file count at four — no other
+// consumer needs them, and adding them to the enum files would trip the ≥5-prod-file commit gate for no
+// benefit. Effort.wire() is the exact daemon `validEffort` set ({low, medium, high, xhigh, max}); Model.wire()
+// uses the version-pinned canonical claude ids the daemon shape-validates (`validModel`) and forwards to
+// claude's --model. The daemon is the value authority (re-validates); the phone forwards a bounded enum.
+
+private fun Effort.wire(): String = name.lowercase()
+
+private fun Model.wire(): String =
+    when (this) {
+        Model.OPUS_4_7 -> "claude-opus-4-7"
+        Model.SONNET_4_6 -> "claude-sonnet-4-6"
+        Model.HAIKU_4_5 -> "claude-haiku-4-5"
+    }
 
 private fun Conversation.displayName(): String =
     name?.takeIf { it.isNotBlank() }

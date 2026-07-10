@@ -1863,6 +1863,217 @@ class ThreadViewModelTest {
             collector.cancel()
         }
 
+    // ---- #544: send session-settings on control change; revert + surface on failure --------------
+
+    @Test
+    fun onModelSelected_whenConnected_sendsOnlyModelFieldToCurrentSession() =
+        runTest {
+            val repo = FakeConversationRepository()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            // Precondition: the resolved model is the app-preferences default (OPUS_4_7).
+            assertEquals(Model.OPUS_4_7, vm.state.value.selectedModel)
+
+            vm.onModelSelected(Model.HAIKU_4_5)
+            advanceUntilIdle()
+
+            // Only the changed field is sent, routed to the conversation's current SESSION id (#544).
+            val call = repo.setSessionSettingsCalls.single()
+            assertEquals("claude-haiku-4-5", call.model)
+            assertNull(call.effort)
+            assertNull(call.yolo)
+            assertEquals("seed-session-personal", call.sessionId)
+            // On the Fake's success ack the optimistic value persists (no revert on the happy path).
+            assertEquals(Model.HAIKU_4_5, vm.state.value.selectedModel)
+            collector.cancel()
+        }
+
+    @Test
+    fun onEffortSelected_whenConnected_sendsOnlyEffortFieldLowercased() =
+        runTest {
+            val repo = FakeConversationRepository()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals(Effort.HIGH, vm.state.value.selectedEffort)
+
+            vm.onEffortSelected(Effort.MAX)
+            advanceUntilIdle()
+
+            val call = repo.setSessionSettingsCalls.single()
+            assertEquals("max", call.effort) // Effort.wire() == name.lowercase() (the daemon validEffort set)
+            assertNull(call.model)
+            assertNull(call.yolo)
+            assertEquals("seed-session-personal", call.sessionId)
+            assertEquals(Effort.MAX, vm.state.value.selectedEffort)
+            collector.cancel()
+        }
+
+    @Test
+    fun onYoloToggled_whenConnected_sendsOnlyYoloField() =
+        runTest {
+            val repo = FakeConversationRepository()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertFalse(vm.state.value.yoloEnabled)
+
+            vm.onYoloToggled(true)
+            advanceUntilIdle()
+
+            val call = repo.setSessionSettingsCalls.single()
+            assertEquals(true, call.yolo) // a non-null Boolean is sent — distinct from an omitted field
+            assertNull(call.model)
+            assertNull(call.effort)
+            assertEquals("seed-session-personal", call.sessionId)
+            assertTrue(vm.state.value.yoloEnabled)
+            collector.cancel()
+        }
+
+    @Test
+    fun onModelSelected_sameAsCurrentValue_doesNotSend() =
+        runTest {
+            val repo = FakeConversationRepository()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals(Model.OPUS_4_7, vm.state.value.selectedModel)
+
+            // Re-selecting the already-displayed value is a no-op — a radio onClick fires even when selected.
+            vm.onModelSelected(Model.OPUS_4_7)
+            advanceUntilIdle()
+
+            assertTrue("re-selecting the current value must not send", repo.setSessionSettingsCalls.isEmpty())
+            collector.cancel()
+        }
+
+    @Test
+    fun onModelSelected_whenServerError_revertsModelAndSurfacesErrorWithoutLeakingMessage() =
+        runTest {
+            // AC #2: set_session_settings is request/reply, so a server `error` surfaces as
+            // RelayErrorException. It must be caught, the control reverted to its last-known value, and
+            // exactly one payload-free signal surfaced — the server-supplied message never reaches the
+            // surface. Capture uncaught throws to prove the typed catch ran (viewModelScope is a separate
+            // SupervisorJob, not runTest's scope, so a leaked throw hits the default handler).
+            val uncaught = mutableListOf<Throwable>()
+            val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
+            try {
+                val repo =
+                    object : ConversationRepository by FakeConversationRepository() {
+                        override suspend fun setSessionSettings(
+                            sessionId: String,
+                            model: String?,
+                            effort: String?,
+                            yolo: Boolean?,
+                        ): Unit = throw RelayErrorException(code = "protocol.malformed", retryable = false, message = "secret")
+                    }
+                val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+                val vm = makeVm(handle, repo)
+                val errors = mutableListOf<Unit>()
+                val errorCollector = launch { vm.sessionSettingsErrors.collect { errors += it } }
+                val stateCollector = launch { vm.state.collect {} }
+                advanceUntilIdle()
+                assertEquals(Model.OPUS_4_7, vm.state.value.selectedModel)
+
+                vm.onModelSelected(Model.HAIKU_4_5)
+                advanceUntilIdle()
+
+                assertEquals("the control reverts to its prior value", Model.OPUS_4_7, vm.state.value.selectedModel)
+                assertEquals("a server error surfaces exactly one signal", 1, errors.size)
+                assertTrue("the server-error throw must be caught, not propagated: $uncaught", uncaught.isEmpty())
+                errorCollector.cancel()
+                stateCollector.cancel()
+            } finally {
+                Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+            }
+        }
+
+    @Test
+    fun onYoloToggled_whenDisconnected_revertsYoloAndSurfacesError() =
+        runTest {
+            // AC #3: a change while disconnected throws IllegalStateException (the facade `live` getter) —
+            // caught, reverted, one signal. Covers the ISE path over YOLO (the RelayErrorException path is
+            // covered over model), satisfying AC #5's "at least one control" across both failure modes.
+            val uncaught = mutableListOf<Throwable>()
+            val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
+            try {
+                val repo =
+                    object : ConversationRepository by FakeConversationRepository() {
+                        override suspend fun setSessionSettings(
+                            sessionId: String,
+                            model: String?,
+                            effort: String?,
+                            yolo: Boolean?,
+                        ): Unit = throw IllegalStateException("not connected")
+                    }
+                val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+                val vm = makeVm(handle, repo)
+                val errors = mutableListOf<Unit>()
+                val errorCollector = launch { vm.sessionSettingsErrors.collect { errors += it } }
+                val stateCollector = launch { vm.state.collect {} }
+                advanceUntilIdle()
+                assertFalse(vm.state.value.yoloEnabled)
+
+                vm.onYoloToggled(true)
+                advanceUntilIdle()
+
+                assertFalse("the toggle reverts to its prior value", vm.state.value.yoloEnabled)
+                assertEquals("disconnected surfaces exactly one signal", 1, errors.size)
+                assertTrue("the not-connected throw must be caught, not propagated: $uncaught", uncaught.isEmpty())
+                errorCollector.cancel()
+                stateCollector.cancel()
+            } finally {
+                Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+            }
+        }
+
+    @Test
+    fun sessionSettings_scopeCancellationMidCall_isInertWithoutSurfacing() =
+        runTest {
+            // AC #4 correctness: `catch (CancellationException) { throw e }` MUST precede the typed catches
+            // (j.u.c.CancellationException extends ISE on the JVM — the #451 rework). A send suspends
+            // mid-call; viewModelScope teardown must neither crash nor mis-surface cancellation as a settings
+            // failure (no revert, no signal). A bare `catch (IllegalStateException)` would false-fire here.
+            val gate = CompletableDeferred<Unit>() // never completes — the send stays suspended in-flight
+            val entered = CompletableDeferred<Unit>()
+            val repo =
+                object : ConversationRepository by FakeConversationRepository() {
+                    override suspend fun setSessionSettings(
+                        sessionId: String,
+                        model: String?,
+                        effort: String?,
+                        yolo: Boolean?,
+                    ) {
+                        entered.complete(Unit)
+                        gate.await()
+                    }
+                }
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
+            val vm = makeVm(handle, repo)
+            val errors = mutableListOf<Unit>()
+            val errorCollector = launch { vm.sessionSettingsErrors.collect { errors += it } }
+            val stateCollector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            val store = ViewModelStore().apply { put("vm", vm) }
+
+            vm.onModelSelected(Model.HAIKU_4_5)
+            advanceUntilIdle()
+            assertTrue("the send must be in-flight", entered.isCompleted)
+
+            store.clear() // cancels viewModelScope → the awaiting send throws CancellationException
+            advanceUntilIdle()
+            assertTrue("cancellation must not surface a settings error: $errors", errors.isEmpty())
+            errorCollector.cancel()
+            stateCollector.cancel()
+        }
+
     @Test
     fun sendMessage_blankText_isNoOp() =
         runTest {
