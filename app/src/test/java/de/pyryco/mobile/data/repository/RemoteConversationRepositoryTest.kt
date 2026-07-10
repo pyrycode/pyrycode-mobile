@@ -1734,6 +1734,208 @@ class RemoteConversationRepositoryTest {
             assertFalse(all.last().single { it.id == "chan" }.archived)
         }
 
+    // ---- delete (#532): delete_conversation request → conversation_deleted ack / error ------------
+
+    // AC #1 / codec: the sent envelope matches the delete_conversation wire contract — an id-only
+    // payload (exactly {conversation_id}, no name/cwd).
+    @Test
+    fun delete_sendsDeleteConversationWithConversationId() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            startDelete(repo, "chan")
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "delete_conversation" }
+            assertEquals(MobileJson.parseToJsonElement("""{"conversation_id":"chan"}"""), sent.payload)
+
+            // Unblock the launched coroutine so backgroundScope completes cleanly.
+            pump.push(conversationDeletedEnvelope(inReplyTo = sent.id, id = "chan"))
+            runCurrent()
+        }
+
+    // AC #1: a successful delete removes chan from ALL THREE read projections — the list, the thread,
+    // and the last-message preview. This is the delete-specific divergence from archive's in-place fold.
+    @Test
+    fun delete_onSuccess_removesFromAllThreeStreams() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            val messages = collectMessages(repo, "chan")
+            val lastMessage = collectLastMessage(repo, "chan")
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            pump.push(messageEnvelope("chan", "m1", "user", "hi", ts = TS))
+            runCurrent()
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+            assertEquals(listOf("m1"), messageIds(messages.last()))
+            assertEquals("m1", lastMessage.last()?.id)
+
+            val delete = startDelete(repo, "chan")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "delete_conversation" }.id
+            pump.push(conversationDeletedEnvelope(inReplyTo = sentId, id = "chan"))
+            runCurrent()
+            delete().getOrThrow()
+
+            assertEquals(listOf("disc"), all.last().map { it.id })
+            assertEquals(emptyList<ThreadItem>(), messages.last())
+            assertNull(lastMessage.last())
+        }
+
+    // The ack field is `id`, NOT `conversation_id`: an ack whose only key is `conversation_id` has no
+    // `id`, so it is rejected at the decode boundary and nothing is removed — pins the field-name SSOT.
+    @Test
+    fun delete_ackWithConversationIdKeyInsteadOfId_isMalformedAndLeavesStreamsUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val delete = startDelete(repo, "chan")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "delete_conversation" }.id
+            pump.push(
+                Envelope(
+                    id = 99L,
+                    type = "conversation_deleted",
+                    ts = TS,
+                    payload = MobileJson.parseToJsonElement("""{"conversation_id":"chan"}"""),
+                    inReplyTo = sentId,
+                ),
+            )
+            runCurrent()
+
+            // Missing required `id` → SerializationException (an IllegalArgumentException subtype).
+            assertTrue(delete().exceptionOrNull() is IllegalArgumentException)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+        }
+
+    // AC #3: a not-Open session throws IllegalStateException; no removal from any stream.
+    @Test
+    fun delete_whenSendReturnsFalse_throwsIllegalStateAndLeavesStreamsUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val delete = startDelete(repo, "chan")
+            runCurrent()
+
+            assertTrue(delete().exceptionOrNull() is IllegalStateException)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+        }
+
+    // AC #4: conversation.not_found CONVERGES on the delete post-condition — the result is SUCCESS
+    // (not the IllegalArgumentException failure archive surfaces), and chan is removed locally.
+    @Test
+    fun delete_onConversationNotFound_convergesAsSuccessAndRemoves() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val delete = startDelete(repo, "chan")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "delete_conversation" }.id
+            pump.push(errorEnvelope(sentId, code = "conversation.not_found"))
+            runCurrent()
+
+            assertTrue("not_found must converge as success", delete().isSuccess)
+            assertEquals(listOf("disc"), all.last().map { it.id })
+        }
+
+    // AC #4: not_found on an already-absent id is a no-op success — converges without a re-emit
+    // (removing an absent id yields an equals-identical projection, which StateFlow conflates).
+    @Test
+    fun delete_notFoundOnAbsentId_isNoOpSuccess() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+            val emissionsBefore = all.size
+
+            val delete = startDelete(repo, "missing")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "delete_conversation" }.id
+            pump.push(errorEnvelope(sentId, code = "conversation.not_found"))
+            runCurrent()
+
+            assertTrue(delete().isSuccess)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+            assertEquals(emissionsBefore, all.size)
+        }
+
+    // Any other server error surfaces as RelayErrorException carrying the code; no removal.
+    @Test
+    fun delete_onOtherServerError_throwsRelayErrorAndLeavesStreamsUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val delete = startDelete(repo, "chan")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "delete_conversation" }.id
+            pump.push(errorEnvelope(sentId, code = "internal.error"))
+            runCurrent()
+
+            val ex = delete().exceptionOrNull()
+            assertTrue("expected RelayErrorException, got $ex", ex is RelayErrorException)
+            assertEquals("internal.error", (ex as RelayErrorException).code)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+        }
+
+    // AC #2: a malformed conversation_deleted ack (missing required id) throws the #318 decode
+    // exception before the removal, so a garbage ack cannot delete a conversation.
+    @Test
+    fun delete_onMalformedAck_throwsAndLeavesStreamsUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val delete = startDelete(repo, "chan")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "delete_conversation" }.id
+            // Payload omits the required `id` → ConversationDeletedPayloadDto decode throws.
+            pump.push(
+                Envelope(
+                    id = 99L,
+                    type = "conversation_deleted",
+                    ts = TS,
+                    payload = MobileJson.parseToJsonElement("""{}"""),
+                    inReplyTo = sentId,
+                ),
+            )
+            runCurrent()
+
+            // SerializationException is an IllegalArgumentException subtype.
+            assertTrue(delete().exceptionOrNull() is IllegalArgumentException)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+        }
+
     // ---- setSessionSettings (#543): set_session_settings request → session_settings_updated/error --
 
     // AC #2, #1: a single-control (model) change sends exactly {session_id, model} — effort/yolo are
@@ -4434,6 +4636,16 @@ class RemoteConversationRepositoryTest {
         return { requireNotNull(outcome) { "unarchive has not completed" } }
     }
 
+    /** As [startArchive], for [RemoteConversationRepository.delete] (awaits the conversation_deleted/error reply). */
+    private fun TestScope.startDelete(
+        repo: RemoteConversationRepository,
+        conversationId: String,
+    ): () -> Result<Unit> {
+        var outcome: Result<Unit>? = null
+        backgroundScope.launch { outcome = runCatching { repo.delete(conversationId) } }
+        return { requireNotNull(outcome) { "delete has not completed" } }
+    }
+
     /**
      * Launch [RemoteConversationRepository.setSessionSettings] on [backgroundScope] (it suspends
      * awaiting the session_settings_updated/error reply) and return a getter for its eventual [Result].
@@ -4570,6 +4782,20 @@ class RemoteConversationRepositoryTest {
             type = "session_settings_updated",
             ts = TS,
             payload = MobileJson.parseToJsonElement("""{"session_id":"$sessionId"}"""),
+            inReplyTo = inReplyTo,
+        )
+
+    /** A correlated `conversation_deleted` ack carrying only `{id}` (#532). */
+    private fun conversationDeletedEnvelope(
+        inReplyTo: Long,
+        id: String,
+        envId: Long = 99L,
+    ): Envelope =
+        Envelope(
+            id = envId,
+            type = "conversation_deleted",
+            ts = TS,
+            payload = MobileJson.parseToJsonElement("""{"id":"$id"}"""),
             inReplyTo = inReplyTo,
         )
 
