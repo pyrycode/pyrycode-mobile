@@ -688,6 +688,63 @@ override suspend fun setSessionSettings(
   (`validModel`/`validEffort`) and rejects an invalid value with `protocol.malformed` before persisting.
   #544 maps its `Model`/`Effort` enums to wire strings before calling.
 
+## `archive(conversationId)` / `unarchive(conversationId)` — the sixth and seventh mutations (#549)
+
+Archives or restores an existing conversation over v2 `archive_conversation` / `unarchive_conversation`
+(server pyrycode#881), replacing the two `UnsupportedOperationException` throws these methods carried since
+#312. Both overrides delegate to one private helper parameterized by wire type — the mobile mirror of the
+server's single handler registered under both verbs:
+
+```kotlin
+override suspend fun archive(conversationId: String): Unit = sendArchiveToggle(conversationId, TYPE_ARCHIVE_CONVERSATION)
+override suspend fun unarchive(conversationId: String): Unit = sendArchiveToggle(conversationId, TYPE_UNARCHIVE_CONVERSATION)
+
+private suspend fun sendArchiveToggle(conversationId: String, type: String) {
+    val request = Envelope(
+        id = requestId.incrementAndGet(), type = type, ts = Clock.System.now().toString(),
+        payload = MobileJson.encodeToJsonElement(ArchiveConversationPayloadDto(conversationId = conversationId)),
+    )
+    val reply = sendAndAwaitReply(request)              // throws on server `error` / not-Open; the decode below is unreachable on failure
+    val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
+    upsertConversation(conversation)                    // confirmed-upsert — ONLY after a successful decode; no return value (interface is Unit)
+}
+```
+
+- **One shared request DTO for both verbs.** `ArchiveConversationPayloadDto` carries only
+  `conversation_id` — archive and restore are a symmetric toggle of one durable flag (same shape, same
+  handler, same not-found/reply behaviour), so pyrycode#881 defined one payload server-side for the pair
+  and this mirrors that; the repository disambiguates by the `Envelope.type` string passed into
+  `sendArchiveToggle`, not by the payload shape.
+- **The reply is `conversation_updated`**, the same success arm `rename`/`promote` already use — no
+  `onInbound` change needed. Decoded through the same #318 `ConversationResponseDto`, so a malformed reply
+  throws the decode exception before `upsertConversation` runs, same as every prior mutation.
+- **The load-bearing change is to the shared decode boundary, not these methods.** Before #549,
+  `ConversationResponseDto` didn't decode any archived field and `toConversation()` hardcoded
+  `archived = false` — every mutation reply, including this one, would have folded a permanently-unarchived
+  conversation. #549 adds a **defaulted** field, `@SerialName("is_archived") val isArchived: Boolean =
+  false`, and wires it in (`archived = isArchived`). Defaulted rather than required because pyrycode#881
+  extended only the `conversation_updated` payload, not `conversation_created` (#347) — an absent key
+  (create/promote replies) still correctly decodes to `false`, so the three pre-existing callers
+  (`createDiscussion`, `promote`, `rename`) need no changes. As a side effect this also fixes a **dormant**
+  bug in the already-shipped `rename`: since pyrycode#881 its reply carries `is_archived` too, which
+  `rename` was silently dropping until this DTO change (undetectable before now — nothing could archive a
+  conversation yet).
+- **Idempotent.** pyrycode#881 replies `conversation_updated` with the unchanged state on a
+  re-archive/re-unarchive; `upsertConversation` replaces the entry with an equal value — a benign re-emit,
+  no special-casing needed.
+- **No return value** — unlike `rename`/`promote` (which return the server-authoritative `Conversation`),
+  the `ConversationRepository` contract's `archive`/`unarchive` return `Unit`, so the decoded conversation
+  is folded but discarded.
+- **`mutationsSupported` is untouched, stays `false`** — it gates the LIVE UI affordance ([#507](../codebase/507.md))
+  and the [#551](https://github.com/pyrycode/pyrycode-mobile/issues/551) e2e; wiring the data path doesn't
+  flip it. The remaining throwing sibling is `changeWorkspace`. Surfacing (no crash, no silent no-op) is
+  [#550](https://github.com/pyrycode/pyrycode-mobile/issues/550)'s concern.
+- **Out of scope, flagged not fixed:** the list-read path (`ConversationsPayload` /
+  `ConversationSummaryDto.toConversation()`) also hardcodes `archived = false` and drops the `is_archived`
+  pyrycode#880 added to `ConversationSummary` — a conversation archived elsewhere shows as active in a
+  fresh list snapshot until a verb reply re-folds it locally. Not part of this slice; see
+  [`../codebase/549.md`](../codebase/549.md) § Lessons learned.
+
 ## `registerPushToken(token)` — the device-concern push registration (#359)
 
 Registers the phone's FCM push token with the paired daemon over v2 `register_push_token`, so the daemon
@@ -1292,9 +1349,10 @@ private fun newSessionFrame(): Envelope = Envelope(
   persisted, never enters `projection`; the [#540](../codebase/540.md) UI-wire consumer discards it.
   Considered-and-rejected alternative: narrowing the interface return type to `Unit` — ripples to the fake +
   facade + interface for an XS slice, deferred.
-- **`mutationsSupported` stays `false`** — its siblings `archive`/`unarchive`/`changeWorkspace` still throw,
-  so flipping the one coarse flag would un-hide them in `ThreadOverflowMenu`. Menu reachability is a later
-  coarse-flag milestone's concern (see the #537 family — "gate cleared ≠ buildable").
+- **`mutationsSupported` stays `false`** — its remaining sibling `changeWorkspace` still throws (`archive`/
+  `unarchive` were wired live by [#549](../codebase/549.md)), so flipping the one coarse flag would
+  un-hide it in `ThreadOverflowMenu`. Menu reachability is a later coarse-flag milestone's concern (see the
+  #537 family — "gate cleared ≠ buildable").
 - `security-sensitive`, PASS: outbound-only, constant `{}` payload (no caller-derived data), the single ISE
   message is a static string, no logging, authorization is server-side (`interactive`, mirrors `interrupt`).
 
@@ -1302,13 +1360,14 @@ private fun newSessionFrame(): Envelope = Envelope(
 
 Every method other than the three live read paths and the now-live `sendMessage` (#346) /
 `createDiscussion` (#347) / `promote` (#348) / `rename` ([#530](../codebase/530.md)) /
-`startNewSession` ([#539](../codebase/539.md)) / `setSessionSettings` ([#543](../codebase/543.md)) throws `UnsupportedOperationException` with a message
+`startNewSession` ([#539](../codebase/539.md)) / `setSessionSettings` ([#543](../codebase/543.md)) /
+`archive` / `unarchive` ([#549](../codebase/549.md)) throws `UnsupportedOperationException` with a message
 naming the owning follow-up, so the class compiles the full interface today and each slice replaces only
 the methods it owns:
 
 | Method(s) | Owner |
 |---|---|
-| `archive`, `unarchive`, `changeWorkspace` | follow-up (no v2 wire message defined yet) |
+| `changeWorkspace` | follow-up (no v2 wire message defined yet) |
 
 `delete`, `recentWorkspaces`, and `createWorkspaceFolder` are **not overridden** — they have interface
 defaults (error / empty flow per the [contract](conversation-repository.md)) and are intentionally outside
@@ -1496,7 +1555,10 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   [`../codebase/359.md`](../codebase/359.md) (`registerPushToken` — the first non-interface device-concern
   method + the deferred `deviceName` handoff) ·
   [`../codebase/543.md`](../codebase/543.md) (`setSessionSettings` — the first session-scoped mutation,
-  no state fold, new reply-type demux arm) — files/line refs, patterns, lessons, verification.
+  no state fold, new reply-type demux arm) ·
+  [`../codebase/549.md`](../codebase/549.md) (`archive`/`unarchive` — shared request DTO for a symmetric
+  verb pair, the `is_archived` decode-boundary extension, the dormant `rename` fix it carries) —
+  files/line refs, patterns, lessons, verification.
 - Specs: `docs/specs/architecture/312-remote-conversation-repository-observe-list.md` ·
   `docs/specs/architecture/329-remote-conversation-repository-observe-last-message.md` ·
   `docs/specs/architecture/313-remote-observe-messages.md` ·
@@ -1504,7 +1566,8 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   `docs/specs/architecture/347-remote-create-discussion.md` ·
   `docs/specs/architecture/348-remote-promote.md` ·
   `docs/specs/architecture/359-register-push-token-wire-sender.md` ·
-  `docs/specs/architecture/543-wire-session-settings.md`.
+  `docs/specs/architecture/543-wire-session-settings.md` ·
+  `docs/specs/architecture/549-archive-unarchive-conversation-wire.md`.
 - Siblings (extend the same class + `onInbound` `when`): [#329](../codebase/329.md)
   (`observeLastMessage`, **landed** — consumes [#317](../codebase/317.md), rides the live `message`
   stream), [#313](../codebase/313.md) (`observeMessages`, **landed** — consumes #317 + adds the
@@ -1544,7 +1607,13 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   arm (`session_settings_updated`, not a reused one like `rename`/`promote`), and is the first mutation
   with **no state fold** since `registerPushToken` — its ack carries only an echoed `session_id`, nothing
   to project. Data-layer slice of the #536 split; #544 wires the Status-sheet controls to it and adds the
-  `StableConversationRepository` facade delegation).
+  `StableConversationRepository` facade delegation), [#549](../codebase/549.md) (`archive`/`unarchive`,
+  **landed** — the sixth and seventh mutations; replace their `UnsupportedOperationException` throws,
+  reuse `sendAndAwaitReply` + `mapError` + the existing `TYPE_CONVERSATION_UPDATED` demux arm verbatim,
+  add one shared `ArchiveConversationPayloadDto` + a private `sendArchiveToggle` helper both overrides
+  delegate to, and extend `ConversationResponseDto` with a defaulted `is_archived` field so the fold
+  actually moves the conversation between tiers — data-layer slice of the #531 split; #550 wires the
+  ViewModel surfacing, #551 the rung-3 e2e).
 - Connection wiring: [`RelayRepositoryCoordinator`](relay-repository-coordinator.md)
   ([#351](../codebase/351.md), **landed**) — constructs this repository per live connection against the
   pump + a child scope, made `NoiseSessionPump : ManagedSessionPump : SessionPump`, and publishes the
