@@ -22,6 +22,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
@@ -1766,6 +1767,127 @@ class RemoteConversationRepositoryTest {
 
             // SerializationException is an IllegalArgumentException subtype.
             assertTrue(create().exceptionOrNull() is IllegalArgumentException)
+        }
+
+    // ---- recentWorkspaces (#565): recent_workspaces request → recent_workspaces_list reply, a cold
+    // ---- one-shot read verb (no projection fold), fail-closed-to-empty on any wire/connection error ----
+
+    // AC #1: the sent envelope matches the recent_workspaces wire contract — an empty `{}` payload
+    // (cloned from list_conversations), and it is the only frame construction emits.
+    @Test
+    fun recentWorkspaces_sendsEmptyPayloadRequest() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            startRecentWorkspaces(repo)
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "recent_workspaces" }
+            assertEquals(MobileJson.parseToJsonElement("""{}"""), sent.payload)
+            assertEquals(1, pump.sent.size)
+
+            // Unblock the launched collector so backgroundScope completes cleanly.
+            pump.push(recentWorkspacesListEnvelope(inReplyTo = sent.id, paths = emptyList()))
+            runCurrent()
+        }
+
+    // AC #1/#2/#3: the populated reply emits its paths in WIRE ORDER (deliberately non-alphabetical to
+    // prove the client does not re-sort — ordering is daemon-authoritative), with both "no bound
+    // workspace" sentinels filtered client-side (the empty string and DEFAULT_SCRATCH_CWD). This also
+    // proves the demux registration (§ Design ④): without the recent_workspaces_list arm the deferred
+    // never completes and the flow degrades to empty, failing the assertion.
+    @Test
+    fun recentWorkspaces_populatedReply_filtersSentinelsAndPreservesWireOrder() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val recents = startRecentWorkspaces(repo)
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "recent_workspaces" }.id
+            pump.push(
+                recentWorkspacesListEnvelope(
+                    inReplyTo = sentId,
+                    paths = listOf("/z/proj", "", "~/.pyrycode/scratch", "/a/proj"),
+                ),
+            )
+            runCurrent()
+
+            assertEquals(listOf("/z/proj", "/a/proj"), recents().getOrThrow())
+        }
+
+    // AC #5: an empty registry ({"workspaces":[]}) emits an empty list — not an error.
+    @Test
+    fun recentWorkspaces_emptyRegistry_emitsEmptyList() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val recents = startRecentWorkspaces(repo)
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "recent_workspaces" }.id
+            pump.push(recentWorkspacesListEnvelope(inReplyTo = sentId, paths = emptyList()))
+            runCurrent()
+
+            assertEquals(emptyList<String>(), recents().getOrThrow())
+        }
+
+    // AC #4: a not-Open session (pump.send returns false) degrades to empty — the not-connected `check`
+    // throws IllegalStateException synchronously → .catch → empty, WITHOUT any reply and without hanging.
+    @Test
+    fun recentWorkspaces_whenNotConnected_emitsEmptyWithoutReply() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val recents = startRecentWorkspaces(repo)
+            runCurrent()
+
+            assertEquals(emptyList<String>(), recents().getOrThrow())
+        }
+
+    // AC #4: any server `error` reply (recent_workspaces names no conversation, so every code is an
+    // ordinary RelayErrorException) is caught by the flow's .catch and degraded to empty.
+    @Test
+    fun recentWorkspaces_serverError_emitsEmpty() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val recents = startRecentWorkspaces(repo)
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "recent_workspaces" }.id
+            pump.push(errorEnvelope(sentId, code = "internal", message = "boom"))
+            runCurrent()
+
+            assertEquals(emptyList<String>(), recents().getOrThrow())
+        }
+
+    // A malformed recent_workspaces_list reply (a row missing the required `path`) throws at decode and
+    // is caught by .catch → empty, so a garbage success reply cannot yield a bogus list.
+    @Test
+    fun recentWorkspaces_malformedReply_emitsEmpty() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val recents = startRecentWorkspaces(repo)
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "recent_workspaces" }.id
+            pump.push(
+                Envelope(
+                    id = 99L,
+                    type = "recent_workspaces_list",
+                    ts = TS,
+                    payload = MobileJson.parseToJsonElement("""{"workspaces":[{"last_used_at":"$TS"}]}"""),
+                    inReplyTo = sentId,
+                ),
+            )
+            runCurrent()
+
+            assertEquals(emptyList<String>(), recents().getOrThrow())
         }
 
     // ---- archive / unarchive (#549): archive_conversation / unarchive_conversation request →
@@ -4933,6 +5055,19 @@ class RemoteConversationRepositoryTest {
     }
 
     /**
+     * Collect the first emission of [RemoteConversationRepository.recentWorkspaces] (a cold one-shot
+     * flow that suspends awaiting the recent_workspaces_list/error reply, unless the not-Open `check`
+     * throws first) on [backgroundScope] and return a getter for its eventual [Result]. Read the result
+     * only after the correlated reply has been pushed and [runCurrent] has drained the cascade (the
+     * not-Open path completes synchronously via .catch, before any reply).
+     */
+    private fun TestScope.startRecentWorkspaces(repo: RemoteConversationRepository): () -> Result<List<String>> {
+        var outcome: Result<List<String>>? = null
+        backgroundScope.launch { outcome = runCatching { repo.recentWorkspaces().first() } }
+        return { requireNotNull(outcome) { "recentWorkspaces has not completed" } }
+    }
+
+    /**
      * Launch [RemoteConversationRepository.archive] on [backgroundScope] (it suspends awaiting the
      * conversation_updated/error reply) and return a getter for its eventual [Result]. Read the result
      * only after the correlated reply has been pushed and [runCurrent] has drained the cascade (the
@@ -5133,6 +5268,26 @@ class RemoteConversationRepositoryTest {
             payload = MobileJson.parseToJsonElement("""{"path":"$path"}"""),
             inReplyTo = inReplyTo,
         )
+
+    /**
+     * A correlated `recent_workspaces_list` reply carrying `{workspaces:[{path, last_used_at}]}` (#565),
+     * one row per [paths] entry in the given order. The daemon-authoritative `last_used_at` is included
+     * on the wire (the client discards it via `ignoreUnknownKeys` — only `path` is modeled).
+     */
+    private fun recentWorkspacesListEnvelope(
+        inReplyTo: Long,
+        paths: List<String>,
+        envId: Long = 99L,
+    ): Envelope {
+        val rows = paths.joinToString(",") { """{"path":"$it","last_used_at":"$TS"}""" }
+        return Envelope(
+            id = envId,
+            type = "recent_workspaces_list",
+            ts = TS,
+            payload = MobileJson.parseToJsonElement("""{"workspaces":[$rows]}"""),
+            inReplyTo = inReplyTo,
+        )
+    }
 
     private fun ackEnvelope(
         inReplyTo: Long,
