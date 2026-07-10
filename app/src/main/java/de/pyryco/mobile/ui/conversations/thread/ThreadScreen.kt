@@ -117,6 +117,7 @@ fun ThreadScreen(
     newSessionErrors: Flow<Unit> = emptyFlow(), // #540: payload-free one-shot new-session send-failure signal
     archiveErrors: Flow<Unit> = emptyFlow(), // #556: payload-free one-shot archive send-failure signal
     changeWorkspaceErrors: Flow<Unit> = emptyFlow(), // #561: payload-free one-shot change-workspace failure signal
+    sessionSettingsErrors: Flow<Unit> = emptyFlow(), // #544: payload-free one-shot run-config failure signal
     onModalOption: (String) -> Unit = {}, // #452: wired by MainActivity → vm::onModalOption (passes ModalOption.id)
     onModalCancel: () -> Unit = {}, // #452: wired by MainActivity → vm::onModalCancel
     onDropQueued: (Long) -> Unit = {}, // #467: wired by MainActivity → vm::onDropQueued (passes QueuedMessage.id)
@@ -151,6 +152,14 @@ fun ThreadScreen(
     val changeWorkspaceFailedMessage = stringResource(R.string.change_workspace_failed)
     LaunchedEffect(changeWorkspaceErrors, snackbarHostState) {
         changeWorkspaceErrors.collect { snackbarHostState.showSnackbar(changeWorkspaceFailedMessage) }
+    }
+    // #544: surface a failed run-configuration change (model / effort / YOLO) as a transient snackbar. Same
+    // payload-free (Unit) one-shot idiom; the fixed local string keeps the server-supplied
+    // RelayErrorException.message out of the un-secured Activity window the snackbar draws in. The control
+    // reverts in the ViewModel, so the sheet never settles on a value the daemon did not confirm.
+    val sessionSettingsFailedMessage = stringResource(R.string.session_settings_failed)
+    LaunchedEffect(sessionSettingsErrors, snackbarHostState) {
+        sessionSettingsErrors.collect { snackbarHostState.showSnackbar(sessionSettingsFailedMessage) }
     }
     Scaffold(
         modifier = modifier,

@@ -98,5 +98,6 @@
     <string name="new_session_failed">Couldn\'t start a new session. Check your connection.</string>
     <string name="archive_failed">Couldn\'t archive this conversation. Try again.</string>
     <string name="change_workspace_failed">Couldn\'t change the workspace. Try again.</string>
+    <string name="session_settings_failed">Couldn\'t update the run configuration. Try again.</string>
     <string name="restore_failed">Couldn\'t restore this conversation. Try again.</string>
 </resources>
