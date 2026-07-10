@@ -22,7 +22,10 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    asserts "ping" renders. Also covers a **tool-use** scenario (#481): a constrained prompt makes real
    claude run a shell tool and asserts the tool step renders; and a **thinking-spinner** scenario (#482,
    the flakiest — ships `@Ignore`-gated / manual): a pure-reasoning prompt makes real claude think a beat
-   and asserts the spinner shows mid-turn. Semi-deterministic.
+   and asserts the spinner shows mid-turn. Semi-deterministic. A **`LIVE=1` variant (#527)** runs the
+   **ping** scenario against the **production relay** over `wss://` (TLS) — the pre-ship gate that catches
+   the live-environment failure class a local relay cannot; see
+   [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay).
 4. **Emulator + deterministic host** ← **shipped (#431).** The same real app + Noise/relay path, but
    claude is swapped for #642's scripted `fakeclaude` backend replaying a fixed JSONL fixture. No real
    claude, **zero claude turns**; re-running back-to-back yields the same pass. Run it with
@@ -159,6 +162,66 @@ Prerequisites on the host:
 The script: starts the relay → mints a device token with `pyry pair` and parses the payload → starts
 the daemon (`PYRY_MOBILE_V2=1`, pointed at the loopback relay) → runs `pixel2Api33AtdDebugAndroidTest`
 with the four values injected as instrumentation arguments → tears everything down.
+
+## Live mode (rung 3, live relay)
+
+`LIVE=1` runs the **same rung-3 ping scenario** — the real app on the emulator, a host `pyry` daemon,
+and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`) over TLS
+instead of a local loopback relay. This is the pre-ship gate: the operator must never be the **first**
+real-stack execution, and a local relay structurally cannot catch a live-environment failure (the
+2026-07-03 connect-drop loop was a five-week-stale relay deploy, invisible to any local run). No new test
+scenario — the existing ping `@Test` rides the new mode.
+
+```bash
+LIVE=1 bash scripts/e2e-emulator.sh
+```
+
+**What it runs.** The `ping` scenario **only**
+(`InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`), so exactly **one real
+claude turn** is spent — the full class also includes the #481 tool-use test, a 2nd turn. `LIVE=1` is
+**mutually exclusive with `DETERMINISTIC=1`** (real vs scripted claude); setting both fails fast.
+
+**How it differs from default rung 3.** Same instrumented suite, same Gradle Managed Device, same
+"pairing values as instrumentation arguments" seam — only the relay and the instance name change:
+
+- The daemon dials `wss://pyrycode-relay.pyryco.de/v1/server` (`/v1/server` **baked in** — a base URL
+  silently 404s into a dial-retry loop), while the phone dials the **base** `wss://pyrycode-relay.pyryco.de`
+  and appends `/v1/client` itself. `OkHttpRelayTransport` rides TLS for `wss` with **no app-side change**.
+  Both URLs derive from one `LIVE_RELAY_HOST` so an override cannot break the asymmetry.
+- **No plaintext, no insecure flag on the live path:** every URL is `wss://` and
+  `PYRY_ALLOW_INSECURE_RELAY` is **never** set — a dedicated daemon branch omits the flag the loopback
+  branch carries.
+- **Isolated instance, real HOME.** The daemon and `pyry pair` run as `-pyry-name=e2e-live` under the
+  operator's **real `$HOME`** — unlike rung 4's isolated `/tmp` HOME. Real claude needs the operator's
+  `~/.claude` subscription auth, which an isolated HOME would strip, so isolation here is by **instance
+  name**: identity + `devices.json` + `conversations.json` live under `~/.pyry/e2e-live/`, so the
+  production instances on this Mac and pyrybox (different names) are never read or written. That directory
+  **persists across runs** (a stable test identity); `cleanup()` never removes it.
+
+Prerequisites (on top of the "How to run" list):
+
+- The operator's claude authenticated on the host (as default rung 3) — Max-subscription covered, so it
+  does **not** meter tokens.
+- **No relay binary needed** (the daemon dials the production relay; the `RELAY_BIN` preflight is skipped).
+- The emulator needs outbound internet + DNS + a system-trusted TLS cert for the relay host. It reaches
+  the public relay over its own NAT'd internet — **not** the `10.0.2.2` host alias, which is loopback-only.
+
+Cost: **one real claude turn per run**, subscription-covered.
+
+First-run assumptions to confirm (grounded in the design, unverified end to end):
+
+- **The live relay accepts the test daemon's `/v1/server` registration** — expected (a normal pyry daemon
+  dialing the production relay, exactly as the operator's real instances do; the relay is content-blind +
+  token-gated). If it allowlists server identities, that is a finding to surface — do **not** weaken the
+  isolation to work around it.
+- **Emulator internet + DNS + TLS** — the AVD must resolve `pyrycode-relay.pyryco.de` and complete a TLS
+  handshake against a system-trusted CA. A proxy/firewall that blocks it is environmental, not a harness bug.
+- **`~/.pyry/e2e-live/` is fully separate from production** — confirm once that `pyry pair` and the
+  `-pyry-name=e2e-live` daemon touch only that directory and never the production instance's `devices.json`.
+- **A down or stale relay is the signal, not a harness bug.** A red run (the phone's `awaitConnected()`
+  timing out) is the exact failure class this mode exists to catch. An optional `curl`/`nc` reachability
+  probe before booting the daemon would fail faster than the 30 s connect timeout — deferred as an operator
+  follow-up (the round-trip already surfaces a down relay).
 
 ## Deterministic mode (rung 4)
 
@@ -383,7 +446,8 @@ token is the chief first-run unknown (see Assumptions).
   (`compileDebugAndroidTestKotlin`). The pairing-payload parser is unit-checked against a synthetic
   payload.
 - **Operator-run (needs your infra):** the actual headless-emulator + host-daemon run — for rung 3
-  with real claude (`bash scripts/e2e-emulator.sh`), and for rung 4 with the scripted backend, each of
+  with real claude (`bash scripts/e2e-emulator.sh`, or `LIVE=1 …` for the live-relay variant #527 — see
+  [Live mode](#live-mode-rung-3-live-relay)), and for rung 4 with the scripted backend, each of
   the six [scenarios](#scenarios-454) (`DETERMINISTIC=1 SCENARIO=ping|stream|spinner|tool|tool-failed|reconnect …
   bash scripts/e2e-emulator.sh`, `DeterministicInteractiveStreamE2ETest`). That is the point of both
   rungs — prove the emulator↔host↔app chain end to end. Expect to tune on first run; these are

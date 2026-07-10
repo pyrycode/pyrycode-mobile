@@ -5,18 +5,21 @@
 # This script drives two rungs of the e2e ladder (see docs/e2e-interactive-stream.md / ADR 025):
 #
 #   * rung 3 (default): the REAL app on a headless emulator → host pyry daemon → real claude →
-#     assert "ping" renders. Semi-deterministic; burns one real claude turn.
+#     assert "ping" renders. Semi-deterministic; burns one real claude turn. A LIVE=1 variant runs the
+#     same rung-3 ping scenario against the PRODUCTION relay over wss:// (TLS), so a pre-ship gate
+#     catches the live-environment failure class a local relay cannot. See "LIVE mode" below.
 #   * rung 4 (DETERMINISTIC=1): the same real app + Noise/relay path, but claude is swapped for the
 #     scripted `fakeclaude` backend (pyrycode #642) that replays a fixed JSONL fixture. The daemon
 #     spawns NO real claude and the run consumes ZERO claude turns, so it can run often and assert
 #     exactly.
 #
 # What it does, in order:
-#   1. Start a local relay on plain ws:// (no TLS).
+#   1. Start a local relay on plain ws:// (no TLS). (LIVE: skipped — the daemon dials the production relay.)
 #   2. Mint a mobile device pairing token with `pyry pair` and parse the payload.
 #   2b. (DETERMINISTIC) Pre-seed the scripted backend: build/locate fakeclaude, pre-create the
 #       bootstrap session JSONL, and write one PROMOTED conversation bound to the bootstrap session id.
-#   3. Start the pyry daemon (Mobile Protocol v2) pointed at the local relay.
+#   3. Start the pyry daemon (Mobile Protocol v2) pointed at the local relay (LIVE: the production
+#      relay over wss://, with NO insecure-relay flag).
 #   4. Run the Gradle Managed-Device instrumented test, injecting the pairing values as
 #      instrumentation arguments. The custom runner (E2eInstrumentationRunner) sees `relayUrl` and
 #      swaps in E2eTestApplication, which pre-pairs the app and binds the relay-backed repository.
@@ -34,6 +37,9 @@
 #   * `pyrycode-relay` and `pyry` on PATH (override with RELAY_BIN / PYRY_BIN).
 #   * rung 3 only: the operator's claude is authenticated on this host — the daemon spawns real claude.
 #     The interactive path is Max-subscription covered, so this does NOT meter tokens.
+#   * LIVE mode only: the operator's claude authenticated (as rung 3); NO relay binary needed (the daemon
+#     dials the production relay); the emulator needs outbound internet + DNS + a system-trusted TLS cert
+#     for the relay host. Mutually exclusive with DETERMINISTIC.
 #   * rung 4 only: either FAKE_CLAUDE_BIN (a prebuilt fakeclaude) or PYRYCODE_SRC (a local pyrycode
 #     checkout) + `go` to build it. No claude auth needed; no claude turns spent.
 #   * Android SDK with the `aosp-atd` API 33 system image. AGP auto-provisions it on first run, which
@@ -45,6 +51,7 @@
 #
 # Usage:
 #   bash scripts/e2e-emulator.sh                 # rung 3 (real claude)
+#   LIVE=1 bash scripts/e2e-emulator.sh          # rung 3 over the LIVE production relay (wss/TLS), ping only
 #   DETERMINISTIC=1 PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh                 # rung 4, ping
 #   DETERMINISTIC=1 SCENARIO=stream  PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, stream
 #   DETERMINISTIC=1 SCENARIO=spinner PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, spinner
@@ -55,6 +62,7 @@
 # Tunables (env):
 #   PORT=8888  DEVICE=pixel2Api33Atd  PAIR_NAME=e2e-emulator  PYRY_NAME=e2e-emulator
 #   PYRY_BIN=pyry  RELAY_BIN=pyrycode-relay
+#   LIVE=  LIVE_RELAY_HOST=pyrycode-relay.pyryco.de   (LIVE=1 → PAIR_NAME/PYRY_NAME default to e2e-live)
 #   DETERMINISTIC=  SCENARIO=ping  PYRYCODE_SRC=  FAKE_CLAUDE_BIN=  FIXTURE_FILE=  FIXTURE_FILE_2=
 #   INITIAL_UUID=  CONV_UUID=  SEED_CHANNEL_NAME=e2e-seed
 #   DISCONNECT_LOG=<relay.log>  DISCONNECT_TOKEN=disconnect  (replay-order only: where/what to watch for
@@ -65,11 +73,9 @@ set -euo pipefail
 # ---- config -----------------------------------------------------------------------------------
 PORT="${PORT:-8888}"
 DEVICE="${DEVICE:-pixel2Api33Atd}"            # matches the managedDevices block in app/build.gradle.kts
-PAIR_NAME="${PAIR_NAME:-e2e-emulator}"        # device label shown in `pyry pair list`
-PYRY_NAME="${PYRY_NAME:-e2e-emulator}"        # namespaces the daemon socket/identity so it does NOT
-                                              # clobber a production pyry daemon running on this host
 PYRY_BIN="${PYRY_BIN:-pyry}"
-RELAY_BIN="${RELAY_BIN:-pyrycode-relay}"
+RELAY_BIN="${RELAY_BIN:-pyrycode-relay}"      # not needed on the LIVE path (no local relay)
+# PAIR_NAME / PYRY_NAME defaults are LIVE-dependent — set in the relay-URL branch below.
 
 # DETERMINISTIC mode (rung 4): scripted fakeclaude backend, no real claude, zero claude turns.
 DETERMINISTIC="${DETERMINISTIC:-}"
@@ -79,12 +85,34 @@ else
   TEST_CLASS="de.pyryco.mobile.e2e.InteractiveStreamE2ETest"
 fi
 
-# The daemon (on the host, server side) reaches the relay over loopback. v0.14.0-era daemons do NOT
-# append the relay path themselves, so spell out /v1/server here.
-DAEMON_RELAY_URL="ws://127.0.0.1:${PORT}/v1/server"  # newer daemons append /v1/server automatically
-# … while the emulator reaches the host via the 10.0.2.2 alias as a bare origin (no path);
-# OkHttpRelayTransport appends /v1/client itself.
-PHONE_RELAY_URL="ws://10.0.2.2:${PORT}"
+# LIVE mode (rung 3, live relay): the same real-claude interactive path as default rung 3, but the
+# daemon dials the PRODUCTION relay over wss:// (TLS) with NO insecure-relay flag. Real vs scripted
+# claude → mutually exclusive with DETERMINISTIC (guarded in preflight). See
+# docs/e2e-interactive-stream.md § "Live mode (rung 3, live relay)".
+LIVE="${LIVE:-}"
+
+# Relay-URL asymmetry + instance-name defaults. The daemon needs /v1/server BAKED INTO the URL it dials
+# (a base URL silently 404s into a dial-retry loop); the phone gets the BASE only and OkHttpRelayTransport
+# appends /v1/client itself. On LIVE both URLs derive from a single LIVE_RELAY_HOST so an operator override
+# cannot break the asymmetry (wss defaults to 443 → no PORT on the LIVE path); isolation there is by
+# instance name (e2e-live) under the REAL HOME, because real claude needs the operator's ~/.claude auth.
+if [ -n "${LIVE}" ]; then
+  LIVE_RELAY_HOST="${LIVE_RELAY_HOST:-pyrycode-relay.pyryco.de}"  # production relay host (CLAUDE.md status)
+  DAEMON_RELAY_URL="wss://${LIVE_RELAY_HOST}/v1/server"           # daemon: /v1/server baked in
+  PHONE_RELAY_URL="wss://${LIVE_RELAY_HOST}"                      # phone: base only, appends /v1/client over TLS
+  PAIR_NAME="${PAIR_NAME:-e2e-live}"     # distinct from default-mode e2e-emulator: obvious in `pyry pair list`
+  PYRY_NAME="${PYRY_NAME:-e2e-live}"     # namespaces identity/devices.json under ~/.pyry/e2e-live/ (never prod)
+else
+  PAIR_NAME="${PAIR_NAME:-e2e-emulator}"        # device label shown in `pyry pair list`
+  PYRY_NAME="${PYRY_NAME:-e2e-emulator}"        # namespaces the daemon socket/identity so it does NOT
+                                                # clobber a production pyry daemon running on this host
+  # The daemon (on the host, server side) reaches the relay over loopback. v0.14.0-era daemons do NOT
+  # append the relay path themselves, so spell out /v1/server here.
+  DAEMON_RELAY_URL="ws://127.0.0.1:${PORT}/v1/server"  # newer daemons append /v1/server automatically
+  # … while the emulator reaches the host via the 10.0.2.2 alias as a bare origin (no path);
+  # OkHttpRelayTransport appends /v1/client itself.
+  PHONE_RELAY_URL="ws://10.0.2.2:${PORT}"
+fi
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GRADLEW="${REPO_ROOT}/gradlew"
@@ -143,7 +171,9 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # ---- preflight --------------------------------------------------------------------------------
-command -v "${RELAY_BIN}" >/dev/null 2>&1 || die "relay binary '${RELAY_BIN}' not found (set RELAY_BIN)"
+[ -n "${LIVE}" ] && [ -n "${DETERMINISTIC}" ] && die "LIVE=1 and DETERMINISTIC=1 are mutually exclusive (real vs scripted claude)"
+# LIVE spawns no local relay (it dials the production relay), so the relay binary is not required there.
+[ -n "${LIVE}" ] || command -v "${RELAY_BIN}" >/dev/null 2>&1 || die "relay binary '${RELAY_BIN}' not found (set RELAY_BIN)"
 command -v "${PYRY_BIN}"  >/dev/null 2>&1 || die "pyry binary '${PYRY_BIN}' not found (set PYRY_BIN)"
 command -v python3        >/dev/null 2>&1 || die "python3 not found (needed to decode the pairing payload)"
 [ -x "${GRADLEW}" ] || die "gradlew not found/executable at ${GRADLEW}"
@@ -241,18 +271,24 @@ if [ -n "${DETERMINISTIC}" ]; then
 fi
 
 # ---- 1. relay ---------------------------------------------------------------------------------
-log "starting relay on :${PORT} (plain ws, no TLS)…"
-"${RELAY_BIN}" --insecure-listen=":${PORT}" --metrics-listen= >"${RELAY_LOG}" 2>&1 &
-RELAY_PID=$!
+# LIVE dials the production relay directly (RELAY_PID stays empty → cleanup's kill guard no-ops); a down
+# or stale relay surfaces later as the phone's connect timeout — the failure class this mode exists to catch.
+if [ -z "${LIVE}" ]; then
+  log "starting relay on :${PORT} (plain ws, no TLS)…"
+  "${RELAY_BIN}" --insecure-listen=":${PORT}" --metrics-listen= >"${RELAY_LOG}" 2>&1 &
+  RELAY_PID=$!
 
-log "waiting for relay /healthz…"
-for _ in $(seq 1 30); do
-  if curl -fsS "http://127.0.0.1:${PORT}/healthz" >/dev/null 2>&1; then break; fi
-  kill -0 "${RELAY_PID}" 2>/dev/null || die "relay exited early — see ${RELAY_LOG}"
-  sleep 0.5
-done
-curl -fsS "http://127.0.0.1:${PORT}/healthz" >/dev/null 2>&1 || die "relay never became healthy — see ${RELAY_LOG}"
-log "relay healthy."
+  log "waiting for relay /healthz…"
+  for _ in $(seq 1 30); do
+    if curl -fsS "http://127.0.0.1:${PORT}/healthz" >/dev/null 2>&1; then break; fi
+    kill -0 "${RELAY_PID}" 2>/dev/null || die "relay exited early — see ${RELAY_LOG}"
+    sleep 0.5
+  done
+  curl -fsS "http://127.0.0.1:${PORT}/healthz" >/dev/null 2>&1 || die "relay never became healthy — see ${RELAY_LOG}"
+  log "relay healthy."
+else
+  log "LIVE mode: skipping local relay — dialing the production relay at wss://${LIVE_RELAY_HOST} (TLS)."
+fi
 
 # ---- 2. pair (mint a device token before the daemon starts so it loads on boot) ---------------
 # `pyry pair` prints a QR plus one base64url-encoded JSON line: {server, relay, token,
@@ -322,7 +358,7 @@ if [ -n "${DETERMINISTIC}" ]; then
 EOF
 fi
 
-# ---- 3. daemon (Mobile Protocol v2, pointed at the local relay) -------------------------------
+# ---- 3. daemon (Mobile Protocol v2, pointed at the relay) -------------------------------------
 log "starting pyry daemon (PYRY_MOBILE_V2=1) → ${DAEMON_RELAY_URL}…"
 if [ -n "${DETERMINISTIC}" ]; then
   # Scripted backend: -pyry-claude=<fakeclaude>, -pyry-workdir=<HOME>, isolated HOME, and the
@@ -336,6 +372,13 @@ if [ -n "${DETERMINISTIC}" ]; then
     PYRY_FAKE_CLAUDE_JSONL_TRIGGER="${JSONL_TRIGGER}" \
     PYRY_FAKE_CLAUDE_TUI=1 \
     "${PYRY_BIN}" -pyry-name="${PYRY_NAME}" -pyry-claude="${FAKE_BIN}" -pyry-workdir="${ISO_HOME}" \
+    >"${DAEMON_LOG}" 2>&1 &
+  DAEMON_PID=$!
+elif [ -n "${LIVE}" ]; then
+  # LIVE (rung 3): dial the PRODUCTION relay over wss:// (TLS). PYRY_ALLOW_INSECURE_RELAY is NEVER set on
+  # this path — TLS-only transport is enforced by omitting the flag here, not by a runtime toggle. Runs
+  # under the real HOME (real claude needs ~/.claude auth); isolation is by -pyry-name (~/.pyry/e2e-live/).
+  PYRY_MOBILE_V2=1 PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" -pyry-name="${PYRY_NAME}" \
     >"${DAEMON_LOG}" 2>&1 &
   DAEMON_PID=$!
 else
@@ -406,9 +449,13 @@ if [ -n "${DETERMINISTIC}" ]; then
 fi
 
 # ---- 4. run the managed-device instrumented test ----------------------------------------------
-# Deterministic mode runs exactly the scenario's one method (class#method); rung 3 runs the whole class.
+# Deterministic mode runs exactly the scenario's one method (class#method); default rung 3 runs the whole
+# class; LIVE scopes to the ping method only (one real claude turn — the full class' #481 tool-use test
+# would spend a 2nd).
 if [ -n "${DETERMINISTIC}" ]; then
   TEST_TARGET="${TEST_CLASS}#${TEST_METHOD}"
+elif [ -n "${LIVE}" ]; then
+  TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread"
 else
   TEST_TARGET="${TEST_CLASS}"
 fi
@@ -424,6 +471,8 @@ log "  phone relayUrl = ${PHONE_RELAY_URL}"
 
 if [ -n "${DETERMINISTIC}" ]; then
   log "PASS — scenario '${SCENARIO}' green: the emulator connected, sent the prompt, and the scripted reply rendered."
+elif [ -n "${LIVE}" ]; then
+  log "PASS — the headless emulator connected over the LIVE relay, sent the prompt, and 'ping' rendered in the thread."
 else
   log "PASS — the headless emulator connected, sent the prompt, and 'ping' rendered in the thread."
 fi
