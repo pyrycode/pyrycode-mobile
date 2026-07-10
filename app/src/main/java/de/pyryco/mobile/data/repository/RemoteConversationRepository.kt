@@ -12,6 +12,7 @@ import de.pyryco.mobile.data.network.ArchiveConversationPayloadDto
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.BackfillSincePayloadDto
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
+import de.pyryco.mobile.data.network.ChangeWorkspacePayloadDto
 import de.pyryco.mobile.data.network.ConversationDeletedPayloadDto
 import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.ConversationsPayload
@@ -1624,10 +1625,63 @@ class RemoteConversationRepository(
             payload = JsonObject(emptyMap()),
         )
 
+    /**
+     * Change conversation [conversationId]'s workspace to [workspace] over v2 `change_workspace`
+     * (#560, server #823). "Workspace" **is** the conversation's `cwd` — there is no separate
+     * workspace-id concept. A line-for-line mirror of [rename] with a `cwd` payload
+     * ([ChangeWorkspacePayloadDto]: `{conversation_id, cwd}`, both required) instead of `{…, name}`:
+     * encodes the request, sends it, and awaits its correlated `conversation_updated` reply — the same
+     * reply reuse rename relies on. Decodes the reply through the #318 [ConversationResponseDto]
+     * boundary, so a malformed reply throws before any state mutation, then **confirmed-upserts** the
+     * returned [Conversation] into [projection] — only after the reply decodes — so the new `cwd`
+     * becomes visible on the workspace chip / list (AC #2). The folded `cwd` is the
+     * **server-authoritative** reply value (the daemon's resolved realpath), not the request's.
+     *
+     * [workspace] is an **untrusted** path forwarded **verbatim** — no client-side validation,
+     * canonicalisation, or `$HOME` check, and the phone never touches the filesystem with it:
+     * confinement is the daemon's job (fail-closed, stores the resolved realpath), which re-validates
+     * and rejects out-of-`$HOME` / empty paths server-side (`protocol.malformed`), surfaced here as an
+     * ordinary [RelayErrorException]. Throws [IllegalArgumentException] for an unknown conversation
+     * (server `conversation.not_found`, as [rename]), [RelayErrorException] for any other server
+     * `error`, [IllegalStateException] when the session is not connected, and the #318 decode exception
+     * for a malformed reply — none of which mutate [projection] (AC #3).
+     *
+     * `change_workspace` performs **no session transition** — it updates the recorded `cwd` only; the
+     * new folder takes effect on the conversation's next fresh session spawn (#823 Out-of-Scope, AC
+     * #4). So there is no `session_transition` (#336) and no session-boundary delimiter. The interface
+     * forces a [Session] return, but there is no session identity to return: the returned placeholder's
+     * identity fields (`id`, `claudeSessionUuid`) are **explicitly unassigned** (empty strings, not a
+     * fabricated UUID — the [startNewSession] precedent); it is never persisted, never enters
+     * [projection], and the #560 `onWorkspacePicked` caller discards it.
+     */
     override suspend fun changeWorkspace(
         conversationId: String,
         workspace: String,
-    ): Session = throw UnsupportedOperationException("changeWorkspace: no v2 wire message defined (follow-up specs the wire contract)")
+    ): Session {
+        val request =
+            Envelope(
+                id = requestId.incrementAndGet(),
+                type = TYPE_CHANGE_WORKSPACE,
+                ts = Clock.System.now().toString(),
+                payload =
+                    MobileJson.encodeToJsonElement(
+                        ChangeWorkspacePayloadDto(conversationId = conversationId, cwd = workspace),
+                    ),
+            )
+        // Throws on a server `error` / not-Open session; the decode + confirmed upsert below are
+        // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
+        val reply = sendAndAwaitReply(request)
+        val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
+        upsertConversation(conversation)
+        // Vestigial: change_workspace has no session transition (AC #4), so no session identity.
+        return Session(
+            id = "",
+            conversationId = conversationId,
+            claudeSessionUuid = "",
+            startedAt = Clock.System.now(),
+            endedAt = null,
+        )
+    }
 
     private companion object {
         /** Request: list the conversations (payload `{}` per protocol). */
@@ -1677,6 +1731,9 @@ class RemoteConversationRepository(
 
         /** Request: permanently delete an existing conversation (#532, #822 `DeleteConversationPayload`). */
         const val TYPE_DELETE_CONVERSATION = "delete_conversation"
+
+        /** Request: change a conversation's workspace `cwd` (#560, #823 `ChangeWorkspacePayload`). Reply is `conversation_updated`. */
+        const val TYPE_CHANGE_WORKSPACE = "change_workspace"
 
         /** Correlated ack for [TYPE_DELETE_CONVERSATION] carrying only `{id}` (#532, #822). */
         const val TYPE_CONVERSATION_DELETED = "conversation_deleted"
