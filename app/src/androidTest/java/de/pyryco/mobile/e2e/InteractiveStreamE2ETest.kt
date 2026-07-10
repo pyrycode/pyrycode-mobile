@@ -4,10 +4,12 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.MainActivity
@@ -268,6 +270,106 @@ class InteractiveStreamE2ETest {
             .assertIsDisplayed()
     }
 
+    /**
+     * Create-workspace-folder twin of the ping happy path (#566, Layer 3): drive the real
+     * create-a-workspace-folder flow end to end against real claude, exercising the already-shipped
+     * #564 create wire and #565 recents wire. Long-press the channel-list FAB → Workspace Picker →
+     * "Create new folder…" → type a folder name → land in a fresh discussion whose workspace **is**
+     * the created folder → send the constrained ping to prove it is a usable live-session workspace →
+     * re-open the picker and confirm the folder shows in "Recent".
+     *
+     * **Reachability (the material difference from #537).** The create affordance is **ungated** — it
+     * is *not* behind the `mutationsSupported` gate that hides the rename family, so this scenario is
+     * buildable where the #537 rename e2e is not. The FAB long-press → picker → create-row path is the
+     * same ungated entry on the live build the operator uses.
+     *
+     * **Why AC-3 re-opens the picker from the channel list, not the thread.** The thread's in-place
+     * picker entry — [de.pyryco.mobile.ui.conversations.components.WorkspaceChip] — is gated on
+     * `!state.hasMessages` (`ThreadScreen.kt`), so once the ping reply renders the chip has unmounted and
+     * cannot re-open the picker. AC-3 therefore returns to the list via the thread "Back" nav and re-uses
+     * the same ungated FAB long-press AC-1 already used. Sequencing AC-3 *after* the ping also means the
+     * folder has unambiguously been used by an active session before we assert it in "Recent".
+     *
+     * Semi-deterministic by nature (real claude): every assertion is **tolerant** — generous timeouts,
+     * substring / case-insensitive, never a delta-count or timing assertion. [folderName][FOLDER_NAME_PREFIX]
+     * is a runtime-unique string that cannot pre-exist on screen, so a substring match on it (in the chip
+     * and in the recents row) is a genuine presence check — the ping/tool tests' token discipline. The
+     * unique name also keeps repeated LIVE gate runs green: `~/pyry-workspace` lives on the operator's
+     * **real** `$HOME` (#527 isolates the pyry instance name, not `$HOME`) and the gate does not clean
+     * between runs, so a fixed name would collide/accumulate.
+     */
+    @Test
+    fun interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace() {
+        // 1. A paired launch lands on the channel list. The "New discussion" FAB is the list marker.
+        //    Wait for the relay connection to open before creating — the picker's create round-trips to
+        //    the daemon, so acting before the session is Open would fail the request.
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
+        }
+        awaitConnected()
+
+        // 2. Long-press the FAB to open the Workspace Picker. A *tap* would create a scratch discussion;
+        //    the long-press routes to ChannelListEvent.LongPressFab (combinedClickable.onLongClick).
+        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performTouchInput { longClick() }
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(CREATE_FOLDER_ROW, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // 3. Open the create dialog, type a collision-resistant folder name, and confirm. The name is a
+        //    clean single path element (the daemon rejects empty / absolute / separator-bearing / ".."),
+        //    unique per run so a substring match on it is a genuine presence check.
+        val folderName = FOLDER_NAME_PREFIX + System.currentTimeMillis()
+        composeTestRule.onAllNodesWithText(CREATE_FOLDER_ROW, substring = true).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasSetTextAction()).performTextInput(folderName)
+        composeTestRule.onAllNodesWithText(CREATE_BUTTON).onFirst().performClick()
+
+        // 4. AC-1: creating the folder navigates into a fresh discussion whose cwd is the created folder.
+        //    The send button marks the thread; the workspace chip reflects the folder's basename verbatim
+        //    ("Workspace: <folderName> (change)"). The chip is still present here — no messages yet.
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule
+            .onAllNodesWithText(folderName, substring = true)
+            .onFirst()
+            .assertIsDisplayed()
+
+        // 5. AC-2: send the constrained ping in the new workspace and assert the streamed reply renders —
+        //    proving the created folder is usable as a live session's workspace against a real claude turn.
+        //    Tail reused from the ping scenario; folderName does not contain "ping", so it never perturbs
+        //    the count. Snapshot the "ping"-bearing node count, then wait for the reply to add at least one.
+        composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
+        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { pingNodeCount() >= 1 }
+        val baseline = pingNodeCount()
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { pingNodeCount() > baseline }
+        composeTestRule
+            .onAllNodesWithText(PING, substring = true, ignoreCase = true)
+            .onFirst()
+            .assertIsDisplayed()
+
+        // 6. AC-3: the thread now has messages, so the WorkspaceChip is gone (!hasMessages gate). Re-open
+        //    the picker from the channel list — Back to the list, then long-press the FAB again — and assert
+        //    the freshly-used folder appears in "Recent" (the recents flow re-fetches cold on every open,
+        //    #565). Waiting for the "Recent" header covers the daemon round-trip; the channel-list section
+        //    is "Recent discussions", so an exact "Recent" match is unambiguous.
+        composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performTouchInput { longClick() }
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(RECENT_SECTION).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule
+            .onAllNodesWithText(folderName, substring = true)
+            .onFirst()
+            .assertIsDisplayed()
+    }
+
     /** Count the on-screen semantic nodes whose text contains "ping" (case-insensitive, substring). */
     private fun pingNodeCount(): Int =
         composeTestRule
@@ -316,9 +418,23 @@ class InteractiveStreamE2ETest {
                 "the single word: ready. (Reason through first: what is the 12th prime number?)"
 
         // Production UI strings (no test tags exist). Keep in sync with res/values/strings.xml:
-        //   cd_new_discussion = "New discussion", cd_send_message = "Send message".
+        //   cd_new_discussion = "New discussion", cd_send_message = "Send message", cd_back = "Back".
         const val CD_NEW_DISCUSSION = "New discussion"
         const val CD_SEND_MESSAGE = "Send message"
+        const val CD_BACK = "Back"
+
+        // #566 create-workspace-folder scenario. Picker/dialog production strings (no test tags):
+        //   the WorkspacePickerSheet create row (matched as a substring so the trailing ellipsis need
+        //   not be reproduced), the CreateFolderDialog confirm button, and the picker's "Recent" header.
+        const val CREATE_FOLDER_ROW = "Create new folder under pyry-workspace"
+        const val CREATE_BUTTON = "Create"
+        const val RECENT_SECTION = "Recent"
+
+        // Collision-resistant folder-name prefix: a clean single path element (lowercase alphanumerics +
+        // dash — the daemon rejects empty / absolute / separator-bearing / ".." names). Suffixed with
+        // System.currentTimeMillis() at runtime so repeated LIVE gate runs never collide under the
+        // operator's real ~/pyry-workspace (#527 isolates the pyry instance name, not $HOME).
+        const val FOLDER_NAME_PREFIX = "e2e566-"
 
         const val LIST_TIMEOUT_MS = 30_000L
         const val CONNECT_TIMEOUT_MS = 30_000L
