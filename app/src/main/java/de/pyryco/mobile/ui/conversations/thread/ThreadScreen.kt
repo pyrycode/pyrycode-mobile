@@ -116,6 +116,7 @@ fun ThreadScreen(
     modalSendErrors: Flow<Unit> = emptyFlow(), // #452: payload-free one-shot modal send-failure signal (#451)
     newSessionErrors: Flow<Unit> = emptyFlow(), // #540: payload-free one-shot new-session send-failure signal
     archiveErrors: Flow<Unit> = emptyFlow(), // #556: payload-free one-shot archive send-failure signal
+    changeWorkspaceErrors: Flow<Unit> = emptyFlow(), // #561: payload-free one-shot change-workspace failure signal
     onModalOption: (String) -> Unit = {}, // #452: wired by MainActivity → vm::onModalOption (passes ModalOption.id)
     onModalCancel: () -> Unit = {}, // #452: wired by MainActivity → vm::onModalCancel
     onDropQueued: (Long) -> Unit = {}, // #467: wired by MainActivity → vm::onDropQueued (passes QueuedMessage.id)
@@ -143,6 +144,13 @@ fun ThreadScreen(
     val archiveFailedMessage = stringResource(R.string.archive_failed)
     LaunchedEffect(archiveErrors, snackbarHostState) {
         archiveErrors.collect { snackbarHostState.showSnackbar(archiveFailedMessage) }
+    }
+    // #561: surface a failed workspace change as a transient snackbar. Same payload-free (Unit) one-shot
+    // idiom; the fixed local string keeps the server-supplied RelayErrorException.message out of the
+    // un-secured Activity window the snackbar draws in.
+    val changeWorkspaceFailedMessage = stringResource(R.string.change_workspace_failed)
+    LaunchedEffect(changeWorkspaceErrors, snackbarHostState) {
+        changeWorkspaceErrors.collect { snackbarHostState.showSnackbar(changeWorkspaceFailedMessage) }
     }
     Scaffold(
         modifier = modifier,
