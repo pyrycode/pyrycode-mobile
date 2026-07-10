@@ -52,6 +52,10 @@ fun ArchivedDiscussionsScreen(
                     snackbarHostState.showSnackbar(
                         resources.getString(R.string.restored_snackbar, effect.displayName),
                     )
+                ArchivedDiscussionsEffect.RestoreFailed ->
+                    snackbarHostState.showSnackbar(
+                        resources.getString(R.string.restore_failed),
+                    )
             }
         }
     }
