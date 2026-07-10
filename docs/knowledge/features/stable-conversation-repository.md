@@ -52,13 +52,16 @@ class StableConversationRepository(
 ```
 
 It overrides **all** interface members — the 5 stream-shaped reads (`observeConversations`,
-`observeMessages`, `observeLastMessage`, `observeStall` (#395), **and** `recentWorkspaces`), the 11
+`observeMessages`, `observeLastMessage`, `observeStall` (#395), **and** `recentWorkspaces`), the 12
 suspend one-shots (`createDiscussion`, `promote`, `archive`, `unarchive`, `delete`, `rename`,
-`startNewSession`, `changeWorkspace`, `sendMessage`, `createWorkspaceFolder`, `requestScreenSnapshot`),
-**and** the one capability property `mutationsSupported` (#507) — including every member that ships a
-default body on the interface (`recentWorkspaces`, `createWorkspaceFolder`, `delete`,
-`requestScreenSnapshot`; #375, `observeStall`; #395, **and** `mutationsSupported`; #507), so delegation is
-faithful and nothing silently falls back to a default.
+`startNewSession`, `changeWorkspace`, `sendMessage`, `createWorkspaceFolder`, `requestScreenSnapshot`,
+**and** `setSessionSettings` ([#544](../codebase/544.md), the facade delegation [#543](../codebase/543.md)
+deliberately deferred)), **and** the one capability property `mutationsSupported` (#507) — including every
+member that ships a default body on the interface (`recentWorkspaces`, `createWorkspaceFolder`, `delete`,
+`requestScreenSnapshot`; #375, `observeStall`; #395, `setSessionSettings`; #543, **and**
+`mutationsSupported`; #507), so delegation is faithful and nothing silently falls back to a default.
+`setSessionSettings` follows the plain one-shot snapshot-or-throw shape below, like every other mutator —
+it introduces no new delegation posture.
 
 ## How it works
 
@@ -245,4 +248,8 @@ pass-through. The eight tests map to the ACs, the key one being
   ViewModel observe the live repo's stall state through this facade.
 - Delegated capability: `mutationsSupported` ([#507](../codebase/507.md)) — the fail-safe-deny `false`
   delegation (the third not-connected posture: answer, don't throw); consumed by no composable yet (#508).
+- Delegated one-shot: `setSessionSettings` ([#544](../codebase/544.md)) — the plain snapshot-or-throw
+  delegation [#543](../codebase/543.md) deferred to this facade's first caller, the
+  [Status sheet](status-sheet.md) run-configuration controls; a not-connected change surfaces as this
+  facade's `IllegalStateException`, which the ViewModel catches to revert + snackbar.
 - DI: [Dependency injection](dependency-injection.md).
