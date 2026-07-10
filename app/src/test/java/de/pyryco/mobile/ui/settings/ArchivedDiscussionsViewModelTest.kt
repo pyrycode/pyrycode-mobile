@@ -1,12 +1,15 @@
 package de.pyryco.mobile.ui.settings
 
+import androidx.lifecycle.ViewModelStore
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Session
+import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -24,7 +27,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -297,24 +299,118 @@ class ArchivedDiscussionsViewModelTest {
         }
 
     @Test
-    fun restoreRequested_doesNotEmitEffect_whenUnarchiveThrows() =
+    fun restoreRequested_whenDisconnected_surfacesRestoreFailed() =
         runTest {
-            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
-            val vm = ArchivedDiscussionsViewModel(throwingUnarchiveRepo(source))
-            val collector = launch { vm.state.collect { } }
-            advanceUntilIdle()
+            // AC #1/#6: a disconnected restore (repository `live` path throws IllegalStateException)
+            // must surface RestoreFailed — never a silent no-op. The VM dropped the old Throwable-wide
+            // runCatching, so a leaked non-cancellation throw would escape to the default uncaught
+            // handler; capture it and assert none fired — the only proof the typed catch ran.
+            val uncaught = mutableListOf<Throwable>()
+            val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
+            try {
+                val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+                val vm =
+                    ArchivedDiscussionsViewModel(
+                        throwingUnarchiveRepo(source, IllegalStateException("not connected")),
+                    )
+                val collector = launch { vm.state.collect { } }
+                advanceUntilIdle()
 
-            vm.onEvent(
-                ArchivedDiscussionsEvent.RestoreRequested("disc-7", "old-project-experiments"),
-            )
-            advanceUntilIdle()
+                vm.onEvent(
+                    ArchivedDiscussionsEvent.RestoreRequested("disc-7", "old-project-experiments"),
+                )
+                advanceUntilIdle()
 
-            val emitted =
-                withTimeoutOrNull(100.milliseconds) {
-                    vm.effects.first()
-                }
-            assertNull("no effect should be emitted when unarchive throws, was $emitted", emitted)
-            collector.cancel()
+                val emitted = withTimeoutOrNull(100.milliseconds) { vm.effects.first() }
+                assertEquals(ArchivedDiscussionsEffect.RestoreFailed, emitted)
+                assertTrue(
+                    "the not-connected throw must be caught, not propagated: $uncaught",
+                    uncaught.isEmpty(),
+                )
+                collector.cancel()
+            } finally {
+                Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+            }
+        }
+
+    @Test
+    fun restoreRequested_whenServerError_surfacesRestoreFailed_withoutLeakingMessage() =
+        runTest {
+            // AC #1/#5: unarchive is request/reply, so a server `error` reply surfaces as
+            // RelayErrorException — reachable here. It must surface RestoreFailed, and the
+            // server-supplied message must never reach the surface: the effect is payload-free,
+            // so "leak me" is structurally unable to escape. Capture uncaught throws to prove the
+            // typed catch ran rather than the throw propagating.
+            val uncaught = mutableListOf<Throwable>()
+            val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
+            try {
+                val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+                val vm =
+                    ArchivedDiscussionsViewModel(
+                        throwingUnarchiveRepo(
+                            source,
+                            RelayErrorException(code = "server.error", retryable = false, message = "leak me"),
+                        ),
+                    )
+                val collector = launch { vm.state.collect { } }
+                advanceUntilIdle()
+
+                vm.onEvent(
+                    ArchivedDiscussionsEvent.RestoreRequested("disc-7", "old-project-experiments"),
+                )
+                advanceUntilIdle()
+
+                val emitted = withTimeoutOrNull(100.milliseconds) { vm.effects.first() }
+                assertEquals(ArchivedDiscussionsEffect.RestoreFailed, emitted)
+                assertTrue(
+                    "the server-error throw must be caught, not propagated: $uncaught",
+                    uncaught.isEmpty(),
+                )
+                collector.cancel()
+            } finally {
+                Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+            }
+        }
+
+    @Test
+    fun restoreRequested_scopeCancellationMidRestore_isInert_notMisSurfaced() =
+        runTest {
+            // AC #4: `catch (CancellationException) { throw e }` MUST precede the typed catches —
+            // j.u.c.CancellationException extends ISE on the JVM. An unarchive suspends mid-call and
+            // viewModelScope teardown must neither crash, emit RestoreSucceeded, nor mis-surface the
+            // cancellation as a RestoreFailed.
+            val uncaught = mutableListOf<Throwable>()
+            val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
+            try {
+                val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+                val gate = CompletableDeferred<Unit>() // never completes — the restore stays suspended
+                val entered = CompletableDeferred<Unit>()
+                val vm = ArchivedDiscussionsViewModel(GatingUnarchiveRepo(source, gate, entered))
+                val effects = mutableListOf<ArchivedDiscussionsEffect>()
+                val effectCollector = launch { vm.effects.collect { effects += it } }
+                val store = ViewModelStore().apply { put("vm", vm) }
+
+                vm.onEvent(
+                    ArchivedDiscussionsEvent.RestoreRequested("disc-7", "old-project-experiments"),
+                )
+                advanceUntilIdle()
+                assertTrue("the restore must be in-flight", entered.isCompleted)
+
+                store.clear() // cancels viewModelScope → the suspended restore throws CancellationException
+                advanceUntilIdle()
+
+                assertTrue("cancellation must not surface any effect: $effects", effects.isEmpty())
+                assertTrue(
+                    "cancellation must propagate, not reach the uncaught handler: $uncaught",
+                    uncaught.isEmpty(),
+                )
+                effectCollector.cancel()
+            } finally {
+                Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+            }
         }
 
     @Test
@@ -493,7 +589,10 @@ class ArchivedDiscussionsViewModelTest {
 
     private fun recordingRepo(source: MutableSharedFlow<List<Conversation>>): RecordingRepo = RecordingRepo(source)
 
-    private fun throwingUnarchiveRepo(source: MutableSharedFlow<List<Conversation>>): ConversationRepository =
+    private fun throwingUnarchiveRepo(
+        source: MutableSharedFlow<List<Conversation>>,
+        error: Throwable,
+    ): ConversationRepository =
         object : ConversationRepository {
             override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = source
 
@@ -511,7 +610,7 @@ class ArchivedDiscussionsViewModelTest {
 
             override suspend fun archive(conversationId: String): Unit = TODO("not used")
 
-            override suspend fun unarchive(conversationId: String): Unit = throw RuntimeException("boom")
+            override suspend fun unarchive(conversationId: String): Unit = throw error
 
             override suspend fun rename(
                 conversationId: String,
@@ -533,6 +632,53 @@ class ArchivedDiscussionsViewModelTest {
                 text: String,
             ): Message = TODO("not used")
         }
+
+    private class GatingUnarchiveRepo(
+        private val source: MutableSharedFlow<List<Conversation>>,
+        private val gate: CompletableDeferred<Unit>,
+        private val entered: CompletableDeferred<Unit>,
+    ) : ConversationRepository {
+        override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = source
+
+        override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = TODO("not used")
+
+        override fun observeLastMessage(conversationId: String): Flow<Message?> = TODO("not used")
+
+        override suspend fun createDiscussion(workspace: String?): Conversation = TODO("not used")
+
+        override suspend fun promote(
+            conversationId: String,
+            name: String,
+            workspace: String?,
+        ): Conversation = TODO("not used")
+
+        override suspend fun archive(conversationId: String): Unit = TODO("not used")
+
+        override suspend fun unarchive(conversationId: String) {
+            entered.complete(Unit)
+            gate.await() // suspends until viewModelScope cancellation throws CancellationException
+        }
+
+        override suspend fun rename(
+            conversationId: String,
+            name: String,
+        ): Conversation = TODO("not used")
+
+        override suspend fun startNewSession(
+            conversationId: String,
+            workspace: String?,
+        ): Session = TODO("not used")
+
+        override suspend fun changeWorkspace(
+            conversationId: String,
+            workspace: String,
+        ): Session = TODO("not used")
+
+        override suspend fun sendMessage(
+            conversationId: String,
+            text: String,
+        ): Message = TODO("not used")
+    }
 
     private fun sampleArchivedDiscussion(id: String): Conversation =
         Conversation(

@@ -3,8 +3,10 @@ package de.pyryco.mobile.ui.settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -49,6 +51,8 @@ sealed interface ArchivedDiscussionsEffect {
     data class RestoreSucceeded(
         val displayName: String,
     ) : ArchivedDiscussionsEffect
+
+    data object RestoreFailed : ArchivedDiscussionsEffect
 }
 
 class ArchivedDiscussionsViewModel(
@@ -88,15 +92,26 @@ class ArchivedDiscussionsViewModel(
         when (event) {
             is ArchivedDiscussionsEvent.RestoreRequested ->
                 viewModelScope.launch {
-                    // Swallow failures: the AC scopes a snackbar only on success; a failed
-                    // unarchive yields no UI surface in this slice. Re-throwing would crash
-                    // viewModelScope's child via the default uncaught handler.
-                    runCatching { repository.unarchive(event.conversationId) }
-                        .onSuccess {
-                            _effects.send(
-                                ArchivedDiscussionsEffect.RestoreSucceeded(event.displayName),
-                            )
-                        }
+                    // Success is list-driven (observeConversations re-emits without this
+                    // conversation); on failure surface a fixed local string, never a silent
+                    // no-op. A server `error` reply is reachable (unarchive is request/reply) as
+                    // RelayErrorException; not-connected is IllegalStateException from the `live`
+                    // path. Both map to the payload-free RestoreFailed — the server-supplied
+                    // message is never read. The CancellationException rethrow MUST precede the
+                    // typed catches: j.u.c.CancellationException extends ISE on the JVM, so teardown
+                    // mid-restore stays inert and is never mis-surfaced as a failure.
+                    try {
+                        repository.unarchive(event.conversationId)
+                        _effects.send(
+                            ArchivedDiscussionsEffect.RestoreSucceeded(event.displayName),
+                        )
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: RelayErrorException) {
+                        _effects.send(ArchivedDiscussionsEffect.RestoreFailed)
+                    } catch (e: IllegalStateException) {
+                        _effects.send(ArchivedDiscussionsEffect.RestoreFailed)
+                    }
                 }
             is ArchivedDiscussionsEvent.TabSelected ->
                 selectedTab.value = event.tab
