@@ -8,6 +8,7 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.network.ArchiveConversationPayloadDto
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.BackfillSincePayloadDto
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
@@ -1376,11 +1377,48 @@ class RemoteConversationRepository(
     /** `false`: the relay has no v2 wire message for the throwing mutation methods below yet (#507). */
     override val mutationsSupported: Boolean = false
 
-    override suspend fun archive(conversationId: String): Unit =
-        throw UnsupportedOperationException("archive: no v2 wire message defined (follow-up specs the wire contract)")
+    override suspend fun archive(conversationId: String): Unit = sendArchiveToggle(conversationId, TYPE_ARCHIVE_CONVERSATION)
 
-    override suspend fun unarchive(conversationId: String): Unit =
-        throw UnsupportedOperationException("unarchive: no v2 wire message defined (follow-up specs the wire contract)")
+    override suspend fun unarchive(conversationId: String): Unit = sendArchiveToggle(conversationId, TYPE_UNARCHIVE_CONVERSATION)
+
+    /**
+     * Archive or restore [conversationId] over v2 [type] (`archive_conversation` /
+     * `unarchive_conversation`, #549, server pyrycode#881) — the shared body both toggle overrides
+     * delegate to (mirroring the server's one parameterized handler registered under both verbs). Encodes
+     * the id-only [ArchiveConversationPayloadDto] request, sends it, and awaits its correlated
+     * `conversation_updated` reply — the **typed** bare-conversation payload now carrying `is_archived`
+     * (pyrycode#881). Decodes the reply through the #318 [ConversationResponseDto] boundary, so a
+     * malformed reply throws before any state mutation, then **confirmed-upserts** the returned
+     * [Conversation] into [projection] — only after the reply decodes — so [observeConversations]
+     * re-emits with the conversation in its new tier (leaving/entering [ConversationFilter.Archived]).
+     *
+     * A direct analogue of [rename] (encode → [sendAndAwaitReply] → typed-decode → fold) minus the
+     * return value: the [ConversationRepository] contract returns [Unit], so the decoded conversation is
+     * folded but not returned. Idempotent: pyrycode#881 replies `conversation_updated` with the unchanged
+     * state on a re-archive/re-unarchive, and [upsertConversation] replaces the entry with an equal value
+     * (a benign re-emit). Throws [IllegalArgumentException] for an unknown conversation (server
+     * `conversation.not_found`, mirroring the fake's type), [RelayErrorException] for any other server
+     * `error`, [IllegalStateException] when the session is not connected, and the #318 decode exception
+     * for a malformed reply — none of which mutate [projection] (AC #3, #4). Adds no logging (the id and
+     * reply stay off the log, the `security-sensitive` discipline).
+     */
+    private suspend fun sendArchiveToggle(
+        conversationId: String,
+        type: String,
+    ) {
+        val request =
+            Envelope(
+                id = requestId.incrementAndGet(),
+                type = type,
+                ts = Clock.System.now().toString(),
+                payload = MobileJson.encodeToJsonElement(ArchiveConversationPayloadDto(conversationId = conversationId)),
+            )
+        // Throws on a server `error` / not-Open session; the decode + confirmed upsert below are
+        // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
+        val reply = sendAndAwaitReply(request)
+        val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
+        upsertConversation(conversation)
+    }
 
     /**
      * Rename an existing conversation (channel or discussion) to [name] over v2 `rename_conversation`
@@ -1555,6 +1593,12 @@ class RemoteConversationRepository(
 
         /** Request: rename an existing conversation (#530, #820 `RenameConversationPayload`). Reply is `conversation_updated`. */
         const val TYPE_RENAME_CONVERSATION = "rename_conversation"
+
+        /** Request: archive an existing conversation (#549, #881 `ArchiveConversationPayload`). Reply is `conversation_updated`. */
+        const val TYPE_ARCHIVE_CONVERSATION = "archive_conversation"
+
+        /** Request: restore an archived conversation (#549, #881, shares `ArchiveConversationPayload`). Reply is `conversation_updated`. */
+        const val TYPE_UNARCHIVE_CONVERSATION = "unarchive_conversation"
 
         /** Request: apply model/effort/YOLO to a running session (#543, #844 `SetSessionSettingsPayload`). */
         const val TYPE_SET_SESSION_SETTINGS = "set_session_settings"
