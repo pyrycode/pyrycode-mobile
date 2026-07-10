@@ -4,6 +4,7 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.SetSessionSettingsPayloadDto
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
@@ -911,6 +912,21 @@ class FakeConversationRepositoryTest {
             assertTrue(
                 "restored discussion must leave Archived",
                 repo.observeConversations(ConversationFilter.Archived).first().none { it.id == "seed-discussion-a" },
+            )
+        }
+
+    // AC #4: the fake records each setSessionSettings request verbatim (four fields, incl. an omitted
+    // effort as null) so #544's ViewModel tests can assert send-on-change; the call returns normally.
+    @Test
+    fun setSessionSettings_recordsRequestVerbatim() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+
+            repo.setSessionSettings("s1", model = "opus", effort = null, yolo = true)
+
+            assertEquals(
+                listOf(SetSessionSettingsPayloadDto("s1", model = "opus", effort = null, yolo = true)),
+                repo.setSessionSettingsCalls,
             )
         }
 

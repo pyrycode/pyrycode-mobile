@@ -33,7 +33,9 @@ import de.pyryco.mobile.data.network.ReplayCursor
 import de.pyryco.mobile.data.network.RequestSnapshotPayloadDto
 import de.pyryco.mobile.data.network.ScreenSnapshotPayloadDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
+import de.pyryco.mobile.data.network.SessionSettingsUpdatedPayloadDto
 import de.pyryco.mobile.data.network.SessionTransitionPayloadDto
+import de.pyryco.mobile.data.network.SetSessionSettingsPayloadDto
 import de.pyryco.mobile.data.network.StallPayloadDto
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
 import de.pyryco.mobile.data.network.ToolUsePayloadDto
@@ -329,17 +331,19 @@ class RemoteConversationRepository(
                     }
                 appendMessages(rows)
             }
-            TYPE_ACK, TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_UPDATED, TYPE_SCREEN_SNAPSHOT ->
+            TYPE_ACK, TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_UPDATED, TYPE_SCREEN_SNAPSHOT, TYPE_SESSION_SETTINGS_UPDATED ->
                 // Success reply to a correlated request, handed verbatim to the waiter. An `ack`
                 // (#346) carries the empty `{}` the bare-ack waiter ignores; a `conversation_created`
                 // (#347) / `conversation_updated` (#348) carries the bare conversation object the
                 // mutation ([createDiscussion] / [promote]) decodes for its typed return; a
                 // `screen_snapshot` (#375) carries the rendered-screen payload [requestScreenSnapshot]
-                // decodes for its `text`. An `inReplyTo` matching no pending entry (or null) is a
-                // no-op: `list_conversations` / `backfill_since` draw no reply here; `screen_snapshot`
-                // is always a correlated reply (no unsolicited push), so an unmatched one is harmless;
-                // `conversation_updated` is also the server's unsolicited broadcast on change (no
-                // `inReplyTo`), which must stay a harmless no-op (the authoritative `conversations`
+                // decodes for its `text`; a `session_settings_updated` (#543) carries the bare
+                // `{session_id}` ack the [setSessionSettings] waiter decodes for reply-shape validation.
+                // An `inReplyTo` matching no pending entry (or null) is a no-op: `list_conversations` /
+                // `backfill_since` draw no reply here; `screen_snapshot` / `session_settings_updated` are
+                // always correlated replies (the daemon never broadcasts them), so an unmatched one is
+                // harmless; `conversation_updated` is also the server's unsolicited broadcast on change
+                // (no `inReplyTo`), which must stay a harmless no-op (the authoritative `conversations`
                 // snapshot drives an unsolicited list refresh, not this delta); and `complete` is
                 // idempotent so a duplicate reply is harmless.
                 envelope.inReplyTo?.let { id -> pendingRequests[id]?.complete(envelope.payload) }
@@ -1420,6 +1424,51 @@ class RemoteConversationRepository(
     }
 
     /**
+     * Apply the operator's run-configuration change — [model] / [effort] / [yolo] — to the running
+     * session [sessionId] over v2 `set_session_settings` (#543, server #844/#845). A direct analogue of
+     * [rename] (encode → [sendAndAwaitReply] → typed-decode) **minus the state fold**: session settings
+     * are ViewModel state (#544), not a projection in this repo, so there is nothing to upsert.
+     *
+     * Encodes [SetSessionSettingsPayloadDto] under the presence contract — a `null` field is **omitted**
+     * ([MobileJson]'s `explicitNulls = false`), meaning "leave unchanged"; a non-null value (including
+     * `false` / `""`) is always sent — then awaits the correlated `session_settings_updated` ack. The
+     * ack carries only `{session_id}` (an echo of the input, not the applied settings), so it is decoded
+     * through the [SessionSettingsUpdatedPayloadDto] boundary **only** to validate the reply shape
+     * (#318 posture — a malformed ack throws here); the decoded value is discarded. Returns [Unit] —
+     * there is nothing to return, and no projection is touched.
+     *
+     * [sessionId] / [model] / [effort] / [yolo] are forwarded **verbatim** (as [rename] forwards the
+     * dialog's name); the daemon re-validates `model` / `effort` server-side and gates on the
+     * interactive capability. Throws [IllegalStateException] when the session is not connected, and —
+     * unlike the conversation-scoped verbs — has **no** [IllegalArgumentException] path: the
+     * unhosted-session code is `session.not_found` (not `conversation.not_found`), so every server
+     * `error` maps to a [RelayErrorException] carrying its `code` (`session.not_found` /
+     * `protocol.malformed` / `server.binary_offline`). A malformed ack throws the #318 decode exception.
+     * None of these mutate any projection.
+     */
+    override suspend fun setSessionSettings(
+        sessionId: String,
+        model: String?,
+        effort: String?,
+        yolo: Boolean?,
+    ) {
+        val request =
+            Envelope(
+                id = requestId.incrementAndGet(),
+                type = TYPE_SET_SESSION_SETTINGS,
+                ts = Clock.System.now().toString(),
+                payload =
+                    MobileJson.encodeToJsonElement(
+                        SetSessionSettingsPayloadDto(sessionId = sessionId, model = model, effort = effort, yolo = yolo),
+                    ),
+            )
+        // Throws on a server `error` / not-Open session before the decode below. The reply is the bare
+        // {session_id} ack; decode validates its shape (a malformed ack throws) — the result is discarded.
+        val reply = sendAndAwaitReply(request)
+        MobileJson.decodeFromJsonElement<SessionSettingsUpdatedPayloadDto>(reply)
+    }
+
+    /**
      * Send the bare v2 `new_session` control frame (#539, pyrycode#831) — the wire half of pressing
      * "New session" (the `/clear` equivalent). A line-for-line mirror of [interrupt]: **fire-and-forget**,
      * so the daemon sends no reply (no ack/error/broadcast) and this uses plain [SessionPump.send], never
@@ -1506,6 +1555,12 @@ class RemoteConversationRepository(
 
         /** Request: rename an existing conversation (#530, #820 `RenameConversationPayload`). Reply is `conversation_updated`. */
         const val TYPE_RENAME_CONVERSATION = "rename_conversation"
+
+        /** Request: apply model/effort/YOLO to a running session (#543, #844 `SetSessionSettingsPayload`). */
+        const val TYPE_SET_SESSION_SETTINGS = "set_session_settings"
+
+        /** Correlated ack for [TYPE_SET_SESSION_SETTINGS] carrying only `{session_id}` (#543, #844). */
+        const val TYPE_SESSION_SETTINGS_UPDATED = "session_settings_updated"
 
         /**
          * Correlated success reply carrying the bare promoted conversation object (#348, #274) — also

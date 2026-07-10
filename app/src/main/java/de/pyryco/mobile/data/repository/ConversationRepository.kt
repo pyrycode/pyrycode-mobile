@@ -102,6 +102,33 @@ interface ConversationRepository {
         name: String,
     ): Conversation
 
+    /**
+     * Applies the operator's run-configuration change — model / effort / YOLO — to the running
+     * session [sessionId], sending a `set_session_settings` request and returning only after the
+     * daemon's ack (#543). **Takes a session id, not a conversation id** — this is the first
+     * session-scoped mutation; consumers source it from [Conversation.currentSessionId].
+     *
+     * Each setting carries a **presence contract**: a `null` argument means "leave unchanged" and is
+     * omitted from the request; a non-null value (including `false` / `""`) is sent. So a single-control
+     * change carries only that one field — `setSessionSettings(id, model = "opus")` sends model alone.
+     *
+     * Returns [Unit]: the ack echoes only the input `session_id`, so success is a normal return and
+     * failure a thrown exception the caller catches. Throws [IllegalStateException] when the session is
+     * not connected, and [de.pyryco.mobile.data.network.RelayErrorException] for any server error
+     * (e.g. `session.not_found` for an unhosted session, `protocol.malformed` for an invalid
+     * model/effort the daemon re-validates) — distinguishable by its `code`.
+     *
+     * Default throws — implementations that do not support settings inherit it, so the inline test
+     * doubles need no override (the same cascade-avoidance as [delete] / [requestScreenSnapshot]). The
+     * Fake and Remote override it.
+     */
+    suspend fun setSessionSettings(
+        sessionId: String,
+        model: String? = null,
+        effort: String? = null,
+        yolo: Boolean? = null,
+    ): Unit = error("setSessionSettings is not implemented for this ConversationRepository")
+
     suspend fun startNewSession(
         conversationId: String,
         workspace: String? = null,

@@ -634,6 +634,60 @@ The `upsertConversation` upsert **replaces the existing conversation entry in pl
 in, and the thread top bar's `displayName` (derived from the same projection) re-emits too — both AC
 surfaces from one fold, no ViewModel change.
 
+## `setSessionSettings(sessionId, model, effort, yolo)` — the fifth mutation, first session-scoped ([#543](../codebase/543.md))
+
+Applies the operator's model / effort / YOLO change to a **running session** over v2
+`set_session_settings`, and returns only after the daemon's ack. [#543](../codebase/543.md) is `rename`
+([#530](../codebase/530.md)) **minus the state fold**: session settings live in the ViewModel (#544's
+scope), not this repository's projection, so there is nothing to `upsertConversation`. It is also the
+**first session-scoped mutation** — every prior one (`sendMessage`, `createDiscussion`, `promote`,
+`rename`, `startNewSession`) keys off `conversationId`; this one takes `sessionId`, sourced by #544 from
+`Conversation.currentSessionId`.
+
+```kotlin
+override suspend fun setSessionSettings(
+    sessionId: String, model: String?, effort: String?, yolo: Boolean?,
+) {
+    val request = Envelope(
+        id = requestId.incrementAndGet(),
+        type = TYPE_SET_SESSION_SETTINGS, ts = Clock.System.now().toString(),
+        payload = MobileJson.encodeToJsonElement(
+            SetSessionSettingsPayloadDto(sessionId = sessionId, model = model, effort = effort, yolo = yolo),
+        ),
+    )
+    val reply = sendAndAwaitReply(request)   // throws on server `error` / not-Open before any decode
+    MobileJson.decodeFromJsonElement<SessionSettingsUpdatedPayloadDto>(reply)  // validation only, discarded
+}
+```
+
+- **Presence contract, not a full settings object.** `model` / `effort`: `String? = null`,
+  `yolo: Boolean? = null` — under `MobileJson`'s `explicitNulls = false`, a `null` argument is **omitted**
+  from the wire payload ("leave unchanged"), while a non-null value — including `false` / `""` — is
+  **always** sent. This mirrors the server struct's pointer + `omitempty` fields exactly (an omitted
+  `yolo` can never masquerade as a sent `false`), so `setSessionSettings(id, model = "opus")` sends only
+  `{"session_id": "…", "model": "opus"}` — a two-key payload, not three.
+- **No fold — the structural delta from every prior #314/#530 mutation.** The reply,
+  `session_settings_updated`, carries only `{session_id}` (an echo of the input, not the applied
+  settings) — there is nothing new to project. The decode through `SessionSettingsUpdatedPayloadDto`
+  exists purely to **validate the reply shape** (a malformed ack throws the #318-posture decode
+  exception before returning); the decoded value is discarded and `setSessionSettings` returns `Unit`.
+- **The reply type is new, not reused.** Unlike `rename`/`promote` (which both ride the pre-existing
+  `conversation_updated` arm), `session_settings_updated` is a **new** verb added to the same
+  reply-completion `when` arm (`TYPE_ACK, TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_UPDATED,
+  TYPE_SCREEN_SNAPSHOT, TYPE_SESSION_SETTINGS_UPDATED -> …`). Correlation still rides `inReplyTo`;
+  `complete` is still idempotent; an unmatched `inReplyTo` is still a harmless no-op (the daemon never
+  broadcasts this reply).
+- **No IAE-crash path — simpler error posture than `rename`.** The unhosted-session error code is
+  `session.not_found`, **not** `conversation.not_found`, so `mapError` routes it through the else-branch
+  to a swallowable `RelayErrorException` carrying `.code`, never `IllegalArgumentException`. Every server
+  error this verb can produce (`session.not_found`, `protocol.malformed` for an invalid model/effort the
+  daemon re-validates, `server.binary_offline`) is a `RelayErrorException`; not-connected is
+  `IllegalStateException` via `sendAndAwaitReply`, same as every sibling verb.
+- **`model` / `effort` vocabulary is the caller's concern, not this method's.** The strings are forwarded
+  **verbatim** (as `rename` forwards the dialog's name); the daemon re-validates
+  (`validModel`/`validEffort`) and rejects an invalid value with `protocol.malformed` before persisting.
+  #544 maps its `Model`/`Effort` enums to wire strings before calling.
+
 ## `registerPushToken(token)` — the device-concern push registration (#359)
 
 Registers the phone's FCM push token with the paired daemon over v2 `register_push_token`, so the daemon
@@ -1248,7 +1302,7 @@ private fun newSessionFrame(): Envelope = Envelope(
 
 Every method other than the three live read paths and the now-live `sendMessage` (#346) /
 `createDiscussion` (#347) / `promote` (#348) / `rename` ([#530](../codebase/530.md)) /
-`startNewSession` ([#539](../codebase/539.md)) throws `UnsupportedOperationException` with a message
+`startNewSession` ([#539](../codebase/539.md)) / `setSessionSettings` ([#543](../codebase/543.md)) throws `UnsupportedOperationException` with a message
 naming the owning follow-up, so the class compiles the full interface today and each slice replaces only
 the methods it owns:
 
@@ -1336,6 +1390,10 @@ these actions rather than let a user invoke a method that throws. See [`../codeb
 | `promote` — any other server `error` (#348) | `RelayErrorException(code, retryable, message)` via `mapError`; no projection mutated |
 | `promote` — `pump.send` returns `false` (not `Open`, #348) | `IllegalStateException` from `sendAndAwaitReply`'s `check`; no request awaited, no projection mutated |
 | `promote` — malformed `conversation_updated` reply (#348) | the #318 decode boundary's `SerializationException` / `IllegalArgumentException`, propagated to the caller; decode precedes `upsertConversation`, so **no projection mutated** (no partial promote) |
+| `setSessionSettings` — server `error` `session.not_found` (unhosted session, #543) | `RelayErrorException(code = "session.not_found", …)` via `mapError`'s else-branch — **not** `IllegalArgumentException` (unlike `conversation.not_found`; there is no IAE-crash path for this verb) |
+| `setSessionSettings` — server `error` `protocol.malformed` (invalid model/effort) / `server.binary_offline` (#543) | `RelayErrorException(code, retryable, message)` via `mapError`; no projection mutated (there is none) |
+| `setSessionSettings` — `pump.send` returns `false` (not `Open`, #543) | `IllegalStateException` from `sendAndAwaitReply`'s `check`; no request awaited |
+| `setSessionSettings` — malformed `session_settings_updated` reply (#543) | the `SessionSettingsUpdatedPayloadDto` decode's `SerializationException` (⊂ `IllegalArgumentException`), propagated to the caller; the decode is validation-only (result discarded either way) |
 | `requestScreenSnapshot` — server `error` `conversation.not_found` / any other / not-`Open` send / malformed `screen_snapshot` reply (#375) | `IllegalArgumentException` / `RelayErrorException` / `IllegalStateException` respectively via the shared `mapError` + `sendAndAwaitReply`'s `check`; a malformed reply throws the #374 `SerializationException` (⊂ `IllegalArgumentException`) **caller-side** after `sendAndAwaitReply` returns. A pure read — **nothing mutated** on any path; nothing logged |
 | `dropQueuedMessage` — server `error` `conversation.not_found` / any other (a stale / already-drained id, e.g. `queue.stale_id`) / not-`Open` send (#466) | `IllegalArgumentException` / `RelayErrorException(code, retryable)` / `IllegalStateException` respectively via the shared `mapError` + `sendAndAwaitReply`'s `check`. The empty `{}` ack carries nothing to decode and is ignored. A pure send — **no projection mutated** on any path (the backlog updates only via a later `queue_state`); nothing to roll back; nothing logged |
 | `interrupt` — not-`Open` send (`pump.send` → `false`, #458) | `IllegalStateException` from the `check` — **no reply awaited** (fire-and-forget, plain `pump.send` not `sendAndAwaitReply`), so it cannot hang. No projection mutated, nothing to roll back, nothing logged. The caller (`ThreadViewModel.sendInterrupt`) swallows it inert. No server-`error` path exists (the daemon sends no reply) |
@@ -1436,14 +1494,17 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   [`../codebase/347.md`](../codebase/347.md) (`createDiscussion` + the `upsertConversation` confirmed-insert) ·
   [`../codebase/348.md`](../codebase/348.md) (`promote` + the `cwd`-resolution decision) ·
   [`../codebase/359.md`](../codebase/359.md) (`registerPushToken` — the first non-interface device-concern
-  method + the deferred `deviceName` handoff) — files/line refs, patterns, lessons, verification.
+  method + the deferred `deviceName` handoff) ·
+  [`../codebase/543.md`](../codebase/543.md) (`setSessionSettings` — the first session-scoped mutation,
+  no state fold, new reply-type demux arm) — files/line refs, patterns, lessons, verification.
 - Specs: `docs/specs/architecture/312-remote-conversation-repository-observe-list.md` ·
   `docs/specs/architecture/329-remote-conversation-repository-observe-last-message.md` ·
   `docs/specs/architecture/313-remote-observe-messages.md` ·
   `docs/specs/architecture/346-remote-send-message.md` ·
   `docs/specs/architecture/347-remote-create-discussion.md` ·
   `docs/specs/architecture/348-remote-promote.md` ·
-  `docs/specs/architecture/359-register-push-token-wire-sender.md`.
+  `docs/specs/architecture/359-register-push-token-wire-sender.md` ·
+  `docs/specs/architecture/543-wire-session-settings.md`.
 - Siblings (extend the same class + `onInbound` `when`): [#329](../codebase/329.md)
   (`observeLastMessage`, **landed** — consumes [#317](../codebase/317.md), rides the live `message`
   stream), [#313](../codebase/313.md) (`observeMessages`, **landed** — consumes #317 + adds the
@@ -1477,7 +1538,13 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   **`resync` arm**, **landed** — `reset()`s the [`ReplayCursor`](replay-cursor.md) #412 records + #416
   advertises and `tryEmit`s a control-derived [`LiveSessionEvent.ReplayGap`](live-session-events.md) on
   the existing `liveSessionEvents`; a payload-less inline marker read structurally, no DTO — see
-  [the resync arm](#the-resync-arm--reset-the-cursor--surface-the-gap-417)).
+  [the resync arm](#the-resync-arm--reset-the-cursor--surface-the-gap-417)), [#543](../codebase/543.md)
+  (`setSessionSettings`, **landed** — the sixth mutation and the **first session-scoped** one (`sessionId`,
+  not `conversationId`); reuses `sendAndAwaitReply` + `mapError` verbatim, adds a **new** reply-type demux
+  arm (`session_settings_updated`, not a reused one like `rename`/`promote`), and is the first mutation
+  with **no state fold** since `registerPushToken` — its ack carries only an echoed `session_id`, nothing
+  to project. Data-layer slice of the #536 split; #544 wires the Status-sheet controls to it and adds the
+  `StableConversationRepository` facade delegation).
 - Connection wiring: [`RelayRepositoryCoordinator`](relay-repository-coordinator.md)
   ([#351](../codebase/351.md), **landed**) — constructs this repository per live connection against the
   pump + a child scope, made `NoiseSessionPump : ManagedSessionPump : SessionPump`, and publishes the

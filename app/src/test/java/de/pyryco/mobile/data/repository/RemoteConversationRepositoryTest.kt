@@ -1480,6 +1480,185 @@ class RemoteConversationRepositoryTest {
             assertEquals("Channel", all.last().single { it.id == "chan" }.name)
         }
 
+    // ---- setSessionSettings (#543): set_session_settings request → session_settings_updated/error --
+
+    // AC #2, #1: a single-control (model) change sends exactly {session_id, model} — effort/yolo are
+    // ABSENT, proving null = omitted = "leave unchanged" (the presence contract).
+    @Test
+    fun setSessionSettings_modelOnly_sendsOnlyModelField() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val settings = startSetSessionSettings(repo, "s1", model = "opus")
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "set_session_settings" }
+            assertEquals(
+                MobileJson.parseToJsonElement("""{"session_id":"s1","model":"opus"}"""),
+                sent.payload,
+            )
+
+            // Unblock the launched coroutine so backgroundScope completes cleanly.
+            pump.push(sessionSettingsUpdatedEnvelope(inReplyTo = sent.id, sessionId = "s1"))
+            runCurrent()
+        }
+
+    // AC #2, #1: a single-control (effort) change sends exactly {session_id, effort}.
+    @Test
+    fun setSessionSettings_effortOnly_sendsOnlyEffortField() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            startSetSessionSettings(repo, "s1", effort = "high")
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "set_session_settings" }
+            assertEquals(
+                MobileJson.parseToJsonElement("""{"session_id":"s1","effort":"high"}"""),
+                sent.payload,
+            )
+            pump.push(sessionSettingsUpdatedEnvelope(inReplyTo = sent.id, sessionId = "s1"))
+            runCurrent()
+        }
+
+    // AC #1: a non-null yolo=false IS sent (not omitted), so the daemon can distinguish "set false"
+    // from "leave unchanged" — the crux of the presence contract.
+    @Test
+    fun setSessionSettings_yoloFalse_isSentNotOmitted() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            startSetSessionSettings(repo, "s1", yolo = false)
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "set_session_settings" }
+            assertEquals(
+                MobileJson.parseToJsonElement("""{"session_id":"s1","yolo":false}"""),
+                sent.payload,
+            )
+            pump.push(sessionSettingsUpdatedEnvelope(inReplyTo = sent.id, sessionId = "s1"))
+            runCurrent()
+        }
+
+    // AC #1: a combined change carries all four keys.
+    @Test
+    fun setSessionSettings_combinedFields_sendsAllFields() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            startSetSessionSettings(repo, "s1", model = "opus", effort = "high", yolo = true)
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "set_session_settings" }
+            assertEquals(
+                MobileJson.parseToJsonElement("""{"session_id":"s1","model":"opus","effort":"high","yolo":true}"""),
+                sent.payload,
+            )
+            pump.push(sessionSettingsUpdatedEnvelope(inReplyTo = sent.id, sessionId = "s1"))
+            runCurrent()
+        }
+
+    // AC #2: the correlated session_settings_updated ack completes the call (proves the demux arm
+    // routes the new reply type to the awaiting waiter).
+    @Test
+    fun setSessionSettings_onAck_completesSuccessfully() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val settings = startSetSessionSettings(repo, "s1", model = "opus")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "set_session_settings" }.id
+            pump.push(sessionSettingsUpdatedEnvelope(inReplyTo = sentId, sessionId = "s1"))
+            runCurrent()
+
+            assertTrue("expected success, got ${settings().exceptionOrNull()}", settings().isSuccess)
+        }
+
+    // A malformed session_settings_updated ack (missing required session_id) throws the #318 decode
+    // exception through the typed reply boundary.
+    @Test
+    fun setSessionSettings_onMalformedAck_throwsDecodeException() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val settings = startSetSessionSettings(repo, "s1", model = "opus")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "set_session_settings" }.id
+            // Payload omits the required `session_id` → SessionSettingsUpdatedPayloadDto decode throws.
+            pump.push(
+                Envelope(
+                    id = 99L,
+                    type = "session_settings_updated",
+                    ts = TS,
+                    payload = MobileJson.parseToJsonElement("""{}"""),
+                    inReplyTo = sentId,
+                ),
+            )
+            runCurrent()
+
+            // SerializationException is an IllegalArgumentException subtype.
+            assertTrue(settings().exceptionOrNull() is IllegalArgumentException)
+        }
+
+    // AC #3: an unhosted session (session.not_found) surfaces as RelayErrorException carrying the code
+    // — and, unlike the conversation-scoped verbs, NOT an IllegalArgumentException (no IAE-crash path).
+    @Test
+    fun setSessionSettings_onSessionNotFound_throwsRelayErrorWithCode() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val settings = startSetSessionSettings(repo, "s1", model = "opus")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "set_session_settings" }.id
+            pump.push(errorEnvelope(sentId, code = "session.not_found"))
+            runCurrent()
+
+            val ex = settings().exceptionOrNull()
+            assertTrue("expected RelayErrorException, got $ex", ex is RelayErrorException)
+            // Asserted before the `as` cast below smart-casts `ex` (which would make this check dead).
+            assertFalse("session.not_found must not be an IllegalArgumentException", ex is IllegalArgumentException)
+            assertEquals("session.not_found", (ex as RelayErrorException).code)
+        }
+
+    // AC #3: an invalid model/effort (protocol.malformed) surfaces as RelayErrorException carrying code.
+    @Test
+    fun setSessionSettings_onProtocolMalformed_throwsRelayErrorWithCode() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val settings = startSetSessionSettings(repo, "s1", model = "not-a-model")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "set_session_settings" }.id
+            pump.push(errorEnvelope(sentId, code = "protocol.malformed"))
+            runCurrent()
+
+            val ex = settings().exceptionOrNull()
+            assertTrue("expected RelayErrorException, got $ex", ex is RelayErrorException)
+            assertEquals("protocol.malformed", (ex as RelayErrorException).code)
+        }
+
+    // AC #3: the not-connected path (pump.send returns false) throws IllegalStateException; no reply.
+    @Test
+    fun setSessionSettings_whenSendReturnsFalse_throwsIllegalState() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val settings = startSetSessionSettings(repo, "s1", model = "opus")
+            runCurrent()
+
+            assertTrue(settings().exceptionOrNull() is IllegalStateException)
+        }
+
     // ---- registerPushToken (#359): register_push_token request → ack/error correlation ---------
 
     // AC #1, #2: the sent envelope matches the register_push_token wire contract
@@ -3977,6 +4156,24 @@ class RemoteConversationRepositoryTest {
     }
 
     /**
+     * Launch [RemoteConversationRepository.setSessionSettings] on [backgroundScope] (it suspends
+     * awaiting the session_settings_updated/error reply) and return a getter for its eventual [Result].
+     * Read the result only after the correlated reply has been pushed and [runCurrent] has drained the
+     * cascade (the not-Open path completes synchronously, before any reply).
+     */
+    private fun TestScope.startSetSessionSettings(
+        repo: RemoteConversationRepository,
+        sessionId: String,
+        model: String? = null,
+        effort: String? = null,
+        yolo: Boolean? = null,
+    ): () -> Result<Unit> {
+        var outcome: Result<Unit>? = null
+        backgroundScope.launch { outcome = runCatching { repo.setSessionSettings(sessionId, model, effort, yolo) } }
+        return { requireNotNull(outcome) { "setSessionSettings has not completed" } }
+    }
+
+    /**
      * Launch [RemoteConversationRepository.registerPushToken] on [backgroundScope] (it suspends
      * awaiting the ack/error reply) and return a getter for its eventual [Result]. Read the result
      * only after the correlated reply has been pushed and [runCurrent] has drained the cascade (the
@@ -4080,6 +4277,20 @@ class RemoteConversationRepositoryTest {
             inReplyTo = inReplyTo,
         )
     }
+
+    /** A correlated `session_settings_updated` ack carrying only `{session_id}` (#543). */
+    private fun sessionSettingsUpdatedEnvelope(
+        inReplyTo: Long,
+        sessionId: String,
+        id: Long = 99L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "session_settings_updated",
+            ts = TS,
+            payload = MobileJson.parseToJsonElement("""{"session_id":"$sessionId"}"""),
+            inReplyTo = inReplyTo,
+        )
 
     private fun ackEnvelope(
         inReplyTo: Long,
