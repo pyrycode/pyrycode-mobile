@@ -163,6 +163,35 @@ The script: starts the relay → mints a device token with `pyry pair` and parse
 the daemon (`PYRY_MOBILE_V2=1`, pointed at the loopback relay) → runs `pixel2Api33AtdDebugAndroidTest`
 with the four values injected as instrumentation arguments → tears everything down.
 
+## Pre-ship gate
+
+The live rung-3 real-claude e2e is the mobile **pre-ship gate** — the command an operator runs so they
+are never the **first** real-stack execution. It is the mobile parallel of the daemon's
+`make e2e-realclaude`. Run it with:
+
+```bash
+bash scripts/e2e-preship-gate.sh
+```
+
+The wrapper bakes in the `LIVE=1` + `e2e-live` isolation defaults (see
+[Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
+incantation to remember and no new test scenario — the existing ping `@Test` rides the wrapped mode.
+
+**When to run:**
+
+- **before installing a new APK build on a device**, so the operator is never the first to discover the
+  real stack can't answer a live send; and
+- **whenever a daemon or relay change touching the mobile surface lands** — run it alongside the daemon's
+  own `make e2e-realclaude`.
+
+**Cost:** one real claude turn (the ping scenario), a few minutes of wall clock, subscription-covered (it
+does **not** meter tokens).
+
+For the full mechanics — relay URLs, the isolated `e2e-live` instance, prerequisites, and first-run
+assumptions — see [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay). The operator-facing
+summary is in [README § Pre-ship gate](../README.md#pre-ship-gate); the two are cross-linked so they
+cannot drift.
+
 ## Live mode (rung 3, live relay)
 
 `LIVE=1` runs the **same rung-3 ping scenario** — the real app on the emulator, a host `pyry` daemon,
@@ -206,7 +235,7 @@ Prerequisites (on top of the "How to run" list):
 - The emulator needs outbound internet + DNS + a system-trusted TLS cert for the relay host. It reaches
   the public relay over its own NAT'd internet — **not** the `10.0.2.2` host alias, which is loopback-only.
 
-Cost: **one real claude turn per run**, subscription-covered.
+Cost: **one real claude turn per run**, a few minutes of wall clock, subscription-covered.
 
 First-run assumptions to confirm (grounded in the design, unverified end to end):
 
