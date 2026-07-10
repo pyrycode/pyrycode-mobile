@@ -43,6 +43,11 @@ data class ConversationResponseDto(
     val id: String,
     val name: String?,
     @SerialName("is_promoted") val isPromoted: Boolean,
+    // Defaulted, not required: pyrycode#881 extended only `ConversationUpdatedPayload` (the
+    // archive/unarchive/rename reply, #549), not `conversation_created` (#347) — so an absent key
+    // (create/promote) correctly decodes to `false`, and the real value folds when present. Field
+    // order mirrors the server struct (kotlinx decodes by key name; order has no wire effect).
+    @SerialName("is_archived") val isArchived: Boolean = false,
     val cwd: String,
     @SerialName("last_used_at")
     @Serializable(with = InstantIso8601Serializer::class)
@@ -62,12 +67,14 @@ fun ConversationResponseDto.toConversation(): Conversation =
         cwd = cwd,
         isPromoted = isPromoted,
         lastUsedAt = lastUsedAt,
-        // Mutation-response-tier placeholders: the create/promote response does not carry these.
-        // Same rule as #316 (the canonical rule source) — full session / sleep / archive state
-        // arrives via the detail + message read paths, not a mutation response. They are defined,
-        // non-null defaults — do NOT "fix" by null-punning or by plumbing upstream enrichment here.
+        // `archived` is a decoded field (#549): the archive/unarchive/rename reply carries `is_archived`
+        // (pyrycode#881), defaulting to `false` when the key is absent (create/promote, which never
+        // carries it). The three below remain mutation-response-tier placeholders — the create/promote/
+        // archive response does not carry them (same rule as #316); full session / sleep state arrives
+        // via the detail + message read paths. Defined, non-null defaults — do NOT "fix" by null-punning
+        // or by plumbing upstream enrichment here.
         currentSessionId = "",
         sessionHistory = emptyList(),
         isSleeping = false,
-        archived = false,
+        archived = isArchived,
     )

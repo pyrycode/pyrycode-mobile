@@ -30,10 +30,18 @@ class ConversationResponseDtoTest {
         """.trimIndent()
 
     // Bare `conversation_updated` object: name BEFORE cwd (Go ConversationUpdatedPayload key order),
-    // named + promoted + bound cwd. Proves the single DTO decodes both wire orderings.
+    // named + promoted + bound cwd. Proves the single DTO decodes both wire orderings. Omits
+    // is_archived deliberately (proving the field defaults to false when the key is absent).
     private val updatedFixture =
         """
         {"id":"c-promoted","is_promoted":true,"name":"weekly-planning","cwd":"/Users/j/Projects/Planner","last_used_at":"2026-05-08T10:34:30Z"}
+        """.trimIndent()
+
+    // A `conversation_updated` reply to `archive_conversation` (#549): carries is_archived:true.
+    // pyrycode#881 added is_archived to ConversationUpdatedPayload (no omitempty → always present).
+    private val archivedFixture =
+        """
+        {"id":"c-archived","is_promoted":true,"is_archived":true,"name":"weekly-planning","cwd":"/Users/j/Projects/Planner","last_used_at":"2026-05-08T10:34:30Z"}
         """.trimIndent()
 
     @Test
@@ -69,11 +77,38 @@ class ConversationResponseDtoTest {
         val element = MobileJson.parseToJsonElement(updatedFixture)
         val mapped = MobileJson.decodeFromJsonElement<ConversationResponseDto>(element).toConversation()
 
-        // The four fields the mutation-response wire does not carry are placeholders, never
-        // null-punned (same rule as #316).
+        // The three fields the mutation-response wire does not carry are placeholders, never
+        // null-punned (same rule as #316). `archived` is no longer here — it is a decoded field
+        // (#549), covered by the is_archived tests below.
         assertEquals("", mapped.currentSessionId)
         assertEquals(emptyList<String>(), mapped.sessionHistory)
         assertFalse(mapped.isSleeping)
+    }
+
+    @Test
+    fun absentIsArchived_defaultsToFalse() {
+        // updatedFixture omits is_archived (e.g. a conversation_created reply, #347, which pyrycode#881
+        // did not extend). The defaulted field decodes to false — the correct non-archived state.
+        val element = MobileJson.parseToJsonElement(updatedFixture)
+        val mapped = MobileJson.decodeFromJsonElement<ConversationResponseDto>(element).toConversation()
+        assertFalse(mapped.archived)
+    }
+
+    @Test
+    fun isArchivedTrue_mapsToArchivedConversation() {
+        // A conversation_updated reply to archive_conversation (#549): is_archived:true → archived=true.
+        val element = MobileJson.parseToJsonElement(archivedFixture)
+        val mapped = MobileJson.decodeFromJsonElement<ConversationResponseDto>(element).toConversation()
+        assertTrue(mapped.archived)
+    }
+
+    @Test
+    fun isArchivedFalse_explicitlyPresent_mapsToNotArchived() {
+        // A conversation_updated reply to unarchive_conversation (#549): is_archived:false → archived=false.
+        val fixture =
+            """{"id":"c1","is_promoted":true,"is_archived":false,"name":"n","cwd":"/p","last_used_at":"2026-05-08T10:34:30Z"}"""
+        val mapped =
+            MobileJson.decodeFromJsonElement<ConversationResponseDto>(MobileJson.parseToJsonElement(fixture)).toConversation()
         assertFalse(mapped.archived)
     }
 

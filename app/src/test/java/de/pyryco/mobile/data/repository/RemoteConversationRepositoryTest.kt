@@ -248,11 +248,9 @@ class RemoteConversationRepositoryTest {
             val repo = RemoteConversationRepository(FakeSessionPump(), backgroundScope)
 
             // observeLastMessage (#329), observeMessages (#313), sendMessage (#346),
-            // createDiscussion (#347), promote (#348), rename (#530), and startNewSession (#539) are now
-            // all implemented; only the remaining mutation / no-wire methods are still stubs. Suspend
-            // stubs throw when invoked.
-            assertUnsupported { repo.archive("c") }
-            assertUnsupported { repo.unarchive("c") }
+            // createDiscussion (#347), promote (#348), rename (#530), startNewSession (#539), and
+            // archive/unarchive (#549) are now all implemented; only the remaining mutation / no-wire
+            // methods are still stubs. Suspend stubs throw when invoked.
             assertUnsupported { repo.changeWorkspace("c", "/p") }
         }
 
@@ -1478,6 +1476,262 @@ class RemoteConversationRepositoryTest {
             assertTrue(rename().exceptionOrNull() is IllegalArgumentException)
             assertEquals(listOf("chan", "disc"), all.last().map { it.id })
             assertEquals("Channel", all.last().single { it.id == "chan" }.name)
+        }
+
+    // ---- archive / unarchive (#549): archive_conversation / unarchive_conversation request →
+    // ---- conversation_updated/error correlation, folding the is_archived flag ---------------------
+
+    // AC #1: the sent envelope matches the archive_conversation wire contract — payload is
+    // {conversation_id} only (a single shared id-only DTO serves both verbs).
+    @Test
+    fun archive_sendsArchiveConversationWithConversationId() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            startArchive(repo, "chan")
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "archive_conversation" }
+            assertEquals(MobileJson.parseToJsonElement("""{"conversation_id":"chan"}"""), sent.payload)
+
+            // Unblock the launched coroutine so backgroundScope completes cleanly.
+            pump.push(conversationUpdatedEnvelope(inReplyTo = sent.id, id = "chan", cwd = "/p/chan", isArchived = true))
+            runCurrent()
+        }
+
+    // AC #2: the sent envelope matches the unarchive_conversation wire contract — same id-only payload.
+    @Test
+    fun unarchive_sendsUnarchiveConversationWithConversationId() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            startUnarchive(repo, "chan")
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "unarchive_conversation" }
+            assertEquals(MobileJson.parseToJsonElement("""{"conversation_id":"chan"}"""), sent.payload)
+
+            pump.push(conversationUpdatedEnvelope(inReplyTo = sent.id, id = "chan", cwd = "/p/chan", isArchived = false))
+            runCurrent()
+        }
+
+    // AC #1: a successful archive folds is_archived:true into the projection — chan moves under the
+    // Archived filter and leaves Channels.
+    @Test
+    fun archive_onSuccess_foldsConversationIntoArchived() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            val channels = collectConversations(repo, ConversationFilter.Channels)
+            val archivedList = collectConversations(repo, ConversationFilter.Archived)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+            assertEquals(listOf("chan"), channels.last().map { it.id })
+            assertEquals(emptyList<String>(), archivedList.last().map { it.id })
+
+            val archive = startArchive(repo, "chan")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "archive_conversation" }.id
+            pump.push(conversationUpdatedEnvelope(inReplyTo = sentId, id = "chan", name = "Channel", cwd = "/p/chan", isArchived = true))
+            runCurrent()
+            archive().getOrThrow()
+
+            // Folded in place: chan is now archived — present under Archived, gone from Channels, still in All.
+            assertEquals(listOf("chan"), archivedList.last().map { it.id })
+            assertEquals(emptyList<String>(), channels.last().map { it.id })
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+            assertTrue(all.last().single { it.id == "chan" }.archived)
+        }
+
+    // AC #2: a successful unarchive folds is_archived:false — chan returns to Channels. First archive it
+    // (the only way to reach an archived local state, since the list snapshot never carries archived).
+    @Test
+    fun unarchive_onSuccess_foldsConversationBackIntoChannels() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val channels = collectConversations(repo, ConversationFilter.Channels)
+            val archivedList = collectConversations(repo, ConversationFilter.Archived)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val archive = startArchive(repo, "chan")
+            runCurrent()
+            val archiveId = pump.sent.single { it.type == "archive_conversation" }.id
+            pump.push(conversationUpdatedEnvelope(inReplyTo = archiveId, id = "chan", name = "Channel", cwd = "/p/chan", isArchived = true))
+            runCurrent()
+            archive().getOrThrow()
+            assertEquals(listOf("chan"), archivedList.last().map { it.id })
+
+            val unarchive = startUnarchive(repo, "chan")
+            runCurrent()
+            val unarchiveId = pump.sent.single { it.type == "unarchive_conversation" }.id
+            pump.push(
+                conversationUpdatedEnvelope(inReplyTo = unarchiveId, id = "chan", name = "Channel", cwd = "/p/chan", isArchived = false),
+            )
+            runCurrent()
+            unarchive().getOrThrow()
+
+            assertEquals(listOf("chan"), channels.last().map { it.id })
+            assertEquals(emptyList<String>(), archivedList.last().map { it.id })
+            assertFalse(channels.last().single { it.id == "chan" }.archived)
+        }
+
+    // Per pyrycode#881 a re-archive is an idempotent no-op that still broadcasts the (unchanged) state.
+    // Folding a reply whose is_archived already matches local state succeeds without error, no duplicate.
+    @Test
+    fun archive_idempotentReArchive_foldsWithoutError() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val archivedList = collectConversations(repo, ConversationFilter.Archived)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val first = startArchive(repo, "chan")
+            runCurrent()
+            val firstId = pump.sent.single { it.type == "archive_conversation" }.id
+            pump.push(conversationUpdatedEnvelope(inReplyTo = firstId, id = "chan", name = "Channel", cwd = "/p/chan", isArchived = true))
+            runCurrent()
+            first().getOrThrow()
+
+            val second = startArchive(repo, "chan")
+            runCurrent()
+            val secondId = pump.sent.last { it.type == "archive_conversation" }.id
+            pump.push(conversationUpdatedEnvelope(inReplyTo = secondId, id = "chan", name = "Channel", cwd = "/p/chan", isArchived = true))
+            runCurrent()
+            second().getOrThrow()
+
+            // Still exactly one archived entry — the equal-value re-upsert is a benign no-op.
+            assertEquals(listOf("chan"), archivedList.last().map { it.id })
+        }
+
+    // AC #3: a not-Open session throws IllegalStateException (not UnsupportedOperationException); no fold.
+    @Test
+    fun archive_whenSendReturnsFalse_throwsIllegalStateAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val archive = startArchive(repo, "chan")
+            runCurrent()
+
+            assertTrue(archive().exceptionOrNull() is IllegalStateException)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+            assertFalse(all.last().single { it.id == "chan" }.archived)
+        }
+
+    // AC #3: the disconnected path holds for unarchive too — IllegalStateException, no fold.
+    @Test
+    fun unarchive_whenSendReturnsFalse_throwsIllegalStateAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val unarchive = startUnarchive(repo, "chan")
+            runCurrent()
+
+            assertTrue(unarchive().exceptionOrNull() is IllegalStateException)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+        }
+
+    // A conversation.not_found error surfaces as IllegalArgumentException (mirrors the fake); no fold.
+    @Test
+    fun archive_onConversationNotFound_throwsIllegalArgumentAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val archive = startArchive(repo, "missing")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "archive_conversation" }.id
+            pump.push(errorEnvelope(sentId, code = "conversation.not_found"))
+            runCurrent()
+
+            val ex = archive().exceptionOrNull()
+            assertTrue("expected IllegalArgumentException, got $ex", ex is IllegalArgumentException)
+            assertFalse("conversation.not_found must not be a RelayErrorException", ex is RelayErrorException)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+        }
+
+    // Any other server error surfaces as RelayErrorException carrying the code; no fold.
+    @Test
+    fun archive_onOtherServerError_throwsRelayErrorAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val archive = startArchive(repo, "chan")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "archive_conversation" }.id
+            pump.push(errorEnvelope(sentId, code = "internal.error"))
+            runCurrent()
+
+            val ex = archive().exceptionOrNull()
+            assertTrue("expected RelayErrorException, got $ex", ex is RelayErrorException)
+            assertEquals("internal.error", (ex as RelayErrorException).code)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+            assertFalse(all.last().single { it.id == "chan" }.archived)
+        }
+
+    // A malformed conversation_updated success reply (missing required field) throws the #318 decode
+    // exception before the fold, so a garbage success reply cannot inject a partial archive.
+    @Test
+    fun archive_onMalformedUpdatedReply_throwsAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val archive = startArchive(repo, "chan")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "archive_conversation" }.id
+            // Payload omits the required `cwd` → ConversationResponseDto decode throws.
+            pump.push(
+                Envelope(
+                    id = 99L,
+                    type = "conversation_updated",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"id":"chan","name":"Channel","is_promoted":true,"is_archived":true,"last_used_at":"2026-05-08T10:00:00Z"}""",
+                        ),
+                    inReplyTo = sentId,
+                ),
+            )
+            runCurrent()
+
+            // SerializationException is an IllegalArgumentException subtype.
+            assertTrue(archive().exceptionOrNull() is IllegalArgumentException)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+            assertFalse(all.last().single { it.id == "chan" }.archived)
         }
 
     // ---- setSessionSettings (#543): set_session_settings request → session_settings_updated/error --
@@ -4156,6 +4410,31 @@ class RemoteConversationRepositoryTest {
     }
 
     /**
+     * Launch [RemoteConversationRepository.archive] on [backgroundScope] (it suspends awaiting the
+     * conversation_updated/error reply) and return a getter for its eventual [Result]. Read the result
+     * only after the correlated reply has been pushed and [runCurrent] has drained the cascade (the
+     * not-Open path completes synchronously, before any reply).
+     */
+    private fun TestScope.startArchive(
+        repo: RemoteConversationRepository,
+        conversationId: String,
+    ): () -> Result<Unit> {
+        var outcome: Result<Unit>? = null
+        backgroundScope.launch { outcome = runCatching { repo.archive(conversationId) } }
+        return { requireNotNull(outcome) { "archive has not completed" } }
+    }
+
+    /** As [startArchive], for [RemoteConversationRepository.unarchive]. */
+    private fun TestScope.startUnarchive(
+        repo: RemoteConversationRepository,
+        conversationId: String,
+    ): () -> Result<Unit> {
+        var outcome: Result<Unit>? = null
+        backgroundScope.launch { outcome = runCatching { repo.unarchive(conversationId) } }
+        return { requireNotNull(outcome) { "unarchive has not completed" } }
+    }
+
+    /**
      * Launch [RemoteConversationRepository.setSessionSettings] on [backgroundScope] (it suspends
      * awaiting the session_settings_updated/error reply) and return a getter for its eventual [Result].
      * Read the result only after the correlated reply has been pushed and [runCurrent] has drained the
@@ -4261,6 +4540,7 @@ class RemoteConversationRepositoryTest {
         id: String,
         cwd: String,
         isPromoted: Boolean = true,
+        isArchived: Boolean = false,
         name: String? = null,
         lastUsedAt: String = "2026-05-08T10:00:00Z",
         envId: Long = 99L,
@@ -4270,9 +4550,10 @@ class RemoteConversationRepositoryTest {
             id = envId,
             type = "conversation_updated",
             ts = TS,
+            // is_archived is always present on the wire (pyrycode#881, no omitempty).
             payload =
                 MobileJson.parseToJsonElement(
-                    """{"id":"$id","name":$nameJson,"is_promoted":$isPromoted,"cwd":"$cwd","last_used_at":"$lastUsedAt"}""",
+                    """{"id":"$id","name":$nameJson,"is_promoted":$isPromoted,"is_archived":$isArchived,"cwd":"$cwd","last_used_at":"$lastUsedAt"}""",
                 ),
             inReplyTo = inReplyTo,
         )
