@@ -96,4 +96,5 @@
     <string name="modal_cancel">Cancel</string>
     <string name="modal_send_failed">Couldn\'t send your answer. Try again.</string>
     <string name="new_session_failed">Couldn\'t start a new session. Check your connection.</string>
+    <string name="archive_failed">Couldn\'t archive this conversation. Try again.</string>
 </resources>

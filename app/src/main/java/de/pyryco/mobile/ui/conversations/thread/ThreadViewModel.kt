@@ -377,6 +377,21 @@ class ThreadViewModel(
      */
     val newSessionErrors: Flow<Unit> = newSessionErrorChannel.receiveAsFlow()
 
+    private val archiveErrorChannel = Channel<Unit>(capacity = Channel.BUFFERED)
+
+    /**
+     * One-shot "archiving this conversation failed" signal (#556) — the [newSessionErrors] one-shot idiom,
+     * cloned for the overflow / Channel-Info "Archive" action. Carries **no** payload (just [Unit]), so
+     * nothing sensitive — least of all the server-supplied [RelayErrorException.message] — can leak through
+     * it; the render slice shows a transient snackbar with a **fixed local string**, never an exception
+     * message. Fires exactly once per caught failure: [RelayErrorException] from a server `error` reply
+     * (archive is request/reply, so a correlated server error is reachable — unlike the fire-and-forget
+     * `new_session` send), or [IllegalStateException] from a not-connected send. Success is passive — no
+     * signal fires; the thread pops back and the confirmed upsert makes `observeConversations` re-emit
+     * without this conversation (list-driven), so it leaves the main list with no explicit removal call.
+     */
+    val archiveErrors: Flow<Unit> = archiveErrorChannel.receiveAsFlow()
+
     /**
      * Folds one live event to the next [isThinking] value, or `null` to leave the flag unchanged. Routes
      * by [conversationId] first (AC #3 — other conversations never move the flag), then maps the turn
@@ -575,6 +590,44 @@ class ThreadViewModel(
     }
 
     /**
+     * Route the overflow / Channel-Info "Archive" tap (#556) to [ConversationRepository.archive] and
+     * surface a failure. The **surfacing** twin of [sendNewSession] — always passes the VM's own
+     * [conversationId] (never a caller-supplied id) — with two deliberate differences:
+     *
+     *  1. **Two catches, not one.** Archive is **request/reply** ([RemoteConversationRepository.archive]
+     *     awaits a `conversation_updated`), so a server `error` reply — hence [RelayErrorException] — is a
+     *     real, reachable outcome and is caught alongside the not-connected [IllegalStateException]. Both
+     *     map to the same payload-free [archiveErrorChannel] signal; the caught `message` is **never** read
+     *     (the server-supplied [RelayErrorException.message] must not reach the surface — AC #4). The
+     *     [IllegalArgumentException] `conversation.not_found` and the #318 decode exception are **not**
+     *     caught: not_found is unreachable (you only archive the conversation you are viewing, whose record
+     *     is in the list by construction — parity with the shipped guard / #530), and a malformed reply is
+     *     a fail-loud protocol violation.
+     *  2. **Success-only [ThreadNavigation.PopBack].** It fires **only** after [ConversationRepository
+     *     .archive] returns without throwing; a failure emits on [archiveErrors] and stays on the thread.
+     *     On success the list is list-driven — the confirmed upsert makes `observeConversations` re-emit
+     *     without this conversation, so there is no explicit removal call.
+     *
+     * The [CancellationException] rethrow **MUST precede** the typed catches (`j.u.c.CancellationException`
+     * extends [IllegalStateException] on the JVM) so screen-exit teardown mid-archive propagates cleanly and
+     * is never mis-surfaced as an archive failure (AC #3).
+     */
+    private fun sendArchive() {
+        viewModelScope.launch {
+            try {
+                repository.archive(conversationId)
+                navigationChannel.send(ThreadNavigation.PopBack)
+            } catch (e: CancellationException) {
+                throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
+            } catch (e: RelayErrorException) {
+                archiveErrorChannel.trySend(Unit)
+            } catch (e: IllegalStateException) {
+                archiveErrorChannel.trySend(Unit)
+            }
+        }
+    }
+
+    /**
      * Drop queued message [queuedMessageId] from this conversation's backlog (#467) — fire the #466
      * `dequeue_message` send through the facade. Reachable as a [ConversationRepository] interface method
      * on the already-injected [repository], so — unlike interrupt/answerModal/cancelModal — there is no new
@@ -616,11 +669,11 @@ class ThreadViewModel(
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
             ThreadEvent.Archive -> {
+                // Close the Channel Info Sheet if Archive was tapped from it (a harmless no-op from the
+                // overflow menu, where it is already false); the send + success-only PopBack live in
+                // sendArchive, off the shared silent guard (#556).
                 pendingChannelInfo.value = false
-                launchGuardedRepoCall {
-                    repository.archive(state.value.conversationId)
-                    navigationChannel.send(ThreadNavigation.PopBack)
-                }
+                sendArchive()
             }
             ThreadEvent.Delete -> pendingDeleteConfirm.value = true
             ThreadEvent.DeleteConfirm -> {
