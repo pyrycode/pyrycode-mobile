@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.Envelope
@@ -238,20 +239,6 @@ class RemoteConversationRepositoryTest {
             )
             runCurrent()
             assertEquals(listOf("ok"), emissions.single().map { it.id })
-        }
-
-    // ---- Every other interface method is a stub naming its owning follow-up ----------------------
-
-    @Test
-    fun stubMethods_throwUnsupportedOperationNamingTheFollowUp() =
-        runTest {
-            val repo = RemoteConversationRepository(FakeSessionPump(), backgroundScope)
-
-            // observeLastMessage (#329), observeMessages (#313), sendMessage (#346),
-            // createDiscussion (#347), promote (#348), rename (#530), startNewSession (#539), and
-            // archive/unarchive (#549) are now all implemented; only the remaining mutation / no-wire
-            // methods are still stubs. Suspend stubs throw when invoked.
-            assertUnsupported { repo.changeWorkspace("c", "/p") }
         }
 
     // ---- observeLastMessage (#329): live `message` stream → most-recent per conversation ---------
@@ -1476,6 +1463,185 @@ class RemoteConversationRepositoryTest {
             assertTrue(rename().exceptionOrNull() is IllegalArgumentException)
             assertEquals(listOf("chan", "disc"), all.last().map { it.id })
             assertEquals("Channel", all.last().single { it.id == "chan" }.name)
+        }
+
+    // ---- changeWorkspace (#560): change_workspace request → conversation_updated/error correlation,
+    // ---- folding the new cwd. Mirrors rename (#530); the reply reuses conversation_updated. ---------
+
+    // AC #1: the sent envelope matches the change_workspace wire contract {conversation_id, cwd} —
+    // exactly two keys, the path field is `cwd` (not `workspace`), no `name`. The path is verbatim.
+    @Test
+    fun changeWorkspace_sendsChangeWorkspaceWithConversationIdAndCwd() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            startChangeWorkspace(repo, "chan", "/home/me/proj")
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "change_workspace" }
+            assertEquals(
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"chan","cwd":"/home/me/proj"}""",
+                ),
+                sent.payload,
+            )
+
+            // Unblock the launched coroutine so backgroundScope completes cleanly.
+            pump.push(conversationUpdatedEnvelope(inReplyTo = sent.id, id = "chan", cwd = "/home/me/proj"))
+            runCurrent()
+        }
+
+    // AC #2: a successful change_workspace folds the updated record into the list projection in place,
+    // and the folded cwd is the server-authoritative reply value (the daemon's resolved realpath), not
+    // the request's — feed a reply whose cwd differs from the request to prove it.
+    @Test
+    fun changeWorkspace_onSuccess_foldsServerAuthoritativeCwdIntoList() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+
+            val change = startChangeWorkspace(repo, "chan", "/home/me/requested")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "change_workspace" }.id
+            // The daemon confines to $HOME and stores the resolved realpath, which it echoes back.
+            pump.push(conversationUpdatedEnvelope(inReplyTo = sentId, id = "chan", name = "Channel", cwd = "/home/me/resolved"))
+            runCurrent()
+            change().getOrThrow()
+
+            // Folded in place: still two entries; chan now shows the server's resolved cwd.
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+            assertEquals("/home/me/resolved", all.last().single { it.id == "chan" }.cwd)
+        }
+
+    // § Design ④: the interface forces a Session return, but change_workspace performs no session
+    // transition, so the returned placeholder's identity fields are explicitly unassigned (empty
+    // strings, never a fabricated UUID); it carries only the arg conversationId and is discarded.
+    @Test
+    fun changeWorkspace_onSuccess_returnsVestigialPlaceholderSession() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val change = startChangeWorkspace(repo, "chan", "/home/me/proj")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "change_workspace" }.id
+            pump.push(conversationUpdatedEnvelope(inReplyTo = sentId, id = "chan", cwd = "/home/me/proj"))
+            runCurrent()
+
+            val session = change().getOrThrow()
+            assertEquals("", session.id)
+            assertEquals("", session.claudeSessionUuid)
+            assertEquals("chan", session.conversationId)
+        }
+
+    // AC #3: a not-Open session (pump.send returns false) throws IllegalStateException; no fold.
+    @Test
+    fun changeWorkspace_whenSendReturnsFalse_throwsIllegalStateAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val change = startChangeWorkspace(repo, "chan", "/home/me/proj")
+            runCurrent()
+
+            assertTrue(change().exceptionOrNull() is IllegalStateException)
+            assertEquals("/p/chan", all.last().single { it.id == "chan" }.cwd)
+        }
+
+    // AC #3: a conversation.not_found error surfaces as IllegalArgumentException (family-typed, not a
+    // RelayErrorException) and is deliberately NOT swallowed by the guard; list unchanged.
+    @Test
+    fun changeWorkspace_onConversationNotFound_throwsIllegalArgumentAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val change = startChangeWorkspace(repo, "missing", "/home/me/proj")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "change_workspace" }.id
+            pump.push(errorEnvelope(sentId, code = "conversation.not_found"))
+            runCurrent()
+
+            val ex = change().exceptionOrNull()
+            assertTrue("expected IllegalArgumentException, got $ex", ex is IllegalArgumentException)
+            assertFalse("conversation.not_found must not be a RelayErrorException", ex is RelayErrorException)
+            assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+        }
+
+    // AC #3: any other server error — including protocol.malformed for a path the daemon rejects as
+    // outside $HOME — surfaces as RelayErrorException carrying the code; list unchanged. The daemon's
+    // static string is never a path (confidentiality), so the exception leaks no picked path.
+    @Test
+    fun changeWorkspace_onOtherServerError_throwsRelayErrorAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val change = startChangeWorkspace(repo, "chan", "/etc/outside-home")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "change_workspace" }.id
+            pump.push(errorEnvelope(sentId, code = "protocol.malformed", message = "workspace rejected"))
+            runCurrent()
+
+            val ex = change().exceptionOrNull()
+            assertTrue("expected RelayErrorException, got $ex", ex is RelayErrorException)
+            assertEquals("protocol.malformed", (ex as RelayErrorException).code)
+            assertFalse("must not echo the picked path", ex.message.orEmpty().contains("/etc/outside-home"))
+            assertEquals("/p/chan", all.last().single { it.id == "chan" }.cwd)
+        }
+
+    // A malformed conversation_updated success reply (missing required field) throws the #318 decode
+    // exception before the fold, so a garbage success reply cannot inject a partial workspace change.
+    @Test
+    fun changeWorkspace_onMalformedUpdatedReply_throwsAndLeavesListUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(MIXED_FIXTURE))
+            runCurrent()
+
+            val change = startChangeWorkspace(repo, "chan", "/home/me/proj")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "change_workspace" }.id
+            // Payload omits the required `cwd` → ConversationResponseDto decode throws.
+            pump.push(
+                Envelope(
+                    id = 99L,
+                    type = "conversation_updated",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"id":"chan","name":"n","is_promoted":true,"last_used_at":"2026-05-08T10:00:00Z"}""",
+                        ),
+                    inReplyTo = sentId,
+                ),
+            )
+            runCurrent()
+
+            // SerializationException is an IllegalArgumentException subtype.
+            assertTrue(change().exceptionOrNull() is IllegalArgumentException)
+            assertEquals("/p/chan", all.last().single { it.id == "chan" }.cwd)
         }
 
     // ---- archive / unarchive (#549): archive_conversation / unarchive_conversation request →
@@ -4612,6 +4778,21 @@ class RemoteConversationRepositoryTest {
     }
 
     /**
+     * Launch [RemoteConversationRepository.changeWorkspace] on [backgroundScope] (it suspends awaiting
+     * the conversation_updated/error reply) and return a getter for its eventual [Result]. Read the
+     * result only after the correlated reply has been pushed and [runCurrent] has drained the cascade.
+     */
+    private fun TestScope.startChangeWorkspace(
+        repo: RemoteConversationRepository,
+        conversationId: String,
+        workspace: String,
+    ): () -> Result<Session> {
+        var outcome: Result<Session>? = null
+        backgroundScope.launch { outcome = runCatching { repo.changeWorkspace(conversationId, workspace) } }
+        return { requireNotNull(outcome) { "changeWorkspace has not completed" } }
+    }
+
+    /**
      * Launch [RemoteConversationRepository.archive] on [backgroundScope] (it suspends awaiting the
      * conversation_updated/error reply) and return a getter for its eventual [Result]. Read the result
      * only after the correlated reply has been pushed and [runCurrent] has drained the cascade (the
@@ -5150,18 +5331,6 @@ class RemoteConversationRepositoryTest {
                     """{"conversation_id":"$conversationId","turn_id":"$turnId","stop_reason":"$stopReason"}""",
                 ),
         )
-
-    private suspend inline fun assertUnsupported(block: () -> Unit): UnsupportedOperationException {
-        val thrown =
-            try {
-                block()
-                null
-            } catch (e: UnsupportedOperationException) {
-                e
-            }
-        assertTrue("expected UnsupportedOperationException", thrown != null)
-        return thrown!!
-    }
 
     private fun conversationsEnvelope(
         rawConversationsPayload: String,
