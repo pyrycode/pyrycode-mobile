@@ -111,8 +111,8 @@ class ThreadViewModelTest {
     fun mutationsSupported_fromNonSupportingRepository_isFalse() =
         runTest {
             val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            // A relay-shaped repo: delegates every read to a seeded fake (so the state pipeline still
-            // assembles) but reports mutationsSupported = false, as RemoteConversationRepository does.
+            // A repo that delegates every read to a seeded fake (so the state pipeline still
+            // assembles) but reports mutationsSupported = false — the general non-supporting case.
             val repo =
                 object : ConversationRepository by FakeConversationRepository() {
                     override val mutationsSupported: Boolean = false

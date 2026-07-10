@@ -1447,8 +1447,14 @@ class RemoteConversationRepository(
         optionId: String,
     ): String = "${modalId.length}:$modalId:$optionId"
 
-    /** `false`: the relay has no v2 wire message for the throwing mutation methods below yet (#507). */
-    override val mutationsSupported: Boolean = false
+    /**
+     * `true`: every mutation method below now has a v2 wire message on both ends — mobile
+     * `rename` / `archive` / `unarchive` / `delete` / `startNewSession` / `changeWorkspace` /
+     * `setSessionSettings` / `createWorkspaceFolder` (#530-#536, #549, #560, #564, #565) and the
+     * matching daemon handlers (pyrycode #820-#826). The `false` in #507 predated those wires; the
+     * throwing stubs it referred to are gone, so the mutation affordances are now reachable in relay mode.
+     */
+    override val mutationsSupported: Boolean = true
 
     override suspend fun archive(conversationId: String): Unit = sendArchiveToggle(conversationId, TYPE_ARCHIVE_CONVERSATION)
 
