@@ -928,11 +928,14 @@ class ThreadViewModelTest {
     @Test
     fun guardedRepoCalls_whenRepositoryThrowsEachHandledType_areSwallowedWithoutCrashing() =
         runTest {
-            // AC #2/#3: every one-shot repo launch in this VM (sendMessage, onWorkspacePicked, and the
-            // Archive / DeleteConfirm / RenameSubmit / SaveAsChannelSubmit overflow arms) swallows the three
-            // relay failure types. A throw escaping the launched coroutine reaches the default handler (not
-            // runTest — viewModelScope is a separate SupervisorJob), so capture uncaught throws and assert
-            // none fired: the only proof the typed catch ran. Mirrors onDropQueued_whenDropFailsInert.
+            // AC #2/#3: the one-shot repo launches that still use the shared guard (sendMessage,
+            // onWorkspacePicked, and the DeleteConfirm / RenameSubmit / SaveAsChannelSubmit overflow arms)
+            // swallow the three relay failure types. Archive is deliberately excluded — since #556 it routes
+            // through its own surfacing path (sendArchive), which does not catch UnsupportedOperationException,
+            // so calling it here would let that iteration escape as an uncaught throw; its swallow-and-surface
+            // behavior is covered by the #556 tests below. A throw escaping the launched coroutine reaches the
+            // default handler (not runTest — viewModelScope is a separate SupervisorJob), so capture uncaught
+            // throws and assert none fired: the only proof the typed catch ran.
             val uncaught = mutableListOf<Throwable>()
             val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
             Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
@@ -950,7 +953,6 @@ class ThreadViewModelTest {
 
                     vm.sendMessage("hi")
                     vm.onWorkspacePicked("pyry-workspace/app")
-                    vm.onOverflowEvent(ThreadEvent.Archive)
                     vm.onOverflowEvent(ThreadEvent.DeleteConfirm)
                     vm.onOverflowEvent(ThreadEvent.RenameSubmit("new name"))
                     vm.onOverflowEvent(ThreadEvent.SaveAsChannelSubmit("chan", WorkspaceChoice.SCRATCH))
@@ -997,18 +999,21 @@ class ThreadViewModelTest {
         }
 
     @Test
-    fun guardedRepoCall_scopeCancellationMidCall_propagatesCancellationInert() =
+    fun archive_scopeCancellationMidCall_propagatesCancellationInertWithoutSurfacing() =
         runTest {
-            // AC #3 (the guard is shared, so one path proves the ordering for all): `catch
-            // (CancellationException) { throw e }` MUST precede the typed `catch (IllegalStateException)` —
-            // j.u.c.CancellationException extends ISE on the JVM (the #451 rework). An archive suspends
-            // mid-call; viewModelScope teardown must neither crash nor let the PopBack side effect fire.
+            // AC #3: `catch (CancellationException) { throw e }` MUST precede the typed catches —
+            // j.u.c.CancellationException extends ISE on the JVM (the #451 rework). Archive (#556) now runs
+            // on its own surfacing path (sendArchive); an archive suspends mid-call, and viewModelScope
+            // teardown must neither crash, fire the success PopBack, nor mis-surface cancellation as an
+            // archive failure (AC #3 — CancellationException is never a surfaced archive error).
             val gate = CompletableDeferred<Unit>() // never completes — the archive stays suspended in-flight
             val entered = CompletableDeferred<Unit>()
             val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
             val vm = makeVm(handle, GatingArchiveRepo(gate = gate, entered = entered))
             val nav = mutableListOf<ThreadNavigation>()
             val navCollector = launch { vm.navigationEvents.collect { nav += it } }
+            val errors = mutableListOf<Unit>()
+            val errorCollector = launch { vm.archiveErrors.collect { errors += it } }
             val store = ViewModelStore().apply { put("vm", vm) }
 
             vm.onOverflowEvent(ThreadEvent.Archive)
@@ -1017,9 +1022,87 @@ class ThreadViewModelTest {
 
             store.clear() // cancels viewModelScope → the awaiting archive throws CancellationException
             advanceUntilIdle()
-            // No crash, no leaked exception (runTest fails otherwise), and the guarded side effect is skipped.
+            // No crash, no leaked exception (runTest fails otherwise), the success PopBack is skipped, and
+            // cancellation is never mis-surfaced as an archive failure.
             assertTrue("cancellation must skip the PopBack side effect: $nav", nav.isEmpty())
+            assertTrue("cancellation must not surface an archive error: $errors", errors.isEmpty())
             navCollector.cancel()
+            errorCollector.cancel()
+        }
+
+    // ---- #556: archive failure surfaces on archiveErrors (own path, not the shared guard) --------
+
+    @Test
+    fun onOverflowEvent_archive_whenNotConnected_surfacesErrorStaysOnThreadWithoutCrashing() =
+        runTest {
+            // AC #1/#5: archive throws not-connected (IllegalStateException, the repo `live` path). Unlike
+            // the shared guard's silent swallow, this SURFACES — archiveErrors emits exactly once — the
+            // thread does NOT pop (PopBack is success-only), and the throw never escapes the launched
+            // coroutine. A leaked throw reaches the default handler (not runTest — viewModelScope is a
+            // separate SupervisorJob), so capture uncaught throws and assert none fired: the only proof the
+            // typed catch ran.
+            val uncaught = mutableListOf<Throwable>()
+            val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
+            try {
+                val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+                val vm = makeVm(handle, ThrowingConversationRepository(IllegalStateException("not connected")))
+                val errors = mutableListOf<Unit>()
+                val errorCollector = launch { vm.archiveErrors.collect { errors += it } }
+                val nav = mutableListOf<ThreadNavigation>()
+                val navCollector = launch { vm.navigationEvents.collect { nav += it } }
+                advanceUntilIdle()
+
+                vm.onOverflowEvent(ThreadEvent.Archive)
+                advanceUntilIdle()
+
+                assertEquals("not-connected must surface exactly one archive-error signal", 1, errors.size)
+                assertTrue("a failed archive must stay on the thread (no PopBack): $nav", nav.isEmpty())
+                assertTrue("the not-connected throw must be caught, not propagated: $uncaught", uncaught.isEmpty())
+                errorCollector.cancel()
+                navCollector.cancel()
+            } finally {
+                Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+            }
+        }
+
+    @Test
+    fun onOverflowEvent_archive_whenServerError_surfacesErrorStaysOnThreadWithoutLeakingMessage() =
+        runTest {
+            // AC #1/#4: archive is request/reply, so a server `error` reply surfaces as RelayErrorException —
+            // reachable here (unlike fire-and-forget new_session). It must be caught and surfaced on
+            // archiveErrors (one signal), the thread must not pop, and the server-supplied message must never
+            // reach the surface (the Unit signal carries no text; the render slice shows the fixed local
+            // string). Capture uncaught throws to prove the typed catch ran.
+            val uncaught = mutableListOf<Throwable>()
+            val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
+            try {
+                val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+                val vm =
+                    makeVm(
+                        handle,
+                        ThrowingConversationRepository(
+                            RelayErrorException(code = "server.error", retryable = false, message = "no"),
+                        ),
+                    )
+                val errors = mutableListOf<Unit>()
+                val errorCollector = launch { vm.archiveErrors.collect { errors += it } }
+                val nav = mutableListOf<ThreadNavigation>()
+                val navCollector = launch { vm.navigationEvents.collect { nav += it } }
+                advanceUntilIdle()
+
+                vm.onOverflowEvent(ThreadEvent.Archive)
+                advanceUntilIdle()
+
+                assertEquals("a server error must surface exactly one archive-error signal", 1, errors.size)
+                assertTrue("a failed archive must stay on the thread (no PopBack): $nav", nav.isEmpty())
+                assertTrue("the server-error throw must be caught, not propagated: $uncaught", uncaught.isEmpty())
+                errorCollector.cancel()
+                navCollector.cancel()
+            } finally {
+                Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+            }
         }
 
     // ---- #396: isStalled projection over repository.observeStall ------------------------------

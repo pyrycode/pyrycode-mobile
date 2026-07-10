@@ -382,6 +382,7 @@ private fun PyryNavHost(
                 armedOptionId = armedOptionId,
                 modalSendErrors = vm.modalSendErrors,
                 newSessionErrors = vm.newSessionErrors,
+                archiveErrors = vm.archiveErrors,
                 onModalOption = vm::onModalOption,
                 onModalCancel = vm::onModalCancel,
                 onDropQueued = vm::onDropQueued,
