@@ -1644,6 +1644,130 @@ class RemoteConversationRepositoryTest {
             assertEquals("/p/chan", all.last().single { it.id == "chan" }.cwd)
         }
 
+    // ---- create_workspace_folder (#564): create_workspace_folder request → workspace_folder_created/
+    // ---- error correlation, returning the daemon's canonical created path (no projection fold) -------
+
+    // AC #1: the sent envelope matches the create_workspace_folder wire contract {parent, name} —
+    // exactly two keys. `parent` is the fixed `~/pyry-workspace` client root (tilde-anchored to the
+    // daemon $HOME), and `name` is the client-trimmed value (input has surrounding whitespace).
+    @Test
+    fun createWorkspaceFolder_sendsFixedParentAndTrimmedName() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            startCreateWorkspaceFolder(repo, "  foo  ")
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "create_workspace_folder" }
+            assertEquals(
+                MobileJson.parseToJsonElement("""{"parent":"~/pyry-workspace","name":"foo"}"""),
+                sent.payload,
+            )
+
+            // Unblock the launched coroutine so backgroundScope completes cleanly.
+            pump.push(workspaceFolderCreatedEnvelope(inReplyTo = sent.id, path = "/home/op/pyry-workspace/foo"))
+            runCurrent()
+        }
+
+    // AC #1/#2: success returns the daemon's server-authoritative path verbatim — NOT a client-side
+    // join of the request. The reply path is deliberately unrelated to the sent name to prove the
+    // client returns the reply's value. This also proves the demux registration (§ Design ④): without
+    // the new workspace_folder_created arm the deferred never completes and getOrThrow would hang.
+    @Test
+    fun createWorkspaceFolder_onSuccess_returnsServerAuthoritativePath() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val create = startCreateWorkspaceFolder(repo, "foo")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "create_workspace_folder" }.id
+            pump.push(workspaceFolderCreatedEnvelope(inReplyTo = sentId, path = "/home/op/pyry-workspace/resolved-elsewhere"))
+            runCurrent()
+
+            assertEquals("/home/op/pyry-workspace/resolved-elsewhere", create().getOrThrow())
+        }
+
+    // AC #4: a blank / whitespace-only name fails with IllegalArgumentException BEFORE any send — no
+    // create_workspace_folder frame reaches the wire.
+    @Test
+    fun createWorkspaceFolder_blankName_throwsIllegalArgumentAndSendsNothing() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val empty = startCreateWorkspaceFolder(repo, "")
+            val whitespace = startCreateWorkspaceFolder(repo, "   ")
+            runCurrent()
+
+            assertTrue(empty().exceptionOrNull() is IllegalArgumentException)
+            assertTrue(whitespace().exceptionOrNull() is IllegalArgumentException)
+            assertTrue(pump.sent.none { it.type == "create_workspace_folder" })
+        }
+
+    // AC #3: a not-Open session (pump.send returns false) throws IllegalStateException; nothing returned.
+    @Test
+    fun createWorkspaceFolder_whenSendReturnsFalse_throwsIllegalState() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val create = startCreateWorkspaceFolder(repo, "foo")
+            runCurrent()
+
+            assertTrue(create().exceptionOrNull() is IllegalStateException)
+        }
+
+    // AC #3: any server error — create_workspace_folder has no not_found code, so every reject is
+    // protocol.malformed — surfaces as RelayErrorException carrying the code. The daemon's static
+    // string is never a path/name (confidentiality), so the exception leaks no picked name.
+    @Test
+    fun createWorkspaceFolder_onServerError_throwsRelayErrorAndLeaksNoName() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val create = startCreateWorkspaceFolder(repo, "../escape")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "create_workspace_folder" }.id
+            pump.push(errorEnvelope(sentId, code = "protocol.malformed", message = "invalid folder name"))
+            runCurrent()
+
+            val ex = create().exceptionOrNull()
+            assertTrue("expected RelayErrorException, got $ex", ex is RelayErrorException)
+            assertEquals("protocol.malformed", (ex as RelayErrorException).code)
+            assertFalse("must not echo the attempted name", ex.message.orEmpty().contains("escape"))
+        }
+
+    // A malformed workspace_folder_created reply (missing required `path`) throws the #318 decode
+    // exception, so a garbage success reply cannot yield a bogus path.
+    @Test
+    fun createWorkspaceFolder_onMalformedReply_throws() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val create = startCreateWorkspaceFolder(repo, "foo")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "create_workspace_folder" }.id
+            // Payload omits the required `path` → WorkspaceFolderCreatedPayloadDto decode throws.
+            pump.push(
+                Envelope(
+                    id = 99L,
+                    type = "workspace_folder_created",
+                    ts = TS,
+                    payload = MobileJson.parseToJsonElement("""{}"""),
+                    inReplyTo = sentId,
+                ),
+            )
+            runCurrent()
+
+            // SerializationException is an IllegalArgumentException subtype.
+            assertTrue(create().exceptionOrNull() is IllegalArgumentException)
+        }
+
     // ---- archive / unarchive (#549): archive_conversation / unarchive_conversation request →
     // ---- conversation_updated/error correlation, folding the is_archived flag ---------------------
 
@@ -4793,6 +4917,22 @@ class RemoteConversationRepositoryTest {
     }
 
     /**
+     * Launch [RemoteConversationRepository.createWorkspaceFolder] on [backgroundScope] (it suspends
+     * awaiting the workspace_folder_created/error reply, unless the blank-name guard throws first) and
+     * return a getter for its eventual [Result]. Read the result only after the correlated reply has
+     * been pushed and [runCurrent] has drained the cascade (the blank-name and not-Open paths complete
+     * synchronously, before any reply).
+     */
+    private fun TestScope.startCreateWorkspaceFolder(
+        repo: RemoteConversationRepository,
+        name: String,
+    ): () -> Result<String> {
+        var outcome: Result<String>? = null
+        backgroundScope.launch { outcome = runCatching { repo.createWorkspaceFolder(name) } }
+        return { requireNotNull(outcome) { "createWorkspaceFolder has not completed" } }
+    }
+
+    /**
      * Launch [RemoteConversationRepository.archive] on [backgroundScope] (it suspends awaiting the
      * conversation_updated/error reply) and return a getter for its eventual [Result]. Read the result
      * only after the correlated reply has been pushed and [runCurrent] has drained the cascade (the
@@ -4977,6 +5117,20 @@ class RemoteConversationRepositoryTest {
             type = "conversation_deleted",
             ts = TS,
             payload = MobileJson.parseToJsonElement("""{"id":"$id"}"""),
+            inReplyTo = inReplyTo,
+        )
+
+    /** A correlated `workspace_folder_created` reply carrying only the created folder's `{path}` (#564). */
+    private fun workspaceFolderCreatedEnvelope(
+        inReplyTo: Long,
+        path: String,
+        envId: Long = 99L,
+    ): Envelope =
+        Envelope(
+            id = envId,
+            type = "workspace_folder_created",
+            ts = TS,
+            payload = MobileJson.parseToJsonElement("""{"path":"$path"}"""),
             inReplyTo = inReplyTo,
         )
 
