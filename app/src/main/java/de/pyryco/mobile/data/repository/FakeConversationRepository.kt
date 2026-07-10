@@ -6,6 +6,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.model.ToolCall
+import de.pyryco.mobile.data.network.SetSessionSettingsPayloadDto
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
@@ -243,6 +244,25 @@ class FakeConversationRepository(
             records + (conversationId to record.copy(conversation = updated))
         }
         return updated
+    }
+
+    /**
+     * The [setSessionSettings] requests received, in call order — the observable seam #544's ViewModel
+     * tests assert send-on-change against. The Fake models **no** per-session settings state (the data
+     * model has none, and adding one is out of scope): it only records what was requested, reusing the
+     * wire DTO [SetSessionSettingsPayloadDto] as the record shape (structural equality for free).
+     */
+    val setSessionSettingsCalls: List<SetSessionSettingsPayloadDto> get() = recordedSessionSettings
+
+    private val recordedSessionSettings = mutableListOf<SetSessionSettingsPayloadDto>()
+
+    override suspend fun setSessionSettings(
+        sessionId: String,
+        model: String?,
+        effort: String?,
+        yolo: Boolean?,
+    ) {
+        recordedSessionSettings += SetSessionSettingsPayloadDto(sessionId, model, effort, yolo)
     }
 
     override suspend fun startNewSession(
