@@ -928,14 +928,15 @@ class ThreadViewModelTest {
     @Test
     fun guardedRepoCalls_whenRepositoryThrowsEachHandledType_areSwallowedWithoutCrashing() =
         runTest {
-            // AC #2/#3: the one-shot repo launches that still use the shared guard (sendMessage,
-            // onWorkspacePicked, and the DeleteConfirm / RenameSubmit / SaveAsChannelSubmit overflow arms)
-            // swallow the three relay failure types. Archive is deliberately excluded — since #556 it routes
-            // through its own surfacing path (sendArchive), which does not catch UnsupportedOperationException,
-            // so calling it here would let that iteration escape as an uncaught throw; its swallow-and-surface
-            // behavior is covered by the #556 tests below. A throw escaping the launched coroutine reaches the
-            // default handler (not runTest — viewModelScope is a separate SupervisorJob), so capture uncaught
-            // throws and assert none fired: the only proof the typed catch ran.
+            // AC #2/#3: the one-shot repo launches that still use the shared guard (sendMessage and the
+            // DeleteConfirm / RenameSubmit / SaveAsChannelSubmit overflow arms) swallow the three relay
+            // failure types. Archive (since #556) and change-workspace (since #561) are deliberately excluded —
+            // each routes through its own surfacing path (sendArchive / sendChangeWorkspace), which does not
+            // catch UnsupportedOperationException, so calling either here would let that iteration escape as an
+            // uncaught throw; their swallow-and-surface behavior is covered by the #556 / #561 tests below. A
+            // throw escaping the launched coroutine reaches the default handler (not runTest — viewModelScope
+            // is a separate SupervisorJob), so capture uncaught throws and assert none fired: the only proof
+            // the typed catch ran.
             val uncaught = mutableListOf<Throwable>()
             val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
             Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
@@ -952,7 +953,6 @@ class ThreadViewModelTest {
                     advanceUntilIdle()
 
                     vm.sendMessage("hi")
-                    vm.onWorkspacePicked("pyry-workspace/app")
                     vm.onOverflowEvent(ThreadEvent.DeleteConfirm)
                     vm.onOverflowEvent(ThreadEvent.RenameSubmit("new name"))
                     vm.onOverflowEvent(ThreadEvent.SaveAsChannelSubmit("chan", WorkspaceChoice.SCRATCH))
@@ -1103,6 +1103,102 @@ class ThreadViewModelTest {
             } finally {
                 Thread.setDefaultUncaughtExceptionHandler(previousHandler)
             }
+        }
+
+    // ---- #561: change_workspace failure surfaces on changeWorkspaceErrors (own path) ---------
+
+    @Test
+    fun changeWorkspace_whenNotConnected_surfacesErrorStaysOnThreadWithoutCrashing() =
+        runTest {
+            // AC #3: change_workspace throws not-connected (IllegalStateException, the repo `live` path).
+            // Unlike the shared guard's silent swallow, the dedicated path SURFACES — changeWorkspaceErrors
+            // emits exactly once — the user stays on the thread (change_workspace never pops), and the throw
+            // never escapes the launched coroutine. A leaked throw reaches the default handler (not runTest —
+            // viewModelScope is a separate SupervisorJob), so capture uncaught throws and assert none fired:
+            // the only proof the typed catch ran.
+            val uncaught = mutableListOf<Throwable>()
+            val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
+            try {
+                val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+                val vm = makeVm(handle, ThrowingConversationRepository(IllegalStateException("not connected")))
+                val errors = mutableListOf<Unit>()
+                val errorCollector = launch { vm.changeWorkspaceErrors.collect { errors += it } }
+                advanceUntilIdle()
+
+                vm.onWorkspacePicked("pyry-workspace/app")
+                advanceUntilIdle()
+
+                assertEquals("not-connected must surface exactly one change-workspace-error signal", 1, errors.size)
+                assertTrue("the not-connected throw must be caught, not propagated: $uncaught", uncaught.isEmpty())
+                errorCollector.cancel()
+            } finally {
+                Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+            }
+        }
+
+    @Test
+    fun changeWorkspace_whenServerError_surfacesErrorStaysOnThreadWithoutLeakingMessage() =
+        runTest {
+            // AC #2: change_workspace is request/reply, so a server `error` reply surfaces as
+            // RelayErrorException — reachable here (unlike fire-and-forget new_session). It must be caught and
+            // surfaced on changeWorkspaceErrors (one signal), and the server-supplied message must never reach
+            // the surface (the Unit signal carries no text; the render slice shows the fixed local string).
+            // Capture uncaught throws to prove the typed catch ran.
+            val uncaught = mutableListOf<Throwable>()
+            val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
+            try {
+                val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+                val vm =
+                    makeVm(
+                        handle,
+                        ThrowingConversationRepository(
+                            RelayErrorException(code = "server.error", retryable = false, message = "no"),
+                        ),
+                    )
+                val errors = mutableListOf<Unit>()
+                val errorCollector = launch { vm.changeWorkspaceErrors.collect { errors += it } }
+                advanceUntilIdle()
+
+                vm.onWorkspacePicked("pyry-workspace/app")
+                advanceUntilIdle()
+
+                assertEquals("a server error must surface exactly one change-workspace-error signal", 1, errors.size)
+                assertTrue("the server-error throw must be caught, not propagated: $uncaught", uncaught.isEmpty())
+                errorCollector.cancel()
+            } finally {
+                Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+            }
+        }
+
+    @Test
+    fun changeWorkspace_scopeCancellationMidCall_propagatesCancellationInertWithoutSurfacing() =
+        runTest {
+            // AC #4: `catch (CancellationException) { throw e }` MUST precede the typed catches —
+            // j.u.c.CancellationException extends ISE on the JVM (the #451 rework). A change_workspace suspends
+            // mid-call; viewModelScope teardown must neither crash nor mis-surface cancellation as a
+            // change-workspace failure (CancellationException is never a surfaced error). change_workspace
+            // never pops, so there is no PopBack side effect to check (the divergence from the #556 archive
+            // twin).
+            val gate = CompletableDeferred<Session>() // never completes — the call stays suspended in-flight
+            val entered = CompletableDeferred<Unit>()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, GatingWorkspaceRepo(gate = gate, entered = entered))
+            val errors = mutableListOf<Unit>()
+            val errorCollector = launch { vm.changeWorkspaceErrors.collect { errors += it } }
+            val store = ViewModelStore().apply { put("vm", vm) }
+
+            vm.onWorkspacePicked("pyry-workspace/app")
+            advanceUntilIdle()
+            assertTrue("the change_workspace must be in-flight", entered.isCompleted)
+
+            store.clear() // cancels viewModelScope → the awaiting call throws CancellationException
+            advanceUntilIdle()
+            // No crash, no leaked exception (runTest fails otherwise), and cancellation is never mis-surfaced
+            // as a change-workspace failure.
+            assertTrue("cancellation must not surface a change-workspace error: $errors", errors.isEmpty())
+            errorCollector.cancel()
         }
 
     // ---- #396: isStalled projection over repository.observeStall ------------------------------
@@ -2680,6 +2776,26 @@ class ThreadViewModelTest {
         override suspend fun archive(conversationId: String) {
             entered.complete(Unit)
             gate.await()
+        }
+    }
+
+    /**
+     * The [GatingArchiveRepo] twin for [changeWorkspace] (#561 AC #4): signals [entered] then suspends on a
+     * never-completing [gate] — so a test can cancel viewModelScope while a change_workspace one-shot is
+     * in-flight and prove the [CancellationException]-first rethrow keeps teardown inert. Gates on a
+     * [Session]-typed deferred so the (never-reached) return is `gate.await()`, fabricating no placeholder.
+     */
+    private class GatingWorkspaceRepo(
+        private val gate: CompletableDeferred<Session>,
+        private val entered: CompletableDeferred<Unit>,
+        private val delegate: FakeConversationRepository = FakeConversationRepository(),
+    ) : ConversationRepository by delegate {
+        override suspend fun changeWorkspace(
+            conversationId: String,
+            workspace: String,
+        ): Session {
+            entered.complete(Unit)
+            return gate.await()
         }
     }
 

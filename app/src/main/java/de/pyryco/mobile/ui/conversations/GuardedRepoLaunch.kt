@@ -9,12 +9,12 @@ import kotlinx.coroutines.launch
 /**
  * Launches [block] in [viewModelScope] with the relay-mode one-shot guard (#490): rethrow structured
  * cancellation first, then inertly swallow the three failure types a relay-backed [ConversationRepository]
- * can produce for the older conversation-action launches (send, create-discussion, change-workspace,
+ * can produce for the older conversation-action launches (send, create-discussion,
  * archive/rename/delete/promote) that predate the modal-send discipline:
  *
  *  - [RelayErrorException] — a crafted server `error` frame.
  *  - [IllegalStateException] — a not-connected session, or the not-wired interface-default `error(...)`.
- *  - [UnsupportedOperationException] — a not-yet-wired remote method (`archive` / `rename` / `changeWorkspace`).
+ *  - [UnsupportedOperationException] — a not-yet-wired remote method (`archive` / `rename`).
  *
  * These throws are inert-swallowed so one failed action never reaches the default uncaught-exception handler
  * and kills the process; the posture mirrors `ThreadViewModel.onDropQueued` / `sendInterrupt` (no error

@@ -392,6 +392,22 @@ class ThreadViewModel(
      */
     val archiveErrors: Flow<Unit> = archiveErrorChannel.receiveAsFlow()
 
+    private val changeWorkspaceErrorChannel = Channel<Unit>(capacity = Channel.BUFFERED)
+
+    /**
+     * One-shot "changing this conversation's workspace failed" signal (#561) — the [archiveErrors] one-shot
+     * idiom, cloned for the Workspace-Picker selection. Carries **no** payload (just [Unit]), so nothing
+     * sensitive — least of all the server-supplied [RelayErrorException.message] — can leak through it; the
+     * render slice shows a transient snackbar with a **fixed local string**, never an exception message.
+     * Fires exactly once per caught failure: [RelayErrorException] from a server `error` reply
+     * (change_workspace is request/reply, so a correlated server error is reachable — unlike the
+     * fire-and-forget `new_session` send), or [IllegalStateException] from a not-connected send. Success is
+     * passive — no signal fires and there is no [ThreadNavigation.PopBack] (the divergence from
+     * [archiveErrors]): #560's confirmed upsert makes `observeConversations` re-emit with the new `cwd`, so
+     * the workspace chip re-labels itself (list-driven) while the user stays on the thread.
+     */
+    val changeWorkspaceErrors: Flow<Unit> = changeWorkspaceErrorChannel.receiveAsFlow()
+
     /**
      * Folds one live event to the next [isThinking] value, or `null` to leave the flag unchanged. Routes
      * by [conversationId] first (AC #3 — other conversations never move the flag), then maps the turn
@@ -451,9 +467,7 @@ class ThreadViewModel(
 
     fun onWorkspacePicked(path: String) {
         pendingWorkspacePicker.value = false
-        launchGuardedRepoCall {
-            repository.changeWorkspace(conversationId, path)
-        }
+        sendChangeWorkspace(path)
     }
 
     fun onWorkspacePickerDismissed() {
@@ -623,6 +637,47 @@ class ThreadViewModel(
                 archiveErrorChannel.trySend(Unit)
             } catch (e: IllegalStateException) {
                 archiveErrorChannel.trySend(Unit)
+            }
+        }
+    }
+
+    /**
+     * Route a Workspace-Picker selection (#561) to [ConversationRepository.changeWorkspace] and surface a
+     * failure. Combines the two established surfacing twins: the **catch set** matches [sendArchive] (two
+     * types — change_workspace is request/reply, so a server `error` reply is reachable), while the
+     * **success continuation** matches [sendNewSession] (passive — no side effect):
+     *
+     *  1. **Two catches.** [RelayErrorException] from a server `error` reply (incl. the daemon rejecting an
+     *     out-of-`$HOME` / empty path as `protocol.malformed`) is caught alongside the not-connected
+     *     [IllegalStateException]; both map to the same payload-free [changeWorkspaceErrorChannel] signal.
+     *     The caught `message` is **never** read (the server-supplied [RelayErrorException.message] must not
+     *     reach the surface — AC #2). The [IllegalArgumentException] `conversation.not_found` and the #318
+     *     decode exception are **not** caught: not_found is unreachable (you only change the workspace of the
+     *     conversation you are viewing, whose record is in the list by construction — parity with the shipped
+     *     guard / #530 / #556), and a malformed reply is a fail-loud protocol violation.
+     *  2. **No [ThreadNavigation.PopBack]** (the divergence from [sendArchive]). Success does nothing else —
+     *     the user stays on the thread; the chip is list-driven: #560's confirmed upsert makes
+     *     `observeConversations` re-emit with the new `cwd`, so the workspace chip re-labels itself (AC #1).
+     *     The vestigial [de.pyryco.mobile.data.model.Session] return (#560 — change_workspace has no session
+     *     transition) is discarded.
+     *
+     * Always passes the VM's own [conversationId] (never re-derived); [path] is the user's own picker
+     * selection, forwarded verbatim as a wire field to #560's already-secured `changeWorkspace` (the phone
+     * never touches the filesystem with it — `$HOME` confinement is the daemon's job). The
+     * [CancellationException] rethrow **MUST precede** the typed catches (`j.u.c.CancellationException`
+     * extends [IllegalStateException] on the JVM) so screen-exit teardown mid-call propagates cleanly and is
+     * never mis-surfaced as a change-workspace failure (AC #4).
+     */
+    private fun sendChangeWorkspace(path: String) {
+        viewModelScope.launch {
+            try {
+                repository.changeWorkspace(conversationId, path)
+            } catch (e: CancellationException) {
+                throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
+            } catch (e: RelayErrorException) {
+                changeWorkspaceErrorChannel.trySend(Unit)
+            } catch (e: IllegalStateException) {
+                changeWorkspaceErrorChannel.trySend(Unit)
             }
         }
     }
