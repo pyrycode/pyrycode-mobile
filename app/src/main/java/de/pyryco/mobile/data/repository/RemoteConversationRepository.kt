@@ -12,9 +12,11 @@ import de.pyryco.mobile.data.network.ArchiveConversationPayloadDto
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.BackfillSincePayloadDto
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
+import de.pyryco.mobile.data.network.ConversationDeletedPayloadDto
 import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.ConversationsPayload
 import de.pyryco.mobile.data.network.CreateConversationPayloadDto
+import de.pyryco.mobile.data.network.DeleteConversationPayloadDto
 import de.pyryco.mobile.data.network.DequeueMessagePayloadDto
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.ErrorPayload
@@ -332,21 +334,24 @@ class RemoteConversationRepository(
                     }
                 appendMessages(rows)
             }
-            TYPE_ACK, TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_UPDATED, TYPE_SCREEN_SNAPSHOT, TYPE_SESSION_SETTINGS_UPDATED ->
+            TYPE_ACK, TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_UPDATED, TYPE_CONVERSATION_DELETED,
+            TYPE_SCREEN_SNAPSHOT, TYPE_SESSION_SETTINGS_UPDATED,
+            ->
                 // Success reply to a correlated request, handed verbatim to the waiter. An `ack`
                 // (#346) carries the empty `{}` the bare-ack waiter ignores; a `conversation_created`
                 // (#347) / `conversation_updated` (#348) carries the bare conversation object the
                 // mutation ([createDiscussion] / [promote]) decodes for its typed return; a
                 // `screen_snapshot` (#375) carries the rendered-screen payload [requestScreenSnapshot]
                 // decodes for its `text`; a `session_settings_updated` (#543) carries the bare
-                // `{session_id}` ack the [setSessionSettings] waiter decodes for reply-shape validation.
-                // An `inReplyTo` matching no pending entry (or null) is a no-op: `list_conversations` /
-                // `backfill_since` draw no reply here; `screen_snapshot` / `session_settings_updated` are
-                // always correlated replies (the daemon never broadcasts them), so an unmatched one is
-                // harmless; `conversation_updated` is also the server's unsolicited broadcast on change
-                // (no `inReplyTo`), which must stay a harmless no-op (the authoritative `conversations`
-                // snapshot drives an unsolicited list refresh, not this delta); and `complete` is
-                // idempotent so a duplicate reply is harmless.
+                // `{session_id}` ack the [setSessionSettings] waiter decodes for reply-shape validation;
+                // a `conversation_deleted` (#532) carries the bare `{id}` ack the [delete] waiter decodes
+                // for reply-shape validation. An `inReplyTo` matching no pending entry (or null) is a
+                // no-op: `list_conversations` / `backfill_since` draw no reply here; `screen_snapshot` /
+                // `session_settings_updated` / `conversation_deleted` are always correlated replies (the
+                // daemon never broadcasts them), so an unmatched one is harmless; `conversation_updated`
+                // is also the server's unsolicited broadcast on change (no `inReplyTo`), which must stay a
+                // harmless no-op (the authoritative `conversations` snapshot drives an unsolicited list
+                // refresh, not this delta); and `complete` is idempotent so a duplicate reply is harmless.
                 envelope.inReplyTo?.let { id -> pendingRequests[id]?.complete(envelope.payload) }
             TYPE_ERROR ->
                 // Failure reply to a correlated request (#346): unblock the waiter exceptionally with
@@ -920,6 +925,24 @@ class RemoteConversationRepository(
         }
     }
 
+    /**
+     * Remove [conversationId] from **all three** read projections after a confirmed `delete` (#532) —
+     * the contrast to [upsertConversation]. The [ConversationRepository.delete] contract's
+     * post-condition spans all three streams, and the fake achieves it by removing its *unified* record
+     * ([FakeConversationRepository]'s `state - conversationId` empties list, messages, and last-message
+     * at once); the remote holds three *separate* `StateFlow`s read independently by [observeMessages] /
+     * [observeLastMessage], so a list-only removal would leave those streams emitting a hard-deleted
+     * conversation's rows. Clearing all three is *completing* the delete, not scope creep. Idempotent by
+     * construction: `List.filterNot` returns an element-equal list when the id is absent, and
+     * `Map - missingKey` an equals-identical map, so [StateFlow] conflation makes deleting an
+     * already-absent id re-emit nothing on any of the three.
+     */
+    private fun removeConversation(conversationId: String) {
+        projection.update { current -> current?.filterNot { it.id == conversationId } }
+        threadByConversation.update { it - conversationId }
+        lastMessages.update { it - conversationId }
+    }
+
     override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> =
         flow {
             // Request on every subscription: redundant requests are absorbed by StateFlow conflation,
@@ -1421,6 +1444,58 @@ class RemoteConversationRepository(
     }
 
     /**
+     * Permanently delete [conversationId] over v2 `delete_conversation` (#532, server pyrycode#822 /
+     * PR #884). Encodes the id-only [DeleteConversationPayloadDto] request, sends it, and awaits its
+     * correlated `conversation_deleted` ack. Unlike [rename] / [sendArchiveToggle] (whose reply is a
+     * bare `conversation_updated` folded via [upsertConversation]), delete's reply is a dedicated
+     * `{id}` ack — the record is gone, so there is nothing to upsert. The ack is decoded through the
+     * [ConversationDeletedPayloadDto] boundary **only** to validate the reply shape (#318 posture — a
+     * malformed ack throws here, before any removal); the decoded value is **discarded** (the repo
+     * removes the id it *sent*, not the id the reply echoes, so a lying relay cannot redirect the
+     * removal). On a well-formed ack it **removes** [conversationId] from all three read projections
+     * ([removeConversation]) so [observeConversations] re-emits without it, [observeMessages] →
+     * `emptyList()`, and [observeLastMessage] → `null` — the faithful mirror of the fake's whole-record
+     * removal.
+     *
+     * **`conversation.not_found` converges as success**, the deliberate divergence from [rename] /
+     * [sendArchiveToggle]: the [ConversationRepository.delete] contract is *tolerant* of unknown ids
+     * (converges on the post-condition, not [IllegalArgumentException]), so an already-gone id is
+     * removed locally and returns normally. [mapError] maps `conversation.not_found` — and nothing
+     * else — to [IllegalArgumentException], so the tight `catch` below captures exactly that case; it
+     * is scoped to [sendAndAwaitReply] alone, so a malformed-ack decode [IllegalArgumentException]
+     * still propagates (never mis-read as already-gone, so a bad ack removes nothing).
+     *
+     * Throws [IllegalStateException] when the session is not connected (or on teardown mid-await),
+     * [RelayErrorException] for any other server `error`, and the #318 decode exception for a malformed
+     * ack — none of which mutate a projection (AC #2, #3). Adds no logging (the id and reply stay off
+     * the log, the `security-sensitive` discipline; [RelayErrorException.message] is server-supplied).
+     */
+    override suspend fun delete(conversationId: String) {
+        val request =
+            Envelope(
+                id = requestId.incrementAndGet(),
+                type = TYPE_DELETE_CONVERSATION,
+                ts = Clock.System.now().toString(),
+                payload = MobileJson.encodeToJsonElement(DeleteConversationPayloadDto(conversationId = conversationId)),
+            )
+        val reply =
+            try {
+                sendAndAwaitReply(request)
+            } catch (alreadyGone: IllegalArgumentException) {
+                // mapError maps conversation.not_found → IAE and nothing else, so this is exactly the
+                // not-found case. Delete's post-condition is "absent", so already-gone is success (AC #4):
+                // converge locally and return. The catch is scoped to the await only — the decode below
+                // is NOT inside it, so a malformed-ack IAE cannot be mis-read as already-gone.
+                removeConversation(conversationId)
+                return
+            }
+        // #318 boundary: a malformed ack throws here (SerializationException ⊂ IllegalArgumentException),
+        // BEFORE removeConversation, so a bad ack mutates nothing (AC #2). Shape-validated, then discarded.
+        MobileJson.decodeFromJsonElement<ConversationDeletedPayloadDto>(reply)
+        removeConversation(conversationId)
+    }
+
+    /**
      * Rename an existing conversation (channel or discussion) to [name] over v2 `rename_conversation`
      * (#530, server #820). Encodes the request ([RenameConversationPayloadDto]: `{conversation_id, name}`,
      * both required — no `cwd`, contrast [promote]), sends it, and awaits its correlated
@@ -1599,6 +1674,12 @@ class RemoteConversationRepository(
 
         /** Request: restore an archived conversation (#549, #881, shares `ArchiveConversationPayload`). Reply is `conversation_updated`. */
         const val TYPE_UNARCHIVE_CONVERSATION = "unarchive_conversation"
+
+        /** Request: permanently delete an existing conversation (#532, #822 `DeleteConversationPayload`). */
+        const val TYPE_DELETE_CONVERSATION = "delete_conversation"
+
+        /** Correlated ack for [TYPE_DELETE_CONVERSATION] carrying only `{id}` (#532, #822). */
+        const val TYPE_CONVERSATION_DELETED = "conversation_deleted"
 
         /** Request: apply model/effort/YOLO to a running session (#543, #844 `SetSessionSettingsPayload`). */
         const val TYPE_SET_SESSION_SETTINGS = "set_session_settings"
