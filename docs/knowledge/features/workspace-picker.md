@@ -31,6 +31,7 @@ val recents by repository
     .recentWorkspaces()
     .collectAsStateWithLifecycle(initialValue = emptyList())
 var showCreateDialog by rememberSaveable { mutableStateOf(false) }
+var errorMessage by rememberSaveable { mutableStateOf<String?>(null) }
 val scope = rememberCoroutineScope()
 
 WorkspacePickerSheet(
@@ -44,12 +45,26 @@ if (showCreateDialog) {
     CreateFolderDialog(
         onCreate = { name ->
             showCreateDialog = false
+            errorMessage = null
             scope.launch {
-                val path = repository.createWorkspaceFolder(name)
-                onPicked(path)
+                try {
+                    onPicked(repository.createWorkspaceFolder(name))
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (e: Exception) {
+                    errorMessage = CREATE_FOLDER_ERROR_MESSAGE
+                }
             }
         },
         onDismiss = { showCreateDialog = false },
+    )
+}
+errorMessage?.let { message ->
+    AlertDialog(
+        onDismissRequest = { errorMessage = null },
+        title = { Text("Couldn't create folder") },
+        text = { Text(message) },
+        confirmButton = { TextButton(onClick = { errorMessage = null }) { Text("OK") } },
     )
 }
 ```
@@ -58,7 +73,7 @@ Behaviour:
 
 - **Tapping a recent row** → `onPick = onPicked` passes straight through. The sheet emits `onPick(path)` exactly when the user taps a row; no wrapping, no transformation.
 - **Tapping "Create new folder under pyry-workspace…"** → `onCreateNew = { showCreateDialog = true }` flips the dialog flag. The `AlertDialog` composes into its own window above the `ModalBottomSheet`, so the two surfaces don't conflict visually.
-- **Submitting the dialog** → `showCreateDialog = false` flips synchronously *before* launching the coroutine, so the dialog leaves composition and a second `onCreate` from the same dialog instance is structurally impossible. The launched job awaits `repository.createWorkspaceFolder(name)`, then calls `onPicked(path)` with the returned path.
+- **Submitting the dialog** → `showCreateDialog = false` flips synchronously *before* launching the coroutine, so the dialog leaves composition and a second `onCreate` from the same dialog instance is structurally impossible. The launched job awaits `repository.createWorkspaceFolder(name)` inside a `try`/`catch` ([#564](../codebase/564.md)); on success it calls `onPicked(path)` with the returned path, on any non-cancellation failure it sets `errorMessage` instead (see § Error handling).
 - **Cancelling the dialog (Cancel button, outside-tap, back-press)** → `onDismiss = { showCreateDialog = false }` flips only the dialog flag. The sheet stays visible. The host's outer `onDismiss` is NOT called.
 - **Dismissing the sheet itself (close icon, scrim tap, drag-down, back-press while the dialog is not open)** → `onDismiss = onDismiss` invokes the consumer's outer callback. The consumer typically flips its `visible` flag to false; the host re-renders with `visible == false`, returns nothing, and the sheet's exit animation runs as `ModalBottomSheet` leaves composition.
 - **`visible == false`** → `if (!visible) return` in the public composable means no Koin lookup, no flow subscription, no coroutine scope. Mounting the host as a permanent sibling of a screen body costs nothing when invisible.
@@ -93,15 +108,17 @@ If the consumer flips `visible = false` while a `createWorkspaceFolder` coroutin
 
 ## Error handling
 
-- **`recentWorkspaces()` failure modes.** None in Phase 0 (the fake's `MutableStateFlow` cannot fail). If Phase 4's flow ever emits a terminal error, `collectAsStateWithLifecycle` swallows it silently — the sheet renders the last good list. Acceptable for Phase 0; Phase 4 will wire a `catch { }` operator if surfacing errors is needed.
-- **`createWorkspaceFolder` failure modes.**
-  - `IllegalArgumentException` from blank-name validation: structurally unreachable. The dialog's Create button is disabled while the trimmed name is blank (see [`CreateFolderDialog`](./create-folder-dialog.md) § Internal state); the dialog never invokes `onCreate("")`. The host does not catch — if this ever fires it indicates a contract violation upstream and the app should crash loudly.
-  - Phase 4 failures (network, server-side collision): out of scope here. The host has no `try { … } catch { … }` wrap today. When Phase 4 lands, the natural surface is a snackbar / error-state slot; until then, the throwing default on `ConversationRepository` and the fake's non-throwing implementation mean uncaught throws cannot occur.
-- **Coroutine cancellation:** silent — see § Cancellation behaviour on consumer-driven dismiss mid-write above. No callback is invoked.
+- **`recentWorkspaces()` failure modes.** None in Phase 0 (the fake's `MutableStateFlow` cannot fail). If Phase 4's flow ever emits a terminal error, `collectAsStateWithLifecycle` swallows it silently — the sheet renders the last good list. Acceptable for Phase 0; Phase 4 will wire a `catch { }` operator if surfacing errors is needed. (`createWorkspaceFolder` below already got its Phase 4 treatment in [#564](../codebase/564.md); `recentWorkspaces` has not.)
+- **`createWorkspaceFolder` failure modes — the Tier-1 crash fix ([#564](../codebase/564.md)).** Before #564, tapping "Create new folder" against the real relay crashed the app: the launch block had no `try`/`catch`, so any throw from `repository.createWorkspaceFolder` — not-connected `IllegalStateException`, server `RelayErrorException`, or a decode exception — propagated uncaught into the coroutine. Because this host is shared by all three consumers (thread workspace flow, settings default-workspace row, FAB long-press), the crash reproduced identically from all three (Tier 1, 2026-07-03 backend-gaps audit). The fix wraps the launch:
+  - `catch (CancellationException) { throw it }` **first** — a dismissed sheet cancelling the coroutine must propagate normally, not be mis-read as a failure. JVM `CancellationException extends IllegalStateException`, so an ISE-only or broad-`Exception`-only catch placed first would swallow it (see [[catch-illegalstate-swallows-cancellation]]).
+  - `catch (Exception) { errorMessage = CREATE_FOLDER_ERROR_MESSAGE }` — every other throw sets a **fixed generic literal** (never the server's `RelayErrorException.message`, never the attempted name/path — the message must not leak untrusted or server-authored text). Rendered as an `AlertDialog` ("Couldn't create folder" / OK) layered above the still-visible `ModalBottomSheet` (`onPicked` was never called, so the sheet doesn't close).
+  - `IllegalArgumentException` from blank-name validation is still structurally unreachable from the shipped dialog (Create stays disabled while the trimmed name is blank — see [`CreateFolderDialog`](./create-folder-dialog.md) § Internal state) but is now also caught by the broad `catch (Exception)` rather than crashing, belt-and-suspenders.
+  - Deliberately **not** [`GuardedRepoLaunch`](./guarded-repo-launch.md) (#490) — that guard silently swallows, which fails "user-visible message." This is a bespoke catch precisely because the failure must be seen, not hidden.
+- **Coroutine cancellation:** the in-flight job is cancelled if the host leaves composition mid-write (see § Cancellation behaviour on consumer-driven dismiss mid-write above); the `CancellationException` catch above rethrows it, so no callback and no `errorMessage` fire — cancellation stays silent by design, distinct from a real failure.
 
 ## Configuration
 
-- **No new dependencies.** `koinInject`, `collectAsStateWithLifecycle`, `rememberCoroutineScope`, `rememberSaveable`, `launch` all ship in the existing `org.koin:koin-androidx-compose` / `androidx.lifecycle:lifecycle-runtime-compose` / `androidx.compose.runtime` / `kotlinx.coroutines` artifacts. No `gradle/libs.versions.toml` edit, no `app/build.gradle.kts` edit.
+- **No new dependencies.** `koinInject`, `collectAsStateWithLifecycle`, `rememberCoroutineScope`, `rememberSaveable`, `launch` all ship in the existing `org.koin:koin-androidx-compose` / `androidx.lifecycle:lifecycle-runtime-compose` / `androidx.compose.runtime` / `kotlinx.coroutines` artifacts. [#564](../codebase/564.md) added `AlertDialog`/`Text`/`TextButton` (already-used `androidx.compose.material3` types) and `kotlinx.coroutines.CancellationException` — no new Gradle artifact either. No `gradle/libs.versions.toml` edit, no `app/build.gradle.kts` edit.
 - **No new DI registrations.** `single { FakeConversationRepository() } bind ConversationRepository::class` is already registered in [`AppModule`](./dependency-injection.md) by [#209](../codebase/209.md) / [#210](../codebase/210.md); the host's `koinInject<ConversationRepository>()` lookup resolves to the same singleton that ViewModels consume via constructor injection.
 - **No previews.** The host's behaviour is sequencing, not pixels — the two children carry their own previews ([`WorkspacePickerSheet`](./workspace-picker-sheet.md): two; [`CreateFolderDialog`](./create-folder-dialog.md): three). Adding a host preview would require a fake-repo wrap and would duplicate what the children's previews already show.
 
@@ -157,6 +174,7 @@ Three Compose UI tests in `app/src/androidTest/java/de/pyryco/mobile/ui/conversa
 - **`dialog_submit_calls_createWorkspaceFolder_exactly_once_and_forwards_returned_path_to_onPicked`** — tap "Create new folder under pyry-workspace…", type `"my-workspace"`, tap Create. Asserts `picked == listOf("pyry-workspace/my-workspace")` (exactly one invocation, exact path) **and** `repo.recentWorkspaces().first().first() == "pyry-workspace/my-workspace"` (the bump landed at position 0; re-asserts the repo contract from the host's vantage and validates end-to-end wiring).
 - **`cancelling_create_dialog_keeps_sheet_visible_and_does_not_invoke_host_onDismiss`** — tap "Create new folder under pyry-workspace…", then tap Cancel. Asserts `dismissed == 0`, the sheet's `"Choose workspace"` title still displays, and the dialog's `"Create workspace"` title `assertDoesNotExist()`. This is the load-bearing test for the "two flag-flips that share the surface verb 'dismiss' route differently" contract.
 - **`tapping_a_recent_row_invokes_onPicked_with_that_rows_path`** — tap a known seeded recent path (`"~/Workspace/pyrycode-mobile"` from the fake's default seed) and assert `picked == listOf("~/Workspace/pyrycode-mobile")`. The wiring is `onPick = onPicked` (one-line pass-through); the test locks the contract per AC #5c.
+- **`dialog_submit_whenCreateWorkspaceFolderThrows_showsErrorMessage_andDoesNotInvokeOnPicked`** ([#564](../codebase/564.md)) — injects a repository whose `createWorkspaceFolder` throws `IllegalStateException`, built via Kotlin interface delegation (`object : ConversationRepository by FakeConversationRepository() { override fun createWorkspaceFolder(...) = throw ... }`) rather than subclassing, since `FakeConversationRepository` is `final`. Drives row → dialog → Create, `waitForIdle()`, then asserts the generic error message node **is displayed**, `onPicked` was **never** invoked, and tapping OK dismisses it. This is the crash-regression test — before #564 this exact sequence threw uncaught.
 
 Tests intentionally NOT included:
 
@@ -175,7 +193,7 @@ Tests intentionally NOT included:
 
 ## Related
 
-- Ticket notes: [`../codebase/220.md`](../codebase/220.md), [`../codebase/221.md`](../codebase/221.md) (first consumer — Channel List FAB long-press wires the host into [`ChannelListScreen`](./channel-list-screen.md) + [`ChannelListViewModel`](./channel-list-viewmodel.md))
+- Ticket notes: [`../codebase/220.md`](../codebase/220.md), [`../codebase/221.md`](../codebase/221.md) (first consumer — Channel List FAB long-press wires the host into [`ChannelListScreen`](./channel-list-screen.md) + [`ChannelListViewModel`](./channel-list-viewmodel.md)), [`../codebase/564.md`](../codebase/564.md) (wires `createWorkspaceFolder` live and fixes the Tier-1 crash — see § Error handling)
 - Spec: `docs/specs/architecture/220-workspace-picker-host-composable.md`
 - Parent: split from [#207](https://github.com/pyrycode/pyrycode-mobile/issues/207) (Workspace Picker host); itself split from [#143](https://github.com/pyrycode/pyrycode-mobile/issues/143).
 - Children: [`WorkspacePickerSheet`](./workspace-picker-sheet.md) (#212), [`CreateFolderDialog`](./create-folder-dialog.md) (#213).
@@ -187,6 +205,7 @@ Tests intentionally NOT included:
   - **Empty-thread workspace chip ([#137](https://github.com/pyrycode/pyrycode-mobile/issues/137))** — the chip's tap opens this host.
   - **Thread overflow "Change workspace…" ([#208](https://github.com/pyrycode/pyrycode-mobile/issues/208))** — the menu item's tap opens this host.
 - Downstream / open:
-  - **Phase 4 error UI** — snackbar / error-state slot for `createWorkspaceFolder` network or server-side failures, landed when the real backend ships.
   - **Animated-close coordination** — a `LaunchedEffect` driving `sheetState.hide()` before `onDismiss` if a future ticket demands the exit-animation completion before the consumer's state flip.
-  - **Literal-strings localisation** — out of scope; deferred to the first `strings.xml` pass alongside the children's literals.
+  - **Literal-strings localisation** — out of scope; deferred to the first `strings.xml` pass alongside the children's literals. `CREATE_FOLDER_ERROR_MESSAGE` and the `AlertDialog`'s title/OK strings ([#564](../codebase/564.md)) are inline literals in `WorkspacePicker.kt`, same posture as the rest of the file.
+  - **Recent-workspaces population** — [#565](https://github.com/pyrycode/pyrycode-mobile/issues/565) wires `recent_workspaces` (the read side `recentWorkspaces()` still consumes the interface default here); a folder created via [#564](../codebase/564.md) appears in Recent only once that lands.
+  - **Failure-state pixel fidelity** — the generic `AlertDialog` in [#564](../codebase/564.md) has no Figma design (Figma `19:44` covers only the input dialog); testable-today behaviour is in scope, pixel fidelity is deferred.
