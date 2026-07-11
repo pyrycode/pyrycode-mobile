@@ -33,11 +33,17 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    discussion to a runtime-unique name, confirm it is present on the channel list, then delete it from the
    thread (overflow → "Channel info" → "Delete" → the "Delete conversation?" dialog → confirm) and assert
    it is gone from the list and the thread has popped back (exercises the #532 delete wire against a real
-   daemon; no claude turn — delete is a daemon round-trip). Semi-deterministic. A **`LIVE=1` variant
-   (#527, extended #566 / #541 / #554)** runs a **curated quartet** of scenarios (ping +
-   create-workspace-folder + new-session + delete, still 3 real claude turns — delete spends none) against
-   the **production relay** over `wss://` (TLS) — the pre-ship gate that catches the live-environment
-   failure class a local relay cannot; see [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay).
+   daemon; no claude turn — delete is a daemon round-trip); and an **archive/restore** scenario (#551):
+   rename a discussion to a runtime-unique name, confirm it is present on the channel list, archive it from
+   the thread (overflow → "Archive", immediate — no confirm) and assert it is gone from the list, then
+   restore it (Settings → "Archived discussions" → the Archived screen's restore affordance) and assert it
+   is back in the list (exercises the #549 archive/unarchive wire, the #556 archive-from-thread and #557
+   restore surfacings against a real daemon; no claude turn — archive and restore are daemon round-trips).
+   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551)** runs a **curated
+   quintet** of scenarios (ping + create-workspace-folder + new-session + delete + archive-restore, still 3
+   real claude turns — delete and archive-restore spend none) against the **production relay** over `wss://`
+   (TLS) — the pre-ship gate that catches the live-environment failure class a local relay cannot; see
+   [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay).
 4. **Emulator + deterministic host** ← **shipped (#431).** The same real app + Noise/relay path, but
    claude is swapped for #642's scripted `fakeclaude` backend replaying a fixed JSONL fixture. No real
    claude, **zero claude turns**; re-running back-to-back yields the same pass. Run it with
@@ -103,7 +109,7 @@ delimiter positioned between the two cross-session messages, driven through the 
 | The instrumented test | `app/src/androidTest/.../e2e/InteractiveStreamE2ETest.kt` |
 | Host orchestration | `scripts/e2e-emulator.sh` |
 
-Rung 3 covers six scenarios on this one harness: the **ping** happy path (a constrained reply renders);
+Rung 3 covers seven scenarios on this one harness: the **ping** happy path (a constrained reply renders);
 a **tool-use** scenario (#481 — a constrained prompt makes real claude run a shell tool, asserting the
 tool step renders, keyed tolerantly on the verbatim tool name `"Bash"` in the tool-row header); a
 **thinking-spinner** scenario (#482 — a pure-reasoning prompt makes real claude think a beat, asserting
@@ -123,6 +129,13 @@ runtime-unique name, confirm it is present on the channel list, then delete it f
 → "Channel info" → the sheet's "Delete" → the "Delete conversation?" dialog → confirm — and assert **both**
 durable post-conditions: the unique name is gone from the list and the thread has popped back, proving the
 #532 delete wire against a real daemon; **zero** claude turns — create/rename/delete are daemon
+round-trips); and an **archive/restore** scenario (#551 —
+`interactiveTurn_archiveRestore_roundTripsListMembership`: rename a scratch discussion to a runtime-unique
+name, confirm it is present on the channel list, archive it from the thread (overflow → "Archive",
+**immediate — no confirm**) and assert it is **gone** from the list, then restore it (settings → "Archived
+discussions" → the Archived screen's restore affordance) and assert it is **back** in the list — the round
+trip closes; proving the #549 archive/unarchive wire, the #556 archive-from-thread and #557 restore
+surfacings against a real daemon; **zero** claude turns — create/rename/archive/restore are daemon
 round-trips). The tool-use test asserts the **durable** terminal signal — the tool name in the resolved row —
 not the transient running spinner: rung 3 has no scripted backend to hold the turn open, so racing the
 spinner over a real relay turn is the "never on timing" failure the [Constraints](#constraints) forbid
@@ -152,6 +165,25 @@ are **both** the literal `"Delete"` and the sheet stays composed behind the dial
 leaves `pendingChannelInfo` true), so the confirm tap is disambiguated by the dialog's sibling `"Cancel"`
 button (which the sheet has no equivalent of), never by z-order. Total real-claude cost: **zero** turns —
 create/rename/delete are daemon round-trips, and the durable identity is the typed name, so no ping is sent.
+
+The **archive/restore** scenario (#551) is the delete twin extended to a **round trip** and is likewise
+**always-on** (not `@Ignore`d): both post-conditions are **durable** structural facts — a conversation is in
+the active channel list or not — so, like #554's delete inversion and #541's delimiter, it belongs in the
+always-on gate. The seeded discussion is given a **runtime-unique** name (`"e2e551-" + System.currentTimeMillis()`)
+via **Rename** (the same reasoning as #554: the Archived screen renders only the display name, and a
+scratch discussion's auto-name "Untitled discussion" is non-unique and un-findable there), so its presence
+is observed on the list *before* archive and its `assertCountEquals(0)` after is a genuine present→absent
+inversion — then its **re-appearance** after restore is a second, opposite inversion on the same surface,
+attributable to the restore. Two structural differences from the delete twin: **archive is immediate** —
+the "Archive" item sits directly in the thread overflow (no confirm dialog, no Channel-Info sheet, so
+**none** of #554's "Delete"-collision disambiguation), and **restore navigates to a second screen** (channel
+list → Settings → "Archived discussions" → the Archived screen, which opens on the **Discussions** tab by
+default → the renamed discussion is on it, no tab tap). The one gotcha is the **restore-coroutine
+cancellation race**: `RestoreRequested` runs `viewModelScope.launch { repository.unarchive(id); … }` scoped
+to the **Archived screen's** ViewModel, so the test waits for the **"Restored" success snackbar** before
+navigating back — otherwise `popBackStack` would cancel a launched-but-unstarted `unarchive` and the closing
+presence check would flake to a timeout. Total real-claude cost: **zero** turns — create/rename/archive/restore
+are all daemon round-trips, and the durable identity is the typed name, so no ping is sent.
 
 The **thinking-spinner** scenario (#482) is the **flakiest** rung-3 scenario and ships **`@Ignore`-gated /
 manual**: the spinner has **no durable equivalent** of the tool name — once real claude emits its first
@@ -227,8 +259,8 @@ bash scripts/e2e-preship-gate.sh
 
 The wrapper bakes in the `LIVE=1` + `e2e-live` isolation defaults (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the four curated `@Test` methods (ping + create-workspace-folder, #566;
-new-session, #541; delete, #554) ride the wrapped mode.
+incantation to remember — the five curated `@Test` methods (ping + create-workspace-folder, #566;
+new-session, #541; delete, #554; archive-restore, #551) ride the wrapped mode.
 
 **When to run:**
 
@@ -237,10 +269,11 @@ new-session, #541; delete, #554) ride the wrapped mode.
 - **whenever a daemon or relay change touching the mobile surface lands** — run it alongside the daemon's
   own `make e2e-realclaude`.
 
-**Cost:** three real claude turns across four curated methods (the ping scenario + the
+**Cost:** three real claude turns across five curated methods (the ping scenario + the
 create-workspace-folder scenario, #566 + the new-session scenario, #541 — one turn each; `/clear` spends
-none; the delete scenario, #554, spends **none** — create/rename/delete are daemon round-trips), a few
-minutes of wall clock, subscription-covered (it does **not** meter tokens).
+none; the delete scenario, #554, and the archive-restore scenario, #551, each spend **none** —
+create/rename/delete/archive/restore are daemon round-trips), a few minutes of wall clock,
+subscription-covered (it does **not** meter tokens).
 
 For the full mechanics — relay URLs, the isolated `e2e-live` instance, prerequisites, and first-run
 assumptions — see [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay). The operator-facing
@@ -249,7 +282,7 @@ cannot drift.
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated quartet of rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated quintet of rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the pre-ship gate: the operator must never be the
 **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -259,13 +292,15 @@ over TLS instead of a local loopback relay. This is the pre-ship gate: the opera
 LIVE=1 bash scripts/e2e-emulator.sh
 ```
 
-**What it runs.** Four curated methods, passed as a comma-separated `class#method` list:
+**What it runs.** Five curated methods, passed as a comma-separated `class#method` list:
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
 `InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566),
-`InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (#541), and
-`InteractiveStreamE2ETest#interactiveTurn_deleteConversation_removesFromListAndClosesThread` (#554), so
-exactly **three real claude turns** are spent per run — the delete scenario adds a method, not a turn
-(create/rename/delete are daemon round-trips). The full class also includes the #481 tool-use test, which
+`InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (#541),
+`InteractiveStreamE2ETest#interactiveTurn_deleteConversation_removesFromListAndClosesThread` (#554), and
+`InteractiveStreamE2ETest#interactiveTurn_archiveRestore_roundTripsListMembership` (#551), so exactly
+**three real claude turns** are spent per run — the delete and archive-restore scenarios each add a method,
+not a turn (create/rename/delete/archive/restore are daemon round-trips). The full class also includes the
+#481 tool-use test, which
 stays excluded from LIVE (an extra turn, cost). `LIVE=1` is **mutually exclusive with `DETERMINISTIC=1`**
 (real vs scripted claude); setting both fails fast.
 
@@ -294,9 +329,10 @@ Prerequisites (on top of the "How to run" list):
 - The emulator needs outbound internet + DNS + a system-trusted TLS cert for the relay host. It reaches
   the public relay over its own NAT'd internet — **not** the `10.0.2.2` host alias, which is loopback-only.
 
-Cost: **three real claude turns per run across four curated methods** (ping + create-workspace-folder, #566
-+ new-session, #541; `/clear` spends none; delete, #554, spends none — create/rename/delete are daemon
-round-trips), a few minutes of wall clock, subscription-covered.
+Cost: **three real claude turns per run across five curated methods** (ping + create-workspace-folder, #566
++ new-session, #541; `/clear` spends none; delete, #554, and archive-restore, #551, each spend none —
+create/rename/delete/archive/restore are daemon round-trips), a few minutes of wall clock,
+subscription-covered.
 
 First-run assumptions to confirm (grounded in the design, unverified end to end):
 
@@ -692,7 +728,13 @@ These are grounded in the source but unverified end to end:
   through the #532 delete wire against a real daemon, always-on (both post-conditions — gone from the list,
   thread popped back — are durable structural facts) and folded into the pre-ship `LIVE=1` gate as the 4th
   curated method (spending **no** extra claude turn — create/rename/delete are daemon round-trips), taking
-  the gate from a trio to a quartet at still 3 turns.
+  the gate from a trio to a quartet at still 3 turns; Layer-3 (real claude) archive/restore round-trip —
+  **shipped (#551)**, driven end to end through the #549 archive/unarchive wire, the #556 archive-from-thread
+  and #557 restore surfacings against a real daemon, always-on (both durable post-conditions — the unique
+  name gone from the active list after archive, then back after restore, a genuine two-direction inversion)
+  and folded into the pre-ship `LIVE=1` gate as the 5th curated method (spending **no** extra claude turn —
+  create/rename/archive/restore are daemon round-trips), taking the gate from a quartet to a quintet at
+  still 3 turns.
 - **#337 full scope:** `seq`-based ordering and replay de-dup across reconnect (a #402 concern; this
   fold concatenates in arrival order, correct within a single connection); and a `make`/Gradle wrapper
   for the orchestration plus fork-sync of any shared `bin/` script per the org convention.
