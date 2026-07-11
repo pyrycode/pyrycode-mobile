@@ -26,14 +26,18 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    the channel-list FAB → Workspace Picker → create a folder → land in a fresh discussion whose
    workspace is the created folder → send the ping prompt in it → re-open the picker and confirm the
    folder shows in "Recent" (exercises the #564 create wire and #565 recents wire end to end against
-   real claude); and a **new-session** scenario (#541): with a live, exercised session, open the thread
+   real claude); a **new-session** scenario (#541): with a live, exercised session, open the thread
    overflow menu → tap "New session" → the daemon runs `/clear` and broadcasts `session_transition`, and
    the thread renders the session-boundary delimiter (exercises the #540 fire-and-forget wire and the
-   #336 fold end to end against real claude). Semi-deterministic. A **`LIVE=1` variant (#527, extended
-   #566 / #541)** runs a **curated trio** of scenarios (ping + create-workspace-folder + new-session)
-   against the **production relay** over `wss://` (TLS) — the pre-ship gate that catches the
-   live-environment failure class a local relay cannot; see
-   [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay).
+   #336 fold end to end against real claude); and a **delete-conversation** scenario (#554): rename a
+   discussion to a runtime-unique name, confirm it is present on the channel list, then delete it from the
+   thread (overflow → "Channel info" → "Delete" → the "Delete conversation?" dialog → confirm) and assert
+   it is gone from the list and the thread has popped back (exercises the #532 delete wire against a real
+   daemon; no claude turn — delete is a daemon round-trip). Semi-deterministic. A **`LIVE=1` variant
+   (#527, extended #566 / #541 / #554)** runs a **curated quartet** of scenarios (ping +
+   create-workspace-folder + new-session + delete, still 3 real claude turns — delete spends none) against
+   the **production relay** over `wss://` (TLS) — the pre-ship gate that catches the live-environment
+   failure class a local relay cannot; see [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay).
 4. **Emulator + deterministic host** ← **shipped (#431).** The same real app + Noise/relay path, but
    claude is swapped for #642's scripted `fakeclaude` backend replaying a fixed JSONL fixture. No real
    claude, **zero claude turns**; re-running back-to-back yields the same pass. Run it with
@@ -99,7 +103,7 @@ delimiter positioned between the two cross-session messages, driven through the 
 | The instrumented test | `app/src/androidTest/.../e2e/InteractiveStreamE2ETest.kt` |
 | Host orchestration | `scripts/e2e-emulator.sh` |
 
-Rung 3 covers five scenarios on this one harness: the **ping** happy path (a constrained reply renders);
+Rung 3 covers six scenarios on this one harness: the **ping** happy path (a constrained reply renders);
 a **tool-use** scenario (#481 — a constrained prompt makes real claude run a shell tool, asserting the
 tool step renders, keyed tolerantly on the verbatim tool name `"Bash"` in the tool-row header); a
 **thinking-spinner** scenario (#482 — a pure-reasoning prompt makes real claude think a beat, asserting
@@ -108,12 +112,18 @@ the spinner is displayed mid-turn, keyed tolerantly on the `cd_thread_thinking` 
 `interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace`: long-press the FAB → Workspace
 Picker → create a folder → land in a fresh discussion whose workspace is the created folder → send the
 ping prompt into it → re-open the picker from the channel list and assert the folder shows in "Recent",
-proving the #564 create wire and #565 recents wire end to end against real claude); and a **new-session**
+proving the #564 create wire and #565 recents wire end to end against real claude); a **new-session**
 scenario (#541 — `interactiveTurn_newSession_rendersSessionBoundaryDelimiter`: prove the session is live
 with the ping, then open the thread overflow menu → tap "New session" → the daemon runs `/clear` and
 broadcasts `session_transition`, and the thread renders the session-boundary delimiter, proving the #540
 fire-and-forget wire and the #336 `session_transition` → `SessionBoundary` fold end to end against real
-claude). The tool-use test asserts the **durable** terminal signal — the tool name in the resolved row —
+claude); and a **delete-conversation** scenario (#554 —
+`interactiveTurn_deleteConversation_removesFromListAndClosesThread`: rename a scratch discussion to a
+runtime-unique name, confirm it is present on the channel list, then delete it from the thread — overflow
+→ "Channel info" → the sheet's "Delete" → the "Delete conversation?" dialog → confirm — and assert **both**
+durable post-conditions: the unique name is gone from the list and the thread has popped back, proving the
+#532 delete wire against a real daemon; **zero** claude turns — create/rename/delete are daemon
+round-trips). The tool-use test asserts the **durable** terminal signal — the tool name in the resolved row —
 not the transient running spinner: rung 3 has no scripted backend to hold the turn open, so racing the
 spinner over a real relay turn is the "never on timing" failure the [Constraints](#constraints) forbid
 (it is why rung 4's `tool` scenario needed a two-drop fence).
@@ -128,6 +138,20 @@ New-session tap (a deterministic guard, no extra claude turn), so its later appe
 the action. `new_session` is **fire-and-forget** (pyrycode#831, #540), so nothing waits on or asserts an
 ack — the only observable is the post-broadcast delimiter. Total real-claude cost: **one** turn (the ping
 proving the session is live); `/clear` spends none.
+
+The **delete-conversation** scenario (#554) is likewise **always-on** (not `@Ignore`d): both post-conditions
+are **durable** structural facts — a conversation is in the channel list or not, and the thread has popped
+back or not — so, like #541's delimiter and #481's tool-name row, it belongs in the always-on gate. The
+seeded discussion is given a **runtime-unique** name (`"e2e554-" + System.currentTimeMillis()`) via
+**Rename** (not "Save as channel", which would leave a dedicated-workspace folder accumulating on the
+operator's real `~/pyry-workspace` across runs), so its presence is observed on the list *before* the delete
+and its `assertCountEquals(0)` after is a genuine present→absent inversion on the same surface — never a
+match-everything, never a delta count or timing (the #481 / #566 token discipline, here applied to an
+**absence**). The one gotcha: the Channel Info sheet's Delete `ActionCell` and the confirm dialog's button
+are **both** the literal `"Delete"` and the sheet stays composed behind the dialog (`ThreadEvent.Delete`
+leaves `pendingChannelInfo` true), so the confirm tap is disambiguated by the dialog's sibling `"Cancel"`
+button (which the sheet has no equivalent of), never by z-order. Total real-claude cost: **zero** turns —
+create/rename/delete are daemon round-trips, and the durable identity is the typed name, so no ping is sent.
 
 The **thinking-spinner** scenario (#482) is the **flakiest** rung-3 scenario and ships **`@Ignore`-gated /
 manual**: the spinner has **no durable equivalent** of the tool name — once real claude emits its first
@@ -203,8 +227,8 @@ bash scripts/e2e-preship-gate.sh
 
 The wrapper bakes in the `LIVE=1` + `e2e-live` isolation defaults (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the three curated `@Test` methods (ping + create-workspace-folder, #566;
-new-session, #541) ride the wrapped mode.
+incantation to remember — the four curated `@Test` methods (ping + create-workspace-folder, #566;
+new-session, #541; delete, #554) ride the wrapped mode.
 
 **When to run:**
 
@@ -213,9 +237,10 @@ new-session, #541) ride the wrapped mode.
 - **whenever a daemon or relay change touching the mobile surface lands** — run it alongside the daemon's
   own `make e2e-realclaude`.
 
-**Cost:** three real claude turns (the ping scenario + the create-workspace-folder scenario, #566 + the
-new-session scenario, #541 — one turn each; `/clear` spends none), a few minutes of wall clock,
-subscription-covered (it does **not** meter tokens).
+**Cost:** three real claude turns across four curated methods (the ping scenario + the
+create-workspace-folder scenario, #566 + the new-session scenario, #541 — one turn each; `/clear` spends
+none; the delete scenario, #554, spends **none** — create/rename/delete are daemon round-trips), a few
+minutes of wall clock, subscription-covered (it does **not** meter tokens).
 
 For the full mechanics — relay URLs, the isolated `e2e-live` instance, prerequisites, and first-run
 assumptions — see [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay). The operator-facing
@@ -224,7 +249,7 @@ cannot drift.
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated trio of rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated quartet of rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the pre-ship gate: the operator must never be the
 **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -234,13 +259,15 @@ over TLS instead of a local loopback relay. This is the pre-ship gate: the opera
 LIVE=1 bash scripts/e2e-emulator.sh
 ```
 
-**What it runs.** Three curated methods, passed as a comma-separated `class#method` list:
+**What it runs.** Four curated methods, passed as a comma-separated `class#method` list:
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
-`InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566), and
-`InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (#541), so exactly
-**three real claude turns** are spent per run — the full class also includes the #481 tool-use test,
-which stays excluded from LIVE (a 4th turn, cost). `LIVE=1` is **mutually exclusive with
-`DETERMINISTIC=1`** (real vs scripted claude); setting both fails fast.
+`InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566),
+`InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (#541), and
+`InteractiveStreamE2ETest#interactiveTurn_deleteConversation_removesFromListAndClosesThread` (#554), so
+exactly **three real claude turns** are spent per run — the delete scenario adds a method, not a turn
+(create/rename/delete are daemon round-trips). The full class also includes the #481 tool-use test, which
+stays excluded from LIVE (an extra turn, cost). `LIVE=1` is **mutually exclusive with `DETERMINISTIC=1`**
+(real vs scripted claude); setting both fails fast.
 
 **How it differs from default rung 3.** Same instrumented suite, same Gradle Managed Device, same
 "pairing values as instrumentation arguments" seam — only the relay and the instance name change:
@@ -267,8 +294,9 @@ Prerequisites (on top of the "How to run" list):
 - The emulator needs outbound internet + DNS + a system-trusted TLS cert for the relay host. It reaches
   the public relay over its own NAT'd internet — **not** the `10.0.2.2` host alias, which is loopback-only.
 
-Cost: **three real claude turns per run** (ping + create-workspace-folder, #566 + new-session, #541;
-`/clear` spends none), a few minutes of wall clock, subscription-covered.
+Cost: **three real claude turns per run across four curated methods** (ping + create-workspace-folder, #566
++ new-session, #541; `/clear` spends none; delete, #554, spends none — create/rename/delete are daemon
+round-trips), a few minutes of wall clock, subscription-covered.
 
 First-run assumptions to confirm (grounded in the design, unverified end to end):
 
@@ -656,11 +684,15 @@ These are grounded in the source but unverified end to end:
   real-claude #482 — the last gated behind a manual switch because the transient spinner has no durable
   artifact and rung 3 cannot hold the turn open); Layer-3 (real claude) create-workspace-folder —
   **shipped (#566)**, driven end to end through the #564 create wire and #565 recents wire and folded
-  into the pre-ship `LIVE=1` gate as the 2nd curated turn (see [Live mode](#live-mode-rung-3-live-relay));
+  into the pre-ship `LIVE=1` gate as the 2nd curated method (see [Live mode](#live-mode-rung-3-live-relay));
   Layer-3 (real claude) new-session delimiter — **shipped (#541)**, driven end to end through the #540
   fire-and-forget wire and the #336 `session_transition` → `SessionBoundary` fold, always-on (durable
   delimiter artifact, unlike the `@Ignore`d spinner) and folded into the pre-ship `LIVE=1` gate as the
-  3rd curated turn.
+  3rd curated method; Layer-3 (real claude) delete-conversation — **shipped (#554)**, driven end to end
+  through the #532 delete wire against a real daemon, always-on (both post-conditions — gone from the list,
+  thread popped back — are durable structural facts) and folded into the pre-ship `LIVE=1` gate as the 4th
+  curated method (spending **no** extra claude turn — create/rename/delete are daemon round-trips), taking
+  the gate from a trio to a quartet at still 3 turns.
 - **#337 full scope:** `seq`-based ordering and replay de-dup across reconnect (a #402 concern; this
   fold concatenates in arrival order, correct within a single connection); and a `make`/Gradle wrapper
   for the orchestration plus fork-sync of any shared `bin/` script per the org convention.

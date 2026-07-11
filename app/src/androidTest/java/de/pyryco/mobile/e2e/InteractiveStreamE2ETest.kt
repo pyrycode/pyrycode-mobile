@@ -2,14 +2,19 @@ package de.pyryco.mobile.e2e
 
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnySibling
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -455,6 +460,147 @@ class InteractiveStreamE2ETest {
             .assertIsDisplayed()
     }
 
+    /**
+     * Delete-conversation twin of the ping happy path (#554, Layer 3): drive the real Delete flow end to
+     * end against a real daemon, exercising the already-shipped #532 `delete` wire (pyrycode#822). Give a
+     * scratch discussion a runtime-unique, list-visible identity via **Rename**, confirm it is **present**
+     * on the channel list, then delete it from the thread — thread overflow → "Channel info" → the sheet's
+     * "Delete" → the "Delete conversation?" dialog → confirm — and assert **both** durable post-conditions:
+     * the unique name is **gone from the list** and the **thread has popped back**.
+     *
+     * **Reachability.** The Delete affordance lives in the `mutationsSupported`-gated Actions block of the
+     * Channel Info sheet, reached from the **ungated** "Channel info" overflow item.
+     * [de.pyryco.mobile.data.repository.RemoteConversationRepository.mutationsSupported] is `true` in relay
+     * mode (PR #572), so the flow is reachable on a plain **discussion** — the same real overflow the
+     * operator uses. Delete is conversation-scoped (keyed by `conversation_id`, replies
+     * `conversation_deleted`), so it carries none of the session-scoped blockers that re-park the sibling
+     * e2es; it is in the clean-buildable camp with #541 / #566.
+     *
+     * **Durable identity via Rename, not promote.** A scratch discussion is auto-named server-side, so its
+     * name is not test-controlled and asserting one's absence is fragile. Renaming to
+     * [CONVERSATION_NAME_PREFIX]` + System.currentTimeMillis()` gives a runtime-unique, list-visible token
+     * that cannot pre-exist on screen nor collide with conversations accumulated by prior LIVE gate runs.
+     * Rename (not "Save as channel") touches only the name — no dedicated-workspace folder that would
+     * accumulate on the operator's real `~/pyry-workspace` across runs (the #566 accumulation problem). The
+     * renamed discussion stays a discussion and is #1 in `observeConversations(Discussions)`
+     * (`sortedByDescending { lastUsedAt }`, just created) → always inside the visible recents, so its row is
+     * guaranteed present.
+     *
+     * **The absence is a genuine inversion.** [CONVERSATION_NAME_PREFIX]` + …` is unique, so its presence is
+     * observed on the list (step 5 assert + step 6 re-enter tap) *before* the delete, and its
+     * `assertCountEquals(0)` after (step 9) is a real present→absent flip on the same surface — never a
+     * match-everything, never a delta count or timing (the #481 / #566 token discipline, applied to an
+     * **absence** assertion).
+     *
+     * **The "Delete" collision (the one gotcha).** The sheet's Delete `ActionCell` and the confirm dialog's
+     * button are **both** the literal `"Delete"`, and `ThreadEvent.Delete` leaves the sheet composed behind
+     * the dialog (it sets `pendingDeleteConfirm` without clearing `pendingChannelInfo`), so both "Delete"
+     * nodes are on screen at confirm time. The confirm tap is disambiguated by a compound matcher only the
+     * dialog's button satisfies — its sibling is [DELETE_DIALOG_CANCEL], which the sheet (whose dismiss is a
+     * Close *icon*) has no equivalent of. Never [onFirst] across the two identical "Delete" nodes (z-order
+     * is not guaranteed).
+     *
+     * **Always-on, not `@Ignore`d.** The post-conditions are **durable** structural facts (a conversation is
+     * in the list or not; the thread popped or not) — no transient like #482's spinner — so the scenario
+     * belongs in the always-on gate, matching #481's tool-name row and #541's delimiter.
+     *
+     * **Zero real-claude turns (deliberate divergence from #541 / #566).** Create-discussion, rename, and
+     * delete are daemon round-trips, not claude turns, and the durable identity is the typed name (no live
+     * session content needed to identify it), so this scenario sends **no** ping and spends **no** claude
+     * turn. It still rides the real rung-3 stack (real relay + daemon) and belongs in the LIVE gate: it
+     * catches a broken `delete` / `rename` wire against the production relay. The LIVE gate is a **quartet**
+     * (4 methods) at **still 3 turns** (delete adds a method, not a turn).
+     */
+    @Test
+    fun interactiveTurn_deleteConversation_removesFromListAndClosesThread() {
+        // 1. A paired launch lands on the channel list. The "New discussion" FAB is the list marker.
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // 2. Wait for the relay connection to open before creating — rename/delete round-trip to the daemon.
+        awaitConnected()
+
+        // 3. Create a fresh discussion → the app navigates into its thread; the send button marks arrival. A
+        //    plain discussion suffices — "Rename" (mutationsSupported) and "Channel info" (ungated) both reach it.
+        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // 4. Rename the discussion to a runtime-unique, list-visible name. Open the overflow, tap "Rename".
+        //    The RenameDialog opens OVER the thread, whose composer is also an editable field, so
+        //    hasSetTextAction() alone is ambiguous — target the dialog's field by its focus (RenameDialog
+        //    auto-focuses on open; the composer never requested focus), waiting for focus to land. REPLACE
+        //    the pre-filled+selected auto-name (performTextReplacement, not performTextInput) so the field
+        //    holds exactly the unique name, then Save.
+        val uniqueName = CONVERSATION_NAME_PREFIX + System.currentTimeMillis()
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(RENAME_ITEM).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(RENAME_ITEM).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasSetTextAction() and isFocused()).performTextReplacement(uniqueName)
+        composeTestRule.onNodeWithText(RENAME_SAVE).performClick()
+
+        // 5. Presence check (AC-3): back to the list, wait for it, then confirm the unique name is displayed on
+        //    a recents row. The rename reply (conversation_updated) upserts → observeConversations re-emits with
+        //    the new name; the waitUntil covers that round-trip. This is the genuine presence observation on the
+        //    same surface where absence is later asserted (step 9).
+        composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
+
+        // 6. Re-enter the thread by tapping the recents row (a 2nd presence observation — it can only succeed if
+        //    the name is on the list). The merged DiscussionPreviewRow carries the name as text and is clickable.
+        composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // 7. Open Channel info → tap the sheet's Delete. "Channel info" is ungated; the sheet's Delete
+        //    ActionCell is unique while only the sheet is open. Tapping it opens the confirm dialog OVER the
+        //    still-composed sheet (ThreadEvent.Delete leaves pendingChannelInfo true) → two "Delete" nodes.
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(CHANNEL_INFO_ITEM).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(DELETE_ACTION).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithText(DELETE_ACTION).performClick()
+
+        // 8. Confirm the delete. Wait for the dialog's unique title, then tap the CONFIRM "Delete" — the sheet's
+        //    "Delete" is also on screen, so disambiguate by the dialog's sibling "Cancel" button (the sheet has
+        //    none). If the button-row tree differs on first run, pick another unambiguous anchor rooted at the
+        //    dialog title (rung 3 permits selector tuning) — never onFirst() across the two identical "Delete".
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(DELETE_DIALOG_TITLE).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule
+            .onNode(hasText(DELETE_ACTION) and hasAnySibling(hasText(DELETE_DIALOG_CANCEL)))
+            .performClick()
+
+        // 9. Both durable post-conditions (AC-2). After DeleteConfirm → repository.delete → PopBack: wait for the
+        //    list marker (the thread has popped back), then assert the unique name is gone from the list. delete
+        //    completes (conversation_deleted → removeConversation clears all projections) BEFORE PopBack fires
+        //    (sequential in the same coroutine), so the re-projection has landed by the time the list renders →
+        //    a direct assertCountEquals(0). Tolerant: presence/absence, generous timeout — never a delta count.
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(uniqueName, substring = true).assertCountEquals(0)
+    }
+
     /** Count the on-screen semantic nodes whose text contains "ping" (case-insensitive, substring). */
     private fun pingNodeCount(): Int =
         composeTestRule
@@ -530,6 +676,30 @@ class InteractiveStreamE2ETest {
         // System.currentTimeMillis() at runtime so repeated LIVE gate runs never collide under the
         // operator's real ~/pyry-workspace (#527 isolates the pyry instance name, not $HOME).
         const val FOLDER_NAME_PREFIX = "e2e566-"
+
+        // #554 delete-conversation scenario. Overflow / sheet / dialog production strings (no test tags).
+        // RENAME_ITEM + RENAME_SAVE drive the rename that gives the seeded discussion a runtime-unique,
+        // list-visible identity; CHANNEL_INFO_ITEM (ungated) opens the sheet whose Actions block holds the
+        // Delete affordance. DELETE_ACTION is the ONE gotcha: the sheet's ActionCell label AND the confirm
+        // dialog's button are BOTH the literal "Delete", and ThreadEvent.Delete leaves the sheet composed
+        // behind the dialog, so both nodes are on screen at confirm time — the confirm tap is disambiguated
+        // by DELETE_DIALOG_CANCEL, the dialog's sibling button the sheet has no equivalent of.
+        // DELETE_DIALOG_TITLE is the unique wait anchor for the opened dialog. Keep in sync with
+        // res/values/strings.xml: thread_overflow_rename = "Rename", rename_dialog_save = "Save",
+        // thread_overflow_channel_info = "Channel info", delete_dialog_confirm = "Delete" (== the sheet's
+        // ActionCell literal), delete_dialog_title = "Delete conversation?", delete_dialog_cancel = "Cancel".
+        const val RENAME_ITEM = "Rename"
+        const val RENAME_SAVE = "Save"
+        const val CHANNEL_INFO_ITEM = "Channel info"
+        const val DELETE_ACTION = "Delete"
+        const val DELETE_DIALOG_TITLE = "Delete conversation?"
+        const val DELETE_DIALOG_CANCEL = "Cancel"
+
+        // Runtime-unique rename target: "e2e554-" + System.currentTimeMillis(). Unique so a substring match
+        // cannot pre-exist on screen — the presence check (step 5) and its inversion, assertCountEquals(0)
+        // after delete (step 9), are both genuine. #566 unique-folderName / #481 token-omission discipline,
+        // applied here to an ABSENCE assertion. Also keeps repeated LIVE gate runs clean (no accumulation).
+        const val CONVERSATION_NAME_PREFIX = "e2e554-"
 
         const val LIST_TIMEOUT_MS = 30_000L
         const val CONNECT_TIMEOUT_MS = 30_000L
