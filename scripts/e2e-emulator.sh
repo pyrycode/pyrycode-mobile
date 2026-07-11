@@ -6,9 +6,9 @@
 #
 #   * rung 3 (default): the REAL app on a headless emulator → host pyry daemon → real claude →
 #     assert "ping" renders. Semi-deterministic; burns one real claude turn. A LIVE=1 variant runs a
-#     curated trio of rung-3 scenarios (ping + create-workspace-folder + new-session, 3 turns) against
-#     the PRODUCTION relay over wss:// (TLS), so a pre-ship gate catches the live-environment failure
-#     class a local relay cannot. See "LIVE mode" below.
+#     curated quartet of rung-3 scenarios (ping + create-workspace-folder + new-session + delete, still
+#     3 turns — delete spends none) against the PRODUCTION relay over wss:// (TLS), so a pre-ship gate
+#     catches the live-environment failure class a local relay cannot. See "LIVE mode" below.
 #   * rung 4 (DETERMINISTIC=1): the same real app + Noise/relay path, but claude is swapped for the
 #     scripted `fakeclaude` backend (pyrycode #642) that replays a fixed JSONL fixture. The daemon
 #     spawns NO real claude and the run consumes ZERO claude turns, so it can run often and assert
@@ -52,7 +52,7 @@
 #
 # Usage:
 #   bash scripts/e2e-emulator.sh                 # rung 3 (real claude)
-#   LIVE=1 bash scripts/e2e-emulator.sh          # rung 3 over the LIVE production relay (wss/TLS): ping + create-workspace-folder + new-session
+#   LIVE=1 bash scripts/e2e-emulator.sh          # rung 3 over the LIVE production relay (wss/TLS): ping + create-workspace-folder + new-session + delete
 #   DETERMINISTIC=1 PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh                 # rung 4, ping
 #   DETERMINISTIC=1 SCENARIO=stream  PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, stream
 #   DETERMINISTIC=1 SCENARIO=spinner PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, spinner
@@ -451,15 +451,16 @@ fi
 
 # ---- 4. run the managed-device instrumented test ----------------------------------------------
 # Deterministic mode runs exactly the scenario's one method (class#method); default rung 3 runs the whole
-# class; LIVE curates three real-claude methods (ping + create-workspace-folder + new-session = 3 turns)
-# via a comma-separated class list — the full class' #481 tool-use test would spend a 4th, so it stays excluded.
+# class; LIVE curates a quartet of real-claude methods (ping + create-workspace-folder + new-session +
+# delete = 4 methods, still 3 turns — delete/rename are daemon round-trips, not claude turns) via a
+# comma-separated class list — the full class' #481 tool-use test would spend an extra turn, so it stays excluded.
 if [ -n "${DETERMINISTIC}" ]; then
   TEST_TARGET="${TEST_CLASS}#${TEST_METHOD}"
 elif [ -n "${LIVE}" ]; then
-  # LIVE curates its real-claude turns: ping + create-workspace-folder + new-session (3 turns), passed
-  # as a comma-separated class#method list. The class' #481 tool-use test stays excluded from LIVE for
-  # cost (it runs only in the default whole-class rung-3 run).
-  TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter"
+  # LIVE curates its real-claude turns: ping + create-workspace-folder + new-session + delete (4 methods,
+  # still 3 turns — delete spends none), passed as a comma-separated class#method list. The class' #481
+  # tool-use test stays excluded from LIVE for cost (it runs only in the default whole-class rung-3 run).
+  TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread"
 else
   TEST_TARGET="${TEST_CLASS}"
 fi
@@ -476,7 +477,7 @@ log "  phone relayUrl = ${PHONE_RELAY_URL}"
 if [ -n "${DETERMINISTIC}" ]; then
   log "PASS — scenario '${SCENARIO}' green: the emulator connected, sent the prompt, and the scripted reply rendered."
 elif [ -n "${LIVE}" ]; then
-  log "PASS — the headless emulator connected over the LIVE relay, sent the prompts, and the ping reply, the created-workspace flow, and the new-session delimiter all rendered in the thread."
+  log "PASS — the headless emulator connected over the LIVE relay, sent the prompts, and the ping reply, the created-workspace flow, the new-session delimiter, and the delete-conversation flow all rendered in the thread."
 else
   log "PASS — the headless emulator connected, sent the prompt, and 'ping' rendered in the thread."
 fi
