@@ -776,6 +776,125 @@ class InteractiveStreamE2ETest {
         composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
     }
 
+    /**
+     * Change-workspace twin of the create-workspace-folder scenario (#562, Layer 3): drive the real
+     * "Change workspace…" overflow flow end to end against a real daemon, exercising the already-shipped
+     * #560 `change_workspace` wire and #561 surfacing. Create a plain discussion, then via the **real**
+     * thread overflow "Change workspace…" → Workspace Picker → "Create new folder…" → a runtime-unique
+     * folder name, complete a `change_workspace` round-trip to that new target path, and assert the
+     * conversation's recorded workspace durably flips to it — read off the [WorkspaceChip] (`"Workspace:
+     * <newWorkspace> (change)"`, the recorded `cwd` basename).
+     *
+     * **Reachability.** The "Change workspace…" item lives in the `mutationsSupported`-gated block of the
+     * overflow ([de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenu]) and is **not**
+     * promotion-gated; [de.pyryco.mobile.data.repository.RemoteConversationRepository.mutationsSupported]
+     * is `true` in relay mode (PR #572), so it is reachable on a plain **discussion** — the same real
+     * overflow the operator uses. `change_workspace` is **conversation-scoped** (keyed by `conversation_id`,
+     * a line-for-line mirror of `rename`, **no** session transition), so it carries none of the
+     * session-scoped `currentSessionId == ""` blocker that re-parks the settings e2e (#545); clean-buildable
+     * with #541 / #554 / #551 / #566.
+     *
+     * **Assert the recorded cwd, not a session id.** Because `change_workspace` performs no session
+     * transition, the durable post-condition is the recorded workspace, so the assertion targets the
+     * `WorkspaceChip` (the `cwd` basename) — it deliberately does **not** reintroduce the session-scoped
+     * dependency that parks #545. The chip is the assertion surface **only because no message is sent:** it
+     * is gated `!isPromoted && !hasMessages` ([de.pyryco.mobile.ui.conversations.thread.ThreadScreen]), and
+     * this scenario spends no claude turn (no ping), so `hasMessages` stays false and the chip stays mounted
+     * throughout.
+     *
+     * **The one field-disambiguation gotcha (unlike #566).** #566 opens the picker over the **channel
+     * list** (no editable field), so `onNode(hasSetTextAction())` is unambiguous there. Here the picker
+     * opens over the **thread**, whose composer ([de.pyryco.mobile.ui.conversations.thread.ThreadInputBar])
+     * is also an editable field, so once the [CreateFolderDialog] opens **two** `hasSetTextAction()` nodes
+     * are on screen. The dialog auto-focuses its field on open (`focusRequester.requestFocus()`) and the
+     * composer never requests focus, so `hasSetTextAction() and isFocused()` selects the dialog's field —
+     * the same disambiguation #554 uses for RenameDialog-over-thread. (Empty field → `performTextInput`,
+     * not `performTextReplacement`.)
+     *
+     * **Two sequential daemon round-trips, one wait (the correctness note).** The Create tap chains
+     * `createWorkspaceFolder` (returns the canonical path) → `onWorkspacePicked` → `sendChangeWorkspace` →
+     * `changeWorkspace` → `conversation_updated` → the projection re-emits with the new `cwd` → the chip
+     * re-labels. Step 6's single `waitUntil` spans **both** round-trips ([THREAD_TIMEOUT_MS] comfortably
+     * covers them over `wss://`; bump only if the live relay proves slow on first operator run — rung 3
+     * permits timeout tuning).
+     *
+     * **The unique name's only post-Create on-screen home is the chip — no transient false match.** [onCreate]
+     * ([de.pyryco.mobile.ui.conversations.components.WorkspacePicker]) sets `showCreateDialog = false`
+     * **synchronously before** the suspend, so the dialog's text field (which held [newWorkspace][WORKSPACE_FOLDER_PREFIX])
+     * is gone the instant Create is tapped; the picker sheet then closes on `onPicked`; and the just-created
+     * folder is not yet in the picker's "Recent" (a folder becomes recent only once used). So `onFirst()`
+     * unambiguously lands on the chip.
+     *
+     * **The before → after inversion.** [newWorkspace][WORKSPACE_FOLDER_PREFIX] is `"e2e562-" +
+     * System.currentTimeMillis()` — runtime-unique, so its **absence is asserted before** the change (step 3,
+     * a deterministic guard, no claude turn) and its appearance in the chip after (step 6) is attributable to
+     * the change. The unique suffix also keeps repeated LIVE gate runs green: each run creates one folder
+     * under the operator's real `~/pyry-workspace` (the #566 accumulation pattern), and a fixed name would
+     * collide with folders left by prior runs.
+     *
+     * **Always-on, not `@Ignore`d.** The recorded cwd is a **durable** fact (the chip re-label survives the
+     * turn) — no transient like #482's spinner — so the scenario belongs in the always-on gate, matching
+     * #481's tool-name row, #541's delimiter, and #554's / #551's list inversions. **Zero real-claude turns**
+     * (like #554 / #551): create-folder and change-workspace are daemon round-trips, not claude turns. The
+     * LIVE gate goes from a quintet (5 methods) to a **sextet** (6 methods) at **still 3 turns**.
+     */
+    @Test
+    fun interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace() {
+        // 1. A paired launch lands on the channel list. The "New discussion" FAB is the list marker. Wait
+        //    for the relay connection to open before creating — the picker's create + change round-trip to
+        //    the daemon, so acting before the session is Open would fail the request.
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
+        }
+        awaitConnected()
+
+        // 2. Create a fresh discussion → the app navigates into its thread; the send button marks arrival. A
+        //    plain discussion suffices — "Change workspace…" is mutationsSupported-gated only, reachable on it.
+        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // 3. Absence guard (the before-state, deterministic — no claude turn): the runtime-unique target
+        //    name is not on screen yet (the chip shows the discussion's scratch workspace), so its later
+        //    appearance in the chip is attributable to the change_workspace round-trip.
+        val newWorkspace = WORKSPACE_FOLDER_PREFIX + System.currentTimeMillis()
+        composeTestRule.onAllNodesWithText(newWorkspace, substring = true).assertCountEquals(0)
+
+        // 4. Drive the REAL overflow: open "More actions", wait for the "Change workspace…" item (matched as
+        //    a substring — the production string ends in a real U+2026 ellipsis), then tap it. The picker
+        //    sheet opens (pendingWorkspacePicker = true), the same one the WorkspaceChip opens.
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(CHANGE_WORKSPACE_ITEM, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(CHANGE_WORKSPACE_ITEM, substring = true).onFirst().performClick()
+
+        // 5. Open the create dialog, type the collision-resistant folder name, and confirm. The dialog opens
+        //    OVER the thread, whose composer is also an editable field, so hasSetTextAction() alone is
+        //    ambiguous — target the dialog's field by its focus (CreateFolderDialog auto-focuses on open; the
+        //    composer never requested focus), waiting for focus to land. The empty field → performTextInput.
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(CREATE_FOLDER_ROW, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(CREATE_FOLDER_ROW, substring = true).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasSetTextAction() and isFocused()).performTextInput(newWorkspace)
+        composeTestRule.onAllNodesWithText(CREATE_BUTTON).onFirst().performClick()
+
+        // 6. After-state (the durable post-condition). The single wait spans BOTH sequential daemon
+        //    round-trips (create_workspace_folder → change_workspace); on success the chip re-labels to
+        //    "Workspace: <newWorkspace> (change)" (the recorded cwd basename), so a non-empty match on the
+        //    unique name can only be the chip. Tolerant: substring, generous timeout, presence — a genuine
+        //    inversion of step 3's absence on the same surface.
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(newWorkspace, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(newWorkspace, substring = true).onFirst().assertIsDisplayed()
+    }
+
     /** Count the on-screen semantic nodes whose text contains "ping" (case-insensitive, substring). */
     private fun pingNodeCount(): Int =
         composeTestRule
@@ -851,6 +970,21 @@ class InteractiveStreamE2ETest {
         // System.currentTimeMillis() at runtime so repeated LIVE gate runs never collide under the
         // operator's real ~/pyry-workspace (#527 isolates the pyry instance name, not $HOME).
         const val FOLDER_NAME_PREFIX = "e2e566-"
+
+        // #562 change-workspace scenario. Reuses the #566 picker/dialog constants (CREATE_FOLDER_ROW,
+        // CREATE_BUTTON) and the overflow opener (CD_MORE_ACTIONS); adds only these two. CHANGE_WORKSPACE_ITEM
+        // is the overflow item, matched as a SUBSTRING — the production string is "Change workspace…" with a
+        // real U+2026 ellipsis (mirrors how CREATE_FOLDER_ROW drops the trailing ellipsis). Keep in sync with
+        // res/values/strings.xml: thread_overflow_change_workspace = "Change workspace…".
+        const val CHANGE_WORKSPACE_ITEM = "Change workspace"
+
+        // Runtime-unique target-folder prefix: "e2e562-" + System.currentTimeMillis(). Distinct from #566's
+        // FOLDER_NAME_PREFIX (the shared companion forbids redeclaration). A clean single path element
+        // (lowercase alphanumerics + dash — the daemon rejects empty / absolute / separator-bearing / ".."
+        // names). Unique so a substring match cannot pre-exist on screen — the absence guard (step 3) and its
+        // inversion, the chip presence after change_workspace (step 6), are both genuine; also keeps repeated
+        // LIVE gate runs clean under the operator's real ~/pyry-workspace (no collision/accumulation).
+        const val WORKSPACE_FOLDER_PREFIX = "e2e562-"
 
         // #554 delete-conversation scenario. Overflow / sheet / dialog production strings (no test tags).
         // RENAME_ITEM + RENAME_SAVE drive the rename that gives the seeded discussion a runtime-unique,
