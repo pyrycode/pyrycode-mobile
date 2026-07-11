@@ -1,5 +1,6 @@
 package de.pyryco.mobile.e2e
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
@@ -370,6 +371,90 @@ class InteractiveStreamE2ETest {
             .assertIsDisplayed()
     }
 
+    /**
+     * New-session twin of the ping happy path (#541, Layer 3): drive the real "New session" overflow flow
+     * end to end against real claude, exercising the already-shipped #540 fire-and-forget wire. With a live,
+     * exercised session, open the thread overflow menu → tap "New session" → the daemon runs `/clear` →
+     * broadcasts `session_transition` (`reason: "clear"`) → the thread folds a `ThreadItem.SessionBoundary`
+     * (#336, canonical in `RemoteConversationRepository`) → `SessionBoundaryDelimiter` renders it. This proves
+     * that path against real claude + a real daemon `/clear`, not the boundary the Fake synthesizes.
+     *
+     * **Reachability.** The "New session" item is gated on `mutationsSupported` only (not promotion), which is
+     * `true` in relay mode (PR #572), so the scenario is reachable on a plain **discussion** — the same real
+     * overflow menu the operator uses.
+     *
+     * **Fire-and-forget — assert the durable delimiter, never an ack.** `new_session` is fire-and-forget
+     * (pyrycode#831, #540 wire), so the only observable is the post-broadcast delimiter. The load-bearing
+     * matcher is [DELIMITER_EXPLANATION], the delimiter's hardcoded explanation line
+     * ([de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter]), which can **only** come from
+     * the rendered delimiter — it is reason-independent, so the match is robust even if the daemon's
+     * `session_transition` reason differs from `clear`. The matcher is deliberately **not** [NEW_SESSION_ITEM]
+     * (`"New session"`): that text is byte-identical to both the overflow menu item and the
+     * `BoundaryReason.Clear` label prefix, so it is not selective at rung 3 (the #481 `TOOL_PROMPT`-omits-"Bash"
+     * / #566 unique-`folderName` token discipline). The delimiter's **absence is asserted before** the
+     * New-session tap, so its later appearance is attributable to the action — a deterministic guard, no extra
+     * claude turn.
+     *
+     * **Always-on, not `@Ignore`d.** Unlike #482's transient thinking spinner — which leaves no trace once the
+     * turn moves on — the delimiter is a **durable** artifact that survives the turn, so it belongs in the
+     * always-on gate, matching #481's durable tool-name row.
+     *
+     * Total real-claude cost: **one** turn (the ping proving the session is live); `/clear` spends none.
+     */
+    @Test
+    fun interactiveTurn_newSession_rendersSessionBoundaryDelimiter() {
+        // 1. A paired launch lands on the channel list. The "New discussion" FAB is the list marker.
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // 2. Wait for the relay connection to open before creating a conversation.
+        awaitConnected()
+
+        // 3. Create a fresh discussion → the app navigates into its thread; the send button marks arrival. A
+        //    plain discussion suffices — the "New session" item is gated on mutationsSupported only, not promotion.
+        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // 4. Prove the session is live (AC-3): send the constrained ping and wait for the streamed reply, so the
+        //    session is genuinely exercised and there is de-emphasized above-delimiter content once it clears.
+        //    Tail reused verbatim from the ping scenario — this spends the one real claude turn; /clear spends none.
+        composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
+        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { pingNodeCount() >= 1 }
+        val baseline = pingNodeCount()
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { pingNodeCount() > baseline }
+
+        // 5. Absence guard (AC-2, deterministic — no extra turn): the delimiter explanation must not be on
+        //    screen yet, so its later appearance is attributable to the New-session tap.
+        composeTestRule
+            .onAllNodesWithText(DELIMITER_EXPLANATION, substring = true)
+            .assertCountEquals(0)
+
+        // 6. Drive the REAL overflow menu: open "More actions", wait for the item to render, then tap "New
+        //    session". NEW_SESSION_ITEM locates/taps the menu item ONLY — never the durable assertion (its
+        //    text collides with the Clear-label prefix; the durable matcher is DELIMITER_EXPLANATION, step 7).
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).onFirst().performClick()
+
+        // 7. Assert the durable delimiter (AC-1, AC-2): after the daemon's /clear → session_transition
+        //    broadcast folds a SessionBoundary, wait for the explanation line to render, then confirm it is on
+        //    screen. Tolerant: substring, generous timeout, presence — never a delta count or timing. A
+        //    non-empty match can only come from the rendered SessionBoundaryDelimiter (the folded boundary).
+        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(DELIMITER_EXPLANATION, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule
+            .onAllNodesWithText(DELIMITER_EXPLANATION, substring = true)
+            .onFirst()
+            .assertIsDisplayed()
+    }
+
     /** Count the on-screen semantic nodes whose text contains "ping" (case-insensitive, substring). */
     private fun pingNodeCount(): Int =
         composeTestRule
@@ -422,6 +507,16 @@ class InteractiveStreamE2ETest {
         const val CD_NEW_DISCUSSION = "New discussion"
         const val CD_SEND_MESSAGE = "Send message"
         const val CD_BACK = "Back"
+
+        // #541 new-session scenario. Overflow-menu production strings (no test tags): CD_MORE_ACTIONS opens
+        // the menu; NEW_SESSION_ITEM is the tap target ONLY — its text is byte-identical to the delimiter's
+        // BoundaryReason.Clear label prefix, so it is NOT selective at rung 3. The load-bearing DURABLE matcher
+        // is DELIMITER_EXPLANATION, the delimiter's reason-independent hardcoded explanation line, which can
+        // only come from the rendered SessionBoundaryDelimiter. Keep in sync with res/values/strings.xml:
+        //   cd_more_actions = "More actions", thread_overflow_new_session = "New session".
+        const val CD_MORE_ACTIONS = "More actions"
+        const val NEW_SESSION_ITEM = "New session"
+        const val DELIMITER_EXPLANATION = "Claude doesn't remember messages above this line"
 
         // #566 create-workspace-folder scenario. Picker/dialog production strings (no test tags):
         //   the WorkspacePickerSheet create row (matched as a substring so the trailing ellipsis need

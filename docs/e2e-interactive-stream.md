@@ -26,9 +26,13 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    the channel-list FAB → Workspace Picker → create a folder → land in a fresh discussion whose
    workspace is the created folder → send the ping prompt in it → re-open the picker and confirm the
    folder shows in "Recent" (exercises the #564 create wire and #565 recents wire end to end against
-   real claude). Semi-deterministic. A **`LIVE=1` variant (#527, extended #566)** runs a **curated pair**
-   of scenarios (ping + create-workspace-folder) against the **production relay** over `wss://` (TLS) —
-   the pre-ship gate that catches the live-environment failure class a local relay cannot; see
+   real claude); and a **new-session** scenario (#541): with a live, exercised session, open the thread
+   overflow menu → tap "New session" → the daemon runs `/clear` and broadcasts `session_transition`, and
+   the thread renders the session-boundary delimiter (exercises the #540 fire-and-forget wire and the
+   #336 fold end to end against real claude). Semi-deterministic. A **`LIVE=1` variant (#527, extended
+   #566 / #541)** runs a **curated trio** of scenarios (ping + create-workspace-folder + new-session)
+   against the **production relay** over `wss://` (TLS) — the pre-ship gate that catches the
+   live-environment failure class a local relay cannot; see
    [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay).
 4. **Emulator + deterministic host** ← **shipped (#431).** The same real app + Noise/relay path, but
    claude is swapped for #642's scripted `fakeclaude` backend replaying a fixed JSONL fixture. No real
@@ -95,20 +99,35 @@ delimiter positioned between the two cross-session messages, driven through the 
 | The instrumented test | `app/src/androidTest/.../e2e/InteractiveStreamE2ETest.kt` |
 | Host orchestration | `scripts/e2e-emulator.sh` |
 
-Rung 3 covers four scenarios on this one harness: the **ping** happy path (a constrained reply renders);
+Rung 3 covers five scenarios on this one harness: the **ping** happy path (a constrained reply renders);
 a **tool-use** scenario (#481 — a constrained prompt makes real claude run a shell tool, asserting the
 tool step renders, keyed tolerantly on the verbatim tool name `"Bash"` in the tool-row header); a
 **thinking-spinner** scenario (#482 — a pure-reasoning prompt makes real claude think a beat, asserting
-the spinner is displayed mid-turn, keyed tolerantly on the `cd_thread_thinking` content-description); and
-a **create-workspace-folder** scenario (#566 —
+the spinner is displayed mid-turn, keyed tolerantly on the `cd_thread_thinking` content-description); a
+**create-workspace-folder** scenario (#566 —
 `interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace`: long-press the FAB → Workspace
 Picker → create a folder → land in a fresh discussion whose workspace is the created folder → send the
 ping prompt into it → re-open the picker from the channel list and assert the folder shows in "Recent",
-proving the #564 create wire and #565 recents wire end to end against real claude). The tool-use test
-asserts the **durable** terminal signal — the tool name in the resolved row — not the transient running
-spinner: rung 3 has no scripted backend to hold the turn open, so racing the spinner over a real relay
-turn is the "never on timing" failure the [Constraints](#constraints) forbid (it is why rung 4's `tool`
-scenario needed a two-drop fence).
+proving the #564 create wire and #565 recents wire end to end against real claude); and a **new-session**
+scenario (#541 — `interactiveTurn_newSession_rendersSessionBoundaryDelimiter`: prove the session is live
+with the ping, then open the thread overflow menu → tap "New session" → the daemon runs `/clear` and
+broadcasts `session_transition`, and the thread renders the session-boundary delimiter, proving the #540
+fire-and-forget wire and the #336 `session_transition` → `SessionBoundary` fold end to end against real
+claude). The tool-use test asserts the **durable** terminal signal — the tool name in the resolved row —
+not the transient running spinner: rung 3 has no scripted backend to hold the turn open, so racing the
+spinner over a real relay turn is the "never on timing" failure the [Constraints](#constraints) forbid
+(it is why rung 4's `tool` scenario needed a two-drop fence).
+
+The **new-session** scenario (#541) is **always-on** (not `@Ignore`d): the delimiter is a **durable**
+artifact that survives the turn — unlike #482's transient spinner — so it belongs in the always-on gate,
+like #481's tool-name row. Its load-bearing matcher is the delimiter's reason-independent explanation
+line (`"Claude doesn't remember messages above this line"`), which can **only** come from the rendered
+`SessionBoundaryDelimiter` — **not** the `"New session"` label prefix, which is byte-identical to the
+overflow menu item and so is not selective at rung 3. The delimiter's **absence is asserted before** the
+New-session tap (a deterministic guard, no extra claude turn), so its later appearance is attributable to
+the action. `new_session` is **fire-and-forget** (pyrycode#831, #540), so nothing waits on or asserts an
+ack — the only observable is the post-broadcast delimiter. Total real-claude cost: **one** turn (the ping
+proving the session is live); `/clear` spends none.
 
 The **thinking-spinner** scenario (#482) is the **flakiest** rung-3 scenario and ships **`@Ignore`-gated /
 manual**: the spinner has **no durable equivalent** of the tool name — once real claude emits its first
@@ -184,8 +203,8 @@ bash scripts/e2e-preship-gate.sh
 
 The wrapper bakes in the `LIVE=1` + `e2e-live` isolation defaults (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the two curated `@Test` methods (ping + create-workspace-folder, #566) ride
-the wrapped mode.
+incantation to remember — the three curated `@Test` methods (ping + create-workspace-folder, #566;
+new-session, #541) ride the wrapped mode.
 
 **When to run:**
 
@@ -194,8 +213,9 @@ the wrapped mode.
 - **whenever a daemon or relay change touching the mobile surface lands** — run it alongside the daemon's
   own `make e2e-realclaude`.
 
-**Cost:** two real claude turns (the ping scenario + the create-workspace-folder scenario, #566), a few
-minutes of wall clock, subscription-covered (it does **not** meter tokens).
+**Cost:** three real claude turns (the ping scenario + the create-workspace-folder scenario, #566 + the
+new-session scenario, #541 — one turn each; `/clear` spends none), a few minutes of wall clock,
+subscription-covered (it does **not** meter tokens).
 
 For the full mechanics — relay URLs, the isolated `e2e-live` instance, prerequisites, and first-run
 assumptions — see [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay). The operator-facing
@@ -204,7 +224,7 @@ cannot drift.
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated pair of rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated trio of rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the pre-ship gate: the operator must never be the
 **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -214,11 +234,12 @@ over TLS instead of a local loopback relay. This is the pre-ship gate: the opera
 LIVE=1 bash scripts/e2e-emulator.sh
 ```
 
-**What it runs.** Two curated methods, passed as a comma-separated `class#method` list:
-`InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread` and
-`InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566), so
-exactly **two real claude turns** are spent per run — the full class also includes the #481 tool-use
-test, which stays excluded from LIVE (a 3rd turn, cost). `LIVE=1` is **mutually exclusive with
+**What it runs.** Three curated methods, passed as a comma-separated `class#method` list:
+`InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
+`InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566), and
+`InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (#541), so exactly
+**three real claude turns** are spent per run — the full class also includes the #481 tool-use test,
+which stays excluded from LIVE (a 4th turn, cost). `LIVE=1` is **mutually exclusive with
 `DETERMINISTIC=1`** (real vs scripted claude); setting both fails fast.
 
 **How it differs from default rung 3.** Same instrumented suite, same Gradle Managed Device, same
@@ -246,8 +267,8 @@ Prerequisites (on top of the "How to run" list):
 - The emulator needs outbound internet + DNS + a system-trusted TLS cert for the relay host. It reaches
   the public relay over its own NAT'd internet — **not** the `10.0.2.2` host alias, which is loopback-only.
 
-Cost: **two real claude turns per run** (ping + create-workspace-folder, #566), a few minutes of wall
-clock, subscription-covered.
+Cost: **three real claude turns per run** (ping + create-workspace-folder, #566 + new-session, #541;
+`/clear` spends none), a few minutes of wall clock, subscription-covered.
 
 First-run assumptions to confirm (grounded in the design, unverified end to end):
 
@@ -635,7 +656,11 @@ These are grounded in the source but unverified end to end:
   real-claude #482 — the last gated behind a manual switch because the transient spinner has no durable
   artifact and rung 3 cannot hold the turn open); Layer-3 (real claude) create-workspace-folder —
   **shipped (#566)**, driven end to end through the #564 create wire and #565 recents wire and folded
-  into the pre-ship `LIVE=1` gate as the 2nd curated turn (see [Live mode](#live-mode-rung-3-live-relay)).
+  into the pre-ship `LIVE=1` gate as the 2nd curated turn (see [Live mode](#live-mode-rung-3-live-relay));
+  Layer-3 (real claude) new-session delimiter — **shipped (#541)**, driven end to end through the #540
+  fire-and-forget wire and the #336 `session_transition` → `SessionBoundary` fold, always-on (durable
+  delimiter artifact, unlike the `@Ignore`d spinner) and folded into the pre-ship `LIVE=1` gate as the
+  3rd curated turn.
 - **#337 full scope:** `seq`-based ordering and replay de-dup across reconnect (a #402 concern; this
   fold concatenates in arrival order, correct within a single connection); and a `make`/Gradle wrapper
   for the orchestration plus fork-sync of any shared `bin/` script per the org convention.
