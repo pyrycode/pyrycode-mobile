@@ -38,10 +38,16 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    the thread (overflow → "Archive", immediate — no confirm) and assert it is gone from the list, then
    restore it (Settings → "Archived discussions" → the Archived screen's restore affordance) and assert it
    is back in the list (exercises the #549 archive/unarchive wire, the #556 archive-from-thread and #557
-   restore surfacings against a real daemon; no claude turn — archive and restore are daemon round-trips).
-   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551)** runs a **curated
-   quintet** of scenarios (ping + create-workspace-folder + new-session + delete + archive-restore, still 3
-   real claude turns — delete and archive-restore spend none) against the **production relay** over `wss://`
+   restore surfacings against a real daemon; no claude turn — archive and restore are daemon round-trips);
+   and a **change-workspace** scenario (#562): via the real thread overflow "Change workspace…" → Workspace
+   Picker → create a new folder, complete a `change_workspace` round-trip to that runtime-unique target path
+   and assert the conversation's recorded workspace (the chip) durably re-labels to it (exercises the #560
+   change_workspace wire and #561 surfacing against a real daemon; no claude turn — change_workspace is a
+   conversation-scoped daemon round-trip).
+   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562)** runs a
+   **curated sextet** of scenarios (ping + create-workspace-folder + new-session + delete + archive-restore
+   + change-workspace, still 3 real claude turns — delete, archive-restore, and change-workspace spend none)
+   against the **production relay** over `wss://`
    (TLS) — the pre-ship gate that catches the live-environment failure class a local relay cannot; see
    [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay).
 4. **Emulator + deterministic host** ← **shipped (#431).** The same real app + Noise/relay path, but
@@ -109,7 +115,7 @@ delimiter positioned between the two cross-session messages, driven through the 
 | The instrumented test | `app/src/androidTest/.../e2e/InteractiveStreamE2ETest.kt` |
 | Host orchestration | `scripts/e2e-emulator.sh` |
 
-Rung 3 covers seven scenarios on this one harness: the **ping** happy path (a constrained reply renders);
+Rung 3 covers eight scenarios on this one harness: the **ping** happy path (a constrained reply renders);
 a **tool-use** scenario (#481 — a constrained prompt makes real claude run a shell tool, asserting the
 tool step renders, keyed tolerantly on the verbatim tool name `"Bash"` in the tool-row header); a
 **thinking-spinner** scenario (#482 — a pure-reasoning prompt makes real claude think a beat, asserting
@@ -136,7 +142,14 @@ name, confirm it is present on the channel list, archive it from the thread (ove
 discussions" → the Archived screen's restore affordance) and assert it is **back** in the list — the round
 trip closes; proving the #549 archive/unarchive wire, the #556 archive-from-thread and #557 restore
 surfacings against a real daemon; **zero** claude turns — create/rename/archive/restore are daemon
-round-trips). The tool-use test asserts the **durable** terminal signal — the tool name in the resolved row —
+round-trips); and a **change-workspace** scenario (#562 —
+`interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace`: create a plain discussion, then via the real
+thread overflow "Change workspace…" → Workspace Picker → "Create new folder…" → a runtime-unique name,
+complete a `change_workspace` round-trip to that new target path and assert the conversation's recorded
+workspace durably re-labels to it — read off the `WorkspaceChip` (`"Workspace: <newWorkspace> (change)"`, the
+`cwd` basename), proving the #560 change_workspace wire and #561 surfacing against a real daemon; **zero**
+claude turns — create-folder and change_workspace are conversation-scoped daemon round-trips). The tool-use
+test asserts the **durable** terminal signal — the tool name in the resolved row —
 not the transient running spinner: rung 3 has no scripted backend to hold the turn open, so racing the
 spinner over a real relay turn is the "never on timing" failure the [Constraints](#constraints) forbid
 (it is why rung 4's `tool` scenario needed a two-drop fence).
@@ -184,6 +197,25 @@ to the **Archived screen's** ViewModel, so the test waits for the **"Restored" s
 navigating back — otherwise `popBackStack` would cancel a launched-but-unstarted `unarchive` and the closing
 presence check would flake to a timeout. Total real-claude cost: **zero** turns — create/rename/archive/restore
 are all daemon round-trips, and the durable identity is the typed name, so no ping is sent.
+
+The **change-workspace** scenario (#562) is likewise **always-on** (not `@Ignore`d): the recorded workspace
+is a **durable** fact — the `WorkspaceChip` re-label survives the turn — so, like #554's / #551's list
+inversions and #541's delimiter, it belongs in the always-on gate. Via the real thread overflow "Change
+workspace…" (`mutationsSupported`-gated, **not** promotion-gated, so reachable on a plain discussion — PR
+#572) → the Workspace Picker → "Create new folder…" it drives a runtime-unique target folder (`"e2e562-" +
+System.currentTimeMillis()`), then asserts the chip re-labels to that basename. Because `change_workspace`
+is **conversation-scoped** (keyed by `conversation_id`, a mirror of `rename`, **no** session transition), it
+carries none of the session-scoped `currentSessionId == ""` blocker that re-parks the settings e2e (#545),
+and the assertion targets the recorded `cwd` (the chip), never a session id. The unique name's **absence is
+asserted before** the change and its appearance in the chip after is a genuine present→absent→present
+inversion on the same surface — never a match-everything (the #481 / #566 token discipline). Two gotchas:
+(1) the Create tap chains **two sequential daemon round-trips** (`create_workspace_folder` →
+`change_workspace`), so a single `waitUntil` spans both; and (2) unlike #566 (whose picker opens over the
+message-less channel list), the picker here opens over the **thread**, whose composer is also an editable
+field, so the `CreateFolderDialog`'s field is disambiguated by its auto-focus (`hasSetTextAction() and
+isFocused()` — the same disambiguation #554 uses for RenameDialog-over-thread). The chip is the assertion
+surface **only because no message is sent** (`!hasMessages` gate), so it stays mounted. Total real-claude
+cost: **zero** turns — create-folder and change_workspace are daemon round-trips, so no ping is sent.
 
 The **thinking-spinner** scenario (#482) is the **flakiest** rung-3 scenario and ships **`@Ignore`-gated /
 manual**: the spinner has **no durable equivalent** of the tool name — once real claude emits its first
@@ -259,8 +291,8 @@ bash scripts/e2e-preship-gate.sh
 
 The wrapper bakes in the `LIVE=1` + `e2e-live` isolation defaults (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the five curated `@Test` methods (ping + create-workspace-folder, #566;
-new-session, #541; delete, #554; archive-restore, #551) ride the wrapped mode.
+incantation to remember — the six curated `@Test` methods (ping + create-workspace-folder, #566;
+new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562) ride the wrapped mode.
 
 **When to run:**
 
@@ -269,11 +301,11 @@ new-session, #541; delete, #554; archive-restore, #551) ride the wrapped mode.
 - **whenever a daemon or relay change touching the mobile surface lands** — run it alongside the daemon's
   own `make e2e-realclaude`.
 
-**Cost:** three real claude turns across five curated methods (the ping scenario + the
+**Cost:** three real claude turns across six curated methods (the ping scenario + the
 create-workspace-folder scenario, #566 + the new-session scenario, #541 — one turn each; `/clear` spends
-none; the delete scenario, #554, and the archive-restore scenario, #551, each spend **none** —
-create/rename/delete/archive/restore are daemon round-trips), a few minutes of wall clock,
-subscription-covered (it does **not** meter tokens).
+none; the delete scenario, #554, the archive-restore scenario, #551, and the change-workspace scenario,
+#562, each spend **none** — create/rename/delete/archive/restore/change-workspace are daemon round-trips),
+a few minutes of wall clock, subscription-covered (it does **not** meter tokens).
 
 For the full mechanics — relay URLs, the isolated `e2e-live` instance, prerequisites, and first-run
 assumptions — see [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay). The operator-facing
@@ -282,7 +314,7 @@ cannot drift.
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated quintet of rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated sextet of rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the pre-ship gate: the operator must never be the
 **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -292,14 +324,16 @@ over TLS instead of a local loopback relay. This is the pre-ship gate: the opera
 LIVE=1 bash scripts/e2e-emulator.sh
 ```
 
-**What it runs.** Five curated methods, passed as a comma-separated `class#method` list:
+**What it runs.** Six curated methods, passed as a comma-separated `class#method` list:
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
 `InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566),
 `InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (#541),
-`InteractiveStreamE2ETest#interactiveTurn_deleteConversation_removesFromListAndClosesThread` (#554), and
-`InteractiveStreamE2ETest#interactiveTurn_archiveRestore_roundTripsListMembership` (#551), so exactly
-**three real claude turns** are spent per run — the delete and archive-restore scenarios each add a method,
-not a turn (create/rename/delete/archive/restore are daemon round-trips). The full class also includes the
+`InteractiveStreamE2ETest#interactiveTurn_deleteConversation_removesFromListAndClosesThread` (#554),
+`InteractiveStreamE2ETest#interactiveTurn_archiveRestore_roundTripsListMembership` (#551), and
+`InteractiveStreamE2ETest#interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace` (#562), so exactly
+**three real claude turns** are spent per run — the delete, archive-restore, and change-workspace scenarios
+each add a method, not a turn (create/rename/delete/archive/restore/change-workspace are daemon round-trips).
+The full class also includes the
 #481 tool-use test, which
 stays excluded from LIVE (an extra turn, cost). `LIVE=1` is **mutually exclusive with `DETERMINISTIC=1`**
 (real vs scripted claude); setting both fails fast.
@@ -329,10 +363,10 @@ Prerequisites (on top of the "How to run" list):
 - The emulator needs outbound internet + DNS + a system-trusted TLS cert for the relay host. It reaches
   the public relay over its own NAT'd internet — **not** the `10.0.2.2` host alias, which is loopback-only.
 
-Cost: **three real claude turns per run across five curated methods** (ping + create-workspace-folder, #566
-+ new-session, #541; `/clear` spends none; delete, #554, and archive-restore, #551, each spend none —
-create/rename/delete/archive/restore are daemon round-trips), a few minutes of wall clock,
-subscription-covered.
+Cost: **three real claude turns per run across six curated methods** (ping + create-workspace-folder, #566
++ new-session, #541; `/clear` spends none; delete, #554, archive-restore, #551, and change-workspace, #562,
+each spend none — create/rename/delete/archive/restore/change-workspace are daemon round-trips), a few
+minutes of wall clock, subscription-covered.
 
 First-run assumptions to confirm (grounded in the design, unverified end to end):
 
@@ -734,7 +768,12 @@ These are grounded in the source but unverified end to end:
   name gone from the active list after archive, then back after restore, a genuine two-direction inversion)
   and folded into the pre-ship `LIVE=1` gate as the 5th curated method (spending **no** extra claude turn —
   create/rename/archive/restore are daemon round-trips), taking the gate from a quartet to a quintet at
-  still 3 turns.
+  still 3 turns; Layer-3 (real claude) change-workspace — **shipped (#562)**, driven end to end through the
+  #560 change_workspace wire and #561 surfacing against a real daemon, always-on (the recorded workspace is a
+  durable fact — the `WorkspaceChip` re-labels to the new folder's basename, a genuine absence→presence
+  inversion) and folded into the pre-ship `LIVE=1` gate as the 6th curated method (spending **no** extra
+  claude turn — create-folder and change_workspace are conversation-scoped daemon round-trips), taking the
+  gate from a quintet to a sextet at still 3 turns.
 - **#337 full scope:** `seq`-based ordering and replay de-dup across reconnect (a #402 concern; this
   fold concatenates in arrival order, correct within a single connection); and a `make`/Gradle wrapper
   for the orchestration plus fork-sync of any shared `bin/` script per the org convention.
