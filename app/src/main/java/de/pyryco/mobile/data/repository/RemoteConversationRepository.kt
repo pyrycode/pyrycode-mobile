@@ -443,13 +443,17 @@ class RemoteConversationRepository(
                 // payload or an unknown reason yields null → drop one envelope, the lone collector
                 // survives. Routes strictly by the payload's conversation_id, so the boundary structurally
                 // cannot cross-route into another thread (AC #1) — an id no collector observes simply sits
-                // unread in the map. Unlike the structured-stream arm this folds a thread row only:
-                // surfaces NOTHING on liveSessionEvents (a boundary is not a streaming event) and does NOT
-                // clear a stall (a session transition is not turn forward-progress). Drop silently —
+                // unread in the map. Two sibling writes on a decoded boundary: appendSessionBoundary folds
+                // a thread-boundary row, and updateCurrentSessionId (#578) folds new_session_id into the
+                // projection Conversation.currentSessionId so session-scoped frames target the live session
+                // instead of the empty id the v2 `conversations` summary defaults. Unlike the structured-
+                // stream arm neither surfaces on liveSessionEvents (a boundary is not a streaming event) nor
+                // clears a stall (a session transition is not turn forward-progress). Drop silently —
                 // conversation_id / session ids / workspace_cwd are sensitive; nothing here logs the payload.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     decodeSessionTransition(envelope)?.let { (conversationId, boundary) ->
                         appendSessionBoundary(conversationId, boundary)
+                        updateCurrentSessionId(conversationId, boundary.newSessionId)
                     }
                 }
             }
@@ -769,6 +773,30 @@ class RemoteConversationRepository(
         boundary: ThreadItem.SessionBoundary,
     ) {
         threadByConversation.update { it + (conversationId to (it[conversationId].orEmpty() + boundary)) }
+    }
+
+    /**
+     * Fold a `session_transition`'s [newSessionId] into the list [projection] entry for [conversationId]
+     * (#578) — the sibling write to [appendSessionBoundary], resolving the live session identity the v2
+     * `conversations` summary omits (so a session-scoped frame like `set_session_settings` targets the
+     * real session instead of the defaulted empty id). Field-updates an **existing** entry only: a
+     * [List.map] over the current list, so an unknown [conversationId] yields an element-equal list
+     * ([StateFlow] conflation ⇒ no re-emit, **no phantom conversation** — unlike [appendSessionBoundary]
+     * the list projection must not gain a phantom entry, so the `else it` identity branch *is* the
+     * absent-conversation guard), and a `null` (pre-first-snapshot) projection stays `null`. Written
+     * **verbatim for every reason** (`clear` carries the freshly-rotated-to id; `idle_evict` carries the
+     * evicted id unchanged ⇒ element-equal no-op in the common case), mirroring [appendSessionBoundary]'s
+     * copy-through posture. The atomic [MutableStateFlow.update] CAS retry-merges against a concurrent
+     * authoritative `conversations` snapshot rather than clobbering it, as [upsertConversation] does.
+     * [newSessionId] is sensitive and is never logged (Security review).
+     */
+    private fun updateCurrentSessionId(
+        conversationId: String,
+        newSessionId: String,
+    ) {
+        projection.update { current ->
+            current?.map { if (it.id == conversationId) it.copy(currentSessionId = newSessionId) else it }
+        }
     }
 
     /**
