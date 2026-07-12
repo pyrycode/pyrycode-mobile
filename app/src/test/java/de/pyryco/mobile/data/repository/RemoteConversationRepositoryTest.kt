@@ -4365,6 +4365,102 @@ class RemoteConversationRepositoryTest {
             assertEquals(listOf("boundary:IdleEvict"), threadShape(c2.last()))
         }
 
+    // ---- #578: fold new_session_id into the projection Conversation.currentSessionId -------------
+
+    // #578 AC #1/#4: a session_transition on the relay path folds new_session_id into the projection
+    // Conversation's currentSessionId, and observeConversations surfaces the updated id (the conversation
+    // stays present and unduplicated).
+    @Test
+    fun sessionTransition_foldsNewSessionIdIntoConversationCurrentSessionId() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+
+            pump.push(
+                conversationsEnvelope(
+                    """{"conversations":[{"id":"c1","name":"C1","is_promoted":true,"cwd":"/p/c1","last_message_ts":"2026-05-08T09:00:00Z","last_used_at":"2026-05-08T09:00:00Z"}]}""",
+                ),
+            )
+            runCurrent()
+            // Pre-fold: the wire summary omits session identity, so currentSessionId defaults to "".
+            assertEquals("", emissions.last().single().currentSessionId)
+
+            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear"))
+            runCurrent()
+
+            assertEquals(listOf("c1"), emissions.last().map { it.id })
+            assertEquals("s2", emissions.last().single { it.id == "c1" }.currentSessionId)
+        }
+
+    // #578 AC #2: a session_transition for a conversation_id absent from the projection is a no-op — no
+    // phantom entry, no currentSessionId change, and (conflation) no fresh emission.
+    @Test
+    fun sessionTransition_absentConversation_isNoOp() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+
+            pump.push(
+                conversationsEnvelope(
+                    """{"conversations":[{"id":"c1","name":"C1","is_promoted":true,"cwd":"/p/c1","last_message_ts":"2026-05-08T09:00:00Z","last_used_at":"2026-05-08T09:00:00Z"}]}""",
+                ),
+            )
+            runCurrent()
+            val emissionCountBefore = emissions.size
+
+            // c2 is not in the projection.
+            pump.push(sessionTransitionEnvelope("c2", "s1", "s2", "clear"))
+            runCurrent()
+
+            assertEquals(listOf("c1"), emissions.last().map { it.id })
+            assertEquals("", emissions.last().single().currentSessionId)
+            // Element-equal list ⇒ StateFlow conflation suppresses re-emission.
+            assertEquals(emissionCountBefore, emissions.size)
+        }
+
+    // #578 AC #3 (fail-closed): without `interactive` negotiated, a well-formed session_transition leaves
+    // currentSessionId unchanged — same gate as the #336 boundary fold.
+    @Test
+    fun sessionTransition_capabilityGateClosed_leavesCurrentSessionIdUnchanged() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { emptySet() })
+            val emissions = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+
+            pump.push(
+                conversationsEnvelope(
+                    """{"conversations":[{"id":"c1","name":"C1","is_promoted":true,"cwd":"/p/c1","last_message_ts":"2026-05-08T09:00:00Z","last_used_at":"2026-05-08T09:00:00Z"}]}""",
+                ),
+            )
+            runCurrent()
+
+            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear"))
+            runCurrent()
+
+            assertEquals("", emissions.last().single().currentSessionId)
+        }
+
+    // #578: a transition arriving before any conversations snapshot (null projection) emits nothing and
+    // does not crash — pins the current?.map null-safety.
+    @Test
+    fun sessionTransition_nullProjection_emitsNothingAndDoesNotCrash() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+
+            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear"))
+            runCurrent()
+
+            assertEquals(emptyList<List<Conversation>>(), emissions)
+        }
+
     // ---- #412: replay-cursor recording on the inbound path --------------------------------------
 
     // AC #2: each interactive structured frame's event_id advances the high-water mark; an
