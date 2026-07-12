@@ -895,6 +895,119 @@ class InteractiveStreamE2ETest {
         composeTestRule.onAllNodesWithText(newWorkspace, substring = true).onFirst().assertIsDisplayed()
     }
 
+    /**
+     * Rename-conversation twin of the delete / change-workspace scenarios (#537, Layer 3): drive the real
+     * Rename flow end to end against a real daemon, exercising the already-shipped #530 `rename` wire
+     * (pyrycode#820). The four shipped siblings (#541 / #551 / #554 / #562) already drive the same
+     * `RenameDialog` as a **seeding** step; this promotes rename from a seed to the **subject** of its own
+     * scenario — only the assertion target changes. Create a scratch discussion, rename it to a
+     * runtime-unique title, submit, and assert the new title appears **durably** on **two** surfaces after the
+     * round-trip: the **thread top bar** (in-thread, immediately after submit) and the **conversation list**
+     * (after popping back).
+     *
+     * **Reachability.** The "Rename" overflow item lives in the `mutationsSupported`-gated block
+     * ([de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenu]) and is **not** promotion-gated;
+     * [de.pyryco.mobile.data.repository.RemoteConversationRepository.mutationsSupported] is `true` in relay
+     * mode (PR #572), so it is reachable on a plain **discussion** — the same real overflow the operator uses.
+     * `rename` is **conversation-scoped** (keyed by `conversation_id`, a line-for-line mirror of
+     * `change_workspace` and `delete`, **no** session transition), so it carries none of the session-scoped
+     * `currentSessionId == ""` blocker that re-parks the settings e2e (#545); clean-buildable with
+     * #541 / #554 / #551 / #562.
+     *
+     * **Assert the recorded name, not a session id.** Because `rename` performs no session transition, the
+     * durable post-condition is the recorded conversation **name**. Surface #1 is the thread top bar
+     * ([de.pyryco.mobile.ui.conversations.thread.ThreadScreen] `title = state.displayName`), reached
+     * **immediately after submit** — unlike delete/archive there is **no PopBack** (`RenameSubmit` dismisses
+     * the dialog and the thread stays open, [de.pyryco.mobile.ui.conversations.thread.ThreadViewModel]), so
+     * the top bar re-labels in place after `conversation_updated` folds into thread state. Surface #2 is the
+     * conversation-list recents row, reached after tapping Back — the same fold upserts the list projection.
+     * Neither surface is a session id (the #545 lesson).
+     *
+     * **The RenameDialog-over-thread field disambiguation (the one gotcha).** `RenameDialog` opens **over**
+     * the thread, whose composer is also an editable field, so `hasSetTextAction()` alone is ambiguous — two
+     * nodes. The dialog auto-focuses its field (`focusRequester.requestFocus()`) and the composer never
+     * requests focus, so `hasSetTextAction() and isFocused()` selects the dialog's field (`and` is a
+     * `SemanticsMatcher` member — no import). The field is **pre-filled with the server auto-name and fully
+     * selected** → `performTextReplacement` (not `performTextInput`, which could leave the auto-name
+     * concatenated). This is verbatim the selector the four siblings use for their rename seed.
+     *
+     * **No top-bar false match.** After Save, `RenameSubmit` flips `showRenameDialog` false synchronously, so
+     * the dialog (whose field held [uniqueName][RENAME_NAME_PREFIX]) leaves composition before the round-trip
+     * lands; the top bar still shows the old auto-name until then. The two never hold the unique name
+     * simultaneously, so step 6's first match is the top bar.
+     *
+     * **Always-on, not `@Ignore`d.** Both post-conditions are **durable** structural facts (the recorded name
+     * on two surfaces) — no transient like #482's spinner — so the scenario belongs in the always-on gate,
+     * matching #481's tool-name row, #541's delimiter, and #554's / #562's inversions. **Zero real-claude
+     * turns** (like #554 / #562): create-discussion and rename are daemon round-trips, not claude turns, and
+     * the durable identity is the typed name, so this scenario sends **no** ping. The LIVE gate goes from a
+     * sextet (6 methods) to a **septet** (7 methods) at **still 3 turns** — rename adds a method, not a turn.
+     */
+    @Test
+    fun interactiveTurn_renameConversation_relabelsTopBarAndListRow() {
+        // 1. A paired launch lands on the channel list. The "New discussion" FAB is the list marker.
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // 2. Wait for the relay connection to open before creating — rename round-trips to the daemon.
+        awaitConnected()
+
+        // 3. Create a fresh discussion → the app navigates into its thread; the send button marks arrival. A
+        //    plain discussion suffices — "Rename" is mutationsSupported-gated only, reachable on it.
+        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // 4. Absence guard (the before-state, deterministic — no claude turn): the runtime-unique target title
+        //    is not on screen yet (the top bar shows the server auto-name), so its later appearance is
+        //    attributable to the rename round-trip. Same guard as #562 step 3 / #554 step 9's inversion.
+        val uniqueName = RENAME_NAME_PREFIX + System.currentTimeMillis()
+        composeTestRule.onAllNodesWithText(uniqueName, substring = true).assertCountEquals(0)
+
+        // 5. Rename to the unique title (identical drive to #554 step 4). Open the overflow, tap "Rename". The
+        //    RenameDialog opens OVER the thread, whose composer is also an editable field, so hasSetTextAction()
+        //    alone is ambiguous — target the dialog's field by its focus (RenameDialog auto-focuses on open; the
+        //    composer never requested focus), waiting for focus to land. REPLACE the pre-filled+selected
+        //    auto-name (performTextReplacement, not performTextInput) so the field holds exactly the unique
+        //    name, then Save.
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(RENAME_ITEM).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(RENAME_ITEM).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasSetTextAction() and isFocused()).performTextReplacement(uniqueName)
+        composeTestRule.onNodeWithText(RENAME_SAVE).performClick()
+
+        // 6. Top-bar assertion (AC-2, surface #1 — in-thread). This wait spans the rename round-trip
+        //    (conversation_updated → state.displayName); there is NO PopBack, so the thread stays open and the
+        //    top bar re-labels in place. The dialog has already left composition (Save flips showRenameDialog
+        //    false synchronously), so the match is the top bar Text, not the dismissing field. Tolerant:
+        //    substring, generous timeout, presence.
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
+
+        // 7. List assertion (AC-2, surface #2 — after popping back). Tap Back, wait for the list marker (the
+        //    thread has popped back), then wait for the unique name on a recents row and confirm it is
+        //    displayed. The same conversation_updated fold upserts the list projection → observeConversations
+        //    re-emits with the new name; the waitUntil covers that round-trip. A genuine inversion of step 4's
+        //    absence, on the list surface, same unique token.
+        composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
+    }
+
     /** Count the on-screen semantic nodes whose text contains "ping" (case-insensitive, substring). */
     private fun pingNodeCount(): Int =
         composeTestRule
@@ -1032,6 +1145,15 @@ class InteractiveStreamE2ETest {
         // cannot pre-exist on screen — the presence check (step 5), its inversion after archive (step 8), and
         // the re-appearance after restore (step 13) are all genuine; also keeps repeated LIVE gate runs clean.
         const val ARCHIVE_NAME_PREFIX = "e2e551-"
+
+        // #537 rename-conversation scenario. Reuses the #554 rename constants (RENAME_ITEM, RENAME_SAVE) and
+        // the overflow opener (CD_MORE_ACTIONS); adds only this prefix. Runtime-unique rename target:
+        // "e2e537-" + System.currentTimeMillis(). Distinct prefix (the shared companion forbids redeclaration;
+        // each scenario owns its own). Unique so a substring match cannot pre-exist on screen — the absence
+        // guard (step 4) and its inversions on the top bar (step 6) and the list row (step 7) are all genuine;
+        // also keeps repeated LIVE gate runs green (no collision with titles left by prior runs) and does not
+        // collide as a substring with top-bar / list chrome the assertion also matches.
+        const val RENAME_NAME_PREFIX = "e2e537-"
 
         const val LIST_TIMEOUT_MS = 30_000L
         const val CONNECT_TIMEOUT_MS = 30_000L
