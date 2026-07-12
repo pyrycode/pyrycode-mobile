@@ -107,6 +107,7 @@ TYPE_SESSION_TRANSITION -> {
     if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
         decodeSessionTransition(envelope)?.let { (conversationId, boundary) ->
             appendSessionBoundary(conversationId, boundary)
+            updateCurrentSessionId(conversationId, boundary.newSessionId)  // #578
         }
     }
 }
@@ -134,6 +135,22 @@ TYPE_SESSION_TRANSITION -> {
 - **Folds a thread row only.** Unlike the structured-stream arm it surfaces **nothing** on
   `liveSessionEvents` (a boundary is not a streaming event) and does **not** clear a stall (a session
   transition is not turn forward-progress — the same posture as `queue_state` / `modal`).
+- **A second, sibling fold ([#578](../codebase/578.md)) resolves live session identity.** The same decoded
+  boundary also feeds a private `updateCurrentSessionId(conversationId, newSessionId)`, which
+  field-updates the matching `Conversation.currentSessionId` in the **list** `projection` (a `List.map`
+  over existing entries — cannot insert, so an unknown `conversationId` is a no-op, not a phantom
+  conversation; `StateFlow` conflation then suppresses the would-be re-emission). This is the fold that
+  resolves the id session-scoped mutations need — `Conversation.currentSessionId` is otherwise hardcoded
+  `""` on every live decode path (the v2 `conversations` summary and create/update replies omit session
+  identity), so `setSessionSettings` ([#543](../codebase/543.md)) went out with an empty id and the daemon
+  answered `session.not_found`. Written **verbatim for every `reason`**, no branching — `idle_evict`
+  carries the evicted id unchanged (element-equal no-op in the common case), `workspace_change` has no
+  server source today. The two sibling writes have **deliberately different absent-target behavior**: the
+  thread `Map` tolerates an orphan boundary row (nothing reads a thread nobody observes); the list
+  `projection` must never gain a phantom conversation — see [#578](../codebase/578.md) for the full
+  rationale. Scope note: this fold only resolves identity **after** a transition fires; a phone that pairs,
+  opens a conversation, and changes a setting before any `/clear` still sees `currentSessionId == ""` —
+  that gap needs a daemon-side change, filed as `pyrycode/pyrycode#940`.
 
 ## Error handling
 
@@ -176,6 +193,8 @@ the arm and the invariant exist so the decode is exhaustive and expressible, and
 
 - [#336 codebase note](../codebase/336.md) — implementation record + lessons (the five-fold lift nuance).
 - Spec: [`docs/specs/architecture/336-session-boundary-fold-remote-thread.md`](../../specs/architecture/336-session-boundary-fold-remote-thread.md).
+- [#578 codebase note](../codebase/578.md) — the sibling `currentSessionId` fold (the one write that
+  resolves live session identity for session-scoped mutations); its spec and security review.
 - [Remote conversation repository](remote-conversation-repository.md) — the host class; the
   `observeMessages` thread read (#313) this extends and the unified `threadByConversation` store.
 - [SessionBoundaryDelimiter](session-boundary-delimiter.md) — the render half (#135/#192); consumes the
