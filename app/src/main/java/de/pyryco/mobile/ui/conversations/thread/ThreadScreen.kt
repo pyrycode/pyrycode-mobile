@@ -79,6 +79,7 @@ import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
 import de.pyryco.mobile.ui.conversations.components.StallPromotionBanner
 import de.pyryco.mobile.ui.conversations.components.StatusSheet
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
+import de.pyryco.mobile.ui.conversations.components.UnrecognizedMessageRow
 import de.pyryco.mobile.ui.conversations.components.WorkspaceChip
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
@@ -282,6 +283,11 @@ fun ThreadScreen(
                                 is ThreadItem.MessageItem -> "msg:${item.message.id}"
                                 is ThreadItem.SessionBoundary ->
                                     "boundary:${item.previousSessionId}->${item.newSessionId}"
+                                // The frame carries neither a message id nor a turn_id, so the row
+                                // brings its own client-stamped identity (#608): a position key would
+                                // shift under render()'s synthetic-message append/drop, and a payload
+                                // key would collide on two identical frames stamped in the same instant.
+                                is ThreadItem.UnrecognizedMessage -> "unrecognized:${item.id}"
                             }
                         },
                     ) { reversedIndex, item ->
@@ -297,6 +303,8 @@ fun ThreadScreen(
                                 is ThreadItem.MessageItem -> MessageBubble(message = item.message)
                                 is ThreadItem.SessionBoundary ->
                                     SessionBoundaryDelimiter(boundary = item)
+                                is ThreadItem.UnrecognizedMessage ->
+                                    UnrecognizedMessageRow(item = item)
                             }
                         }
                     }
@@ -591,6 +599,7 @@ private fun ThreadItem.timestamp(): Instant =
     when (this) {
         is ThreadItem.MessageItem -> message.timestamp
         is ThreadItem.SessionBoundary -> occurredAt
+        is ThreadItem.UnrecognizedMessage -> occurredAt
     }
 
 internal fun ThreadUiState.toChannelInfoUiModel(now: Instant = Clock.System.now()): ChannelInfoUiModel =
