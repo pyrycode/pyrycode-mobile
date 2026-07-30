@@ -3,6 +3,7 @@ package de.pyryco.mobile.data.network
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.ModalOption
+import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -121,6 +122,62 @@ internal data class QueueStatePayloadDto(
  */
 internal fun QueueStatePayloadDto.toQueue(): List<QueuedMessage> =
     queued.orEmpty().map { QueuedMessage(id = it.queuedMsgId, text = it.text, timestamp = Instant.parse(it.ts)) }
+
+/**
+ * The `api_retry` control event (#593, pyrycode#1074): claude is stuck retrying an API error, so the
+ * thread can say so instead of showing an indefinite thinking spinner. Decode-only — the phone never
+ * sends one. Always decode through [MobileJson].
+ *
+ * Wire SSOT: pyrycode `internal/protocol/interactive.go` (`ApiRetryPayload`) +
+ * `docs/protocol-mobile.md` § `api_retry`. Shape: `{conversation_id, active, current, total}`. Every
+ * field is **strict-required, non-null** — unlike [QueueStatePayloadDto.queued] this payload has no
+ * documented nullable latitude (the Go struct sets no `omitempty`, so boundary values like
+ * `active: false` / `current: 0` always serialize), so strictness is uniform: a missing field, or one
+ * whose JSON shape cannot be read as its declared type (a number where a `String` is declared, a
+ * non-integral or out-of-`Int32` counter), fails the structural decode with a
+ * [kotlinx.serialization.SerializationException] and the one envelope is dropped (AC #3). One measured
+ * latitude to be aware of when cloning this arm: kotlinx's *tree* decoder accepts a **quoted** primitive
+ * whose content is otherwise valid (`"active":"true"`, `"current":"3"`) even with `isLenient = false`,
+ * so those decode to the same value an unquoted frame would give rather than dropping — harmless here,
+ * and not a strictness probe a test should lean on.
+ *
+ * [active] is the edge — `true` on onset, `false` once claude recovered. The rising edge **re-fires**
+ * whenever the parsed count climbs (`3/10` → `4/10`), so a repeat `active: true` is a counter update,
+ * not a redundant onset. The falling edge carries the last-known counter verbatim rather than zeros;
+ * [toStatus] is where the "ignore the counter when inactive" contract is enforced.
+ */
+@Serializable
+internal data class ApiRetryPayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    val active: Boolean,
+    val current: Int,
+    val total: Int,
+)
+
+/**
+ * Map a decoded [ApiRetryPayloadDto] to the portable [ApiRetryStatus]. **Total — never null**,
+ * deliberately unlike [TurnStatePayloadDto.toEvent] / [SessionTransitionPayloadDto.toBoundary], whose
+ * unrecognized-*value* drop is a mapper concern: there is no unrecognized value to reject here
+ * ([active] is a bool, the counter two ints), so structural malformation stays the only path that
+ * drops a frame.
+ *
+ * Three cases. An inactive payload maps to [ApiRetryStatus.NotRetrying] **discarding [current] /
+ * [total]** — the single place the "a client ignores the counter on the falling edge" contract is
+ * enforced, so the stale counter the daemon copies there structurally cannot reach the projection.
+ * An active payload with both counter fields positive carries them verbatim (no clamping: bounding an
+ * extreme or incoherent pair is a display concern #594 owns, and rewriting server data at the decode
+ * boundary would diverge from every sibling mapper's carry-verbatim posture). Any other active shape —
+ * the documented unparsed `{0, 0}`, a partially-zero `{3, 0}`, a negative from a hostile daemon —
+ * maps to [ApiRetryStatus.AttemptUnknown]. Treating those as "retrying, count unknown" rather than
+ * dropping the envelope is the safer failure: a drop would discard a **real retry onset** and leave
+ * the thread on the indefinite spinner this feature exists to replace.
+ */
+internal fun ApiRetryPayloadDto.toStatus(): ApiRetryStatus =
+    when {
+        !active -> ApiRetryStatus.NotRetrying
+        current > 0 && total > 0 -> ApiRetryStatus.Attempt(current, total)
+        else -> ApiRetryStatus.AttemptUnknown
+    }
 
 /**
  * Map a decoded [TurnStatePayloadDto] to a [LiveSessionEvent.TurnState], or **null** when [state] is
