@@ -4048,6 +4048,190 @@ class RemoteConversationRepositoryTest {
             assertEquals(listOf(ApiRetryStatus.NotRetrying, ApiRetryStatus.Attempt(3, 10)), retries)
         }
 
+    // ---- #596: decode `compacting` as a thread-observable per-conversation compaction state ------
+
+    // AC #1: a rising-edge `compacting` envelope flips the observable compaction state on.
+    @Test
+    fun compacting_risingEdge_flipsOn() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val compacting = collectCompacting(repo, "c1")
+            runCurrent()
+            assertEquals(listOf(false), compacting)
+
+            pump.push(compactingEnvelope("c1", active = true))
+            runCurrent()
+            assertEquals(listOf(false, true), compacting)
+        }
+
+    // AC #2, the load-bearing test of the slice: the explicit falling edge clears the state, and it
+    // never remains active afterwards. This is the behaviour the `stall` arm structurally cannot have
+    // (no clearing edge on the wire), so cloning that arm too literally fails exactly here.
+    @Test
+    fun compacting_roundTrip_fallingEdgeClears() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val compacting = collectCompacting(repo, "c1")
+            runCurrent()
+
+            pump.push(compactingEnvelope("c1", active = true, id = 1L))
+            runCurrent()
+            assertEquals(listOf(false, true), compacting)
+
+            pump.push(compactingEnvelope("c1", active = false, id = 2L))
+            runCurrent()
+            assertEquals(listOf(false, true, false), compacting)
+            assertEquals("the state must not remain active after a falling edge", false, compacting.last())
+        }
+
+    // A re-fired rising edge for an already-compacting conversation is an idempotent Set add — no
+    // re-emit. Unlike `api_retry` there is no counter to climb, so nothing distinguishes the repeat.
+    @Test
+    fun compacting_repeatedRisingEdge_isIdempotent() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val compacting = collectCompacting(repo, "c1")
+            runCurrent()
+
+            pump.push(compactingEnvelope("c1", active = true, id = 1L))
+            pump.push(compactingEnvelope("c1", active = true, id = 2L))
+            runCurrent()
+            assertEquals(listOf(false, true), compacting)
+        }
+
+    // A lone falling edge with no prior rising edge leaves the observer at `false` and emits nothing
+    // new (removal of an absent id is a no-op).
+    @Test
+    fun compacting_fallingEdgeWithNoPriorRisingEdge_emitsNothingNew() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val compacting = collectCompacting(repo, "c1")
+            runCurrent()
+
+            pump.push(compactingEnvelope("c1", active = false))
+            runCurrent()
+            assertEquals(listOf(false), compacting)
+        }
+
+    // AC #3: a frame naming one conversation leaves every other conversation's state undisturbed.
+    @Test
+    fun compacting_perConversationIsolation() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val c1 = collectCompacting(repo, "c1")
+            val c2 = collectCompacting(repo, "c2")
+            runCurrent()
+
+            pump.push(compactingEnvelope("c1", active = true))
+            runCurrent()
+            assertEquals(listOf(false, true), c1)
+            assertEquals(listOf(false), c2)
+        }
+
+    // observeCompacting is distinctUntilChanged: another conversation's compaction edges do not
+    // re-emit this flow.
+    @Test
+    fun compacting_distinctUntilChanged_otherConversationDoesNotReemit() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val c1 = collectCompacting(repo, "c1")
+            runCurrent()
+            assertEquals(listOf(false), c1)
+
+            pump.push(compactingEnvelope("c2", active = true, id = 1L))
+            pump.push(compactingEnvelope("c2", active = false, id = 2L))
+            runCurrent()
+            assertEquals(listOf(false), c1)
+        }
+
+    // AC #5: a malformed `compacting` is dropped without disturbing the observed state or tearing down
+    // the single inbound consumer — a later valid frame still surfaces, proving the collector survived.
+    @Test
+    fun compacting_malformed_droppedCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val compacting = collectCompacting(repo, "c1")
+            runCurrent()
+
+            // Missing the required `conversation_id` → SerializationException → envelope dropped.
+            pump.push(compactingProbe(1L, """{"active":true}"""))
+            // Wrong-typed `conversation_id` (number, not string) → dropped.
+            pump.push(compactingProbe(2L, """{"conversation_id":123,"active":true}"""))
+            // Missing `active` → dropped (no field is defaulted).
+            pump.push(compactingProbe(3L, """{"conversation_id":"c1"}"""))
+            // Genuinely wrong-shaped `active` — an object, then an array. NOT usable as a probe:
+            // a *quoted* primitive (`"active":"true"`), which kotlinx's tree decoder accepts as `true`
+            // even with `isLenient = false` (measured — see the ApiRetryPayloadDto KDoc), so it would
+            // decode green and prove nothing.
+            pump.push(compactingProbe(4L, """{"conversation_id":"c1","active":{}}"""))
+            pump.push(compactingProbe(5L, """{"conversation_id":"c1","active":[true]}"""))
+            runCurrent()
+            assertEquals(listOf(false), compacting)
+
+            pump.push(compactingEnvelope("c1", active = true, id = 6L))
+            runCurrent()
+            assertEquals(listOf(false, true), compacting)
+        }
+
+    // AC #1 (fail-closed): without `interactive` negotiated, a well-formed `compacting` never surfaces.
+    @Test
+    fun compacting_capabilityGateClosed_blocksDecode() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { emptySet() })
+            val compacting = collectCompacting(repo, "c1")
+            runCurrent()
+
+            pump.push(compactingEnvelope("c1", active = true))
+            runCurrent()
+            assertEquals(listOf(false), compacting)
+        }
+
+    // AC #1 (fail-closed): a negotiated set with another token but NOT `interactive` still blocks.
+    @Test
+    fun compacting_capabilityGateOtherTokenOnly_blocksDecode() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("something_else") })
+            val compacting = collectCompacting(repo, "c1")
+            runCurrent()
+
+            pump.push(compactingEnvelope("c1", active = true))
+            runCurrent()
+            assertEquals(listOf(false), compacting)
+        }
+
+    // Inert toward its neighbours — a `compacting` does NOT clear an active stall (compaction is not
+    // turn forward-progress, and clearing here would be a hostile-daemon lever for suppressing the
+    // stall indicator) and folds no thread row, while its own state still lands.
+    @Test
+    fun compacting_inertTowardNeighbours_keepsStallAndFoldsNoThreadRow() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val stalls = collectStall(repo, "c1")
+            val thread = collectMessages(repo, "c1")
+            val compacting = collectCompacting(repo, "c1")
+            runCurrent()
+
+            pump.push(stallEnvelope("c1"))
+            runCurrent()
+            assertEquals(listOf(false, true), stalls)
+
+            pump.push(compactingEnvelope("c1", active = true, id = 2L))
+            runCurrent()
+            assertEquals("compaction is not forward progress — the stall stands", listOf(false, true), stalls)
+            assertEquals("no thread row folded", listOf(emptyList<ThreadItem>()), thread)
+            assertEquals(listOf(false, true), compacting)
+        }
+
     // ---- #387: correlate tool_use/tool_result into live tool-call thread items with status ------
 
     // AC #1: a tool_use produces a running tool row carrying the tool name + input, empty output.
@@ -5828,6 +6012,38 @@ class RemoteConversationRepositoryTest {
                     """{"conversation_id":"$conversationId","active":$active,"current":$current,"total":$total}""",
                 ),
         )
+
+    private fun TestScope.collectCompacting(
+        repo: RemoteConversationRepository,
+        conversationId: String,
+    ): MutableList<Boolean> {
+        val emissions = mutableListOf<Boolean>()
+        backgroundScope.launch { repo.observeCompacting(conversationId).collect { emissions += it } }
+        return emissions
+    }
+
+    /**
+     * A `compacting` control envelope `{conversation_id, active}` (#596). Both fields are always present
+     * on the wire (no `omitempty`), so the helper always emits both; [active] is the edge — `true` on
+     * onset, `false` once compaction finished. Banner-only: the payload carries no counter to build.
+     */
+    private fun compactingEnvelope(
+        conversationId: String,
+        active: Boolean,
+        id: Long = 1L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "compacting",
+            ts = TS,
+            payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId","active":$active}"""),
+        )
+
+    /** A raw `compacting` envelope carrying [payload] verbatim — for the malformed-payload probes. */
+    private fun compactingProbe(
+        id: Long,
+        payload: String,
+    ): Envelope = Envelope(id = id, type = "compacting", ts = TS, payload = MobileJson.parseToJsonElement(payload))
 
     /**
      * A `session_transition` envelope `{conversation_id, previous_session_id, new_session_id, reason,

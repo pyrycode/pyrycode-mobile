@@ -70,6 +70,20 @@ interface ConversationRepository {
     fun observeApiRetry(conversationId: String): Flow<ApiRetryStatus> = flowOf(ApiRetryStatus.NotRetrying)
 
     /**
+     * Emits whether [conversationId]'s remote claude is currently auto-compacting its context (#596).
+     * `false` until the wire says otherwise; `true` on the rising edge, back to `false` on the explicit
+     * falling edge — unlike [observeStall], whose recovery is inferred from forward progress. Cold flow;
+     * re-emits on every change. The thread layer observes this to distinguish compaction from a frozen
+     * spinner while claude goes silent for tens of seconds (#597). On/off only — the wire carries no
+     * compaction progress, so there is nothing to report beyond the edge.
+     *
+     * Default `flowOf(false)` — implementations without an interactive wire (the fake, inline test
+     * doubles) inherit "never compacting" and need no override, the same cascade-avoidance as
+     * [observeStall] / [observeQueue] / [observeApiRetry].
+     */
+    fun observeCompacting(conversationId: String): Flow<Boolean> = flowOf(false)
+
+    /**
      * Whether this repository can actually perform the conversation-mutation actions
      * ([archive] / [unarchive] / [rename] / [startNewSession] / [changeWorkspace] / [delete]).
      * A UI gating consumer reads this to stop offering actions the backend cannot service.

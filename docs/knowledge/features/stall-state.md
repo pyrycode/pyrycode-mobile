@@ -125,6 +125,10 @@ where it is actually rendered, in [`LiteralScreenSurface`](literal-screen-surfac
   shape rather than this arm's bare `Set`. Does **not** clear a stall — claude retrying is stuck, not
   making forward progress — and a retry does not fold a thread row, symmetric with this arm's own
   isolation from the queue projection.
+- [Compacting state](compacting-state.md) (#596) — clones **this** arm's bare `Set` shape (no counter
+  to carry), but diverges on the one point `stall`'s model doesn't transfer: it has an explicit wire
+  falling edge, so clearing is driven by the frame rather than inferred from forward progress. Also
+  does **not** clear a stall — compaction is claude busy elsewhere, not forward progress.
 - [ConversationRepository](conversation-repository.md) — the interface the defaulted `observeStall`
   joins; [`StableConversationRepository`](stable-conversation-repository.md) — the facade that makes it
   reach the thread ViewModel.

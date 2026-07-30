@@ -1432,6 +1432,70 @@ already-authenticated Noise channel, `ApiRetryStatus` is a closed sealed type ca
 no `String` (no daemon-supplied text can structurally reach the UI through this arm), and **nothing in
 the new arm or the decode logs the payload**. See [API-retry status § Security](api-retry-status.md#security).
 
+## `observeCompacting(conversationId)` — the thread-observable compaction state (#596)
+
+Whether a conversation's remote claude is **currently auto-compacting its context**. [#596](../codebase/596.md)
+decodes the capability-gated v2 `compacting` control envelope into a per-conversation `Boolean` the
+thread layer observes (the visible reaction is sibling **#597**, not yet shipped). The onset/clearing
+model lives in [Compacting state](compacting-state.md); this section records only how it attaches to
+the repository — it rides the **same single inbound collector** as everything else, with **no new
+domain type, no mapper, no new file, no second subscription**.
+
+- **A seventh connection-scoped projection, and the leanest of the family.** `private val
+  compactingConversations = MutableStateFlow<Set<String>>(emptySet())` — a structural sibling of
+  `stalledConversations`, not `apiRetryByConversation`: `compacting` carries no counter, so the bare
+  membership `Set` shape [`stall`](stall-state.md) uses is the right fit, not `api_retry`'s
+  payload-carrying `Map`. Written **only** from the one `init` inbound collector, so the rising and
+  falling edges never race (single writer). The write is a genuine **read-modify-write** on the set
+  (`it + id` / `it - id`), unlike `apiRetryByConversation`'s pure replace, so `MutableStateFlow.update {}`
+  is load-bearing here, not merely stylistic — a `.value = … + id` formulation would open a real
+  check-then-mutate window. Empty per connection (#351) → a compaction state never survives a reconnect.
+- **One demux hook — a membership toggle, inside the existing `interactive` gate, with the edge branch
+  living in the arm itself.** A **new** `TYPE_COMPACTING` arm: `decodeCompacting(envelope)?.let {
+  (conversationId, active) -> compactingConversations.update { if (active) it + conversationId else it -
+  conversationId } }`. Unlike `api_retry`'s "deliberately no branch on `active`" rule, the `if (active)`
+  **belongs in this arm**: there is no mapper here to own the edge semantics (the two wire fields already
+  are the domain shape, a `String` and a `Boolean`), so the membership transition *is* the edge, expressed
+  exactly once — not a duplicated rule. `it - conversationId` on an absent id is a no-op, so a falling
+  edge with no prior rising edge is harmlessly inert, and a repeated rising edge is an idempotent `Set`
+  add. Like the `api_retry`/`queue_state` siblings and unlike the live-session arm, this folds no thread
+  row and does **not** clear an active stall — compaction is claude busy elsewhere, not turn forward
+  progress; clearing a stall here would let a daemon suppress the phone's stall indicator by emitting
+  `compacting` frames (AC #4 is satisfied structurally, by the arm having only this one statement).
+- **The method is a pure cold projection** (1:1 with `observeStall`), issuing no request:
+
+  ```kotlin
+  override fun observeCompacting(conversationId: String): Flow<Boolean> =
+      compactingConversations.map { conversationId in it }.distinctUntilChanged()
+  ```
+
+  Membership over an empty set gives not-compacting-until-the-first-frame with **no `?: false` default
+  needed** — "absent" and "not compacting" are the same thing by construction, tidier than
+  `observeApiRetry`'s stored falling edge. `distinctUntilChanged()` suppresses only value-*identical*
+  re-emissions: a `compacting` for **another** conversation does not re-emit this flow, and a repeated
+  rising edge is genuinely nothing new — #593's no-dedup hazard does not transfer, because that one
+  existed only to let a climbing counter through, and a bool has no intermediate values to collapse. A
+  `StateFlow` always has a current value, so every collector (including a `flatMapLatest`
+  re-subscription through the facade) gets the current state on subscription.
+- **`decodeCompacting(envelope): Pair<String, Boolean>?`** mirrors `decodeStall`/`decodeApiRetry`: one
+  `try { dto.conversationId to dto.active } catch (IllegalArgumentException) { null }`
+  (`SerializationException ⊂` it). There is no unrecognized *value* to reject here (`active` is a bool),
+  so — unlike `decodeLiveSessionEvent` — structural malformation is the only null path. `CompactingPayloadDto`
+  (both fields strict-required, no nullable latitude) lives in `data/network/InteractivePayloads.kt`,
+  with no `toX()` mapper: the wire shape already is the domain shape.
+- **On the interface with a default — like `observeStall`/`observeQueue`/`observeApiRetry`, unlike
+  `liveSessionEvents`.** The thread needs the current-value compaction state through the
+  [`StableConversationRepository`](stable-conversation-repository.md) facade (#597 is the first
+  consumer), so `observeCompacting` is a **defaulted** `ConversationRepository` method (`flowOf(false)`),
+  with the facade and this repo overriding it. The default absorbs the Fake/test-double cascade (no ≥5
+  split); no consumer cascade. See [[post-352-connection-scoped-repo-behind-facade]].
+
+`security-sensitive`, but the repository stays plain orchestration: decode runs behind the
+already-authenticated Noise channel, the payload carries **only** a routing id and a bool — no
+daemon-supplied text or number of any kind can structurally reach the UI through this arm, the
+narrowest boundary of the four sibling arms — and **nothing in the new arm or the decode logs the
+payload**. See [Compacting state § Security](compacting-state.md#security).
+
 ## Live tool-call rows — `applyToolUse` / `applyToolResult` (#387)
 
 Correlate the v2 `tool_use` (start) / `tool_result` (completion)
@@ -1916,7 +1980,14 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   arm never touches the live-session arm, so it does not clear a stall), following #460's
   payload-carrying `Map` shape rather than #395's bare `Set` because the wire carries a counter, **on
   the interface with a `flowOf(NotRetrying)` default** so the retry state reaches the thread through
-  the facade — see [API-retry status](api-retry-status.md); UI reaction is sibling #594, not shipped).
+  the facade — see [API-retry status](api-retry-status.md); UI reaction is sibling #594, not shipped),
+  [#596](../codebase/596.md) (`observeCompacting`, **landed** — the seventh projection
+  `compactingConversations`; a `TYPE_COMPACTING` arm that clones #395's bare `Set` (not #593's `Map`,
+  since the wire carries no counter) but — unlike #395 — has an **explicit falling edge** on the wire,
+  so `if (active)` branches inside the arm itself rather than a mapper owning it; never touches the
+  live-session arm, so it does not clear a stall or fold a thread row, **on the interface with a
+  `flowOf(false)` default** — see [Compacting state](compacting-state.md); UI reaction is sibling #597,
+  not shipped).
 - Connection wiring: [`RelayRepositoryCoordinator`](relay-repository-coordinator.md)
   ([#351](../codebase/351.md), **landed**) — constructs this repository per live connection against the
   pump + a child scope, made `NoiseSessionPump : ManagedSessionPump : SessionPump`, and publishes the

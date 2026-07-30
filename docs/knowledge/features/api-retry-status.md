@@ -56,9 +56,11 @@ documented climb, silently violating the "reaches the observer as a new emission
 repository projection is a payload-carrying `Map<String, ApiRetryStatus>`, structurally the same shape
 as [`queue_state`](queued-backlog.md) (#460)'s `queuedByConversation`, not `stall`'s bare `Set`.
 
-`compacting`, a banner-only twin from the same daemon PR (pyrycode#1074), is tracked mobile-side as
-#583 and is expected to clone this arm's shape — but nothing here is generalised into a shared
-status-event abstraction. Two samples are not a pattern.
+`compacting`, a banner-only twin from the same daemon PR (pyrycode#1074), landed mobile-side as
+[#596](../codebase/596.md) — see [Compacting state](compacting-state.md). It clones this arm's
+capability gate and malformed-drop idiom but not its `Map` shape: with no counter to carry, it uses
+`stall`'s bare `Set` instead. Nothing here is generalised into a shared status-event abstraction.
+Two samples are not a pattern.
 
 ## Onset, climb, and clearing
 
@@ -153,7 +155,8 @@ overlay of a retry banner) belong to #594.
   reach the thread ViewModel.
 - Consumer (shipped): **[#594](../codebase/594.md)** — [API-retry indicator](api-retry-indicator.md),
   the visible "Retrying — attempt N/M" render.
-- Sibling (not yet shipped): **#583** — `compacting`, the banner-only twin from the same daemon PR;
-  expected to clone this arm's shape without generalising it.
+- Sibling (shipped): **[#596](../codebase/596.md)** — [Compacting state](compacting-state.md), the
+  `compacting` banner-only twin from the same daemon PR, cloning this arm's gate and drop idiom over
+  `stall`'s `Set` shape rather than this one's `Map`.
 - Server SSOT: pyrycode#1074 (design, merged PR pyrycode#1160, 2026-07-21),
   `internal/protocol/interactive.go:99` (`ApiRetryPayload`), `docs/protocol-mobile.md § api_retry`.
