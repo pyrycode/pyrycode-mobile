@@ -14,6 +14,7 @@ import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.Model
+import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -337,6 +338,26 @@ class ThreadViewModel(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
                 initialValue = false,
+            )
+
+    /**
+     * Whether this conversation's remote claude is stuck retrying an API error, and at which attempt
+     * (#593) — drives the "Retrying — attempt N/M" status that replaces the indefinite generic spinner
+     * (#594). A sibling [StateFlow] beside [connectionState] / [isThinking] / [isStalled] (not a
+     * [ThreadUiState] field): like them it is a transient, connection-scoped cross-cutting signal the
+     * stateless screen takes as a separate parameter. Sourced from the already-injected [repository];
+     * `observeApiRetry` already applies `distinctUntilChanged` in the remote impl and defaults to
+     * [ApiRetryStatus.NotRetrying] in the facade, so no extra operator is needed — and none may be added,
+     * since a climbed counter must reach the screen as a fresh emission. [ApiRetryStatus.NotRetrying]
+     * covers "no live connection" and "not retrying".
+     */
+    val apiRetry: StateFlow<ApiRetryStatus> =
+        repository
+            .observeApiRetry(conversationId)
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = ApiRetryStatus.NotRetrying,
             )
 
     /**
