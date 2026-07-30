@@ -3,11 +3,13 @@
 A per-conversation status the thread layer observes to learn that the remote claude has hit an API
 error and is **retrying**, so the phone can say so — "Retrying — attempt N/M" — instead of showing an
 indefinite thinking spinner. Landed in [#593](../codebase/593.md) (split from #582, the data slice).
-The **visible** reaction is sibling **[#594](../codebase/594.md)** (natively blocked by #593, not yet
-shipped).
+The **visible** reaction is sibling **[#594](../codebase/594.md)** — shipped; see
+[API-retry indicator](api-retry-indicator.md) for the `ApiRetryIndicator` component and the
+`ThreadScreen`/`ThreadViewModel` wiring that consumes this projection.
 
-This is the **data layer only**: decode the inbound `api_retry` envelope into observable state. It
-renders nothing.
+This doc covers the **data layer only**: decode the inbound `api_retry` envelope into observable state.
+It renders nothing itself — for the rendered "Retrying — attempt N/M" status, see
+[API-retry indicator](api-retry-indicator.md).
 
 ## The signal
 
@@ -149,8 +151,8 @@ overlay of a retry banner) belong to #594.
 - [ConversationRepository](conversation-repository.md) — the interface the defaulted `observeApiRetry`
   joins; [`StableConversationRepository`](stable-conversation-repository.md) — the facade that makes it
   reach the thread ViewModel.
-- Consumer (not yet shipped): **#594** — the visible "Retrying — attempt N/M" render, natively
-  blocked by #593.
+- Consumer (shipped): **[#594](../codebase/594.md)** — [API-retry indicator](api-retry-indicator.md),
+  the visible "Retrying — attempt N/M" render.
 - Sibling (not yet shipped): **#583** — `compacting`, the banner-only twin from the same daemon PR;
   expected to clone this arm's shape without generalising it.
 - Server SSOT: pyrycode#1074 (design, merged PR pyrycode#1160, 2026-07-21),
