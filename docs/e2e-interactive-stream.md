@@ -47,11 +47,21 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    discussion, drive the real thread overflow "Rename" → `RenameDialog` to a runtime-unique title, submit,
    and assert the new title appears durably on **two** surfaces — the thread top bar (in-thread, immediately
    after submit) and the conversation list (after popping back) — exercising the #530 rename wire against a
-   real daemon; no claude turn — rename is a conversation-scoped daemon round-trip with no session transition.
-   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537)** runs a
-   **curated septet** of scenarios (ping + create-workspace-folder + new-session + delete + archive-restore
-   + change-workspace + rename, still 3 real claude turns — delete, archive-restore, change-workspace, and
-   rename spend none)
+   real daemon; no claude turn — rename is a conversation-scoped daemon round-trip with no session transition;
+   and a **save-as-channel (promote)** scenario (#581): create a scratch discussion, drive the real thread
+   overflow "Save as channel…" → `SaveAsChannelDialog` to a runtime-unique channel name **keeping it in
+   scratch**, submit, and assert the promote round-trip lands on **three** durable surfaces — the thread top bar
+   re-labels in place (no pop-back), the `WorkspaceChip` unmounts (the `isPromoted` tier flip), and after
+   backing out the name is present on the main list but absent from the Discussions drilldown (the promoted
+   tier) — exercising the #348 promote wire against a real daemon; no claude turn — promote is a
+   conversation-scoped daemon round-trip (a pure registry op) with no session transition. This is the
+   **backfill** of the one operator-facing flow that shipped before the real-stack definition-of-done rule
+   (pyrycode-mobile-agents#9), and is **red on any daemon older than pyrycode/pyrycode#949**, which registered
+   the handler the verb had been answering `unsupported` without.
+   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581)**
+   runs a **curated octet** of scenarios (ping + create-workspace-folder + new-session + delete +
+   archive-restore + change-workspace + rename + save-as-channel, still 3 real claude turns — delete,
+   archive-restore, change-workspace, rename, and save-as-channel spend none)
    against the **production relay** over `wss://`
    (TLS) — the pre-ship gate that catches the live-environment failure class a local relay cannot; see
    [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay).
@@ -160,7 +170,15 @@ title, submit, and assert the new title appears **durably** on **two** surfaces 
 thread top bar (in-thread, immediately after submit; there is **no** PopBack, so the thread stays open and
 `state.displayName` re-labels in place) and the conversation list (after popping back) — proving the #530
 rename wire against a real daemon; **zero** claude turns — create/rename are conversation-scoped daemon
-round-trips with no session transition). The tool-use
+round-trips with no session transition); and a **save-as-channel (promote)** scenario (#581 —
+`interactiveTurn_saveAsChannel_promotesToChannelTier`: create a scratch discussion, drive the real thread
+overflow "Save as channel…" → `SaveAsChannelDialog` to a runtime-unique channel name **keeping it in scratch**,
+submit, and assert the promote round-trip lands on **three** durable surfaces — the thread top bar re-labels
+**in place** (there is **no** PopBack), the `WorkspaceChip` **unmounts** (the `isPromoted` tier flip, in-thread),
+and after backing out the name is **present on the main list** but **absent from the Discussions drilldown**
+(i.e. presented in the promoted channel tier, not as a recent discussion) — proving the #348 promote wire
+against a real daemon; **zero** claude turns — create/promote are conversation-scoped daemon round-trips,
+promote being a pure registry op daemon-side). The tool-use
 test asserts the **durable** terminal signal — the tool name in the resolved row —
 not the transient running spinner: rung 3 has no scripted backend to hold the turn open, so racing the
 spinner over a real relay turn is the "never on timing" failure the [Constraints](#constraints) forbid
@@ -249,6 +267,49 @@ disambiguation (`hasSetTextAction() and isFocused()` + `performTextReplacement` 
 field — the same selector the four siblings use). Total real-claude cost: **zero** turns — create/rename are
 daemon round-trips, so no ping is sent.
 
+The **save-as-channel (promote)** scenario (#581) is the family's **backfill** member and likewise
+**always-on** (not `@Ignore`d): the recorded name and the recorded `isPromoted` flag are **durable** facts, so,
+like #537's top-bar re-label and #554's / #551's list inversions, it belongs in the always-on gate.
+Save-as-channel shipped (#348) *before* the real-stack definition-of-done rule (pyrycode-mobile-agents#9), and
+the gap it left was not theoretical: the daemon never registered the `promote_conversation` handler, so the verb
+answered `unsupported` over the real wire and **the promote never happened**, while the mobile suite stayed
+green against a fake daemon that answers anything. pyrycode/pyrycode#949 landed the handler (the desktop
+parallel is pyrycode-desktop#430); this scenario is the mobile client half, and is **red on any older daemon
+binary — that is the regression it exists to catch**. Via the real thread overflow "Save as channel…" — gated
+on the conversation being **unpromoted**, **not** on `mutationsSupported` (unlike "Rename" / "Change
+workspace…"), so reachable on a fresh discussion regardless of the capability flag — it types a runtime-unique
+name (`"e2e581-" + System.currentTimeMillis()`) whose **absence is asserted before** the submit, and asserts
+**three** surfaces, all reading the same `observeConversations(All)` projection a single confirmed upsert
+re-emits: the **thread top bar** (in-thread — `SaveAsChannelSubmit` performs **no** PopBack, so the thread stays
+open and `state.displayName` re-labels in place), the **`WorkspaceChip` unmount** (the `isPromoted` tier flip —
+the chip is gated `!isPromoted && !hasMessages` and no message is sent, so its disappearance is attributable
+solely to the promote; the #562 gating fact read in the opposite direction), and **presence on the main list ∧
+absence from the Discussions drilldown**. Because `promote` is **conversation-scoped** with **no** session
+transition, the assertion is the recorded name and flag, never a session id (the #545 lesson); and the reply is
+a **bare conversation object folded by a confirmed upsert**, **not** a `conversation_updated` broadcast (that is
+*rename's* shape, from #530), which is why every assertion is on rendered UI rather than a named wire message.
+Three gotchas: (1) the dialog's workspace radios default to **dedicated folder**, which would create a real
+directory under the operator's `~/pyry-workspace` on every gate run, so the scenario **taps "Keep in scratch"**
+before Save (`SCRATCH` resolves the request's workspace to `null`, keeping the existing scratch `cwd`; the
+dedicated branch is already covered by #566); (2) the dialog opens **over** the thread, so its field is
+disambiguated from the composer by auto-focus (`hasSetTextAction() and isFocused()` + `performTextReplacement`
+on the pre-filled+selected `"New channel"` — the #537 selector verbatim); and (3) the menu item
+`"Save as channel…"` (U+2026) is matched **exactly**, because the dialog title is the same literal without the
+ellipsis. Total real-claude cost: **zero** turns — create/promote are daemon round-trips, so no ping is sent.
+
+**Why the tier read needs the drilldown** (the non-obvious fact a future sibling will want): the main list
+**cannot** discriminate the two tiers with a tolerant matcher. `ConversationRow` and `DiscussionPreviewRow` both
+set a merged `contentDescription` from **byte-identical** format strings (`cd_conversation_row` ==
+`cd_discussion_preview_row` == `"%1$s, %2$s"`, both rendering `"<name>, <relativeTime>"`), there are no test
+tags, and `RecentDiscussionsSection`'s `Column` carries **no** semantics modifier — so it is not a
+`SemanticsNode` and any `hasAnyAncestor` / `hasAnySibling` scoping would be a bet on merge behaviour. The
+`See all discussions (N)` counter would decrement on promote, but that is a **delta count**, which the
+[Constraints](#constraints) forbid. So the tier read goes where the tiers are unambiguous: the
+Discussions-only screen, fed by `observeConversations(ConversationFilter.Discussions)`. Its arrival marker is
+the **FAB's disappearance**, never its title — `discussion_list_title` is byte-identical to the main list's
+`recent_discussions_section_header`, so a title wait would pass **instantly, before navigating**, and the
+absence assertion would then run against the main list: a **false green**.
+
 The **thinking-spinner** scenario (#482) is the **flakiest** rung-3 scenario and ships **`@Ignore`-gated /
 manual**: the spinner has **no durable equivalent** of the tool name — once real claude emits its first
 token, `turn_state` flips to `responding`, `isThinking` goes false, and `ThinkingIndicator` early-returns,
@@ -323,9 +384,9 @@ bash scripts/e2e-preship-gate.sh
 
 The wrapper bakes in the `LIVE=1` + `e2e-live` isolation defaults (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the seven curated `@Test` methods (ping + create-workspace-folder, #566;
-new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537) ride the
-wrapped mode.
+incantation to remember — the eight curated `@Test` methods (ping + create-workspace-folder, #566;
+new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
+save-as-channel, #581) ride the wrapped mode.
 
 **When to run:**
 
@@ -334,11 +395,12 @@ wrapped mode.
 - **whenever a daemon or relay change touching the mobile surface lands** — run it alongside the daemon's
   own `make e2e-realclaude`.
 
-**Cost:** three real claude turns across seven curated methods (the ping scenario + the
+**Cost:** three real claude turns across eight curated methods (the ping scenario + the
 create-workspace-folder scenario, #566 + the new-session scenario, #541 — one turn each; `/clear` spends
 none; the delete scenario, #554, the archive-restore scenario, #551, the change-workspace scenario, #562,
-and the rename scenario, #537, each spend **none** — create/rename/delete/archive/restore/change-workspace
-are daemon round-trips), a few minutes of wall clock, subscription-covered (it does **not** meter tokens).
+the rename scenario, #537, and the save-as-channel scenario, #581, each spend **none** —
+create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips), a few minutes of
+wall clock, subscription-covered (it does **not** meter tokens).
 
 For the full mechanics — relay URLs, the isolated `e2e-live` instance, prerequisites, and first-run
 assumptions — see [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay). The operator-facing
@@ -347,7 +409,7 @@ cannot drift.
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated septet of rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated octet of rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the pre-ship gate: the operator must never be the
 **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -357,17 +419,18 @@ over TLS instead of a local loopback relay. This is the pre-ship gate: the opera
 LIVE=1 bash scripts/e2e-emulator.sh
 ```
 
-**What it runs.** Seven curated methods, passed as a comma-separated `class#method` list:
+**What it runs.** Eight curated methods, passed as a comma-separated `class#method` list:
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
 `InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566),
 `InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (#541),
 `InteractiveStreamE2ETest#interactiveTurn_deleteConversation_removesFromListAndClosesThread` (#554),
 `InteractiveStreamE2ETest#interactiveTurn_archiveRestore_roundTripsListMembership` (#551),
-`InteractiveStreamE2ETest#interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace` (#562), and
-`InteractiveStreamE2ETest#interactiveTurn_renameConversation_relabelsTopBarAndListRow` (#537), so exactly
-**three real claude turns** are spent per run — the delete, archive-restore, change-workspace, and rename
-scenarios each add a method, not a turn (create/rename/delete/archive/restore/change-workspace are daemon
-round-trips).
+`InteractiveStreamE2ETest#interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace` (#562),
+`InteractiveStreamE2ETest#interactiveTurn_renameConversation_relabelsTopBarAndListRow` (#537), and
+`InteractiveStreamE2ETest#interactiveTurn_saveAsChannel_promotesToChannelTier` (#581), so exactly
+**three real claude turns** are spent per run — the delete, archive-restore, change-workspace, rename, and
+save-as-channel scenarios each add a method, not a turn
+(create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips).
 The full class also includes the
 #481 tool-use test, which
 stays excluded from LIVE (an extra turn, cost). `LIVE=1` is **mutually exclusive with `DETERMINISTIC=1`**
@@ -398,10 +461,11 @@ Prerequisites (on top of the "How to run" list):
 - The emulator needs outbound internet + DNS + a system-trusted TLS cert for the relay host. It reaches
   the public relay over its own NAT'd internet — **not** the `10.0.2.2` host alias, which is loopback-only.
 
-Cost: **three real claude turns per run across seven curated methods** (ping + create-workspace-folder, #566
-+ new-session, #541; `/clear` spends none; delete, #554, archive-restore, #551, change-workspace, #562, and
-rename, #537, each spend none — create/rename/delete/archive/restore/change-workspace are daemon
-round-trips), a few minutes of wall clock, subscription-covered.
+Cost: **three real claude turns per run across eight curated methods** (ping + create-workspace-folder, #566
++ new-session, #541; `/clear` spends none; delete, #554, archive-restore, #551, change-workspace, #562,
+rename, #537, and save-as-channel, #581, each spend none —
+create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips), a few minutes of wall
+clock, subscription-covered.
 
 First-run assumptions to confirm (grounded in the design, unverified end to end):
 
@@ -815,7 +879,18 @@ These are grounded in the source but unverified end to end:
   conversation-scoped with **no** session transition, so the assertion is the recorded name, never a session
   id) and folded into the pre-ship `LIVE=1` gate as the 7th curated method (spending **no** extra claude
   turn — create/rename are conversation-scoped daemon round-trips), taking the gate from a sextet to a septet
-  at still 3 turns.
+  at still 3 turns; Layer-3 (real claude) save-as-channel (promote) — **shipped (#581)**, the **backfill** of
+  the one operator-facing flow that shipped (#348) before the real-stack definition-of-done rule
+  (pyrycode-mobile-agents#9) and had therefore been answering `unsupported` on the real wire unnoticed until
+  pyrycode/pyrycode#949 registered the daemon handler (desktop parallel: pyrycode-desktop#430), driven end to
+  end through the #348 promote wire against a real daemon, always-on (three durable post-conditions — the
+  runtime-unique channel name on the thread top bar in-thread, the `WorkspaceChip` unmount as the `isPromoted`
+  tier flip, and presence on the main list ∧ absence from the Discussions drilldown; promote is
+  conversation-scoped with **no** session transition, and its reply is a bare conversation object folded by a
+  confirmed upsert, **not** a `conversation_updated` broadcast, so every assertion is on rendered UI) and folded
+  into the pre-ship `LIVE=1` gate as the 8th curated method (spending **no** extra claude turn — create/promote
+  are conversation-scoped daemon round-trips, promote being a pure registry op), taking the gate from a septet
+  to an octet at still 3 turns.
 - **#337 full scope:** `seq`-based ordering and replay de-dup across reconnect (a #402 concern; this
   fold concatenates in arrival order, correct within a single connection); and a `make`/Gradle wrapper
   for the orchestration plus fork-sync of any shared `bin/` script per the org convention.

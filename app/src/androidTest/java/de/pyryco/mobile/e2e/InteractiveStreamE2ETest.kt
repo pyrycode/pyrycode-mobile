@@ -1008,6 +1008,192 @@ class InteractiveStreamE2ETest {
         composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
     }
 
+    /**
+     * Save-as-channel (promote) twin of the rename scenario (#581, Layer 3): drive the real "Save as channel…"
+     * overflow flow end to end against a real daemon, exercising the already-shipped #348 `promote` wire. This
+     * is the **backfill** member of the family — save-as-channel shipped *before* the real-stack
+     * definition-of-done rule (pyrycode-mobile-agents#9), and the gap was not theoretical: the daemon never
+     * registered the `promote_conversation` handler, so the verb answered `unsupported` over the real wire and
+     * **the promote never happened**, while the mobile suite stayed green against a fake daemon that answers
+     * anything. pyrycode/pyrycode#949 landed the handler; this is the remaining mobile client half (the desktop
+     * parallel is pyrycode-desktop#430). **Expected RED on any daemon older than #949 — that is the regression
+     * it exists to catch.**
+     *
+     * **Reachability.** The "Save as channel…" item is gated on the conversation being **unpromoted**
+     * ([de.pyryco.mobile.ui.conversations.thread.ThreadOverflowMenu] `if (!isPromoted)`) and is **not**
+     * `mutationsSupported`-gated (unlike #537's "Rename"), so a freshly created discussion reaches it
+     * regardless of the capability flag. `promote` is **conversation-scoped** (**no** session transition), so it
+     * carries none of the session-scoped `currentSessionId == ""` blocker that re-parks the settings e2e
+     * (#545); clean-buildable with #541 / #551 / #554 / #562 / #566 / #537.
+     *
+     * **Wire shape.** `promote` is a **request/reply** verb whose reply is the **bare conversation object**,
+     * folded by a confirmed upsert — it is **not** a `conversation_updated` broadcast (that is *rename's*
+     * shape, from #530). So this asserts on **rendered UI**, never on a named wire message.
+     *
+     * **Three durable surfaces, one projection.** [de.pyryco.mobile.ui.conversations.thread.ThreadViewModel]
+     * derives thread state from `observeConversations(ConversationFilter.All)`, so a single confirmed upsert of
+     * the promote reply drives all three assertions: (1) the **thread top bar**
+     * ([de.pyryco.mobile.ui.conversations.thread.ThreadScreen] `title = state.displayName`), reached
+     * **immediately after submit** — unlike delete/archive there is **no PopBack** (`SaveAsChannelSubmit`
+     * dismisses the dialog and the thread stays open), so the top bar re-labels in place; (2) the
+     * **[de.pyryco.mobile.ui.conversations.components.WorkspaceChip] unmount** — the `isPromoted` tier flip,
+     * in-thread and free, because the chip is gated `!isPromoted && !hasMessages` and this scenario **sends no
+     * message**, so `hasMessages` stays false and the chip's disappearance is attributable **solely** to the
+     * promote (the #562 gating fact, read in the opposite direction); and (3) after Back, **presence on the
+     * main list** ∧ **absence from the Discussions drilldown**. None of the three is a session id (the #545
+     * lesson).
+     *
+     * **Why the tier read is a drilldown, not a main-list matcher.** The obvious "renders on a channel row,
+     * not a recents row" has no tolerant encoding on the main list: `ConversationRow` and
+     * `DiscussionPreviewRow` both set a merged `contentDescription` from **byte-identical** format strings
+     * (`cd_conversation_row` == `cd_discussion_preview_row` == `"%1$s, %2$s"`), `RecentDiscussionsSection`'s
+     * `Column` carries **no** semantics modifier (so no ancestor/sibling scoping to bet on), and the
+     * `See all discussions (N)` counter would be a **delta count**, which the Constraints forbid. So the tier
+     * read goes where the tiers are unambiguous: the Discussions-only screen, fed by
+     * `observeConversations(ConversationFilter.Discussions)`
+     * ([de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel]). Presence on the main list ∧ absence
+     * there **is** "presented in the promoted (channel) tier rather than as a recent discussion", expressed
+     * entirely in presence/absence matchers. This is the #551 tier-membership idiom (its Archived-screen
+     * steps), reused.
+     *
+     * **The dialog-over-thread field disambiguation (identical to #537 — reused verbatim).**
+     * [de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog] opens **over** the thread, whose
+     * composer is also an editable field, so `hasSetTextAction()` alone is ambiguous — two nodes. The dialog
+     * auto-focuses its field (`focusRequester.requestFocus()`) and the composer never requests focus, so
+     * `hasSetTextAction() and isFocused()` selects the dialog's field (`and` is a `SemanticsMatcher` member —
+     * no import). The field is **pre-filled and fully selected** (`TextRange(0, initialName.length)`) → use
+     * `performTextReplacement`, not `performTextInput` (which could leave the pre-fill concatenated). Note the
+     * pre-fill is the **constant** `"New channel"`, not `state.displayName` (the one divergence from
+     * `RenameDialog`).
+     *
+     * **The workspace radio must be moved off its default (no #537 analogue).** The dialog opens on
+     * `WorkspaceChoice.DEDICATED`, which `ThreadViewModel.resolveWorkspace` maps to
+     * `"pyry-workspace/channels/<slug>"` — submitting untouched would create a **real directory** on the
+     * operator's machine on every gate run. `SCRATCH` maps to `null` (the conversation keeps its scratch
+     * `cwd`), so step 5 **taps "Keep in scratch"** before Save: the dedicated-folder branch is already covered
+     * by #566, and this scenario stays about the promote round-trip. The radio row is a merged
+     * `Modifier.selectable(role = RadioButton)`, so the text tap resolves to it (the `RadioButton` itself is
+     * `onClick = null` by design).
+     *
+     * **Two literal collisions matched exactly, not by substring.** `save_as_channel_action` is
+     * `"Save as channel…"` (U+2026) while `save_as_channel_dialog_title` is `"Save as channel"` (no ellipsis),
+     * so a substring search conflates them — [SAVE_AS_CHANNEL_ITEM] is matched **exactly**. And
+     * `discussion_list_title` is `"Recent discussions"`, the **same literal** as
+     * `recent_discussions_section_header` already on the **main list**, so using the drilldown's *title* as
+     * step 8's arrival marker would pass **instantly, before navigating**, and the absence assertion would then
+     * run against the main list — a **false green**. The marker is the **FAB's disappearance** instead
+     * ([de.pyryco.mobile.ui.conversations.list.DiscussionListScreen] has a Back nav icon and no FAB).
+     *
+     * **No top-bar false match.** `SaveAsChannelSubmit` clears `pendingSaveAsChannelDialog` **synchronously
+     * before** the suspend, so the dialog (whose field held the unique name) leaves composition the instant
+     * Save is tapped, while the top bar still shows the old auto-name until the round-trip lands. The two never
+     * hold the unique name simultaneously, so step 6's first match is the top bar.
+     *
+     * **Always-on, not `@Ignore`d.** All three post-conditions are **durable** structural facts (the recorded
+     * name and the recorded `isPromoted` flag) — no transient like #482's spinner — so the scenario belongs in
+     * the always-on gate, matching #481's tool-name row, #541's delimiter, and #554's / #551's / #562's /
+     * #537's inversions. **Zero real-claude turns**: create-discussion and promote are daemon round-trips
+     * (promote is a pure registry op daemon-side), not claude turns, and the durable identity is the typed
+     * name, so this scenario sends **no** ping. The LIVE gate goes from a septet (7 methods) to an **octet**
+     * (8 methods) at **still 3 turns** — promote adds a method, not a turn.
+     */
+    @Test
+    fun interactiveTurn_saveAsChannel_promotesToChannelTier() {
+        // 1. A paired launch lands on the channel list. The "New discussion" FAB is the list marker.
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // 2. Wait for the relay connection to open before creating — promote round-trips to the daemon.
+        awaitConnected()
+
+        // 3. Create a fresh discussion → the app navigates into its thread; the send button marks arrival. A
+        //    plain discussion is exactly what is needed — "Save as channel…" is !isPromoted-gated (NOT
+        //    mutationsSupported-gated), and a fresh discussion is unpromoted by construction.
+        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // 4. Absence guard + tier before-state (both deterministic — no claude turn). The runtime-unique
+        //    channel name is not on screen yet (the top bar shows the server auto-name and the dialog's
+        //    pre-fill is the constant "New channel"), so its later appearance is attributable to the promote
+        //    round-trip. And the WorkspaceChip IS mounted — the discussion tier — the before-state of step 6's
+        //    tier-flip inversion (it stays mounted because no message is sent: !isPromoted && !hasMessages).
+        val uniqueName = PROMOTE_NAME_PREFIX + System.currentTimeMillis()
+        composeTestRule.onAllNodesWithText(uniqueName, substring = true).assertCountEquals(0)
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(WORKSPACE_CHIP_PREFIX, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(WORKSPACE_CHIP_PREFIX, substring = true).onFirst().assertIsDisplayed()
+
+        // 5. Promote to the unique name, KEEPING THE CONVERSATION IN SCRATCH. Open the overflow, tap "Save as
+        //    channel…" (matched EXACTLY — the dialog title is the same literal minus the U+2026 ellipsis, so a
+        //    substring search would conflate them). The dialog opens OVER the thread, whose composer is also an
+        //    editable field, so hasSetTextAction() alone is ambiguous — target the dialog's field by its focus
+        //    (SaveAsChannelDialog auto-focuses on open; the composer never requested focus), waiting for focus
+        //    to land, and REPLACE the pre-filled+selected "New channel" (performTextReplacement, not
+        //    performTextInput). Then tap "Keep in scratch" — MANDATORY: the dialog defaults to DEDICATED, which
+        //    would create a real folder under the operator's ~/pyry-workspace on every gate run (that branch is
+        //    already covered by #566). Finally Save.
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(SAVE_AS_CHANNEL_ITEM).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(SAVE_AS_CHANNEL_ITEM).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasSetTextAction() and isFocused()).performTextReplacement(uniqueName)
+        composeTestRule.onNodeWithText(KEEP_IN_SCRATCH_OPTION).performClick()
+        composeTestRule.onNodeWithText(SAVE_AS_CHANNEL_SAVE).performClick()
+
+        // 6. In-thread assertions (surfaces #1 + #2). The first wait spans the promote round-trip (reply → a
+        //    confirmed upsert → observeConversations(All) re-emits → state.displayName): there is NO PopBack, so
+        //    the thread stays open and the top bar re-labels in place. The dialog has already left composition
+        //    (SaveAsChannelSubmit clears it synchronously before the suspend), so the match is the top bar. The
+        //    second wait is the tier flip — the WorkspaceChip unmounts once state.isPromoted is true, the
+        //    in-thread read of the very flag the list's tier split is computed from. Two independent waits (not
+        //    one assertion after one wait): name and flag land in the same upsert, but waiting on each keeps a
+        //    failure attributable.
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(WORKSPACE_CHIP_PREFIX, substring = true).fetchSemanticsNodes().isEmpty()
+        }
+
+        // 7. Main-list presence (surface #3a). Tap Back, wait for the list marker (the thread has popped back),
+        //    then wait for the unique name on the list and confirm it is displayed — a genuine inversion of
+        //    step 4's absence, same unique token. The same upsert feeds both list projections.
+        composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
+
+        // 8. Discussions-tier absence (surface #3b — the tier read). Drill into the Discussions-only screen via
+        //    "See all discussions (N)", then assert the promoted conversation is NOT in the Discussions
+        //    projection. Present on the main list (step 7) ∧ absent here ⇒ presented in the promoted (channel)
+        //    tier, not as a recent discussion. The arrival marker is the FAB's DISAPPEARANCE, never the screen
+        //    title: discussion_list_title is byte-identical to the main list's recents section header, so a
+        //    title wait would pass instantly before navigating and the absence would then run against the main
+        //    list — a false green. Tolerant: presence/absence, generous timeout — never a delta count (so the
+        //    "See all discussions (N)" counter is a tap target here, never an assertion surface).
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(SEE_ALL_DISCUSSIONS, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(SEE_ALL_DISCUSSIONS, substring = true).onFirst().performClick()
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isEmpty()
+        }
+        composeTestRule.onAllNodesWithText(uniqueName, substring = true).assertCountEquals(0)
+    }
+
     /** Count the on-screen semantic nodes whose text contains "ping" (case-insensitive, substring). */
     private fun pingNodeCount(): Int =
         composeTestRule
@@ -1154,6 +1340,36 @@ class InteractiveStreamE2ETest {
         // also keeps repeated LIVE gate runs green (no collision with titles left by prior runs) and does not
         // collide as a substring with top-bar / list chrome the assertion also matches.
         const val RENAME_NAME_PREFIX = "e2e537-"
+
+        // #581 save-as-channel (promote) scenario. Reuses the overflow opener (CD_MORE_ACTIONS) and the list /
+        // thread markers; adds these six. SAVE_AS_CHANNEL_ITEM is matched EXACTLY — the production menu item
+        // ends in a real U+2026 ellipsis and the dialog title is the same literal WITHOUT it, so substring
+        // matching would conflate them (the opposite choice from CHANGE_WORKSPACE_ITEM, whose literal has no
+        // such twin). KEEP_IN_SCRATCH_OPTION is MANDATORY, not optional polish: the dialog opens on
+        // WorkspaceChoice.DEDICATED, which resolves to a real "pyry-workspace/channels/<slug>" directory on the
+        // operator's machine — SCRATCH resolves to null, keeping the conversation's existing scratch cwd (the
+        // dedicated branch is already covered by #566). SAVE_AS_CHANNEL_SAVE is the same literal as RENAME_SAVE
+        // but a different dialog, declared separately (the shared companion forbids reusing it as a name).
+        // WORKSPACE_CHIP_PREFIX is the in-thread isPromoted tier signal: the WorkspaceChip's label is a
+        // hardcoded literal ("Workspace: <label> (change)"), not a string resource, so this prefix is the
+        // matchable token — mounted before the promote, unmounted after. SEE_ALL_DISCUSSIONS is the drilldown
+        // tap target (matched as a substring — the production label ends in a "(%d)" count). Keep in sync with
+        // res/values/strings.xml: save_as_channel_action = "Save as channel…",
+        // save_as_channel_dialog_workspace_scratch = "Keep in scratch", save_as_channel_dialog_save = "Save",
+        // see_all_discussions_label = "See all discussions (%d)".
+        const val SAVE_AS_CHANNEL_ITEM = "Save as channel…"
+        const val KEEP_IN_SCRATCH_OPTION = "Keep in scratch"
+        const val SAVE_AS_CHANNEL_SAVE = "Save"
+        const val WORKSPACE_CHIP_PREFIX = "Workspace:"
+        const val SEE_ALL_DISCUSSIONS = "See all discussions"
+
+        // Runtime-unique promote target: "e2e581-" + System.currentTimeMillis(). Distinct prefix (the shared
+        // companion forbids redeclaration; each scenario owns its own). Unique so a substring match cannot
+        // pre-exist on screen — the absence guard (step 4), its inversions on the top bar (step 6) and the main
+        // list (step 7), and the Discussions-tier absence (step 8) are all genuine; also keeps repeated LIVE
+        // gate runs green (no collision with channels left by prior runs) and does not collide as a substring
+        // with top-bar / list chrome the assertions also match.
+        const val PROMOTE_NAME_PREFIX = "e2e581-"
 
         const val LIST_TIMEOUT_MS = 30_000L
         const val CONNECT_TIMEOUT_MS = 30_000L

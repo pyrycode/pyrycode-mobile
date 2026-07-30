@@ -6,9 +6,9 @@
 #
 #   * rung 3 (default): the REAL app on a headless emulator → host pyry daemon → real claude →
 #     assert "ping" renders. Semi-deterministic; burns one real claude turn. A LIVE=1 variant runs a
-#     curated septet of rung-3 scenarios (ping + create-workspace-folder + new-session + delete +
-#     archive-restore + change-workspace + rename, still 3 turns — delete, archive-restore,
-#     change-workspace, and rename spend none) against the PRODUCTION relay
+#     curated octet of rung-3 scenarios (ping + create-workspace-folder + new-session + delete +
+#     archive-restore + change-workspace + rename + save-as-channel, still 3 turns — delete,
+#     archive-restore, change-workspace, rename, and save-as-channel spend none) against the PRODUCTION relay
 #     over wss:// (TLS), so a pre-ship gate
 #     catches the live-environment failure class a local relay cannot. See "LIVE mode" below.
 #   * rung 4 (DETERMINISTIC=1): the same real app + Noise/relay path, but claude is swapped for the
@@ -453,19 +453,20 @@ fi
 
 # ---- 4. run the managed-device instrumented test ----------------------------------------------
 # Deterministic mode runs exactly the scenario's one method (class#method); default rung 3 runs the whole
-# class; LIVE curates a septet of real-claude methods (ping + create-workspace-folder + new-session +
-# delete + archive-restore + change-workspace + rename = 7 methods, still 3 turns —
-# delete/rename/archive/unarchive/change-workspace are daemon round-trips, not claude turns) via a
+# class; LIVE curates an octet of real-claude methods (ping + create-workspace-folder + new-session +
+# delete + archive-restore + change-workspace + rename + save-as-channel = 8 methods, still 3 turns —
+# delete/rename/archive/unarchive/change-workspace/promote are daemon round-trips, not claude turns) via a
 # comma-separated class list — the full class' #481 tool-use test would spend an extra turn, so it stays
 # excluded.
 if [ -n "${DETERMINISTIC}" ]; then
   TEST_TARGET="${TEST_CLASS}#${TEST_METHOD}"
 elif [ -n "${LIVE}" ]; then
   # LIVE curates its real-claude turns: ping + create-workspace-folder + new-session + delete +
-  # archive-restore + change-workspace + rename (7 methods, still 3 turns — delete, archive-restore,
-  # change-workspace, and rename spend none), passed as a comma-separated class#method list. The class'
-  # #481 tool-use test stays excluded from LIVE for cost (it runs only in the default whole-class rung-3 run).
-  TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_archiveRestore_roundTripsListMembership,${TEST_CLASS}#interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow"
+  # archive-restore + change-workspace + rename + save-as-channel (8 methods, still 3 turns — delete,
+  # archive-restore, change-workspace, rename, and save-as-channel spend none), passed as a comma-separated
+  # class#method list. The class' #481 tool-use test stays excluded from LIVE for cost (it runs only in the
+  # default whole-class rung-3 run).
+  TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_archiveRestore_roundTripsListMembership,${TEST_CLASS}#interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier"
 else
   TEST_TARGET="${TEST_CLASS}"
 fi
@@ -482,7 +483,7 @@ log "  phone relayUrl = ${PHONE_RELAY_URL}"
 if [ -n "${DETERMINISTIC}" ]; then
   log "PASS — scenario '${SCENARIO}' green: the emulator connected, sent the prompt, and the scripted reply rendered."
 elif [ -n "${LIVE}" ]; then
-  log "PASS — the headless emulator connected over the LIVE relay, sent the prompts, and the ping reply, the created-workspace flow, the new-session delimiter, the delete-conversation flow, the archive/restore round-trip, the change-workspace chip re-label, and the rename top-bar/list re-label all rendered in the thread."
+  log "PASS — the headless emulator connected over the LIVE relay, sent the prompts, and the ping reply, the created-workspace flow, the new-session delimiter, the delete-conversation flow, the archive/restore round-trip, the change-workspace chip re-label, the rename top-bar/list re-label, and the save-as-channel promote (top-bar re-label + channel tier) all rendered in the thread."
 else
   log "PASS — the headless emulator connected, sent the prompt, and 'ping' rendered in the thread."
 fi
