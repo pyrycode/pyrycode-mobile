@@ -359,6 +359,7 @@ private fun PyryNavHost(
             val isThinking by vm.isThinking.collectAsStateWithLifecycle()
             val isStalled by vm.isStalled.collectAsStateWithLifecycle()
             val apiRetry by vm.apiRetry.collectAsStateWithLifecycle()
+            val isCompacting by vm.isCompacting.collectAsStateWithLifecycle()
             val isBusy by vm.isBusy.collectAsStateWithLifecycle()
             val modalState by vm.currentModal.collectAsStateWithLifecycle()
             val armedOptionId by vm.armedOptionId.collectAsStateWithLifecycle()
@@ -378,6 +379,7 @@ private fun PyryNavHost(
                 isThinking = isThinking,
                 isStalled = isStalled,
                 apiRetry = apiRetry,
+                isCompacting = isCompacting,
                 isBusy = isBusy,
                 onInterrupt = vm::onInterrupt,
                 modalState = modalState,

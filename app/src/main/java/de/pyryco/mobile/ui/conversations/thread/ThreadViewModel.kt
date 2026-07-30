@@ -361,6 +361,30 @@ class ThreadViewModel(
             )
 
     /**
+     * Whether this conversation's remote claude is currently auto-compacting its context (#596) — drives
+     * the "Compacting conversation" status that replaces the indefinite generic spinner (#597). A sibling
+     * [StateFlow] beside [connectionState] / [isThinking] / [isStalled] (not a [ThreadUiState] field): like
+     * them it is a transient, connection-scoped cross-cutting signal the stateless screen takes as a
+     * separate parameter. Sourced from the already-injected [repository]; `observeCompacting` already
+     * applies `distinctUntilChanged` in the remote impl and defaults to `false` on the interface and the
+     * facade, so no extra operator is needed. `false` covers "no live connection", "not compacting", and
+     * "no `compacting` frame ever received".
+     *
+     * Dedup is **correct** here, deliberately unlike [apiRetry]'s "and none may be added" caveat: that
+     * warning exists only because a climbed counter must reach the screen as a fresh emission, and it
+     * inverts for a `Boolean`, which has no intermediate values to collapse. Do not import the inverted
+     * rule by pattern-matching the sibling above.
+     */
+    val isCompacting: StateFlow<Boolean> =
+        repository
+            .observeCompacting(conversationId)
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = false,
+            )
+
+    /**
      * Which non-default option of the currently-open modal is "armed" (#451) — tapped once and awaiting an
      * explicit second confirm — or `null`. Carries its own [ArmedModalOption.modalId] so a stale arm can
      * never pre-arm or auto-confirm a fresh modal (the modalId equality in [onModalOption] is the

@@ -105,6 +105,7 @@ class ScriptedThreadHarness(
                     onRetry = {},
                     isThinking = vm.isThinking.collectAsState().value,
                     apiRetry = vm.apiRetry.collectAsState().value,
+                    isCompacting = vm.isCompacting.collectAsState().value,
                     // #459: subscribe isBusy in the same composition pass as state/isThinking so its
                     // `replay = 0` upstream is live before any push* (awaitReady's top-bar proof covers it).
                     isBusy = vm.isBusy.collectAsState().value,
@@ -142,6 +143,15 @@ class ScriptedThreadHarness(
         current: Int,
         total: Int,
     ) = pump.push(apiRetryEnvelope(conversationId, active, current, total))
+
+    /**
+     * Script one `compacting` edge (#596) — [active] `true` is the rising edge, `false` the explicit
+     * clearing edge. On/off only: the wire payload is `{conversation_id, active}` and carries no counter,
+     * percent, or ETA, so there is nothing else to script. Like [pushApiRetry] (and unlike the `replay = 0`
+     * live-event `push*` methods) this one projects a retained `MutableStateFlow`, so it has no
+     * subscribe-before-push hazard — pushed after [start] anyway, for uniformity.
+     */
+    fun pushCompacting(active: Boolean) = pump.push(compactingEnvelope(conversationId, active))
 
     /** Script one `turn_end` for [turnId], finalizing the streaming row (#337). */
     fun pushTurnEnd(
@@ -316,6 +326,18 @@ private fun apiRetryEnvelope(
             MobileJson.parseToJsonElement(
                 """{"conversation_id":"$conversationId","active":$active,"current":$current,"total":$total}""",
             ),
+    )
+
+/** A `compacting` envelope `{conversation_id, active}` (#596), cloning [turnStateEnvelope]'s shape. */
+private fun compactingEnvelope(
+    conversationId: String,
+    active: Boolean,
+): Envelope =
+    Envelope(
+        id = 1L,
+        type = "compacting",
+        ts = TS,
+        payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId","active":$active}"""),
     )
 
 private fun turnEndEnvelope(
