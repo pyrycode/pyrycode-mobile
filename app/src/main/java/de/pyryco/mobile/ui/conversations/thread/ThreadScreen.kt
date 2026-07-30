@@ -373,9 +373,6 @@ fun ThreadScreen(
             yoloEnabled = state.yoloEnabled,
             onYoloToggled = onYoloToggled,
             onDismiss = { sheetVisible = false },
-            tokenPercent = state.tokenPercent,
-            tokensUsed = state.tokensUsed,
-            tokensTotal = state.tokensTotal,
         )
     }
     if (state.channelInfoOpen) {
