@@ -296,6 +296,47 @@ class StableConversationRepositoryTest {
             assertEquals(listOf(emptyList(), backlog, emptyList()), queues)
         }
 
+    // ---- #593: observeApiRetry delegates and tracks connection churn -----------------------------
+
+    @Test
+    fun observeApiRetry_whileAbsent_emitsNotRetrying() =
+        runTest {
+            val current = MutableStateFlow<ConversationRepository?>(null)
+            val facade = StableConversationRepository(current)
+
+            val retries = mutableListOf<ApiRetryStatus>()
+            backgroundScope.launch { facade.observeApiRetry("c1").collect { retries += it } }
+            runCurrent()
+
+            assertEquals(listOf(ApiRetryStatus.NotRetrying), retries)
+        }
+
+    @Test
+    fun observeApiRetry_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            val retries = mutableListOf<ApiRetryStatus>()
+            backgroundScope.launch { facade.observeApiRetry("c1").collect { retries += it } }
+            runCurrent()
+            assertEquals(listOf(ApiRetryStatus.NotRetrying), retries)
+
+            repoA.pushApiRetry(ApiRetryStatus.Attempt(3, 10))
+            runCurrent()
+            assertEquals(listOf(ApiRetryStatus.NotRetrying, ApiRetryStatus.Attempt(3, 10)), retries)
+
+            // Switching to a fresh (not-retrying) connection drops the prior connection's retry state.
+            current.value = repoB
+            runCurrent()
+            assertEquals(
+                listOf(ApiRetryStatus.NotRetrying, ApiRetryStatus.Attempt(3, 10), ApiRetryStatus.NotRetrying),
+                retries,
+            )
+        }
+
     // ---- #507: mutationsSupported capability — delegates to the live value, fail-safe-deny false --
 
     @Test
@@ -342,6 +383,7 @@ class StableConversationRepositoryTest {
         private val conversations = MutableStateFlow<List<Conversation>?>(null)
         private val stalled = MutableStateFlow(false)
         private val queued = MutableStateFlow<List<QueuedMessage>>(emptyList())
+        private val apiRetry = MutableStateFlow<ApiRetryStatus>(ApiRetryStatus.NotRetrying)
 
         val createDiscussionCalls = mutableListOf<String?>()
         val sendMessageCalls = mutableListOf<Pair<String, String>>()
@@ -364,6 +406,10 @@ class StableConversationRepositoryTest {
             queued.value = value
         }
 
+        fun pushApiRetry(value: ApiRetryStatus) {
+            apiRetry.value = value
+        }
+
         override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = conversations.filterNotNull()
 
         override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = flowOf(emptyList())
@@ -373,6 +419,8 @@ class StableConversationRepositoryTest {
         override fun observeStall(conversationId: String): Flow<Boolean> = stalled
 
         override fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> = queued
+
+        override fun observeApiRetry(conversationId: String): Flow<ApiRetryStatus> = apiRetry
 
         override suspend fun createDiscussion(workspace: String?): Conversation {
             createDiscussionCalls += workspace

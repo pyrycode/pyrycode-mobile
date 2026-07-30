@@ -120,6 +120,11 @@ where it is actually rendered, in [`LiteralScreenSurface`](literal-screen-surfac
   and `interactive` gate, but a **full-snapshot** ordered list with no onset/clearing edge. A stalled
   conversation will typically also have a non-empty queue; the two states are exposed **independently**
   (any combined "stalled with N waiting" view is a UI derivation, not a data-layer concern).
+- [API-retry status](api-retry-status.md) (#593) — a different-shaped cousin: gated the same way, but
+  with both an explicit falling edge and a counter, so it follows `queue_state`'s payload-carrying `Map`
+  shape rather than this arm's bare `Set`. Does **not** clear a stall — claude retrying is stuck, not
+  making forward progress — and a retry does not fold a thread row, symmetric with this arm's own
+  isolation from the queue projection.
 - [ConversationRepository](conversation-repository.md) — the interface the defaulted `observeStall`
   joins; [`StableConversationRepository`](stable-conversation-repository.md) — the facade that makes it
   reach the thread ViewModel.

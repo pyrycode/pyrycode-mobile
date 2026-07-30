@@ -172,6 +172,9 @@ screen-capture surface — see [#461](../codebase/461.md). #461 is therefore **n
   send.
 - [Stall state](stall-state.md) (#395) — the structural twin: the decode→state→observe shape, gate, and
   test harness this reuses; the onset-only counterpoint to this full-snapshot model.
+- [API-retry status](api-retry-status.md) (#593) — follows this arm's payload-carrying `Map` projection
+  shape (rather than stall's bare `Set`) because it too carries more than a boolean's worth of state —
+  a counter with both a rising and falling edge, where this arm has a full-replace snapshot with neither.
 - [Live-session events](live-session-events.md) (#385) / [Modal events](modal-events.md) (#437) — the other
   capability-gated decode seams on the same single inbound collector.
 - [ConversationRepository](conversation-repository.md) — the interface the defaulted `observeQueue` joins;

@@ -51,14 +51,16 @@ class StableConversationRepository(
 ) : ConversationRepository
 ```
 
-It overrides **all** interface members — the 5 stream-shaped reads (`observeConversations`,
-`observeMessages`, `observeLastMessage`, `observeStall` (#395), **and** `recentWorkspaces`), the 12
+It overrides **all** interface members — the 7 stream-shaped reads (`observeConversations`,
+`observeMessages`, `observeLastMessage`, `observeStall` (#395), `observeQueue` (#460),
+`observeApiRetry` (#593), **and** `recentWorkspaces`), the 12
 suspend one-shots (`createDiscussion`, `promote`, `archive`, `unarchive`, `delete`, `rename`,
 `startNewSession`, `changeWorkspace`, `sendMessage`, `createWorkspaceFolder`, `requestScreenSnapshot`,
 **and** `setSessionSettings` ([#544](../codebase/544.md), the facade delegation [#543](../codebase/543.md)
 deliberately deferred)), **and** the one capability property `mutationsSupported` (#507) — including every
 member that ships a default body on the interface (`recentWorkspaces`, `createWorkspaceFolder`, `delete`,
-`requestScreenSnapshot`; #375, `observeStall`; #395, `setSessionSettings`; #543, **and**
+`requestScreenSnapshot`; #375, `observeStall`; #395, `observeQueue`; #460, `observeApiRetry`; #593,
+`setSessionSettings`; #543, **and**
 `mutationsSupported`; #507), so delegation is faithful and nothing silently falls back to a default.
 `setSessionSettings` follows the plain one-shot snapshot-or-throw shape below, like every other mutator —
 it introduces no new delegation posture.
@@ -81,6 +83,12 @@ private fun <T> switchToLive(whenAbsent: T, select: (ConversationRepository) -> 
   `flatMapLatest` cancel-old-on-switch means a stall from a prior connection never leaks across a
   reconnect (each connection's remote repo starts with an empty stall set, #351). See
   [Stall state](stall-state.md).
+- `observeQueue(id)` (#460) → `switchToLive(emptyList()) { … }` — no live connection reports an empty
+  backlog; same cancel-old-on-switch isolation. See [Queued backlog](queued-backlog.md).
+- `observeApiRetry(id)` (#593) → `switchToLive(ApiRetryStatus.NotRetrying) { … }` — no live connection
+  reports "not retrying"; a retry state from a prior connection never leaks across a reconnect (each
+  connection's remote repo starts with an empty `apiRetryByConversation` map, #351). See
+  [API-retry status](api-retry-status.md).
 
 When `currentRepository` emits a new value, `flatMapLatest` **cancels the previous inner flow** and
 subscribes the new one:
@@ -246,6 +254,11 @@ pass-through. The eight tests map to the ACs, the key one being
 - Delegated observable: [Stall state](stall-state.md) ([#395](../codebase/395.md)) — the `observeStall`
   read this facade forwards with `whenAbsent = false`, the reachability path that lets the thread
   ViewModel observe the live repo's stall state through this facade.
+- Delegated observable: [Queued backlog](queued-backlog.md) ([#460](../codebase/460.md)) — the
+  `observeQueue` read forwarded with `whenAbsent = emptyList()`.
+- Delegated observable: [API-retry status](api-retry-status.md) ([#593](../codebase/593.md)) — the
+  `observeApiRetry` read forwarded with `whenAbsent = ApiRetryStatus.NotRetrying`, the reachability path
+  that will let the thread ViewModel observe the live repo's API-retry state once sibling #594 renders it.
 - Delegated capability: `mutationsSupported` ([#507](../codebase/507.md)) — the fail-safe-deny `false`
   delegation (the third not-connected posture: answer, don't throw); consumed by no composable yet (#508).
 - Delegated one-shot: `setSessionSettings` ([#544](../codebase/544.md)) — the plain snapshot-or-throw

@@ -3808,6 +3808,246 @@ class RemoteConversationRepositoryTest {
             assertEquals(listOf(emptyList<QueuedMessage>()), queue)
         }
 
+    // ---- #593: decode `api_retry` into an observable per-conversation retry state ----------------
+
+    // AC #1: a rising edge carrying a parsed counter reads "in an API retry at attempt N of M".
+    @Test
+    fun apiRetry_risingEdgeWithCounter_observesAttempt() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val retries = collectApiRetry(repo, "c1")
+            runCurrent()
+            assertEquals(listOf(ApiRetryStatus.NotRetrying), retries)
+
+            pump.push(apiRetryEnvelope("c1", active = true, current = 3, total = 10))
+            runCurrent()
+            assertEquals(listOf(ApiRetryStatus.NotRetrying, ApiRetryStatus.Attempt(3, 10)), retries)
+        }
+
+    // AC #1: `active: true` with `{0, 0}` is a legitimate "retrying, counter unknown" state —
+    // AttemptUnknown, neither NotRetrying nor a drop. Every undocumented counter shape (partially
+    // zero, negative) folds into the same total-mapper branch rather than dropping a real onset.
+    @Test
+    fun apiRetry_unparsedOrUndocumentedCounter_observesAttemptUnknown() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            // One conversation per shape — distinctUntilChanged would swallow a repeat on a shared id.
+            val shapes = listOf(0 to 0, 3 to 0, 0 to 5, -1 to 10)
+            val observed = shapes.indices.map { collectApiRetry(repo, "c$it") }
+            runCurrent()
+
+            shapes.forEachIndexed { i, (current, total) ->
+                pump.push(apiRetryEnvelope("c$i", active = true, current = current, total = total, id = i.toLong()))
+            }
+            runCurrent()
+            observed.forEachIndexed { i, emissions ->
+                assertEquals("shape ${shapes[i]}", listOf(ApiRetryStatus.NotRetrying, ApiRetryStatus.AttemptUnknown), emissions)
+            }
+        }
+
+    // AC #2, the load-bearing test of the slice: a re-fired rising edge with a climbed counter reaches
+    // the observer as a NEW emission. Asserting the full emission list is what pins "no dedup, no
+    // pinned-first value, no collapsing the climb" — a `.last()` assertion would pass under a dedup bug.
+    @Test
+    fun apiRetry_counterClimb_reachesObserverAsNewEmission() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val retries = collectApiRetry(repo, "c1")
+            runCurrent()
+
+            pump.push(apiRetryEnvelope("c1", active = true, current = 3, total = 10, id = 1L))
+            runCurrent()
+            pump.push(apiRetryEnvelope("c1", active = true, current = 4, total = 10, id = 2L))
+            runCurrent()
+
+            assertEquals(
+                listOf(ApiRetryStatus.NotRetrying, ApiRetryStatus.Attempt(3, 10), ApiRetryStatus.Attempt(4, 10)),
+                retries,
+            )
+        }
+
+    // AC #2: an `active: false` clears the state, and the last-known counter the daemon copies onto the
+    // falling edge is ignored — the mapper discards it, so the stale value never reaches the projection.
+    @Test
+    fun apiRetry_fallingEdge_clearsAndIgnoresStaleCounter() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val retries = collectApiRetry(repo, "c1")
+            runCurrent()
+
+            pump.push(apiRetryEnvelope("c1", active = true, current = 3, total = 10, id = 1L))
+            runCurrent()
+            pump.push(apiRetryEnvelope("c1", active = false, current = 3, total = 10, id = 2L))
+            runCurrent()
+
+            assertEquals(
+                listOf(ApiRetryStatus.NotRetrying, ApiRetryStatus.Attempt(3, 10), ApiRetryStatus.NotRetrying),
+                retries,
+            )
+        }
+
+    // A lone falling edge with no prior rising edge leaves the observer at NotRetrying and emits
+    // nothing new (the stored NotRetrying is value-identical to the absent-key default).
+    @Test
+    fun apiRetry_fallingEdgeWithNoPriorRisingEdge_emitsNothingNew() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val retries = collectApiRetry(repo, "c1")
+            runCurrent()
+
+            pump.push(apiRetryEnvelope("c1", active = false, current = 7, total = 9))
+            runCurrent()
+            assertEquals(listOf(ApiRetryStatus.NotRetrying), retries)
+        }
+
+    // AC #3: a frame for one conversation leaves every other conversation's state undisturbed.
+    @Test
+    fun apiRetry_perConversationIsolation() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val c1 = collectApiRetry(repo, "c1")
+            val c2 = collectApiRetry(repo, "c2")
+            runCurrent()
+
+            pump.push(apiRetryEnvelope("c1", active = true, current = 2, total = 5))
+            runCurrent()
+            assertEquals(listOf(ApiRetryStatus.NotRetrying, ApiRetryStatus.Attempt(2, 5)), c1)
+            assertEquals(listOf(ApiRetryStatus.NotRetrying), c2)
+        }
+
+    // observeApiRetry is distinctUntilChanged: another conversation's status change does not re-emit
+    // this flow (the suppression is value-identity, which is exactly why the climb above still emits).
+    @Test
+    fun apiRetry_distinctUntilChanged_otherConversationDoesNotReemit() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val c1 = collectApiRetry(repo, "c1")
+            runCurrent()
+            assertEquals(listOf(ApiRetryStatus.NotRetrying), c1)
+
+            pump.push(apiRetryEnvelope("c2", active = true, current = 1, total = 3, id = 1L))
+            pump.push(apiRetryEnvelope("c2", active = true, current = 2, total = 3, id = 2L))
+            runCurrent()
+            assertEquals(listOf(ApiRetryStatus.NotRetrying), c1)
+        }
+
+    // AC #3: a malformed `api_retry` is dropped without tearing down the single inbound consumer — a
+    // later valid frame still surfaces, proving the lone collector survived.
+    @Test
+    fun apiRetry_malformed_droppedCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val retries = collectApiRetry(repo, "c1")
+            runCurrent()
+
+            // Missing the required `conversation_id` → SerializationException → envelope dropped.
+            pump.push(
+                Envelope(
+                    id = 1L,
+                    type = "api_retry",
+                    ts = TS,
+                    payload = MobileJson.parseToJsonElement("""{"active":true,"current":1,"total":2}"""),
+                ),
+            )
+            // Wrong-typed `conversation_id` (number, not string) → SerializationException → dropped.
+            pump.push(
+                Envelope(
+                    id = 2L,
+                    type = "api_retry",
+                    ts = TS,
+                    payload = MobileJson.parseToJsonElement("""{"conversation_id":123,"active":true,"current":1,"total":2}"""),
+                ),
+            )
+            // Non-integral `current` (a float) → JsonDecodingException → dropped. Note what is NOT a
+            // usable strictness probe here: kotlinx's tree decoder accepts a *quoted* primitive whose
+            // content is otherwise valid even with `isLenient = false`, so `"active":"true"` and
+            // `"current":"1"` both decode rather than dropping. A genuinely wrong shape — a float, a
+            // non-numeric string, an Int32 overflow, a number where a String is declared — is rejected.
+            pump.push(
+                Envelope(
+                    id = 3L,
+                    type = "api_retry",
+                    ts = TS,
+                    payload = MobileJson.parseToJsonElement("""{"conversation_id":"c1","active":true,"current":1.5,"total":2}"""),
+                ),
+            )
+            // Missing `total` → SerializationException → dropped (no field is defaulted).
+            pump.push(
+                Envelope(
+                    id = 4L,
+                    type = "api_retry",
+                    ts = TS,
+                    payload = MobileJson.parseToJsonElement("""{"conversation_id":"c1","active":true,"current":1}"""),
+                ),
+            )
+            runCurrent()
+            assertEquals(listOf(ApiRetryStatus.NotRetrying), retries)
+
+            pump.push(apiRetryEnvelope("c1", active = true, current = 1, total = 2, id = 5L))
+            runCurrent()
+            assertEquals(listOf(ApiRetryStatus.NotRetrying, ApiRetryStatus.Attempt(1, 2)), retries)
+        }
+
+    // AC #3 (fail-closed): without `interactive` negotiated, a well-formed `api_retry` never surfaces.
+    @Test
+    fun apiRetry_capabilityGateClosed_blocksDecode() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { emptySet() })
+            val retries = collectApiRetry(repo, "c1")
+            runCurrent()
+
+            pump.push(apiRetryEnvelope("c1", active = true, current = 3, total = 10))
+            runCurrent()
+            assertEquals(listOf(ApiRetryStatus.NotRetrying), retries)
+        }
+
+    // AC #3 (fail-closed): a negotiated set with another token but NOT `interactive` still blocks.
+    @Test
+    fun apiRetry_capabilityGateOtherTokenOnly_blocksDecode() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("something_else") })
+            val retries = collectApiRetry(repo, "c1")
+            runCurrent()
+
+            pump.push(apiRetryEnvelope("c1", active = true, current = 3, total = 10))
+            runCurrent()
+            assertEquals(listOf(ApiRetryStatus.NotRetrying), retries)
+        }
+
+    // AC #4: inert toward its neighbours — an `api_retry` does NOT clear an active stall (a retry is
+    // not turn forward-progress; claude is stuck, not progressing) and folds no thread row, while its
+    // own state still lands.
+    @Test
+    fun apiRetry_inertTowardNeighbours_keepsStallAndFoldsNoThreadRow() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val stalls = collectStall(repo, "c1")
+            val thread = collectMessages(repo, "c1")
+            val retries = collectApiRetry(repo, "c1")
+            runCurrent()
+
+            pump.push(stallEnvelope("c1"))
+            runCurrent()
+            assertEquals(listOf(false, true), stalls)
+
+            pump.push(apiRetryEnvelope("c1", active = true, current = 3, total = 10, id = 2L))
+            runCurrent()
+            assertEquals("a retry is not forward progress — the stall stands", listOf(false, true), stalls)
+            assertEquals("no thread row folded", listOf(emptyList<ThreadItem>()), thread)
+            assertEquals(listOf(ApiRetryStatus.NotRetrying, ApiRetryStatus.Attempt(3, 10)), retries)
+        }
+
     // ---- #387: correlate tool_use/tool_result into live tool-call thread items with status ------
 
     // AC #1: a tool_use produces a running tool row carrying the tool name + input, empty output.
@@ -5556,6 +5796,38 @@ class RemoteConversationRepositoryTest {
             payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId","queued":[$queued]}"""),
         )
     }
+
+    private fun TestScope.collectApiRetry(
+        repo: RemoteConversationRepository,
+        conversationId: String,
+    ): MutableList<ApiRetryStatus> {
+        val emissions = mutableListOf<ApiRetryStatus>()
+        backgroundScope.launch { repo.observeApiRetry(conversationId).collect { emissions += it } }
+        return emissions
+    }
+
+    /**
+     * An `api_retry` control envelope `{conversation_id, active, current, total}` (#593). All four
+     * fields are always present on the wire (no `omitempty`), so the helper always emits all four;
+     * [current] / [total] are JSON **numbers** and are carried even on a falling edge (the daemon
+     * copies the last-known counter there, and the client is contractually required to ignore it).
+     */
+    private fun apiRetryEnvelope(
+        conversationId: String,
+        active: Boolean,
+        current: Int,
+        total: Int,
+        id: Long = 1L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "api_retry",
+            ts = TS,
+            payload =
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"$conversationId","active":$active,"current":$current,"total":$total}""",
+                ),
+        )
 
     /**
      * A `session_transition` envelope `{conversation_id, previous_session_id, new_session_id, reason,

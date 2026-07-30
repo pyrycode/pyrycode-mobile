@@ -76,6 +76,9 @@ class StableConversationRepository(
     override fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> =
         switchToLive(emptyList()) { it.observeQueue(conversationId) }
 
+    override fun observeApiRetry(conversationId: String): Flow<ApiRetryStatus> =
+        switchToLive(ApiRetryStatus.NotRetrying) { it.observeApiRetry(conversationId) }
+
     /**
      * Delegates the capability to the live repository's value, reporting `false` when no connection is
      * live (fail-safe-deny — the safe answer for a gating consumer is "hide the actions"). This is the

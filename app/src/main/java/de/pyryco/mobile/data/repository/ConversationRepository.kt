@@ -55,6 +55,21 @@ interface ConversationRepository {
     fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> = flowOf(emptyList())
 
     /**
+     * Emits whether [conversationId]'s remote claude is currently stuck retrying an API error, and at
+     * which attempt (#593). [ApiRetryStatus.NotRetrying] until the wire says otherwise; a rising edge
+     * carries the parsed `attempt N/M` counter ([ApiRetryStatus.Attempt]) or
+     * [ApiRetryStatus.AttemptUnknown] when the daemon could not parse one; a falling edge returns to
+     * [ApiRetryStatus.NotRetrying]. A re-fired rising edge with a climbed counter re-emits with the new
+     * value. Cold flow; re-emits on every change. The thread layer observes this to say "Retrying —
+     * attempt N/M" instead of an indefinite thinking spinner (#594).
+     *
+     * Default `flowOf(NotRetrying)` — implementations without an interactive wire (the fake, inline
+     * test doubles) inherit "never retrying" and need no override, the same cascade-avoidance as
+     * [observeStall] / [observeQueue] / [delete].
+     */
+    fun observeApiRetry(conversationId: String): Flow<ApiRetryStatus> = flowOf(ApiRetryStatus.NotRetrying)
+
+    /**
      * Whether this repository can actually perform the conversation-mutation actions
      * ([archive] / [unarchive] / [rename] / [startNewSession] / [changeWorkspace] / [delete]).
      * A UI gating consumer reads this to stop offering actions the backend cannot service.
@@ -270,3 +285,33 @@ data class QueuedMessage(
     val text: String,
     val timestamp: Instant,
 )
+
+/**
+ * Whether a conversation's remote claude is stuck retrying an API error, and how far into the retry
+ * run it is (#593, pyrycode#1074). The element type of [ConversationRepository.observeApiRetry],
+ * co-located with the contract it serves (like [ThreadItem] / [QueuedMessage]).
+ *
+ * A closed sealed type carrying two [Int]s and **no [String]**: the routing `conversation_id` stays a
+ * map key in the repository projection and never reaches this value, so no daemon-supplied text —
+ * banner, screen scrape, or otherwise — can structurally reach the UI through this arm.
+ *
+ * The `data` modifiers are load-bearing, not cosmetic: structural equality is what makes the
+ * repository's `distinctUntilChanged` projection behave. A climbed counter is a *different* [Attempt]
+ * value and re-emits, while an unrelated conversation's frame leaves this value equal and does not.
+ */
+sealed interface ApiRetryStatus {
+    /** No retry in flight — the default, and the state a falling edge returns to. */
+    data object NotRetrying : ApiRetryStatus
+
+    /**
+     * Retrying, but the daemon could not parse claude's on-screen `attempt N/M` counter (the wire's
+     * `{current: 0, total: 0}`). A legitimate retry state, not an error and not a decode failure.
+     */
+    data object AttemptUnknown : ApiRetryStatus
+
+    /** Retrying at attempt [current] of [total], carried verbatim from the wire (no clamping — #594 bounds display). */
+    data class Attempt(
+        val current: Int,
+        val total: Int,
+    ) : ApiRetryStatus
+}
