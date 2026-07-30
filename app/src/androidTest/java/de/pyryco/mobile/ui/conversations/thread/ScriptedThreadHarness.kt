@@ -104,6 +104,7 @@ class ScriptedThreadHarness(
                     connectionState = vm.connectionState.collectAsState().value,
                     onRetry = {},
                     isThinking = vm.isThinking.collectAsState().value,
+                    apiRetry = vm.apiRetry.collectAsState().value,
                     // #459: subscribe isBusy in the same composition pass as state/isThinking so its
                     // `replay = 0` upstream is live before any push* (awaitReady's top-bar proof covers it).
                     isBusy = vm.isBusy.collectAsState().value,
@@ -127,6 +128,20 @@ class ScriptedThreadHarness(
 
     /** Script one `turn_state` ("thinking" | "responding" | "idle") (#406). */
     fun pushTurnState(state: String) = pump.push(turnStateEnvelope(conversationId, state))
+
+    /**
+     * Script one `api_retry` edge (#593) — [active] `true` is the rising edge (re-fire it with a climbed
+     * [current] for a counter update), `false` the clearing edge. The falling edge on the wire carries the
+     * last-known counter verbatim, so [current] / [total] stay settable there; the repository's mapper is
+     * what discards them. Unlike the `replay = 0` live-event `push*` methods this one projects a retained
+     * `MutableStateFlow`, so it has no subscribe-before-push hazard — pushed after [start] anyway, for
+     * uniformity.
+     */
+    fun pushApiRetry(
+        active: Boolean,
+        current: Int,
+        total: Int,
+    ) = pump.push(apiRetryEnvelope(conversationId, active, current, total))
 
     /** Script one `turn_end` for [turnId], finalizing the streaming row (#337). */
     fun pushTurnEnd(
@@ -284,6 +299,23 @@ private fun turnStateEnvelope(
         type = "turn_state",
         ts = TS,
         payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId","state":"$state"}"""),
+    )
+
+/** An `api_retry` envelope `{conversation_id, active, current, total}` (#593), cloning [turnStateEnvelope]'s shape. */
+private fun apiRetryEnvelope(
+    conversationId: String,
+    active: Boolean,
+    current: Int,
+    total: Int,
+): Envelope =
+    Envelope(
+        id = 1L,
+        type = "api_retry",
+        ts = TS,
+        payload =
+            MobileJson.parseToJsonElement(
+                """{"conversation_id":"$conversationId","active":$active,"current":$current,"total":$total}""",
+            ),
     )
 
 private fun turnEndEnvelope(
