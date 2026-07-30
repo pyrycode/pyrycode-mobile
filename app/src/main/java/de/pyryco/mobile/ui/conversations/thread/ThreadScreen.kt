@@ -188,7 +188,6 @@ fun ThreadScreen(
                 ThreadStatusRow(
                     model = state.selectedModel.label(),
                     effort = state.selectedEffort.label(),
-                    tokenPercent = state.tokenPercent,
                     onExpandClick = { sheetVisible = true },
                 )
                 ThreadInputBar(onSend = onSendMessage)

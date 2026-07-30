@@ -16,7 +16,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
@@ -31,24 +30,32 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
-import de.pyryco.mobile.ui.theme.warning
 
+/**
+ * The compact monospace status line pinned above the input bar: `Opus 4.7 · high`.
+ *
+ * **Deliberate, spec'd divergence from Figma `16:58`** (#602). That node is a single text layer
+ * literally named `Opus 4.7 · high · 73% used` and specifies a third, severity-coloured
+ * context-usage segment. The percentage backing it was never measured — it was
+ * `ThreadViewModel.STUB_TOKEN_PERCENT`, a constant — so this row renders two segments rather than
+ * editorialising about a fabricated number. The honest "Context usage unavailable" explanation
+ * lives one tap away in the Status sheet (#601); #591 restores the Figma-matching populated render
+ * once the daemon serves real figures. Everything else about the node — typography, alpha, padding,
+ * the two-tone span split and the trailing expand affordance — is as designed.
+ */
 @Composable
 fun ThreadStatusRow(
     model: String,
     effort: String,
-    tokenPercent: Int,
     onExpandClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
     val onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
-    val percentColor = tokenPercentColor(tokenPercent)
     val annotated: AnnotatedString =
         buildAnnotatedString {
             withStyle(SpanStyle(color = onSurface)) { append(model) }
-            withStyle(SpanStyle(color = onSurfaceVariant)) { append(" · $effort · ") }
-            withStyle(SpanStyle(color = percentColor)) { append("$tokenPercent% used") }
+            withStyle(SpanStyle(color = onSurfaceVariant)) { append(" · $effort") }
         }
     Row(
         modifier =
@@ -77,76 +84,18 @@ fun ThreadStatusRow(
     }
 }
 
+@Preview(name = "StatusRow — Light", showBackground = true, widthDp = 412)
 @Composable
-private fun tokenPercentColor(tokenPercent: Int): Color {
-    val clamped = tokenPercent.coerceIn(0, 100)
-    return when {
-        clamped < 50 -> MaterialTheme.colorScheme.onSurfaceVariant
-        clamped < 95 -> MaterialTheme.colorScheme.warning
-        else -> MaterialTheme.colorScheme.error
-    }
-}
-
-@Preview(name = "StatusRow — Light, 20%", showBackground = true, widthDp = 412)
-@Composable
-private fun ThreadStatusRowLight20Preview() {
+private fun ThreadStatusRowLightPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
-        ThreadStatusRow(model = "Opus 4.7", effort = "high", tokenPercent = 20, onExpandClick = {})
+        ThreadStatusRow(model = "Opus 4.7", effort = "high", onExpandClick = {})
     }
 }
 
-@Preview(name = "StatusRow — Light, 60%", showBackground = true, widthDp = 412)
+@Preview(name = "StatusRow — Dark", showBackground = true, widthDp = 412)
 @Composable
-private fun ThreadStatusRowLight60Preview() {
-    PyrycodeMobileTheme(darkTheme = false) {
-        ThreadStatusRow(model = "Opus 4.7", effort = "high", tokenPercent = 60, onExpandClick = {})
-    }
-}
-
-@Preview(name = "StatusRow — Light, 88%", showBackground = true, widthDp = 412)
-@Composable
-private fun ThreadStatusRowLight88Preview() {
-    PyrycodeMobileTheme(darkTheme = false) {
-        ThreadStatusRow(model = "Opus 4.7", effort = "high", tokenPercent = 88, onExpandClick = {})
-    }
-}
-
-@Preview(name = "StatusRow — Light, 97%", showBackground = true, widthDp = 412)
-@Composable
-private fun ThreadStatusRowLight97Preview() {
-    PyrycodeMobileTheme(darkTheme = false) {
-        ThreadStatusRow(model = "Opus 4.7", effort = "high", tokenPercent = 97, onExpandClick = {})
-    }
-}
-
-@Preview(name = "StatusRow — Dark, 20%", showBackground = true, widthDp = 412)
-@Composable
-private fun ThreadStatusRowDark20Preview() {
+private fun ThreadStatusRowDarkPreview() {
     PyrycodeMobileTheme(darkTheme = true) {
-        ThreadStatusRow(model = "Opus 4.7", effort = "high", tokenPercent = 20, onExpandClick = {})
-    }
-}
-
-@Preview(name = "StatusRow — Dark, 60%", showBackground = true, widthDp = 412)
-@Composable
-private fun ThreadStatusRowDark60Preview() {
-    PyrycodeMobileTheme(darkTheme = true) {
-        ThreadStatusRow(model = "Opus 4.7", effort = "high", tokenPercent = 60, onExpandClick = {})
-    }
-}
-
-@Preview(name = "StatusRow — Dark, 88%", showBackground = true, widthDp = 412)
-@Composable
-private fun ThreadStatusRowDark88Preview() {
-    PyrycodeMobileTheme(darkTheme = true) {
-        ThreadStatusRow(model = "Opus 4.7", effort = "high", tokenPercent = 88, onExpandClick = {})
-    }
-}
-
-@Preview(name = "StatusRow — Dark, 97%", showBackground = true, widthDp = 412)
-@Composable
-private fun ThreadStatusRowDark97Preview() {
-    PyrycodeMobileTheme(darkTheme = true) {
-        ThreadStatusRow(model = "Opus 4.7", effort = "high", tokenPercent = 97, onExpandClick = {})
+        ThreadStatusRow(model = "Opus 4.7", effort = "high", onExpandClick = {})
     }
 }
