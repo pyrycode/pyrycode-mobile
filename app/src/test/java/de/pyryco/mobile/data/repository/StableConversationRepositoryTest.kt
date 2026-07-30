@@ -337,6 +337,44 @@ class StableConversationRepositoryTest {
             )
         }
 
+    // ---- #596: observeCompacting delegates and tracks connection churn ---------------------------
+
+    @Test
+    fun observeCompacting_whileAbsent_emitsFalse() =
+        runTest {
+            val current = MutableStateFlow<ConversationRepository?>(null)
+            val facade = StableConversationRepository(current)
+
+            val compacting = mutableListOf<Boolean>()
+            backgroundScope.launch { facade.observeCompacting("c1").collect { compacting += it } }
+            runCurrent()
+
+            assertEquals(listOf(false), compacting)
+        }
+
+    @Test
+    fun observeCompacting_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            val compacting = mutableListOf<Boolean>()
+            backgroundScope.launch { facade.observeCompacting("c1").collect { compacting += it } }
+            runCurrent()
+            assertEquals(listOf(false), compacting)
+
+            repoA.pushCompacting(true)
+            runCurrent()
+            assertEquals(listOf(false, true), compacting)
+
+            // Switching to a fresh (not-compacting) connection drops the prior connection's state.
+            current.value = repoB
+            runCurrent()
+            assertEquals(listOf(false, true, false), compacting)
+        }
+
     // ---- #507: mutationsSupported capability — delegates to the live value, fail-safe-deny false --
 
     @Test
@@ -384,6 +422,7 @@ class StableConversationRepositoryTest {
         private val stalled = MutableStateFlow(false)
         private val queued = MutableStateFlow<List<QueuedMessage>>(emptyList())
         private val apiRetry = MutableStateFlow<ApiRetryStatus>(ApiRetryStatus.NotRetrying)
+        private val compacting = MutableStateFlow(false)
 
         val createDiscussionCalls = mutableListOf<String?>()
         val sendMessageCalls = mutableListOf<Pair<String, String>>()
@@ -410,6 +449,10 @@ class StableConversationRepositoryTest {
             apiRetry.value = value
         }
 
+        fun pushCompacting(value: Boolean) {
+            compacting.value = value
+        }
+
         override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = conversations.filterNotNull()
 
         override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = flowOf(emptyList())
@@ -421,6 +464,8 @@ class StableConversationRepositoryTest {
         override fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> = queued
 
         override fun observeApiRetry(conversationId: String): Flow<ApiRetryStatus> = apiRetry
+
+        override fun observeCompacting(conversationId: String): Flow<Boolean> = compacting
 
         override suspend fun createDiscussion(workspace: String?): Conversation {
             createDiscussionCalls += workspace

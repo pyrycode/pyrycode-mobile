@@ -180,6 +180,39 @@ internal fun ApiRetryPayloadDto.toStatus(): ApiRetryStatus =
     }
 
 /**
+ * The `compacting` control event (#596, pyrycode#1074): claude is auto-compacting its context, so the
+ * thread can say so instead of showing a spinner that looks frozen — the daemon's only signal that
+ * something is happening while the content channel goes silent for tens of seconds. Decode-only — the
+ * phone never sends one. Always decode through [MobileJson].
+ *
+ * Wire SSOT: pyrycode `internal/protocol/interactive.go` (`CompactingPayload`) +
+ * `docs/protocol-mobile.md` § `compacting`. Shape: `{conversation_id, active}` — exactly two fields,
+ * both **strict-required, non-null** (the Go struct sets no `omitempty`, so `active: false` always
+ * serializes). A missing field, or one whose JSON shape cannot be read as its declared type (a number
+ * where a `String` is declared, an object or array where a `Boolean` is), fails the structural decode
+ * with a [kotlinx.serialization.SerializationException] and the one envelope is dropped (AC #5). The
+ * measured latitude documented on [ApiRetryPayloadDto] applies here too: kotlinx's *tree* decoder
+ * accepts a **quoted** primitive (`"active":"true"`) even with `isLenient = false`, so that is not a
+ * strictness probe a test should lean on.
+ *
+ * [active] is the edge — `true` on onset, `false` once compaction finished. Unlike [StallPayloadDto]
+ * this carries a **real falling edge**, so the state must never stick after it (the sibling `stall`
+ * infers recovery from forward progress instead). **Banner-only:** the upstream detector streams no
+ * compaction progress, so there is deliberately no counter, percent, or ETA field.
+ *
+ * No `toX()` mapper, following [StallPayloadDto]'s precedent and deliberately unlike
+ * [ApiRetryPayloadDto.toStatus]: that one exists to collapse four wire fields into a counter-carrying
+ * domain type, whereas these two wire fields already *are* the domain shape (a `String` routing key
+ * plus a `Boolean`), so a mapper would be a ceremonial identity function. This is also *state*, not
+ * one of the five [LiveSessionEvent] streaming events, so it never lands on the live event stream.
+ */
+@Serializable
+internal data class CompactingPayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    val active: Boolean,
+)
+
+/**
  * Map a decoded [TurnStatePayloadDto] to a [LiveSessionEvent.TurnState], or **null** when [state] is
  * not one of the three documented values (AC #3). Modeling `state` as a plain `String` in the DTO
  * (not a strict enum) keeps the unrecognized-value decision a *mapper* concern: an unknown `state`
