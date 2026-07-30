@@ -1245,6 +1245,51 @@ class ThreadViewModelTest {
             collector.cancel()
         }
 
+    // ---- #597: isCompacting projection over repository.observeCompacting ----------------------
+
+    @Test
+    fun isCompacting_initialValue_isFalseWithNonCompactingRepo() =
+        runTest {
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            // A plain fake inherits observeCompacting's flowOf(false) default — the flag stays inert, so a
+            // conversation that never receives a `compacting` frame renders exactly as it does today (AC #3).
+            val vm = makeVm(handle, FakeConversationRepository())
+            assertFalse(vm.isCompacting.value)
+        }
+
+    @Test
+    fun isCompacting_reflectsOnsetThenClear() =
+        runTest {
+            val repo = CompactingControllableRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.isCompacting.collect {} }
+            advanceUntilIdle()
+
+            repo.compacting.value = true
+            advanceUntilIdle()
+            assertTrue(vm.isCompacting.value) // AC #1 — onset shows the compacting status.
+
+            repo.compacting.value = false
+            advanceUntilIdle()
+            assertFalse(vm.isCompacting.value) // AC #2 — clears on the falling edge; nothing sticks.
+            collector.cancel()
+        }
+
+    @Test
+    fun isCompacting_observesOnlyOwnConversationId() =
+        runTest {
+            val repo = CompactingControllableRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.isCompacting.collect {} }
+            advanceUntilIdle()
+
+            assertTrue(repo.observedIds.isNotEmpty())
+            assertTrue(repo.observedIds.all { it == ACTIVE_CONV })
+            collector.cancel()
+        }
+
     // ---- #461: queuedMessages projection over repository.observeQueue ----------------------------
 
     @Test
@@ -2910,6 +2955,23 @@ class ThreadViewModelTest {
         override fun observeStall(conversationId: String): Flow<Boolean> {
             observedIds += conversationId
             return stall
+        }
+    }
+
+    /**
+     * The [StallControllableRepo] shape for #597: delegates the whole [ConversationRepository] surface to a
+     * seeded [FakeConversationRepository] and overrides only [observeCompacting] with a controllable
+     * [MutableStateFlow], recording each observed id for the routing assertion.
+     */
+    private class CompactingControllableRepo(
+        private val delegate: FakeConversationRepository = FakeConversationRepository(),
+    ) : ConversationRepository by delegate {
+        val compacting = MutableStateFlow(false)
+        val observedIds = mutableListOf<String>()
+
+        override fun observeCompacting(conversationId: String): Flow<Boolean> {
+            observedIds += conversationId
+            return compacting
         }
     }
 

@@ -4,8 +4,8 @@ A per-conversation `Boolean` the thread layer observes to learn that the remote 
 silent because it is **auto-compacting its context** — the daemon's only signal that something is
 happening during the tens of seconds the content channel stays quiet — so the phone can say so
 instead of looking like a frozen spinner. Landed in [#596](../codebase/596.md) (split from #583,
-the data slice). The **visible** reaction is sibling **#597** (natively blocked by this ticket, not
-yet shipped).
+the data slice). The **visible** reaction is sibling [#597](../codebase/597.md) — the
+[Compacting indicator](compacting-indicator.md), shipped.
 
 This doc covers the **data layer only**: decode the inbound `compacting` envelope into observable
 state. It renders nothing itself.
@@ -151,8 +151,8 @@ threats (screenshot/overlay of a compaction banner) belong to #597.
 - [ConversationRepository](conversation-repository.md) — the interface the defaulted
   `observeCompacting` joins; [`StableConversationRepository`](stable-conversation-repository.md) — the
   facade that makes it reach the thread ViewModel.
-- Consumer (not yet shipped): **#597** — the visible compaction banner, natively blocked by this
-  ticket.
+- Consumer: [Compacting indicator](compacting-indicator.md) ([#597](../codebase/597.md)) — the
+  visible "Compacting conversation" status, natively blocked by this ticket and now shipped.
 - Server SSOT: pyrycode#1074 (design, merged PR pyrycode#1160, 2026-07-21),
   `internal/protocol/interactive.go` (`CompactingPayload`, `TypeCompacting`),
   `docs/protocol-mobile.md § compacting`.

@@ -67,6 +67,7 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.ApiRetryIndicator
 import de.pyryco.mobile.ui.conversations.components.ChannelInfoSheet
 import de.pyryco.mobile.ui.conversations.components.ChannelInfoUiModel
+import de.pyryco.mobile.ui.conversations.components.CompactingIndicator
 import de.pyryco.mobile.ui.conversations.components.ConnectionBanner
 import de.pyryco.mobile.ui.conversations.components.EmptyThreadState
 import de.pyryco.mobile.ui.conversations.components.InterruptAffordance
@@ -103,6 +104,7 @@ fun ThreadScreen(
     isThinking: Boolean = false,
     isStalled: Boolean = false,
     apiRetry: ApiRetryStatus = ApiRetryStatus.NotRetrying, // #594: claude's API-retry status, replaces the spinner
+    isCompacting: Boolean = false, // #597: claude is auto-compacting its context, replaces the spinner
     isBusy: Boolean = false, // #459: a turn is in flight (thinking OR responding) → show the interrupt affordance
     onInterrupt: () -> Unit = {}, // #459: wired by MainActivity → vm::onInterrupt (the #458 send path)
     onTitleClick: () -> Unit = {},
@@ -310,16 +312,22 @@ fun ThreadScreen(
                 onDrop = onDropQueued,
                 modifier = Modifier.fillMaxWidth(),
             )
-            // One status slot; the retry status wins whenever it is active (#594). The `api_retry` signal
-            // is conversation-level and outlives the thinking phase, so it must show regardless of what
-            // `turn_state` says — and the two must never stack. Single-sourcing the mutual exclusion here,
-            // in the screen, is deliberate: `isThinking` stays defined as the `turn_state` phase (other
-            // tests assert it directly), so suppressing it at its source would make the VM's contract lie.
-            // InterruptAffordance below is untouched — an in-flight turn is still interruptible while retrying.
-            if (apiRetry == ApiRetryStatus.NotRetrying) {
-                ThinkingIndicator(isThinking = isThinking, modifier = Modifier.fillMaxWidth())
-            } else {
-                ApiRetryIndicator(status = apiRetry, modifier = Modifier.fillMaxWidth())
+            // One status slot; the retry status wins whenever it is active (#594), then compaction (#597).
+            // Both signals are conversation-level and outlive the thinking phase, so each must show
+            // regardless of what `turn_state` says — and no two may ever stack. Single-sourcing the mutual
+            // exclusion here, in the screen, is deliberate: `isThinking` stays defined as the `turn_state`
+            // phase (other tests assert it directly), so suppressing it at its source would make the VM's
+            // contract lie. api-retry keeps the top arm because it is the "something is going wrong" signal
+            // while compaction is benign progress, so the benign affordance must never mask the alarming
+            // one; the two overlapping has never been observed. InterruptAffordance below is untouched —
+            // an in-flight turn is still interruptible while retrying or compacting.
+            when {
+                apiRetry != ApiRetryStatus.NotRetrying ->
+                    ApiRetryIndicator(status = apiRetry, modifier = Modifier.fillMaxWidth())
+                isCompacting ->
+                    CompactingIndicator(isCompacting = true, modifier = Modifier.fillMaxWidth())
+                else ->
+                    ThinkingIndicator(isThinking = isThinking, modifier = Modifier.fillMaxWidth())
             }
             // The interrupt affordance (#459): shown across the whole in-flight turn (thinking OR
             // responding), so it sits at the very foot of the list, below the thinking spinner. Interim
