@@ -890,7 +890,19 @@ These are grounded in the source but unverified end to end:
   confirmed upsert, **not** a `conversation_updated` broadcast, so every assertion is on rendered UI) and folded
   into the pre-ship `LIVE=1` gate as the 8th curated method (spending **no** extra claude turn — create/promote
   are conversation-scoped daemon round-trips, promote being a pure registry op), taking the gate from a septet
-  to an octet at still 3 turns.
+  to an octet at still 3 turns; API-retry status (attempt N/M) — **rung 2 shipped (#594)**, the
+  `ScriptedApiRetryTest` scenarios driving `api_retry` edges through the real #593 repository projection
+  into `ThreadViewModel.apiRetry` and `ApiRetryIndicator`, covering both edges (the rising edge, including
+  a climbed counter that must re-render rather than dedup, and the clearing edge reverting to whatever the
+  turn state says) and both counter cases (a parsed `3/10`, and the counter-less fallback taken by the
+  unparsed `0/0`, an incoherent `9/3`, and an absurd `1/2147483647`). **Rungs 3 and 4 are not coverable
+  here, deliberately** — the daemon emits `api_retry` only from the PTY-runner detector family, while
+  production runs the stream-json interactive runner, which has no emitter; so real claude cannot be made
+  to produce the frame inside a test budget (rung 3), and rung 4's `fakeclaude` swaps out claude but keeps
+  the real daemon — still no emitter — so injecting the frame there would be a daemon change, out of scope
+  for a client-only ticket. This is an operator-facing flow shipping with **no** rung-3 scenario, and the
+  reason is a producer-side gap rather than a transient-signal one (contrast the `@Ignore`d #482 spinner,
+  which rung 3 *can* produce but cannot reliably catch).
 - **#337 full scope:** `seq`-based ordering and replay de-dup across reconnect (a #402 concern; this
   fold concatenates in arrival order, correct within a single connection); and a `make`/Gradle wrapper
   for the orchestration plus fork-sync of any shared `bin/` script per the org convention.
