@@ -1374,6 +1374,64 @@ already-authenticated Noise channel, and **nothing in the new arm or the drop br
 (`QueuedMessage.text` is user-authored queued-message content). See
 [Queued backlog § Security](queued-backlog.md#security).
 
+## `observeApiRetry(conversationId)` — the thread-observable API-retry state (#593)
+
+Whether a conversation's remote claude is **stuck retrying an API error**, and at which attempt.
+[#593](../codebase/593.md) decodes the capability-gated v2 `api_retry` control envelope into a
+per-conversation `ApiRetryStatus` the thread layer observes to react (the visible reaction is sibling
+**#594**, not yet shipped). The onset/climb/clearing model lives in
+[API-retry status](api-retry-status.md); this section records only how it attaches to the repository
+— it rides the **same single inbound collector** as everything else, with **no new class beyond the
+domain type and DTO, no new file, no second subscription**.
+
+- **A sixth connection-scoped projection.** `private val apiRetryByConversation =
+  MutableStateFlow<Map<String, ApiRetryStatus>>(emptyMap())` — a structural sibling of
+  `queuedByConversation`, not `stalledConversations`: `api_retry` carries a counter a bare `Set`
+  cannot represent. Written **only** from the one `init` inbound collector, so rising and falling
+  edges never race (single writer); `MutableStateFlow.update {}` matches the sibling projections'
+  posture. Empty per connection (#351) → a retry state never survives a reconnect.
+- **One demux hook — a full replace, inside the existing `interactive` gate, with no branch on
+  `active`.** A **new** `TYPE_API_RETRY` arm: `decodeApiRetry(envelope)?.let { (conversationId,
+  status) -> apiRetryByConversation.update { it + (conversationId to status) } }`. `toStatus()` (§
+  below) is the sole owner of edge semantics — a rising edge, a re-fired rising edge with a climbed
+  counter, and a falling edge are all just a mapped `ApiRetryStatus` the arm replaces unconditionally;
+  a second `if (active)` here would encode the same rule twice. **Unlike the #395 stall arm this has
+  no second hook** — it does not touch the live-session arm, so it neither clears an active stall
+  (a retry is not forward progress) nor folds a thread row (AC #4 is satisfied structurally, by the
+  arm having only this one statement).
+- **The method is a pure cold projection** (1:1 with `observeQueue`), issuing no request:
+
+  ```kotlin
+  override fun observeApiRetry(conversationId: String): Flow<ApiRetryStatus> =
+      apiRetryByConversation.map { it[conversationId] ?: ApiRetryStatus.NotRetrying }.distinctUntilChanged()
+  ```
+
+  `?: NotRetrying` gives not-retrying-until-first-frame; `distinctUntilChanged()` suppresses only
+  value-*identical* re-emissions — an `api_retry` for **another** conversation does not re-emit this
+  flow, while a **climbed counter is a different `Attempt` value and does reach the observer as a new
+  emission**, which is precisely what `stall`'s `Set<String>` model could not do (`true → true` would
+  collapse the climb). A `StateFlow` always has a current value, so every collector (including a
+  `flatMapLatest` re-subscription through the facade) gets the current status on subscription.
+- **`decodeApiRetry(envelope): Pair<String, ApiRetryStatus>?`** mirrors `decodeQueueState`: one
+  `try { decode → dto.conversationId to dto.toStatus() } catch (IllegalArgumentException) { null }`
+  (`SerializationException ⊂` it). Because `toStatus()` is **total** (never null), structural
+  malformation is the only path that drops a frame — an undocumented counter shape maps to
+  `ApiRetryStatus.AttemptUnknown` rather than being dropped, since a drop would discard a real retry
+  onset. The `ApiRetryPayloadDto` (all four fields strict-required, no nullable latitude) and
+  `toStatus()` live in `data/network/InteractivePayloads.kt`.
+- **On the interface with a default — like `observeStall`/`observeQueue`, unlike `liveSessionEvents`.**
+  The thread needs the current-value retry state through the
+  [`StableConversationRepository`](stable-conversation-repository.md) facade (#594 is the first
+  consumer), so `observeApiRetry` is a **defaulted** `ConversationRepository` method
+  (`flowOf(ApiRetryStatus.NotRetrying)`), with the facade and this repo overriding it. The default
+  absorbs the Fake/test-double cascade (no ≥5 split); no consumer cascade. See
+  [[post-352-connection-scoped-repo-behind-facade]].
+
+`security-sensitive`, but the repository stays plain orchestration: decode runs behind the
+already-authenticated Noise channel, `ApiRetryStatus` is a closed sealed type carrying two `Int`s and
+no `String` (no daemon-supplied text can structurally reach the UI through this arm), and **nothing in
+the new arm or the decode logs the payload**. See [API-retry status § Security](api-retry-status.md#security).
+
 ## Live tool-call rows — `applyToolUse` / `applyToolResult` (#387)
 
 Correlate the v2 `tool_use` (start) / `tool_result` (completion)
@@ -1852,7 +1910,13 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   didn't need), and folds via a new `removeConversation` helper that clears all three read projections
   rather than upserting one. `conversation.not_found` converges as success — the deliberate divergence
   from rename/archive's IAE-crash-on-not-found. `mutationsSupported` stays `false`; the rung-3 e2e is
-  #554, Inbox, blocked by this ticket).
+  #554, Inbox, blocked by this ticket), [#593](../codebase/593.md) (`observeApiRetry`, **landed** —
+  the sixth projection `apiRetryByConversation`; a `TYPE_API_RETRY` **full-replace** arm with **no
+  branch on `active`** and **no clearing hook** (`toStatus()` owns edge semantics; unlike #395 this
+  arm never touches the live-session arm, so it does not clear a stall), following #460's
+  payload-carrying `Map` shape rather than #395's bare `Set` because the wire carries a counter, **on
+  the interface with a `flowOf(NotRetrying)` default** so the retry state reaches the thread through
+  the facade — see [API-retry status](api-retry-status.md); UI reaction is sibling #594, not shipped).
 - Connection wiring: [`RelayRepositoryCoordinator`](relay-repository-coordinator.md)
   ([#351](../codebase/351.md), **landed**) — constructs this repository per live connection against the
   pump + a child scope, made `NoiseSessionPump : ManagedSessionPump : SessionPump`, and publishes the
