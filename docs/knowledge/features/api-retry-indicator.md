@@ -93,29 +93,37 @@ fix if that ever happens is a one-line const change, not a config knob.
 
 ## Placement in the thread
 
-[`ThreadScreen`](thread-screen.md) makes an either/or decision at the existing foot-of-list status slot
-(`ThreadScreen.kt:~310`), replacing the bare `ThinkingIndicator(...)` call:
+[`ThreadScreen`](thread-screen.md) arbitrates the existing foot-of-list status slot
+(`ThreadScreen.kt:319-328`). Originally an either/or replacing the bare `ThinkingIndicator(...)` call,
+[#597](../codebase/597.md) extended it to a **three-way `when`** to admit
+[`CompactingIndicator`](compacting-indicator.md):
 
 ```kotlin
-if (apiRetry == ApiRetryStatus.NotRetrying) {
-    ThinkingIndicator(isThinking = isThinking, modifier = Modifier.fillMaxWidth())
-} else {
-    ApiRetryIndicator(status = apiRetry, modifier = Modifier.fillMaxWidth())
+when {
+    apiRetry != ApiRetryStatus.NotRetrying ->
+        ApiRetryIndicator(status = apiRetry, modifier = Modifier.fillMaxWidth())
+    isCompacting ->
+        CompactingIndicator(isCompacting = true, modifier = Modifier.fillMaxWidth())
+    else ->
+        ThinkingIndicator(isThinking = isThinking, modifier = Modifier.fillMaxWidth())
 }
 ```
 
-**One status slot; retry wins whenever active.** The `api_retry` signal is conversation-level and
-outlives the `thinking` turn phase, so it must show *regardless of what `turn_state` says* — including
-while `turn_state` is `idle` — and the two must never render stacked (AC #1). The precedence decision
-lives here, in the screen, deliberately **not** in the ViewModel: `isThinking` stays defined purely as
-the `turn_state` phase (other tests assert it directly), so suppressing it at its source would make the
-`ThreadViewModel` contract lie. `InterruptAffordance`, mounted directly below this slot, is untouched —
-an in-flight turn stays interruptible while retrying.
+**One status slot; retry wins whenever active, then compaction.** The `api_retry` signal is
+conversation-level and outlives the `thinking` turn phase, so it must show *regardless of what
+`turn_state` says* — including while `turn_state` is `idle` — and no two arms may ever render stacked
+(AC #1). The precedence decision lives here, in the screen, deliberately **not** in the ViewModel:
+`isThinking` stays defined purely as the `turn_state` phase (other tests assert it directly), so
+suppressing it at its source would make the `ThreadViewModel` contract lie. api-retry keeps the top arm
+over compaction because it is the "something is going wrong" signal while compaction is benign
+progress — the benign affordance must never mask the alarming one (the two have never been observed
+overlapping, so no AC is spent on the combination). `InterruptAffordance`, mounted directly below this
+slot, is untouched — an in-flight turn stays interruptible while retrying or compacting.
 
 This is the counterpoint to [`StallPromotionBanner`](stall-promotion-banner.md), which lives in a
-different slot entirely (above the list, below `ConnectionBanner`) and is independent — the two signals
-can legitimately co-render; that pairing is out of scope for this ticket (open question, PO's call if it
-ever reads badly in practice).
+different slot entirely (above the list, below `ConnectionBanner`) and is independent — every signal in
+this slot can legitimately co-render with it; that pairing is out of scope for this family (open
+question, PO's call if it ever reads badly in practice).
 
 ## Wiring
 
@@ -206,12 +214,16 @@ both rendered branches are covered.
 - Upstream signal: [API-retry status](api-retry-status.md) — `ThreadViewModel.apiRetry` /
   `observeApiRetry`, the `api_retry` decode this component renders.
 - Host: [Thread screen](thread-screen.md) — threads `apiRetry` as another flat sibling parameter and
-  arbitrates the single foot-of-list status slot between it and `ThinkingIndicator`.
+  arbitrates the foot-of-list status slot, now a three-way `when` across it,
+  [`CompactingIndicator`](compacting-indicator.md), and `ThinkingIndicator`.
 - Idioms mirrored: [Thinking indicator](thinking-indicator.md) (the direct clone — early-return,
   sibling-`StateFlow`, defaulted-hoisted-parameter, merged-`semantics`, design-owed M3 default,
   light/dark previews, file-private spacing `val`s intentionally **not** shared/refactored across the
   two components), [Stall promotion banner](stall-promotion-banner.md) (the different-slot,
   independently-co-rendering counterpoint).
+- Sibling render slice: [Compacting indicator](compacting-indicator.md) ([#597](../codebase/597.md)) —
+  joined this slot as the third arm, ordered below api-retry so the alarming signal is never masked by
+  the benign one.
 - Parent: split from [#582](https://github.com/pyrycode/pyrycode-mobile/issues/582); sibling data slice
   [#593](../codebase/593.md) (PR #595, `022c0b8`).
 - Known unrelated pre-existing failure discovered while verifying this ticket:
