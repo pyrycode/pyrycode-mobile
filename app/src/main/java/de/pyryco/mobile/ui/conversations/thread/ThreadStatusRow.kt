@@ -36,12 +36,12 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
  *
  * **Deliberate, spec'd divergence from Figma `16:58`** (#602). That node is a single text layer
  * literally named `Opus 4.7 · high · 73% used` and specifies a third, severity-coloured
- * context-usage segment. The percentage backing it was never measured — it was
- * `ThreadViewModel.STUB_TOKEN_PERCENT`, a constant — so this row renders two segments rather than
- * editorialising about a fabricated number. The honest "Context usage unavailable" explanation
- * lives one tap away in the Status sheet (#601); #591 restores the Figma-matching populated render
- * once the daemon serves real figures. Everything else about the node — typography, alpha, padding,
- * the two-tone span split and the trailing expand affordance — is as designed.
+ * context-usage segment. The percentage backing it was never measured — it was a hardcoded
+ * constant, deleted in #603 — so this row renders two segments rather than editorialising about
+ * a fabricated number. The honest "Context usage unavailable" explanation lives one tap away in
+ * the Status sheet (#601); #591 restores the Figma-matching populated render once the daemon
+ * serves real figures. Everything else about the node — typography, alpha, padding, the two-tone
+ * span split and the trailing expand affordance — is as designed.
  */
 @Composable
 fun ThreadStatusRow(
