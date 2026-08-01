@@ -66,6 +66,14 @@
     <string name="thread_queued_backlog_label">Queued</string>
     <string name="cd_thread_queued_backlog">Queued messages waiting to send</string>
     <string name="cd_thread_queued_drop">Drop this queued message</string>
+    <string name="thread_unrecognized_label">Unrecognized message</string>
+    <string name="thread_unrecognized_truncated">Payload truncated by the daemon.</string>
+    <string name="thread_unrecognized_site_line_type">whole message</string>
+    <string name="thread_unrecognized_site_assistant_block">assistant block</string>
+    <string name="thread_unrecognized_site_user_block">user block</string>
+    <string name="thread_unrecognized_site_undecodable">could not be decoded</string>
+    <string name="cd_thread_unrecognized_expand">Show the unrecognized payload</string>
+    <string name="cd_thread_unrecognized_collapse">Hide the unrecognized payload</string>
     <string name="cd_tool_running">Tool call running</string>
     <string name="cd_tool_failed">Tool call failed</string>
     <string name="thread_overflow_new_session">New session</string>

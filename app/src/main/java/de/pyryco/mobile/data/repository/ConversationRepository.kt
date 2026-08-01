@@ -259,9 +259,10 @@ enum class ConversationFilter { All, Channels, Discussions, Archived }
 
 /**
  * One row in the conversation thread. The stream interleaves messages
- * with synthetic [SessionBoundary] markers in chronological order; the
- * thread screen renders boundaries as horizontal-rule delimiters and
- * de-emphasizes messages above the latest delimiter.
+ * with synthetic [SessionBoundary] markers and diagnostic
+ * [UnrecognizedMessage] rows in chronological order; the thread screen
+ * renders boundaries as horizontal-rule delimiters and de-emphasizes
+ * rows above the latest delimiter.
  */
 sealed interface ThreadItem {
     data class MessageItem(
@@ -283,9 +284,51 @@ sealed interface ThreadItem {
         val occurredAt: Instant,
         val workspaceCwd: String? = null,
     ) : ThreadItem
+
+    /**
+     * A claude message the interactive daemon's stream-json parser could not understand (#608). The
+     * daemon forwards genuinely-unknown kinds as their own wire frame rather than dropping them, so a
+     * gap in our own parser leaves a visible trace in the thread instead of a silent hole.
+     *
+     * **The values here are the most untrusted strings the thread holds** — unbounded, model-adjacent
+     * JSON. Consumers must render them inert (plain text, never markdown), must not persist them, and
+     * must not log them; see `UnrecognizedMessageRow`.
+     *
+     * @param id A **client-owned** stable identity, not a wire field: the frame carries neither a
+     *   message id nor a `turn_id`. Invariant: unique within a thread. Duplicate values crash the
+     *   thread's `LazyColumn`, which keys on it, so uniqueness is a producer obligation — documented
+     *   here and asserted in tests, not enforced at construction (as [SessionBoundary]'s
+     *   [workspaceCwd][SessionBoundary.workspaceCwd] invariant). Stamped by #609.
+     * @param site Where the parser met the message. A closed set, decoded from the wire string by #609.
+     * @param messageType The offending message or content-block type. **Empty when [site] is
+     *   [UnrecognizedSite.Undecodable]** — nothing decoded, so no type was ever read. Not nullable: the
+     *   wire field is present-and-empty, and modelling it as `""` keeps the decode arm total.
+     * @param raw The offending JSON verbatim, capped daemon-side at 16 KiB. A [String], **not** nested
+     *   JSON — a truncated blob is no longer valid JSON. The daemon scrubs invalid UTF-8 after cutting,
+     *   so it arrives well-formed even when the cut landed mid-rune. Never parse, trim, or reformat it.
+     * @param truncated Whether the daemon cut [raw] to fit the cap.
+     * @param occurredAt Arrival instant, stamped by #609 — the wire carries **no** timestamp. Load-bearing
+     *   beyond list ordering: `toChannelInfoUiModel` reads the first row's timestamp for the
+     *   channel-info "created" label, so an unrecognized row landing first in a thread supplies it.
+     */
+    data class UnrecognizedMessage(
+        val id: String,
+        val site: UnrecognizedSite,
+        val messageType: String,
+        val raw: String,
+        val truncated: Boolean,
+        val occurredAt: Instant,
+    ) : ThreadItem
 }
 
 enum class BoundaryReason { Clear, IdleEvict, WorkspaceChange }
+
+/**
+ * Where the daemon's stream-json parser met a message it could not understand (#608). Closed at the
+ * four documented wire values, which is what lets the UI's label lookup stay exhaustive: a future fifth
+ * site is a compile error rather than a blank slot.
+ */
+enum class UnrecognizedSite { LineType, AssistantBlock, UserBlock, Undecodable }
 
 /**
  * One message waiting in a conversation's queued backlog while claude is busy (#460). The element type
