@@ -50,6 +50,7 @@ import de.pyryco.mobile.data.network.ToolResultPayloadDto
 import de.pyryco.mobile.data.network.ToolUsePayloadDto
 import de.pyryco.mobile.data.network.TurnEndPayloadDto
 import de.pyryco.mobile.data.network.TurnStatePayloadDto
+import de.pyryco.mobile.data.network.UnrecognizedMessagePayloadDto
 import de.pyryco.mobile.data.network.WorkspaceFolderCreatedPayloadDto
 import de.pyryco.mobile.data.network.toBoundary
 import de.pyryco.mobile.data.network.toConversation
@@ -57,6 +58,7 @@ import de.pyryco.mobile.data.network.toConversations
 import de.pyryco.mobile.data.network.toEvent
 import de.pyryco.mobile.data.network.toMessage
 import de.pyryco.mobile.data.network.toQueue
+import de.pyryco.mobile.data.network.toRow
 import de.pyryco.mobile.data.network.toStatus
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -245,6 +247,30 @@ class RemoteConversationRepository(
     private val compactingConversations = MutableStateFlow<Set<String>>(emptySet())
 
     private val requestId = AtomicLong(0)
+
+    /**
+     * Source of the client-owned [ThreadItem.UnrecognizedMessage.id] (#609). The `unrecognized_message`
+     * wire frame carries neither a message id nor a `turn_id`, yet the thread's `LazyColumn` keys on
+     * `"unrecognized:<id>"` — so a duplicate crashes the thread, and the id cannot be derived from the
+     * payload or the arrival instant (two byte-identical frames stamped in the same instant would
+     * collide, which is exactly the repeat case the fold must keep distinguishable).
+     *
+     * A per-repository monotonic counter is sufficient *structurally*, not incidentally: ids are unique
+     * within this instance (hence within any one thread), the repository is connection-scoped (#351) so
+     * each connection gets a fresh instance, and [StableConversationRepository]'s `flatMapLatest` drops
+     * the previous connection's projection outright on reconnect — no reader ever observes rows from two
+     * instances merged, so a restarted counter cannot collide with a prior connection's ids.
+     *
+     * The value carries **no wire data** — no `conversation_id`, no payload hash — keeping [QueuedMessage.id]'s
+     * posture: a monotonic ordinal, not a secret, never compared against anything attacker-controlled
+     * ([AtomicLong], deliberately not `SecureRandom`). [AtomicLong] mirrors [requestId] for consistency
+     * rather than because concurrency demands it; the inbound demux is a single collector.
+     *
+     * **Ordinals may be skipped** — a frame that decodes structurally but is dropped by the unknown-`site`
+     * mapper still consumed its `incrementAndGet()`. That is intentional: the invariant is *uniqueness*,
+     * not density.
+     */
+    private val unrecognizedRowId = AtomicLong(0)
 
     /**
      * Request *envelope* id (`requestId.incrementAndGet()`, **not** the payload `message_id`) ->
@@ -537,6 +563,34 @@ class RemoteConversationRepository(
                     }
                 }
             }
+            TYPE_UNRECOGNIZED_MESSAGE -> {
+                // A claude message the daemon's stream-json parser could not map (#609, pyrycode#1074).
+                // Same `interactive` gate as the live-session / `stall` / `queue_state` / `api_retry` /
+                // `compacting` / `session_transition` siblings: a non-interactive phone never decodes a
+                // spurious `unrecognized_message` from a buggy/hostile daemon that ignored the server-side
+                // fan-out gate (fail-closed, defence in depth). Decode-or-drop (AC #4): a malformed payload
+                // or a `site` outside the closed set yields null → drop one envelope, the lone collector
+                // survives. Routes strictly by the payload's conversation_id, so the row structurally
+                // cannot cross-route into another thread (AC #1) — an id no collector observes simply sits
+                // unread in the map. Exactly ONE write, unlike the session_transition twin directly above:
+                // appendUnrecognizedMessage folds the thread row and that is all — there is deliberately no
+                // updateCurrentSessionId sibling here, because the frame carries no session identity (a
+                // reader who knows that arm will look for a second write; there isn't one). Inert toward
+                // every neighbour (AC #3): it does not tryEmit on liveSessionEvents (a diagnostic row is not
+                // a streaming event), does not open, close, or alter a turn (the frame carries no turn_id —
+                // the daemon could not attribute one honestly, and opening a turn would wedge the
+                // conversation since no turn end follows a message nobody could parse), and touches
+                // stalledConversations in NEITHER direction (an unparseable message is not turn forward
+                // progress, and clearing here would be a hostile-daemon lever for suppressing the stall
+                // indicator) nor any other conversation status. Drop silently — nothing here logs any
+                // payload field: `raw`/`message_type` are the most untrusted strings the thread holds, and a
+                // logged conversation_id is a cross-conversation correlation leak.
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    decodeUnrecognizedMessage(envelope)?.let { (conversationId, row) ->
+                        appendUnrecognizedMessage(conversationId, row)
+                    }
+                }
+            }
             TYPE_MODAL_SHOWN, TYPE_MODAL_DISMISSED -> {
                 // A v2 modal lifecycle envelope (#437). Same `interactive` gate as the structured-stream,
                 // `stall`, and `resync` siblings — a non-interactive phone never decodes a spurious modal
@@ -719,6 +773,38 @@ class RemoteConversationRepository(
         }
 
     /**
+     * Decode one v2 `unrecognized_message` envelope (#609) to its routing [conversationId] and the mapped
+     * [ThreadItem.UnrecognizedMessage], or **null** when it cannot be folded. Decodes the untrusted
+     * [Envelope.payload] through the single configured [MobileJson] and maps via `toRow()`. The whole body
+     * is one `try`/`catch (IllegalArgumentException)` ([kotlinx.serialization.SerializationException] ⊂
+     * [IllegalArgumentException]), so a malformed payload — a missing or wrong-typed required field —
+     * yields `null`, dropping the one envelope while the lone inbound collector survives (AC #4). A
+     * **`site` outside the closed set** is a distinct path: `toRow()` returns `null` (no throw), so the one
+     * envelope drops the same way. Mirrors [decodeSessionTransition]'s drop idiom.
+     *
+     * This is the sole boundary at which the untrusted payload becomes a typed value, and the DTO never
+     * escapes it — callers hold only the domain type. The two **client-owned** fields are stamped here,
+     * not in the mapper: the row id from [unrecognizedRowId] (see its KDoc for why a monotonic counter is
+     * structurally sufficient) and the arrival instant from [Clock.System.now], the established
+     * locally-assembled-row clock ([applyToolUse]) — the wire carries no timestamp. The `"unrecognized-"`
+     * prefix is for debuggability only; it is **not** load-bearing for collision-avoidance, since ids are
+     * compared only within their own [ThreadItem] type and `ThreadScreen` namespaces each type's key.
+     *
+     * **Nothing here logs any payload field** — `raw` and `message_type` are unbounded model-adjacent JSON
+     * (the most untrusted strings the thread holds) and a logged conversation_id is a cross-conversation
+     * correlation leak.
+     */
+    private fun decodeUnrecognizedMessage(envelope: Envelope): Pair<String, ThreadItem.UnrecognizedMessage>? =
+        try {
+            val dto = MobileJson.decodeFromJsonElement<UnrecognizedMessagePayloadDto>(envelope.payload)
+            dto
+                .toRow(id = "unrecognized-${unrecognizedRowId.incrementAndGet()}", occurredAt = Clock.System.now())
+                ?.let { dto.conversationId to it }
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+
+    /**
      * Decode one v2 modal envelope (#437) to its typed [ModalEvent], or **null** when it cannot be
      * surfaced. Selects the DTO by [Envelope.type], decodes the untrusted [Envelope.payload] through the
      * single configured [MobileJson], and maps via `toEvent()`. The whole body is one `try`/`catch
@@ -895,6 +981,33 @@ class RemoteConversationRepository(
         boundary: ThreadItem.SessionBoundary,
     ) {
         threadByConversation.update { it + (conversationId to (it[conversationId].orEmpty() + boundary)) }
+    }
+
+    /**
+     * Append [row] to [conversationId]'s thread in one atomic [MutableStateFlow.update] (#609): a pure
+     * end-append in arrival order into the same [threadByConversation] the live `message` and `tool_use`
+     * arms write, so the row interleaves with everything else in the thread (AC #1). Routes strictly into
+     * [conversationId]'s slice, so it can only ever surface in `observeMessages(conversationId)` — never
+     * cross-routed. The untrusted `raw` / `messageType` ride inside the typed [row] and are never logged
+     * here (Security review).
+     *
+     * **No dedup, and deliberately a separate function from [appendSessionBoundary] rather than a shared
+     * `appendThreadItem`.** The two share an implementation but not a contract, and the difference is
+     * exactly the rationale: [appendSessionBoundary] does not dedup because there is *nothing to dedup on*
+     * (the wire carries no row id), whereas this one does not dedup because **dedup would destroy the
+     * signal** — how often this frame fires is the number that tells someone to go fix something, so
+     * merging repeats hides it. The refusal is the point, not an oversight; the daemon does no dedup on the
+     * wire either. A shared helper would have to carry both rationales in one KDoc, and a later change to
+     * one contract would silently change the other.
+     *
+     * This cuts against the two nearest folds — [appendMessages] dedups by `message_id` and [applyToolUse]
+     * is idempotent on a repeat id. [appendSessionBoundary]'s pure end-append is the one followed here.
+     */
+    private fun appendUnrecognizedMessage(
+        conversationId: String,
+        row: ThreadItem.UnrecognizedMessage,
+    ) {
+        threadByConversation.update { it + (conversationId to (it[conversationId].orEmpty() + row)) }
     }
 
     /**
@@ -2117,6 +2230,19 @@ class RemoteConversationRepository(
          * `idle_evict`, `workspace_change`}; `workspace_cwd` is non-null only for `workspace_change`.
          */
         const val TYPE_SESSION_TRANSITION = "session_transition"
+
+        /**
+         * Capability-gated thread event: a claude message the daemon's stream-json parser could not map
+         * `{conversation_id, site, message_type, raw, truncated}` (#609, pyrycode#1074) — folds a
+         * [ThreadItem.UnrecognizedMessage] into the conversation thread (keyed by `conversation_id`) in
+         * arrival order. `site` ∈ {`line_type`, `assistant_block`, `user_block`, `undecodable`};
+         * `message_type` is empty on `undecodable`; `raw` is the offending JSON as a **string**, capped
+         * daemon-side at 16 KiB. Unlike its `stall` / `api_retry` / `compacting` neighbours this reports a
+         * gap in **our own** mapping rather than what claude is doing, and unlike every turn-stream event
+         * it carries **no `turn_id`** and drives no turn lifecycle. Repeats are never coalesced — on the
+         * wire or here — because the firing frequency *is* the signal.
+         */
+        const val TYPE_UNRECOGNIZED_MESSAGE = "unrecognized_message"
 
         /**
          * Outbound queue control: the phone's request to drop a not-yet-drained message

@@ -7,9 +7,9 @@ vanishing silently. The daemon used to discard unmapped kinds into a debug log t
 prints; it now sorts known-ignored kinds from genuinely unknown ones and forwards the latter as their own
 `unrecognized_message` wire frame.
 
-This slice builds **only the row and its type** — the `ThreadItem` subtype plus the composable that draws
-it. Nothing produces the row yet; [#609](../codebase/609.md) decodes the wire frame, stamps `id` and
-`occurredAt`, and folds it into the thread stream.
+#608 built **only the row and its type** — the `ThreadItem` subtype plus the composable that draws it.
+[#609](../codebase/609.md) landed the decode arm: it decodes the wire frame, stamps `id` and `occurredAt`,
+and folds the row into `RemoteConversationRepository`'s thread stream, so the row is now live end to end.
 
 Package: `de.pyryco.mobile.ui.conversations.components`
 (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). File: `UnrecognizedMessageRow.kt`.
@@ -42,8 +42,12 @@ enum class UnrecognizedSite { LineType, AssistantBlock, UserBlock, Undecodable }
   collides on two identical frames stamped in the same instant — exactly the repeat case the row has to
   keep distinct — and retains up to 16 KiB inside a key held for the list's lifetime. Uniqueness is
   documented as a producer invariant (asserted in tests, not enforced at construction), the same idiom
-  `SessionBoundary` already uses for `workspaceCwd`. #609 stamps it; the v2 envelope's monotonic frame id
-  is the expected source.
+  `SessionBoundary` already uses for `workspaceCwd`. **#609 stamps it with a per-repository monotonic
+  `AtomicLong` counter (`"unrecognized-<n>"`), not a wire-carried frame id** — the wire has no such field
+  (five fields total, verified against the Go struct, none an id). The counter's uniqueness rests on the
+  repository being connection-scoped (#351) plus `StableConversationRepository`'s `flatMapLatest`
+  dropping a prior connection's projection outright on reconnect, so a restarted counter never collides
+  with a previous connection's ids.
 - **`messageType` is `""`, not `null`, when `site == Undecodable`** — nothing decoded, so no type was
   ever read, and modelling it as an empty string keeps the future decode arm total.
 - **`raw` is a `String`, never nested JSON.** The daemon caps it at 16 KiB and truncates mid-blob, so a
@@ -173,13 +177,15 @@ config-change simulation. Run with `./gradlew connectedAndroidTest`;
 `compileDebugAndroidTestKotlin` first, since instrumented sources are not compiled by `test`/`lint`/
 `assembleDebug`.
 
-AC 1's interleaving/ordering/no-collapse-on-repeat properties are **not** testable here — nothing in
-this slice can produce two rows to interleave. That end-to-end assertion belongs to
-[#609](../codebase/609.md), the first slice that can emit them.
+AC 1's interleaving/ordering/no-collapse-on-repeat properties were **not** testable in this slice —
+nothing here could produce two rows to interleave. [#609](../codebase/609.md) (landed) owns that
+end-to-end coverage: arrival-order interleaving, back-to-back repeats yielding two distinct-id rows, and
+the fold's non-interference with stall/live-events/other status, all in
+`RemoteConversationRepositoryTest`.
 
 ## Related
 
-- Ticket notes: [`../codebase/608.md`](../codebase/608.md)
+- Ticket notes: [`../codebase/608.md`](../codebase/608.md) (row + type), [`../codebase/609.md`](../codebase/609.md) (decode + fold)
 - Spec: [`docs/specs/architecture/608-unrecognized-message-row.md`](../../specs/architecture/608-unrecognized-message-row.md)
 - Wire SSOT: `pyrycode/docs/protocol-mobile.md` § `unrecognized_message` (sibling checkout).
 - Desktop sibling: `pyrycode-desktop`'s `ConversationScreen.tsx` `UnrecognizedRow` (shipped `8c0d013`) —
@@ -187,8 +193,9 @@ this slice can produce two rows to interleave. That end-to-end assertion belongs
 - Structural precedent: [`ToolCallRow`](./tool-call-row.md) (collapsed-pill + in-place-expand shape,
   palette intentionally diverges).
 - Consumer: [`Thread screen`](./thread-screen.md) — `LazyColumn` key, render arm, `timestamp()`.
-- Downstream: [#609](../codebase/609.md) — decodes the `unrecognized_message` wire frame, stamps `id` /
-  `occurredAt`, folds it into `RemoteConversationRepository`'s thread stream, and owns the end-to-end
-  interleaving/ordering coverage this slice couldn't write.
+- Downstream: [#609](../codebase/609.md) (landed, PR #619) — decodes the `unrecognized_message` wire
+  frame, stamps `id` / `occurredAt`, folds it into `RemoteConversationRepository`'s thread stream, and
+  owns the end-to-end interleaving/ordering coverage this slice couldn't write. Blocks #586 (deterministic
+  e2e non-vacuity demonstration).
 - Prior design-owed thread-row gaps: [#406](../codebase/406.md) (thinking indicator),
   [#388](../codebase/388.md) (tool row running/failed states).
