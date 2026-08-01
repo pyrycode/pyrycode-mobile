@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.UnrecognizedSite
 import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -356,5 +357,87 @@ private fun String.toBoundaryReason(): BoundaryReason? =
         "clear" -> BoundaryReason.Clear
         "idle_evict" -> BoundaryReason.IdleEvict
         "workspace_change" -> BoundaryReason.WorkspaceChange
+        else -> null
+    }
+
+/**
+ * The `unrecognized_message` thread event (#609, pyrycode#1074): a claude message the interactive
+ * daemon's stream-json parser could not map `{conversation_id, site, message_type, raw, truncated}`,
+ * folded into the conversation thread as a [ThreadItem.UnrecognizedMessage]. Unlike its `stall` /
+ * `api_retry` / `compacting` neighbours this reports a gap in **our own** mapping, not what claude is
+ * doing. Decode-only — the phone never sends one. Always decode through [MobileJson].
+ *
+ * Wire SSOT: pyrycode `internal/protocol/interactive.go` (`UnrecognizedMessagePayload`) +
+ * `docs/protocol-mobile.md` § `unrecognized_message`. All five fields are **strict-required, non-null**
+ * with no Kotlin default (the [CompactingPayloadDto] posture): the Go struct sets no `omitempty`, so
+ * `message_type: ""` arrives **present-and-empty** and `truncated: false` arrives **present** — both
+ * decode cleanly under a strict DTO, which is what lets every field stay required. A missing field, or
+ * one whose JSON shape cannot be read as its declared type (an object or array where a `String` is
+ * declared), fails the structural decode with a [kotlinx.serialization.SerializationException] and the
+ * one envelope is dropped (AC #4). The measured latitude documented on [ApiRetryPayloadDto] applies
+ * here too: kotlinx's *tree* decoder accepts a **quoted** primitive (`"truncated":"true"`) even with
+ * `isLenient = false`, so that is not a strictness probe a test should lean on.
+ *
+ * [site] is a plain `String` (not an enum): an unrecognized value is a *mapper* drop (see [toRow]), not
+ * a decode failure — the [SessionTransitionPayloadDto.reason] / [TurnStatePayloadDto.state] posture.
+ *
+ * [raw] is the most untrusted string this seam carries — unbounded, model-adjacent JSON. It crosses
+ * **verbatim**, never trimmed, parsed, reformatted, or logged; the render layer owns its posture
+ * (#608's `UnrecognizedMessageRow`). No client-side length cap: the daemon truncates at construction to
+ * 16 KiB and `OkHttpRelayTransport`'s 65519-byte frame contract bounds it again (~4x headroom), so a
+ * third bound would defend a failure that cannot reach this code.
+ *
+ * Like [SessionTransitionPayloadDto] and unlike the five live-session DTOs this produces a [ThreadItem],
+ * so it has no `toEvent()` and never lands on the live-event stream. It carries **no `turn_id`** and
+ * drives no turn lifecycle: the daemon could not read the message well enough to attribute a turn to it,
+ * and opening one would wedge the conversation because no turn end follows a message nobody could parse.
+ */
+@Serializable
+internal data class UnrecognizedMessagePayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    val site: String,
+    @SerialName("message_type") val messageType: String,
+    val raw: String,
+    val truncated: Boolean,
+)
+
+/**
+ * Map a decoded [UnrecognizedMessagePayloadDto] to a [ThreadItem.UnrecognizedMessage], or **null** when
+ * [site] is not one of the four documented values (AC #4 — the unknown-value drop is a mapper concern,
+ * like [SessionTransitionPayloadDto.toBoundary], distinct from a malformed envelope). [site] is the one
+ * payload field that is **narrowed** rather than copied: only the four client-owned [UnrecognizedSite]
+ * constants can reach the UI's exhaustive label lookup, so a hostile daemon cannot inject a fifth label.
+ *
+ * [id] and [occurredAt] are **client-owned** and injected by the caller — the wire carries neither a row
+ * id nor a timestamp (the [MessagePayloadDto.toMessage] idiom of passing non-wire values in). Keeping
+ * [occurredAt] a parameter rather than reading the clock here is what keeps this mapper pure and
+ * deterministically testable; the caller stamps both (see `decodeUnrecognizedMessage`).
+ *
+ * Every other field is a **total verbatim copy**. In particular this does **not** cross-validate the
+ * empty-[messageType]-iff-`undecodable` invariant: it is daemon-guaranteed, and enforcing it here would
+ * defend an unobserved failure and could drop a valid frame. The desktop client made the same call
+ * (`parseUnrecognizedMessagePayload`, `inboundMessage.ts`), so the two clients agree deliberately.
+ */
+internal fun UnrecognizedMessagePayloadDto.toRow(
+    id: String,
+    occurredAt: Instant,
+): ThreadItem.UnrecognizedMessage? =
+    site.toUnrecognizedSite()?.let { unrecognizedSite ->
+        ThreadItem.UnrecognizedMessage(
+            id = id,
+            site = unrecognizedSite,
+            messageType = messageType,
+            raw = raw,
+            truncated = truncated,
+            occurredAt = occurredAt,
+        )
+    }
+
+private fun String.toUnrecognizedSite(): UnrecognizedSite? =
+    when (this) {
+        "line_type" -> UnrecognizedSite.LineType
+        "assistant_block" -> UnrecognizedSite.AssistantBlock
+        "user_block" -> UnrecognizedSite.UserBlock
+        "undecodable" -> UnrecognizedSite.Undecodable
         else -> null
     }

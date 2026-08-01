@@ -28,13 +28,17 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -4885,6 +4889,256 @@ class RemoteConversationRepositoryTest {
             assertEquals(emptyList<List<Conversation>>(), emissions)
         }
 
+    // ---- #609: fold unrecognized_message into the thread as ThreadItem.UnrecognizedMessage -------
+
+    // AC #1: a well-formed frame folds one row carrying all four wire fields verbatim, plus a stamped
+    // arrival instant (the wire carries no timestamp) and a client-owned id.
+    @Test
+    fun unrecognizedMessage_foldsRowCarryingWireFieldsVerbatim() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            val before = Clock.System.now()
+            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "wobble", """{"type":"wobble","x":1}"""))
+            runCurrent()
+            val after = Clock.System.now()
+
+            val row = unrecognizedRowsOf(emissions.last()).single()
+            assertEquals(UnrecognizedSite.LineType, row.site)
+            assertEquals("wobble", row.messageType)
+            assertEquals("""{"type":"wobble","x":1}""", row.raw)
+            assertFalse(row.truncated)
+            assertTrue("occurredAt is stamped from the wall clock", row.occurredAt >= before && row.occurredAt <= after)
+            assertTrue("id is non-empty", row.id.isNotEmpty())
+        }
+
+    // AC #1: the row interleaves by arrival order with the live `message` rows in the same thread.
+    @Test
+    fun unrecognizedMessage_interleavesWithMessagesInArrivalOrder() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(messageEnvelope("c1", "m1", "user", "first", "2026-05-31T10:00:00Z"))
+            runCurrent()
+            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "wobble", "{}"))
+            runCurrent()
+            pump.push(messageEnvelope("c1", "m2", "assistant", "second", "2026-05-31T10:01:00Z"))
+            runCurrent()
+
+            assertEquals(listOf("m1", "unrecognized:LineType", "m2"), threadShape(emissions.last()))
+        }
+
+    // AC #1: each of the four closed-set site values maps to its UnrecognizedSite constant.
+    @Test
+    fun unrecognizedMessage_eachSiteMapsToItsConstant() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "a", "{}"))
+            pump.push(unrecognizedMessageEnvelope("c1", "assistant_block", "b", "{}", id = 2L))
+            pump.push(unrecognizedMessageEnvelope("c1", "user_block", "c", "{}", id = 3L))
+            pump.push(unrecognizedMessageEnvelope("c1", "undecodable", "", "{}", id = 4L))
+            runCurrent()
+
+            assertEquals(
+                listOf(
+                    UnrecognizedSite.LineType,
+                    UnrecognizedSite.AssistantBlock,
+                    UnrecognizedSite.UserBlock,
+                    UnrecognizedSite.Undecodable,
+                ),
+                unrecognizedRowsOf(emissions.last()).map { it.site },
+            )
+        }
+
+    // AC #1: `truncated` round-trips both ways — `false` is a value, not an absence, so it must never be
+    // read through truthiness nor defaulted.
+    @Test
+    fun unrecognizedMessage_truncatedRoundTripsBothWays() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "a", "cut...", truncated = true))
+            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "b", "whole", truncated = false, id = 2L))
+            runCurrent()
+
+            assertEquals(listOf(true, false), unrecognizedRowsOf(emissions.last()).map { it.truncated })
+        }
+
+    // AC #1: an empty message_type (the `undecodable` site — nothing decoded, so no type was read) folds a
+    // row carrying "" rather than being dropped as malformed.
+    @Test
+    fun unrecognizedMessage_emptyMessageTypeOnUndecodableSite_folds() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(unrecognizedMessageEnvelope("c1", "undecodable", "", "not json at all"))
+            runCurrent()
+
+            val row = unrecognizedRowsOf(emissions.last()).single()
+            assertEquals(UnrecognizedSite.Undecodable, row.site)
+            assertEquals("", row.messageType)
+            assertEquals("not json at all", row.raw)
+        }
+
+    // AC #1: repeats are never coalesced — two byte-identical frames yield two rows with distinct ids, so
+    // the thread's LazyColumn can key them apart. How often the frame fires is the signal; merging hides it.
+    @Test
+    fun unrecognizedMessage_backToBackRepeats_produceTwoRowsWithDistinctIds() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "wobble", """{"type":"wobble"}"""))
+            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "wobble", """{"type":"wobble"}""", id = 2L))
+            runCurrent()
+
+            val rows = unrecognizedRowsOf(emissions.last())
+            assertEquals(listOf("unrecognized:LineType", "unrecognized:LineType"), threadShape(emissions.last()))
+            assertEquals(2, rows.size)
+            assertNotEquals("repeats must be keyable apart", rows[0].id, rows[1].id)
+        }
+
+    // AC #4: a site outside the closed set drops that one frame without killing the collector — a later
+    // well-formed frame on the same conversation still folds.
+    @Test
+    fun unrecognizedMessage_unknownSite_droppedCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(unrecognizedMessageEnvelope("c1", "wormhole", "a", "{}"))
+            runCurrent()
+            assertEquals(emptyList<String>(), threadShape(emissions.last()))
+
+            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "b", "{}", id = 2L))
+            runCurrent()
+            assertEquals(listOf("unrecognized:LineType"), threadShape(emissions.last()))
+        }
+
+    // AC #4: a malformed payload drops that one frame and the lone collector survives. Both probes use a
+    // genuinely wrong shape (a missing required field; an object where a String belongs) — a *quoted*
+    // primitive is a known false green, since kotlinx's tree decoder accepts it even at isLenient = false.
+    @Test
+    fun unrecognizedMessage_malformedDropped_collectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            // Missing the required `truncated` → SerializationException → dropped.
+            pump.push(unrecognizedProbe(1L, """{"conversation_id":"c1","site":"line_type","message_type":"a","raw":"{}"}"""))
+            // An object where `raw` declares a String → wrong-typed → dropped.
+            pump.push(
+                unrecognizedProbe(
+                    2L,
+                    """{"conversation_id":"c1","site":"line_type","message_type":"a","raw":{"n":1},"truncated":false}""",
+                ),
+            )
+            runCurrent()
+            assertEquals(emptyList<String>(), threadShape(emissions.last()))
+
+            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "b", "{}", id = 3L))
+            runCurrent()
+            assertEquals(listOf("unrecognized:LineType"), threadShape(emissions.last()))
+        }
+
+    // AC #2 (fail-closed): without `interactive` negotiated, a well-formed frame folds nothing.
+    @Test
+    fun unrecognizedMessage_capabilityGateClosed_foldsNothing() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { emptySet() })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "a", "{}"))
+            runCurrent()
+
+            assertEquals(emptyList<String>(), threadShape(emissions.last()))
+        }
+
+    // AC #2 (fail-closed): a negotiated set with another token but NOT `interactive` also folds nothing.
+    @Test
+    fun unrecognizedMessage_capabilityGateUnrelated_foldsNothing() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("something_else") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "a", "{}"))
+            runCurrent()
+
+            assertEquals(emptyList<String>(), threadShape(emissions.last()))
+        }
+
+    // AC #1: the row routes strictly by its payload conversation_id — a frame naming "c2" never appears in
+    // "c1"'s thread, and surfaces only in "c2"'s.
+    @Test
+    fun unrecognizedMessage_routesByConversationId_neverCrossRoutes() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val c1 = collectMessages(repo, "c1")
+            val c2 = collectMessages(repo, "c2")
+            runCurrent()
+
+            pump.push(unrecognizedMessageEnvelope("c2", "line_type", "a", "{}"))
+            runCurrent()
+
+            assertEquals(emptyList<String>(), threadShape(c1.last()))
+            assertEquals(listOf("unrecognized:LineType"), threadShape(c2.last()))
+        }
+
+    // AC #3: the frame opens/closes/alters no turn, surfaces on no live-event stream, and clears neither a
+    // stall nor any other conversation status — while its own row still lands.
+    @Test
+    fun unrecognizedMessage_inertTowardNeighbours_keepsStallAndEmitsNoLiveEvent() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectLiveEvents(repo)
+            val stalls = collectStall(repo, "c1")
+            val apiRetry = collectApiRetry(repo, "c1")
+            val compacting = collectCompacting(repo, "c1")
+            val thread = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(stallEnvelope("c1"))
+            runCurrent()
+            assertEquals(listOf(false, true), stalls)
+
+            pump.push(unrecognizedMessageEnvelope("c1", "line_type", "a", "{}", id = 2L))
+            runCurrent()
+
+            assertEquals("an unparseable message is not turn forward progress — the stall stands", listOf(false, true), stalls)
+            assertEquals(emptyList<LiveSessionEvent>(), events)
+            assertEquals(listOf(ApiRetryStatus.NotRetrying), apiRetry)
+            assertEquals(listOf(false), compacting)
+            assertEquals(listOf("unrecognized:LineType"), threadShape(thread.last()))
+        }
+
     // ---- #412: replay-cursor recording on the inbound path --------------------------------------
 
     // AC #2: each interactive structured frame's event_id advances the high-water mark; an
@@ -5860,8 +6114,8 @@ class RemoteConversationRepositoryTest {
 
     /**
      * Arrival-order shape of a mixed thread (#336): a message row → its id, a boundary →
-     * "boundary:<reason>", an unrecognized row → "unrecognized:<site>". The last arm exists only to keep
-     * the `when` total (#608) — this repository cannot yet produce that row; #609 wires the decode.
+     * "boundary:<reason>", an unrecognized row → "unrecognized:<site>" (the row type shipped in #608;
+     * #609 wired the decode arm that folds it).
      */
     private fun threadShape(thread: List<ThreadItem>): List<String> =
         thread.map {
@@ -6075,6 +6329,45 @@ class RemoteConversationRepositoryTest {
                 ),
         )
     }
+
+    /**
+     * An `unrecognized_message` envelope `{conversation_id, site, message_type, raw, truncated}` (#609).
+     * All five fields are always present on the wire (no `omitempty`), so the helper always emits all
+     * five — including an empty [messageType] (the `undecodable` shape) and `truncated: false`. Built
+     * through [buildJsonObject] rather than string interpolation because [raw] is arbitrary JSON text
+     * whose own quotes and braces must survive into the payload intact.
+     */
+    private fun unrecognizedMessageEnvelope(
+        conversationId: String,
+        site: String,
+        messageType: String,
+        raw: String,
+        truncated: Boolean = false,
+        id: Long = 1L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "unrecognized_message",
+            ts = TS,
+            payload =
+                buildJsonObject {
+                    put("conversation_id", conversationId)
+                    put("site", site)
+                    put("message_type", messageType)
+                    put("raw", raw)
+                    put("truncated", truncated)
+                },
+        )
+
+    /** A raw `unrecognized_message` envelope carrying [payload] verbatim — for the malformed-payload probes. */
+    private fun unrecognizedProbe(
+        id: Long,
+        payload: String,
+    ): Envelope = Envelope(id = id, type = "unrecognized_message", ts = TS, payload = MobileJson.parseToJsonElement(payload))
+
+    /** Every [ThreadItem.UnrecognizedMessage] in [thread], in order (#609). */
+    private fun unrecognizedRowsOf(thread: List<ThreadItem>): List<ThreadItem.UnrecognizedMessage> =
+        thread.filterIsInstance<ThreadItem.UnrecognizedMessage>()
 
     /** A `resync` control marker `{conversation_id}` (#417) — no event_id; daemon's aged-out-of-ring signal. */
     private fun resyncEnvelope(
