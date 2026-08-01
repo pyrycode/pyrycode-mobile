@@ -1682,7 +1682,7 @@ class ThreadViewModelTest {
         }
 
     @Test
-    fun state_initialValue_includesDefaultModelEffortAndTokenPercentDefaults() =
+    fun state_initialValue_includesDefaultModelEffortAndYolo() =
         runTest {
             val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
             val vm = makeVm(handle, FakeConversationRepository())
@@ -1690,13 +1690,10 @@ class ThreadViewModelTest {
             assertEquals(Model.OPUS_4_7, vm.state.value.selectedModel)
             assertEquals(Effort.HIGH, vm.state.value.selectedEffort)
             assertFalse(vm.state.value.yoloEnabled)
-            assertEquals(0, vm.state.value.tokenPercent)
-            assertEquals(0, vm.state.value.tokensUsed)
-            assertEquals(0, vm.state.value.tokensTotal)
         }
 
     @Test
-    fun state_postSubscription_emitsDefaultModelEffortAndTokenPercent() =
+    fun state_postSubscription_emitsDefaultModelEffortAndYolo() =
         runTest {
             val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
             val vm = makeVm(handle, FakeConversationRepository())
@@ -1705,9 +1702,6 @@ class ThreadViewModelTest {
             assertEquals(Model.OPUS_4_7, vm.state.value.selectedModel)
             assertEquals(Effort.HIGH, vm.state.value.selectedEffort)
             assertFalse(vm.state.value.yoloEnabled)
-            assertEquals(73, vm.state.value.tokenPercent)
-            assertEquals(146_000, vm.state.value.tokensUsed)
-            assertEquals(200_000, vm.state.value.tokensTotal)
             collector.cancel()
         }
 
