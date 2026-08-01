@@ -525,7 +525,10 @@ file → the producer tails exactly the file `fakeclaude` writes.
    promoted row to `conversations.json` with `current_session_id == INITIAL_UUID`,
    `is_promoted: true`, `name: "e2e-seed"` (deliberately **not** `"…ping…"`: the seeded channel name
    renders verbatim in the thread top bar, and the reply is asserted as a `"ping"` substring — a
-   `"ping"`-bearing channel name would false-green the test on the title alone).
+   `"ping"`-bearing channel name would false-green the test on the title alone). With
+   `INTERACTIVE_RUNNER` set, this step also seeds `<HOME>/.pyry/config.json` — per-**user**, one level
+   *above* the per-instance directory `conversations.json` goes in — to pin the daemon's interactive
+   runner; see [Interactive runner selection](#interactive-runner-selection).
 3. **Daemon** — adds `-pyry-claude=<fakeclaude>`, `-pyry-workdir=<HOME>`, and the
    `PYRY_FAKE_CLAUDE_*` env (`TUI=1`, `INITIAL_UUID`, `SESSIONS_DIR`, `JSONL_TRIGGER`).
 4. **Fixture-drop watcher** — a background job waits for the `send_message.enqueued` line in
@@ -697,6 +700,72 @@ The drop-B disconnect fence is wired as the overridable `DISCONNECT_TOKEN` / `DI
 to a `"disconnect"` substring in `relay.log`) and baseline-counted (wait for the count to *increase* past
 the level captured after drop A) so a stale connection-churn line cannot false-fire it. The exact relay
 token is the chief first-run unknown (see Assumptions).
+
+## Interactive runner selection
+
+The daemon picks its interactive runner from `interactive_runner` in `$HOME/.pyry/config.json`. There is
+**no command-line flag** — the mode is config-file only, and `resolveConfigPath()` is per-**user**, not
+per-instance (pyrycode `cmd/pyry/pair.go`), so `-pyry-name=e2e-live` does not namespace it. The only lever
+on which config a spawned daemon reads is `$HOME`, which splits the harness's three modes:
+
+| Mode | `$HOME` | Config the daemon reads | `INTERACTIVE_RUNNER` |
+| --- | --- | --- | --- |
+| Deterministic (rung 4) | isolated `/tmp/pyry-e2e-det.*` | none, unless the harness seeds one | **pinnable** |
+| Live (rung 3, production relay) | the operator's **real** HOME | the operator's own | refused in preflight |
+| default rung 3 | the operator's **real** HOME | the operator's own | refused in preflight |
+
+Without this, a live gate's runner is a property of the operator's machine rather than of the test: flip
+that config key for a rollback and the gate silently starts measuring the other runner with no signal in its
+output. A gate whose subject changes without its result changing is not a gate.
+
+`INTERACTIVE_RUNNER` pins the runner for one run, so a deliberate rollback comparison is a one-variable
+change:
+
+```bash
+DETERMINISTIC=1 INTERACTIVE_RUNNER=stream-json PYRYCODE_SRC=~/Workspace/Projects/pyrycode bash scripts/e2e-emulator.sh
+```
+
+**Accepted values are `pty` and `stream-json`** — the daemon's own set (`selectInteractiveRunner`, which
+deliberately has no silent fallback). Anything else fails in the harness **preflight**, naming the offending
+value and the accepted set, before the relay starts and before anything is spawned; without that check a
+typo reaches the operator as an opaque `daemon exited early — see daemon.log` three seconds later. Leaving
+the variable unset changes nothing in any mode: no validation, no seed, no config file — byte-for-byte
+today's behaviour.
+
+**Pinning applies on the DETERMINISTIC path only.** The seed goes to `<ISO_HOME>/.pyry/config.json` — inside
+the fresh `mktemp -d` HOME nothing outside the run can see — as a partial config carrying just the one field
+(`config.Load` overlays it onto the defaults, and `PYRY_RELAY_URL` already supplies `relay_url` on that
+path). Requesting a runner on a real-HOME path (`LIVE=1`, or plain rung 3) **aborts in preflight**, naming
+why: the config is per-user, the run is under the real HOME, and honouring the request would edit the
+operator's production `~/.pyry/config.json`. That abort lands before the daemon spawns and before any file
+is written — a test-caused edit to production configuration is the failure this mechanism must not
+introduce. `scripts/e2e-preship-gate.sh` execs `env LIVE=1 bash …` and so inherits the caller's environment:
+an operator who has `INTERACTIVE_RUNNER` exported gets that abort and its explanation rather than a pre-ship
+gate quietly measuring the other runner. That is intended — the wrapper does not scrub the variable.
+
+**Every mode names the runner its daemon will use, before that daemon spawns:**
+
+```
+[e2e] interactive runner: stream-json  (from /Users/you/.pyry/config.json)
+[e2e] interactive runner: pty  (daemon default — no config file at /tmp/pyry-e2e-det.qj9cn9/.pyry/config.json)
+```
+
+The reported value is resolved by **reading back the very file the daemon is about to read** — never by
+echoing what was requested. That is what makes the pin self-verifying. The path is the trap: the config is
+per-user (`<HOME>/.pyry/config.json`), while the adjacent `conversations.json` seed is per-instance
+(`<HOME>/.pyry/<PYRY_NAME>/`). A seed written one level too deep is read by `config.Load` as a *missing*
+file, which returns defaults with **no error** — the run would go green on the default runner and the pin
+would have done nothing. Read-back reporting turns that silent false-green into a visible
+`pty (daemon default)` on stdout.
+
+On the real-HOME paths that read is strictly read-only, and it never becomes a new way for those modes to
+fail. A config the harness cannot read is *reported* (`unknown`), not fatal; a value outside the accepted set
+is reported as the bare token `unrecognised`; a missing config file is reported as the daemon's default, not
+as an error. The harness prints the one field plus a fixed reason — never the file body (the same file holds
+`relay_url`) and never an interpolated parser exception.
+
+Out of scope here: **which** runner rung 4 defaults to. That is #613, blocked on an upstream `fakeclaude`
+capability; this mechanism ships the lever and leaves the default where it is.
 
 ## Verification status
 

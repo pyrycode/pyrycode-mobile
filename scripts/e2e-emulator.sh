@@ -62,11 +62,17 @@
 #   DETERMINISTIC=1 SCENARIO=tool-failed PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, tool failed
 #   DETERMINISTIC=1 SCENARIO=reconnect   PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh   # rung 4, reconnect continuity
 #   DETERMINISTIC=1 SCENARIO=replay-order PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh  # rung 4, post-reconnect replay ordering
+#   DETERMINISTIC=1 INTERACTIVE_RUNNER=stream-json PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh  # rung 4, pinned runner
 # Tunables (env):
 #   PORT=8888  DEVICE=pixel2Api33Atd  PAIR_NAME=e2e-emulator  PYRY_NAME=e2e-emulator
 #   PYRY_BIN=pyry  RELAY_BIN=pyrycode-relay
 #   LIVE=  LIVE_RELAY_HOST=pyrycode-relay.pyryco.de   (LIVE=1 → PAIR_NAME/PYRY_NAME default to e2e-live)
 #   DETERMINISTIC=  SCENARIO=ping  PYRYCODE_SRC=  FAKE_CLAUDE_BIN=  FIXTURE_FILE=  FIXTURE_FILE_2=
+#   INTERACTIVE_RUNNER=  (pty | stream-json; DETERMINISTIC only — pins the daemon's interactive runner.
+#                         Unset = the daemon's own default, unchanged. A real-HOME run (LIVE / default
+#                         rung 3) REFUSES the request rather than edit the operator's ~/.pyry/config.json;
+#                         every mode still REPORTS the runner its daemon will use. See #614 and
+#                         docs/e2e-interactive-stream.md § "Interactive runner selection".)
 #   INITIAL_UUID=  CONV_UUID=  SEED_CHANNEL_NAME=e2e-seed
 #   DISCONNECT_LOG=<relay.log>  DISCONNECT_TOKEN=disconnect  (replay-order only: where/what to watch for
 #                                                             the phone-leg drop that fences drop B)
@@ -117,6 +123,16 @@ else
   PHONE_RELAY_URL="ws://10.0.2.2:${PORT}"
 fi
 
+# INTERACTIVE_RUNNER (#614): pin which interactive runner the spawned daemon builds — "pty" (the
+# terminal-driven supervisor) or "stream-json". The daemon has NO flag for this; it reads
+# `interactive_runner` from <HOME>/.pyry/config.json, and resolveConfigPath() is per-USER, not
+# per-instance (pyrycode cmd/pyry/pair.go), so -pyry-name does not namespace it. The only lever is
+# $HOME — which is why pinning is supported on the isolated-HOME DETERMINISTIC path ONLY, and a
+# real-HOME run refuses the request in preflight instead of editing production configuration.
+# Unset means DO NOTHING: no validation beyond this, no seed, no behaviour change in any mode.
+# Reporting (which runner the daemon will actually use) happens in EVERY mode either way.
+INTERACTIVE_RUNNER="${INTERACTIVE_RUNNER:-}"
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GRADLEW="${REPO_ROOT}/gradlew"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pyry-e2e.XXXXXX")"
@@ -156,6 +172,80 @@ ISO_HOME=""
 log() { printf '\033[1;34m[e2e]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[e2e] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
+# resolve_runner_from_config <config-path> (#614)
+#   Echoes exactly one line, "<runner>\t<reason>". NEVER writes. NEVER exits non-zero — on the
+#   real-HOME paths this reads a file the harness does not own, and a config we cannot read is
+#   something to REPORT, not to abort on (that would make read-only reporting a new failure mode for
+#   modes that work today). `set -e` would kill the script on a non-zero command substitution, so the
+#   python side catches everything and always exits 0 with one line.
+#   runner is one of a closed four-token set: pty | stream-json | unrecognised | unknown.
+#   SECURITY (spec § Security review): report the ONE field and a fixed reason token — never the file
+#   body (the same file holds relay_url and is the natural home for future secrets) and never an
+#   interpolated parser exception (its text can carry a fragment of the document). Echoing the raw
+#   value only when it matches the accepted set also clamps terminal escapes out of an operator's
+#   config: anything else reports the bare token `unrecognised`.
+resolve_runner_from_config() {
+  python3 - "$1" <<'PY'
+import json, sys
+
+
+def resolve(path):
+    try:
+        with open(path, "r") as f:
+            raw = f.read()
+    except FileNotFoundError:
+        # Upstream config.Load treats a missing file as DefaultConfig() with NO error, and
+        # InteractiveRunner has no DefaultConfig entry — so absent file == the daemon's default.
+        return ("pty", "daemon default — no config file at " + path)
+    except OSError:
+        return ("unknown", "could not read " + path)
+    try:
+        obj = json.loads(raw)
+    except Exception:
+        return ("unknown", "could not parse " + path + " (not valid JSON)")
+    if not isinstance(obj, dict):
+        return ("unknown", "could not parse " + path + " (not a JSON object)")
+    value = obj.get("interactive_runner", "")
+    if not isinstance(value, str):
+        # Upstream decodes into a string field, so a non-string here fails config.Load outright —
+        # that is a parse failure, NOT the default. Reporting it as "pty (daemon default)" would
+        # name a runner the daemon will never reach.
+        return ("unknown",
+                "could not parse " + path
+                + " (interactive_runner is not a string — the daemon will refuse to start)")
+    if value == "":
+        return ("pty", "daemon default — interactive_runner unset in " + path)
+    if value in ("pty", "stream-json"):
+        return (value, "from " + path)
+    return ("unrecognised",
+            "value in " + path + " is outside the accepted set — the daemon will refuse to start")
+
+
+try:
+    runner, reason = resolve(sys.argv[1])
+except BaseException:
+    runner, reason = ("unknown", "could not read " + sys.argv[1])
+sys.stdout.write(runner + "\t" + reason + "\n")
+PY
+}
+
+# report_interactive_runner <config-path> (#614)
+#   Names, on stdout, the interactive runner the daemon is about to use. Always called BEFORE the
+#   daemon spawns, in every mode. It reports by READING BACK the very file the daemon will read —
+#   never by echoing what was requested — so a pin that landed at the wrong path reports the daemon
+#   default and the operator can see on stdout that the pin did not take.
+report_interactive_runner() {
+  local config_path="$1" line runner reason
+  line="$(resolve_runner_from_config "${config_path}" || true)"
+  # Belt for a resolver that somehow produced nothing at all. NOT `|| echo <token>` on the
+  # substitution itself: that appends a SECOND line and breaks the tab split (same trap as the
+  # `|| echo 0` count idiom noted at the disconnect-fenced watcher below).
+  [ -n "${line}" ] || line="$(printf 'unknown\tcould not read %s' "${config_path}")"
+  runner="${line%%$'\t'*}"
+  reason="${line#*$'\t'}"
+  log "interactive runner: ${runner}  (${reason})"
+}
+
 cleanup() {
   local code=$?
   log "tearing down…"
@@ -175,6 +265,39 @@ trap cleanup EXIT INT TERM
 
 # ---- preflight --------------------------------------------------------------------------------
 [ -n "${LIVE}" ] && [ -n "${DETERMINISTIC}" ] && die "LIVE=1 and DETERMINISTIC=1 are mutually exclusive (real vs scripted claude)"
+
+# INTERACTIVE_RUNNER guards (#614). Both are pure argument checks, so they run FIRST — ahead of the
+# host-binary lookups below, before the relay starts, before ISO_HOME exists, before pairing, and
+# therefore before anything is spawned or any file is written.
+#
+# Order between the two is load-bearing: validate the VALUE, then the MODE. The typo check is
+# unconditional, so `INTERACTIVE_RUNNER=ptty LIVE=1` must surface the typo — the cheaper problem —
+# rather than reporting the mode error, sending the operator to switch modes and re-run, and only
+# THEN revealing the typo.
+if [ -n "${INTERACTIVE_RUNNER}" ]; then
+  # The daemon's own accepted set, with no silent fallback: any other value aborts daemon startup
+  # (pyrycode cmd/pyry/main.go selectInteractiveRunner). Catching it here is what keeps a typo from
+  # reaching the operator as an opaque "daemon exited early — see daemon.log" three seconds later;
+  # the wording mirrors upstream's so the two messages agree.
+  case "${INTERACTIVE_RUNNER}" in
+    pty | stream-json) ;;
+    *) die "INTERACTIVE_RUNNER=\"${INTERACTIVE_RUNNER}\" not recognized (accepted: \"pty\", \"stream-json\")" ;;
+  esac
+  # Pinning writes <HOME>/.pyry/config.json. That path is per-USER, so on a real-HOME run it IS the
+  # operator's production configuration — refuse rather than edit it. Only DETERMINISTIC runs under
+  # an isolated HOME. `scripts/e2e-preship-gate.sh` execs `env LIVE=1 bash …` and so inherits the
+  # caller's environment: an operator with INTERACTIVE_RUNNER exported gets this abort and its
+  # explanation instead of a pre-ship gate silently measuring the other runner. That is intended —
+  # do NOT scrub the variable there.
+  if [ -z "${DETERMINISTIC}" ]; then
+    die "INTERACTIVE_RUNNER=\"${INTERACTIVE_RUNNER}\" is supported on the DETERMINISTIC path only — this run uses the REAL HOME.
+The daemon reads interactive_runner from <HOME>/.pyry/config.json, which is per-user and not per-instance (-pyry-name does
+not namespace it), so honouring the request here would edit your production ~/.pyry/config.json. Re-run with DETERMINISTIC=1
+to pin it, or unset INTERACTIVE_RUNNER — either way the harness reports which runner the daemon will use.
+Nothing was spawned and nothing was written."
+  fi
+fi
+
 # LIVE spawns no local relay (it dials the production relay), so the relay binary is not required there.
 [ -n "${LIVE}" ] || command -v "${RELAY_BIN}" >/dev/null 2>&1 || die "relay binary '${RELAY_BIN}' not found (set RELAY_BIN)"
 command -v "${PYRY_BIN}"  >/dev/null 2>&1 || die "pyry binary '${PYRY_BIN}' not found (set PYRY_BIN)"
@@ -359,9 +482,50 @@ if [ -n "${DETERMINISTIC}" ]; then
   cat >"${CONV_DIR}/conversations.json" <<EOF
 {"conversations":[{"id":"${CONV_UUID}","name":"${SEED_CHANNEL_NAME}","cwd":"${ISO_HOME}","current_session_id":"${INITIAL_UUID}","is_promoted":true,"last_used_at":"2026-01-01T00:00:00Z"}]}
 EOF
+  # Pin the interactive runner (#614) — isolated HOME only, and only when asked for. Leaving
+  # INTERACTIVE_RUNNER unset must write NOTHING: today this path has no config file at all, and that
+  # byte-for-byte sameness is the point. Do not write {"interactive_runner":""} as a "harmless" default.
+  #
+  # PATH TRAP — read this before touching the path. The conversations.json seed just above goes to
+  # CONV_DIR, which is PER-INSTANCE (<ISO_HOME>/.pyry/<PYRY_NAME>/). The config is PER-USER, one level
+  # ABOVE it:
+  #     correct  <ISO_HOME>/.pyry/config.json               ← what resolveConfigPath() returns
+  #     wrong    <ISO_HOME>/.pyry/<PYRY_NAME>/config.json   ← copying the adjacent line's path
+  # The wrong path is silent: config.Load reads a missing file as DefaultConfig() with NO error, so the
+  # run goes green on the default runner and the pin does nothing. The pre-spawn report below reads the
+  # config back from the daemon's own path, so a misplaced seed shows up as "pty (daemon default)".
+  #
+  # A partial file is legal — config.Load overlays it onto DefaultConfig(), so every other field keeps
+  # its default. relay_url specifically is safe to leave defaulted here because this path already passes
+  # PYRY_RELAY_URL, which wins over the config (upstream resolveRelayURL: flag → env → config); today's
+  # unseeded deterministic run proves it, reaching the local relay with no config file at all.
+  #
+  # Shape and permissions mirror pyrycode's internal/e2e/harness.go StartStreamInteractiveWithRelay
+  # (MkdirAll 0700 + WriteFile 0600, before spawn). The umask subshell gives the FILE 0600 with no
+  # create-then-chmod window; like upstream's MkdirAll it does not re-mode an existing .pyry, which
+  # `pyry pair` has already created 0700 (pyrycode internal/keys/store.go). Either way the whole tree
+  # sits inside ISO_HOME, itself a private `mktemp -d`.
+  if [ -n "${INTERACTIVE_RUNNER}" ]; then
+    (
+      umask 077
+      mkdir -p "${ISO_HOME}/.pyry"
+      printf '{"interactive_runner":"%s"}\n' "${INTERACTIVE_RUNNER}" >"${ISO_HOME}/.pyry/config.json"
+    ) || die "failed to seed ${ISO_HOME}/.pyry/config.json"
+    log "  pinned interactive_runner=${INTERACTIVE_RUNNER} → ${ISO_HOME}/.pyry/config.json"
+  fi
 fi
 
 # ---- 3. daemon (Mobile Protocol v2, pointed at the relay) -------------------------------------
+# Name the interactive runner this daemon will use BEFORE it spawns (#614) — one call site, all three
+# modes, so a gate's result stays a property of the test rather than of whatever ~/.pyry/config.json
+# happens to say. DETERMINISTIC reads back the isolated HOME (seeded or not); LIVE and default rung 3
+# read the operator's own config STRICTLY READ-ONLY. The resolver never writes and never aborts.
+if [ -n "${DETERMINISTIC}" ]; then
+  DAEMON_CONFIG_PATH="${ISO_HOME}/.pyry/config.json"
+else
+  DAEMON_CONFIG_PATH="${HOME:-}/.pyry/config.json"   # real HOME: read, never written
+fi
+report_interactive_runner "${DAEMON_CONFIG_PATH}"
 log "starting pyry daemon (PYRY_MOBILE_V2=1) → ${DAEMON_RELAY_URL}…"
 if [ -n "${DETERMINISTIC}" ]; then
   # Scripted backend: -pyry-claude=<fakeclaude>, -pyry-workdir=<HOME>, isolated HOME, and the
