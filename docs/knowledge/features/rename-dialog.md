@@ -29,8 +29,9 @@ Single `AlertDialog` with four slots, structurally identical to [`CreateFolderDi
 
 1. **`onDismissRequest = onDismiss`** — outside-tap + back-press routed through M3 defaults.
 2. **`title`** — `Text(stringResource(R.string.rename_dialog_title), style = MaterialTheme.typography.headlineSmall)`. Style set explicitly to document the visual contract in source even though M3's `AlertDialog` title slot already defaults to `headlineSmall`.
-3. **`text`** — a single `OutlinedTextField`:
+3. **`text`** — a `LaunchedEffect(Unit) { focusRequester.requestFocus() }` immediately followed by a single `OutlinedTextField`. The effect **must** sit inside this slot, not before the `AlertDialog(...)` call — see the internal-state note below on why (#589).
    ```kotlin
+   LaunchedEffect(Unit) { focusRequester.requestFocus() }
    OutlinedTextField(
        value = fieldValue,
        onValueChange = { fieldValue = it },
@@ -60,15 +61,15 @@ val trimmedName by remember { derivedStateOf { fieldValue.text.trim() } }
 val isSaveEnabled by remember(initialName) {
     derivedStateOf { trimmedName.isNotEmpty() && trimmedName != initialName }
 }
-
-LaunchedEffect(Unit) { focusRequester.requestFocus() }
 ```
+
+`LaunchedEffect(Unit) { focusRequester.requestFocus() }` is declared **inside the `text` slot**, immediately before the `OutlinedTextField` it targets — see the slot listing above and § Auto-focus placement below.
 
 - **`fieldValue: TextFieldValue`** (not `String`) — preserves the `selection = TextRange(0, initialName.length)` seed so the field opens with the full name selected. AC #2's "typing immediately overwrites" comes for free: any keystroke replaces the selected range.
 - **Two-part `isSaveEnabled` gate.** `trimmedName.isNotEmpty()` blocks blank and whitespace-only inputs; `trimmedName != initialName` blocks the no-op rename. This is the key behavioural difference from [`CreateFolderDialog`](create-folder-dialog.md), which gates only on `trimmedName.isNotEmpty()` (its initial value is always empty).
 - **`remember(initialName)` keying on `isSaveEnabled`** — defensive. `initialName` doesn't change mid-composition in current flow (the host gates the dialog with `if (state.showRenameDialog)`, which tears it down between renames), but keying makes it a non-issue if a future caller binds it to a value that mutates while the dialog is open.
 - **`derivedStateOf` for trim / enabled** — same recomposition-isolation idiom as `CreateFolderDialog`; computes only when `fieldValue` actually changes.
-- **`LaunchedEffect(Unit)` for focus** — fires once per dialog instance after the composition tree commits, which is when `FocusRequester.requestFocus()` becomes safe to call. No `LaunchedEffect(focusRequester)` indirection needed.
+- **`LaunchedEffect(Unit)` for focus, placed inside `text`** — fires once per dialog instance after the field's own sub-composition commits. `AlertDialog`'s slots compose in the dialog window's **own** sub-composition, separate from the caller; an effect declared in the parent composition (before the `AlertDialog(...)` call) runs against a `FocusRequester` node that isn't attached yet in that sub-composition. `requestFocus()` returns cleanly either way — no `IllegalStateException` — so the defect was invisible until measured (#589; fixed after four LIVE `InteractiveStreamE2ETest` scenarios stalled on it). No `LaunchedEffect(focusRequester)` indirection needed; `Unit` is correct once the effect is co-located with the field.
 
 ### Submit paths
 
@@ -116,8 +117,9 @@ Two test files: nine Compose UI tests for the dialog composable, three unit test
 
 ### `RenameDialogTest.kt` (Compose, `./gradlew connectedAndroidTest`)
 
-`app/src/androidTest/java/de/pyryco/mobile/ui/conversations/components/RenameDialogTest.kt`. `createComposeRule()` + `PyrycodeMobileTheme` wrapper, matching the [`CreateFolderDialogTest`](create-folder-dialog.md) precedent. Nine tests:
+`app/src/androidTest/java/de/pyryco/mobile/ui/conversations/components/RenameDialogTest.kt`. `createComposeRule()` + `PyrycodeMobileTheme` wrapper, matching the [`CreateFolderDialogTest`](create-folder-dialog.md) precedent. Ten tests:
 
+- `field_reports_focus_once_dialog_composes` (#589) — `hasSetTextAction() and isFocused()` (the exact predicate `InteractiveStreamE2ETest` waits on before typing into this dialog) resolves to exactly one node within 2 s. This is the auto-focus contract itself, not just render/state coverage; see [`../codebase/589.md`](../codebase/589.md).
 - `title_and_field_label_and_buttons_render` — `"Rename"`, `"Name"`, `"Cancel"`, `"Save"` all `assertIsDisplayed`.
 - `field_prefills_with_initial_name` — `onNode(hasSetTextAction() and hasText("old name")).assertIsDisplayed()`. Disambiguates the field node from the title `Text` (both could match `hasText("Rename")` if there were a conversation named `"Rename"`).
 - `save_disabled_on_first_composition_when_matches_initial_name` — Save `assertIsNotEnabled` on the default render. AC #3 "disabled when trimmed input equals current name."
@@ -196,7 +198,7 @@ sealed interface ThreadEvent {
 
 ## Related
 
-- Ticket notes: [`../codebase/141.md`](../codebase/141.md)
+- Ticket notes: [`../codebase/141.md`](../codebase/141.md); auto-focus contract fix: [`../codebase/589.md`](../codebase/589.md)
 - Spec: `docs/specs/architecture/141-rename-dialog-wiring.md`
 - Parent: this is the per-item follow-up for `ThreadEvent.Rename` from the [`ThreadOverflowMenu`](thread-overflow-menu.md) family — first downstream slice after [#252](../codebase/252.md) mounted the menu in production.
 - Sibling stateless dialogs in the same package: [`CreateFolderDialog`](create-folder-dialog.md) (#213) — the original structural template; [`SaveAsChannelDialog`](save-as-channel-dialog.md) ([#142](../codebase/142.md)) — sibling pre-filled-input dialog using the same public-plus-`*Internal`-seam shape but with a single-gate `isSaveEnabled` (no unchanged-name check), an enum-payload `onSubmit` signature, and a `Column` with embedded radio rows in the `text` slot.

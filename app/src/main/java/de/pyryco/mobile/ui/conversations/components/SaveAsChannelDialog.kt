@@ -74,10 +74,6 @@ private fun SaveAsChannelDialogInternal(
     val trimmedName by remember { derivedStateOf { fieldValue.text.trim() } }
     val isSaveEnabled by remember { derivedStateOf { trimmedName.isNotEmpty() } }
 
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-    }
-
     AlertDialog(
         onDismissRequest = onDismiss,
         modifier = modifier,
@@ -88,6 +84,13 @@ private fun SaveAsChannelDialogInternal(
             )
         },
         text = {
+            // Placement is load-bearing: the field composes in the dialog window's own
+            // sub-composition, so a requestFocus() driven from the parent composition returns
+            // cleanly but never lands (#589 — measured 0 focused nodes). Keep the effect here,
+            // beside the field it targets.
+            LaunchedEffect(Unit) {
+                focusRequester.requestFocus()
+            }
             Column(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {

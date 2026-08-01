@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -45,6 +46,39 @@ class RenameDialogTest {
         }
 
         composeTestRule.onNode(hasSetTextAction() and hasText("old name")).assertIsDisplayed()
+    }
+
+    /**
+     * Guards the auto-focus contract three LIVE `InteractiveStreamE2ETest` scenarios wait on before
+     * typing: `deleteConversation` (:544), `archiveRestore` (:689) and `renameConversation` (:981) each
+     * open this dialog **over the thread**, whose composer is also editable, and disambiguate the two
+     * `hasSetTextAction()` nodes by focus. The predicate below is that live predicate verbatim — a
+     * paraphrase would leave the property those scenarios actually depend on unmeasured.
+     *
+     * The follow-up [androidx.compose.ui.test.junit4.ComposeTestRule.onNode] is not redundant: it throws
+     * on multiple matches, so it asserts the **uniqueness** the live scenarios rely on when they call
+     * `performTextReplacement` on this same selector.
+     *
+     * The 2 s bound is deliberate and is not [de.pyryco.mobile.e2e.InteractiveStreamE2ETest]'s 30 s. It
+     * absorbs the frame between `LaunchedEffect` and focus dispatch — a bare `assertIsFocused()` could
+     * report "contract broken" when the truth is "focus landed one frame later" — while staying short
+     * enough that anything slower is a finding worth reporting rather than quietly waited out.
+     */
+    @Test
+    fun field_reports_focus_once_dialog_composes() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                RenameDialog(initialName = "old name", onSubmit = {}, onDismiss = {})
+            }
+        }
+
+        composeTestRule.waitUntil(2_000L) {
+            composeTestRule
+                .onAllNodes(hasSetTextAction() and isFocused())
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
+        composeTestRule.onNode(hasSetTextAction() and isFocused()).assertIsDisplayed()
     }
 
     @Test

@@ -30,9 +30,10 @@ Single `AlertDialog` with four slots, structurally identical to [`RenameDialog`]
 
 1. **`onDismissRequest = onDismiss`** — outside-tap + back-press routed through M3 defaults.
 2. **`title`** — `Text(stringResource(R.string.save_as_channel_dialog_title), style = MaterialTheme.typography.headlineSmall)`. Style set explicitly to document the visual contract in source even though M3's `AlertDialog` title slot already defaults to `headlineSmall`.
-3. **`text`** — a `Column(verticalArrangement = Arrangement.spacedBy(16.dp))` containing an `OutlinedTextField` and a file-private `WorkspaceRadios` composable:
+3. **`text`** — a `Column(verticalArrangement = Arrangement.spacedBy(16.dp))` containing a `LaunchedEffect(Unit) { focusRequester.requestFocus() }`, the `OutlinedTextField` it targets, and a file-private `WorkspaceRadios` composable. The effect **must** sit inside this `Column`, not before the `AlertDialog(...)` call — see the internal-state note below on why (#589).
    ```kotlin
    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+       LaunchedEffect(Unit) { focusRequester.requestFocus() }
        OutlinedTextField(
            value = fieldValue,
            onValueChange = { fieldValue = it },
@@ -86,15 +87,15 @@ var fieldValue by remember { mutableStateOf(initialValue) }
 var selectedWorkspace by remember { mutableStateOf(initialWorkspace) }
 val trimmedName by remember { derivedStateOf { fieldValue.text.trim() } }
 val isSaveEnabled by remember { derivedStateOf { trimmedName.isNotEmpty() } }
-
-LaunchedEffect(Unit) { focusRequester.requestFocus() }
 ```
+
+`LaunchedEffect(Unit) { focusRequester.requestFocus() }` is declared **inside the `text` slot's `Column`**, immediately before the `OutlinedTextField` it targets — see the slot listing above.
 
 - **`fieldValue: TextFieldValue`** (not `String`) — preserves the `selection = TextRange(0, initialName.length)` seed so the field opens with the full name selected. Typing immediately overwrites the seeded `"New channel"`: any keystroke replaces the selected range. Same shape as [`RenameDialog`](rename-dialog.md).
 - **`selectedWorkspace: WorkspaceChoice`** seeded from `initialWorkspace` (always `WorkspaceChoice.DEDICATED` from the public composable; previews route through the seam to set SCRATCH). Mutated on row tap via `onSelectedChange` → `selectedWorkspace = it`.
 - **Single-gate `isSaveEnabled`** — `trimmedName.isNotEmpty()` only. **No `trimmedName != initialName` clause** (the key behavioural difference from `RenameDialog`) — the dialog has no semantic notion of "unchanged"; submitting the unchanged seeded `"New channel"` is valid (the user intentionally chose to promote with the auto-suggested title). The slug helper handles the resulting `name = "New channel"` → `slug = "new-channel"` translation server-side.
 - **`derivedStateOf` for trim / enabled** — same recomposition-isolation idiom as `RenameDialog`; computes only when `fieldValue` actually changes. **No `remember(initialName)` key** on `isSaveEnabled` — the rename dialog needed it to defensively recompute against a streaming-rename mutation of `initialName`; this dialog's `isSaveEnabled` doesn't reference `initialName` at all (single-gate), so the key would do nothing.
-- **`LaunchedEffect(Unit)` for focus** — fires once per dialog instance after the composition tree commits, which is when `FocusRequester.requestFocus()` becomes safe to call. Same shape as `RenameDialog`.
+- **`LaunchedEffect(Unit)` for focus, placed inside `text`'s `Column`** — fires once per dialog instance after the field's own sub-composition commits. `AlertDialog`'s slots compose in the dialog window's **own** sub-composition, separate from the caller; an effect declared in the parent composition (before the `AlertDialog(...)` call) runs against a `FocusRequester` node that isn't attached yet in that sub-composition. `requestFocus()` returns cleanly either way — no `IllegalStateException` — so the defect was invisible until measured (#589; fixed after `interactiveTurn_saveAsChannel_promotesToChannelTier` was found to carry the same exposure, untested live). Same shape as `RenameDialog`, now that both are fixed.
 
 ### Submit paths
 
@@ -146,8 +147,9 @@ Two test files: 11 Compose UI tests for the dialog composable, four unit tests o
 
 ### `SaveAsChannelDialogTest.kt` (Compose, `./gradlew connectedAndroidTest`)
 
-`app/src/androidTest/java/de/pyryco/mobile/ui/conversations/components/SaveAsChannelDialogTest.kt`. `createComposeRule()` + `PyrycodeMobileTheme` wrapper, matching the [`RenameDialogTest`](rename-dialog.md#renamedialogtestkt-compose-gradlew-connectedandroidtest) precedent. 11 tests:
+`app/src/androidTest/java/de/pyryco/mobile/ui/conversations/components/SaveAsChannelDialogTest.kt`. `createComposeRule()` + `PyrycodeMobileTheme` wrapper, matching the [`RenameDialogTest`](rename-dialog.md#renamedialogtestkt-compose-gradlew-connectedandroidtest) precedent. 12 tests:
 
+- `field_reports_focus_once_dialog_composes` (#589) — `hasSetTextAction() and isFocused()` (the exact predicate `InteractiveStreamE2ETest` waits on before typing into this dialog) resolves to exactly one node within 2 s. The uniqueness half carries extra weight here: the `text` slot also holds the `WorkspaceRadios` group, so this is the one of the three dialogs where a sibling node could plausibly match. See [`../codebase/589.md`](../codebase/589.md).
 - `title_field_label_radios_and_buttons_render` — `"Save as channel"`, `"Name"`, `"Move to dedicated channel folder"`, `"Keep in scratch"`, `"Cancel"`, `"Save"` all `assertIsDisplayed`. The combined "renders the right widgets" sanity check.
 - `field_prefills_with_initial_name` — `onNode(hasSetTextAction() and hasText("New channel")).assertIsDisplayed()`. Disambiguates the field node from the title `Text` and from the radio labels via `hasSetTextAction()`.
 - `dedicated_radio_selected_by_default` — `onNodeWithText("Move to dedicated channel folder").assertIsSelected()`; `onNodeWithText("Keep in scratch").assertIsNotSelected()`. Locks AC #1 "selected by default."
@@ -274,7 +276,7 @@ The auto-suggested-title generator is a Phase 4 concern (synthesize from the fir
 
 ## Related
 
-- Ticket notes: [`../codebase/142.md`](../codebase/142.md)
+- Ticket notes: [`../codebase/142.md`](../codebase/142.md); auto-focus contract fix: [`../codebase/589.md`](../codebase/589.md)
 - Spec: `docs/specs/architecture/142-save-as-channel-dialog.md`
 - Parent: second per-item follow-up of the four `[NewSession, ChangeWorkspace, ChannelInfo, SaveAsChannel]` cases from the [`ThreadOverflowMenu`](thread-overflow-menu.md) family — after [#141](../codebase/141.md) wired `Rename`, [#142](../codebase/142.md) wires `SaveAsChannel`.
 - Sibling stateless dialogs in the same package: [`RenameDialog`](rename-dialog.md) (#141 — the direct structural template), [`CreateFolderDialog`](create-folder-dialog.md) (#213 — the original template that #141 lifted and #142 lifts again transitively).

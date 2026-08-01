@@ -28,8 +28,9 @@ Single `AlertDialog` with four slots:
 
 1. **`onDismissRequest = onDismiss`** — handles outside-tap and back-press (M3 defaults `dismissOnBackPress = true` and `dismissOnClickOutside = true` match the AC; no `properties` override needed).
 2. **`title`** — `Text("Create workspace", style = typography.headlineSmall)`. The style is passed explicitly to document the visual contract in source even though M3's `AlertDialog` title slot defaults to `headlineSmall`.
-3. **`text`** — a single `OutlinedTextField`:
+3. **`text`** — a `LaunchedEffect(Unit) { focusRequester.requestFocus() }` immediately followed by a single `OutlinedTextField`. The effect **must** sit inside this slot, not before the `AlertDialog(...)` call — see the internal-state note below on why (#589).
    ```kotlin
+   LaunchedEffect(Unit) { focusRequester.requestFocus() }
    OutlinedTextField(
        value = fieldValue,
        onValueChange = { fieldValue = it },
@@ -57,13 +58,13 @@ val focusRequester = remember { FocusRequester() }
 var fieldValue by remember { mutableStateOf(initialValue) }
 val trimmedName by remember { derivedStateOf { fieldValue.text.trim() } }
 val isCreateEnabled by remember { derivedStateOf { trimmedName.isNotEmpty() } }
-
-LaunchedEffect(Unit) { focusRequester.requestFocus() }
 ```
+
+`LaunchedEffect(Unit) { focusRequester.requestFocus() }` is declared **inside the `text` slot**, immediately before the `OutlinedTextField` it targets — see the slot listing above.
 
 - **`fieldValue: TextFieldValue` (not `String`)** — required so the seam can pre-select text via `TextRange(0, name.length)`; preserving this representation also makes a future public `initialName` parameter cheap (`TextRange(0, initialName.length)` on first composition).
 - **`derivedStateOf` for trim / enabled** — avoids recomputing the trim + blank-check on recompositions that don't change the field value.
-- **`LaunchedEffect(Unit)` for focus** — fires once per dialog instance; Compose's `LaunchedEffect` runs on the main thread by default, which is where focus work must happen.
+- **`LaunchedEffect(Unit)` for focus, placed inside `text`** — fires once per dialog instance after the field's own sub-composition commits. `AlertDialog`'s slots compose in the dialog window's **own** sub-composition, separate from the caller; an effect declared in the parent composition (before the `AlertDialog(...)` call) runs against a `FocusRequester` node that isn't attached yet in that sub-composition. `requestFocus()` returns cleanly either way — no `IllegalStateException` — so the defect was invisible until measured (#589; fixed after four LIVE `InteractiveStreamE2ETest` scenarios stalled on it). `Unit` is correct once the effect is co-located with the field; no `LaunchedEffect(focusRequester)` indirection needed.
 - **No `DisposableEffect`.** The dialog tears down when the host stops composing it (sets its `showDialog` flag to `false`); Compose handles state disposal.
 
 ### Submit paths
@@ -122,8 +123,9 @@ Unlike `ModalBottomSheet` previews ([`WorkspacePickerSheet`](./workspace-picker-
 
 ## Tests
 
-Six Compose UI tests in `app/src/androidTest/.../CreateFolderDialogTest.kt` (`createComposeRule()` + `AndroidJUnit4`, no MockK / Turbine — matches `ConversationAvatarTest.kt` and [`WorkspacePickerSheetTest.kt`](./workspace-picker-sheet.md)). All target the **public** `CreateFolderDialog` (the seam stays file-private per spec); typing happens via `performTextInput` on the `hasSetTextAction()` node:
+Seven Compose UI tests in `app/src/androidTest/.../CreateFolderDialogTest.kt` (`createComposeRule()` + `AndroidJUnit4`, no MockK / Turbine — matches `ConversationAvatarTest.kt` and [`WorkspacePickerSheetTest.kt`](./workspace-picker-sheet.md)). All target the **public** `CreateFolderDialog` (the seam stays file-private per spec); typing happens via `performTextInput` on the `hasSetTextAction()` node:
 
+- `field_reports_focus_once_dialog_composes` (#589) — `hasSetTextAction() and isFocused()` (the exact predicate `InteractiveStreamE2ETest` waits on before typing into this dialog) resolves to exactly one node within 2 s, with the field seeded **empty** — proving focus doesn't depend on the field carrying text. See [`../codebase/589.md`](../codebase/589.md).
 - `title_and_label_and_buttons_render` — `"Create workspace"`, `"What should this workspace be called?"`, `"Cancel"`, `"Create"` all `assertIsDisplayed`.
 - `create_button_disabled_when_input_blank` — `onNodeWithText("Create").assertIsNotEnabled()` on the default empty input.
 - `create_button_enabled_after_non_blank_input` — type `"my-workspace"`, assert `Create.assertIsEnabled()`.
@@ -139,12 +141,12 @@ The Compose tests deviate **up** from the architect spec, which said `"not requi
 - **No error / validation display.** The dialog has one validation rule (trimmed non-blank); there is no `isError`, no `supportingText`, no inline helper. Repo-level failures from `createWorkspaceFolder(name)` ([#210](../codebase/210.md)) — name collision, IO error — surface in the host (#207) *after* `onCreate` fires. The dialog has no opinion on what the host does next.
 - **No automatic `KeyboardCapitalization`.** Folder paths are lowercase by convention; `KeyboardCapitalization.None` overrides the M3 default of capitalising the first letter.
 - **No `selection` visible on the empty-init contract.** `TextRange.Zero` resolves to a cursor at position 0 with no selection, which is what the empty initial state should show. The pre-select-all behaviour kicks in only when the seam is invoked with a non-empty initial value (the previews exercise this path; the public composable does not).
-- **`FocusRequester` requires the field to be in the composition tree before `requestFocus()` runs** — `LaunchedEffect(Unit)` defers until first composition completes, which is sufficient. No `LaunchedEffect(focusRequester)` indirection needed.
+- **`FocusRequester` requires the field to be in the composition tree, in the *same* sub-composition as the effect, before `requestFocus()` runs.** `LaunchedEffect(Unit)` deferring until first composition completes is necessary but not sufficient: it must also be declared inside the `AlertDialog`'s `text` slot (the dialog window's own sub-composition), not in the parent composition before the `AlertDialog(...)` call — the latter shape shipped for a while and silently never focused the field (#589). No `LaunchedEffect(focusRequester)` indirection needed once co-located.
 - **`AlertDialog` renders inside its own window** — outside-tap dispatches through the scrim, not through the dialog's own click handlers. The host doesn't need to wire either back-press or outside-tap separately.
 
 ## Related
 
-- Ticket notes: [`../codebase/213.md`](../codebase/213.md)
+- Ticket notes: [`../codebase/213.md`](../codebase/213.md); auto-focus contract fix: [`../codebase/589.md`](../codebase/589.md)
 - Spec: `docs/specs/architecture/213-createfolderdialog-stateless-composable.md`
 - Parent: split from [#206](https://github.com/pyrycode/pyrycode-mobile/issues/206) (Workspace Picker bottom sheet — host + sheet + dialog bundle); itself split from #143.
 - Sibling stateless composables in the same package: [`WorkspacePickerSheet`](./workspace-picker-sheet.md) (#212), [`ConversationRow`](./conversation-row.md), [`ConnectionBanner`](./connection-banner.md), [`ToolCallRow`](./tool-call-row.md), [`MessageBubble`](./message-bubble.md).

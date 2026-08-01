@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -36,6 +37,42 @@ class CreateFolderDialogTest {
             .assertIsDisplayed()
         composeTestRule.onNodeWithText("Cancel").assertIsDisplayed()
         composeTestRule.onNodeWithText("Create").assertIsDisplayed()
+    }
+
+    /**
+     * Guards the auto-focus contract the LIVE `interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace`
+     * scenario waits on before typing (`InteractiveStreamE2ETest.kt:882`): the picker opens this dialog
+     * **over the thread**, whose composer is also editable, and disambiguates the two
+     * `hasSetTextAction()` nodes by focus. The predicate below is that live predicate verbatim — a
+     * paraphrase would leave the property that scenario actually depends on unmeasured.
+     *
+     * This field is seeded **empty**, and that is the point: it proves focus does not depend on the field
+     * carrying text, which is what makes the live selector usable here at all (there is no text to key on).
+     *
+     * The follow-up [androidx.compose.ui.test.junit4.ComposeTestRule.onNode] is not redundant: it throws
+     * on multiple matches, so it asserts the **uniqueness** the live scenario relies on when it calls
+     * `performTextInput` on this same selector.
+     *
+     * The 2 s bound is deliberate and is not [de.pyryco.mobile.e2e.InteractiveStreamE2ETest]'s 30 s. It
+     * absorbs the frame between `LaunchedEffect` and focus dispatch — a bare `assertIsFocused()` could
+     * report "contract broken" when the truth is "focus landed one frame later" — while staying short
+     * enough that anything slower is a finding worth reporting rather than quietly waited out.
+     */
+    @Test
+    fun field_reports_focus_once_dialog_composes() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                CreateFolderDialog(onCreate = {}, onDismiss = {})
+            }
+        }
+
+        composeTestRule.waitUntil(2_000L) {
+            composeTestRule
+                .onAllNodes(hasSetTextAction() and isFocused())
+                .fetchSemanticsNodes()
+                .isNotEmpty()
+        }
+        composeTestRule.onNode(hasSetTextAction() and isFocused()).assertIsDisplayed()
     }
 
     @Test

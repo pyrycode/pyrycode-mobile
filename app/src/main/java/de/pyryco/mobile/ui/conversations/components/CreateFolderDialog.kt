@@ -52,10 +52,6 @@ private fun CreateFolderDialogInternal(
     val trimmedName by remember { derivedStateOf { fieldValue.text.trim() } }
     val isCreateEnabled by remember { derivedStateOf { trimmedName.isNotEmpty() } }
 
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-    }
-
     AlertDialog(
         onDismissRequest = onDismiss,
         modifier = modifier,
@@ -66,6 +62,13 @@ private fun CreateFolderDialogInternal(
             )
         },
         text = {
+            // Placement is load-bearing: the field composes in the dialog window's own
+            // sub-composition, so a requestFocus() driven from the parent composition returns
+            // cleanly but never lands (#589 — measured 0 focused nodes). Keep the effect here,
+            // beside the field it targets.
+            LaunchedEffect(Unit) {
+                focusRequester.requestFocus()
+            }
             OutlinedTextField(
                 value = fieldValue,
                 onValueChange = { fieldValue = it },

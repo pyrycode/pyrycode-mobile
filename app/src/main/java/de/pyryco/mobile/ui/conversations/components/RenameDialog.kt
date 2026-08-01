@@ -63,10 +63,6 @@ private fun RenameDialogInternal(
         derivedStateOf { trimmedName.isNotEmpty() && trimmedName != initialName }
     }
 
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-    }
-
     AlertDialog(
         onDismissRequest = onDismiss,
         modifier = modifier,
@@ -77,6 +73,13 @@ private fun RenameDialogInternal(
             )
         },
         text = {
+            // Placement is load-bearing: the field composes in the dialog window's own
+            // sub-composition, so a requestFocus() driven from the parent composition returns
+            // cleanly but never lands (#589 — measured 0 focused nodes). Keep the effect here,
+            // beside the field it targets.
+            LaunchedEffect(Unit) {
+                focusRequester.requestFocus()
+            }
             OutlinedTextField(
                 value = fieldValue,
                 onValueChange = { fieldValue = it },
