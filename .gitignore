@@ -24,5 +24,13 @@ local.properties
 .codegraph
 .dispatcher.lock
 
+# Kotlin compiler-daemon session markers. Deleted and recreated on every
+# build, so tracking one makes every worktree permanently dirty — and the
+# dispatcher's unconditional safety-net commit would then re-commit that
+# churn on every agent run, in every column. Same class as the .codegraph
+# chain above, through a different door; no trailing slash for the same
+# reason.
+.kotlin
+
 # IntelliJ / Android Studio project files
 .idea/

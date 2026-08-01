@@ -119,6 +119,7 @@ delimiter positioned between the two cross-session messages, driven through the 
 | Tool-step rows (running → done; failed) — `pushToolUse` / `pushToolResult` scripting + builders | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#472), `ScriptedToolRowTest.kt` (#472) |
 | Connection banner (connecting / reconnecting / offline; absent when connected) — `pushConnectionState` scripting (lifted `FakeConnectionStateSource` field) | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#474), `ScriptedConnectionBannerTest.kt` (#474) |
 | Session-boundary divider (one delimiter, between two cross-session messages) — `pushSessionTransition` scripting + `sessionTransitionEnvelope` builder (ported from `RemoteConversationRepositoryTest`) | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#473), `ScriptedSessionBoundaryTest.kt` (#473) |
+| Parser-gap sentinel non-vacuity (a scripted row makes the guard fire; the finding names `site` + a sanitized `message_type` and never the payload body; an unrecognized `site` token drops) — `pushUnrecognizedMessage` scripting + `unrecognizedMessageEnvelope` builder, the one builder assembled through `kotlinx.serialization` rather than string interpolation because `raw` is itself JSON | `app/src/androidTest/.../ui/conversations/thread/ScriptedThreadHarness.kt` (#586), `ScriptedUnrecognizedMessageTest.kt` (#586) |
 
 ## What rung 3 is made of
 
@@ -986,7 +987,39 @@ These are grounded in the source but unverified end to end:
   claude but keeps the real daemon — still no emitter — so injecting the frame there would be a daemon
   change, out of scope for a client-only ticket. A second operator-facing flow shipping with **no** rung-3
   scenario for a producer-side reason rather than a transient-signal one (again contrast the `@Ignore`d #482
-  spinner).
+  spinner); parser-gap sentinel (an unrecognized-message row fails every live scenario) —
+  **rung 3 shipped (#586)**, a single `UnrecognizedRowSentinel` rule field on `InteractiveStreamE2ETest`
+  that fails **any** scenario during which an `unrecognized_message` row (#609) reached the thread, naming
+  the frame's `site` (as its wire token, the string an operator greps the daemon for) and a sanitized,
+  length-capped `message_type` — never the payload body, never a conversation id. Every curated `LIVE=1`
+  method becomes a sentinel for free, and a ninth added tomorrow inherits the guard with **no** per-test
+  wiring. Red does **not** mean broken: it means claude gained a message kind and the daemon's measured
+  ignore-list needs re-taking. Shape: the rule resets a process-global recorder before the body and checks
+  it after, fed by an inert pass-through `TappingConversationRepository` installed in
+  `E2eTestApplication`'s relay branch — it taps the subscription the app **already** makes rather than
+  opening its own, because `observeMessages` issues a full-history `backfill_since` on *every*
+  subscription, so a guard with one collector per conversation would put that traffic on the live wire
+  during a timing-sensitive real-claude turn (a sentinel that adds flakiness of its own is worse than no
+  sentinel). The recorder **accumulates** across the scenario, which is what covers the four curated
+  methods that deliberately finish on a list surface (delete, archive-restore, rename, save-as-channel):
+  an end-of-run look at the thread alone would be vacuous for half the octet. A red body keeps its own
+  cause — the finding is attached with `addSuppressed`, since the likeliest manifestation of a parser gap
+  is the scenario's *own* assertion timing out because the reply never rendered. **The non-vacuity proof
+  lives on rung 2, not rung 4** (`ScriptedUnrecognizedMessageTest`, above): the daemon emits
+  `unrecognized_message` only from `internal/streamsup/parser.go`, the **stream-json** runner, so rung 4 —
+  which runs the PTY runner under an isolated `HOME` — has **no emitter**, and a fixture line with an
+  unknown `type` produces nothing; rung 4 cannot be flipped to stream-json either, because `fakeclaude`'s
+  stream mode short-circuits before the fixture-replay machinery and has no equivalent affordance (#613,
+  blocked on an upstream pyrycode capability with no ticket yet). This is the #594/#597 carve-out
+  **inverted** — there rung 2 held the only producer, here rung 3 holds the emitter and rung 4 is the one
+  without. Rung 4 records through the same tap but installs no rule, which is correct rather than an
+  omission: a rule there would be permanently vacuous. **Live-path caveat, recorded rather than
+  engineered around:** on `LIVE=1` the runner comes from the operator's real `~/.pyry/config.json` and
+  `INTERACTIVE_RUNNER` is refused in preflight, so the sentinel can only fire when that resolves to
+  stream-json — a condition visible in every run's output via #614's `interactive runner: <runner>
+  (<reason>)` line, printed before every daemon spawn (see
+  [Interactive runner selection](#interactive-runner-selection)). No machinery is added for a failure
+  nobody has hit.
 - **#337 full scope:** `seq`-based ordering and replay de-dup across reconnect (a #402 concern; this
   fold concatenates in arrival order, correct within a single connection); and a `make`/Gradle wrapper
   for the orchestration plus fork-sync of any shared `bin/` script per the org convention.

@@ -58,6 +58,21 @@ class InteractiveStreamE2ETest {
     @get:Rule
     val composeTestRule = createAndroidComposeRule<MainActivity>()
 
+    /**
+     * #586: fails **any** scenario in this class during which the daemon reported a claude message kind
+     * its parser could not map. Declaring it is the entire per-class cost — a ninth scenario added
+     * tomorrow inherits the guard with no line to remember. Red does not mean broken; it means the
+     * daemon's measured ignore-list needs re-taking. See [UnrecognizedRowSentinel].
+     *
+     * The sentinel can only fire when the resolved interactive runner is stream-json, which is where the
+     * `unrecognized_message` emitter lives. On `LIVE=1` that comes from the operator's real
+     * `~/.pyry/config.json` (`INTERACTIVE_RUNNER` is refused in preflight), and #614's
+     * `interactive runner: <runner> (<reason>)` line prints it before every daemon spawn — a known,
+     * visible condition, deliberately not engineered around.
+     */
+    @get:Rule
+    val unrecognizedRowSentinel = UnrecognizedRowSentinel()
+
     // The thinking spinner's content-description (production UI string, no test tags). Copied from
     // DeterministicInteractiveStreamE2ETest (the rung-4 twin). Keep in sync with res/values/strings.xml:
     //   cd_thread_thinking = "Agent is thinking".
