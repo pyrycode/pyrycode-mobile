@@ -15,6 +15,7 @@ import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.SessionPump
+import de.pyryco.mobile.e2e.TappingConversationRepository
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,6 +24,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.io.File
 import java.util.UUID
 
@@ -81,7 +84,10 @@ class ScriptedThreadHarness(
     private val vm =
         ThreadViewModel(
             savedStateHandle = SavedStateHandle(mapOf("conversationId" to conversationId)),
-            repository = repo,
+            // #586: the same inert tap the live graph installs, so the rung-2 non-vacuity proof covers the
+            // whole chain (scripted envelope → real fold → tap → recorder → finding) rather than a pure
+            // function in isolation. It records and nothing more, so every other scenario is unaffected.
+            repository = TappingConversationRepository(repo),
             connectionStateSource = connectionStateSource,
             appPreferences = AppPreferences(newDataStore()),
             liveSessionEvents = repo.liveSessionEvents,
@@ -152,6 +158,29 @@ class ScriptedThreadHarness(
      * subscribe-before-push hazard — pushed after [start] anyway, for uniformity.
      */
     fun pushCompacting(active: Boolean) = pump.push(compactingEnvelope(conversationId, active))
+
+    /**
+     * Script one `unrecognized_message` (#609) — a claude message kind the daemon's stream-json parser
+     * could not map. [site] stays a raw wire token rather than the [de.pyryco.mobile.data.repository
+     * .UnrecognizedSite] enum, matching [pushSessionTransition]'s choice for `reason`: the harness must be
+     * able to script an *unrecognized* site so a test can exercise the mapper's drop path. [raw] is the
+     * offending JSON verbatim and realistically contains quotes, which is why this builder assembles its
+     * payload through `kotlinx.serialization` instead of the string interpolation the sibling builders use.
+     */
+    fun pushUnrecognizedMessage(
+        site: String,
+        messageType: String,
+        raw: String,
+        truncated: Boolean = false,
+    ) = pump.push(
+        unrecognizedMessageEnvelope(
+            conversationId = conversationId,
+            site = site,
+            messageType = messageType,
+            raw = raw,
+            truncated = truncated,
+        ),
+    )
 
     /** Script one `turn_end` for [turnId], finalizing the streaming row (#337). */
     fun pushTurnEnd(
@@ -338,6 +367,36 @@ private fun compactingEnvelope(
         type = "compacting",
         ts = TS,
         payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId","active":$active}"""),
+    )
+
+/**
+ * An `unrecognized_message` envelope `{conversation_id, site, message_type, raw, truncated}` (#609).
+ *
+ * Built with [buildJsonObject] rather than the interpolated `"""{...}"""` the siblings above use, because
+ * `raw` is itself JSON: interpolating it would emit a malformed envelope that the real fold silently
+ * drops, and the probe would prove nothing while passing (the #593/#460 lesson — a decoder that accepts
+ * the wrong thing makes a probe vacuous). The same applies to a hostile `message_type` carrying quotes or
+ * control characters.
+ */
+private fun unrecognizedMessageEnvelope(
+    conversationId: String,
+    site: String,
+    messageType: String,
+    raw: String,
+    truncated: Boolean,
+): Envelope =
+    Envelope(
+        id = 1L,
+        type = "unrecognized_message",
+        ts = TS,
+        payload =
+            buildJsonObject {
+                put("conversation_id", conversationId)
+                put("site", site)
+                put("message_type", messageType)
+                put("raw", raw)
+                put("truncated", truncated)
+            },
     )
 
 private fun turnEndEnvelope(

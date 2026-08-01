@@ -6,11 +6,15 @@ import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.di.appModule
 import de.pyryco.mobile.di.conversationRepositoryModule
 import kotlinx.coroutines.runBlocking
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.context.startKoin
+import org.koin.core.module.Module
+import org.koin.dsl.module
 
 /**
  * Test Application installed by [E2eInstrumentationRunner] for every instrumented run.
@@ -22,8 +26,8 @@ import org.koin.core.context.startKoin
  *    starts Koin with the default (fake) repository binding. This keeps every existing component test
  *    on its unchanged environment.
  *  * **e2e relay arguments present** (the interactive-stream prototype, #337 / #642 rung 3) → it
- *    1. binds the real relay-backed repository (`conversationRepositoryModule(useRelay = true)`), the
- *       runtime equivalent of flipping the compile-time `USE_RELAY_REPOSITORY`; and
+ *    1. binds the real relay-backed repository via [tappedRelayRepositoryModule] — the runtime equivalent
+ *       of flipping the compile-time `USE_RELAY_REPOSITORY`, plus #586's parser-gap tap; and
  *    2. pre-writes a [PairedServer] built from the arguments into the **same** [PairedServerStore] the
  *       app reads, so the app boots straight to the channel list (no QR scan) and dials the host relay
  *       at `ws://10.0.2.2:<port>` — the emulator's alias for the host loopback.
@@ -57,7 +61,7 @@ class E2eTestApplication : Application() {
         val koin =
             startKoin {
                 androidContext(this@E2eTestApplication)
-                modules(appModule, conversationRepositoryModule(useRelay = true))
+                modules(appModule, tappedRelayRepositoryModule())
             }.koin
         // Persist into the SAME store singleton MainActivity reads, so load() != null → channel list.
         runBlocking {
@@ -70,6 +74,25 @@ class E2eTestApplication : Application() {
             )
         }
     }
+
+    /**
+     * The relay branch's [ConversationRepository] binding: exactly what
+     * `conversationRepositoryModule(useRelay = true)` binds (see `AppModule.kt:156-161`), wrapped in
+     * #586's [TappingConversationRepository] so the parser-gap sentinel can observe the thread the app is
+     * already subscribed to.
+     *
+     * It **replaces** that module rather than overriding it from a second one: Koin 4's override
+     * semantics are not something an e2e harness should depend on, and replacement is unambiguous. The
+     * cost is that the two definitions can now drift — keep this one a mirror of `AppModule.kt:156-161`.
+     * Non-circular because `appModule` registers [StableConversationRepository] as its own concrete type
+     * and `conversationRepositoryModule` is the only definition binding the interface.
+     *
+     * The no-relay branch above is untouched: the tap ships only where a real daemon can produce the frame.
+     */
+    private fun tappedRelayRepositoryModule(): Module =
+        module {
+            single<ConversationRepository> { TappingConversationRepository(get<StableConversationRepository>()) }
+        }
 
     private fun requireArg(
         args: Bundle,
