@@ -92,9 +92,10 @@ internal object UnrecognizedRowRecorder {
     /**
      * Upper bound on retained rows. A new claude message kind emitted per content block could produce one
      * frame per delta, and each row carries up to 16 KiB of `raw`. The guard fails on the first row, so
-     * nothing past the cap is diagnostically load-bearing — it only makes the reported count a floor.
+     * nothing past the cap is diagnostically load-bearing — it only makes the reported count a floor, and
+     * [unrecognizedFinding] says so in words rather than reporting a saturated count as exact.
      */
-    private const val MAX_RECORDED_ROWS = 32
+    internal const val MAX_RECORDED_ROWS = 32
 
     private val recorded = AtomicReference<Set<ThreadItem.UnrecognizedMessage>>(emptySet())
 
@@ -148,8 +149,12 @@ internal object UnrecognizedRowRecorder {
 internal fun unrecognizedFinding(rows: List<ThreadItem.UnrecognizedMessage>): String? {
     if (rows.isEmpty()) return null
     val elided = rows.size - MAX_LISTED_ROWS
+    // A saturated recorder makes the count a floor, not a total (see MAX_RECORDED_ROWS) — say which, so the
+    // operator does not read "32 rows" as the measured extent of the parser gap.
+    val count =
+        if (rows.size >= UnrecognizedRowRecorder.MAX_RECORDED_ROWS) "at least ${rows.size}" else "${rows.size}"
     return buildString {
-        append("Parser-gap sentinel (#586): ${rows.size} unrecognized-message row(s) reached the thread during this scenario.")
+        append("Parser-gap sentinel (#586): $count unrecognized-message row(s) reached the thread during this scenario.")
         rows.take(MAX_LISTED_ROWS).forEach { append("\n  - ${describe(it)}") }
         if (elided > 0) append("\n  - (and $elided further row(s), not listed)")
         append("\n$REMEDY")

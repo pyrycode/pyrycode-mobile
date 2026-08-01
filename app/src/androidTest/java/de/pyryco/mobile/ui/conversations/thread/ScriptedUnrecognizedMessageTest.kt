@@ -63,6 +63,15 @@ class ScriptedUnrecognizedMessageTest {
         awaitRecordedRow()
 
         assertNotNull(unrecognizedFinding(UnrecognizedRowRecorder.observed()))
+
+        // AC #3: the row must survive the thread's collector being cancelled, which is what covers the four
+        // curated LIVE=1 methods that finish on a list surface. Structurally guaranteed today (only reset()
+        // clears the set) — asserted anyway, so a future edit to snapshot-per-emission semantics fails here
+        // rather than silently making the rung-3 guard vacuous for half the octet. close() is idempotent
+        // (scope.cancel()), so tearDown()'s second call is a no-op.
+        harness.close()
+
+        assertNotNull(unrecognizedFinding(UnrecognizedRowRecorder.observed()))
     }
 
     // AC #1: the failure names the frame's site and message_type, so the operator can re-take the
@@ -99,8 +108,12 @@ class ScriptedUnrecognizedMessageTest {
 
         val finding = requireNotNull(unrecognizedFinding(UnrecognizedRowRecorder.observed()))
 
-        // One row in ⇒ exactly one row line out: the embedded newline forged nothing.
+        // One row in ⇒ exactly one row line out: the embedded newline forged nothing. HOSTILE_MESSAGE_TYPE's
+        // forged tail copies the real row-line shape, so a surviving `\n` would be counted here.
         assertEquals(finding, 1, finding.lines().count { it.trimStart().startsWith("- site=") })
+        // Belt to the above's suspenders, and independent of the forged tail's shape: the whole finding is
+        // header + one row + remedy, so ANY extra line a `\n` produced — forged row or not — fails here.
+        assertEquals(finding, 3, finding.lines().size)
         assertFalse(finding, finding.contains(ESCAPE))
         assertFalse(finding, finding.contains(PADDING.take(MESSAGE_TYPE_CAP + 1)))
     }
@@ -166,8 +179,15 @@ class ScriptedUnrecognizedMessageTest {
 
         const val PADDING = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
-        /** A newline to forge a second finding line, an ANSI escape, and a length well past the cap. */
-        const val HOSTILE_MESSAGE_TYPE = "kind$ESCAPE[31m\nsite=forged$PADDING"
+        /**
+         * A newline forging a second finding line, an ANSI escape, and a length well past the cap.
+         *
+         * The forged tail deliberately reproduces `unrecognizedFinding`'s **own** row-line shape —
+         * two spaces, `- `, `site=` — so that a regression letting `\n` through would produce a line
+         * the assertions below actually match. A forged tail of some other shape would slip past a
+         * `- site=` count and leave the scenario passing whether or not sanitization worked.
+         */
+        const val HOSTILE_MESSAGE_TYPE = "kind$ESCAPE[31m\n  - site=forged$PADDING"
 
         /** Rendered by the streaming row — the arrival fence for the two never-fires cases. */
         const val CLEAN_TEXT = "ordinary delta text"
