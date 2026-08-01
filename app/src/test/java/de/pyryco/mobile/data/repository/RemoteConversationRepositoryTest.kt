@@ -5858,12 +5858,17 @@ class RemoteConversationRepositoryTest {
 
     private fun messageIds(thread: List<ThreadItem>): List<String> = thread.map { (it as ThreadItem.MessageItem).message.id }
 
-    /** Arrival-order shape of a mixed thread (#336): a message row → its id, a boundary → "boundary:<reason>". */
+    /**
+     * Arrival-order shape of a mixed thread (#336): a message row → its id, a boundary →
+     * "boundary:<reason>", an unrecognized row → "unrecognized:<site>". The last arm exists only to keep
+     * the `when` total (#608) — this repository cannot yet produce that row; #609 wires the decode.
+     */
     private fun threadShape(thread: List<ThreadItem>): List<String> =
         thread.map {
             when (it) {
                 is ThreadItem.MessageItem -> it.message.id
                 is ThreadItem.SessionBoundary -> "boundary:${it.reason}"
+                is ThreadItem.UnrecognizedMessage -> "unrecognized:${it.site}"
             }
         }
 
