@@ -4,7 +4,7 @@ Android client for [Pyrycode](https://github.com/pyrycode/pyrycode). Native Kotl
 
 ## Status
 
-UI complete (Phases 0-2 shipped); **Phase 4 backend integration in progress** — Noise_IK encrypted transport over WebSocket to pyrycode-relay (live 2026-05-29); UI still runs against `FakeConversationRepository`, real backend is a Koin module swap.
+See [README § Status](README.md#status) — status lives there in exactly one place; this file does not duplicate it.
 
 ## Conversations model
 
@@ -63,12 +63,22 @@ de/pyryco/mobile/
 │   ├── crypto/             # Device static key + paired-server key stores (Keystore-wrapped)
 │   └── network/            # Phase 4 transport: OkHttpRelayTransport, NoiseIkSession,
 │                           #   RelayConnectionSupervisor, MobileWireCodec
+├── lifecycle/              # LifecycleConnectionDriver (#302): foreground → connect(),
+│                           #   background → close() on the relay supervisor
 └── di/                     # Koin modules
 ```
 
 The Phase 4 crypto primitives use the **vendored `noise-java`** library at `com/southernstorm/noise/` (see ADR 0004) — `data/crypto/` + `data/network/` build the `Noise_IK` WebSocket transport on top of it.
 
+The mobile wire protocol's single source of truth is the pyrycode repo's `docs/protocol-mobile.md` (local sibling checkout: `../pyrycode/docs/protocol-mobile.md`) — don't restate the wire contract here.
+
 `ConversationRepository.observeMessages(conversationId)` paginates across past sessions transparently, producing a chronological stream interleaved with synthetic `SessionBoundary` markers that the thread screen renders as horizontal-rule delimiters.
+
+## Documentation
+
+- Per-ticket specs: `docs/specs/architecture/<N>-slug.md`.
+- Per-ticket implementation notes: `docs/knowledge/codebase/<N>.md` (pipeline-written).
+- Evergreen index: `docs/knowledge/INDEX.md`.
 
 ## Conventions
 
