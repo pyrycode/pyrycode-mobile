@@ -405,8 +405,8 @@ wall clock, subscription-covered (it does **not** meter tokens).
 
 For the full mechanics — relay URLs, the isolated `e2e-live` instance, prerequisites, and first-run
 assumptions — see [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay). The operator-facing
-summary is in [README § Pre-ship gate](../README.md#pre-ship-gate); the two are cross-linked so they
-cannot drift.
+summary is in [README § Pre-ship gate](../README.md#pre-ship-gate); the README deliberately does not
+restate scenario counts or turn costs — this document is the single authority for gate scope and cost.
 
 ## Live mode (rung 3, live relay)
 
