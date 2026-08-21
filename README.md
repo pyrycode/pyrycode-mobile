@@ -4,7 +4,7 @@ Android client for [Pyrycode](https://github.com/pyrycode/pyrycode) — talk to 
 
 ## Status
 
-As of 2026-08-02: UI complete (Phases 0-2 shipped); **Phase 4 backend is live** — the client has held a stable v2 `Noise_IK` session against the production relay since 2026-07-03. The UI still binds `FakeConversationRepository` by default behind the compile-time `USE_RELAY_REPOSITORY = false` flag in `app/build.gradle.kts`; the [pre-ship gate](#pre-ship-gate) exercises the real stack end to end.
+As of 2026-08-22: UI complete (Phases 0-2 shipped); **Phase 4 backend is live** — the client has held a stable v2 `Noise_IK` session against the production relay since 2026-07-03. The UI still binds `FakeConversationRepository` by default behind the compile-time `USE_RELAY_REPOSITORY = false` flag in `app/build.gradle.kts`; the [pre-ship gate](#pre-ship-gate) exercises the real stack end to end.
 
 This is a personal project under active development. Not yet on Play Store.
 
