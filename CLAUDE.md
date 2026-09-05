@@ -77,8 +77,10 @@ The mobile wire protocol's single source of truth is the pyrycode repo's `docs/p
 ## Documentation
 
 - Per-ticket specs: `docs/specs/architecture/<N>-slug.md`.
-- Per-ticket implementation notes: `docs/knowledge/codebase/<N>.md` (pipeline-written).
+- Feature overviews: `docs/knowledge/features/<feature>.md` (pipeline-written; each ticket's lessons fold into the overview for the area it touched, in the section they belong to).
+- `docs/knowledge/codebase/<N>.md` is the frozen per-ticket archive, closed 2026-09-05. Read it as history; nothing writes there.
 - Evergreen index: `docs/knowledge/INDEX.md`.
+- `scripts/docs-guard.sh` keeps the overviews under 50000 bytes and free of lines that markdown misreads as headings. It is the first entry in the dispatcher's verifier gate list; run it before committing docs.
 
 ## Conventions
 
