@@ -12,7 +12,7 @@ would hold a dead reference the instant the connection dropped.
 
 `StableConversationRepository` is the fix: **one process-lifetime singleton whose object identity never
 changes**, delegating every call to whichever connection-scoped repository is currently live (read from
-#351's `currentRepository`), switching transparently as connections come and go, and exposing a defined
+\#351's `currentRepository`), switching transparently as connections come and go, and exposing a defined
 non-crashing surface while no connection is live.
 
 Package: `de.pyryco.mobile.data.repository` (`StableConversationRepository.kt`), co-located with the
@@ -197,7 +197,7 @@ single<ConversationRepository> {
 }
 ```
 
-#352 (this slice) anticipated #350 as *"add `bind ConversationRepository::class` to this `single` and
+\#352 (this slice) anticipated #350 as *"add `bind ConversationRepository::class` to this `single` and
 rewire the ViewModels"* — it landed differently and more cleanly: a **separate selector module** (so the
 binding is unit-testable in isolation) and **no ViewModel rewiring** (every consumer already resolves the
 interface). See [`../codebase/350.md`](../codebase/350.md).

@@ -10,7 +10,7 @@ This is **decode + surface only** — wire → typed events on a hot flow. Every
 out of scope:
 
 - **sending** the answer / cancel (`modal_answer` / `modal_cancel`) — sibling **#438** (**landed**:
-  [`answerModal` / `cancelModal`](remote-conversation-repository.md#answermodal--cancelmodal--the-v2-modal-answercancel-control-send-438),
+  [`answerModal` / `cancelModal`](remote-conversation-repository-live-stream-and-modals.md#answermodal--cancelmodal--the-v2-modal-answercancel-control-send-438),
   [#438 notes](../codebase/438.md));
 - **rendering** the overlay + the fail-safe-deny default highlight — the render slice **#446**
   (#439 split into the projection **#445** + the render overlay #446); answering / cancelling is **#444**;
@@ -332,7 +332,7 @@ options[].id` invariant (producer-owned; a #446 default-to-first render fallback
   deferral above.
 - [Mobile Protocol v2 wire layer](mobile-protocol-v2-wire-layer.md) — `MobileJson`, `Envelope`,
   `@SerialName` Go-interop.
-- Sibling slices: **#438** answer/cancel send (**landed** — [`answerModal` / `cancelModal`](remote-conversation-repository.md#answermodal--cancelmodal--the-v2-modal-answercancel-control-send-438),
+- Sibling slices: **#438** answer/cancel send (**landed** — [`answerModal` / `cancelModal`](remote-conversation-repository-live-stream-and-modals.md#answermodal--cancelmodal--the-v2-modal-answercancel-control-send-438),
   [notes](../codebase/438.md)) · **#445** current-modal projection (**landed** — [Current-modal state](current-modal-state.md))
   · **#446** render overlay (blocked by #445) · **#444** answer/cancel from the UI · **#440**
   read-only-when-ungranted. (#439 was split into the projection #445 + the render overlay #446.)

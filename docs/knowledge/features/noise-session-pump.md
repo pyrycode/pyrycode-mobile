@@ -350,7 +350,7 @@ Test doubles live in-file: a `Channel`-backed `FakeRelayTransport` (`pushInbound
 captured `sentFrames`; **`connect()` `error()`s** — the pump must never dial), a real IK `TestResponder`
 (copied from `NoiseIkSessionTest`) so the session is exercised against a real peer, and a
 `NoiseSessionFactory` over fake stores pinned to the responder's static key. **28 `@Test`** — 14 from
-#309 (handshake→`Open` with the encrypted `hello` asserted, timeout, MAC failure, wrong/unknown frame
+\#309 (handshake→`Open` with the encrypted `hello` asserted, timeout, MAC failure, wrong/unknown frame
 type, inbound decrypt→`Envelope`, fail-closed teardown on every bad frame, outbound round-trip, `Down` /
 idempotent-`close()` lifecycle + no-leak, `start()`-twice throws), **1 from [#401](../codebase/401.md)**
 (a `hello_ack` echoing `["interactive"]` surfaces `setOf("interactive")` on `PumpState.Open` — asserted
@@ -368,7 +368,7 @@ the pinned-`rs` continuity holds); `rekeyIntervalMs` (and, for #495, `rekeyRespT
 gotchas** — the `FakeDeviceStaticKeyStore` must hand out a **fresh copy per call** (the per-re-key re-load
 would otherwise get the scalar `create()` already zeroed); `runCurrent()` (not `advanceUntilIdle()`) settles
 a `noise_resp` when asserting "no extra frame" (an over-advance re-fires the re-based timer); and, since
-#495, **every re-key test that fires a re-key then waits must use a bounded `advanceTimeBy(REKEY_MS);
+\#495, **every re-key test that fires a re-key then waits must use a bounded `advanceTimeBy(REKEY_MS);
 runCurrent()`, never `advanceUntilIdle()`** — the latter now fast-forwards through the armed response
 watchdog and tears the session down (see [`codebase/495.md`](../codebase/495.md) § Lessons learned and
 [`codebase/304.md`](../codebase/304.md) § Lessons learned).

@@ -248,7 +248,7 @@ as the control-derived `ReplayGap` member — #417 — but via the resync arm, n
 > `LiveSessionEvent`: modal payloads carry **no `conversation_id`** (`modalId` is the sole correlation
 > key), whereas every member here mandates `conversationId` and the demux routes on it — so they form
 > their own [`ModalEvent`](modal-events.md) family on their own concrete-only
-> [`modalEvents`](remote-conversation-repository.md#modalevents--the-v2-permissionchoice-modal-decode-seam-437)
+> [`modalEvents`](remote-conversation-repository-live-stream-and-modals.md#modalevents--the-v2-permissionchoice-modal-decode-seam-437)
 > flow. Two further contrasts worth noting when adding a new interactive event: the modal mappers are
 > **total** (`class`/`source`/`outcome` carried **verbatim** as `String`, never coerced to an enum that
 > drops a forward-compat value — the inverse of `turn_state.state`'s nullable mapper above), and the modal
@@ -268,7 +268,7 @@ is **not** one of the five render envelopes and does **not** flow through the de
   onto **this same** `liveSessionEvents` `SharedFlow` — preferring the existing surface over a parallel
   channel — but there is **no `ReplayGapDto`** and no `toEvent()` (the resync marker is a payload-less
   inline `{conversation_id}` struct; the arm reads it structurally). See
-  [Remote conversation repository § the resync arm](remote-conversation-repository.md#the-resync-arm--reset-the-cursor--surface-the-gap-417).
+  [Remote conversation repository § the resync arm](remote-conversation-repository-live-stream-and-modals.md#the-resync-arm--reset-the-cursor--surface-the-gap-417).
 - **An observable signal a UI layer can later render** (e.g. a "messages may be missing" affordance) —
   this slice does not render it. The current consumer, [`ThreadViewModel`](turn-state-thinking-flag.md),
   **ignores** it: it is added to the `→ null` / `→ this` ignore-groups of the two exhaustive
@@ -300,7 +300,7 @@ is **not** one of the five render envelopes and does **not** flow through the de
   DTO, no decode). See [§ The `ReplayGap` member](#the-replaygap-member-417).
 - [Modal events](modal-events.md) ([#437](../codebase/437.md)) — the **sibling decode family**: the same
   three-layer pattern + single-collector gated demux arm + fail-closed drop, on its own
-  [`modalEvents`](remote-conversation-repository.md#modalevents--the-v2-permissionchoice-modal-decode-seam-437)
+  [`modalEvents`](remote-conversation-repository-live-stream-and-modals.md#modalevents--the-v2-permissionchoice-modal-decode-seam-437)
   flow (modal payloads carry no `conversation_id`, so not a sixth member here).
 - [Noise session pump](noise-session-pump.md) — surfaces `PumpState.Open.capabilities` (#401), the
   gate source.

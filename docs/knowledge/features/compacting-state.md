@@ -76,7 +76,7 @@ cannot affect those tests.
 
 ## How it surfaces in the repository
 
-The behaviour lives in [`RemoteConversationRepository`](remote-conversation-repository.md#observecompactingconversationid--the-thread-observable-compaction-state-596)
+The behaviour lives in [`RemoteConversationRepository`](remote-conversation-repository-thread-observables.md#observecompactingconversationid--the-thread-observable-compaction-state-596)
 on the **single existing** inbound collector — see that doc for the field, the demux arm, and the
 projection. In short: a connection-scoped `MutableStateFlow<Set<String>>` (membership = compacting),
 written **only** from `onInbound` (single writer → the rising and falling edges never race), with

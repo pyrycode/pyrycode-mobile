@@ -1,13 +1,13 @@
 # Unrecognized message row — `ThreadItem.UnrecognizedMessage` / `UnrecognizedMessageRow`
 
 The thread's visible answer to a gap in the app's own parser ([#608](../codebase/608.md), split from
-#585): a claude message the interactive daemon's stream-json reader could not understand renders as a
+\#585): a claude message the interactive daemon's stream-json reader could not understand renders as a
 collapsed one-line pill that expands in place on tap to show the offending JSON verbatim, rather than
 vanishing silently. The daemon used to discard unmapped kinds into a debug log the production build never
 prints; it now sorts known-ignored kinds from genuinely unknown ones and forwards the latter as their own
 `unrecognized_message` wire frame.
 
-#608 built **only the row and its type** — the `ThreadItem` subtype plus the composable that draws it.
+\#608 built **only the row and its type** — the `ThreadItem` subtype plus the composable that draws it.
 [#609](../codebase/609.md) landed the decode arm: it decodes the wire frame, stamps `id` and `occurredAt`,
 and folds the row into `RemoteConversationRepository`'s thread stream, so the row is now live end to end.
 

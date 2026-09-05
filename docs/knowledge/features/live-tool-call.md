@@ -63,7 +63,7 @@ crash, a duplicate row, or an orphan:
 
 Tool rows **are** thread rows, so they fold into the **same** `threadByConversation` the live
 `message` arm writes (a tool row is a `ThreadItem.MessageItem` wrapping a `Role.Tool` `Message`).
-[`observeMessages`](remote-conversation-repository.md#observemessagesconversationid--the-live-thread-read-313)'s
+[`observeMessages`](remote-conversation-repository-reads-and-thread-store.md#observemessagesconversationid--the-live-thread-read-313)'s
 projection exposes that `List<ThreadItem>` **in arrival order, with no re-sort** (since #336 the store
 already holds `ThreadItem`s — no per-row wrap) — so a tool row interleaves chronologically with
 messages by **arrival position**, with **no merge, no second flow, no timestamp sort**. A ViewModel-side merge could not satisfy AC #4 because ordering is owned by
@@ -74,7 +74,7 @@ re-emits and the status transition propagates.
 
 ## How it surfaces in the repository
 
-All of the behaviour lives in [`RemoteConversationRepository`](remote-conversation-repository.md#live-tool-call-rows--applytooluse--applytoolresult-387)
+All of the behaviour lives in [`RemoteConversationRepository`](remote-conversation-repository-thread-observables.md#live-tool-call-rows--applytooluse--applytoolresult-387)
 on the **single existing** inbound collector — see that doc for the dispatch and the two folds. In
 short: the `tool_use`/`tool_result` dispatch is folded into the **existing** #385 live-session demux
 arm (alongside the unchanged #395 stall-clear and the #385 `tryEmit` — **no second subscription**), and

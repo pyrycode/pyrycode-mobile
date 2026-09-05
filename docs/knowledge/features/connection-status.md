@@ -88,7 +88,7 @@ RelayConnectionSupervisor          activeConnection (single source: pump + scope
 
 ## Consumer
 
-#390 (the Settings connection-status line) **split into two slices** at the architect:
+\#390 (the Settings connection-status line) **split into two slices** at the architect:
 
 - **[#397](../codebase/397.md) (the rendering component — shipped)** — the stateless
   [`ConnectionStatusLine`](connection-status-line.md) composable that renders *this* model as the
