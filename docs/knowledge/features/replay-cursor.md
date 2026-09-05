@@ -5,7 +5,7 @@ interactive structured-stream `event_id` the phone has observed, recorded as a s
 high-water mark that **outlives connection churn**. On a mid-turn reconnect the phone advertises this
 value as `hello.last_event_id` so the daemon can replay the events the phone missed before the live
 stream resumes. Three slices: **recording** the cursor landed in [#412](../codebase/412.md) (split from
-#402); **advertising** it (`hello.last_event_id`, read live at `hello`-build) landed in
+\#402); **advertising** it (`hello.last_event_id`, read live at `hello`-build) landed in
 [#416](../codebase/416.md) (split from #413); **reacting** to the daemon's aged-out-of-ring `resync`
 marker — `reset()` the cursor (next reconnect advertises fresh) + surface a `LiveSessionEvent.ReplayGap`
 — landed in [#417](../codebase/417.md) (split from #413, `blockedBy #416`). Full reload via
@@ -202,7 +202,7 @@ TYPE_RESYNC -> {
 - **`backfill_since` full reload is deferred** — no daemon-side message-history store / handler exists
   yet. This slice's contract ends at reset-the-cursor + surface-the-gap.
 
-See [Reacting → the resync arm](remote-conversation-repository.md#the-resync-arm--reset-the-cursor--surface-the-gap-417)
+See [Reacting → the resync arm](remote-conversation-repository-live-stream-and-modals.md#the-resync-arm--reset-the-cursor--surface-the-gap-417)
 for the repository attachment and [`ReplayGap`](live-session-events.md) for the surfaced event.
 
 ## Trust boundary

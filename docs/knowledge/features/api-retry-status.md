@@ -84,7 +84,7 @@ this distinction: `true → true` collapses under any equality model.
 
 ## How it surfaces in the repository
 
-The behaviour lives in [`RemoteConversationRepository`](remote-conversation-repository.md#observeapiretryconversationid--the-thread-observable-api-retry-state-593)
+The behaviour lives in [`RemoteConversationRepository`](remote-conversation-repository-thread-observables.md#observeapiretryconversationid--the-thread-observable-api-retry-state-593)
 on the **single existing** inbound collector — see that doc for the field, the demux arm, and the
 projection. In short: a connection-scoped `MutableStateFlow<Map<String, ApiRetryStatus>>`, written
 **only** from `onInbound` (single writer → edges never race), with `observeApiRetry` a cold

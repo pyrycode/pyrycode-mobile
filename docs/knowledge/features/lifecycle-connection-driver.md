@@ -164,7 +164,7 @@ untrusted→trusted boundary: inputs are lifecycle events from the trusted Andro
 parameters), so neither the driver nor any future caller can inject relay- or push-controlled data through
 this seam. Net-positive for the mobile threat model — it **closes the authenticated relay socket whenever
 the app is backgrounded**, eliminating an idle authenticated connection. **Zero logging** (mirrors the
-#306/#307 posture; code-review enforced). *Carry-forward for the FCM ticket:* keep the
+\#306/#307 posture; code-review enforced). *Carry-forward for the FCM ticket:* keep the
 FCM→`onPushWake()` hop payload-free — a spoofed/replayed push can then at most trigger one idempotent,
 paired-gated, backoff-rate-limited `connect()` (no amplification, no data injection).
 

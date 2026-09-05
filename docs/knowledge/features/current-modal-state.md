@@ -3,7 +3,7 @@
 The **state/projection half of the permission/choice-modal UI surface**: how the daemon's decoded modal
 lifecycle (`modal_shown` → `modal_dismissed`) is folded into a single "which modal is currently open"
 observable, `currentModal: StateFlow<ModalUiState>`. Introduced in [#445](../codebase/445.md) (split from
-#443, the render half of #439), part of the Phase 3 permission-modal feature (epic pyrycode#597, ADR 025).
+\#443, the render half of #439), part of the Phase 3 permission-modal feature (epic pyrycode#597, ADR 025).
 
 **As of [#492](../codebase/492.md) the fold is hoisted to the process-scoped
 [`RelayRepositoryCoordinator`](relay-repository-coordinator.md).** It used to fold per-thread-screen inside
@@ -91,7 +91,7 @@ coordinator can see it; `reduce` has no Android/UI dependency), **no logging** o
 field-for-field (`modalId`, `modalClass`, `title`, `prompt`, `options: List<ModalOption>` in wire array
 order, `defaultOptionId`); `Dismissed` mirrors `ModalEvent.Dismissed` (`modalId`, `outcome`, `source`).
 Every field is carried **verbatim** — no parsing, enum-coercion, trimming, or reordering (preserves
-#437's forward-compat posture). It reuses `data.model.ModalOption` (no parallel option type). `Hidden` is
+\#437's forward-compat posture). It reuses `data.model.ModalOption` (no parallel option type). `Hidden` is
 the initial / resolved-and-cleared state and does double duty as the inert default.
 
 `ThreadViewModel` takes the coordinator's already-folded projection as a **defaulted** `val` ctor property

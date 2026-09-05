@@ -63,7 +63,7 @@ self-describing and authoritative, so:
 
 ## How it surfaces in the repository
 
-All of the behaviour lives in [`RemoteConversationRepository`](remote-conversation-repository.md#observequeueconversationid--the-thread-observable-queued-backlog-460)
+All of the behaviour lives in [`RemoteConversationRepository`](remote-conversation-repository-thread-observables.md#observequeueconversationid--the-thread-observable-queued-backlog-460)
 on the **single existing** inbound collector — see that doc for the field, the demux arm, and the
 projection. In short: a connection-scoped `MutableStateFlow<Map<String, List<QueuedMessage>>>` (key =
 conversation id, value = the full ordered backlog), written **only** from `onInbound` (single writer → no

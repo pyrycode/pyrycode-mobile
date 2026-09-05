@@ -65,7 +65,7 @@ no-op, so clearing rides every live event harmlessly.
 
 ## How it surfaces in the repository
 
-All of the behaviour lives in [`RemoteConversationRepository`](remote-conversation-repository.md#observestallconversationid--the-thread-observable-stall-state-395)
+All of the behaviour lives in [`RemoteConversationRepository`](remote-conversation-repository-thread-observables.md#observestallconversationid--the-thread-observable-stall-state-395)
 on the **single existing** inbound collector — see that doc for the field, the demux arms, and the
 projection. In short: a connection-scoped `MutableStateFlow<Set<String>>` (membership = stalled),
 written **only** from `onInbound` (single writer → onset and clearing never race), with `observeStall`

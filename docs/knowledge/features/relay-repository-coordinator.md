@@ -30,7 +30,7 @@ from #349). Portable, `android.*`-free, emits **no logs**.
 ## Where it sits in the Phase 4 stack
 
 ```
-#352 stable ConversationRepository facade   ◀── delegates to currentRepository (out of scope here)
+\#352 stable ConversationRepository facade   ◀── delegates to currentRepository (out of scope here)
         ▲
 RelayRepositoryCoordinator (#351) ─ per-connection pump + repository lifecycle   ◀── this doc
         │  observes currentConnection ; publishes currentRepository
@@ -235,7 +235,7 @@ Three load-bearing constraints shape it:
 
 ### Closing #359's `device_name: ""` defer
 
-#359 left `RemoteConversationRepository`'s `deviceName` ctor param defaulted to `""` and flagged that
+\#359 left `RemoteConversationRepository`'s `deviceName` ctor param defaulted to `""` and flagged that
 whichever slice adds the live caller must thread the real name. #365 is that slice: it adds the
 `deviceName: String = ""` coordinator param, threads it into the repo (`RemoteConversationRepository(pump,
 childScope, deviceName)`), and `AppModule` supplies the live `NoiseClientInfo.deviceName` (`Build.MODEL`).
