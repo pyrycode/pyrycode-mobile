@@ -10,9 +10,9 @@ Package: `de.pyryco.mobile.ui.conversations.thread` (`app/src/main/java/de/pyryc
 
 Split on 2026-09-05 to keep this document under the 50000-byte cap the docs guard enforces. Each section named below moved verbatim, heading and anchors intact, into its own document:
 
-- [ThreadOverflowMenu — `events and behaviour](thread-overflow-menu-events-and-behaviour.md) — ThreadEvent`, `What it does`
-- [ThreadOverflowMenu — `ViewModel dispatcher](thread-overflow-menu-viewmodel-dispatcher.md) — ViewModel dispatcher`
-- [ThreadOverflowMenu — `wiring, tests and edge cases](thread-overflow-menu-wiring-tests-and-edge-cases.md) — Configuration / wiring`, `Tests`, `Edge cases / limitations`
+- [ThreadOverflowMenu — events and behaviour](thread-overflow-menu-events-and-behaviour.md) — `ThreadEvent`, `What it does`
+- [ThreadOverflowMenu — ViewModel dispatcher](thread-overflow-menu-viewmodel-dispatcher.md) — `ViewModel dispatcher`
+- [ThreadOverflowMenu — wiring, tests and edge cases](thread-overflow-menu-wiring-tests-and-edge-cases.md) — `Configuration / wiring`, `Tests`, `Edge cases / limitations`
 
 The sections that stay here: `## Shape`, `## Preview`, `## Related`.
 
