@@ -7,15 +7,20 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import de.pyryco.mobile.data.network.RelayLog
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonObject
 import java.io.IOException
 import java.security.GeneralSecurityException
 import java.security.KeyStore
+import java.security.ProviderException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -24,7 +29,7 @@ import javax.crypto.spec.GCMParameterSpec
 /**
  * [PairedServerStore] backed by the Android Keystore (mechanism (a): wrap-at-rest, ADR-0006).
  *
- * The [PairedServer] record is JSON-serialized, UTF-8-encoded, then AES-256-GCM-encrypted under a
+ * The paired-server collection is JSON-serialized, UTF-8-encoded, then AES-256-GCM-encrypted under a
  * hardware-backed, non-exportable, uid-scoped Keystore wrap key — with the per-encrypt
  * Keystore-generated IV prepended — and stored as `base64(iv ‖ ciphertext)` under a single key in
  * the app-private [DataStore]. This is a second consumer of #291's proven mechanism, with three
@@ -36,42 +41,103 @@ import javax.crypto.spec.GCMParameterSpec
  */
 class KeystorePairedServerStore(
     private val dataStore: DataStore<Preferences>,
-) : PairedServerStore {
+    private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+) : PairedServerCollectionStore {
     private val json = Json { ignoreUnknownKeys = true }
 
-    override suspend fun load(): PairedServer? =
-        withContext(Dispatchers.IO) {
-            val stored = dataStore.data.first()[PREF_KEY] ?: return@withContext null
-            // Graceful: any decode / missing-key / decrypt / parse failure resolves to null
-            // (→ re-pair). The catch set is specific so CancellationException still propagates.
+    override suspend fun load(): PairedServer? = list().lastOrNull()?.record
+
+    override suspend fun loadById(serverId: String): PairedServerEntry? = list().find { it.record.serverId == serverId }
+
+    override suspend fun list(): List<PairedServerEntry> =
+        withContext(ioDispatcher) {
             try {
-                val blob = decode(stored)
-                if (blob.size <= GCM_IV_LENGTH) return@withContext null
-                val wrapKey = getWrapKey() ?: return@withContext null
-                val plaintext = unwrap(blob, wrapKey)
-                json.decodeFromString<PairedServer>(plaintext.toString(Charsets.UTF_8))
-            } catch (e: GeneralSecurityException) {
-                null
-            } catch (e: IOException) {
-                null
-            } catch (e: IllegalArgumentException) {
-                null
+                decodeEntries(dataStore.data.first()[PREF_KEY])
+            } catch (e: Exception) {
+                val code = failureCode(e) ?: throw e
+                RelayLog.d { "paired_store operation=read status=failed code=$code" }
+                emptyList()
             }
         }
 
-    override suspend fun save(record: PairedServer) {
-        withContext(Dispatchers.IO) {
+    override suspend fun save(record: PairedServer) =
+        mutate("save") { entries ->
+            val name = entries.find { it.record.serverId == record.serverId }?.displayName
+            entries.filterNot { it.record.serverId == record.serverId } + PairedServerEntry(record, name)
+        }
+
+    override suspend fun setDisplayName(
+        serverId: String,
+        displayName: String?,
+    ) = mutate("rename") { entries ->
+        if (entries.none { it.record.serverId == serverId }) {
+            null
+        } else {
+            entries.map { if (it.record.serverId == serverId) it.copy(displayName = displayName) else it }
+        }
+    }
+
+    override suspend fun remove(serverId: String) =
+        mutate("remove") { entries ->
+            if (entries.none { it.record.serverId == serverId }) {
+                null
+            } else {
+                entries.filterNot { it.record.serverId == serverId }
+            }
+        }
+
+    private suspend fun mutate(
+        operation: String,
+        transform: (List<PairedServerEntry>) -> List<PairedServerEntry>?,
+    ) {
+        withContext(ioDispatcher) {
             try {
-                val plaintext = json.encodeToString(record).toByteArray(Charsets.UTF_8)
-                val wrapped = wrap(plaintext)
-                dataStore.edit { prefs -> prefs[PREF_KEY] = encode(wrapped) }
-            } catch (e: GeneralSecurityException) {
-                throw PairedServerStoreException("paired server save failed: ${e.javaClass.simpleName}", e)
-            } catch (e: IOException) {
-                throw PairedServerStoreException("paired server save failed: ${e.javaClass.simpleName}", e)
+                // The read must be inside edit: a separate read loses overlapping saves.
+                dataStore.edit { prefs ->
+                    val entries = transform(decodeEntries(prefs[PREF_KEY])) ?: return@edit
+                    val plaintext = json.encodeToString(StoredPairings(1, entries)).toByteArray(Charsets.UTF_8)
+                    prefs[PREF_KEY] = encode(wrap(plaintext))
+                }
+                RelayLog.d { "paired_store operation=$operation status=ok" }
+            } catch (e: Exception) {
+                val code = failureCode(e) ?: throw e
+                RelayLog.d { "paired_store operation=$operation status=failed code=$code" }
+                // Parser/provider causes can contain plaintext; never attach the original cause.
+                throw PairedServerStoreException("paired server $operation failed: $code")
             }
         }
     }
+
+    private fun decodeEntries(stored: String?): List<PairedServerEntry> {
+        if (stored == null) return emptyList()
+        val blob = decode(stored)
+        require(blob.size > GCM_IV_LENGTH) { "invalid paired store envelope" }
+        val wrapKey = getWrapKey() ?: throw GeneralSecurityException("paired store key missing")
+        val payload = json.parseToJsonElement(unwrap(blob, wrapKey).toString(Charsets.UTF_8)).jsonObject
+        if ("version" !in payload && "entries" !in payload) {
+            return listOf(PairedServerEntry(json.decodeFromJsonElement<PairedServer>(payload)))
+        }
+        val collection = json.decodeFromJsonElement<StoredPairings>(payload)
+        require(collection.version == 1) { "unsupported paired store version" }
+        require(
+            collection.entries
+                .map { it.record.serverId }
+                .distinct()
+                .size == collection.entries.size,
+        ) {
+            "duplicate paired store identity"
+        }
+        return collection.entries
+    }
+
+    // Cancellation and unrelated programming errors are deliberately not classified.
+    private fun failureCode(error: Exception): String? =
+        when (error) {
+            is GeneralSecurityException, is ProviderException, is SecurityException -> "keystore"
+            is IOException -> "io"
+            is IllegalArgumentException -> "invalid_data"
+            else -> null
+        }
 
     private fun wrap(plain: ByteArray): ByteArray {
         val cipher = Cipher.getInstance(TRANSFORMATION)
@@ -120,7 +186,7 @@ class KeystorePairedServerStore(
         const val ANDROID_KEYSTORE = "AndroidKeyStore"
         const val WRAP_KEY_ALIAS = "pyrycode.paired_server_wrap"
 
-        // One record, one fixed key — server-id lives inside the encrypted blob, never as a
+        // One collection, one fixed key — server-id lives inside the encrypted blob, never as a
         // pref-key component, so #291's attacker-influenced key-collision surface does not exist.
         val PREF_KEY = stringPreferencesKey("pyrycode.paired_server")
 
@@ -129,4 +195,12 @@ class KeystorePairedServerStore(
         const val GCM_TAG_BITS = 128
         const val WRAP_KEY_SIZE_BITS = 256
     }
+}
+
+@Serializable
+private data class StoredPairings(
+    val version: Int,
+    val entries: List<PairedServerEntry>,
+) {
+    override fun toString(): String = "StoredPairings([REDACTED])"
 }

@@ -3,7 +3,7 @@ package de.pyryco.mobile.data.crypto
 import kotlinx.serialization.Serializable
 
 /**
- * Encrypted custody of the paired-server credential record.
+ * Compatibility access to encrypted paired-server credentials.
  *
  * After QR pairing the phone holds four values it must re-present to reconnect after process
  * death: the relay URL it dials, the bearer token it sends inside the encrypted hello, the server
@@ -12,24 +12,51 @@ import kotlinx.serialization.Serializable
  * and the relay WS client (#276, relay URL + token + server id); both see only the typed
  * [PairedServer] and stay decoupled from the Keystore mechanism.
  *
- * Live source of paired-state truth: `MainActivity` picks the start destination from [load] (record
- * present → channel list, absent → welcome) and the Scanner placeholder persists a stub via [save];
- * the QR-pairing consumers (#275/#276) remain dormant.
+ * Collection-aware consumers use [PairedServerCollectionStore]. Existing connection consumers
+ * keep using the most recently saved surviving record through [load].
  */
 interface PairedServerStore {
     /**
-     * Decrypt and return the persisted paired server, or `null` if no record is stored OR the
-     * record is undecryptable / corrupt (graceful → re-pair; never throws, never crashes). Unlike
+     * Return the most recently saved surviving server, or `null` if no record is stored OR the
+     * record is undecryptable / corrupt. Cancellation still propagates. Unlike
      * [DeviceStaticKeyStore.loadOrCreate], an unreadable record is safe to discard — it is
      * re-fetchable from the QR, so there is no identity-drift risk.
      */
     suspend fun load(): PairedServer?
 
     /**
-     * Encrypt and persist [record], overwriting any existing one. Throws [PairedServerStoreException]
-     * on a Keystore / IO failure (the pairing did not persist — the caller surfaces "try again").
+     * Replace only [record]'s exact server id, preserving its local name and all other hosts.
+     * Makes it the latest saved record. Throws [PairedServerStoreException] on storage/Keystore
+     * failure, without changing persisted credentials or their compatibility selection.
      */
     suspend fun save(record: PairedServer)
+}
+
+/** Collection access, separate from legacy consumers and their single-record test doubles. */
+interface PairedServerCollectionStore : PairedServerStore {
+    /** Snapshot ordered oldest-save first; empty for missing or unreadable storage. */
+    suspend fun list(): List<PairedServerEntry>
+
+    /** Exact, case-sensitive id lookup; null for an absent id or unreadable storage. */
+    suspend fun loadById(serverId: String): PairedServerEntry?
+
+    /** Set or clear local metadata without changing credentials/order; unknown ids are a no-op. */
+    suspend fun setDisplayName(
+        serverId: String,
+        displayName: String?,
+    )
+
+    /** Remove only this id and its name; unknown ids are a no-op. Device static keys are untouched. */
+    suspend fun remove(serverId: String)
+}
+
+/** Local metadata stays outside the four-field pairing contract and inside encrypted storage. */
+@Serializable
+data class PairedServerEntry(
+    val record: PairedServer,
+    val displayName: String? = null,
+) {
+    override fun toString(): String = "PairedServerEntry([REDACTED])"
 }
 
 /**
@@ -37,7 +64,7 @@ interface PairedServerStore {
  * byte-faithfully so #275/#276 receive exactly what the server expects.
  *
  * A `data class`, so structural `equals`/`hashCode`/`copy` are correct and useful (the fields are
- * all `String`). The only override is [toString], declared explicitly to redact the bearer [token]:
+ * all `String`). The only override is [toString], declared explicitly to redact every field:
  * the compiler-generated `toString` would render it in plaintext and leak it to Logcat via a stray
  * `Log.d("$record")`. Serialization is unaffected — the wire needs the real token.
  */
@@ -48,7 +75,7 @@ data class PairedServer(
     val relayUrl: String,
     val serverStaticPublicKey: String,
 ) {
-    override fun toString(): String = "PairedServer(serverId=$serverId)"
+    override fun toString(): String = "PairedServer([REDACTED])"
 }
 
 /** Signals a Keystore / IO failure while persisting in [PairedServerStore.save]. Carries no secret material. */
