@@ -32,6 +32,7 @@ import de.pyryco.mobile.data.network.base64StdEncode
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.DebugBundleStatus
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
@@ -71,6 +72,7 @@ import org.junit.Test
 import org.koin.core.KoinApplication
 import org.koin.dsl.binds
 import org.koin.dsl.module
+import java.io.ByteArrayOutputStream
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RelayConnectionFactoryTest {
@@ -550,6 +552,101 @@ class RelayConnectionFactoryTest {
             assertTrue(f.transports.all { it.closed && it.collectors == 0 })
         }
 
+    @Test
+    fun debugBundlesStayWithExactHostsAcrossSelectionRemovalAndReconnect() =
+        runTest {
+            val f = Fixture(this)
+            f.interactive = false
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            try {
+                runCurrent()
+                assertEquals(
+                    DebugBundleStatus.UNAVAILABLE,
+                    registry
+                        .requestDebugBundle("A")
+                        .state.value.status,
+                )
+                registry.connect()
+                runCurrent()
+                val a = registry.requestDebugBundle("A")
+                val b = registry.requestDebugBundle("B")
+                assertEquals(
+                    DebugBundleStatus.UNAVAILABLE,
+                    registry
+                        .requestDebugBundle("a")
+                        .state.value.status,
+                )
+                assertEquals(
+                    DebugBundleStatus.UNAVAILABLE,
+                    registry
+                        .requestDebugBundle("unknown")
+                        .state.value.status,
+                )
+                assertEquals(
+                    DebugBundleStatus.BUSY,
+                    registry
+                        .requestDebugBundle("A")
+                        .state.value.status,
+                )
+                for (transport in f.transports) {
+                    val wire = transport.outboundJson.single().jsonObject
+                    assertEquals("request_debug_bundle", wire["type"]!!.jsonPrimitive.content)
+                    assertFalse(wire.containsKey("payload"))
+                    assertFalse(wire.containsKey("conversation_id"))
+                }
+                f.store.save(f.a.record)
+                runCurrent()
+                f.transports[1].emit(envelope("debug_bundle_chunk", """{"seq":0,"data":"Yg=="}"""))
+                f.transports[0].emit(envelope("debug_bundle_chunk", """{"seq":0,"data":"YQ=="}"""))
+                runCurrent()
+                assertEquals(1, a.state.value.acceptedChunks)
+                assertEquals(1, b.state.value.acceptedChunks)
+                f.store.remove("A")
+                runCurrent()
+                assertEquals(DebugBundleStatus.DISCONNECTED, a.state.value.status)
+                assertNull(a.takeArchive())
+                assertEquals(
+                    DebugBundleStatus.UNAVAILABLE,
+                    registry
+                        .requestDebugBundle("A")
+                        .state.value.status,
+                )
+                f.transports[1].emit(envelope("debug_bundle_done", """{"total":1}"""))
+                runCurrent()
+                val output = ByteArrayOutputStream()
+                b.takeArchive()!!.writeTo(output)
+                assertArrayEquals(byteArrayOf(98), output.toByteArray())
+                assertEquals(
+                    DebugBundleStatus.RECONNECT_REQUIRED,
+                    registry
+                        .requestDebugBundle("B")
+                        .state.value.status,
+                )
+                registry.close()
+                assertEquals(
+                    DebugBundleStatus.UNAVAILABLE,
+                    registry
+                        .requestDebugBundle("B")
+                        .state.value.status,
+                )
+                runCurrent()
+                registry.connect()
+                runCurrent()
+                val next = f.transports.last()
+                assertTrue(next.outbound.isEmpty())
+                val retry = registry.requestDebugBundle("B")
+                next.emit(envelope("debug_bundle_done", """{"total":0}"""))
+                runCurrent()
+                assertEquals(DebugBundleStatus.COMPLETE, retry.state.value.status)
+                assertEquals(0, retry.takeArchive()!!.sizeBytes)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
     private class Fixture(
         scope: TestScope,
     ) {
@@ -559,6 +656,7 @@ class RelayConnectionFactoryTest {
         val store = ObservablePairedServerStore(rawStore)
         var beforeDial: (PairedServer) -> Unit = {}
         var unavailable: String? = null
+        var interactive = true
         val keys = Keys()
         val transports = mutableListOf<PeerTransport>()
         private val dispatcher = StandardTestDispatcher(scope.testScheduler)
@@ -578,6 +676,7 @@ class RelayConnectionFactoryTest {
                         },
                         keys,
                         record.serverId == unavailable,
+                        interactive,
                     ).also { transports += it }
                 },
                 NoiseClientInfo("test-device", "test-version"),
@@ -658,6 +757,7 @@ class RelayConnectionFactoryTest {
         private val host: Host,
         private val keys: Keys,
         private val unavailable: Boolean = false,
+        private val interactive: Boolean = true,
     ) : RelayTransport {
         private val frames = Channel<InnerFrameV2>(Channel.UNLIMITED)
         private val links = Channel<TransportEvent>(Channel.UNLIMITED)
@@ -667,6 +767,7 @@ class RelayConnectionFactoryTest {
         var handshakes = 0
         var hello: Envelope? = null
         val outbound = mutableListOf<Envelope>()
+        val outboundJson = mutableListOf<kotlinx.serialization.json.JsonElement>()
         var initialFrame = ByteArray(0)
         override val inbound = tracked(frames)
         override val events = tracked(links)
@@ -700,6 +801,7 @@ class RelayConnectionFactoryTest {
                 val ciphertext = base64StdDecode(frame.data)
                 val plaintext = ByteArray(ciphertext.size)
                 val n = pair!!.receiver.decryptWithAd(null, ciphertext, 0, plaintext, 0, ciphertext.size)
+                outboundJson += MobileJson.parseToJsonElement(plaintext.copyOf(n).decodeToString())
                 outbound += MobileJson.decodeFromString<Envelope>(plaintext.copyOf(n).decodeToString())
                 return true
             }
@@ -720,7 +822,7 @@ class RelayConnectionFactoryTest {
                         .encodeToString(
                             envelope(
                                 "hello_ack",
-                                """{"protocol_version":"v2","server_id":"${record.serverId}","conn_id":"connection","capabilities":["interactive"]}""",
+                                """{"protocol_version":"v2","server_id":"${record.serverId}","conn_id":"connection","capabilities":${if (interactive) "[\"interactive\"]" else "[]"}}""",
                             ),
                         ).encodeToByteArray()
                 } else {

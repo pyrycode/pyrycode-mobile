@@ -11,6 +11,8 @@ import de.pyryco.mobile.data.network.RelayConnectionController
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.DebugBundleStatus
+import de.pyryco.mobile.data.repository.DebugBundleTransfer
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -81,6 +83,12 @@ class RelayConnectionRegistry(
 
     @Synchronized
     fun connectionFor(serverId: String): RelayConnectionBundle? = entries[serverId]?.second
+
+    /** Exact host routing shares the removal lock; selection never participates. */
+    @Synchronized
+    fun requestDebugBundle(serverId: String): DebugBundleTransfer =
+        connectionFor(serverId)?.coordinator?.requestDebugBundle()
+            ?: DebugBundleTransfer.rejected(DebugBundleStatus.UNAVAILABLE)
 
     @Synchronized
     private fun reconcile(saved: List<PairedServerEntry>) {

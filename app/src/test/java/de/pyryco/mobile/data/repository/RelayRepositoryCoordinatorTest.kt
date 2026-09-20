@@ -12,6 +12,7 @@ import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.InnerFrameV2
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.PumpState
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RelayTransport
 import de.pyryco.mobile.data.network.TransportEvent
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -51,6 +52,60 @@ import org.junit.Test
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class RelayRepositoryCoordinatorTest {
+    @Test
+    fun debugBundleRetryUsesFreshOpenConnectionAndNeverReplaysIncompleteTransfer() =
+        runTest {
+            val previousLogging = RelayLog.enabled
+            RelayLog.enabled = false
+            val env = newEnv()
+            try {
+                env.connections.value = StubRelayTransport()
+                runCurrent()
+                assertEquals(
+                    DebugBundleStatus.UNAVAILABLE,
+                    env.coordinator
+                        .requestDebugBundle()
+                        .state.value.status,
+                )
+                val old = env.pumps.single()
+                old.open()
+                runCurrent()
+                val first = env.coordinator.requestDebugBundle()
+                old.push(Envelope(1, "debug_bundle_chunk", TS, MobileJson.parseToJsonElement("""{"seq":0,"data":"YQ=="}""")))
+                runCurrent()
+                assertEquals(1, first.state.value.acceptedChunks)
+                env.connections.value = StubRelayTransport()
+                assertEquals(
+                    DebugBundleStatus.UNAVAILABLE,
+                    env.coordinator
+                        .requestDebugBundle()
+                        .state.value.status,
+                )
+                runCurrent()
+                assertEquals(DebugBundleStatus.DISCONNECTED, first.state.value.status)
+                assertNull(first.takeArchive())
+                val fresh = env.pumps.last()
+                fresh.open()
+                runCurrent()
+                assertTrue(fresh.sent.isEmpty())
+                val retry = env.coordinator.requestDebugBundle()
+                old.push(Envelope(2, "debug_bundle_done", TS, MobileJson.parseToJsonElement("""{"total":1}""")))
+                runCurrent()
+                assertEquals(DebugBundleStatus.RECEIVING, retry.state.value.status)
+                assertEquals(0, retry.state.value.acceptedChunks)
+                fresh.push(Envelope(1, "debug_bundle_done", TS, MobileJson.parseToJsonElement("""{"total":0}""")))
+                runCurrent()
+                assertEquals(DebugBundleStatus.COMPLETE, retry.state.value.status)
+                assertEquals(0L, retry.takeArchive()!!.sizeBytes)
+                env.coordinator.close()
+                assertEquals(DebugBundleStatus.COMPLETE, retry.state.value.status)
+            } finally {
+                env.coordinator.close()
+                runCurrent()
+                RelayLog.enabled = previousLogging
+            }
+        }
+
     // ---- AC #2: a live connection starts a pump and publishes a repository ----------------------
 
     @Test

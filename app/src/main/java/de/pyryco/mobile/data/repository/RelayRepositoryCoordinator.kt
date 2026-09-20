@@ -239,6 +239,7 @@ class RelayRepositoryCoordinator(
      * [close] could cancel the collector between [ManagedSessionPump.start] and retaining the pump,
      * which would leak a started-but-unclosed pump. Do not introduce a suspension here.
      */
+    @Synchronized
     private fun onConnection(transport: RelayTransport?) {
         teardownActive()
         if (transport == null) return
@@ -261,7 +262,7 @@ class RelayRepositoryCoordinator(
             )
         // Publish the whole connection as ONE object: currentRepository now derives repo and pump-state
         // from this single switched value, closing the #493 cross-StateFlow race (see [currentRepository]).
-        activeConnection.value = Connection(pump, childScope, repo)
+        activeConnection.value = Connection(pump, childScope, repo, transport)
         // launch returns immediately; the suspending re-registration runs on the child scope, off the
         // non-suspending critical path of this collector (the :233 cancellation-atomicity invariant).
         childScope.launch { reregisterPushTokenOnOpen(pump, repo) }
@@ -300,18 +301,31 @@ class RelayRepositoryCoordinator(
      * its own scope down — independently required, since the child scope does not reach the pump's scope).
      * Idempotent: a second call with no active connection is a no-op.
      */
+    @Synchronized
     private fun teardownActive() {
         val current = activeConnection.value ?: return
         activeConnection.value = null
+        current.repo.endDebugBundle()
         current.scope.cancel()
         current.pump.close()
     }
 
     /** Tears down the active connection (wiping pump keys) and cancels the coordinator scope, ending
      *  the collector. Idempotent. */
+    @Synchronized
     fun close() {
         teardownActive()
         scope.cancel()
+    }
+
+    /** Request on this host's current authenticated connection; never wait, redirect or replay. */
+    @Synchronized
+    fun requestDebugBundle(): DebugBundleTransfer {
+        val current = activeConnection.value
+        if (!job.isActive || current == null || current.transport !== connections.value || current.pump.state.value !is PumpState.Open) {
+            return DebugBundleTransfer.rejected(DebugBundleStatus.UNAVAILABLE)
+        }
+        return current.repo.requestDebugBundle()
     }
 
     /**
@@ -358,6 +372,7 @@ class RelayRepositoryCoordinator(
         val pump: ManagedSessionPump,
         val scope: CoroutineScope,
         val repo: RemoteConversationRepository,
+        val transport: RelayTransport,
     )
 }
 

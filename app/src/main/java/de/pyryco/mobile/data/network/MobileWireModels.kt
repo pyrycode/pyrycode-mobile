@@ -1,8 +1,11 @@
 package de.pyryco.mobile.data.network
 
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 
 /**
  * Mobile Protocol v2 wire models (#273): typed, serializable representations of
@@ -33,6 +36,8 @@ data class InnerFrameV2(
  * polymorphic by [type]: consumer tickets bridge typed ↔ generic at the edges via
  * `MobileJson.decodeFromJsonElement` / `encodeToJsonElement`. It stays untrusted
  * raw JSON until a consumer decodes and validates it.
+ * `JsonNull` represents absent payloads for bare control frames and is omitted on encode;
+ * existing payload consumers keep their non-null [JsonElement] contract.
  *
  * [eventId] is the durable, per-conversation, strictly-increasing replay cursor (#412),
  * stable across reconnects — distinct from [id], the per-connection id that resets each
@@ -43,12 +48,13 @@ data class InnerFrameV2(
  * `omitempty *uint64` (pyrycode#649); a pathological `uint64 > 2^63` decodes to a negative
  * [Long] and is rejected downstream by [ReplayCursor.record]'s positive guard.
  */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class Envelope(
     val id: Long,
     val type: String,
     val ts: String,
-    val payload: JsonElement,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val payload: JsonElement = JsonNull,
     @SerialName("in_reply_to") val inReplyTo: Long? = null,
     @SerialName("event_id") val eventId: Long? = null,
 )

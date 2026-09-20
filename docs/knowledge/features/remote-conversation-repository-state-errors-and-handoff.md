@@ -38,11 +38,20 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
   request carries (benign — no TOCTOU of consequence). The KDoc on every affected field was updated to
   name its writers (and, for `projection`, `promote`'s read).
 - **The `pendingRequests` registry (#346)** (`ConcurrentHashMap<Long, CompletableDeferred<JsonElement>>`)
-  is the only other shared mutable state: an in-flight mutation request registers a deferred keyed by its
+  tracks awaited replies: an in-flight mutation request registers a deferred keyed by its
   envelope id, the collector completes it on the correlated `ack`/`error`, and the awaiting caller
   removes its own entry in a `finally`. Bounded by caller concurrency (one entry per in-flight send,
   removed on success/error/cancellation). On collector termination, `failAllPending` also fails and
   removes registered requests so connection loss does not strand an awaiting caller (#488).
+- **Diagnostic archive transfers** use the same request-id allocator and sole
+  inbound collector, with a separate synchronized `DebugBundleTransfer` retained
+  for the connection lifetime. Admission reserves it before sending; chunk/done
+  frames and bundle-correlated errors are offered to it before ordinary handlers.
+  A settled attempt remains retained to absorb late frames and prevent unsafe
+  reuse. The collector's `finally` calls `endDebugBundle()` to disable admission
+  permanently and settle any incomplete transfer, then `failAllPending()`.
+  Coordinator teardown also calls `endDebugBundle()` synchronously before
+  cancellation. See [host API and retry lifetime](relay-repository-coordinator.md#host-diagnostic-archive-transfer).
 - **Dispatcher inherited from the injected scope** (DI uses `Dispatchers.Default`; this is pure CPU/JSON
   work — the socket I/O is the transport's, below the pump). Not hard-coded.
 - `observeConversations`, `observeLastMessage`, and `observeMessages` are cold; N concurrent collectors
@@ -52,6 +61,10 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
 
 | Failure mode | Result |
 |---|---|
+| Diagnostic send returns false or throws | Static `SEND_FAILED`; no raw exception reaches transfer state or logs; another attempt requires reconnect. |
+| Bundle-correlated `error` | `REFUSED`, determined solely by `in_reply_to`; the daemon error body is not decoded. Unrelated errors retain their existing routing. |
+| Malformed bundle chunk/done, ordering gap/duplicate or count mismatch | `INVALID_STREAM`; partial chunks wiped/released, no archive exposed, ordinary inbound routing continues. Late bundle frames cannot change the result. |
+| Inbound completion, failure or cancellation; coordinator teardown | Receiving bundle becomes `DISCONNECTED`; admission closes. Already settled results remain unchanged. |
 | Malformed `conversations` payload | `IllegalArgumentException` caught per-envelope (covers both #316 families — `MissingFieldException` ⊂ `SerializationException`, and the kotlinx-datetime bad-timestamp throw); envelope **dropped**; collector survives; projection unchanged |
 | Malformed `message` payload (missing field / unmappable role e.g. `system` / bad `ts`) | `IllegalArgumentException` caught per-envelope (covers the #317 `SerializationException` decode failure and the `Instant.parse(ts)` throw); envelope **dropped silently** (no payload logged — content may be sensitive); collector survives; `lastMessages` **and** `threadByConversation` unchanged ([#329](../codebase/329.md) / [#313](../codebase/313.md)) |
 | Malformed `message_chunk` (any one row bad) | the **whole chunk** dropped in one `catch (IllegalArgumentException)` (decode + map-all under one `try`); collector survives; thread unchanged ([#313](../codebase/313.md)) |

@@ -28,12 +28,14 @@ What the phone sends/receives over the WebSocket. `data` carries the raw Noise f
 ### `Envelope` — application message frame
 
 ```kotlin
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class Envelope(
     val id: Long,                                       // uint64 on the wire
     val type: String,                                   // e.g. "hello", "hello_ack"
     val ts: String,                                     // RFC3339, kept as String (not parsed)
-    val payload: JsonElement,                           // generic carrier, polymorphic by `type`
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val payload: JsonElement = JsonNull,                // absent payload, still a non-null generic carrier
     @SerialName("in_reply_to") val inReplyTo: Long? = null,  // OMITTED when absent
     @SerialName("event_id") val eventId: Long? = null,       // #412: durable replay cursor; OMITTED when absent
 )
@@ -51,6 +53,15 @@ val ack = MobileJson.decodeFromJsonElement<HelloAckPayload>(envelope.payload)
 // encode, when building a "hello" envelope:
 val env = Envelope(id, "hello", ts, MobileJson.encodeToJsonElement(HelloClientPayload(...)))
 ```
+
+An absent payload decodes as `JsonNull`; callers still receive a non-null
+`JsonElement`. `@EncodeDefault(NEVER)` omits that default on encode even though
+`MobileJson.encodeDefaults` is true. `explicitNulls = false` alone does not omit
+the non-null `JsonNull` object. Object/string payloads retain their representation.
+This lets the [host diagnostic transfer](relay-repository-coordinator.md#host-diagnostic-archive-transfer)
+send a bare `request_debug_bundle`. Verify key absence in serialized JSON, as
+`DebugBundleTransferTest` and the registry's real Noise peer test do: decoding an
+envelope back into Kotlin cannot distinguish an omitted payload from `JsonNull`.
 
 ### `HelloClientPayload` — the `hello` payload (in `noise_init` early-data)
 
@@ -136,6 +147,14 @@ fun decodeServerStaticPubkey(qr: QrPayload): ByteArray  // -> raw 32 bytes, or t
 ```
 
 `decodeServerStaticPubkey` base64-std-decodes `qr.serverStaticPubkey` then requires exactly 32 bytes, throwing `IllegalArgumentException` (field-named message, **no echoed key bytes**, reports an observed length count) on bad base64 **or** length ≠ 32. It **never silently truncates** — this stops a malformed/truncated X25519 key from reaching #275's `Noise_IK` handshake, where a wrong-length key would corrupt or weaken it.
+
+The Java standard decoder accepts unpadded input and noncanonical pad bits.
+`DebugBundleTransfer` therefore requires
+`base64StdEncode(base64StdDecode(data)) == data` before accepting a chunk; the
+shared decoder alone does not enforce canonical encoding. Its tests reject both
+`YQ` (missing padding) and `YR==` (nonzero pad bits), which otherwise decode to the
+same byte as canonical `YQ==`. This stricter check belongs to the bundle receiver;
+the shared helper's behavior is unchanged.
 
 **The two-alphabet trap (#320).** Two different base64 alphabets coexist in one pairing payload: the **outer** QR-string wrapper is base64**url**-no-pad (Go `base64.RawURLEncoding`) — `decodeBase64UrlNoPad` (`Base64.getUrlDecoder()`); the **inner** `server_static_pubkey` is base64-**std**-with-padding — `base64StdDecode` / `decodeServerStaticPubkey`. The two decoders are deliberately co-located here so the trap stays visible. `decodeBase64UrlNoPad`'s load-bearing behavior is **rejecting** the std alphabet's `+`/`/` (throws `IllegalArgumentException`); it tolerates optional `=` padding (real `RawURLEncoding` is unpadded, so it round-trips). Using `base64StdDecode` on the outer wrapper — or `decodeBase64UrlNoPad` on the inner key — is a silent bug. The outer-wrapper consumer is the [Pairing payload parser](pairing-payload-parser.md).
 
@@ -247,14 +266,11 @@ consumer [#375](../codebase/375.md) (`ConversationRepository.requestScreenSnapsh
     **Refined rule:** parse-at-decode a payload timestamp only when a domain field consumes the instant;
     otherwise keep it a `String` like `Envelope.ts`.
 
-The envelope `type` strings are defined by the consumer ([#375](../codebase/375.md)) as
-`TYPE_REQUEST_SNAPSHOT` / `TYPE_SCREEN_SNAPSHOT` companion constants in `RemoteConversationRepository`,
-joining its **complete** mobile-side `TYPE_*` registry — every wire type (including `send_message` /
-`list_conversations`) is a named constant there and every request envelope uses `type = TYPE_*`, with no
-inline `type = "..."` literals. (This **corrects** the prediction recorded when #374 landed that these
-would be inline literals "with no mobile-side type-constants registry" — the registry already existed in
-`RemoteConversationRepository`; #375 simply extended it. The registry is local to that class, not a shared
-module mirroring the server's `codes.go`.) Because `SnapshotPayload.kt` holds **two** public types, ktlint `standard:filename` does not fire,
+The consumer defines `TYPE_REQUEST_SNAPSHOT` / `TYPE_SCREEN_SNAPSHOT` companion
+constants in `RemoteConversationRepository`, alongside its conversation verbs.
+This is a class-local collection, not an exhaustive shared protocol registry:
+diagnostic bundle type strings live in the repository's request and transfer
+receiver. Because `SnapshotPayload.kt` holds **two** public types, ktlint `standard:filename` does not fire,
 so it keeps the spec's `SnapshotPayload.kt` name — unlike #318's single-class rename ([[ktlint-filename-rule-single-class]]).
 `ScreenSnapshotPayloadDto` keeps the `data class` auto-`toString()` (which includes `text`) — matching the
 content-bearing `MessagePayloadDto`; `toString`-redaction is reserved for the `token` credential. The
