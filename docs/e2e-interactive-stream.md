@@ -730,10 +730,32 @@ only and must not be used to diagnose a current deterministic run.
 - **LIVE verified for #694:** the [recorded current-head run at `23218b5`](https://github.com/pyrycode/pyrycode-mobile/issues/694#issuecomment-5750540960)
   executed all eight curated scenarios with eight passes, no failures or skips, and
   process exit 0. The verifier also recorded 241 passing routine UI tests, including
-  both assertion regressions, at the preceding test revision. #588's passing-artifact
-  revalidation remains separate; daemon records alone do not prove phone rendering.
+  both assertion regressions, at the preceding test revision.
   The wrapper checks Claude login before starting a live suite. Automatic runs use
   the dispatcher's existing 1Password credential; missing credentials produce no passing XML.
+- **Default and explicit workspaces verified for #588 (2026-09-20):**
+  `InteractiveStreamE2ETest.interactiveTurn_pingPrompt_streamsPingReplyIntoThread`
+  (New discussion tap, factory `DEFAULT_SCRATCH_CWD`, no picker) and
+  `InteractiveStreamE2ETest.interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace`
+  (create/select an explicit folder) each executed once and rendered the assistant reply.
+  The [committed XML](../scripts/fixtures/default-workspace-live/588.xml) and
+  [revision/checksum context](../scripts/fixtures/default-workspace-live/588-context.json)
+  record `python3 scripts/android-test-gate.py live` at `2026-09-20T15:12:16.872Z`:
+  app `1569fe03d8ac5cdb6b13995175fcb9c6ba5d4d2a`, isolated stream-json daemon
+  `dccd18286b8f80d113c055322e22df3125bd1735`, Pixel 2 / API 33 / AOSP ATD
+  (`pixel2Api33Atd`), exit 0, eight passed, zero failures/errors/skips.
+  The [post-artifact gate at `be20dad578`](https://github.com/pyrycode/pyrycode-mobile/issues/588#issuecomment-5750756209)
+  passed all eight again (exit 0, no skips), completing live acceptance.
+  No workspace product patch was needed.
+- **Earlier #588 failure:** the [12:43 UTC capture](https://github.com/pyrycode/pyrycode-mobile/issues/588#issuecomment-5749901060)
+  had five passes and three reply-wait failures, including both workspace cases.
+  Daemon histories showed completed replies, but did not prove phone rendering;
+  unlike the earlier expired-OAuth baseline, this was not an authentication failure.
+  Substring-count growth was an unreliable reply oracle because queued prompt text
+  could disappear as the reply arrived. [#694](https://github.com/pyrycode/pyrycode-mobile/issues/694)
+  repaired that assertion before revalidation. The failed capture remains in Git
+  history; [the plan's revisions](specs/architecture/588-default-workspace-live-recheck.md#revisions)
+  retain the triage and its evidence limits.
 - **Dispatcher-run:** before verifier, `python3 scripts/android-test-gate.py ui` runs the non-E2E
   device tests, followed by one `scripted` invocation for each of `ping`, `stream`, `spinner`,
   `tool`, `tool-failed`, `reconnect` and `replay-order`. Tagged tickets run `live` after verifier.
@@ -786,7 +808,8 @@ The remaining checks here are specific to a real relay or real Claude execution:
   independent of queued-message counts, and the new-session delimiter is revealed
   after wrap-up. `PingReplyTest` and `SessionBoundaryVisibilityTest` provide routine
   Compose regressions for these shared assertions. The eight LIVE selections and
-  workspace/session postconditions remain; #588 artifact revalidation is separate.
+  workspace/session postconditions remain; #588's default/explicit-workspace
+  revalidation passed with [committed evidence](#verification-status).
 - **Coverage:** thinking indicator (hardest, screen-sourced) — **shipped (#454)**, alongside the
   multi-delta `stream`-render scenario; tool-use event assertion (running → done, and failed) —
   **shipped (#455, Layer 2c)**; reconnect continuity (reply survives a mid-turn drop) —
