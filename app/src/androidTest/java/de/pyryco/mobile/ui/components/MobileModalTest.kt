@@ -1,6 +1,9 @@
 package de.pyryco.mobile.ui.components
 
+import android.os.ParcelFileDescriptor
+import android.provider.Settings
 import android.view.View
+import android.view.inputmethod.InputMethodManager
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
@@ -8,7 +11,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -16,8 +18,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.InputModeManager
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.SoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
@@ -52,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.espresso.Espresso
+import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -68,6 +76,7 @@ class MobileModalTest {
     private val loading = mutableStateOf(false)
     private val error = mutableStateOf<String?>(null)
     private lateinit var dialogView: View
+    private var keyboardController: SoftwareKeyboardController? = null
 
     private fun show(
         overflow: Boolean = false,
@@ -101,6 +110,7 @@ class MobileModalTest {
             error = error.value,
         ) {
             dialogView = LocalView.current
+            keyboardController = LocalSoftwareKeyboardController.current
             var value by remember { mutableStateOf("") }
             if (overflow) repeat(18) { Text("Item $it") }
             OutlinedTextField(
@@ -202,48 +212,71 @@ class MobileModalTest {
 
     @Test
     fun ime_keeps_focused_field_final_item_and_actions_reachable() {
-        show(overflow = true, small = true)
-        rule.onNodeWithTag("field").performScrollTo().performClick()
-        rule.waitUntil(5_000) {
-            ViewCompat.getRootWindowInsets(dialogView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+        withTestIme {
+            show(overflow = true, small = true)
+            rule.waitUntil(5_000) { rule.runOnIdle { dialogView.hasWindowFocus() } }
+            rule
+                .onNodeWithTag("field")
+                .performScrollTo()
+                .performClick()
+                .assertIsFocused()
+            rule.runOnIdle { checkNotNull(keyboardController).show() }
+            rule.waitUntil(5_000) {
+                rule.runOnIdle {
+                    ViewCompat.getRootWindowInsets(dialogView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+                }
+            }
+            rule
+                .onNodeWithTag("field")
+                .assertIsFocused()
+                .assertIsDisplayed()
+                .performTextInput("Keyboard entry")
+            rule.onNodeWithText("Final item").performScrollTo().assertIsDisplayed()
+            rule.onNodeWithContentDescription("Close").assertIsDisplayed()
+            rule.onNodeWithText("OK").assertIsDisplayed()
+            val footer = rule.onNodeWithText("OK").fetchSemanticsNode().boundsInRoot
+            rule.runOnIdle {
+                val location = IntArray(2)
+                dialogView.getLocationOnScreen(location)
+                val ime = ViewCompat.getRootWindowInsets(dialogView)?.getInsets(WindowInsetsCompat.Type.ime())?.bottom ?: 0
+                assertTrue(ime > 0)
+                assertTrue(location[1] + footer.bottom <= dialogView.resources.displayMetrics.heightPixels - ime + 1)
+            }
+            rule.onNodeWithText("Cancel").performClick()
+            rule.runOnIdle { assertEquals(1, dismissals) }
         }
-        rule
-            .onNodeWithTag("field")
-            .assertIsFocused()
-            .assertIsDisplayed()
-            .performTextInput("Keyboard entry")
-        rule.onNodeWithText("Final item").performScrollTo().assertIsDisplayed()
-        rule.onNodeWithContentDescription("Close").assertIsDisplayed()
-        rule.onNodeWithText("OK").assertIsDisplayed()
-        val location = IntArray(2)
-        rule.runOnIdle { dialogView.getLocationOnScreen(location) }
-        val footer = rule.onNodeWithText("OK").fetchSemanticsNode().boundsInRoot
-        val ime = ViewCompat.getRootWindowInsets(dialogView)?.getInsets(WindowInsetsCompat.Type.ime())?.bottom ?: 0
-        assertTrue(ime > 0)
-        assertTrue(location[1] + footer.bottom <= dialogView.resources.displayMetrics.heightPixels - ime + 1)
-        rule.onNodeWithText("Cancel").performClick()
-        rule.runOnIdle { assertEquals(1, dismissals) }
     }
 
     @Test
     fun keyboard_navigation_stays_in_dialog_and_restores_launcher_focus() {
+        val launcher = FocusRequester()
+        lateinit var launcherInputMode: InputModeManager
+        lateinit var dialogInputMode: InputModeManager
         rule.setContent {
             PyrycodeMobileTheme {
                 var open by remember { mutableStateOf(false) }
-                val launcher = remember { FocusRequester() }
-                LaunchedEffect(Unit) { launcher.requestFocus() }
+                launcherInputMode = LocalInputModeManager.current
                 Column {
                     Button(onClick = { open = true }, modifier = Modifier.focusRequester(launcher)) { Text("Launch") }
                     Button(onClick = {}) { Text("Other background action") }
                 }
                 if (open) {
-                    MobileModal("Keyboard modal", onDismissRequest = { open = false }, onSubmit = { submissions++ }) {
+                    MobileModal("Keyboard modal", onDismissRequest = {
+                        dismissals++
+                        open = false
+                    }, onSubmit = { submissions++ }) {
+                        dialogInputMode = LocalInputModeManager.current
                         Text("Body")
                     }
                 }
             }
         }
+        rule.runOnIdle {
+            assertTrue(launcherInputMode.requestInputMode(InputMode.Keyboard))
+            launcher.requestFocus()
+        }
         rule.onNodeWithText("Launch").assertIsFocused().performKeyInput { pressKey(Key.Enter) }
+        rule.runOnIdle { assertTrue(dialogInputMode.requestInputMode(InputMode.Keyboard)) }
         rule.onNodeWithContentDescription("Close").performSemanticsAction(SemanticsActions.RequestFocus)
         repeat(6) {
             rule.onNode(isFocused() and hasAnyAncestor(isDialog())).performKeyInput { pressKey(Key.Tab) }
@@ -254,6 +287,41 @@ class MobileModalTest {
         rule.runOnIdle { assertEquals(1, submissions) }
         rule.onNodeWithText("Cancel").performSemanticsAction(SemanticsActions.RequestFocus)
         rule.onNodeWithText("Cancel").performKeyInput { pressKey(Key.Enter) }
+        rule.runOnIdle { assertEquals(1, dismissals) }
+        rule.onNodeWithText("Launch").assertIsFocused().performKeyInput { pressKey(Key.Enter) }
+        rule.onNodeWithText("Keyboard modal").assertIsDisplayed()
+        rule.runOnIdle { assertTrue(dialogInputMode.requestInputMode(InputMode.Keyboard)) }
+        rule.onNodeWithContentDescription("Close").performSemanticsAction(SemanticsActions.RequestFocus)
+        rule.onNodeWithContentDescription("Close").assertIsFocused().performKeyInput { pressKey(Key.Enter) }
         rule.onNodeWithText("Launch").assertIsFocused()
+        rule.runOnIdle {
+            assertEquals(2, dismissals)
+            assertEquals(1, submissions)
+        }
+    }
+
+    private fun withTestIme(block: () -> Unit) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val resolver = instrumentation.targetContext.contentResolver
+        val imeId = "${instrumentation.context.packageName}/${MobileModalTestIme::class.java.name}"
+        val previous = Settings.Secure.getString(resolver, Settings.Secure.DEFAULT_INPUT_METHOD)
+        val manager = instrumentation.targetContext.getSystemService(InputMethodManager::class.java)
+        val wasEnabled = manager.enabledInputMethodList.any { it.id == imeId }
+
+        fun shell(command: String) =
+            ParcelFileDescriptor
+                .AutoCloseInputStream(instrumentation.uiAutomation.executeShellCommand(command))
+                .bufferedReader()
+                .use { it.readText() }
+        try {
+            shell("ime enable $imeId")
+            shell("ime set $imeId")
+            assertEquals(imeId, Settings.Secure.getString(resolver, Settings.Secure.DEFAULT_INPUT_METHOD))
+            block()
+        } finally {
+            if (!previous.isNullOrEmpty()) shell("ime set $previous")
+            if (!wasEnabled) shell("ime disable $imeId")
+            if (previous.isNullOrEmpty()) shell("settings delete secure default_input_method")
+        }
     }
 }
