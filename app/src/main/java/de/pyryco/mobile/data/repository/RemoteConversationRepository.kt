@@ -1695,29 +1695,24 @@ class RemoteConversationRepository(
     }
 
     /**
-     * Send the bare v2 `interrupt` control frame (#458) — the wire half of pressing **Esc** on a
-     * running turn. Unlike [cancelModal], interrupt is **fire-and-forget**: the daemon sends no reply
-     * (no ack/error/broadcast), so this uses plain [SessionPump.send] and never [sendAndAwaitReply],
-     * which would hang awaiting a reply that never comes. The frame is connection-level ("the one
-     * running turn") and carries **no payload** — no `conversation_id`, no idempotency token: it is
-     * replay-safe (a replayed Esc with no running turn is a daemon-side no-op). The `interactive`
-     * capability is enforced server-side, so the phone always sends.
+     * Stop the named conversation over v2 `interrupt` (protocol-mobile.md, Interrupt v2).
+     * Fire-and-forget: the daemon sends no ack, so use [SessionPump.send], not [sendAndAwaitReply].
+     * The daemon validates the conversation lookup key and enforces the interactive capability.
+     * No local turn state changes; the existing inbound turn events remain authoritative.
      *
-     * Throws [IllegalStateException] when the session is not connected ([SessionPump.send] returns
-     * `false`), mirroring [sendAndAwaitReply]'s line-612 not-connected behaviour so the caller can
-     * swallow it.
+     * Throws [IllegalStateException] when the session is not connected so the caller can swallow it.
      */
-    suspend fun interrupt() {
-        check(pump.send(interruptRequest())) { "$TYPE_INTERRUPT not sent: session not connected" }
+    suspend fun interrupt(conversationId: String) {
+        check(pump.send(interruptRequest(conversationId))) { "$TYPE_INTERRUPT not sent: session not connected" }
     }
 
-    /** The bare `interrupt` control frame (#458): empty payload, no correlation key — see [interrupt]. */
-    private fun interruptRequest(): Envelope =
+    /** Explicitly targeted, fire-and-forget control frame — see [interrupt]. */
+    private fun interruptRequest(conversationId: String): Envelope =
         Envelope(
             id = requestId.incrementAndGet(),
             type = TYPE_INTERRUPT,
             ts = Clock.System.now().toString(),
-            payload = JsonObject(emptyMap()),
+            payload = JsonObject(mapOf("conversation_id" to JsonPrimitive(conversationId))),
         )
 
     /**

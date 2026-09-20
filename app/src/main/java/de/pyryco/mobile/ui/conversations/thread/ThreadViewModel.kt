@@ -135,7 +135,7 @@ class ThreadViewModel(
     // #458: the outbound `interrupt` send path → the coordinator's passthrough (RelayRepositoryCoordinator
     // .interrupt). Defaulted no-op so the fake-backed Koin graph + existing tests stay inert. The VM holds
     // only this suspend lambda, never the coordinator/concrete repo — same posture as answerModal/cancelModal.
-    private val interrupt: suspend () -> Unit = {},
+    private val interrupt: suspend (conversationId: String) -> Unit = {},
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
@@ -605,10 +605,9 @@ class ThreadViewModel(
         }
     }
 
-    /** Send the bare `interrupt` control frame (#458) — the action sibling #459's busy-state affordance
-     *  calls. Always attempts the send (minimal client; the server is authoritative on whether a turn is
-     *  running and on the `interactive` gate); takes no args — the frame is connection-level, not
-     *  per-conversation. Holds no per-VM state to gate on, so unlike [onModalCancel] there is no guard. */
+    /** Stop this ViewModel's conversation. Always attempts the send; the daemon is authoritative on
+     *  whether its turn is running and on the interactive gate. The affordance passes no arguments:
+     *  [sendInterrupt] supplies the saved open [conversationId], without changing local turn state. */
     fun onInterrupt() {
         sendInterrupt()
     }
@@ -628,7 +627,7 @@ class ThreadViewModel(
     private fun sendInterrupt() {
         viewModelScope.launch {
             try {
-                interrupt()
+                interrupt(conversationId)
             } catch (e: CancellationException) {
                 throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
             } catch (e: RelayErrorException) {

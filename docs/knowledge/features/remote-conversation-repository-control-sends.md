@@ -85,41 +85,46 @@ override suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: 
   monotonic `queued_msg_id` is never recycled, so a replayed drop hits an already-consumed id → a benign
   daemon stale-id reject (the `modal_cancel` no-token posture). Authorization is daemon-side.
 
-## `interrupt()` — the bare v2 `interrupt` control-send (#458)
+<a id="interrupt--the-bare-v2-interrupt-control-send-458"></a>
 
-The **outbound, fire-and-forget** half of the remote-Esc feature: a bare `interrupt` control frame the daemon
-maps to `turnevent.Cancel` → one Esc keystroke to the supervised claude (pyrycode#707). The
-[`cancelModal`](remote-conversation-repository-live-stream-and-modals.md#answermodal--cancelmodal--the-v2-modal-answercancel-control-send-438) template with **one
-behavioural departure** — interrupt gets **no reply**, so it uses plain `pump.send`, **not**
-`sendAndAwaitReply` (awaiting a reply that never comes would hang). [#458](../codebase/458.md).
+## `interrupt(conversationId)` — explicitly targeted v2 `interrupt`
+
+Stop sends the open thread's id as the sole payload field, `conversation_id`
+(#626). A bare frame would leave targeting to the daemon's process-wide
+follow-active cursor, which another device can move. See the authoritative
+[Interrupt (v2) protocol](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#interrupt-v2).
 
 ```kotlin
-suspend fun interrupt() {
-    check(pump.send(interruptRequest())) { "$TYPE_INTERRUPT not sent: session not connected" }
+suspend fun interrupt(conversationId: String) {
+    check(pump.send(interruptRequest(conversationId))) { "$TYPE_INTERRUPT not sent: session not connected" }
 }
-private fun interruptRequest(): Envelope = Envelope(
+private fun interruptRequest(conversationId: String): Envelope = Envelope(
     id = requestId.incrementAndGet(), type = TYPE_INTERRUPT,
-    ts = Clock.System.now().toString(), payload = JsonObject(emptyMap()),   // bare — no payload
+    ts = Clock.System.now().toString(),
+    payload = JsonObject(mapOf("conversation_id" to JsonPrimitive(conversationId))),
 )
 ```
 
-- **Bare connection-level frame — no `conversationId` argument.** The method takes none; the payload is the
-  empty object `{}` (the `listConversationsRequest()` precedent), with no `conversation_id` / no idempotency
-  key. Claude serialises turns ⇒ at most one running turn ⇒ a bare frame is unambiguous. **Replay-safe** (a
-  replayed Esc with no running turn is a daemon no-op), so the absence of a token is by design, not omission.
-- **Fire-and-forget — plain `pump.send`, no awaited reply.** The `check` throws `IllegalStateException` when
-  the pump is not `Open` (`send` returns `false`), reusing `sendAndAwaitReply`'s line-612 not-connected idiom
-  so the caller (`ThreadViewModel.sendInterrupt`) can swallow it. New companion const `TYPE_INTERRUPT =
-  "interrupt"` near `TYPE_MODAL_CANCEL`.
-- **Concrete-only, injected as a defaulted suspend lambda** off the
-  [coordinator passthrough](relay-repository-coordinator.md#outbound-interrupt-passthrough-458), exactly like
-  `answerModal`/`cancelModal` — **not** on the interface. The discriminator is the payload: a frame with no
-  `conversation_id` (modal-keyed, or here connection-level) is fetched off the concrete coordinator; a
-  `conversation_id`-carrying frame (`requestScreenSnapshot` / `dropQueuedMessage`) goes on the interface +
-  facade. See [Interrupt send path](interrupt-send-path.md).
-- **The `interactive` gate is server-authoritative** — the phone always sends (minimal client); a
-  non-interactive connection's interrupt is dropped daemon-side. **Permission-gate-exempt.** `security-sensitive`,
-  PASS: outbound-only, no untrusted parse, the empty payload has no injection surface, never logs.
+- **Fire-and-forget:** each invocation calls plain `pump.send` once. There is no
+  ack or error reply to await; `sendAndAwaitReply` would hang. A false send result
+  throws `IllegalStateException`, which `ThreadViewModel.sendInterrupt` swallows
+  without a log or UI error. Cancellation still propagates through the ViewModel.
+- **Inbound events own turn state:** this method changes no projection on success
+  or failure. Sending does not prove that the turn stopped; the existing
+  conversation-routed `turn_state`/`turn_end` events update the busy flag.
+- **Preserve the callback seam:** the concrete method is reached through the
+  [coordinator passthrough](relay-repository-coordinator.md#outbound-interrupt-passthrough-458)
+  and a defaulted `suspend (String) -> Unit` callback. A `conversation_id` payload
+  does not require adding it to `ConversationRepository` or the facade.
+- **Daemon-owned validation:** the id is JSON data, never authorization. The
+  daemon validates the named target and enforces `interactive`; an unaddressable
+  target is silently inert and cannot redirect Stop to another conversation.
+  No identifier or payload is logged.
+- **Targeting regression:** `RemoteConversationRepositoryTest` seeds messages in
+  A and B, exercises A, then asserts exactly one interrupt naming B with no reply
+  fixture and unchanged messages in both threads. The
+  [send-path tests](interrupt-send-path.md#testing) cover the other boundaries;
+  cross-device live proof remains with #679.
 
 <a id="startnewsession--the-bare-v2-new_session-control-send-539"></a>
 

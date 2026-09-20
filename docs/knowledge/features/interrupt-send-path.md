@@ -1,105 +1,110 @@
-# Interrupt send path — the bare v2 `interrupt` control frame (remote Esc)
+# Interrupt send path — stop the open conversation
 
-The phone's **outbound send path** for stopping a running turn remotely — the wire half of pressing **Esc**.
-Phase 3 (epic pyrycode#597) lets a paired phone interrupt the supervised claude; the server side shipped in
-pyrycode#707, where the daemon maps an inbound `interrupt` control frame to the neutral `turnevent.Cancel`
-and routes it to claude as a single Esc keystroke. This is the phone half: a thin vertical slice
-(repository → coordinator → DI → ViewModel action) landed in [#458](../codebase/458.md). It carries **no UI**
-— the visible busy-state affordance that calls it is sibling **#459** (`blockedBy #458`).
+Stop carries the open thread's saved `conversationId` from `ThreadViewModel` to
+the daemon in `interrupt.payload.conversation_id` (#626). The
+[busy-turn affordance](interrupt-affordance.md) calls this path while the viewed
+conversation is thinking or responding. Sending leaves local turn state unchanged;
+the control disappears only when that conversation's inbound events clear `isBusy`.
 
-It is the structural twin of the [`modal_cancel` outbound slice](modal-answer-flow.md)
-([#451](../codebase/451.md)), with two departures the fire-and-forget wire contract forces: **plain
-`pump.send`** (no awaited reply) and **inert empty-catch swallowing** (no error channel, no log).
+## Wire contract
 
-## Wire contract (SSOT: pyrycode `docs/protocol-mobile.md` § Interrupt v2, pyrycode#707)
+The authoritative contract is upstream's
+[Interrupt (v2)](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#interrupt-v2).
+Mobile sends a single payload field, `conversation_id`, encoded as a `JsonPrimitive`.
+An empty payload lets the daemon's process-wide follow-active cursor choose the
+conversation. Another device's activity can move that cursor, so Stop must name
+the viewed conversation on every call.
 
-- `interrupt` — phone → binary (encrypted relay frame). **No reply, no ack, no broadcast.**
-- **Bare frame.** `{type: "interrupt"}` with **no payload**: no `conversation_id`, no `interrupt_id`, no
-  nonce, no idempotency key. (Contrast modals, which carry `modal_id` + an `answer_token`.) No payload DTO.
-- **Replay-safe.** A replayed `interrupt` sends another Esc; an Esc with no running turn is a no-op in
-  claude. Claude serialises turns ⇒ at most one running turn ⇒ a bare connection-level frame is
-  unambiguous. Not part of the reconnect-replay ring; needs no correlation key.
-- **Interactive-capability-gated server-side.** A non-interactive connection's `interrupt` is dropped by the
-  daemon. The phone already advertises `interactive` in its `hello` ([#401](../codebase/401.md)).
-- **Permission-gate-exempt** — interrupting one's own paired session is a normal paired action.
+The id is a daemon-validated lookup key, not authorization. A named target that
+the daemon cannot act on is silently ignored, without falling through to another
+conversation. The daemon enforces the `interactive` capability and paired-device
+authorization; there is no extra client capability gate.
+
+Interrupt has no synchronous ack or error reply. The client observes completion
+through the conversation's existing turn events. There is no idempotency key or
+reconnect replay: an interrupt with no running turn is a no-op.
 
 ## The path
 
-```
-ThreadViewModel.onInterrupt()           # the action #459's affordance calls (no args, no guard)
-   └─ sendInterrupt()                    # viewModelScope.launch { try { interrupt() } catch … }  (empty catches)
-       └─ interrupt: suspend () -> Unit  # DI-injected lambda = coordinator::interrupt (defaulted no-op {})
-           └─ RelayRepositoryCoordinator.interrupt()      # null-guard passthrough → throws ISE if no connection
-               └─ RemoteConversationRepository.interrupt() # check(pump.send(interruptRequest())) — fire-and-forget
-                   └─ pump.send(Envelope{type:"interrupt", payload:{}})  # over the Open Noise_IK session
+```text
+ThreadViewModel.onInterrupt()
+  └─ sendInterrupt(): viewModelScope.launch { interrupt(conversationId) }
+      └─ interrupt: suspend (String) -> Unit = coordinator::interrupt
+          └─ RelayRepositoryCoordinator.interrupt(conversationId)
+              └─ RemoteConversationRepository.interrupt(conversationId)
+                  └─ pump.send(Envelope{type:"interrupt", payload:{conversation_id: B}})
 ```
 
-- **`RemoteConversationRepository.interrupt()`** — `check(pump.send(interruptRequest()))`. Plain `pump.send`
-  (Boolean), **not** [`sendAndAwaitReply`](remote-conversation-repository.md) (the daemon sends no reply;
-  awaiting one would hang). `interruptRequest()` builds a bare `Envelope` with `payload =
-  JsonObject(emptyMap())` (the `listConversationsRequest()` empty-payload precedent). The `check` throws
-  `IllegalStateException` when the pump is not `Open`, reusing the not-connected idiom so the caller can
-  swallow it. Companion const `TYPE_INTERRUPT = "interrupt"`. See
-  [Remote conversation repository § `interrupt()`](remote-conversation-repository.md).
-- **`RelayRepositoryCoordinator.interrupt()`** — the exact `cancelModal` mirror: `activeConnection.value?.repo ?:
-  throw IllegalStateException("no active connection")`, then `repo.interrupt()`. Null-guard only; never logs.
-  See [Relay repository coordinator § Outbound interrupt passthrough](relay-repository-coordinator.md#outbound-interrupt-passthrough-458).
-- **DI** — `AppModule` binds `interrupt = coordinator::interrupt` in the `ThreadViewModel` factory, alongside
-  `answerModal`/`cancelModal`. No new Koin binding (fetched off the concrete coordinator singleton).
-- **`ThreadViewModel`** — a defaulted `interrupt: suspend () -> Unit = {}` ctor param (the VM holds only the
-  lambda, never the coordinator/concrete repo), a public `onInterrupt()` action, and a private
-  `sendInterrupt()` launcher. `onInterrupt()` takes **no args** and has **no guard** (unlike `onModalCancel`,
-  there is no per-VM state to gate on — it always attempts the send; the server is authoritative on whether a
-  turn is running). Show/hide gating of the affordance is #459's.
+- **ViewModel:** `onInterrupt()` takes no UI argument; `sendInterrupt()` supplies
+  the id saved for this thread. The injected callback is defaulted to a no-op for
+  fixtures. The action always attempts the send; visibility is governed by
+  `isBusy`, while the daemon decides whether there is a running turn to stop.
+- **DI and coordinator:** `AppModule` binds `interrupt = coordinator::interrupt`.
+  The [passthrough](relay-repository-coordinator.md#outbound-interrupt-passthrough-458)
+  reads the active connection's concrete repository and forwards the id unchanged.
+  The connection selects the transport, while the argument selects the conversation.
+- **Repository:** [`interrupt(conversationId)`](remote-conversation-repository-control-sends.md#interruptconversationid--explicitly-targeted-v2-interrupt)
+  makes one plain `pump.send(interruptRequest(conversationId))` call. Awaiting
+  `sendAndAwaitReply` would hang because this verb has no reply.
 
 ## Design decisions
 
-- **Fire-and-forget, not request/reply.** No ack to await ⇒ plain `pump.send`. This is the one repo-layer
-  difference from the `cancelModal` template.
-- **Connection-level — no `conversationId` in the send path.** The action lives on the per-conversation
-  `ThreadViewModel` (where #459's busy turn is visible), but the frame stays bare and connection-level
-  ("the one running turn").
-- **Always send; no client-side `interactive` suppression.** The gate is server-authoritative and
-  fail-closed. A minimal client sends an Esc-only frame; the daemon ignores it on a non-interactive
-  connection.
-- **Inert on failure — empty catch bodies, no error channel, no log.** `sendInterrupt()` is the `sendCancel`
-  twin but swallows `IllegalStateException` (not-connected / pre-`Open`) and `RelayErrorException`
-  (unreachable on the real fire-and-forget path — retained for parity + the AC #4 test, documented in KDoc).
-  The `catch (CancellationException) { throw e }` **precedes** the typed catches so structured cancellation
-  is preserved (`j.u.c.CancellationException extends IllegalStateException` on the JVM —
-  [[catch-illegalstate-swallows-cancellation]]).
+- Preserve the existing suspend callback seam. Adding a target does not require
+  moving interrupt onto `ConversationRepository` or its stable facade; the
+  ViewModel continues to hold only the callback.
+- Do not optimistically clear `isBusy`, reset messages or claim success after a
+  send. Both accepted and failed sends leave local state alone; inbound
+  `turn_state`/`turn_end` events for the open conversation own the busy flag.
+- Do not queue or retry the operation. Connection and send failures remain silent,
+  with no snackbar, error channel or log.
 
 ## Error handling
 
-| Failure | Surfaces at | Result |
+| Failure | Boundary | Result |
 |---|---|---|
-| No active connection (`activeConnection.value == null`) | coordinator `interrupt()` | `IllegalStateException` → VM swallows → **inert** |
-| Connected but pump pre-`Open` (`pump.send` → `false`) | repo `check(pump.send(...))` | `IllegalStateException` → VM swallows → **inert** |
-| Relay/server `error` | not reachable (no reply awaited) | catch retained for parity + AC #4 test → **inert** |
-| `viewModelScope` cancelled mid-send | `CancellationException` | rethrown **before** typed catches → propagates (structured cancellation preserved) |
+| No active connection | Coordinator null guard | `IllegalStateException`, swallowed by the ViewModel |
+| `pump.send` returns `false` | Repository `check` | `IllegalStateException`, swallowed by the ViewModel |
+| Injected callback throws `RelayErrorException` | ViewModel | Swallowed; retained test seam, unreachable through the real fire-and-forget send |
+| Send coroutine is cancelled | ViewModel | `CancellationException` is rethrown before the typed catches |
 
-No banner, no dialog, no log, no error channel. The send fails silently inert.
+On the JVM, `CancellationException` extends `IllegalStateException`. Catch ordering
+therefore matters even when failure handlers have empty bodies. The send stays
+owned by `viewModelScope` and is cancelled on ViewModel teardown.
 
 ## Security
 
-`security-sensitive`, architect § Security review **PASS** + code review confirmed. Outbound-only with no
-untrusted parse (zero-arg, compile-time-constant empty payload, no injection surface). `pump.send` transmits
-only over an `Open` (authenticated Noise_IK) session — a pre-`Open`/null pump throws and the interrupt cannot
-ride an unauthenticated channel. No token/nonce by design (replay-safe). Permission-gate-exempt
-(interrupting one's own paired session is a normal paired action, pyrycode#707). Never-log. See
-[#458 § Security](../codebase/458.md#security-security-sensitive).
+The id is serialized as JSON data without interpolation. Transport remains the
+authenticated Noise session; the coordinator and repository never log the id or
+payload. Supplying a conversation id does not bypass daemon authorization or its
+`interactive` gate. See the [plan's security review](../../specs/architecture/626-explicit-interrupt-target.md#security-review).
+
+## Testing
+
+`ThreadViewModelTest`, `RelayRepositoryCoordinatorTest` and
+`RemoteConversationRepositoryTest` assert B's target after distinct prior activity
+in A, including exactly one callback/send for the Stop action. Repository coverage
+supplies no reply fixture and preserves messages in both conversations; ViewModel
+coverage preserves busy/thread state after success and failure. A single target
+or a count-only recorder would miss a stale target passed from an earlier thread.
+
+Teardown cancellation alone can pass even if a catch swallows cancellation: the
+parent job is already cancelled and empty catches leave no visible side effect.
+`onInterrupt_sendCancellationRemainsCancellation` throws cancellation from the
+callback and checks the send job's completion cause, proving propagation.
+
+The [affordance regression](interrupt-affordance.md#testing) checks idle absence,
+thinking/responding visibility, the recorded target and continued visibility after
+tapping until `turn_end`. These deterministic assertions and the existing curated
+live suite do not prove the cross-device outcome. [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679)
+owns the pending rung-3 scenario in `InteractiveStreamE2ETest`: with real turns in A
+and B and another device most recently using A, phone Stop while viewing B must end
+B while A keeps running. See the [e2e coverage follow-ups](../../e2e-interactive-stream.md#follow-ups-to-ticket).
 
 ## Related
 
-- Ticket: [#458](../codebase/458.md) — files, line refs, the test-teeth lesson, full security walk.
-- Mirror / template: [Modal answer flow](modal-answer-flow.md) ([#451](../codebase/451.md), the `modal_cancel`
-  outbound slice this is the twin of); the concrete sends [#438](../codebase/438.md).
-- Hosts the send: [Remote conversation repository](remote-conversation-repository.md) (`interrupt()`);
-  the passthrough: [Relay repository coordinator](relay-repository-coordinator.md).
-- Consumer (downstream, **shipped**): [Interrupt affordance](interrupt-affordance.md)
-  ([#459](../codebase/459.md), `blockedBy` #458) — the busy-turn interrupt control (Figma 16-8), its
-  `isBusy` show/hide gating, and the AC#4 screen test. `onInterrupt()` (this slice) is the tap target.
-- Placement counterpoint: [#466](../codebase/466.md) (`dropQueuedMessage` — the interface-method shape for a
-  `conversation_id`-carrying frame; interrupt is the connection-level injected-lambda branch).
-- Server SSOT: pyrycode#707, `docs/protocol-mobile.md` § Interrupt (v2), ADR 025, EPIC pyrycode#597.
-</content>
+- [Interrupt affordance](interrupt-affordance.md) — visibility, rendering and tap wiring.
+- [Remote control sends](remote-conversation-repository-control-sends.md) and
+  [coordinator](relay-repository-coordinator.md) — transport and connection ownership.
+- [Modal answer flow](modal-answer-flow.md) — the related suspend callback pattern.
+- [Explicit Stop plan](../../specs/architecture/626-explicit-interrupt-target.md);
+  [original send-path history](../codebase/458.md).
