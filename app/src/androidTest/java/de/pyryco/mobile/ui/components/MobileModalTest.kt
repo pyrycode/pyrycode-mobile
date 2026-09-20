@@ -65,10 +65,27 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TestRule
+import org.junit.runners.model.Statement
 
 @OptIn(ExperimentalTestApi::class)
 class MobileModalTest {
-    @get:Rule val rule = createComposeRule()
+    @get:Rule(order = 0)
+    val imeBeforeActivity =
+        TestRule { base, description ->
+            object : Statement() {
+                override fun evaluate() {
+                    if (description.getAnnotation(WithTestIme::class.java) != null) {
+                        withTestIme { base.evaluate() }
+                    } else {
+                        base.evaluate()
+                    }
+                }
+            }
+        }
+
+    @get:Rule(order = 1)
+    val rule = createComposeRule()
 
     private var dismissals = 0
     private var submissions = 0
@@ -211,42 +228,41 @@ class MobileModalTest {
     }
 
     @Test
+    @WithTestIme
     fun ime_keeps_focused_field_final_item_and_actions_reachable() {
-        withTestIme {
-            show(overflow = true, small = true)
-            rule.waitUntil(5_000) {
-                rule.runOnIdle { ::dialogView.isInitialized && dialogView.hasWindowFocus() }
-            }
-            rule
-                .onNodeWithTag("field")
-                .performScrollTo()
-                .performClick()
-                .assertIsFocused()
-            rule.runOnIdle { checkNotNull(keyboardController).show() }
-            rule.waitUntil(5_000) {
-                rule.runOnIdle {
-                    ViewCompat.getRootWindowInsets(dialogView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
-                }
-            }
-            rule
-                .onNodeWithTag("field")
-                .assertIsFocused()
-                .assertIsDisplayed()
-                .performTextInput("Keyboard entry")
-            rule.onNodeWithText("Final item").performScrollTo().assertIsDisplayed()
-            rule.onNodeWithContentDescription("Close").assertIsDisplayed()
-            rule.onNodeWithText("OK").assertIsDisplayed()
-            val footer = rule.onNodeWithText("OK").fetchSemanticsNode().boundsInRoot
-            rule.runOnIdle {
-                val location = IntArray(2)
-                dialogView.getLocationOnScreen(location)
-                val ime = ViewCompat.getRootWindowInsets(dialogView)?.getInsets(WindowInsetsCompat.Type.ime())?.bottom ?: 0
-                assertTrue(ime > 0)
-                assertTrue(location[1] + footer.bottom <= dialogView.resources.displayMetrics.heightPixels - ime + 1)
-            }
-            rule.onNodeWithText("Cancel").performClick()
-            rule.runOnIdle { assertEquals(1, dismissals) }
+        show(overflow = true, small = true)
+        rule.waitUntil(5_000) {
+            rule.runOnIdle { ::dialogView.isInitialized && dialogView.hasWindowFocus() }
         }
+        rule
+            .onNodeWithTag("field")
+            .performScrollTo()
+            .performClick()
+            .assertIsFocused()
+        rule.runOnIdle { checkNotNull(keyboardController).show() }
+        rule.waitUntil(5_000) {
+            rule.runOnIdle {
+                ViewCompat.getRootWindowInsets(dialogView)?.isVisible(WindowInsetsCompat.Type.ime()) == true
+            }
+        }
+        rule
+            .onNodeWithTag("field")
+            .assertIsFocused()
+            .assertIsDisplayed()
+            .performTextInput("Keyboard entry")
+        rule.onNodeWithText("Final item").performScrollTo().assertIsDisplayed()
+        rule.onNodeWithContentDescription("Close").assertIsDisplayed()
+        rule.onNodeWithText("OK").assertIsDisplayed()
+        val footer = rule.onNodeWithText("OK").fetchSemanticsNode().boundsInRoot
+        rule.runOnIdle {
+            val location = IntArray(2)
+            dialogView.getLocationOnScreen(location)
+            val ime = ViewCompat.getRootWindowInsets(dialogView)?.getInsets(WindowInsetsCompat.Type.ime())?.bottom ?: 0
+            assertTrue(ime > 0)
+            assertTrue(location[1] + footer.bottom <= dialogView.resources.displayMetrics.heightPixels - ime + 1)
+        }
+        rule.onNodeWithText("Cancel").performClick()
+        rule.runOnIdle { assertEquals(1, dismissals) }
     }
 
     @Test
@@ -319,11 +335,18 @@ class MobileModalTest {
             shell("ime enable $imeId")
             shell("ime set $imeId")
             assertEquals(imeId, Settings.Secure.getString(resolver, Settings.Secure.DEFAULT_INPUT_METHOD))
+            // Drain configuration delivery before the inner Compose rule launches its activity.
+            instrumentation.waitForIdleSync()
             block()
         } finally {
+            // The inner rule has already closed the host before restoring the device IME.
             if (!previous.isNullOrEmpty()) shell("ime set $previous")
             if (!wasEnabled) shell("ime disable $imeId")
             if (previous.isNullOrEmpty()) shell("settings delete secure default_input_method")
         }
     }
 }
+
+@Target(AnnotationTarget.FUNCTION)
+@Retention(AnnotationRetention.RUNTIME)
+private annotation class WithTestIme
