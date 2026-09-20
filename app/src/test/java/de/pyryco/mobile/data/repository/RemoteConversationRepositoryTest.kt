@@ -2856,22 +2856,36 @@ class RemoteConversationRepositoryTest {
             assertTrue(outcome.exceptionOrNull() is IllegalStateException)
         }
 
-    // ---- startNewSession (#539): bare fire-and-forget control frame --------------------------------
-
-    // AC #1, wire contract: startNewSession emits exactly one bare `new_session` frame whose payload is
-    // the empty object `{}` (no conversation_id / no other keys). Fire-and-forget: no reply is awaited.
-    // The returned placeholder Session carries the arg conversationId (identity fields are unassigned).
+    // Reset targets the viewed conversation, independent of prior traffic in another conversation.
     @Test
-    fun startNewSession_sendsBareNewSessionMatchingWireContract() =
+    fun startNewSession_targetsBWithAndWithoutPriorActivityInA_withoutChangingMessages() =
         runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+            for (activityInA in listOf(false, true)) {
+                val pump = FakeSessionPump()
+                val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+                val messagesA = collectMessages(repo, "c-a")
+                val messagesB = collectMessages(repo, "c-b")
+                runCurrent()
+                pump.push(messageEnvelope("c-b", "b1", "user", "in B", "2026-05-31T10:00:00Z"))
+                if (activityInA) {
+                    pump.push(messageEnvelope("c-a", "a1", "user", "in A", "2026-05-31T11:00:00Z"))
+                    repo.startNewSession("c-a", null)
+                }
+                runCurrent()
+                val beforeA = messagesA.toList()
+                val beforeB = messagesB.toList()
 
-            val session = repo.startNewSession("c-1", null)
+                // No reply is provided; the send must complete immediately.
+                val session = repo.startNewSession("c-b", null)
+                runCurrent()
 
-            val sent = pump.sent.single { it.type == "new_session" }
-            assertEquals(MobileJson.parseToJsonElement("{}"), sent.payload)
-            assertEquals("c-1", session.conversationId)
+                val sent = pump.sent.last { it.type == "new_session" }
+                assertEquals(MobileJson.parseToJsonElement("""{"conversation_id":"c-b"}"""), sent.payload)
+                assertEquals("c-b", session.conversationId)
+                assertEquals("", session.id)
+                assertEquals(beforeA, messagesA)
+                assertEquals(beforeB, messagesB)
+            }
         }
 
     // AC #2, #3: a not-Open session (pump.send returns false) fails fast with IllegalStateException and
@@ -2880,12 +2894,19 @@ class RemoteConversationRepositoryTest {
     fun startNewSession_whenSendReturnsFalse_throwsIllegalStateAndDoesNotHang() =
         runTest {
             val pump = FakeSessionPump()
-            pump.sendResult = false
             val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+            val messages = collectMessages(repo, "c-1")
+            runCurrent()
+            pump.push(messageEnvelope("c-1", "m1", "user", "retained", "2026-05-31T10:00:00Z"))
+            runCurrent()
+            val before = messages.toList()
+            pump.sendResult = false
 
             val outcome = runCatching { repo.startNewSession("c-1", null) }
+            runCurrent()
 
             assertTrue(outcome.exceptionOrNull() is IllegalStateException)
+            assertEquals(before, messages)
         }
 
     // ---- dropQueuedMessage (#466): dequeue_message request → ack/error correlation ----------------

@@ -1933,18 +1933,14 @@ class RemoteConversationRepository(
     }
 
     /**
-     * Send the bare v2 `new_session` control frame (#539, pyrycode#831) — the wire half of pressing
-     * "New session" (the `/clear` equivalent). A line-for-line mirror of [interrupt]: **fire-and-forget**,
-     * so the daemon sends no reply (no ack/error/broadcast) and this uses plain [SessionPump.send], never
-     * [sendAndAwaitReply] (which would hang awaiting a reply that never comes). The frame is
-     * connection-level — it carries **no payload**: no `conversation_id`, no `workspace` (the daemon
-     * operates on the single live claude; per-conversation scoping is a future server ticket). The
-     * `interactive` capability is enforced server-side, so the phone always sends.
+     * Send v2 `new_session` for the viewed conversation, explicitly naming its id so another
+     * device's activity cannot redirect the reset through the daemon's follow-active cursor.
+     * See the upstream protocol's New session (v2) contract. This is fire-and-forget via
+     * [SessionPump.send], never [sendAndAwaitReply]; session changes arrive through inbound events.
+     * The daemon validates the id and enforces the interactive capability.
      *
-     * The `conversationId` / `workspace` args are **not** sent on the wire; they are vestigial for the
-     * remote impl (meaningful only to the fake, which mints per-conversation). Throws
-     * [IllegalStateException] when the session is not connected ([SessionPump.send] returns `false`),
-     * mirroring [interrupt], so the caller can surface the failure.
+     * [workspace] is not part of this control frame. Throws [IllegalStateException] when
+     * [SessionPump.send] returns false, so the caller can surface the failure.
      *
      * The interface forces a [Session] return, but a fire-and-forget frame yields no session identity —
      * the real one arrives later via the out-of-scope `session_transition` marker (#336 fold). So the
@@ -1956,7 +1952,7 @@ class RemoteConversationRepository(
         conversationId: String,
         workspace: String?,
     ): Session {
-        check(pump.send(newSessionFrame())) { "$TYPE_NEW_SESSION not sent: session not connected" }
+        check(pump.send(newSessionFrame(conversationId))) { "$TYPE_NEW_SESSION not sent: session not connected" }
         return Session(
             id = "",
             conversationId = conversationId,
@@ -1966,13 +1962,13 @@ class RemoteConversationRepository(
         )
     }
 
-    /** The bare `new_session` control frame (#539): empty payload, no correlation key — see [startNewSession]. */
-    private fun newSessionFrame(): Envelope =
+    /** Explicitly targeted, fire-and-forget control frame — see [startNewSession]. */
+    private fun newSessionFrame(conversationId: String): Envelope =
         Envelope(
             id = requestId.incrementAndGet(),
             type = TYPE_NEW_SESSION,
             ts = Clock.System.now().toString(),
-            payload = JsonObject(emptyMap()),
+            payload = JsonObject(mapOf("conversation_id" to JsonPrimitive(conversationId))),
         )
 
     /**
