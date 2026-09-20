@@ -70,7 +70,7 @@ class RelayRepositoryCoordinator(
     val currentModal: StateFlow<ModalUiState>                // (#492) the process-scoped "which modal is open" projection, folded here (Eagerly) off a now-PRIVATE #437 modal-event seam
     suspend fun answerModal(modalId: String, optionId: String)  // (#451) outbound modal_answer passthrough — the inbound-modal mirror, but a call not a flow
     suspend fun cancelModal(modalId: String)                    // (#451) outbound modal_cancel passthrough
-    suspend fun interrupt()                                     // (#458) outbound bare interrupt passthrough — the cancelModal mirror, fire-and-forget
+    suspend fun interrupt(conversationId: String)                // explicit conversation target; fire-and-forget
     fun start()   // idempotent — launches the single connections collector on the coordinator scope
     fun close()   // tears down the active connection (wiping pump keys) + cancels the coordinator scope
 }
@@ -402,14 +402,15 @@ suspend fun answerModal(modalId: String, optionId: String) {
 
 ## Outbound interrupt passthrough (#458)
 
-The third outbound control passthrough, the exact `cancelModal` mirror for the bare `interrupt` frame (the
-remote-Esc wire half — see [Interrupt send path](interrupt-send-path.md), [#458](../codebase/458.md)). It
-reads the concrete repo off the same single `activeConnection` source:
+The third outbound control passthrough forwards the open thread's conversation id
+unchanged (#626). It reads the concrete repository from `activeConnection` to
+select the transport; the argument selects the conversation to stop. See
+[Interrupt send path](interrupt-send-path.md).
 
 ```kotlin
-suspend fun interrupt() {
+suspend fun interrupt(conversationId: String) {
     val repo = activeConnection.value?.repo ?: throw IllegalStateException("no active connection")
-    repo.interrupt()
+    repo.interrupt(conversationId)
 }
 ```
 
@@ -417,12 +418,16 @@ suspend fun interrupt() {
   exists but whose pump is pre-`Open` surfaces as the concrete
   [`RemoteConversationRepository.interrupt`](remote-conversation-repository.md)'s `check(pump.send(...))` →
   `IllegalStateException`. No redundant `Open` gate. Never logs.
-- **No `optionId`/`modalId` — interrupt is connection-level and bare.** Unlike the modal passthroughs it
-  takes no arguments; the frame carries no `conversation_id` ("the one running turn").
+- **Explicit target:** the repository encodes the supplied id as
+  `interrupt.payload.conversation_id`. No shared active-conversation cursor is read,
+  so prior activity in A cannot choose the target of a call naming B.
+- **Fire-and-forget:** the passthrough awaits no acknowledgment and changes no
+  local turn state. The open conversation's inbound turn events remain authoritative.
 - Bound at the `AppModule` `ThreadViewModel` factory as a suspend **method reference** (`interrupt =
-  coordinator::interrupt`) into the VM's defaulted `interrupt` lambda — **no new Koin binding**, exactly like
+  coordinator::interrupt`) into the VM's defaulted `suspend (String) -> Unit` lambda — **no new Koin binding**, exactly like
   the modal seams. The consumer is [`ThreadViewModel.onInterrupt` / `sendInterrupt`](interrupt-send-path.md);
-  unlike `sendCancel` its catches are **empty** (interrupt is inert on failure — no error channel, no log).
+  unlike `sendCancel` its failure catches are **empty** (no error channel or log).
+  `CancellationException` is rethrown before the failure catches.
 
 ## Reconnect-spanning replay cursor (#412)
 
@@ -538,6 +543,12 @@ inbound, `started`/`closed` flags, a `push` helper) stands in for the pump; the
 distinct pump + repository instances per connection with no projection carryover. AC #1 is a runtime
 contract check in `NoiseSessionPumpTest` (`pump is SessionPump` / `is ManagedSessionPump`, typed as
 `Any`). No instrumented test — pure data-layer.
+
+Interrupt coverage uses the real repository over the fake pump: send for A, then
+assert the call naming B adds exactly one `interrupt` frame whose sole payload
+field is `conversation_id: B`, without supplying a reply. The no-active-connection
+case still throws `IllegalStateException` for the ViewModel to swallow. These
+target assertions do not prove the [pending cross-device live outcome](interrupt-send-path.md#testing).
 
 [#365](../codebase/365.md) added a drivable `state` to `FakeManagedPump` (a
 `MutableStateFlow(PumpState.Handshaking)` + `open()` / `closeState()` helpers — defaulting to

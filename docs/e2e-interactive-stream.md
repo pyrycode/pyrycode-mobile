@@ -71,6 +71,9 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    new-session scenarios in `InteractiveStreamE2ETest` require a displayed exact
    ping reply in the message list (#694), independently of disappearing queued text.
    New-session also reveals the delimiter after a potentially tall wrap-up reply.
+   **Pending coverage:** #679 owns cross-device Stop in `InteractiveStreamE2ETest`:
+   real turns in A and B, another device most recently using A, and phone Stop in B
+   ending B while A continues. The curated eight-scenario gate does not cover it.
 4. **Emulator + deterministic host** ← **shipped (#431).** The same real app + Noise/relay path, but
    claude is swapped for #642's scripted `fakeclaude` backend replaying raw stream-json fixture bytes.
    No real claude, **zero claude turns**; re-running back-to-back uses the same stream contract. Run it with
@@ -872,6 +875,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
   automated scripted suite.
 
 ## Follow-ups to ticket
+
+- **Coverage — pending:** [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679)
+  owns the cross-device Stop scenario in `InteractiveStreamE2ETest`: with real turns
+  in A and B and another device most recently using A, Stop while the phone views B
+  must end B while A keeps running. #626's ViewModel/coordinator/repository target
+  assertions and `ScriptedThreadRenderTest` affordance coverage are deterministic
+  proof only; neither they nor the existing curated live gate establish this outcome.
+  The dispatcher owns live execution after verification.
 
 - **Rung 4 (shipped, #431; extended #454, #455):** deterministic host backend via #642's scripted
   `fakeclaude` — see [Deterministic mode (rung 4)](#deterministic-mode-rung-4). #454 added the
