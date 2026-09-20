@@ -32,3 +32,15 @@ No documentation-only acceptance criteria or required reference-document edits i
 ## Open questions
 
 None. No Figma source is required for test-only work with no UI changes.
+
+## Revisions
+
+### 2026-09-20 — LIVE rework: reveal the session delimiter after wrap-up
+
+The dispatcher LIVE run at `2c0bff6` executed eight scenarios: seven passed; `interactiveTurn_newSession_rendersSessionBoundaryDelimiter` passed `awaitDisplayedPingReply` and timed out in its later delimiter wait. The retained daemon log and registry show the intended conversation rotated; its outgoing transcript contains a 2,560-character wrap-up reply after the ping. These records locate the failed step but are not phone-rendering evidence. The bare-frame targeting issue already tracked by #625 did not mis-target this observed reset.
+
+Additional files read: `ThreadScreen` retains keyed rows in a reversed `LazyColumn` and only auto-scrolls while streaming; `SessionBoundaryDelimiter` renders the explanation; the sibling daemon's protocol “New session (v2)” describes its new wrap-up turn. The original test assumes the boundary is already composed, which a tall wrap-up row can invalidate when the appended boundary is outside the viewport.
+
+Add `SessionBoundaryVisibilityTest` beside `PingReplyTest`, rendering a tall finalized wrap-up row before appending a boundary. Assert the explanation is initially absent from semantics, then use a shared androidTest-only `awaitDisplayedSessionBoundary` helper to scroll the reversed list to its newest row while waiting and assert the explanation is displayed. Use that helper for the LIVE postcondition, retaining the pre-tap absence guard, 90-second timeout, and all LIVE selections. No production fix or ignored test. The exact LIVE failure remains subject to dispatcher re-execution; the regression proves the viewport case independently.
+
+The existing LIVE timeout is the RED evidence; author the viewport regression before the helper. Device regression execution remains dispatcher-owned. Run Spotless, lint, assembleDebug and instrumented-test compilation. No JVM tests change. Revised scope remains one test-repair deliverable, approximately 300 written lines, zero production files/types, four helper consumers, three acceptance criteria, zero error branches. Refreshed feature branches have no overlap with the added files. Documentation-stage handoff also carries the viewport lesson to “Compose evidence” if the regression passes.

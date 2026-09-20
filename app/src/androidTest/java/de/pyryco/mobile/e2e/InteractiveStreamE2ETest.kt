@@ -24,7 +24,9 @@ import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.ui.conversations.thread.PING_PROMPT
+import de.pyryco.mobile.ui.conversations.thread.SESSION_BOUNDARY_EXPLANATION
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedPingReply
+import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedSessionBoundary
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -378,10 +380,10 @@ class InteractiveStreamE2ETest {
     /**
      * New-session twin of the ping happy path (#541, Layer 3): drive the real "New session" overflow flow
      * end to end against real claude, exercising the already-shipped #540 fire-and-forget wire. With a live,
-     * exercised session, open the thread overflow menu → tap "New session" → the daemon runs `/clear` →
+     * exercised session, open the thread overflow menu → tap "New session" → the daemon wraps up and rotates →
      * broadcasts `session_transition` (`reason: "clear"`) → the thread folds a `ThreadItem.SessionBoundary`
      * (#336, canonical in `RemoteConversationRepository`) → `SessionBoundaryDelimiter` renders it. This proves
-     * that path against real claude + a real daemon `/clear`, not the boundary the Fake synthesizes.
+     * that path against real claude and the daemon's reset, not the boundary the Fake synthesizes.
      *
      * **Reachability.** The "New session" item is gated on `mutationsSupported` only (not promotion), which is
      * `true` in relay mode (PR #572), so the scenario is reachable on a plain **discussion** — the same real
@@ -403,7 +405,7 @@ class InteractiveStreamE2ETest {
      * turn moves on — the delimiter is a **durable** artifact that survives the turn, so it belongs in the
      * always-on gate, matching #481's durable tool-name row.
      *
-     * Total real-claude cost: **one** turn (the ping proving the session is live); `/clear` spends none.
+     * Real-claude cost: the ping turn plus the daemon's reset wrap-up turn when handoff notes are enabled.
      */
     @Test
     fun interactiveTurn_newSession_rendersSessionBoundaryDelimiter() {
@@ -424,7 +426,7 @@ class InteractiveStreamE2ETest {
 
         // 4. Prove the session is live (AC-3): send the constrained ping and wait for the streamed reply, so the
         //    session is genuinely exercised and there is de-emphasized above-delimiter content once it clears.
-        //    Tail reused verbatim from the ping scenario — this spends the one real claude turn; /clear spends none.
+        //    The daemon may run a separate wrap-up turn after the New-session tap.
         composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
         composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
@@ -444,17 +446,9 @@ class InteractiveStreamE2ETest {
         }
         composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).onFirst().performClick()
 
-        // 7. Assert the durable delimiter (AC-1, AC-2): after the daemon's /clear → session_transition
-        //    broadcast folds a SessionBoundary, wait for the explanation line to render, then confirm it is on
-        //    screen. Tolerant: substring, generous timeout, presence — never a delta count or timing. A
-        //    non-empty match can only come from the rendered SessionBoundaryDelimiter (the folded boundary).
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(DELIMITER_EXPLANATION, substring = true).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule
-            .onAllNodesWithText(DELIMITER_EXPLANATION, substring = true)
-            .onFirst()
-            .assertIsDisplayed()
+        // 7. Reveal the newest row while waiting: the daemon's wrap-up reply can fill the viewport
+        //    before session_transition appends the delimiter. The explanation must still be displayed.
+        composeTestRule.awaitDisplayedSessionBoundary(REPLY_TIMEOUT_MS)
     }
 
     /**
@@ -1243,7 +1237,7 @@ class InteractiveStreamE2ETest {
         //   cd_more_actions = "More actions", thread_overflow_new_session = "New session".
         const val CD_MORE_ACTIONS = "More actions"
         const val NEW_SESSION_ITEM = "New session"
-        const val DELIMITER_EXPLANATION = "Claude doesn't remember messages above this line"
+        const val DELIMITER_EXPLANATION = SESSION_BOUNDARY_EXPLANATION
 
         // #566 create-workspace-folder scenario. Picker/dialog production strings (no test tags):
         //   the WorkspacePickerSheet create row (matched as a substring so the trailing ellipsis need
