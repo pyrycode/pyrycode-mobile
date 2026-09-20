@@ -6,8 +6,9 @@ and turns a *live relay socket* into a *working remote conversation repository* 
 that socket lives. It observes the supervisor's `currentConnection`, and for each live transport it
 starts a fresh Noise pump over it and constructs a [`RemoteConversationRepository`](remote-conversation-repository.md)
 against that pump on a connection-scoped child scope. The live repository — or `null` between
-connections — is published on `currentRepository`, the seam the **stable-reference facade** (#352)
-consumes so ViewModels never re-resolve across connection churn.
+connections — is published on `currentRepository`. The app registry projects its selected
+host to the [stable facade](stable-conversation-repository.md), so ViewModels keep one
+reference across connection churn and compatibility selection changes.
 
 This is the slice every prior Phase 4 read/mutation slice deferred to as **"the owner (#279/#302)"** of
 the connection scope and the `SessionPump` binding. It is largely a **wiring layer**: it adds no wire
@@ -30,8 +31,10 @@ from #349). Portable, `android.*`-free, emits **no logs**.
 ## Where it sits in the Phase 4 stack
 
 ```
-\#352 stable ConversationRepository facade   ◀── delegates to currentRepository (out of scope here)
+StableConversationRepository facade
         ▲
+RelayConnectionRegistry ── latest saved survivor selects compatibility projections
+        ▲  one retained bundle/coordinator per exact serverId
 RelayRepositoryCoordinator (#351) ─ per-connection pump + repository lifecycle   ◀── this doc
         │  observes currentConnection ; publishes currentRepository
         ├──────────────▶ RemoteConversationRepository (#312/#313/#329/#346)   ◀── one per connection
@@ -189,8 +192,9 @@ reading `.value` (the shape of the #493 regression test).
 
 The factory adds no scope. Bundle disposal closes both the supervisor and the
 coordinator; a temporary supervisor close leaves the coordinator alive for the
-next connection. The app's compatibility bundle lasts for the process, while
-explicit-record bundles have independent owners and disposal (see [Configuration](#configuration)).
+next connection. The app registry retains each explicit-record bundle until its
+pairing is removed, its credentials change or the registry is disposed. Its own
+scope observes collection revisions (see [Configuration](#configuration)).
 
 ### Why `currentConnection` alone is a sufficient teardown trigger
 
@@ -284,9 +288,9 @@ The mapping `internal fun PumpState?.toPyrycodeLinkStatus()` (bottom of the file
 `Handshaking → Handshaking`, `Open → Connected`. It **discards `Open.connId` and `Closed.cause`** —
 the no-log / no-leak contract is structurally enforced (no relay/crypto-derived string reaches the
 status surface). `relayStatus` and `connections` come directly from the owning bundle's supervisor;
-neither needs a separate Koin binding. The consumer (#398) likewise obtains
-the combined model with **no new binding**, passing `get<RelayRepositoryCoordinator>().connectionStatus`
-straight into the `SettingsViewModel` constructor at the `AppModule` factory.
+neither needs a separate Koin binding. `AppModule` passes the registry
+compatibility projection, `get<RelayConnectionRegistry>().connectionStatus`, into
+`SettingsViewModel`, keeping both legs on the selected host.
 
 > **Init-order gotcha.** `stateIn(scope, Eagerly, …)` runs at *property initialization*, so
 > `connectionStatus`/`pyrycodeStatus` (and `currentRepository`/`currentModal`) must be declared **after**
@@ -328,8 +332,8 @@ val liveSessionEvents: Flow<LiveSessionEvent> =
   `isThinking`/turn-state projection — reducing to "latest phase" is a consumer concern. The first
   consumer is [`ThreadViewModel.isThinking`](turn-state-thinking-flag.md) (#406, the thinking-indicator
   data half); #387 (tool timeline) and #337 (live assistant text) reuse the same flow without
-  re-plumbing this layer. Each fetches it off the concrete coordinator singleton at the `AppModule`
-  factory — **no new Koin binding** — exactly like `connectionStatus`.
+  re-plumbing this layer. `AppModule` supplies the registry projection of the
+  selected coordinator's flow, exactly like `connectionStatus`.
 
 ## Modal event seam (#445) and the hoisted currentModal fold (#492)
 
@@ -338,7 +342,7 @@ The decoded [`ModalEvent`](modal-events.md) stream ([#437](../codebase/437.md)) 
 the same posture as `liveSessionEvents`, so a UI ViewModel cannot reach it directly. The coordinator
 threads it up as a **byte-for-byte mirror** of the live-session seam — switching off the same single
 `activeConnection` source (`conn?.repo`) — and, as of [#492](../codebase/492.md), **folds it here** into
-one bundle-scoped "which modal is open" projection (process-lived in the current app):
+one "which modal is open" projection per retained host bundle:
 
 ```kotlin
 // #492: PRIVATE — its sole consumer is currentModal below.
@@ -371,9 +375,9 @@ val currentModal: StateFlow<ModalUiState> =
   modal is **retained**, not reset to `Hidden` (the #492 teardown decision: the answer path is guarded by
   the deterministic `answerModal`/`cancelModal` null-guard, never by this UI projection, so retaining a
   stale `Open` can't send an answer on a dead connection).
-- The sole consumer is `ThreadViewModel`, which re-exposes `currentModal` verbatim (fetched off the
-  concrete coordinator singleton at the `AppModule` `ThreadViewModel` factory — **no new Koin binding**,
-  exactly like `liveSessionEvents`).
+- `AppModule` passes the registry's selected-host `currentModal` projection into
+  `ThreadViewModel`. Every retained coordinator keeps folding its own modals even
+  while another host is selected; overlapping modal ids never share an accumulator.
 
 ## Outbound modal-send passthrough (#451)
 
@@ -405,7 +409,8 @@ suspend fun answerModal(modalId: String, optionId: String) {
   passthrough adds no `android.*` (data/ stays portable).
 - The consumer is [`ThreadViewModel.sendAnswer` / `sendCancel`](modal-answer-flow.md), bound at the
   `AppModule` `ThreadViewModel` factory as suspend **method references**
-  (`answerModal = coordinator::answerModal`) — **no new Koin binding**, exactly like the inbound seams.
+  (`answerModal = registry::answerModal`, likewise cancel), which resolve the
+  selected coordinator at call entry, matching the inbound compatibility seams.
 
 ## Outbound interrupt passthrough (#458)
 
@@ -431,8 +436,9 @@ suspend fun interrupt(conversationId: String) {
 - **Fire-and-forget:** the passthrough awaits no acknowledgment and changes no
   local turn state. The open conversation's inbound turn events remain authoritative.
 - Bound at the `AppModule` `ThreadViewModel` factory as a suspend **method reference** (`interrupt =
-  coordinator::interrupt`) into the VM's defaulted `suspend (String) -> Unit` lambda — **no new Koin binding**, exactly like
-  the modal seams. The consumer is [`ThreadViewModel.onInterrupt` / `sendInterrupt`](interrupt-send-path.md);
+  registry::interrupt`) into the VM's defaulted `suspend (String) -> Unit` lambda.
+  The registry selects the host at call entry; the supplied id selects that host's
+  conversation. The consumer is [`ThreadViewModel.onInterrupt` / `sendInterrupt`](interrupt-send-path.md);
   unlike `sendCancel` its failure catches are **empty** (no error channel or log).
   `CancellationException` is rethrown before the failure catches.
 
@@ -465,12 +471,10 @@ internal val replayCursor: ReplayCursor = ReplayCursor()   // one per coordinato
   `hello.last_event_id`; `null` omits the field. Reading an app-wide coordinator
   would mix hosts, and capturing a value at construction would miss later events.
 
-The temporary `createCompatibility(store)` path also has one cursor per bundle.
-It preserves that cursor across redials while rereading the latest saved pairing;
-it does not maintain a map of host cursors. Host discovery, replacement and
-selection remain [#634](https://github.com/pyrycode/pyrycode-mobile/issues/634)'s
-responsibility. Use explicit-record bundles when independent host ownership is
-required.
+The registry selects among retained explicit-record bundles; it never moves a
+cursor between them. Selection changes leave all host cursors untouched. The
+older `createCompatibility(store)` helper can reread a different host on redial
+while retaining one cursor, so it is not used by app DI for collection ownership.
 
 ## Security invariants
 
@@ -500,58 +504,61 @@ reference would leak a started-but-unclosed pump.
 
 ## Configuration
 
-`RelayConnectionFactory` in `di/RelayConnectionFactory.kt` uses one construction
-path for two entries: `create(record)` fixes the immutable pairing for the
-bundle's lifetime; `createCompatibility(store)` preserves the temporary
-single-host app's dynamic store reads. Both own a supervisor, Noise session
-factory and coordinator with its replay cursor. The bundle initializes all
-members before starting the coordinator; construction starts collectors, and a
-later `supervisor.connect()` starts the dial.
+`RelayConnectionFactory.create(record)` constructs a `RelayConnectionBundle`
+containing one supervisor, Noise session factory and coordinator. Its immutable
+record supplies every dial, handshake and device-key reload for that host.
+Construction starts coordinator collectors; `supervisor.connect()` starts dialing.
+The factory supplies `NoiseClientInfo.deviceName`, the one-shot `pushToken.first()`
+read, worker dispatchers and a separate key-store IO dispatcher. It owns no scope.
 
-`AppModule.kt` registers the factory and one eager compatibility bundle, then
-aliases the existing concrete resolutions to its members:
+`AppModule.kt` eagerly owns `RelayConnectionRegistry` and calls `dispose()` on
+Koin close. The [observable pairing store](paired-server-store.md#wiring--usage)
+provides initial and successful-mutation revisions. Serial snapshot reads reconcile
+one bundle per exact, case-sensitive `serverId`, even for hosts sharing a relay.
+Identical records and name-only changes retain owners; removed or changed records
+close their bundle before any replacement is created or dials. The
+[lifecycle driver](lifecycle-connection-driver.md) controls all retained supervisors:
+background close preserves coordinators, modal accumulators and cursors; resume
+creates fresh transports, pumps, repositories and Noise sessions for each host.
 
-```kotlin
-single {
-    RelayConnectionFactory(
-        get(), get(), get(), // DeviceStaticKeyStore, RelayTransportFactory, NoiseClientInfo
-        pushToken = { get<AppPreferences>().pushToken.first() },
-    )
-}
-single(createdAtStart = true) {
-    get<RelayConnectionFactory>().createCompatibility(get())
-} onClose { it?.close() }
-single<NoiseSessionFactory> { get<RelayConnectionBundle>().sessionFactory }
-single<RelayConnectionSupervisor> { get<RelayConnectionBundle>().supervisor } binds
-    arrayOf(ConnectionStateSource::class, RelayConnectionController::class)
-single<RelayRepositoryCoordinator> { get<RelayConnectionBundle>().coordinator }
-```
+`connectionFor(serverId)` returns exactly that retained bundle, or `null` for an
+unknown/removed id. Its coordinator exposes `currentRepository`, `liveSessionEvents`,
+`currentModal` and `connectionStatus` with separate relay/pyrycode legs. An id never
+falls back to the compatibility host. Failures, overlapping conversation/modal ids,
+pending requests and replay positions remain within their host's bundle.
 
-The compatibility entry remains idle while unpaired, permits `connect()` after
-a successful pairing save, and selects the latest saved record on the next dial.
-Freezing a record at startup would lose both first-pairing and re-pairing behavior.
-The [lifecycle driver](lifecycle-connection-driver.md) closes only the supervisor
-in the background and reconnects it in the foreground, retaining the bundle's
-coordinator and cursor.
+The registry's `selected` flow follows the last saved surviving entry, matching
+`PairedServerStore.load()`. Removing it selects the latest survivor; removing the
+last leaves no owner. Selection switches the stable repository, banner/status,
+events, modal and outbound actions together without redialing unaffected bundles.
+An empty selection yields no repository/events, hidden modal, relay `Idle` /
+pyrycode `Down` and a hidden legacy banner. Modal/interrupt calls without a
+selection throw `IllegalStateException`; retry is a no-op while empty, backgrounded
+or disposed. Host-aware screen routing remains #635–#637.
 
-`bundle.close()` is permanent, idempotent disposal: close the supervisor's socket
-and retry loop, then close the coordinator, cancelling its projections and
-repository collectors and explicitly closing the active pump to wipe session
-keys. Do not reuse a disposed bundle. Dropping, retrying or disposing A leaves
-B's status, repository and cursor independent. Koin's `onClose` invokes this
-disposal for the app bundle.
+Compatibility state must read through the current selection. An independently
+`stateIn`-cached switch briefly exposed the previous host's repository after
+selection changed, while modal actions already addressed the new host. The
+registry's repository/modal/status `.value` and `replayCache` therefore read the
+selected coordinator directly; collection switches its flows without another
+cache. Events and banner observation are cold switched flows. These projections
+own no jobs; consumers own their collection lifetimes. The registry scope owns the
+revision collector, while each bundle owns its coordinator projections.
 
-The factory passes `NoiseClientInfo.deviceName` into the coordinator and retains
-the one-shot `pushToken.first()` read from the non-completing DataStore flow.
-It adds no scope and passes its injectable worker dispatcher to the supervisor,
-coordinator and each pump; key-store IO has a separate dispatcher.
+Concrete Koin bundle/supervisor/session-factory/coordinator aliases resolve the
+selected retained bundle for tests and diagnostics and refuse without a selection.
+Stable app consumers use the registry. `createCompatibility(store)` remains a
+helper, not an app-owned connection. See [DI wiring](dependency-injection.md#how-it-works).
 
-The bundle does not bind `ConversationRepository`. The existing
-`conversationRepositoryModule` selector chooses the stable facade in normal
-builds or the [fake](conversation-repository.md) with
-`-PuseRelayRepository=false`. It changes what the UI reads, not whether the
-encrypted channel is established. Conversation-list and backfill requests still
-wait for subscribers to the repository's read paths.
+`bundle.close()` is permanent and idempotent: stop the supervisor's socket/retry
+loop, cancel the coordinator and repository collectors, and explicitly close the
+pump to wipe session keys. Registry disposal clears selection/map, closes every
+bundle and cancels revision observation. Never reuse a disposed bundle.
+
+The factory does not bind `ConversationRepository`: the existing selector chooses
+the stable facade by default or the [fake](conversation-repository.md) with
+`-PuseRelayRepository=false`. Both modes retain registry connection ownership.
+Conversation-list and backfill requests still wait for repository subscribers.
 
 ## Edge cases / limitations
 
@@ -568,15 +575,19 @@ wait for subscribers to the repository's read paths.
 
 ## Testing
 
-`di/RelayConnectionFactoryTest.kt` covers construction with real Noise sessions
-over channel-backed transports. After A drops, resets its cursor, reconnects and
-is disposed twice, the test checks that B retains its repository, status and
-cursor, can send an encrypted `list_conversations`, and still records inbound
-events. It also checks transport collector counts after teardown: socket closure
-alone would not prove that the independently scoped pump and repository stopped.
-Compatibility tests cover unpaired idle, pairing, latest-save selection on redial
-and background/foreground reconnect; isolated Koin tests verify concrete aliases,
-both repository selectors and bundle disposal on container close.
+`di/RelayConnectionFactoryTest.kt` covers bundles and registry ownership with real
+Noise peers over channel-backed transports. It verifies independent credentials,
+cursors, status, repositories and modals even with overlapping conversation/modal
+ids. B's pending modal reply completes while A fails, reconnects and is removed;
+B continues receiving events. Transport collector counts must reach zero after
+teardown: socket closure alone cannot prove the separately scoped pump stopped.
+
+The selection-edge assertion uses an unconfined collector of `registry.selected`
+to read `currentRepository.value` before switched collectors catch up. A settled
+assertion after `runCurrent()` would pass with the stale `stateIn` cache. Registry
+and DI cases also cover empty startup, first pairing, identical/name-only retention,
+credential replacement ordering, latest-survivor selection, both repository
+selectors and resumable background close; see [lifecycle tests](lifecycle-connection-driver.md#testing).
 
 `app/src/test/java/de/pyryco/mobile/data/repository/RelayRepositoryCoordinatorTest.kt` — JVM unit tests
 (JUnit4 + `runTest`, hand fakes, no MockK), mirroring `RelayConnectionSupervisorTest` /
@@ -623,7 +634,7 @@ The existing key-wipe / single-use-pump / no-carryover tests pass **unmodified**
   seam (first consumer: [`ThreadViewModel.isThinking`](turn-state-thinking-flag.md)) ·
   [#445](../codebase/445.md) — the reconnection-surviving [`modalEvents`](modal-events.md) seam (mirror of
   `liveSessionEvents`) · [#492](../codebase/492.md) — **hoists** the
-  [`currentModal`](current-modal-state.md) fold to this process-scoped layer (`modalEvents` demoted to
+  [`currentModal`](current-modal-state.md) fold to this bundle-scoped layer (`modalEvents` demoted to
   `private`; the ViewModel now re-exposes `currentModal`), so a `modal_shown` fired before any thread
   screen subscribes is no longer dropped ·
   [#451](../codebase/451.md) — the **outbound** `answerModal` / `cancelModal` passthrough (the modalEvents

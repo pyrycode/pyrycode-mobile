@@ -28,7 +28,7 @@ val appModule = module {
     single<DataStore<Preferences>> { /* … */ }   // #11
     single { AppPreferences(get()) }              // #11
     single { FakeConversationRepository() }       // #45/#350 — concrete-only; interface bound below
-    single { StableConversationRepository(get<RelayRepositoryCoordinator>().currentRepository) } // #352
+    single { StableConversationRepository(get<RelayConnectionRegistry>().currentRepository) }
     viewModel { ChannelListViewModel(get(), get()) }   // #45
 }
 
@@ -48,23 +48,37 @@ existing `FakeConversationRepository` singleton. Only the exact values `true` an
 selection with no runtime setter. See [README Build](../../../README.md#build).
 
 The selector changes the repository injected into UI consumers. The lifecycle
-driver, supervisor and coordinator still control connection establishment in
+driver and registry still control every saved host's connection establishment in
 both modes; selecting the fake does not disable that stack.
 
-Relay construction lives in `RelayConnectionFactory`. `appModule` registers one
-eager, store-backed compatibility bundle and aliases its supervisor, Noise session
-factory and coordinator as the existing concrete Koin types. The controller and
-connection-state interfaces resolve that same supervisor; Koin disposal closes
-the bundle. Independent hosts use `create(record)` and own their state outside
-these temporary app-wide aliases. See [bundle configuration](relay-repository-coordinator.md#configuration)
-and [Noise factory wiring](noise-ik-session.md#factory-wiring).
+`appModule` eagerly owns `RelayConnectionRegistry` and disposes it on Koin close.
+Both pairing-store interfaces resolve one [observable decorator](paired-server-store.md#wiring--usage).
+Its initial and successful-mutation revisions drive collection reconciliation;
+the registry uses `RelayConnectionFactory.create(record)` for one retained bundle
+per exact server id. Foreground/background lifetime belongs to this registry.
+
+`RelayConnectionController` and `ConnectionStateSource` resolve the registry.
+The stable repository, Settings status, and Thread events, modal and outbound
+actions follow its latest-saved surviving selection. No separate compatibility
+connection is created. With no selection, these dependencies remain resolvable
+with empty repository/events, hidden modal and idle/down status. Host-aware lists,
+thread routing and settings remain #635–#637. See
+[bundle configuration](relay-repository-coordinator.md#configuration).
+
+Concrete `RelayConnectionBundle`, `RelayConnectionSupervisor`, `NoiseSessionFactory`
+and `RelayRepositoryCoordinator` bindings are Koin **factory resolutions of the
+selected retained owner**, not singleton snapshots or newly constructed bundles.
+They serve test/diagnostic callers, including deterministic reconnect helpers;
+resolving them without a selection fails with `no paired host`. Long-lived app
+consumers use the registry projections rather than holding these selected aliases.
+See [Noise factory wiring](noise-ik-session.md#factory-wiring).
 
 ## Adding a binding
 
 1. Open `de/pyryco/mobile/di/AppModule.kt`.
 2. Add a definition inside the `module { ... }` block:
    - **Singleton** (e.g. a DataStore wrapper, repository): `single { AppPreferences(androidContext()) }`.
-   - **Interface binding**: alias the existing owner, e.g. `single<RelayConnectionSupervisor> { get<RelayConnectionBundle>().supervisor } binds arrayOf(ConnectionStateSource::class, RelayConnectionController::class)`.
+   - **Interface binding**: alias the existing owner, e.g. `single<RelayConnectionController> { get<RelayConnectionRegistry>() }`.
    - **Flag-gated fake↔real binding** (#350): register every candidate *concrete-only* in `appModule`, then bind the interface in a dedicated `fun fooModule(useX: Boolean = BuildConfig.USE_X) = module { single<Foo> { if (useX) get<Real>() else get<Fake>() } }` loaded alongside `appModule`. The selector **resolves** the candidates by type (`get<…>()`) — it never constructs them, so it carries none of their dependency weight, and it stays unit-testable via `koinApplication { … }` in isolation. See [`../codebase/350.md`](../codebase/350.md).
    - **ViewModel**: `viewModel { ChannelListViewModel(get()) }` — DSL import `org.koin.core.module.dsl.viewModel` (the multiplatform-safe path; the older `org.koin.androidx.viewmodel.dsl.viewModel` is being phased out). Resolved in composables with `koinViewModel<ChannelListViewModel>()` from `koin-androidx-compose`.
 3. No registration step elsewhere. The modules are wired into `startKoin` once; the new definition flows through automatically. (A binding selected by a build flag goes in its own module per the #350 pattern above, not inside `appModule`.)
@@ -86,6 +100,13 @@ generated flag pass. Exercise default, explicit-real and demo builds;
 `RepositoryBindingInstrumentedTest` separately checks the installed test
 application's fake binding. See [verification guidance](development-verification.md#test-scheduling-and-harnesses)
 for its placement outside the excluded `e2e` package.
+
+`RelayConnectionFactoryTest.appModuleTracksLatestSurvivorWithoutReplacingStableConsumers`
+checks unpaired startup, first pairing, selection changes and last-host removal
+with both selectors. It verifies stable facade identity, selected concrete aliases,
+and matching repository, event, modal, status and action targets without extra
+transports. Its JVM container loads definitions with a fixture registry, avoiding
+Android's eager `ProcessLifecycleOwner` initialization.
 
 ## Configuration
 
