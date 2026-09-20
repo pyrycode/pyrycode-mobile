@@ -9,7 +9,12 @@ import com.southernstorm.noise.protocol.Noise
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyPair
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.PairedServer
+import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
+import de.pyryco.mobile.data.crypto.PairedServerEntry
 import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.crypto.PairedServerStoreException
+import de.pyryco.mobile.data.model.LiveSessionEvent
+import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.InnerFrameV2
@@ -31,14 +36,22 @@ import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
@@ -56,6 +69,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.koin.core.KoinApplication
+import org.koin.dsl.binds
 import org.koin.dsl.module
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -124,7 +138,7 @@ class RelayConnectionFactoryTest {
                 runCurrent()
                 assertEquals(listOf(f.a.record, f.b.record), f.transports.takeLast(2).map { it.record })
                 assertEquals(listOf("31", "72"), f.transports.takeLast(2).map { it.cursor() })
-                assertEquals(0, f.store.loads)
+                assertEquals(0, f.rawStore.loads)
             } finally {
                 a.close()
                 b.close()
@@ -251,40 +265,289 @@ class RelayConnectionFactoryTest {
         }
 
     @Test
-    fun appModuleAliasesOneCompatibilityBundleAndPreservesBothSelectors() =
+    fun appModuleTracksLatestSurvivorWithoutReplacingStableConsumers() =
         runTest {
             for (useRelay in listOf(false, true)) {
                 val f = Fixture(this)
+                val registry = f.registry()
                 val overrides =
                     module {
-                        single { f.factory }
-                        single<PairedServerStore> { f.store }
+                        single { f.store } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
+                        single { registry }
                     }
-                // Load definitions without Android's eager ProcessLifecycleOwner initialization.
                 val app = KoinApplication.init().modules(appModule, overrides, conversationRepositoryModule(useRelay))
                 try {
                     val koin = app.koin
-                    val bundle = koin.get<RelayConnectionBundle>()
-                    assertSame(bundle.supervisor, koin.get<RelayConnectionSupervisor>())
-                    assertSame(bundle.supervisor, koin.get<RelayConnectionController>())
-                    assertSame(bundle.supervisor, koin.get<ConnectionStateSource>())
-                    assertSame(bundle.sessionFactory, koin.get<NoiseSessionFactory>())
-                    assertSame(bundle.coordinator, koin.get<RelayRepositoryCoordinator>())
+                    val stable = koin.get<StableConversationRepository>()
                     val selected = koin.get<ConversationRepository>()
-                    assertSame(if (useRelay) koin.get<StableConversationRepository>() else koin.get<FakeConversationRepository>(), selected)
-                    bundle.supervisor.connect()
+                    assertSame(if (useRelay) stable else koin.get<FakeConversationRepository>(), selected)
+                    assertSame(registry, koin.get<RelayConnectionController>())
+                    assertSame(registry, koin.get<ConnectionStateSource>())
+                    assertSame(f.store, koin.get<PairedServerCollectionStore>())
+                    registry.connect()
                     runCurrent()
                     assertTrue(f.transports.isEmpty())
+                    assertTrue(stable.observeConversations(ConversationFilter.Channels).first().isEmpty())
+                    assertEquals(ModalUiState.Hidden, registry.currentModal.value)
                     f.store.save(f.a.record)
-                    koin.get<RelayConnectionController>().connect()
                     runCurrent()
-                    assertNotNull(bundle.coordinator.currentRepository.value)
+                    val a = registry.connectionFor("A")!!
+                    assertSame(a, koin.get<RelayConnectionBundle>())
+                    assertSame(a.supervisor, koin.get<RelayConnectionSupervisor>())
+                    assertSame(a.sessionFactory, koin.get<NoiseSessionFactory>())
+                    assertSame(a.coordinator, koin.get<RelayRepositoryCoordinator>())
+                    val events = mutableListOf<LiveSessionEvent>()
+                    registry.liveSessionEvents.onEach { events += it }.launchIn(backgroundScope)
+                    f.store.save(f.b.record)
+                    runCurrent()
+                    val b = registry.connectionFor("B")!!
+                    assertSame(b.coordinator.currentRepository.value, registry.currentRepository.value)
+                    assertSame(b.coordinator, koin.get<RelayRepositoryCoordinator>())
+                    assertSame(stable, koin.get<StableConversationRepository>())
+                    val ta = f.transports[0]
+                    val tb = f.transports[1]
+                    ta.emit(turn(11))
+                    tb.emit(turn(22))
+                    ta.emit(modal("A"))
+                    tb.emit(modal("B"))
+                    runCurrent()
+                    assertEquals(1, events.size)
+                    assertEquals(b.coordinator.currentModal.value, registry.currentModal.value)
+                    assertEquals(b.coordinator.connectionStatus.value, registry.connectionStatus.value)
+                    stable.startNewSession("c")
+                    registry.interrupt("c")
+                    val cancel = async { registry.cancelModal("same") }
+                    runCurrent()
+                    assertEquals(listOf("new_session", "interrupt", "modal_cancel"), tb.outbound.map { it.type })
+                    tb.emit(envelope("ack", "{}").copy(inReplyTo = tb.outbound.last().id))
+                    runCurrent()
+                    cancel.await()
+                    assertTrue(ta.outbound.isEmpty())
+                    f.store.remove("B")
+                    runCurrent()
+                    assertSame(a, registry.selected.value)
+                    assertEquals(a.coordinator.currentModal.value, registry.currentModal.value)
+                    assertEquals(2, f.transports.size)
+                    f.store.remove("A")
+                    runCurrent()
+                    assertNull(registry.selected.value)
+                    assertNull(registry.currentRepository.value)
+                    assertEquals(ModalUiState.Hidden, registry.currentModal.value)
+                    assertEquals(RelayLinkStatus.Idle, registry.connectionStatus.value.relay)
+                    assertTrue(runCatching { registry.interrupt("c") }.exceptionOrNull() is IllegalStateException)
                 } finally {
                     app.close()
+                    registry.dispose()
                     runCurrent()
                 }
                 assertTrue(f.transports.all { it.closed && it.collectors == 0 })
             }
+        }
+
+    @Test
+    fun registryReconcilesCredentialsButRetainsNamesAndIdenticalRecords() =
+        runTest {
+            val f = Fixture(this)
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            try {
+                runCurrent()
+                assertNotNull(registry.connectionFor("A"))
+                assertTrue(f.transports.isEmpty())
+                registry.connect()
+                registry.connect()
+                runCurrent()
+                val a = registry.connectionFor("A")!!
+                val b = registry.connectionFor("B")!!
+                assertEquals(2, f.transports.size)
+                assertNull(registry.connectionFor("a"))
+                assertNull(registry.connectionFor("missing"))
+                f.store.setDisplayName("A", "renamed")
+                runCurrent()
+                assertSame(b, registry.selected.value)
+                val selectionCheck =
+                    backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+                        registry.selected.drop(1).take(1).collect { selected ->
+                            // A one-shot can run on the selection edge before switched collectors catch up.
+                            assertSame(selected!!.coordinator.currentRepository.value, registry.currentRepository.value)
+                        }
+                    }
+                f.store.save(f.a.record)
+                runCurrent()
+                selectionCheck.join()
+                assertSame(a, registry.selected.value)
+                assertSame(a, registry.connectionFor("A"))
+                assertSame(b, registry.connectionFor("B"))
+                assertEquals(2, f.transports.size)
+                val old = f.transports[0]
+                f.beforeDial = { record -> if (record.serverId == "A") assertTrue(old.closed) }
+                f.store.save(f.a.record.copy(token = "rotated"))
+                runCurrent()
+                assertNotSame(a, registry.connectionFor("A"))
+                assertSame(b, registry.connectionFor("B"))
+                assertEquals("rotated", f.transports.last().helloToken())
+                assertEquals(0, old.collectors)
+                f.store.remove("A")
+                runCurrent()
+                assertNull(registry.connectionFor("A"))
+                assertSame(b, registry.selected.value)
+                assertFalse(f.transports[1].closed)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun registryKeepsPeerEventsModalCursorAndPendingReplyThroughOtherHostFailure() =
+        runTest {
+            val f = Fixture(this)
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                val a = registry.connectionFor("A")!!
+                val b = registry.connectionFor("B")!!
+                val ta = f.transports[0]
+                val tb = f.transports[1]
+                val repoB = b.coordinator.currentRepository.value
+                val eventsA = mutableListOf<LiveSessionEvent>()
+                val eventsB = mutableListOf<LiveSessionEvent>()
+                a.coordinator.liveSessionEvents
+                    .onEach { eventsA += it }
+                    .launchIn(backgroundScope)
+                b.coordinator.liveSessionEvents
+                    .onEach { eventsB += it }
+                    .launchIn(backgroundScope)
+                runCurrent()
+                ta.emit(turn(7))
+                tb.emit(turn(7))
+                ta.emit(modal("A"))
+                tb.emit(modal("B"))
+                runCurrent()
+                val modalB = b.coordinator.currentModal.value
+                assertEquals("B", (modalB as ModalUiState.Open).title)
+                assertEquals("A", (a.coordinator.currentModal.value as ModalUiState.Open).title)
+                assertEquals(1, eventsA.size)
+                assertEquals(1, eventsB.size)
+                val pending = async { registry.answerModal("same", "deny") }
+                runCurrent()
+                assertFalse(pending.isCompleted)
+                ta.close()
+                runCurrent()
+                assertNull(a.coordinator.currentRepository.value)
+                assertSame(repoB, b.coordinator.currentRepository.value)
+                assertEquals(modalB, b.coordinator.currentModal.value)
+                a.supervisor.retry()
+                runCurrent()
+                assertEquals("7", f.transports.last().cursor())
+                f.store.remove("A")
+                runCurrent()
+                assertSame(repoB, b.coordinator.currentRepository.value)
+                assertEquals(modalB, b.coordinator.currentModal.value)
+                assertEquals(7L, b.coordinator.replayCursor.latest)
+                assertFalse(tb.closed)
+                tb.emit(envelope("ack", "{}").copy(inReplyTo = tb.outbound.single().id))
+                runCurrent()
+                pending.await()
+                tb.emit(turn(8))
+                runCurrent()
+                assertEquals(2, eventsB.size)
+                assertEquals(1, eventsA.size)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun registryBackgroundAndDisposalFencePendingReadsAndPreserveResumeCursor() =
+        runTest {
+            val f = Fixture(this)
+            val gate = CompletableDeferred<Unit>()
+            f.rawStore.readGate = gate
+            f.store.save(f.a.record)
+            val registry = f.registry()
+            registry.connect()
+            runCurrent()
+            registry.close()
+            gate.complete(Unit)
+            runCurrent()
+            assertTrue(f.transports.isEmpty())
+            val a = registry.connectionFor("A")!!
+            registry.connect()
+            runCurrent()
+            f.transports.single().emit(turn(41))
+            runCurrent()
+            registry.close()
+            registry.close()
+            runCurrent()
+            assertTrue(f.transports.single().closed)
+            assertEquals(0, f.transports.single().collectors)
+            f.store.save(f.b.record)
+            runCurrent()
+            assertEquals(1, f.transports.size)
+            registry.connect()
+            registry.connect()
+            runCurrent()
+            assertSame(a, registry.connectionFor("A"))
+            assertEquals("41", f.transports[1].cursor())
+            assertFalse(f.transports[0].initialFrame.contentEquals(f.transports[1].initialFrame))
+            assertEquals(3, f.transports.size)
+            val pending = CompletableDeferred<Unit>()
+            f.rawStore.readGate = pending
+            f.store.setDisplayName("A", "new")
+            runCurrent()
+            registry.dispose()
+            registry.dispose()
+            registry.connect()
+            pending.complete(Unit)
+            runCurrent()
+            f.store.save(f.a.record)
+            runCurrent()
+            assertNull(registry.connectionFor("A"))
+            assertNull(registry.selected.value)
+            assertTrue(f.transports.all { it.closed && it.collectors == 0 })
+            assertEquals(3, f.transports.size)
+            assertEquals(0, f.rawStore.activeReads)
+        }
+
+    @Test
+    fun unavailableHostDoesNotDelayOtherHostAndFailedSaveDoesNotNotify() =
+        runTest {
+            val f = Fixture(this)
+            f.unavailable = "A"
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            try {
+                registry.connect()
+                runCurrent()
+                assertNull(
+                    registry
+                        .connectionFor("A")!!
+                        .coordinator.currentRepository.value,
+                )
+                assertNotNull(
+                    registry
+                        .connectionFor("B")!!
+                        .coordinator.currentRepository.value,
+                )
+                val revision = f.store.revision.value
+                f.rawStore.failSave = true
+                assertTrue(runCatching { f.store.save(f.a.record.copy(token = "bad")) }.isFailure)
+                runCurrent()
+                assertEquals(revision, f.store.revision.value)
+                assertEquals(f.b.record, f.store.load())
+                assertEquals(2, f.transports.size)
+            } finally {
+                registry.dispose()
+                runCurrent()
+            }
+            assertTrue(f.transports.all { it.closed && it.collectors == 0 })
         }
 
     private class Fixture(
@@ -292,7 +555,10 @@ class RelayConnectionFactoryTest {
     ) {
         val a = Host("A")
         val b = Host("B")
-        val store = LatestStore()
+        val rawStore = LatestStore()
+        val store = ObservablePairedServerStore(rawStore)
+        var beforeDial: (PairedServer) -> Unit = {}
+        var unavailable: String? = null
         val keys = Keys()
         val transports = mutableListOf<PeerTransport>()
         private val dispatcher = StandardTestDispatcher(scope.testScheduler)
@@ -300,25 +566,67 @@ class RelayConnectionFactoryTest {
             RelayConnectionFactory(
                 keys,
                 RelayTransportFactory { record ->
-                    PeerTransport(record, if (record.serverId == "A") a else b, keys).also { transports += it }
+                    beforeDial(record)
+                    PeerTransport(
+                        record,
+                        if (record.serverId ==
+                            "A"
+                        ) {
+                            a
+                        } else {
+                            b
+                        },
+                        keys,
+                        record.serverId == unavailable,
+                    ).also { transports += it }
                 },
                 NoiseClientInfo("test-device", "test-version"),
                 dispatcher = dispatcher,
                 ioDispatcher = dispatcher,
             )
+
+        fun registry() = RelayConnectionRegistry(store, factory, dispatcher)
     }
 
-    private class LatestStore : PairedServerStore {
-        private var latest: PairedServer? = null
+    private class LatestStore : PairedServerCollectionStore {
+        private var entries = emptyList<PairedServerEntry>()
         var loads = 0
+        var readGate: CompletableDeferred<Unit>? = null
+        var activeReads = 0
+        var failSave = false
 
         override suspend fun load(): PairedServer? {
             loads++
-            return latest
+            return entries.lastOrNull()?.record
         }
 
+        override suspend fun list(): List<PairedServerEntry> {
+            activeReads++
+            try {
+                readGate?.await()
+                return entries.toList()
+            } finally {
+                activeReads--
+            }
+        }
+
+        override suspend fun loadById(serverId: String) = entries.find { it.record.serverId == serverId }
+
         override suspend fun save(record: PairedServer) {
-            latest = record
+            if (failSave) throw PairedServerStoreException("test failure")
+            val name = loadById(record.serverId)?.displayName
+            entries = entries.filterNot { it.record.serverId == record.serverId } + PairedServerEntry(record, name)
+        }
+
+        override suspend fun remove(serverId: String) {
+            entries = entries.filterNot { it.record.serverId == serverId }
+        }
+
+        override suspend fun setDisplayName(
+            serverId: String,
+            displayName: String?,
+        ) {
+            entries = entries.map { if (it.record.serverId == serverId) it.copy(displayName = displayName) else it }
         }
     }
 
@@ -349,6 +657,7 @@ class RelayConnectionFactoryTest {
         val record: PairedServer,
         private val host: Host,
         private val keys: Keys,
+        private val unavailable: Boolean = false,
     ) : RelayTransport {
         private val frames = Channel<InnerFrameV2>(Channel.UNLIMITED)
         private val links = Channel<TransportEvent>(Channel.UNLIMITED)
@@ -373,7 +682,7 @@ class RelayConnectionFactoryTest {
             }
 
         override fun connect() {
-            links.trySend(TransportEvent.Up)
+            if (!unavailable) links.trySend(TransportEvent.Up)
         }
 
         override fun close() {
@@ -465,6 +774,12 @@ class RelayConnectionFactoryTest {
             type: String,
             payload: String,
         ) = Envelope(1, type, "2026-09-20T00:00:00Z", MobileJson.parseToJsonElement(payload))
+
+        fun modal(title: String) =
+            envelope(
+                "modal_shown",
+                """{"modal_id":"same","class":"permission","title":"$title","prompt":"Allow?","options":[{"id":"deny","label":"Deny"}],"default_option_id":"deny"}""",
+            )
 
         fun turn(id: Long) = envelope("turn_state", """{"conversation_id":"c","state":"thinking"}""").copy(eventId = id)
     }

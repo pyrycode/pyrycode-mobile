@@ -3,8 +3,8 @@
 The phone retains an encrypted collection of host credentials and optional local
 names. Pairing another host preserves existing hosts; pairing the same server id
 replaces only its credentials. The four credential strings round-trip unchanged.
-Existing callers still use the most recently saved surviving record until
-connection construction and lifecycle routing adopt explicit host selection.
+The app's connection registry follows the whole collection. Existing UI consumers
+use a compatibility view of the most recently saved surviving host.
 
 Package: `de.pyryco.mobile.data.crypto`. The portable contracts and models live in
 [`PairedServerStore.kt`](../../../app/src/main/java/de/pyryco/mobile/data/crypto/PairedServerStore.kt);
@@ -161,25 +161,46 @@ redact all fields, so printing a returned list is also redacted.
 
 ## Wiring & usage
 
-The Koin binding remains:
+Both store interfaces resolve one observable decorator in `appModule`:
 
 ```kotlin
-single { KeystorePairedServerStore(get()) } bind PairedServerStore::class
+single { ObservablePairedServerStore(KeystorePairedServerStore(get())) } binds
+    arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
 ```
 
-`MainActivity` uses `load()` for initial paired state and the Settings server
-label. `NoiseSessionFactory` and `RelayConnectionSupervisor` also still use the
-compatibility read. Scan and paste confirmation use
-[`confirmPairingAndConnect`](pairing-confirm-gate.md) to save before starting the
-connection; a failed save never proceeds to connect.
+`ObservablePairedServerStore` in `di/` delegates persistence and snapshot reads to
+the encrypted store. Its revision `StateFlow` advances only after `save`, `remove`
+or `setDisplayName` returns successfully; exceptions propagate without notification.
+A successful no-op may still advance the revision. The registry compares the
+resulting records, so unchanged credentials and name-only edits retain connections.
+Use the shared DI store for app mutations: a separate raw store instance cannot
+notify this decorator's observers.
 
-The concrete store implements `PairedServerCollectionStore`, but the collection
-interface has no separate DI binding yet. Explicit host connection construction
-and lifecycle routing belong to [#633](https://github.com/pyrycode/pyrycode-mobile/issues/633)
-and [#634](https://github.com/pyrycode/pyrycode-mobile/issues/634); name/removal UI
-belongs to [#642](https://github.com/pyrycode/pyrycode-mobile/issues/642).
+`RelayConnectionRegistry` observes the initial revision and subsequent revisions,
+serializes `list()` reads and reconciles one bundle per exact server id. Saves and
+removals therefore take effect while foregrounded without another lifecycle edge;
+the save call itself does not await reconciliation or connection readiness. The
+last entry selects the compatibility view, matching `load()`. Re-saving identical
+credentials can change selection without redialing; a name edit changes neither
+selection nor bundle identity. Removing the latest selects the latest survivor;
+an empty collection leaves no connection owner. See
+[lifecycle wiring and guarantees](lifecycle-connection-driver.md#wiring--eager-koin-singleton-no-pyryapp-change).
+
+`MainActivity` still uses `load()` for initial paired state and the Settings server
+label. Scan and paste confirmation use
+[`confirmPairingAndConnect`](pairing-confirm-gate.md) to save before calling the
+registry's controller; a failed save never proceeds to connect. Each bundle's
+supervisor and [Noise factory](noise-ik-session.md#factory-wiring) instead read an
+immutable record supplied by the registry, so saving another host cannot retarget
+them. Name/removal UI remains [#642](https://github.com/pyrycode/pyrycode-mobile/issues/642).
 
 ## Testing
+
+`di/RelayConnectionFactoryTest.kt` checks the collection DI binding, observable-store
+reconciliation, name-only and identical-record retention, latest-save
+selection and removal. Its failed-save fixture asserts that the revision and
+previous compatibility choice remain unchanged; persistence tests below cover
+the encrypted store's separate failure contract.
 
 [`KeystorePairedServerStoreTest`](../../../app/src/androidTest/java/de/pyryco/mobile/data/crypto/KeystorePairedServerStoreTest.kt)
 uses real Android Keystore on a device/emulator. Its 17 tests cover byte-faithful

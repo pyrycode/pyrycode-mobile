@@ -117,8 +117,10 @@ record's relay URL, server id and token; the Noise handshake uses its token and
 pinned server static key. Both initial device-key loading and
 `reloadDeviceStaticKey()` use its server id. Saving another pairing cannot
 retarget an explicit-record bundle, even when both hosts share a relay URL.
-Credential replacement requires a new owner; discovery and selection belong to
-[#634](https://github.com/pyrycode/pyrycode-mobile/issues/634).
+The app-owned `RelayConnectionRegistry` discovers saved hosts through the
+[observable collection](paired-server-store.md#wiring--usage). It closes a removed
+or credential-changed bundle before creating its replacement; identical records
+and display-name-only edits keep their existing owner.
 
 Each `RelayConnectionBundle` owns its supervisor, session factory and
 [coordinator](relay-repository-coordinator.md#configuration). The session factory
@@ -136,16 +138,25 @@ an app-wide coordinator or freezing the value at construction. Reconnect creates
 a fresh transport, pump and Noise session while retaining this supplier and its
 coordinator. See [replay ownership](relay-repository-coordinator.md#reconnect-spanning-replay-cursor-412).
 
-**Temporary single-host DI.** `appModule` registers the reusable factory and one
-eager `createCompatibility(store)` bundle through the same construction path.
-This entry keeps the store-backed reads: startup can be unpaired, pairing can
-connect after saving, and the next dial selects the latest saved record. Freezing
-this entry at app startup would break those behaviors. Existing concrete
-supervisor/session-factory/coordinator resolutions alias the bundle's members;
-the fake/relay repository selector remains unchanged. `Build.MODEL` and
-`BuildConfig.VERSION_NAME` still enter as plain `NoiseClientInfo` strings from
-`AppModule`, keeping the session and factory portable. The existing setup error
-categories, key-buffer wiping and single-connection algorithms are unchanged.
+**Registry ownership and compatibility selection.** `appModule` eagerly owns the
+registry, which constructs explicit-record bundles for all saved hosts. Empty
+startup creates none; a successful pairing save reconciles without waiting for
+another foreground edge. Backgrounding closes all supervisors resumably, retaining
+each coordinator and cursor for a fresh Noise handshake on resume. Removal,
+credential replacement and registry disposal permanently close the affected owners.
+
+Existing app consumers follow the most recently saved surviving bundle, matching
+`PairedServerStore.load()`. Changing this compatibility selection does not redial
+unaffected hosts. Concrete Koin supervisor/session-factory/coordinator aliases
+resolve that retained selection and refuse when none exists; they never create
+another connection. `createCompatibility(store)` remains a factory helper but is
+no longer used by app DI. See [registry configuration](relay-repository-coordinator.md#configuration)
+and [lifecycle guarantees](lifecycle-connection-driver.md#guarantees-delegated-not-re-implemented).
+
+The fake/relay repository selector remains unchanged. `Build.MODEL` and
+`BuildConfig.VERSION_NAME` enter as plain `NoiseClientInfo` strings from `AppModule`,
+keeping the session and factory portable. Setup error categories, key-buffer
+wiping and single-connection algorithms are unchanged.
 
 ## Threading & key hygiene
 
