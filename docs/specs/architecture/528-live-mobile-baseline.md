@@ -43,3 +43,7 @@ Documentation stage: update `docs/e2e-interactive-stream.md` under “How to run
 ## Open questions
 
 None for implementation. Live results and their runtime metadata remain pending dispatcher execution and builder artifact return.
+
+## Revisions
+
+- 2026-09-20: The dispatcher's “Live artifact handoff” requires `needs-live-artifacts` alongside `needs-real-claude` before first review. Apply the artifact marker for the four pending files above; on return, commit both profiles' usable evidence before removing only that marker. No coupled reader changes are needed.
