@@ -13,6 +13,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
@@ -748,7 +749,11 @@ class InteractiveStreamE2ETest {
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(ARCHIVED_ROW).fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNodeWithText(ARCHIVED_ROW).performClick()
+        composeTestRule
+            .onNodeWithText(ARCHIVED_ROW)
+            .performScrollTo()
+            .assertIsDisplayed()
+            .performClick()
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
         }

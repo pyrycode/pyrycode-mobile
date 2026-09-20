@@ -1,3 +1,4 @@
 {"type":"assistant","message":{"id":"toolf-1","content":[{"type":"tool_use","id":"toolu_e2e_fail","name":"Bash","input":{"command":"false"}}]}}
 {"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_e2e_fail","content":"command failed","is_error":true}]}}
 {"type":"assistant","message":{"id":"toolf-2","stop_reason":"end_turn","content":[{"type":"text","text":"oops"}]}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"43143143-4314-4314-8314-431431431431"}

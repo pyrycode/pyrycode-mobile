@@ -30,9 +30,9 @@ The data-model entity is **`Conversation`** with an `isPromoted: Boolean` flag, 
 
 ```bash
 ./gradlew assembleDebug              # build debug APK
-./gradlew installDebug               # install on connected device/emulator
+./gradlew installDebug               # optional local install; dispatcher owns routine device execution
 ./gradlew test                       # unit tests
-./gradlew connectedAndroidTest       # instrumented tests (device required)
+./gradlew connectedAndroidTest       # optional local run; dispatcher owns managed-device UI execution
 ./gradlew lint                       # Android Lint
 ./gradlew clean                      # clean build outputs
 ```

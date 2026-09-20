@@ -1,6 +1,9 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -141,7 +144,11 @@ class ThreadScreenChannelInfoTest {
         setContent(mutableListOf(), state = deleteConfirmState())
 
         composeTestRule.onNodeWithText("Delete conversation?").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Test channel", substring = true).assertIsDisplayed()
+        composeTestRule
+            .onNode(
+                hasText("This permanently deletes \"Test channel\" and all its sessions and messages. This can’t be undone.") and
+                    hasAnyAncestor(isDialog()),
+            ).assertIsDisplayed()
     }
 
     @Test

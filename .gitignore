@@ -34,3 +34,6 @@ local.properties
 
 # IntelliJ / Android Studio project files
 .idea/
+
+# Python test harness bytecode
+__pycache__/

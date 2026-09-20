@@ -1,3 +1,4 @@
 {"type":"assistant","message":{"id":"order-1","content":[{"type":"text","text":"alpha "}]}}
 {"type":"assistant","message":{"id":"order-2","content":[{"type":"text","text":"bravo "}]}}
 {"type":"assistant","message":{"id":"order-3","stop_reason":"end_turn","content":[{"type":"text","text":"charlie"}]}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"43143143-4314-4314-8314-431431431431"}

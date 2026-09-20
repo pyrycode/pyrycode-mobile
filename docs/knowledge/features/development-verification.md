@@ -42,9 +42,12 @@ fresh worktree, Gradle may need `ANDROID_HOME` set because `local.properties` is
 ignored. Preserve the command's exit status when inspecting output; piping Gradle
 through `tail` can hide a failure.
 
-Run `./gradlew connectedAndroidTest` only with an available Android device or
-emulator. Report whether a device ran the tests, rather than describing a compile
-or unit result as device evidence.
+The dispatcher owns routine device execution through
+`python3 scripts/android-test-gate.py ui`, which uses the Gradle-managed Android
+13 device and does not require Android Studio to be open or an emulator to be
+booted manually. Report the command, XML evidence and executed count. A missing,
+zero-count or failed run is not device evidence. Agents author the tests and
+triage the supplied failure; a local `connectedAndroidTest` run is optional.
 
 ## Compose evidence
 
@@ -118,25 +121,32 @@ cached output makes the result unclear.
 ## Emulator and real evidence
 
 An instrumented test proves behavior in its fixture. It does not prove camera
-binding, lifecycle timing, relay compatibility or a real daemon round trip. Run the
-emulator ladder described in [interactive stream e2e](../../e2e-interactive-stream.md)
-when the change reaches that surface, and record the scenario, app/build version,
-daemon compatibility and executed test count. A zero exit code with every live
-scenario skipped is not a passing live proof.
+binding, lifecycle timing, relay compatibility or a real daemon round trip. The
+dispatcher runs the UI gate and each zero-real-Claude scripted scenario before
+verifier. For a ticket labelled `needs-real-claude`, it runs
+`python3 scripts/android-test-gate.py live` after verifier and before documentation
+or merge. Record the scenario, app/build version, daemon compatibility and executed
+test count. XML evidence is required; a zero exit code with every scenario skipped
+is not a passing proof.
 
-Choose an e2e rung from the producer that emits the event. A stream-json-only
-event cannot be proven by a PTY runner, and a PTY-only event cannot be proven by a
-scripted stream fixture. Keep missing fixtures and skipped captures visible. Before
-accepting a capture, check its redacted context, expected event count and reader
-version. Do not copy credentials, pairing codes, user prompts, host paths or raw
-daemon payloads into evidence.
+Choose an e2e rung from the producer that emits the event. The current mobile
+harness uses the daemon's stream-json runner and `fakeclaude` raw replay. Set
+`PYRY_FAKE_CLAUDE_STREAM_JSON=1`, provide `PYRY_FAKE_CLAUDE_STREAM_REPLAY_FIRST`,
+and pair `PYRY_FAKE_CLAUDE_STREAM_REPLAY_SECOND` with
+`PYRY_FAKE_CLAUDE_STREAM_REPLAY_RELEASE` when a held turn needs a second fragment.
+Release it from the queued second message or relay disconnect that the scenario
+defines. PTY transcript polling is historical and the current harness rejects a
+PTY runner. Keep missing fixtures and skipped captures visible. Before accepting a
+capture, check its redacted context, expected event count and reader version. Do
+not copy credentials, pairing codes, user prompts, host paths or raw daemon
+payloads into evidence.
 
-For camera overlays, verify the real preview layer on an emulator or device when
-the change concerns it. A unit test or a fake preview slot cannot prove CameraX
-binding or that the preview respects the Compose overlay. For relay and Noise
-changes, combine deterministic JVM coverage with the appropriate emulator or
-real-daemon path; do not claim the latter ran unless its output identifies the
-executed scenario.
+For camera overlays, the dispatcher must verify the real preview layer on the
+managed emulator or device when the change concerns it. A unit test or a fake
+preview slot cannot prove CameraX binding or that the preview respects the Compose
+overlay. For relay and Noise changes, combine deterministic JVM coverage with the
+appropriate UI or post-verifier live path; do not claim the latter ran unless its
+output identifies the executed scenario and XML evidence.
 
 ## Documentation evidence
 
@@ -145,3 +155,11 @@ it. Put product behavior in the owning feature topic. Put requirements, review
 findings and unfinished work on the ticket or PR. Put workflow lessons in the
 agent or dispatcher repository. The frozen `codebase/` archive is read-only, and
 local Claude memory is not a substitute for a reviewed repository document.
+
+## Archive refresh regression
+
+The live archive test on 2026-09-20 exposed a list decoder that discarded
+`is_archived` and reset every row to active on a refresh. List summaries now
+preserve that field, with an active default for older server replies. The archive
+E2E also scrolls its Settings row into view before tapping. Preserve both checks
+when changing the list mapping or Settings layout.
