@@ -349,9 +349,9 @@ class RelayRepositoryCoordinator(
      * [RemoteConversationRepository.interrupt]. Same null-guard-only posture and never-log contract;
      * fire-and-forget (no reply awaited).
      */
-    suspend fun interrupt() {
+    suspend fun interrupt(conversationId: String) {
         val repo = activeConnection.value?.repo ?: throw IllegalStateException("no active connection")
-        repo.interrupt()
+        repo.interrupt(conversationId)
     }
 
     private class Connection(

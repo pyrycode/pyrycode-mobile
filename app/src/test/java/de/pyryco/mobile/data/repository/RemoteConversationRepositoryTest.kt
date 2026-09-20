@@ -2826,20 +2826,29 @@ class RemoteConversationRepositoryTest {
             assertTrue(cancel().exceptionOrNull() is IllegalStateException)
         }
 
-    // ---- interrupt (#458): bare fire-and-forget control frame -------------------------------------
-
-    // AC #1, wire contract: interrupt() emits exactly one bare `interrupt` frame whose payload is the
-    // empty object `{}` (no conversation_id / no other keys). Fire-and-forget: no reply is awaited.
+    // Explicit target, fire-and-forget: prior traffic in A must not redirect Stop from B.
     @Test
-    fun interrupt_sendsBareInterruptMatchingWireContract() =
+    fun interrupt_targetsBWithoutAwaitingReplyOrChangingMessages() =
         runTest {
             val pump = FakeSessionPump()
             val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+            val messagesA = collectMessages(repo, "c-a")
+            val messagesB = collectMessages(repo, "c-b")
+            runCurrent()
+            pump.push(messageEnvelope("c-b", "b1", "user", "in B", "2026-05-31T10:00:00Z"))
+            pump.push(messageEnvelope("c-a", "a1", "user", "in A", "2026-05-31T11:00:00Z"))
+            repo.startNewSession("c-a", null)
+            runCurrent()
+            val beforeA = messagesA.toList()
+            val beforeB = messagesB.toList()
 
-            repo.interrupt()
+            repo.interrupt("c-b")
+            runCurrent()
 
             val sent = pump.sent.single { it.type == "interrupt" }
-            assertEquals(MobileJson.parseToJsonElement("{}"), sent.payload)
+            assertEquals(MobileJson.parseToJsonElement("""{"conversation_id":"c-b"}"""), sent.payload)
+            assertEquals(beforeA, messagesA)
+            assertEquals(beforeB, messagesB)
         }
 
     // AC #3: a not-Open session (pump.send returns false) fails fast with IllegalStateException and
@@ -2851,7 +2860,7 @@ class RemoteConversationRepositoryTest {
             pump.sendResult = false
             val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
 
-            val outcome = runCatching { repo.interrupt() }
+            val outcome = runCatching { repo.interrupt("c-b") }
 
             assertTrue(outcome.exceptionOrNull() is IllegalStateException)
         }

@@ -919,9 +919,9 @@ class RelayRepositoryCoordinatorTest {
             env.coordinator.close()
         }
 
-    // A live connection (pump Open) → interrupt delegates: one bare `interrupt` frame, fire-and-forget.
+    // A live connection forwards B explicitly even after a control send for A.
     @Test
-    fun interrupt_withActiveConnection_delegatesAndSendsBareFrame() =
+    fun interrupt_withActiveConnection_targetsBAfterA() =
         runTest {
             val env = newEnv()
             env.connections.value = StubRelayTransport()
@@ -930,11 +930,14 @@ class RelayRepositoryCoordinatorTest {
             pump.open()
             runCurrent()
 
-            env.coordinator.interrupt()
+            env.coordinator.interrupt("c-a")
+            val before = pump.sent.size
+            env.coordinator.interrupt("c-b")
             runCurrent()
 
-            val sent = pump.sent.single { it.type == "interrupt" }
-            assertTrue(sent.payload.jsonObject.isEmpty())
+            val sent = pump.sent.drop(before).single()
+            assertEquals("interrupt", sent.type)
+            assertEquals(MobileJson.parseToJsonElement("""{"conversation_id":"c-b"}"""), sent.payload)
 
             env.coordinator.close()
         }
@@ -946,7 +949,7 @@ class RelayRepositoryCoordinatorTest {
             val env = newEnv()
             runCurrent()
 
-            val outcome = runCatching { env.coordinator.interrupt() }
+            val outcome = runCatching { env.coordinator.interrupt("c-b") }
             assertTrue(outcome.exceptionOrNull() is IllegalStateException)
 
             env.coordinator.close()

@@ -79,7 +79,7 @@ class ScriptedThreadHarness(
 
     /** Records taps on the interrupt affordance (#459) — the recording analog of #458's send path,
      *  injected as the VM's interrupt lambda so the screen test can assert exactly-once invocation. */
-    private var interruptCount = 0
+    private val interruptTargets = mutableListOf<String>()
 
     private val vm =
         ThreadViewModel(
@@ -91,7 +91,7 @@ class ScriptedThreadHarness(
             connectionStateSource = connectionStateSource,
             appPreferences = AppPreferences(newDataStore()),
             liveSessionEvents = repo.liveSessionEvents,
-            interrupt = { interruptCount++ },
+            interrupt = { interruptTargets += it },
         )
 
     /**
@@ -124,7 +124,9 @@ class ScriptedThreadHarness(
     }
 
     /** Number of times the interrupt affordance's tap invoked the VM's interrupt-send action (#459). */
-    fun interruptInvocations(): Int = interruptCount
+    fun interruptInvocations(): Int = interruptTargets.size
+
+    fun interruptedConversations(): List<String> = interruptTargets.toList()
 
     /** Script one `assistant_delta` for [turnId] at [seq] carrying [text] (#337). */
     fun pushAssistantDelta(

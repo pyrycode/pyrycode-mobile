@@ -26,9 +26,12 @@ import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.ThrowingConversationRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -635,22 +638,43 @@ class ThreadViewModelTest {
     // ---- #458: onInterrupt outbound send path -------------------------------------------------
 
     @Test
-    fun onInterrupt_sendsInterruptExactlyOnce() =
+    fun onInterrupt_targetsOpenConversationAfterA_withoutClearingBusyState() =
         runTest {
             val recorder = InterruptRecorder()
-            val vm =
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val repository = FakeConversationRepository()
+            val previous =
                 makeVm(
-                    SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV)),
-                    FakeConversationRepository(),
+                    SavedStateHandle(mapOf("conversationId" to "c-a")),
+                    repository,
                     interrupt = recorder.interrupt,
                 )
+            previous.onInterrupt()
             advanceUntilIdle()
+            assertEquals(listOf("c-a"), recorder.targets)
+            recorder.targets.clear()
+            val vm =
+                makeVm(
+                    SavedStateHandle(mapOf("conversationId" to ACTIVE_CONV)),
+                    repository,
+                    liveSessionEvents = events,
+                    interrupt = recorder.interrupt,
+                )
+            val busyCollector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.isBusy.collect {} }
+            val stateCollector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
+            advanceUntilIdle()
+            val before = vm.state.value
+            assertTrue(vm.isBusy.value)
 
             vm.onInterrupt()
             advanceUntilIdle()
 
-            // AC #4 happy path: the injected send is invoked exactly once.
-            assertEquals(1, recorder.count)
+            assertEquals(listOf(ACTIVE_CONV), recorder.targets)
+            assertTrue(vm.isBusy.value)
+            assertEquals(before, vm.state.value)
+            busyCollector.cancel()
+            stateCollector.cancel()
         }
 
     @Test
@@ -676,23 +700,55 @@ class ThreadViewModelTest {
                     )
                 for (failure in failures) {
                     val recorder = InterruptRecorder(failWith = failure)
+                    val events = MutableSharedFlow<LiveSessionEvent>()
                     val vm =
                         makeVm(
                             SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV)),
                             FakeConversationRepository(),
+                            liveSessionEvents = events,
                             interrupt = recorder.interrupt,
                         )
+                    val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+                    val busyCollector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.isBusy.collect {} }
+                    events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
                     advanceUntilIdle()
+                    val before = vm.state.value
+                    assertTrue(vm.isBusy.value)
 
                     vm.onInterrupt()
                     advanceUntilIdle()
 
-                    assertEquals(1, recorder.count) // the attempt was made
+                    assertEquals(listOf(ACTIVE_CONV), recorder.targets)
+                    assertEquals(before, vm.state.value)
+                    assertTrue(vm.isBusy.value)
+                    collector.cancel()
+                    busyCollector.cancel()
                 }
                 assertTrue("interrupt failures must be swallowed, not propagated: $uncaught", uncaught.isEmpty())
             } finally {
                 Thread.setDefaultUncaughtExceptionHandler(previousHandler)
             }
+        }
+
+    @Test
+    fun onInterrupt_sendCancellationRemainsCancellation() =
+        runTest {
+            val cancellation = CancellationException("cancelled send")
+            val completion = CompletableDeferred<Throwable?>()
+            val vm =
+                makeVm(
+                    SavedStateHandle(mapOf("conversationId" to ACTIVE_CONV)),
+                    FakeConversationRepository(),
+                    interrupt = {
+                        currentCoroutineContext()[Job]?.invokeOnCompletion { completion.complete(it) }
+                        throw cancellation
+                    },
+                )
+
+            vm.onInterrupt()
+            advanceUntilIdle()
+
+            assertEquals(cancellation, completion.await())
         }
 
     @Test
@@ -2714,7 +2770,7 @@ class ThreadViewModelTest {
         currentModal: StateFlow<ModalUiState> = MutableStateFlow(ModalUiState.Hidden),
         answerModal: suspend (String, String) -> Unit = { _, _ -> },
         cancelModal: suspend (String) -> Unit = { _ -> },
-        interrupt: suspend () -> Unit = { },
+        interrupt: suspend (String) -> Unit = { },
     ): ThreadViewModel =
         ThreadViewModel(handle, repository, source, prefs, liveSessionEvents, currentModal, answerModal, cancelModal, interrupt)
 
@@ -2753,11 +2809,10 @@ class ThreadViewModelTest {
     private class InterruptRecorder(
         private val failWith: Throwable? = null,
     ) {
-        var count = 0
-            private set
+        val targets = mutableListOf<String>()
 
-        val interrupt: suspend () -> Unit = {
-            count++
+        val interrupt: suspend (String) -> Unit = { conversationId ->
+            targets += conversationId
             failWith?.let { throw it }
         }
     }

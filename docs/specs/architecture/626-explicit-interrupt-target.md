@@ -58,3 +58,7 @@ Pending for documentation stage: update `docs/knowledge/features/interrupt-send-
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-20
+
+## Revisions
+
+- 2026-09-20: verification uses `testDebugUnitTest --tests ...` because this Android project's aggregate `test` task rejects `--tests`. The focused RED run failed on the expected B payload versus the actual empty object before implementation. No design change.
