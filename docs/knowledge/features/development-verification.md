@@ -36,6 +36,10 @@ The aggregate `test`, lint and assemble tasks do not compile
 ./gradlew compileDebugAndroidTestKotlin
 ```
 
+For Java helpers or test-APK services such as `MobileModalTestIme`, also run
+`./gradlew compileDebugAndroidTestJavaWithJavac assembleDebugAndroidTest`.
+Kotlin compilation alone does not check the Java service and packaged fixture.
+
 Use `testDebugUnitTest --tests 'fully.qualified.TestClass'` for one JVM test class.
 The aggregate `test` task does not accept the test filter in this project. In a
 fresh worktree, Gradle may need `ANDROID_HOME` set because `local.properties` is
@@ -57,6 +61,34 @@ the expected assertion. For a visible transition, assert the state before the
 action, wait for a positive effect of that action, then assert the resulting
 absence or replacement. Use `useUnmergedTree = true` when a merged semantics
 container hides per-row text or controls.
+
+For hardware-keyboard button tests, request `InputMode.Keyboard` through
+`LocalInputModeManager` after composition and before requesting focus. Establish
+it separately in the launcher and dialog windows. Assert launcher focus before
+Enter opens the modal, then assert Tab containment, action activation and focus
+restoration after dismissal. A failure before opening the dialog does not test
+its focus-restoration contract. See [the shared mobile modal](mobile-modal.md#focus-and-verification).
+
+ATD images omit LatinIME; editable focus or `performTextInput` alone does not
+establish that a software keyboard is visible. See Android's
+[removed ATD components](https://developer.android.com/studio/test/managed-devices).
+`MobileModalTest` supplies a real `MobileModalTestIme` in the test APK, using Java
+and Android framework classes because its standalone service process cannot rely
+on Kotlin/Compose libraries supplied only by the target APK during
+instrumentation. The service declaration requires `BIND_INPUT_METHOD` and remains
+under `app/src/androidTest`.
+
+Selecting an IME after the Compose rule launches its activity can recreate that
+activity and dispose content installed with `setContent`. `MobileModalTest` uses
+an outer rule (`order = 0`, selected by `@WithTestIme`) to select the IME and drain
+main-thread configuration delivery before the Compose rule (`order = 1`) launches
+the host. Its `finally` restores the previous IME selection and the test IME's
+enabled state after host teardown. A guarded view read or longer timeout cannot
+revive a disposed dialog. Once the host is stable, wait on the UI thread for the
+captured dialog view to initialize and gain window focus, focus the field and
+show the keyboard. Assert actual IME visibility and a nonzero inset as well as
+displayed content and footer bounds above the keyboard; a scroll test
+with no keyboard leaves that contract untested.
 
 Reply assertions must not depend on total substring-count growth: removing queued
 prompt text can offset a newly displayed assistant reply. For fresh discussions

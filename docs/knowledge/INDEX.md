@@ -12,6 +12,7 @@ broader document search. The frozen archive under `codebase/` is historical.
 - [Channels and discussions](features/channel-list-screen.md): list surfaces, promotion and archive flows.
 - [Conversation thread](features/thread-screen.md): messages, live turns, status rows and thread actions.
 - [Settings](features/settings-screen.md): settings UI, storage and diagnostics.
+- [Shared mobile modal](features/mobile-modal.md): caller-controlled editing shell, theme mapping, focus and IME behavior.
 
 ## Data and transport
 
