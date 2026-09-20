@@ -41,9 +41,11 @@ RelayRepositoryCoordinator (#351) ─ per-connection pump + repository lifecycle
 RelayConnectionSupervisor (#307) ─ currentConnection: StateFlow<RelayTransport?>
 ```
 
-The coordinator is the **only place** the three Phase-4 siblings are joined: the supervisor owns the
-socket, the pump owns the Noise session, the repository owns the conversation projections — each
-code-independent — and this layer scopes the latter two to the former's lifetime.
+`RelayConnectionFactory` constructs the supervisor, session factory and coordinator
+inside one `RelayConnectionBundle` (see [Configuration](#configuration)). The
+supervisor owns the socket, the pump owns the Noise session, and the repository
+owns the conversation projections. The coordinator scopes the latter two to each
+socket's lifetime; the bundle and coordinator survive reconnects.
 
 ## Exported types
 
@@ -61,13 +63,13 @@ class RelayRepositoryCoordinator(
     relayStatus: StateFlow<RelayLinkStatus>,                 // (#392) = supervisor.relayStatus (the relay leg)
     createPump: (RelayTransport) -> ManagedSessionPump,      // prod: { NoiseSessionPump(it, sessionFactory) }
     dispatcher: CoroutineDispatcher = Dispatchers.Default,   // injection seam (test clock); stored as a val
-    deviceName: String = "",                                 // (#365) live Build.MODEL; "" until AppModule wires it
+    deviceName: String = "",                                 // (#365) supplied through the bundle's NoiseClientInfo
     pushToken: suspend () -> String? = { null },             // (#365) one-shot token read; null ⇒ no registration
 ) {
     val currentRepository: StateFlow<ConversationRepository?>  // live repo, or null between connections
     val connectionStatus: StateFlow<ConnectionStatus>         // (#392) combined {relay, pyrycode} two-part status
     val liveSessionEvents: Flow<LiveSessionEvent>             // (#406) reconnection-surviving #385 live-event seam
-    val currentModal: StateFlow<ModalUiState>                // (#492) the process-scoped "which modal is open" projection, folded here (Eagerly) off a now-PRIVATE #437 modal-event seam
+    val currentModal: StateFlow<ModalUiState>                // (#492) the bundle-scoped "which modal is open" projection, folded here (Eagerly) off a now-PRIVATE #437 modal-event seam
     suspend fun answerModal(modalId: String, optionId: String)  // (#451) outbound modal_answer passthrough — the inbound-modal mirror, but a call not a flow
     suspend fun cancelModal(modalId: String)                    // (#451) outbound modal_cancel passthrough
     suspend fun interrupt(conversationId: String)                // explicit conversation target; fire-and-forget
@@ -178,12 +180,17 @@ reading `.value` (the shape of the #493 regression test).
 ### Scope ownership (three distinct scopes)
 
 - **Coordinator scope** — `CoroutineScope(SupervisorJob() + dispatcher)`; owns the `connections`
-  collector. Cancelled by `close()`.
+  collector and eager projections for one bundle. Cancelled by `close()`.
 - **Per-connection `childScope`** — `SupervisorJob(coordinatorJob) + dispatcher`; owns the repository's
   single inbound collector. Cancelled on each teardown, and transitively when the coordinator scope dies.
 - **Pump scope** — owned **by `NoiseSessionPump` itself**, *not* a child of `childScope`. Reached **only**
   by `pump.close()`. This is why teardown must close the pump explicitly: cancelling the child scope does
   not reach the pump's own `SupervisorJob`.
+
+The factory adds no scope. Bundle disposal closes both the supervisor and the
+coordinator; a temporary supervisor close leaves the coordinator alive for the
+next connection. The app's compatibility bundle lasts for the process, while
+explicit-record bundles have independent owners and disposal (see [Configuration](#configuration)).
 
 ### Why `currentConnection` alone is a sufficient teardown trigger
 
@@ -276,8 +283,8 @@ The mapping `internal fun PumpState?.toPyrycodeLinkStatus()` (bottom of the file
 `RelayLinkStatus.toConnectionState()`) is total over `PumpState` + `null`: `null`/`Closed → Down`,
 `Handshaking → Handshaking`, `Open → Connected`. It **discards `Open.connId` and `Closed.cause`** —
 the no-log / no-leak contract is structurally enforced (no relay/crypto-derived string reaches the
-status surface). `relayStatus` is fetched off the concrete supervisor (`get<RelayConnectionSupervisor>().relayStatus`)
-exactly like `connections`, with **no new Koin binding** — and the consumer (#398) likewise obtains
+status surface). `relayStatus` and `connections` come directly from the owning bundle's supervisor;
+neither needs a separate Koin binding. The consumer (#398) likewise obtains
 the combined model with **no new binding**, passing `get<RelayRepositoryCoordinator>().connectionStatus`
 straight into the `SettingsViewModel` constructor at the `AppModule` factory.
 
@@ -331,7 +338,7 @@ The decoded [`ModalEvent`](modal-events.md) stream ([#437](../codebase/437.md)) 
 the same posture as `liveSessionEvents`, so a UI ViewModel cannot reach it directly. The coordinator
 threads it up as a **byte-for-byte mirror** of the live-session seam — switching off the same single
 `activeConnection` source (`conn?.repo`) — and, as of [#492](../codebase/492.md), **folds it here** into
-the single process-scoped "which modal is open" projection:
+one bundle-scoped "which modal is open" projection (process-lived in the current app):
 
 ```kotlin
 // #492: PRIVATE — its sole consumer is currentModal below.
@@ -339,7 +346,7 @@ the single process-scoped "which modal is open" projection:
 private val modalEvents: Flow<ModalEvent> =
     activeConnection.flatMapLatest { conn -> conn?.repo?.modalEvents ?: emptyFlow() }
 
-// #492: the single hoisted projection, folded once at this process-scoped layer.
+// #492: the hoisted projection, folded once per coordinator.
 val currentModal: StateFlow<ModalUiState> =
     modalEvents
         .scan<ModalEvent, ModalUiState>(ModalUiState.Hidden) { state, event -> state.reduce(event) }
@@ -431,33 +438,39 @@ suspend fun interrupt(conversationId: String) {
 
 ## Reconnect-spanning replay cursor (#412)
 
-The coordinator owns the [`ReplayCursor`](replay-cursor.md) ([#412](../codebase/412.md)) — the durable
-high-water mark of the latest interactive structured-stream
-[`Envelope.eventId`](mobile-protocol-v2-wire-layer.md) observed across all connections — for the **same
-reason** it owns `liveSessionEvents` and the pyrycode-leg derivation: it is the single process-lifetime
-layer that holds both the per-connection repo (the recorder) and the per-connection pump (the future
-hello producer). The cursor **cannot** live on the per-connection
-[`RemoteConversationRepository`](remote-conversation-repository.md) (rebuilt each reconnect), because it
-must outlive connection churn and be readable at the *next* connection's `hello`-build moment — **before**
-that connection's inbound path exists.
+Each bundle's coordinator owns one in-memory [`ReplayCursor`](replay-cursor.md):
+the latest interactive structured-stream [`Envelope.eventId`](mobile-protocol-v2-wire-layer.md)
+observed across that bundle's reconnects. Explicit-record bundles for A and B
+have separate coordinators and cursors even if their relay URL is the same.
+The cursor cannot live on the per-connection
+[`RemoteConversationRepository`](remote-conversation-repository.md), which is
+rebuilt each reconnect: the next `hello` needs the old position before its new
+inbound path exists. It is not persisted across bundle replacement or process
+restart.
 
 ```kotlin
-internal val replayCursor: ReplayCursor = ReplayCursor()   // survives connection churn; read by #413 at hello-build
+internal val replayCursor: ReplayCursor = ReplayCursor()   // one per coordinator, survives reconnects
 ```
 
-- Threaded into each per-connection repo in `onConnection` as one extra **defaulted** named arg
-  (`replayCursor = replayCursor`) — keeping `onConnection` non-suspending (no new suspension point) and
-  every existing construction/test compiling unchanged (the same defaulted-param discipline as
-  `deviceName`/`negotiatedCapabilities`).
-- **Survives reconnects** because `teardownActive` (the per-connection churn path) never touches it; only
-  a full `close()` ends the process-scoped object. A coordinator test pins `replayCursor.latest`
-  persisting across an `onConnection` churn.
-- **`internal`, read-only seam** (mirroring `toPyrycodeLinkStatus`'s visibility) so unit tests and the
-  consuming slice [#413](https://github.com/pyrycode/pyrycode-mobile/issues/413) read it **without** a
-  public API surface or a new Koin binding. This slice **records** the cursor; #413 reads
-  `replayCursor.latest` at `buildHello` to advertise `last_event_id` and resume the missed event tail.
-  The cursor is the third non-interface surface threaded off the concrete repo/pump, after
-  `liveSessionEvents` (#406) and the `pyrycodeStatus` derivation (#392).
+- Each per-connection repository receives its coordinator's cursor through
+  `replayCursor = replayCursor` in non-suspending `onConnection`. Inbound recording
+  or a `resync` reset in A changes only A's cursor; B retains its position.
+- `teardownActive` never clears the cursor. Drops, retry and background supervisor
+  close preserve it while replacing the transport, pump, Noise session and
+  repository. Bundle disposal ends this owner's usable lifetime; a new bundle
+  starts empty.
+- The [session factory supplier](noise-ik-session.md#factory-wiring) closes over
+  the owning coordinator's `internal val replayCursor`, with no Koin lookup.
+  It reads `.latest` at `hello`-build, advertising that position as
+  `hello.last_event_id`; `null` omits the field. Reading an app-wide coordinator
+  would mix hosts, and capturing a value at construction would miss later events.
+
+The temporary `createCompatibility(store)` path also has one cursor per bundle.
+It preserves that cursor across redials while rereading the latest saved pairing;
+it does not maintain a map of host cursors. Host discovery, replacement and
+selection remain [#634](https://github.com/pyrycode/pyrycode-mobile/issues/634)'s
+responsibility. Use explicit-record bundles when independent host ownership is
+required.
 
 ## Security invariants
 
@@ -473,8 +486,9 @@ fabric from the stochastic rule):
   ephemerals and AEAD nonce counter are *per-handshake*; reusing a pump across transports would reuse
   nonces under one key (a confidentiality break). `createPump` builds a brand-new pump per non-null
   emission; the pump's `start()` single-use assertion makes a spent pump impossible to restart. Hence
-  "no state carryover on reconnect" is a **crypto invariant**, not just hygiene — nothing (projection
-  state, in-flight requests, the pump) is shared between an old and new connection.
+  fresh cryptographic state on reconnect is an invariant: the pump, session keys,
+  in-flight requests and repository projections are replaced. The coordinator's
+  replay cursor and modal accumulator intentionally survive that churn.
 - **Never collects the transport's single-consumer streams** (`inbound`/`events`) — it only hands the
   `RelayTransport` reference to `createPump`. A stray collection would steal frames from the handshake
   (the pump owns `inbound`) or from the supervisor (owns `events`).
@@ -486,36 +500,58 @@ reference would leak a started-but-unclosed pump.
 
 ## Configuration
 
-DI registration in `AppModule.kt`, mirroring the [`LifecycleConnectionDriver`](lifecycle-connection-driver.md)
-eager-singleton precedent:
+`RelayConnectionFactory` in `di/RelayConnectionFactory.kt` uses one construction
+path for two entries: `create(record)` fixes the immutable pairing for the
+bundle's lifetime; `createCompatibility(store)` preserves the temporary
+single-host app's dynamic store reads. Both own a supervisor, Noise session
+factory and coordinator with its replay cursor. The bundle initializes all
+members before starting the coordinator; construction starts collectors, and a
+later `supervisor.connect()` starts the dial.
+
+`AppModule.kt` registers the factory and one eager compatibility bundle, then
+aliases the existing concrete resolutions to its members:
 
 ```kotlin
-single(createdAtStart = true) {
-    val sessionFactory = get<NoiseSessionFactory>()
-    RelayRepositoryCoordinator(
-        connections = get<RelayConnectionSupervisor>().currentConnection,
-        relayStatus = get<RelayConnectionSupervisor>().relayStatus,     // #392: the relay leg of connectionStatus
-        createPump = { transport -> NoiseSessionPump(transport, sessionFactory) },
-        // #365: close #359's device_name: "" defer + supply the connect-time token read.
-        deviceName = get<NoiseClientInfo>().deviceName,                 // Build.MODEL
-        pushToken = { get<AppPreferences>().pushToken.first() },        // one-shot read of the persisted token
-    ).also { it.start() }
+single {
+    RelayConnectionFactory(
+        get(), get(), get(), // DeviceStaticKeyStore, RelayTransportFactory, NoiseClientInfo
+        pushToken = { get<AppPreferences>().pushToken.first() },
+    )
 }
+single(createdAtStart = true) {
+    get<RelayConnectionFactory>().createCompatibility(get())
+} onClose { it?.close() }
+single<NoiseSessionFactory> { get<RelayConnectionBundle>().sessionFactory }
+single<RelayConnectionSupervisor> { get<RelayConnectionBundle>().supervisor } binds
+    arrayOf(ConnectionStateSource::class, RelayConnectionController::class)
+single<RelayRepositoryCoordinator> { get<RelayConnectionBundle>().coordinator }
 ```
 
-The two `#365` params are **defaulted** (`""` / `{ null }`), so the connect-time re-registration is
-dormant until `AppModule` wires these live values; `AppPreferences` and `NoiseClientInfo` were already
-resolvable singletons. `pushToken.first()` is the correct one-shot read of the non-completing DataStore
-flow.
+The compatibility entry remains idle while unpaired, permits `connect()` after
+a successful pairing save, and selects the latest saved record on the next dial.
+Freezing a record at startup would lose both first-pairing and re-pairing behavior.
+The [lifecycle driver](lifecycle-connection-driver.md) closes only the supervisor
+in the background and reconnects it in the foreground, retaining the bundle's
+coordinator and cursor.
 
-`createdAtStart` so it observes `currentConnection` for the process lifetime. It does **not** bind
-`ConversationRepository` — that binding lives in #350's flag-gated `conversationRepositoryModule` selector
-(the facade is the normal build binding; `-PuseRelayRepository=false` selects the
-[Fake](conversation-repository.md) for a demo). With the coordinator eager and the supervisor already dialing in a paired+foregrounded
-app, a real `Noise_IK` handshake runs on each live connection; this is bounded — no
-`list_conversations`/`backfill_since` is sent until a subscriber calls a read path (only #352/#350 wire
-that up), so a live-but-unconsumed pump just completes the handshake and idles. #350's flag gates what
-the **UI reads**, not whether the encrypted channel is established.
+`bundle.close()` is permanent, idempotent disposal: close the supervisor's socket
+and retry loop, then close the coordinator, cancelling its projections and
+repository collectors and explicitly closing the active pump to wipe session
+keys. Do not reuse a disposed bundle. Dropping, retrying or disposing A leaves
+B's status, repository and cursor independent. Koin's `onClose` invokes this
+disposal for the app bundle.
+
+The factory passes `NoiseClientInfo.deviceName` into the coordinator and retains
+the one-shot `pushToken.first()` read from the non-completing DataStore flow.
+It adds no scope and passes its injectable worker dispatcher to the supervisor,
+coordinator and each pump; key-store IO has a separate dispatcher.
+
+The bundle does not bind `ConversationRepository`. The existing
+`conversationRepositoryModule` selector chooses the stable facade in normal
+builds or the [fake](conversation-repository.md) with
+`-PuseRelayRepository=false`. It changes what the UI reads, not whether the
+encrypted channel is established. Conversation-list and backfill requests still
+wait for subscribers to the repository's read paths.
 
 ## Edge cases / limitations
 
@@ -531,6 +567,16 @@ the **UI reads**, not whether the encrypted channel is established.
   `ConversationRepository` facade (#352) and does **not** touch ViewModels.
 
 ## Testing
+
+`di/RelayConnectionFactoryTest.kt` covers construction with real Noise sessions
+over channel-backed transports. After A drops, resets its cursor, reconnects and
+is disposed twice, the test checks that B retains its repository, status and
+cursor, can send an encrypted `list_conversations`, and still records inbound
+events. It also checks transport collector counts after teardown: socket closure
+alone would not prove that the independently scoped pump and repository stopped.
+Compatibility tests cover unpaired idle, pairing, latest-save selection on redial
+and background/foreground reconnect; isolated Koin tests verify concrete aliases,
+both repository selectors and bundle disposal on container close.
 
 `app/src/test/java/de/pyryco/mobile/data/repository/RelayRepositoryCoordinatorTest.kt` — JVM unit tests
 (JUnit4 + `runTest`, hand fakes, no MockK), mirroring `RelayConnectionSupervisorTest` /
