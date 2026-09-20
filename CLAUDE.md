@@ -15,7 +15,7 @@ The data-model entity is **`Conversation`** with an `isPromoted: Boolean` flag, 
 
 **Sessions are nested under conversations.** A conversation has a current active session and history of past sessions. Threads render messages chronologically across sessions, with **delimiters** at session boundaries (`/clear`, idle-evict, workspace change). Above-delimiter messages are visually de-emphasized; the explanatory line below the delimiter reminds users that claude doesn't remember above the line and offers a memory-plugin install affordance.
 
-`Conversation` is server-side (defined by pyrycode CLI's eventual `conversations.json` registry). Discord-side (Phase 2 of pyrycode) and Mobile-side (Phase 3 Mobile API) consume the same entity.
+`Conversation` is server-side and shared by the pyrycode clients. Mobile consumes that shared entity.
 
 ## Stack
 
@@ -80,6 +80,10 @@ The mobile wire protocol's single source of truth is the pyrycode repo's `docs/p
 - Feature overviews: `docs/knowledge/features/<feature>.md` (pipeline-written; each ticket's lessons fold into the overview for the area it touched, in the section they belong to).
 - `docs/knowledge/codebase/<N>.md` is the frozen per-ticket archive, closed 2026-09-05. Read it as history; nothing writes there.
 - Evergreen index: `docs/knowledge/INDEX.md`.
+- Detailed document inventory: `docs/knowledge/CATALOG.md`.
+- Shared knowledge ownership: `docs/shared-knowledge.md`.
+- Verification topic: `docs/knowledge/features/development-verification.md`.
+- `docs/PROJECT-MEMORY.md` is a compatibility pointer; do not append to it.
 - `scripts/docs-guard.sh` keeps the overviews under 50000 bytes and free of lines that markdown misreads as headings. It is the first entry in the dispatcher's verifier gate list; run it before committing docs.
 
 ## Conventions
@@ -94,5 +98,18 @@ The mobile wire protocol's single source of truth is the pyrycode repo's `docs/p
 
 - Don't wire the real backend in by ripping out the fakes — Phase 4 is active, but the swap is architectural: replace `FakeConversationRepository` via a Koin module, don't special-case it in the UI. The networking/crypto stack already exists in `data/network/` + `data/crypto/`.
 - Don't bake Android-only assumptions into the data layer — Compose Multiplatform is a walk-back trigger; keep `data/` portable.
-- Don't generalize an agent dispatcher across pyrycode + pyrycode-mobile prematurely. The eventual `pyrycode-mobile-agents` repo is a fork, not a reuse.
 - Don't refactor adjacent code "while you're there." Touch only what's necessary.
+
+## Shared knowledge
+
+Claude auto memory is disabled for this project. Start with
+`docs/knowledge/INDEX.md`, then read the owning topic. Search
+`docs/knowledge/CATALOG.md` only when the short map is not enough. Do not use a
+private memory directory as a second source of project instructions.
+
+Builders and verifiers record discoveries on their ticket or pull request. The
+documentation stage owns evergreen topic documents, the index and the catalog.
+Interactive maintainers may update shared documentation in a reviewed change.
+Requirements and review findings stay on the ticket or pull request. Agent
+workflow lessons belong in the agent or dispatcher repository. Personal project
+direction belongs in the vault.
