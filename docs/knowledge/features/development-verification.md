@@ -67,6 +67,54 @@ When a suspend send path catches `IllegalStateException`, rethrow
 `IllegalStateException` subtype, so a broad catch can turn teardown into a fake
 send failure. Tests should cover both cancellation and the intended failure types.
 
+For `@Composable` signature changes, treat a code graph result as advisory. The
+current graph can collapse callers into file self-references and miss a real
+consumer. Search all `*.kt` files under `app/src` for the composable name and for
+the rendered text being removed. This covers production, JVM tests and
+`androidTest` call sites in one pass. Record the graph gap when it affects the
+blast-radius decision.
+
+## Test scheduling and harnesses
+
+Use `runCurrent()` after pushing a fake relay item when the test path is a
+channel-to-StateFlow cascade with no timer. `advanceUntilIdle()` does not
+necessarily drain that background collector. Reserve it for tests whose contract
+really advances virtual time. When adding a finite watchdog or timeout, drive only
+the intended deadline with `advanceTimeBy(...)` followed by `runCurrent()`;
+`advanceUntilIdle()` also advances newly armed watchdogs.
+
+Gradle gates do not exercise shell scripts. For a change under `scripts/`, extract
+the changed function into a scratch file, add strict shell options and test it with
+stubbed helpers. Exercise preflight guards with nonexistent `PYRY_BIN` and relay
+paths so the script cannot start a real process. Keep the scratch file outside the
+worktree.
+
+## Probe the evidence itself
+
+An injection or sanitizer test must forge the exact line shape its reader matches.
+For the unrecognized-row sentinel, the hostile value must include the report's row
+prefix, not only a newline. Assert the total report line count as an independent
+fence. Temporarily widen the sanitizer, run the test and read the resulting failure
+before restoring the guard. This proves the assertion can fail instead of merely
+proving that the current implementation passes.
+
+## JVM logging and formatting
+
+Plain JVM tests have no Robolectric runtime and this module does not enable default
+Android return values. A reachable `android.util.Log.*` call throws "not mocked".
+Route log emission through an injectable sink, as `data/network/RelayLog.kt` does,
+so tests can capture the call and restore process-global flags after each test.
+
+Spotless also runs ktlint's filename rule. If a Kotlin file contains one non-private
+top-level class-like type, the filename must match that type, including for
+`internal` types. Split a result or DTO into its own correctly named file when the
+rule requires it; `spotlessApply` cannot repair the filename.
+
+The Spotless message saying it could not autocorrect a theoretically fixable
+violation is only a warning. Read the final `BUILD SUCCESSFUL` or `BUILD FAILED`
+and the explicit violation list. Use `./gradlew spotlessCheck --rerun-tasks` when
+cached output makes the result unclear.
+
 ## Emulator and real evidence
 
 An instrumented test proves behavior in its fixture. It does not prove camera
