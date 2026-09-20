@@ -235,11 +235,16 @@ cleanup() {
   wait 2>/dev/null || true
   if [ "${code}" -ne 0 ]; then
     log "logs kept at ${WORK_DIR} (relay.log, daemon.log, pair.out)"
-    [ -n "${ISO_HOME}" ] && log "isolated HOME kept at ${ISO_HOME}"
+    if [ -n "${ISO_HOME}" ]; then
+      log "isolated HOME kept at ${ISO_HOME}"
+    fi
   else
     rm -rf "${WORK_DIR}"
-    [ -n "${ISO_HOME}" ] && rm -rf "${ISO_HOME}"
+    if [ -n "${ISO_HOME}" ]; then
+      rm -rf "${ISO_HOME}"
+    fi
   fi
+  return "${code}"
 }
 trap cleanup EXIT INT TERM
 
