@@ -365,6 +365,26 @@ repository binding. The normal app build remains a separate product acceptance c
 
 ## How to run
 
+Compile the instrumented suite before device execution; the ordinary app build and
+JVM tests do not compile `app/src/androidTest`:
+
+```bash
+./gradlew compileDebugAndroidTestKotlin
+python3 -m unittest discover -s scripts -p 'test_android_test_gate.py'
+```
+
+These local checks do not substitute for a live result. Reproduce the managed
+API 33 baseline through the report-validating gate, with the authenticated host
+and daemon prerequisites below:
+
+```bash
+DEVICE=pixel2Api33Atd python3 scripts/android-test-gate.py live
+```
+
+API 33 is the sole required Android version for the baseline and routine ticket
+gates for now (2026-09-20 decision); API 35 is deferred and requires no run or
+artifacts. The default local-relay rung-3 command remains:
+
 ```bash
 bash scripts/e2e-emulator.sh
 ```
@@ -394,7 +414,7 @@ mobile parallel of the daemon's `make e2e-realclaude`. The dispatcher command is
 python3 scripts/android-test-gate.py live
 ```
 
-The wrapper bakes in the `LIVE=1` + `e2e-live` isolation defaults (see
+The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
 incantation to remember — the eight curated `@Test` methods (ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
@@ -429,9 +449,23 @@ over TLS instead of a local loopback relay. This is the post-verifier pre-ship g
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
 (the 2026-07-03 connect-drop loop was a five-week-stale relay deploy, invisible to any local run).
 
+Use the gate for the reproducible API 33 baseline:
+
 ```bash
-LIVE=1 bash scripts/e2e-emulator.sh
+DEVICE=pixel2Api33Atd python3 scripts/android-test-gate.py live
 ```
+
+It invokes `LIVE=1 bash scripts/e2e-emulator.sh`, forces fresh execution, and
+collects only `app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd`.
+For an explicitly selected `DEVICE=connected` run, it instead reads
+`app/build/outputs/androidTest-results/connected/debug`. Reports from the other
+path or another managed profile cannot satisfy the gate; stale, missing,
+zero-count or failed reports and nonzero process exits fail it. Sanitized output
+is saved as `build/dispatcher-tests/live-*/dispatcher.xml` and printed to stdout.
+Connected-path regression coverage does not establish a live result on a connected
+device. The [recorded baseline](#verification-status) proves only managed
+`pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
+version for now; API 35 is deferred.
 
 **What it runs.** Eight curated methods, passed as a comma-separated `class#method` list:
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
@@ -460,12 +494,14 @@ stays excluded from LIVE (an extra turn, cost). `LIVE=1` is **mutually exclusive
 - **No plaintext, no insecure flag on the live path:** every URL is `wss://` and
   `PYRY_ALLOW_INSECURE_RELAY` is **never** set — a dedicated daemon branch omits the flag the loopback
   branch carries.
-- **Isolated instance, real HOME.** The daemon and `pyry pair` run as `-pyry-name=e2e-live` under the
+- **Isolated instance, real HOME.** Direct `LIVE=1` script runs use `-pyry-name=e2e-live`;
+  the gate overrides both daemon and pairing names with a unique `e2e-auto-…` name. Both run under the
   runner's **real `$HOME`** — unlike rung 4's isolated `/tmp` HOME. Real Claude needs the runner's
   `~/.claude` subscription auth, which an isolated HOME would strip, so isolation here is by **instance
-  name**: identity + `devices.json` + `conversations.json` live under `~/.pyry/e2e-live/`, so the
+  name**: identity + `devices.json` + `conversations.json` live under `~/.pyry/<test-instance>/`, so the
   production instances on this Mac and pyrybox (different names) are never read or written. That directory
-  **persists across runs** (a stable test identity); `cleanup()` never removes it.
+  **persists after execution**; direct script runs reuse the `e2e-live` identity, and `cleanup()`
+  never removes it.
 
 Prerequisites (on top of the "How to run" list):
 
@@ -484,7 +520,7 @@ rename, #537, and save-as-channel, #581, each spend none —
 create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips), a few minutes of wall
 clock, subscription-covered.
 
-First-run assumptions to confirm (grounded in the design, unverified end to end):
+Environment checks for a new host (the recorded API 33 run passed these paths):
 
 - **The live relay accepts the test daemon's `/v1/server` registration** — expected (a normal pyry daemon
   dialing the production relay, exactly as the operator's real instances do; the relay is content-blind +
@@ -721,6 +757,48 @@ The old `INTERACTIVE_RUNNER` and per-user config seeding details remain historic
 only and must not be used to diagnose a current deterministic run.
 
 ## Verification status
+
+**Current live baseline — 2026-09-20, 16:12:58–16:13:58 UTC (#528).**
+The [committed sanitized XML](../scripts/fixtures/live-mobile-baseline/528-api33.xml)
+and [runtime/revision context](../scripts/fixtures/live-mobile-baseline/528-api33-context.json)
+record `python3 scripts/android-test-gate.py live` (default `DEVICE=pixel2Api33Atd`):
+8 executed, 8 passed, 0 failures/errors/skips, process exit 0. All methods below
+belong to `InteractiveStreamE2ETest` and each executed once in that run.
+
+| Scenario | Method | API 33 outcome, 2026-09-20 |
+| --- | --- | --- |
+| Ping | `interactiveTurn_pingPrompt_streamsPingReplyIntoThread` | PASS |
+| Create workspace folder | `interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` | PASS |
+| New session | `interactiveTurn_newSession_rendersSessionBoundaryDelimiter` | PASS |
+| Delete | `interactiveTurn_deleteConversation_removesFromListAndClosesThread` | PASS |
+| Archive/restore | `interactiveTurn_archiveRestore_roundTripsListMembership` | PASS |
+| Change workspace | `interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace` | PASS |
+| Rename | `interactiveTurn_renameConversation_relabelsTopBarAndListRow` | PASS |
+| Save as channel | `interactiveTurn_saveAsChannel_promotesToChannelTier` | PASS |
+
+This result proves **managed `pixel2Api33Atd`, configured Pixel 2, Android 13 / API 33,
+AOSP ATD arm64-v8a**, image revision 1. ADB captured the running device at 16:13:12 UTC:
+model `Android ATD built for arm64`, build `TE1A.220922.034`; the context retains the
+full image fingerprint and installed SDK package revision. It used app
+`4390bc739d5d70cb43d8ab2331613c642f74f61a`, isolated daemon
+`dccd18286b8f80d113c055322e22df3125bd1735`, Claude Code **2.1.259**, and the resolved
+**stream-json** runner against the live relay. App/daemon revisions and the Claude
+binary checksum were checked before and after execution and did not change.
+The context identifies the maintainer recovery through the dispatcher credential
+environment as the producer and includes the sanitized XML checksum. Production
+daemon configuration was unchanged; `UnrecognizedRowSentinel` remained active.
+
+API 33 is the sole required version for the baseline and routine ticket gates for
+now; **API 35 is deferred**, with no run or evidence required. This capture proves
+neither API 35 nor `DEVICE=connected`. Tool-use excluded from LIVE, the ignored
+spinner and negative controls remain outside the baseline. No unresolved environment
+or product blocker is recorded for this capture. Missing credentials or a missing or
+unbootable API 33 device in a later run is an environment blocker, never eight product
+failures or a pass. An observed product failure needs an owning-layer issue and
+revalidation. The committed context's pending final gate describes its capture-time
+handoff; this table does not claim a later execution.
+
+Earlier results and failure history:
 
 - **Verified on 2026-09-20:** all 238 non-E2E UI tests passed on the managed Android 13
   device after repairing six stale selectors. All seven stream-json scripted scenarios passed

@@ -1,4 +1,7 @@
 import importlib.util
+import contextlib
+import io
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -17,6 +20,60 @@ class AndroidGateTest(unittest.TestCase):
         path = root / "TEST-result.xml"
         path.write_text(xml)
         return path
+
+    def test_live_gate_collects_only_fresh_reports_from_selected_device_path(self):
+        baseline = (Path(__file__).parent / "fixtures/default-workspace-live/588.xml").read_text()
+        for device in ("pixel2Api33Atd", "connected"):
+            for result in ("pass", "process_failure", "missing", "stale", "test_failure"):
+                with self.subTest(device=device, result=result), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    results = root / "app/build/outputs/androidTest-results"
+                    directories = {
+                        "pixel2Api33Atd": results / "managedDevice/debug/pixel2Api33Atd",
+                        "connected": results / "connected/debug",
+                        "otherManaged": results / "managedDevice/debug/otherApi35",
+                    }
+                    started = 2_000_000_000
+
+                    def run(command, **kwargs):
+                        self.assertEqual(command, ["bash", str(root / "scripts/e2e-emulator.sh")])
+                        self.assertEqual(kwargs["env"]["DEVICE"], device)
+                        self.assertEqual(kwargs["env"]["LIVE"], "1")
+                        self.assertEqual(kwargs["env"]["PYRY_FORCE_TEST_RUN"], "1")
+                        for profile, directory in directories.items():
+                            directory.mkdir(parents=True)
+                            if profile == device and result == "missing":
+                                continue
+                            xml = baseline
+                            if profile != device:
+                                # Fresh wrong-path XML must never count or contaminate the selected run.
+                                xml = xml.replace("interactiveTurn_", "wrongPath_")
+                            elif result == "test_failure":
+                                xml = xml.replace('failures="0"', 'failures="1"', 1)
+                                xml = xml.replace(" />", "><failure>private failure</failure></testcase>", 1)
+                            path = self.report(directory, xml)
+                            stamp = started - 1 if profile == device and result == "stale" else started + 1
+                            os.utime(path, ns=(stamp, stamp))
+                        return subprocess.CompletedProcess(command, 7 if result == "process_failure" else 0)
+
+                    stdout = io.StringIO()
+                    with patch.object(gate, "ROOT", root), \
+                            patch.dict(os.environ, {"DEVICE": device}, clear=True), \
+                            patch("sys.argv", ["android-test-gate.py", "live"]), \
+                            patch.object(gate, "claude_authenticated", return_value=True), \
+                            patch.object(gate.time, "time_ns", return_value=started), \
+                            patch.object(gate.subprocess, "run", side_effect=run), \
+                            contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
+                        self.assertEqual(gate.main(), 0 if result == "pass" else 1)
+                    if result in ("missing", "stale"):
+                        self.assertEqual(stdout.getvalue(), "")
+                        self.assertEqual(list(root.rglob("dispatcher.xml")), [])
+                    else:
+                        cases = ET.fromstring(stdout.getvalue()).findall(".//testcase")
+                        self.assertEqual(len(cases), 8)
+                        self.assertTrue(all(case.get("name").startswith("interactiveTurn_") for case in cases))
+                        self.assertNotIn("private failure", stdout.getvalue())
+                        self.assertEqual(len(list(root.rglob("dispatcher.xml"))), 1)
 
     def test_auth_preflight_requires_a_successful_logged_in_status(self):
         for code, output, expected in [(0, '{"loggedIn":true}', True),

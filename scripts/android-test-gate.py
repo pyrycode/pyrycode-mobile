@@ -155,7 +155,9 @@ def main():
     started = time.time_ns()
     try:
         outcome = subprocess.run(command, cwd=ROOT, env=env, stdout=sys.stderr, stderr=sys.stderr)
-        paths = fresh_reports(ROOT / "app/build/outputs/androidTest-results/managedDevice", started)
+        results = ROOT / "app/build/outputs/androidTest-results"
+        directory = results / "connected/debug" if device == "connected" else results / "managedDevice/debug" / device
+        paths = fresh_reports(directory, started)
         for index, path in enumerate(paths):
             shutil.copy2(path, run_dir / f"{index}-{path.name}")
         xml, passed, executed = combine_reports(paths, minimum, expected_class)
