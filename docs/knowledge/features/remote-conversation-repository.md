@@ -55,13 +55,14 @@ NoiseSessionPump (#309) ─ inbound: Flow<Envelope> / send(Envelope): Boolean
 RelayTransport (#306) ─ OkHttp WS ─ Noise_IK (#303)
 ```
 
-The repository consumes the pump over the **portable `SessionPump` interface** — it never reaches below
-the pump to the raw frame transport or the Noise session, and it never re-implements wire↔domain mapping
-(that is the [#316](mobile-protocol-v2-wire-layer.md#application-payloads-decoded-on-top-of-envelope)
-mapper's job). It runs **behind** the already-authenticated Noise channel: the internet-exposed frames +
-crypto are the pump/transport's concern, and the untrusted-payload decode-and-validate boundary is the
-\#316 mapper — so the repository is plain orchestration over already-authenticated, delegated-decode data
-(not `security-sensitive`).
+The repository consumes the **portable `SessionPump` interface**, without reaching
+below it to the raw transport or Noise session. Conversation wire-to-domain mapping
+belongs to the [payload mappers](mobile-protocol-v2-wire-layer.md#application-payloads-decoded-on-top-of-envelope).
+Authenticated payloads still require validation: the connection-owned
+`DebugBundleTransfer` validates diagnostic chunk fields before retaining opaque
+bytes. It shares the sole inbound consumer and exposes a separate
+[host transfer API](relay-repository-coordinator.md#host-diagnostic-archive-transfer),
+outside `ConversationRepository` and screen state.
 
 ## The `SessionPump` consumed contract
 

@@ -10,23 +10,17 @@ connections — is published on `currentRepository`. The app registry projects i
 host to the [stable facade](stable-conversation-repository.md), so ViewModels keep one
 reference across connection churn and compatibility selection changes.
 
-This is the slice every prior Phase 4 read/mutation slice deferred to as **"the owner (#279/#302)"** of
-the connection scope and the `SessionPump` binding. It is largely a **wiring layer**: it adds no wire
-types and no payloads. Beyond owning the pump + repository lifecycle, it owns exactly one connect-time
-side effect — the **FCM push-token re-registration** ([#365](../codebase/365.md)), which reuses
-[#359](../codebase/359.md)'s sender unchanged (see [§ Connect-time push-token re-registration](#connect-time-fcm-push-token-re-registration-365)).
-Because it owns the connection-scoped pump, it is also where the **pyrycode-leg session readiness** is
-derived and the combined [`ConnectionStatus`](connection-status.md) `{relay, pyrycode}` status
-published ([#392](../codebase/392.md)) — see [§ Two-part connection status](#two-part-connection-status-392).
-For the same reason — it owns the connection-scoped *repository* — it surfaces the
-reconnection-surviving [`liveSessionEvents`](live-session-events.md) seam ([#406](../codebase/406.md))
-that brings #385's decoded turn-state/tool/assistant events to UI ViewModels — see
-[§ Live-session event seam](#live-session-event-seam-406).
+The coordinator derives [two-part connection status](#two-part-connection-status-392),
+switches [live-session events](#live-session-event-seam-406) across reconnects, and
+owns [FCM push-token re-registration](#connect-time-fcm-push-token-re-registration-365)
+once per connection. Explicit [diagnostic archive requests](#host-diagnostic-archive-transfer)
+also enter through this owner so admission and teardown share a connection lifetime.
 
 Package: `de.pyryco.mobile.data.repository` (`RelayRepositoryCoordinator` + the `ManagedSessionPump`
 interface it drives, the latter appended to `SessionPump.kt`), co-located with the
 [repository](remote-conversation-repository.md) it builds. Landed in [#351](../codebase/351.md) (split
-from #349). Portable, `android.*`-free, emits **no logs**.
+from #349). Portable, `android.*`-free; diagnostic logging is confined to static
+transfer categories and accepted chunk counts.
 
 ## Where it sits in the Phase 4 stack
 
@@ -76,6 +70,7 @@ class RelayRepositoryCoordinator(
     suspend fun answerModal(modalId: String, optionId: String)  // (#451) outbound modal_answer passthrough — the inbound-modal mirror, but a call not a flow
     suspend fun cancelModal(modalId: String)                    // (#451) outbound modal_cancel passthrough
     suspend fun interrupt(conversationId: String)                // explicit conversation target; fire-and-forget
+    fun requestDebugBundle(): DebugBundleTransfer               // one attempt on this host's current Open connection
     fun start()   // idempotent — launches the single connections collector on the coordinator scope
     fun close()   // tears down the active connection (wiping pump keys) + cancels the coordinator scope
 }
@@ -92,60 +87,36 @@ repository is untouched) — `NoiseSessionPump`'s already-public `state` gained 
 
 ## How it works — the connection→repository state machine
 
-A single, **non-suspending** `onConnection(transport: RelayTransport?)` handles each `currentConnection`
-emission, run by one collector launched in `start()`:
+A single, synchronized, **non-suspending** `onConnection(transport)` handles each
+`currentConnection` emission on the collector launched by `start()`:
 
-1. **Tear down the active connection** (always, first): `currentRepository = null`, then **cancel the
-   child scope, then close the pump** — order matters (see below).
-2. **If `transport == null`**, return — this is the between-connections state.
-3. **Else build a fresh connection**: a per-connection `childScope` (child of the coordinator job),
-   `pump = createPump(transport).also { it.start() }`, and
-   `repo = RemoteConversationRepository(pump, childScope, deviceName, negotiatedCapabilities = { … })`,
-   then publish the whole connection as **one object** — `activeConnection.value = Connection(pump,
-   childScope, repo)`, the single source every derived seam (including the Open-gated `currentRepository`)
-   projects from — and `childScope.launch { … }` the connect-time push-token re-registration hook (#365,
-   below). `launch` returns immediately, so `onConnection` stays non-suspending.
+1. Clear `activeConnection`, synchronously call the old repository's
+   `endDebugBundle()`, cancel its child scope, then close its pump. Settling the
+   transfer before cancellation prevents an incomplete archive from outliving
+   teardown; closing the pump separately wipes keys and stops its own scope.
+2. Return if the new transport is `null`.
+3. Create a fresh child scope, start a fresh pump, and construct the remote
+   repository. Publish `Connection(pump, childScope, repo, transport)` as one value,
+   then launch push-token re-registration on the child scope. The suspending hook
+   runs outside this critical section.
 
-   The fourth argument is the **capability supplier** [#385](../codebase/385.md) wired to gate the
-   repo's [`liveSessionEvents`](remote-conversation-repository.md) decode seam on the negotiated
-   `interactive` set: `negotiatedCapabilities = { (pump.state.value as? PumpState.Open)?.capabilities.orEmpty() }`.
-   A **supplier**, not a value, read lazily per structured envelope (the set is empty while the pump
-   is `Handshaking`; structured envelopes only arrive post-`Open`). `pump.state.value` is a
-   **non-suspending** read, so this adds no suspension point to the non-suspending critical section.
-   No interface change — the `SessionPump` the repo consumes is untouched (this reads the live
-   `ManagedSessionPump.state` the coordinator already owns).
-
-```
-currentConnection :  null → T1 → null → T2 → …
-        ▼
-onConnection (single collector, sequential, non-suspending)
-   T1 ─▶ pump1 = create(T1).start();  repo1 = Remote(pump1, scope1, name);  activeConnection = Connection(pump1, scope1, repo1)
-         scope1.launch { reregisterPushTokenOnOpen(pump1, repo1) }   (#365, off the critical path)
- null ─▶ activeConnection = null;  scope1.cancel(); pump1.close()  (keys wiped)
-   T2 ─▶ pump2 = create(T2).start();  repo2 = Remote(pump2, scope2, name);  activeConnection = Connection(pump2, scope2, repo2)
-         scope2.launch { reregisterPushTokenOnOpen(pump2, repo2) }
-```
+The repository receives the bundle's replay cursor and a lazy capability supplier:
+`{ (pump.state.value as? PumpState.Open)?.capabilities.orEmpty() }`. Structured
+event handlers read the negotiated set per envelope; handshaking yields an empty
+set. Diagnostic transfers require `Open` but do not require `interactive`.
 
 ### The single connection source and the Open-gated `currentRepository` (#421 / #493)
 
-There is **one** connection-state holder — `private val activeConnection = MutableStateFlow<Connection?>(null)`
-— carrying the pump + child scope + concrete repo of the connection currently being served, or `null` between
-connections. **Every** connection-derived seam is a projection of this one `StateFlow`: `currentRepository`,
-`pyrycodeStatus`, `liveSessionEvents`, `modalEvents`/`currentModal`, `connectionStatus`, and the outbound
-`answerModal`/`cancelModal`/`interrupt` passthroughs (which read its `.value`). It is written **only** on the
-non-suspending `onConnection`/`teardownActive` path (plus the idempotent `close()`); the pump/repo references
-stay *inside* it (single-owner) — only *derived* signals are ever exposed, never the pump reference itself.
+`activeConnection: MutableStateFlow<Connection?>` holds the pump, child scope,
+concrete repository and transport identity, or `null` between connections. Status,
+repository, live-event and modal projections all derive from it; outbound calls
+read its `.value`. Only `onConnection`/`teardownActive` write it. The pump remains
+private, and teardown, close and diagnostic admission share the coordinator lock.
 
-`currentRepository` is **Open-gated**: it exposes the live repo only once the connection's Noise pump reaches
-`PumpState.Open`, and `null` again between connections. This gate is the **#421 fix**. Exposing the repo at
-bare socket-up (repo built but the pump still `Handshaking`) made the conversation list never load: the #352
-facade subscribes to `RemoteConversationRepository.observeConversations` the moment a non-null repo appears,
-and that subscription fires a **one-shot** `list_conversations` via `pump.send` — which returns `false` and is
-**dropped** pre-`Open`, never re-issued after the handshake. The daemon never receives the request, never
-replies with a `conversations` snapshot, and the list spins forever (the "New discussion" FAB, gated on the
-first snapshot, never appears). Gating behind `Open` — mirroring `pyrycodeStatus` and the connect-time
-push-token hook, which already await `Open` — means the facade subscribes, and the list send fires, only once
-`pump.send` will succeed.
+`currentRepository` exposes a repository only when **its own pump** is `Open`.
+Publishing during handshaking previously lost the facade's one-shot
+`list_conversations` send: `pump.send` returned false, and reaching Open did not
+resubscribe. The list then waited forever for a snapshot (#421).
 
 ```kotlin
 // #493: repo AND pump-state derive from the SAME switched value — one flatMapLatest over the one source.
@@ -156,29 +127,17 @@ val currentRepository: StateFlow<ConversationRepository?> =
         }.stateIn(scope, SharingStarted.Eagerly, null)
 ```
 
-**Why one source, not two (#493).** The gate previously `combine`d **two independently-mutated `StateFlow`s** —
-a repo holder (`mutableRepository`) and a `flatMapLatest` over a *separate* pump holder (`activePumpFlow`). On a
-**direct A→B reconnect** (the supervisor emits transport B while A is still live, with **no** interposed `null`),
-`combine` collects its inputs on separate coroutines: the direct repo emission (`repoB`) arrives in one hop,
-while the pump-state input must cancel pumpA's `state` collector and subscribe to pumpB's — one *extra* hop.
-In that window `combine`'s cached pump-state is still **pumpA's `Open`** (and `ManagedSessionPump.close()`
-leaves `state` at its last value, so nothing corrects it), so it transiently emits `(repoB, Open) → repoB`:
-**the new connection's repo is exposed while its own pump is still `Handshaking`** — the facade's one-shot
-`list_conversations` fires pre-`Open` and is dropped, **re-introducing #421**. Deriving repo *and* pump-state
-from one switched `Connection` closes that window **structurally**: the inner lambda **closes over `conn`**, so
-the mapped `conn.repo` and `conn.pump.state` are always the *same* connection's. Switching to connection B
-yields `connB.pump.state.value` (`Handshaking`) → `null` first, and there is no path that pairs `connB.repo`
-with any pump but B's own. (The `if (Open) conn.repo else null` widens `RemoteConversationRepository` to
-`ConversationRepository?` via `Flow`/`StateFlow` covariance; the declared type stays
-`StateFlow<ConversationRepository?>`.) The settled `.value` on a full drain is `null` on both the old and new
-code — the bug is a **transient emission**, observable only by *collecting* `currentRepository`, not by
-reading `.value` (the shape of the #493 regression test).
+Combining separate repository and pump-state flows reintroduced that failure on a
+direct A→B reconnect (#493). B's repository could arrive before the switched pump
+collector, pairing it briefly with A's cached `Open` even while B was handshaking.
+One `flatMapLatest` closes over the same `Connection` for both values. Test this by
+collecting **every emission**: a settled `.value` after draining the scheduler is
+`null` with either implementation and misses the transient.
 
-> **History.** #421 added the Open-gate; #493 kept the gate but replaced its plumbing — collapsing the four
-> holders (`mutableRepository`, `activePumpFlow`, `activeRemoteRepo`, and a plain `active: Connection?` var)
-> into the single `activeConnection` and deriving the gate from it. The consolidation is a strict reduction of
-> mutable state (4 → 1), not added machinery. See [#493](../codebase/493.md) /
-> [#421](https://github.com/pyrycode/pyrycode-mobile/issues/421).
+Diagnostic admission also compares `Connection.transport` by identity with
+`connections.value`. An old pump may still say `Open` before the connection
+collector processes a replacement or disconnect. The identity check rejects a
+request in that interval instead of sending it through the stale repository.
 
 ### Scope ownership (three distinct scopes)
 
@@ -313,7 +272,7 @@ val liveSessionEvents: Flow<LiveSessionEvent> =
 ```
 
 - The concrete `repo` is reached through the single `activeConnection` source (`conn?.repo`) — its
-  `Connection.repo` field is set as part of `activeConnection.value = Connection(pump, scope, repo)` in
+  `Connection.repo` field is set as part of `activeConnection.value = Connection(pump, scope, repo, transport)` in
   `onConnection` and cleared to `null` in `teardownActive`, both **non-suspending** writes inside the same
   critical section, so the cancellation-atomicity invariant is preserved. The repo reference stays **inside**
   `activeConnection`: only the *derived* event flow is exposed, never the concrete repo reference. (Before
@@ -497,10 +456,9 @@ fabric from the stochastic rule):
   `RelayTransport` reference to `createPump`. A stray collection would steal frames from the handshake
   (the pump owns `inbound`) or from the supervisor (owns `events`).
 
-The **non-suspending `onConnection`** is itself a concurrency safeguard: cooperative cancellation only
-acts at a suspension point, so a suspension-free build/teardown body is handled *atomically* w.r.t. a
-racing `close()` — closing the one window where a cancellation between `pump.start()` and retaining the
-reference would leak a started-but-unclosed pump.
+`onConnection`, teardown, close and diagnostic admission share a monitor and never
+suspend while holding it. This serializes those operations and prevents cooperative
+cancellation between starting a pump and retaining its reference.
 
 ## Configuration
 
@@ -560,6 +518,52 @@ the stable facade by default or the [fake](conversation-repository.md) with
 `-PuseRelayRepository=false`. Both modes retain registry connection ownership.
 Conversation-list and backfill requests still wait for repository subscribers.
 
+### Host diagnostic archive transfer
+
+`RelayConnectionRegistry.requestDebugBundle(serverId): DebugBundleTransfer` uses
+the caller's exact, case-sensitive host id under the registry's removal lock. It
+requests the whole daemon's archive through that bundle's current paired, Open
+connection, regardless of `interactive`. Unknown, removed, disconnected or
+handshaking hosts return `UNAVAILABLE`; selection changes never redirect an
+attempt, and different hosts can transfer independently. The request follows the
+daemon's [Debug bundle (v2) contract](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#debug-bundle-v2),
+omitting both `payload` and `conversation_id` (see [envelope encoding](mobile-protocol-v2-wire-layer.md#envelope--application-message-frame)).
+
+Observe `transfer.state: StateFlow<DebugBundleState>` for `status`,
+`acceptedChunks` and `retry`. Progress counts accepted chunks, not bytes or a
+percentage. `RECEIVING` becomes `COMPLETE` only on a validated completion marker;
+zero-chunk archives are valid. On completion, `takeArchive()` returns a
+`DebugBundleArchive` once, then returns `null`. Its `sizeBytes` and
+`writeTo(OutputStream)` support a separate save owner: bytes stay outside screen
+state, remain opaque and are never unpacked. The caller owns the output stream,
+output failures and release of the archive reference. Native action/saving belongs
+to [#683](https://github.com/pyrycode/pyrycode-mobile/issues/683). The receiver holds
+chunks in memory; it adds no aggregate size limit or transfer timeout.
+
+| Admission/result | Retry condition |
+| --- | --- |
+| `UNAVAILABLE` | `WHEN_AVAILABLE`: make a new explicit request when this host has a usable connection. |
+| `BUSY` | `AFTER_TRANSFER`: another transfer is receiving; observe that attempt and re-evaluate afterward. No second frame is sent and the active transfer is retained. |
+| `RECONNECT_REQUIRED`, `COMPLETE`, `SEND_FAILED`, `REFUSED`, `INVALID_STREAM`, `DISCONNECTED` | `AFTER_RECONNECT`: a fresh connection is required before another explicit attempt. |
+
+Every attempted send consumes the repository's transfer allowance, including
+success, refusal and a false/throwing send. Chunk/done frames have no request
+correlation, so resetting an accumulator on the same connection could admit old
+frames into a retry. `BUSY`'s `AFTER_TRANSFER` therefore does **not** promise a
+same-connection retry; a later call on that still-open connection returns
+`RECONNECT_REQUIRED`. Reconnect creates a fresh repository and never replays the
+request. Retry values describe availability, not automatic actions.
+
+The repository's sole inbound consumer routes bundle frames and errors whose
+`in_reply_to` matches the bundle request to the transfer. Unrelated errors and
+ordinary events retain their handlers, including after a malformed bundle frame.
+Send failure, correlated refusal, invalid input, disconnect, inbound termination
+or host removal settle a receiving transfer once and wipe/release partial chunks.
+Late frames cannot change a terminal result. Missing completion stays incomplete
+until teardown or inbound termination produces `DISCONNECTED`. Transfer failures
+and diagnostic logs contain only static categories and accepted counts, never archive content,
+recordings, credentials, daemon error bodies or exception details.
+
 ## Edge cases / limitations
 
 - **`currentRepository` is `null` between connections** — by design. The #352 facade renders the
@@ -574,6 +578,21 @@ Conversation-list and backfill requests still wait for repository subscribers.
   `ConversationRepository` facade (#352) and does **not** touch ViewModels.
 
 ## Testing
+
+`DebugBundleTransferTest` checks opaque output, accepted counts, terminal-once
+failure, late frames, correlated errors and all inbound termination modes. Numeric
+rejection cases must include **zero accepted chunks**: `JsonPrimitive.intOrNull`
+rounded `1e-400` and `-1e-400` to zero, while tests starting after the first chunk
+passed because zero already mismatched the expected one. Both `seq` and `total`
+now use exact integer text parsing; invalid cases assert no archive and continued
+ordinary-event routing. Canonical base64 checks are described in the
+[wire layer](mobile-protocol-v2-wire-layer.md#base64--pubkey-helpers).
+
+Bundle registry tests use two real Noise peers without `interactive`, inspect the
+decrypted serialized request for omitted fields, and change selection/remove one
+host while the other completes. Coordinator tests request immediately after a
+transport change, **before `runCurrent()`**, to catch stale admission; after
+reconnect they assert no automatic send and no old-pump frames reaching a retry.
 
 `di/RelayConnectionFactoryTest.kt` covers bundles and registry ownership with real
 Noise peers over channel-backed transports. It verifies independent credentials,
