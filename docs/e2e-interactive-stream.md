@@ -27,11 +27,13 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    workspace is the created folder → send the ping prompt in it → re-open the picker and confirm the
    folder shows in "Recent" (exercises the #564 create wire and #565 recents wire end to end against
    real claude); a **new-session** scenario (#541): with a live, exercised session, open the thread
-   overflow menu → tap "New session" → the daemon wraps up and rotates, then broadcasts `session_transition`, and
+   overflow menu → tap "Reset session" → the daemon wraps up and rotates, then broadcasts `session_transition`, and
    the thread renders the session-boundary delimiter (exercises the #540 fire-and-forget wire and the
-   #336 fold end to end against real claude); and a **delete-conversation** scenario (#554): rename a
-   discussion to a runtime-unique name, confirm it is present on the channel list, then delete it from the
-   thread (overflow → "Channel info" → "Delete" → the "Delete conversation?" dialog → confirm) and assert
+   #336 fold end to end against real claude). In `InteractiveStreamE2ETest`,
+   `interactiveTurn_newSession_rendersSessionBoundaryDelimiter` selects “Reset session”
+   with explicit conversation targeting (#625). The **delete-conversation** scenario (#554) renames a
+   discussion to a runtime-unique name, confirms it is present on the channel list, then deletes it from the
+   thread (overflow → "Channel info" → "Delete" → the "Delete conversation?" dialog → confirm) and asserts
    it is gone from the list and the thread has popped back (exercises the #532 delete wire against a real
    daemon; no claude turn — delete is a daemon round-trip); and an **archive/restore** scenario (#551):
    rename a discussion to a runtime-unique name, confirm it is present on the channel list, archive it from
@@ -146,7 +148,7 @@ Picker → create a folder → land in a fresh discussion whose workspace is the
 ping prompt into it → re-open the picker from the channel list and assert the folder shows in "Recent",
 proving the #564 create wire and #565 recents wire end to end against real claude); a **new-session**
 scenario (#541 — `interactiveTurn_newSession_rendersSessionBoundaryDelimiter`: prove the session is live
-with the ping, then open the thread overflow menu → tap "New session" → the daemon wraps up and rotates, then
+with the ping, then open the thread overflow menu → tap "Reset session" → the daemon wraps up and rotates, then
 broadcasts `session_transition`, and the thread renders the session-boundary delimiter, proving the #540
 fire-and-forget wire and the #336 `session_transition` → `SessionBoundary` fold end to end against real
 claude); and a **delete-conversation** scenario (#554 —
@@ -193,9 +195,9 @@ The **new-session** scenario (#541) is **always-on** (not `@Ignore`d): the delim
 artifact that survives the turn — unlike #482's transient spinner — so it belongs in the always-on gate,
 like #481's tool-name row. Its load-bearing matcher is the delimiter's reason-independent explanation
 line (`"Claude doesn't remember messages above this line"`), which can **only** come from the rendered
-`SessionBoundaryDelimiter` — **not** the `"New session"` label prefix, which is byte-identical to the
-overflow menu item and so is not selective at rung 3. The delimiter's **absence is asserted before** the
-New-session tap (a deterministic guard, no extra claude turn), so its later appearance is attributable to
+`SessionBoundaryDelimiter`. “Reset session” selects the action; the explanation proves the
+resulting boundary independently of the menu label. The delimiter's **absence is asserted before** the
+reset tap (a deterministic guard, no extra claude turn), so its later appearance is attributable to
 the action. `new_session` is **fire-and-forget** (pyrycode#831, #540), so nothing waits on or asserts an
 ack — the observable is the displayed post-broadcast delimiter. The test scrolls to the newest
 row while waiting, since a tall wrap-up can keep it off-screen (#694). Cost is the ping turn
@@ -901,7 +903,11 @@ The remaining checks here are specific to a real relay or real Claude execution:
   **shipped (#566)**, driven end to end through the #564 create wire and #565 recents wire and folded
   into the pre-ship `LIVE=1` gate as the 2nd curated method (see [Live mode](#live-mode-rung-3-live-relay));
   Layer-3 (real claude) new-session delimiter — **shipped (#541)**, driven end to end through the #540
-  fire-and-forget wire and the #336 `session_transition` → `SessionBoundary` fold, always-on (durable
+  fire-and-forget wire and the #336 `session_transition` → `SessionBoundary` fold.
+  `InteractiveStreamE2ETest.interactiveTurn_newSession_rendersSessionBoundaryDelimiter`
+  selects “Reset session” with explicit targeting (#625); its pre-action absence and
+  displayed-delimiter assertions remain the completion proof. The broader two-device,
+  two-conversation proof belongs to #679. This scenario is always-on (durable
   delimiter artifact, unlike the `@Ignore`d spinner) and folded into the pre-ship `LIVE=1` gate as the
   3rd curated method; Layer-3 (real claude) delete-conversation — **shipped (#554)**, driven end to end
   through the #532 delete wire against a real daemon, always-on (both post-conditions — gone from the list,
