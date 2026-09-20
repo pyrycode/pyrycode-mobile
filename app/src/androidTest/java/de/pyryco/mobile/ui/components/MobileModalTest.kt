@@ -214,7 +214,9 @@ class MobileModalTest {
     fun ime_keeps_focused_field_final_item_and_actions_reachable() {
         withTestIme {
             show(overflow = true, small = true)
-            rule.waitUntil(5_000) { rule.runOnIdle { dialogView.hasWindowFocus() } }
+            rule.waitUntil(5_000) {
+                rule.runOnIdle { ::dialogView.isInitialized && dialogView.hasWindowFocus() }
+            }
             rule
                 .onNodeWithTag("field")
                 .performScrollTo()
