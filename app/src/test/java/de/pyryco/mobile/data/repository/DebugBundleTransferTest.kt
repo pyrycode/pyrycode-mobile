@@ -117,20 +117,31 @@ class DebugBundleTransferTest {
                     """{"seq":1,"data":"YR=="}""",
                 )
             val badDone = listOf("null", "{}", """{"total":"1"}""", """{"total":1.0}""", """{"total":0}""", """{"total":2}""")
-            for ((type, payload) in badChunks.map { "debug_bundle_chunk" to it } + badDone.map { "debug_bundle_done" to it }) {
+            val cases =
+                badChunks.map { Triple(1, "debug_bundle_chunk", it) } + badDone.map { Triple(1, "debug_bundle_done", it) } +
+                    listOf("1e-400", "-1e-400", "0.0", "1e999", "2147483648", "-2147483649").flatMap { number ->
+                        listOf(
+                            Triple(0, "debug_bundle_chunk", """{"seq":$number,"data":"YQ=="}"""),
+                            Triple(0, "debug_bundle_done", """{"total":$number}"""),
+                        )
+                    }
+            for ((accepted, type, payload) in cases) {
                 val f = Fixture(this)
                 val transfer = f.repo.requestDebugBundle()
-                f.pump.emit("debug_bundle_chunk", """{"seq":0,"data":"YQ=="}""")
+                if (accepted == 1) f.pump.emit("debug_bundle_chunk", """{"seq":0,"data":"YQ=="}""")
                 f.pump.emit(type, payload)
                 runCurrent()
                 assertEquals(payload, DebugBundleStatus.INVALID_STREAM, transfer.state.value.status)
-                assertEquals(1, transfer.state.value.acceptedChunks)
+                assertEquals(accepted, transfer.state.value.acceptedChunks)
                 assertNull(transfer.takeArchive())
-                f.pump.emit("debug_bundle_done", """{"total":1}""")
+                val settled = transfer.state.value
+                f.pump.emit("debug_bundle_done", """{"total":$accepted}""")
+                f.pump.emit("debug_bundle_chunk", """{"seq":$accepted,"data":"YQ=="}""")
+                f.pump.emit("debug_bundle_done", """{"total":${accepted + 1}}""")
                 f.pump.emit("conversations", """{"conversations":[]}""")
                 runCurrent()
                 assertEquals(emptyList<Any>(), f.repo.observeConversations(ConversationFilter.All).first())
-                assertEquals(DebugBundleStatus.INVALID_STREAM, transfer.state.value.status)
+                assertEquals(settled, transfer.state.value)
                 assertNull(transfer.takeArchive())
                 f.close()
             }

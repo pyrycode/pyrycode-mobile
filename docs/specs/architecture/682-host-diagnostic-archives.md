@@ -110,7 +110,7 @@ linking the daemon's Debug bundle contract.
 
 **Verdict:** PASS
 
-- Trust boundaries: `DebugBundleTransfer.accept` validates untrusted frame fields before accumulation. Completed bytes remain opaque and never enter UI state or filenames.
+- Trust boundaries (corrected after verifier review): `DebugBundleTransfer.accept` must parse `seq`/`total` directly with `String.toIntOrNull`, retaining the non-string primitive guard and count comparison. `JsonPrimitive.intOrNull` rounds underflowing fractions to zero; it cannot enforce this boundary. Decimal-point/exponent forms and Int overflow are rejected without floating-point conversion. Completed bytes remain opaque and never enter UI state or filenames.
 - Tokens/secrets: no credential generation or storage changes. Archives may contain secrets; partial bytes are wiped on failure, and archive/state string representations reveal no content.
 - Files/storage: no filesystem operation, path construction, archive extraction or persistence. Save destination and storage lifecycle belong to #683.
 - Android surface: no exported component, intent, provider, WebView or daemon-authored UI text.
@@ -129,3 +129,8 @@ linking the daemon's Debug bundle contract.
   private `Connection`, so a request during a pending connection-state emission
   returns unavailable immediately. Tests cover this gap and non-interactive Noise
   sessions. The five production files and five-type boundary remain unchanged.
+- 2026-09-21 (PR #703 verifier MUST FIX): replace numeric coercion with exact
+  integer text parsing. Exercise positive/negative underflow, decimal fractions
+  and overflow in both fields at zero accepted chunks, asserting terminal failure,
+  no archive, inert late frames and continued ordinary-event routing. Security
+  re-review retains PASS for this corrected boundary; other findings are unchanged.

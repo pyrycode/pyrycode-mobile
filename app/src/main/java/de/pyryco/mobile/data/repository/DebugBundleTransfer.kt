@@ -8,7 +8,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.intOrNull
 import java.io.OutputStream
 
 enum class DebugBundleStatus {
@@ -77,7 +76,8 @@ class DebugBundleTransfer internal constructor(
             val payload = envelope.payload as? JsonObject
             val field = if (envelope.type == "debug_bundle_chunk") "seq" else "total"
             val number = payload?.get(field) as? JsonPrimitive
-            require(number != null && !number.isString && number.intOrNull == chunks.size)
+            // JsonPrimitive.intOrNull can round underflowing exponent fractions to zero.
+            require(number != null && !number.isString && number.content.toIntOrNull() == chunks.size)
             if (envelope.type == "debug_bundle_chunk") {
                 val data = payload["data"] as? JsonPrimitive
                 require(data != null && data.isString)
