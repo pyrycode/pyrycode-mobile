@@ -10,6 +10,7 @@ import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.KeystoreDeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.KeystorePairedServerStore
+import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.NoiseSessionFactory
@@ -50,7 +51,8 @@ val appModule =
         }
         single { AppPreferences(get()) }
         single { KeystoreDeviceStaticKeyStore(get()) } bind DeviceStaticKeyStore::class
-        single { KeystorePairedServerStore(get()) } bind PairedServerStore::class
+        single { ObservablePairedServerStore(KeystorePairedServerStore(get())) } binds
+            arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
         single { NoiseClientInfo(deviceName = Build.MODEL, clientVersion = BuildConfig.VERSION_NAME) }
         single {
             RelayConnectionFactory(
@@ -61,9 +63,15 @@ val appModule =
             )
         }
         single(createdAtStart = true) {
-            get<RelayConnectionFactory>().createCompatibility(get())
-        } onClose { it?.close() }
-        single<NoiseSessionFactory> { get<RelayConnectionBundle>().sessionFactory }
+            RelayConnectionRegistry(get(), get())
+        } onClose { it?.dispose() }
+        single<RelayConnectionController> { get<RelayConnectionRegistry>() }
+        single<ConnectionStateSource> { get<RelayConnectionRegistry>() }
+        // Test/diagnostic aliases resolve the retained selection; they never create an owner.
+        factory<RelayConnectionBundle> { checkNotNull(get<RelayConnectionRegistry>().selected.value) { "no paired host" } }
+        factory<NoiseSessionFactory> { get<RelayConnectionBundle>().sessionFactory }
+        factory<RelayConnectionSupervisor> { get<RelayConnectionBundle>().supervisor }
+        factory<RelayRepositoryCoordinator> { get<RelayConnectionBundle>().coordinator }
         single<WebSocket.Factory> { OkHttpRelayTransport.defaultClient() }
         single<RelayTransportFactory> {
             val client = get<WebSocket.Factory>()
@@ -73,46 +81,38 @@ val appModule =
         // Concrete-only: the ConversationRepository interface is bound by conversationRepositoryModule
         // (#350), which selects the StableConversationRepository facade by default or this demo Fake.
         single { FakeConversationRepository() }
-        // Keep the concrete and narrow controller resolutions on the same compatibility owner.
-        single<RelayConnectionSupervisor> { get<RelayConnectionBundle>().supervisor } binds
-            arrayOf(ConnectionStateSource::class, RelayConnectionController::class)
         // #302: process-lifecycle driver. Eagerly created at startKoin (Application.onCreate, main
         // thread) so it registers as a ProcessLifecycleOwner observer immediately; resolvable so a
-        // future FCM service can get() it for onPushWake(). Reuses the dormant supervisor singleton.
+        // future FCM service can get() it for onPushWake(). The registry owns all saved hosts.
         single(createdAtStart = true) {
             LifecycleConnectionDriver(
-                controller = get<RelayConnectionSupervisor>(),
+                controller = get<RelayConnectionController>(),
                 lifecycle = ProcessLifecycleOwner.get().lifecycle,
             ).also { it.start() }
         }
-        single<RelayRepositoryCoordinator> { get<RelayConnectionBundle>().coordinator }
-        // #352: the stable facade ViewModels hold across connection churn — delegates to whichever
-        // connection-scoped repo the coordinator publishes on currentRepository, switching on churn.
+        // The stable facade follows the registry's selection and that host's connection churn.
         // Registered as its own resolvable type only; conversationRepositoryModule (#350) flag-selects
         // whether this facade or the Fake wins the ConversationRepository binding.
-        single { StableConversationRepository(get<RelayRepositoryCoordinator>().currentRepository) }
+        single { StableConversationRepository(get<RelayConnectionRegistry>().currentRepository) }
         viewModel { ScannerViewModel() }
         viewModel { ChannelListViewModel(get(), get()) }
         viewModel { DiscussionListViewModel(get()) }
         viewModel {
-            SettingsViewModel(get(), get(), get<RelayRepositoryCoordinator>().connectionStatus)
+            SettingsViewModel(get(), get(), get<RelayConnectionRegistry>().connectionStatus)
         }
         viewModel { ArchivedDiscussionsViewModel(get()) }
         viewModel {
-            val coordinator = get<RelayRepositoryCoordinator>()
+            val registry = get<RelayConnectionRegistry>()
             ThreadViewModel(
                 get(),
                 get(),
                 get(),
                 get(),
-                coordinator.liveSessionEvents,
-                // #492: the process-scoped "current modal" projection, folded once at the coordinator.
-                coordinator.currentModal,
-                // #451: bind the outbound modal-send path to the coordinator's passthrough.
-                answerModal = coordinator::answerModal,
-                cancelModal = coordinator::cancelModal,
-                // #458: bind the outbound interrupt send path to the coordinator's passthrough.
-                interrupt = coordinator::interrupt,
+                registry.liveSessionEvents,
+                registry.currentModal,
+                answerModal = registry::answerModal,
+                cancelModal = registry::cancelModal,
+                interrupt = registry::interrupt,
             )
         }
         // #381: resolvable so #382's nav destination can obtain it (get() → SavedStateHandle +

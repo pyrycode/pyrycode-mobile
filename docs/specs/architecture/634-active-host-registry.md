@@ -80,3 +80,7 @@ Pending for the documentation stage: update `docs/knowledge/features/lifecycle-c
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-21
+
+## Revisions
+
+- 2026-09-21: A deterministic selection-edge assertion failed when `stateIn` still exposed B's repository immediately after selection changed to A. Compatibility state now reads `.value` through the selected bundle and switches collected flows without an independent cache. This keeps one-shot repository delegation and modal actions on the same selection, also making disposal immediately read empty state. The projection has no owned job; its collection is cancelled with its consumer. The registry retains only its collection-read job. No network or screen contract changes.
