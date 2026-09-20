@@ -1,0 +1,48 @@
+{
+  "issue": 588,
+  "result": "failed",
+  "run_started_at_utc": "2026-09-20T12:43:59.263Z",
+  "app_revision": "90de2cecdd16272612ee3170c5c8c2c00f28e714",
+  "main_revision": "595a94723d9bcfea3b306b8bc19515d8b62d3833",
+  "daemon_revision": "dccd18286b8f80d113c055322e22df3125bd1735",
+  "device": {
+    "name": "pixel2Api33Atd",
+    "profile": "Pixel 2",
+    "api_level": 33,
+    "system_image_source": "aosp-atd"
+  },
+  "command": "python3 scripts/android-test-gate.py live",
+  "process_exit": 1,
+  "wall_clock_seconds": 316.1,
+  "executed": 8,
+  "passed": 5,
+  "failed": 3,
+  "errors": 0,
+  "skipped": 0,
+  "xml_file": "588.xml",
+  "xml_sha256": "eceff35c11c2f1852cce68ade493442ae6c418c29e44ac123110f42516374e17",
+  "xml_source": "Exact sanitized dispatcher stdout from 2026-09-20T12-43-59-263Z_real-claude-gate_#588.log; original detached worktree was removed.",
+  "dispatcher_evidence": "https://github.com/pyrycode/pyrycode-mobile/issues/588#issuecomment-5749901060",
+  "test_class": "de.pyryco.mobile.e2e.InteractiveStreamE2ETest",
+  "failed_cases": [
+    "interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace",
+    "interactiveTurn_newSession_rendersSessionBoundaryDelimiter",
+    "interactiveTurn_pingPrompt_streamsPingReplyIntoThread"
+  ],
+  "failed_assertion": "90-second wait for pingNodeCount() to exceed its post-send baseline",
+  "daemon_history_summary": {
+    "scope": "All three failed cases, correlated through send_message.enqueued conversation IDs in the isolated test daemon history",
+    "assistant_deltas_per_case": 1,
+    "assistant_text_characters": 4,
+    "assistant_text_matches_expected_reply": true,
+    "turn_end_outcome": "success",
+    "turn_end_is_error": false,
+    "turn_end_terminal_reason": "completed",
+    "turn_end_stop_reason": "end_turn",
+    "rate_limit_status": "allowed_warning"
+  },
+  "triage": "Daemon generated all expected replies successfully. Mobile receive/render/assertion path remains unproven; substring-count growth can be offset by queued text disappearing. No current authentication or workspace-generation failure established.",
+  "phone_rendering_verified": false,
+  "blocker": "https://github.com/pyrycode/pyrycode-mobile/issues/694",
+  "pending": "Repair reply assertion, then dispatcher live revalidation and builder commitment of passing artifacts. Retain needs-real-claude and needs-live-artifacts."
+}
