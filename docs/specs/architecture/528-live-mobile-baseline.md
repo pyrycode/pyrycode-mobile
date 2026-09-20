@@ -15,7 +15,7 @@
 
 Select reports in `main` from `app/build/outputs/androidTest-results/connected/debug` when `DEVICE=connected`, otherwise from `managedDevice/debug/<DEVICE>`. These paths match existing AGP artifacts in the canonical checkout. Keep `fresh_reports` timestamp filtering, sanitized report output, nonzero process rejection and all existing XML validation. Do not alter app code, daemon code/configuration, scenario selection, assertions or `UnrecognizedRowSentinel`.
 
-The single deliverable is a reproducible two-profile live baseline. The harness seam is required to collect that baseline. Estimated total including plan, regression tests and returned evidence: approximately 300–400 lines; zero production Kotlin files, zero new exported app types, zero consumer signature changes, four AC and no app state machine/error branches. No UI design changes. Refiner estimate is consistent. Remote feature branches were refreshed and no overlap was found for the two script files.
+The single deliverable is a reproducible API 33 live baseline. The harness seam is required to collect that baseline. Estimated total including plan, regression tests and returned evidence: approximately 300–400 lines; zero production Kotlin files, zero new exported app types, zero consumer signature changes, four AC and no app state machine/error branches. No UI design changes. Refiner estimate is consistent. Remote feature branches were refreshed and no overlap was found for the two script files.
 
 ## Testing strategy
 
@@ -23,29 +23,26 @@ Before implementation, add a regression that invokes `main` with a stubbed subpr
 
 Run the focused Python suite RED then GREEN, `spotlessApply`, `lint`, `assembleDebug`, and `compileDebugAndroidTestKotlin`. No JVM classes change. No device runs are claimed by these local checks.
 
-## Live acceptance handoff — pending
+## Live acceptance handoff
 
-Dispatcher runs, with authenticated real Claude, live relay and an isolated test daemon:
+Operator decision on 2026-09-20: API 33 is the sole required Android version for the baseline and routine ticket gates for now. API 35 is deferred. Keep the connected-report fix and its regression coverage.
 
-- `python3 scripts/android-test-gate.py live`: managed `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD.
-- `DEVICE=connected python3 scripts/android-test-gate.py live`: only the intended `Pixel_8` API 35 emulator selected; installed image is `google_apis_playstore/arm64-v8a` (actual running image must be recorded).
+The recovery run used `python3 scripts/android-test-gate.py live` on managed `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD, through the existing dispatcher credential environment. It used real Claude, the live relay and an isolated test daemon. All eight methods executed and passed, with zero failures or skips and process exit zero. Production configuration was unchanged.
 
-Keep `needs-real-claude`. Both runs must execute and pass ping, create-workspace-folder, new-session, delete, archive/restore, change-workspace, rename and save-as-channel individually. Tool-use, spinner and negative controls remain outside this baseline. Installed images are present; their availability is not proof of bootability or successful live authentication.
+Committed `scripts/fixtures/live-mobile-baseline/528-api33.xml` and `528-api33-context.json` record the result, per-method outcomes, app and daemon revisions, Claude version, resolved runner, observed runtime device and image, timestamps and XML checksum. Device properties were captured with ADB during the run. Claude binary and source revisions were checked before and after execution.
 
-On return, builder triages and commits `scripts/fixtures/live-mobile-baseline/528-api33.xml`, `528-api33-context.json`, `528-api35.xml` and `528-api35-context.json`. Each XML is sanitized dispatcher output. Each context records command/date, app and daemon revisions, Claude version, resolved interactive runner, actual device/API/image, process exit, per-method outcomes and executed/pass/fail/skip counts, XML checksum and evidence provenance. Never commit secrets, raw logs or pairing payloads. Missing prerequisites are environment blockers, not product failures. For product failures, identify owner, search existing issues and file/link a bounded owning-repo fix with a native blocker before revalidation. Production daemon and configuration remain untouched.
+Remove `needs-live-artifacts` after this evidence is pushed. Keep `needs-real-claude` for review and the normal final live gate. No API 35 run or evidence is required. Tool-use, spinner and negative controls remain outside this baseline.
 
 ## Documentation handoff
 
-Pending for the documentation stage, exact ticket requirement:
-
-Documentation stage: update `docs/e2e-interactive-stream.md` under “How to run”, “Live mode (rung 3, live relay)” and “Verification status” with the instrumented-compilation gate, reproducible commands for both profiles, dated per-scenario outcomes and committed evidence links. State exactly which profile each result proves, retain historical failures as history, and distinguish unresolved environment/product blockers from passes.
+Update `docs/e2e-interactive-stream.md` under “How to run”, “Live mode” and “Verification status” with the instrumented-compilation check, reproducible API 33 command, dated per-scenario outcomes and committed evidence links. State that API 33 is the sole required version for now and API 35 is deferred. Retain historical failures as history. Include the runtime capture in the baseline evidence description.
 
 ## Open questions
 
-None for implementation. Live results and their runtime metadata remain pending dispatcher execution and builder artifact return.
+None for implementation or API 33 evidence. Review, the final live gate and documentation remain with the pipeline.
 
 ## Revisions
 
-- 2026-09-20: The dispatcher's “Live artifact handoff” requires `needs-live-artifacts` alongside `needs-real-claude` before first review. Apply the artifact marker for the four pending files above; on return, commit both profiles' usable evidence before removing only that marker. No coupled reader changes are needed.
-
-- 2026-09-20 artifact return: Dispatcher supplied only the managed API 33 run (eight passes, process exit 0). Preserve its exact sanitized XML and provenance now. Claude version and runtime image metadata were not retained; record these as unknown, without substituting the current host state. No connected API 35 evidence was supplied, so the two-profile baseline remains incomplete and both live markers remain. Complete the missing artifacts from dispatcher records before removing `needs-live-artifacts`.
+- 2026-09-20: The initial plan required API 33 and API 35. The operator subsequently narrowed acceptance to API 33 only.
+- 2026-09-20: The first returned API 33 result passed all eight tests but omitted Claude version and runtime image details. Its evidence remains in Git history.
+- 2026-09-20: Reran API 33 while capturing the missing details. All eight tests passed. Replaced the incomplete baseline with that complete, revision-linked evidence.
