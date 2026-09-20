@@ -30,7 +30,7 @@ For a ticket labelled `needs-real-claude`, the dispatcher runs the live real-Cla
 python3 scripts/android-test-gate.py live
 ```
 
-This runs the curated live rung-3 scenarios (the real app on an emulator → host `pyry` daemon → real claude, against the production relay over `wss://`, under a unique `e2e-auto-*` test identity. The wrapper selects `LIVE=1`, builds test-only host binaries from configured sibling sources, and checks Claude authentication before starting the suite. The dispatcher supplies the source paths, SDK paths and its existing 1Password credential. For a manual run, use the same environment.
+This runs the curated live scenarios through the real app, test daemon and real Claude against the production relay over `wss://`, under a unique `e2e-auto-*` test identity. The wrapper selects `LIVE=1`, builds test-only host binaries from configured sibling sources, and checks Claude authentication before starting the suite. The dispatcher supplies the source paths, SDK paths and its existing 1Password credential. For a manual run, use the same environment.
 
 **The dispatcher runs it when:**
 

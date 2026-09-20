@@ -32,7 +32,7 @@
 #   * rung 4 only: either FAKE_CLAUDE_BIN (a prebuilt fakeclaude) or PYRYCODE_SRC (a local pyrycode
 #     checkout) + `go` to build it. No claude auth needed; no claude turns spent.
 #   * Android SDK with the `aosp-atd` API 33 system image. AGP auto-provisions it on first run, which
-#     needs cmdline-tools installed and the image licence accepted (`sdkmanager --licenses`).
+#     needs the image licence accepted. Android Studio can remain closed.
 #   * python3 (used only to decode the base64url pairing payload).
 #
 # rung 3 is semi-deterministic by nature (real claude); rung 4 is fully deterministic and re-running it
