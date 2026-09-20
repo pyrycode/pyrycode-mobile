@@ -122,3 +122,10 @@ linking the daemon's Debug bundle contract.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-21
+
+## Revisions
+
+- 2026-09-21: implementation keeps the current transport identity in the coordinator's
+  private `Connection`, so a request during a pending connection-state emission
+  returns unavailable immediately. Tests cover this gap and non-interactive Noise
+  sessions. The five production files and five-type boundary remain unchanged.

@@ -247,6 +247,38 @@ class RemoteConversationRepository(
     private val compactingConversations = MutableStateFlow<Set<String>>(emptySet())
 
     private val requestId = AtomicLong(0)
+    private var debugBundle: DebugBundleTransfer? = null
+    private var bundleInboundEnded = false
+
+    /** One attempt per connection: uncorrelated chunk/done frames cannot safely feed a retry. */
+    @Synchronized
+    internal fun requestDebugBundle(): DebugBundleTransfer {
+        if (bundleInboundEnded) return DebugBundleTransfer.rejected(DebugBundleStatus.UNAVAILABLE)
+        debugBundle?.let {
+            return DebugBundleTransfer.rejected(
+                if (it.state.value.status == DebugBundleStatus.RECEIVING) DebugBundleStatus.BUSY else DebugBundleStatus.RECONNECT_REQUIRED,
+            )
+        }
+        val request = Envelope(requestId.incrementAndGet(), "request_debug_bundle", Clock.System.now().toString())
+        val transfer = DebugBundleTransfer(request.id).also { debugBundle = it }
+        val sent =
+            try {
+                pump.send(request)
+            } catch (_: Exception) {
+                false
+            }
+        if (!sent) transfer.fail(DebugBundleStatus.SEND_FAILED)
+        return transfer
+    }
+
+    @Synchronized
+    internal fun endDebugBundle() {
+        bundleInboundEnded = true
+        debugBundle?.fail(DebugBundleStatus.DISCONNECTED)
+    }
+
+    @Synchronized
+    private fun routeDebugBundle(envelope: Envelope): Boolean = debugBundle?.accept(envelope) == true
 
     /**
      * Source of the client-owned [ThreadItem.UnrecognizedMessage.id] (#609). The `unrecognized_message`
@@ -343,12 +375,14 @@ class RemoteConversationRepository(
             try {
                 pump.inbound.collect { envelope -> onInbound(envelope) }
             } finally {
+                endDebugBundle()
                 failAllPending()
             }
         }
     }
 
     private fun onInbound(envelope: Envelope) {
+        if (routeDebugBundle(envelope)) return
         recordReplayCursor(envelope)
         when (envelope.type) {
             TYPE_CONVERSATIONS -> {
