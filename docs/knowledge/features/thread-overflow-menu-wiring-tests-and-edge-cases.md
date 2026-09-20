@@ -13,7 +13,17 @@ Split out of [ThreadOverflowMenu](thread-overflow-menu.md) on 2026-09-05 to keep
 
 ## Tests
 
-Two test files: a Compose `androidTest` for the menu composable, two `test` (unit) cases for the VM dispatcher.
+Coverage spans the menu composable, the mounted thread screen and the ViewModel dispatcher.
+
+### Reset wording and retained content
+
+`ThreadScreenOverflowTest` asserts the literal “Reset session” menu label and
+its dismissal after `ThreadEvent.NewSession`. Its
+`resetFailure_showsFixedMessageAndRetainsThread` case injects the payload-free
+error signal, then checks the literal failure snackbar and retained message.
+Resource-derived expected text alone would also pass with an incorrect resource
+value. Repository failed-send and ViewModel error tests cover the send-to-signal
+path; the screen fixture covers presentation.
 
 ### `ThreadOverflowMenuTest.kt` (Compose, `./gradlew connectedAndroidTest`)
 
@@ -22,7 +32,7 @@ Lives at `app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/Thre
   Since [#382](../codebase/382.md) all **8** `ThreadOverflowMenu(...)` call sites in this file pass the new required `onShowLiteralScreen` ( `{}`, or a recording lambda in the new tap test).
 - **`channel_menu_items_render_in_documented_order_when_expanded`** ([#204](../codebase/204.md) split) — renders with `isPromoted = true`; asserts all five `R.string.thread_overflow_*` labels + the `_install_memory_plugin` label + (since [#382](../codebase/382.md)) the `_show_literal_screen` label are displayed and the `save_as_channel_action` label `assertDoesNotExist()`.
 - **`discussion_menu_items_render_in_documented_order_when_expanded`** ([#204](../codebase/204.md) split) — renders with `isPromoted = false`; asserts `save_as_channel_action` + the five common labels + (since [#382](../codebase/382.md)) the `_show_literal_screen` label are displayed and `_install_memory_plugin` `assertDoesNotExist()`. Pre-#204 the file had one `menu_items_render_in_documented_order_when_expanded` test that asserted only the five common items; #204 split it across the two `isPromoted` variants. **Asserting `_show_literal_screen` in *both* the promoted and unpromoted tests is what proves "always available regardless of promotion" (AC#1).** Order is implicitly verified by the per-item tap tests below — a label-mismatch on any item would fail its own tap test before this one.
-- **`mutation_actions_are_hidden_when_mutations_unsupported`** ([#508](../codebase/508.md)) — renders with `mutationsSupported = false, isPromoted = true`; asserts New session / Rename / Change workspace / Archive each `assertDoesNotExist()` (the four gated-out mutation items) and Show literal screen / Channel info / Install memory plugin each `assertIsDisplayed()` (they survive the gate). The two render-order tests above exercise the defaulted `mutationsSupported = true` path unchanged — no edit needed to prove the supported case.
+- **`mutation_actions_are_hidden_when_mutations_unsupported`** ([#508](../codebase/508.md)) — renders with `mutationsSupported = false, isPromoted = true`; asserts Reset session / Rename / Change workspace / Archive each `assertDoesNotExist()` (the four gated-out mutation items) and Show literal screen / Channel info / Install memory plugin each `assertIsDisplayed()` (they survive the gate). The two render-order tests above exercise the defaulted `mutationsSupported = true` path unchanged — no edit needed to prove the supported case.
 - **`tapping_show_literal_screen_dismisses_then_invokes_callback`** ([#382](../codebase/382.md)) — combined-log recorder with `onDismiss = { log.add("dismiss") }`, `onEvent = { log.add("event:$it") }`, `onShowLiteralScreen = { log.add("show") }`; after `performClick()` asserts `log == listOf("dismiss", "show")`. The absence of any `event:…` entry proves the action **bypasses `onEvent`** (no `ThreadEvent` leaks through the VM path).
 - **`tapping_<item>_dismisses_then_dispatches_event`** (one per item, seven total — five for the common items, plus `_save_as_channel` and the no-event variant `_install_memory_plugin`) — uses the **combined-log recorder pattern**: a single `val log = mutableListOf<String>()` with `onDismiss = { log.add("dismiss") }` and `onEvent = { log.add("event:$it") }`. After `performClick()`, asserts `log == listOf("dismiss", "event:NewSession")` (or the corresponding event). The combined-log assertion is the directly-testable expression of "dismisses the dropdown *before* firing its `ThreadEvent`" — two separate recorders (a counter + a list) couldn't pin the ordering inside one `onClick` callback. The five common-item tests pass `isPromoted = true`; the save-as-channel test passes `isPromoted = false`.
 - **`tapping_install_memory_plugin_dismisses_and_opens_docs_url`** ([#204](../codebase/204.md)) — uses the same combined-log shape for `onDismiss`, but injects a fake `UriHandler` via `CompositionLocalProvider(LocalUriHandler provides fakeHandler) { ThreadOverflowMenu(...) }` to capture the URL. Asserts `log == listOf("dismiss")` (proves both dismiss-fired *and* no-event-fired in one equality) and `fakeHandler.openedUris == listOf(MEMORY_PLUGIN_DOCS_URL)`. The fake is a six-line file-local `class RecordingUriHandler : UriHandler { val openedUris = mutableListOf<String>(); override fun openUri(uri: String) { openedUris += uri } }` — same direct-test-double idiom as `RecordingRepo` (see [Lessons learned in #204](../codebase/204.md#lessons-learned) for the `CompositionLocalProvider`-inside-the-theme placement rule).

@@ -10,7 +10,13 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -54,7 +60,7 @@ class ThreadScreenOverflowTest {
         composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performClick()
 
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_show_literal_screen)).assertIsDisplayed()
-        composeTestRule.onNodeWithText(string(R.string.thread_overflow_new_session)).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Reset session").assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_rename)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_change_workspace)).assertIsDisplayed()
         composeTestRule.onNodeWithText(string(R.string.thread_overflow_archive)).assertIsDisplayed()
@@ -67,10 +73,43 @@ class ThreadScreenOverflowTest {
         setContent(events)
 
         composeTestRule.onNodeWithContentDescription(string(R.string.cd_more_actions)).performClick()
-        composeTestRule.onNodeWithText(string(R.string.thread_overflow_new_session)).performClick()
+        composeTestRule.onNodeWithText("Reset session").performClick()
 
         assertEquals(listOf(ThreadEvent.NewSession), events)
-        composeTestRule.onNodeWithText(string(R.string.thread_overflow_new_session)).assertDoesNotExist()
+        composeTestRule.onNodeWithText("Reset session").assertDoesNotExist()
+    }
+
+    @Test
+    fun resetFailure_showsFixedMessageAndRetainsThread() {
+        val errors = Channel<Unit>(Channel.BUFFERED)
+        val state =
+            baseState().copy(
+                hasMessages = true,
+                items =
+                    listOf(
+                        ThreadItem.MessageItem(
+                            Message("m1", "s1", Role.User, "Retained message", Instant.parse("2026-09-20T10:00:00Z"), false),
+                        ),
+                    ),
+            )
+        val errorFlow = errors.receiveAsFlow()
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadScreen(
+                    state = state,
+                    onBack = {},
+                    onSendMessage = {},
+                    connectionState = ConnectionState.Connected,
+                    onRetry = {},
+                    newSessionErrors = errorFlow,
+                )
+            }
+        }
+        composeTestRule.onNodeWithText("Retained message").assertIsDisplayed()
+        composeTestRule.runOnIdle { errors.trySend(Unit) }
+        composeTestRule.onNodeWithText("Couldn't reset the session. Check your connection.").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Retained message").assertIsDisplayed()
+        errors.close()
     }
 
     @Test

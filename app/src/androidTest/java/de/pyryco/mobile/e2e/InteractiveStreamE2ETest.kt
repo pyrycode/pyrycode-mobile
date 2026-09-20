@@ -378,14 +378,14 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * New-session twin of the ping happy path (#541, Layer 3): drive the real "New session" overflow flow
+     * New-session twin of the ping happy path (#541, Layer 3): drive the real "Reset session" overflow flow
      * end to end against real claude, exercising the already-shipped #540 fire-and-forget wire. With a live,
-     * exercised session, open the thread overflow menu → tap "New session" → the daemon wraps up and rotates →
+     * exercised session, open the thread overflow menu → tap "Reset session" → the daemon wraps up and rotates →
      * broadcasts `session_transition` (`reason: "clear"`) → the thread folds a `ThreadItem.SessionBoundary`
      * (#336, canonical in `RemoteConversationRepository`) → `SessionBoundaryDelimiter` renders it. This proves
      * that path against real claude and the daemon's reset, not the boundary the Fake synthesizes.
      *
-     * **Reachability.** The "New session" item is gated on `mutationsSupported` only (not promotion), which is
+     * **Reachability.** The "Reset session" item is gated on `mutationsSupported` only (not promotion), which is
      * `true` in relay mode (PR #572), so the scenario is reachable on a plain **discussion** — the same real
      * overflow menu the operator uses.
      *
@@ -394,11 +394,9 @@ class InteractiveStreamE2ETest {
      * matcher is [DELIMITER_EXPLANATION], the delimiter's hardcoded explanation line
      * ([de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter]), which can **only** come from
      * the rendered delimiter — it is reason-independent, so the match is robust even if the daemon's
-     * `session_transition` reason differs from `clear`. The matcher is deliberately **not** [NEW_SESSION_ITEM]
-     * (`"New session"`): that text is byte-identical to both the overflow menu item and the
-     * `BoundaryReason.Clear` label prefix, so it is not selective at rung 3 (the #481 `TOOL_PROMPT`-omits-"Bash"
-     * / #566 unique-`folderName` token discipline). The delimiter's **absence is asserted before** the
-     * New-session tap, so its later appearance is attributable to the action — a deterministic guard, no extra
+     * `session_transition` reason differs from `clear`. [NEW_SESSION_ITEM] only selects the reset action;
+     * the delimiter explanation proves the resulting session boundary. Its absence is asserted before
+     * the reset tap, so its later appearance is attributable to the action — no extra
      * claude turn.
      *
      * **Always-on, not `@Ignore`d.** Unlike #482's transient thinking spinner — which leaves no trace once the
@@ -418,7 +416,7 @@ class InteractiveStreamE2ETest {
         awaitConnected()
 
         // 3. Create a fresh discussion → the app navigates into its thread; the send button marks arrival. A
-        //    plain discussion suffices — the "New session" item is gated on mutationsSupported only, not promotion.
+        //    plain discussion suffices — the "Reset session" item is gated on mutationsSupported only, not promotion.
         composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
@@ -437,9 +435,8 @@ class InteractiveStreamE2ETest {
             .onAllNodesWithText(DELIMITER_EXPLANATION, substring = true)
             .assertCountEquals(0)
 
-        // 6. Drive the REAL overflow menu: open "More actions", wait for the item to render, then tap "New
-        //    session". NEW_SESSION_ITEM locates/taps the menu item ONLY — never the durable assertion (its
-        //    text collides with the Clear-label prefix; the durable matcher is DELIMITER_EXPLANATION, step 7).
+        // 6. Open the real overflow menu and tap Reset session. The durable assertion uses
+        //    DELIMITER_EXPLANATION, independently of the action label.
         composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(NEW_SESSION_ITEM).fetchSemanticsNodes().isNotEmpty()
@@ -1230,13 +1227,12 @@ class InteractiveStreamE2ETest {
         const val CD_BACK = "Back"
 
         // #541 new-session scenario. Overflow-menu production strings (no test tags): CD_MORE_ACTIONS opens
-        // the menu; NEW_SESSION_ITEM is the tap target ONLY — its text is byte-identical to the delimiter's
-        // BoundaryReason.Clear label prefix, so it is NOT selective at rung 3. The load-bearing DURABLE matcher
-        // is DELIMITER_EXPLANATION, the delimiter's reason-independent hardcoded explanation line, which can
+        // the menu; NEW_SESSION_ITEM is the tap target. The durable matcher is DELIMITER_EXPLANATION,
+        // the delimiter's reason-independent hardcoded explanation line, which can
         // only come from the rendered SessionBoundaryDelimiter. Keep in sync with res/values/strings.xml:
-        //   cd_more_actions = "More actions", thread_overflow_new_session = "New session".
+        //   cd_more_actions = "More actions", thread_overflow_new_session = "Reset session".
         const val CD_MORE_ACTIONS = "More actions"
-        const val NEW_SESSION_ITEM = "New session"
+        const val NEW_SESSION_ITEM = "Reset session"
         const val DELIMITER_EXPLANATION = SESSION_BOUNDARY_EXPLANATION
 
         // #566 create-workspace-folder scenario. Picker/dialog production strings (no test tags):

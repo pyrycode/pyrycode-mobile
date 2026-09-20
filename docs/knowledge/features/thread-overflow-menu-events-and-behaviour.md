@@ -50,21 +50,25 @@ Renders one M3 `DropdownMenu` containing the five common `DropdownMenuItem`s, wr
 | ----------------- | ------------------- | ------------------------------------------ | ------------------ | ---------------------------------------------------------- |
 | 1 (always)        | —                   | `R.string.thread_overflow_show_literal_screen` | Show the literal screen | `onShowLiteralScreen()` (no event — pure navigation, #382) |
 | 2 (discussion)    | `!isPromoted`       | `R.string.save_as_channel_action`          | Save as channel…   | `onEvent(ThreadEvent.SaveAsChannel)`                       |
-| 3 (mutations)     | `mutationsSupported` | `R.string.thread_overflow_new_session`     | New session        | `onEvent(ThreadEvent.NewSession)`                          |
+| 3 (mutations)     | `mutationsSupported` | `R.string.thread_overflow_new_session`     | Reset session      | `onEvent(ThreadEvent.NewSession)`                          |
 | 4 (mutations)     | `mutationsSupported` | `R.string.thread_overflow_rename`          | Rename             | `onEvent(ThreadEvent.Rename)`                              |
 | 5 (mutations)     | `mutationsSupported` | `R.string.thread_overflow_change_workspace`| Change workspace…  | `onEvent(ThreadEvent.ChangeWorkspace)`                     |
 | 6 (mutations)     | `mutationsSupported` | `R.string.thread_overflow_archive`         | Archive            | `onEvent(ThreadEvent.Archive)`                             |
 | 7 (always)        | —                   | `R.string.thread_overflow_channel_info`    | Channel info       | `onEvent(ThreadEvent.ChannelInfo)`                         |
 | 8 (channel)       | `isPromoted`        | `R.string.thread_overflow_install_memory_plugin` | Install memory plugin | `uriHandler.openUri(MEMORY_PLUGIN_DOCS_URL)` (no event)    |
 
-Since [#508](../codebase/508.md) the **four mutation items — New session, Rename, Change workspace…, Archive (orders 3–6) — are wrapped in a single `if (mutationsSupported) { … }` block** because they are contiguous. In relay mode (`mutationsSupported == false`) each throws or is a misleading no-op, so all four are hidden (AC#1); the non-mutating items (Show literal screen, Save as channel… — `promote` is implemented on the remote, Channel info, Install memory plugin) survive the gate. `mutationsSupported` is `true` end-to-end in fake mode (the default binding), so this changes nothing there. See the sibling gate on [`ChannelInfoSheet`](channel-info-sheet.md)'s Actions section, resolved as **hide** on both surfaces in #508.
+The four mutation items — Reset session, Rename, Change workspace…, Archive
+(orders 3–6) — share `if (mutationsSupported)`. Both the remote repository and the
+fake support mutations. Reset is available in discussions and channels; promotion
+is not a reset prerequisite.
 
-Final orders, after the conditional branches collapse (fake mode / `mutationsSupported == true`):
+With mutations supported, the final orders are:
 
-- **Discussion (`isPromoted == false`):** Show the literal screen → Save as channel… → New session → Rename → Change workspace… → Archive → Channel info. Seven items, no install-memory-plugin.
-- **Channel (`isPromoted == true`):** Show the literal screen → New session → Rename → Change workspace… → Archive → Channel info → Install memory plugin. Seven items, no save-as-channel.
+- **Discussion:** Show the literal screen → Save as channel… → Reset session → Rename → Change workspace… → Archive → Channel info.
+- **Channel:** Show the literal screen → Reset session → Rename → Change workspace… → Archive → Channel info → Install memory plugin.
 
-In **relay mode (`mutationsSupported == false`)** the four mutation items drop out: a discussion shows Show the literal screen → Save as channel… → Channel info (three items); a channel shows Show the literal screen → Channel info → Install memory plugin (three items).
+When `mutationsSupported == false`, the four mutation items are hidden; the other
+items retain their order.
 
 The **Show the literal screen** item is an unconditional `DropdownMenuItem` at the **top** of the `DropdownMenu` body, before the conditionals; the two context-aware items render as two `if` blocks below it — `if (!isPromoted) { ... }` prepended; `if (isPromoted) { ... }` appended. A `when (isPromoted)` over the entire menu body was considered and rejected — it would either duplicate the five common items in both branches or collapse to the same `if` pair around two extra items, and the `if`-pair shape directly expresses the AC wording ([per-ticket rationale](../codebase/204.md#patterns-established)).
 
