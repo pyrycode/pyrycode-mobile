@@ -56,3 +56,10 @@ The ticket has no separate documentation acceptance criterion. Pending documenta
 ## Open questions
 
 None about implementation. Whether the current authenticated daemon replies in both workspaces is the pending live acceptance result, not an assumed pass.
+
+## Builder verification — 2026-09-20
+
+- Source checks confirm both named methods are present once, annotated `@Test` without `@Ignore`, and selected in LIVE. Instrumented sources and production code remain unchanged.
+- `./gradlew spotlessApply lint assembleDebug --console=plain` passed using the Android SDK/JDK paths configured in the dispatcher's environment file. Lint reports zero errors and 59 warnings in unchanged files; reviewed warnings cover dependency versions, existing resource/API usage and Compose guidance. Formatting left the tracked tree unchanged.
+- `scripts/docs-guard.sh` and `git diff --check` passed. No scoped JVM test or instrumented compile was needed because no test source changed.
+- Live execution and both evidence files remain pending. The issue carries `needs-real-claude` and `needs-live-artifacts`; no live pass is claimed.
