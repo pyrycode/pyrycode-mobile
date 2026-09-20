@@ -64,4 +64,10 @@ private class RecordingConnectionStateSource : ConnectionStateSource {
 
 It cannot reuse `FakeConnectionStateSource` because the fake's `retry()` is a no-op — an assertion-of-effect through the fake would have nothing to observe. The recording double is deliberate test-local fixture; pre-staging this as a public-ish helper in `data/repository/` would be premature (no other consumer needs it).
 
-No instrumented Compose test for `ThreadScreen` or `ThreadTopAppBar`. The codebase has no `androidTest` infrastructure for thread/list screens beyond existing fixtures. Visual verification is by `./gradlew assembleDebug` + `./gradlew installDebug` + manual tap from channel-list / discussion-list / FAB-create-discussion paths (channel name renders, discussion fallback renders, banner stays hidden under steady-state `Connected`, back pops, title-tap and overflow-tap are no-op stubs with TalkBack announcing role + content description correctly).
+Instrumented `PingReplyTest` and `SessionBoundaryVisibilityTest` render the real
+`ThreadScreen` with hoisted state and exercise the same assertion helpers as
+`InteractiveStreamE2ETest`. They cover queue replacement without substring-count
+growth and revealing a delimiter after a tall finalized wrap-up. Both live beside
+`QueuedBacklogTest`, outside the routine UI gate's excluded `e2e` package. See
+[Compose evidence](development-verification.md#compose-evidence) for matcher scope
+and the distinction between semantic existence and display.
