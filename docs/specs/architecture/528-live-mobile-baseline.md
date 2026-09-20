@@ -47,3 +47,5 @@ None for implementation. Live results and their runtime metadata remain pending 
 ## Revisions
 
 - 2026-09-20: The dispatcher's “Live artifact handoff” requires `needs-live-artifacts` alongside `needs-real-claude` before first review. Apply the artifact marker for the four pending files above; on return, commit both profiles' usable evidence before removing only that marker. No coupled reader changes are needed.
+
+- 2026-09-20 artifact return: Dispatcher supplied only the managed API 33 run (eight passes, process exit 0). Preserve its exact sanitized XML and provenance now. Claude version and runtime image metadata were not retained; record these as unknown, without substituting the current host state. No connected API 35 evidence was supplied, so the two-profile baseline remains incomplete and both live markers remain. Complete the missing artifacts from dispatcher records before removing `needs-live-artifacts`.

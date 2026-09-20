@@ -1,0 +1,51 @@
+{
+  "issue": 528,
+  "command": "python3 scripts/android-test-gate.py live",
+  "run_started_at_utc": "2026-09-20T15:54:38.383Z",
+  "app_revision": "3e2688fac2cd5c8f509308061b6b36cdd9dc1ace",
+  "main_revision": "b44df4655e5f4695d7008243705fe23c49fb5e99",
+  "daemon_revision": "dccd18286b8f80d113c055322e22df3125bd1735",
+  "claude_version": null,
+  "resolved_interactive_runner": "stream-json",
+  "device": {
+    "executed_gradle_profile": "pixel2Api33Atd",
+    "configured_device": "Pixel 2",
+    "configured_api_level": 33,
+    "configured_system_image_source": "aosp-atd",
+    "runtime_image_fingerprint": null,
+    "runtime_image_revision": null,
+    "provenance": "Matching stderr confirms pixel2Api33Atd ran eight tests; device/API/image source are the managed profile configuration in app/build.gradle.kts at app_revision. Runtime image identity was not retained."
+  },
+  "process_exit": 0,
+  "wall_clock_seconds": 71.5,
+  "result": "passed",
+  "baseline_acceptance": "incomplete",
+  "executed": 8,
+  "passed": 8,
+  "failed": 0,
+  "errors": 0,
+  "skipped": 0,
+  "test_class": "de.pyryco.mobile.e2e.InteractiveStreamE2ETest",
+  "per_method_outcomes": {
+    "interactiveTurn_deleteConversation_removesFromListAndClosesThread": "passed",
+    "interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace": "passed",
+    "interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace": "passed",
+    "interactiveTurn_newSession_rendersSessionBoundaryDelimiter": "passed",
+    "interactiveTurn_pingPrompt_streamsPingReplyIntoThread": "passed",
+    "interactiveTurn_saveAsChannel_promotesToChannelTier": "passed",
+    "interactiveTurn_archiveRestore_roundTripsListMembership": "passed",
+    "interactiveTurn_renameConversation_relabelsTopBarAndListRow": "passed"
+  },
+  "xml_file": "528-api33.xml",
+  "xml_sha256": "3c6f6e27fc021a833b8923fb2f949cd0da83094457cc6e102df767bbaf63b2fe",
+  "xml_source": "Exact sanitized dispatcher stdout from 2026-09-20T15-54-38-383Z_real-claude-gate_#528.log; detached execution worktree and original AGP reports are no longer present.",
+  "metadata_source": "Dispatcher PASS comment provides command, app/main revisions, exit status and duration. Matching .stderr.log provides daemon revision, resolved runner, selected managed profile and eight executed cases. Start time comes from the dispatcher log filename. Full app/main hashes resolved from local Git objects.",
+  "dispatcher_evidence": "https://github.com/pyrycode/pyrycode-mobile/issues/528#issuecomment-5750888083",
+  "triage": "All eight selected LIVE methods passed on the managed API 33 profile; no product failure is evidenced. This result does not prove the connected API 35 profile.",
+  "missing_evidence": [
+    "Claude version used by this run was not retained; current host version cannot establish historical version.",
+    "Runtime device/API/image metadata was not retained beyond the executed managed profile and its checked-in configuration.",
+    "No Pixel_8 API 35 connected run or matching metadata was returned. 528-api35.xml and 528-api35-context.json cannot be produced from API 33 records."
+  ],
+  "pending": "Dispatcher must supply the missing run and runtime metadata. Builder must commit usable API 35 evidence and complete API 33 metadata before removing needs-live-artifacts; keep needs-real-claude. Documentation remains with the documentation stage."
+}
