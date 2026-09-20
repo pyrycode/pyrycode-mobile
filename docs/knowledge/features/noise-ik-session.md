@@ -77,7 +77,7 @@ NEW ──writeInit()──▶ AWAITING_RESP ──readResp()──▶ ESTABLISH
 
 The handshake carries application early-data, framed by the [#273](mobile-protocol-v2-wire-layer.md) wire models and **always (de)serialized via `MobileJson`** (a default `Json {}` would drop defaulted fields like `role`/`protocol_versions`, which is wire-breaking):
 
-- **`hello`** (in `noise_init`) — `HelloClientPayload(deviceName, clientVersion, token, lastEventId = lastEventId())` (`role = "client"`, `protocolVersions = ["v2"]`, and `capabilities = ["interactive"]` default) inside `Envelope(id = 1, type = "hello", ts = <RFC3339>, payload)`. The token rides **inside the encrypted early-data**, never a plaintext header (correct v2). The `capabilities` default ([#401](../codebase/401.md)) advertises the v2 features the phone understands and rides the wire via `MobileJson`'s `encodeDefaults` — see the [wire layer § Capability negotiation](mobile-protocol-v2-wire-layer.md#capability-negotiation-401). `lastEventId` ([#416](../codebase/416.md)) is the [replay cursor](replay-cursor.md), read **live** via the supplier here; a `null` (fresh connection, nothing observed) is **omitted on encode** by `explicitNulls = false`, so a fresh `hello` stays byte-identical to today.
+- **`hello`** (in `noise_init`) — `HelloClientPayload(deviceName, clientVersion, token, lastEventId = lastEventId())` (`role = "client"`, `protocolVersions = ["v2"]`, and `capabilities = ["interactive"]` default) inside `Envelope(id = 1, type = "hello", ts = <RFC3339>, payload)`. The daemon validates the token **inside the encrypted early-data**; the WebSocket upgrade also carries the required token [header](relay-ws-transport.md#headers). The `capabilities` default ([#401](../codebase/401.md)) advertises the v2 features the phone understands and rides the wire via `MobileJson`'s `encodeDefaults` — see the [wire layer § Capability negotiation](mobile-protocol-v2-wire-layer.md#capability-negotiation-401). `lastEventId` ([#416](../codebase/416.md)) is the [replay cursor](replay-cursor.md), read **live** via the supplier here; a `null` (fresh connection, nothing observed) is **omitted on encode** by `explicitNulls = false`, so a fresh `hello` stays byte-identical to today.
 - **`hello_ack`** (in `noise_resp`) — decode `Envelope`, require `type == "hello_ack"`, decode the whole `HelloAckPayload` (since [#401](../codebase/401.md) `parseHelloAck` returns the payload, not just `connId`). Any malformed/wrong-type/missing-`conn_id` → `NoiseSessionException("malformed hello_ack")` (a non-array `capabilities` is a malformed payload too → same fail-closed throw).
 - **Negotiated capabilities ([#401](../codebase/401.md))** — `readResp` extracts both `connId` and `capabilities.toSet()` from the decoded `hello_ack`. The set is surfaced on a **new property** `val negotiatedCapabilities: Set<String>`, mirroring `connId` exactly (written once before `state = ESTABLISHED`; **throws `IllegalStateException` until established**). The **wire `List` → surface `Set`** conversion happens once here, at the post-MAC trust crossing — capabilities are a membership set (`CAPABILITY_INTERACTIVE in negotiatedCapabilities` answers "is it granted?"), and a `Set` dedups a daemon that repeats an entry. A daemon that echoes none decodes to the empty default → empty set (not granted). This is **surfacing-only**: the session gates nothing on the set; the [pump](noise-session-pump.md) carries it onto `PumpState.Open.capabilities` for the eventual decode gate (#385) / stall gate (#395).
 
@@ -109,21 +109,43 @@ A long-lived session refreshes its AEAD keys in place rather than tearing down a
 
 After constructing the session, the factory **zeroes its copy of the private-key buffer** (the constructor has already copied it into the DH state). `create()` does **not** open a socket — that is #276's concern.
 
-**DI** (`di/AppModule.kt`) — the only Android-bound values (`Build.MODEL`, `BuildConfig.VERSION_NAME`) are resolved at the Koin module (which is Android-bound) and injected as plain strings, keeping the session + factory portable:
+`di/RelayConnectionFactory.kt` owns connection construction. Its
+`create(record: PairedServer)` entry wraps the supplied immutable record in a
+read-only `PairedServerStore` view and gives that same view to the bundle's
+`RelayConnectionSupervisor` and `NoiseSessionFactory`. Every dial uses that
+record's relay URL, server id and token; the Noise handshake uses its token and
+pinned server static key. Both initial device-key loading and
+`reloadDeviceStaticKey()` use its server id. Saving another pairing cannot
+retarget an explicit-record bundle, even when both hosts share a relay URL.
+Credential replacement requires a new owner; discovery and selection belong to
+[#634](https://github.com/pyrycode/pyrycode-mobile/issues/634).
+
+Each `RelayConnectionBundle` owns its supervisor, session factory and
+[coordinator](relay-repository-coordinator.md#configuration). The session factory
+receives a supplier over that bundle's coordinator:
 
 ```kotlin
-single { NoiseClientInfo(deviceName = Build.MODEL, clientVersion = BuildConfig.VERSION_NAME) }
-single {
-    NoiseSessionFactory(   // DeviceStaticKeyStore, PairedServerStore, NoiseClientInfo
-        get(), get(), get(),
-        lastEventId = { get<RelayRepositoryCoordinator>().replayCursor.latest },   // #416
-    )
-}
+lastEventId = { coordinator.replayCursor.latest }
 ```
 
-The factory is the **first registered consumer** of both [#291](../codebase/291.md) and [#294](../codebase/294.md)'s crypto stores (nothing calls `create()` yet — #276 wires the WS client).
+The network layer still holds only a `() -> Long?`, with no repository reference
+or Koin lookup. Construction stores the lambda; it runs at `hello`-build after
+all bundle members exist and the coordinator has started. Reading the owning
+coordinator at that moment preserves its live reconnect cursor without resolving
+an app-wide coordinator or freezing the value at construction. Reconnect creates
+a fresh transport, pump and Noise session while retaining this supplier and its
+coordinator. See [replay ownership](relay-repository-coordinator.md#reconnect-spanning-replay-cursor-412).
 
-The `lastEventId` supplier ([#416](../codebase/416.md)) is the **only cross-layer edge** between `data/network` and the repository layer, and it is confined to this composition-root lambda — the factory and session hold only a `() -> Long?`, never a repository reference. It reads the [coordinator](relay-repository-coordinator.md)'s `internal val replayCursor` (the seam [#412](../codebase/412.md) exposed for exactly this read). **No Koin DI cycle**: constructing the factory only *stores* the lambda; it resolves the coordinator **only when invoked at `hello`-build** (per connection, after the coordinator is constructed and started), by which point Koin returns the already-cached singleton — even though the coordinator single eagerly resolves this factory at its own construction, the lambda is never fired there. The reasoning is recorded inline in `AppModule.kt` so a future "simplify to an eager `get`" edit (which *would* cycle) is warned off.
+**Temporary single-host DI.** `appModule` registers the reusable factory and one
+eager `createCompatibility(store)` bundle through the same construction path.
+This entry keeps the store-backed reads: startup can be unpaired, pairing can
+connect after saving, and the next dial selects the latest saved record. Freezing
+this entry at app startup would break those behaviors. Existing concrete
+supervisor/session-factory/coordinator resolutions alias the bundle's members;
+the fake/relay repository selector remains unchanged. `Build.MODEL` and
+`BuildConfig.VERSION_NAME` still enter as plain `NoiseClientInfo` strings from
+`AppModule`, keeping the session and factory portable. The existing setup error
+categories, key-buffer wiping and single-connection algorithms are unchanged.
 
 ## Threading & key hygiene
 
@@ -141,6 +163,15 @@ The `lastEventId` supplier ([#416](../codebase/416.md)) is the **only cross-laye
 - **Replay** is inherently resisted by the monotonic transport nonce (the session never calls `setNonce` or resets a `CipherState`).
 
 ## Testing
+
+`di/RelayConnectionFactoryTest.kt` exercises two explicit-record bundles with
+distinct real Noise responder keys and device keys while sharing a relay URL.
+It decrypts each `hello` token, verifies the device public key on the responder,
+then re-keys both after changing the shared store and checks caller-buffer
+wiping. This covers both initial authentication and the separate key-reload
+path; constructor arguments alone do not prove the encrypted exchange. The same
+harness decrypts distinct reconnect cursors for the two bundles and checks that
+an empty cursor omits `last_event_id`.
 
 JVM-only (`app/src/test/.../NoiseIkSessionTest.kt`, `./gradlew test`) — the vendored `noise-java` suite is pure Java and the session takes raw bytes, so the whole lifecycle runs without a device (unlike the [#291](../codebase/291.md)/[#294](../codebase/294.md) Keystore stores, which need instrumented tests). An in-test **`TestResponder`** harness mirrors the Go `flynn/noise` peer: it drives the responder leg (generate static key, read msg1, write a `hello_ack` as msg2 early-data, `split()` with the responder's mirror-swap) so the initiator is exercised against a real peer, not a stub. The transport round-trip *is* the positive proof of the correct `sender`/`receiver` assignment — a crossed session MAC-fails. `NoiseSessionFactoryTest` fakes both stores (pure-JVM), enabled by the injectable `ioDispatcher`. [#303](../codebase/303.md) extended `TestResponder` with a **re-key leg** (a fresh responder handshake re-using its own static key) and added 9 re-key scenarios — note its **AC #3 caveat**: a peer-static-discontinuity test cannot be staged by re-keying the responder leg with a *different* key (a wrong-key responder can't even `readMessage` the `noise_init`); the faithful stand-in is a well-formed `noise_resp` from a fully independent handshake (`foreignRekeyResp()`). [#401](../codebase/401.md) added **5 capability scenarios** (and threaded a `capabilities` parameter through the `ackEnvelope` helper): hello advertises `interactive` end-to-end through `writeInit`; `hello_ack` echoing it → `negotiatedCapabilities` granted; `hello_ack` omitting it → empty set + `connId` preserved; a non-array `capabilities` → `NoiseSessionException` (fail-closed); pre-handshake property access throws.
 

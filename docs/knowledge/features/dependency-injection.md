@@ -51,12 +51,20 @@ The selector changes the repository injected into UI consumers. The lifecycle
 driver, supervisor and coordinator still control connection establishment in
 both modes; selecting the fake does not disable that stack.
 
+Relay construction lives in `RelayConnectionFactory`. `appModule` registers one
+eager, store-backed compatibility bundle and aliases its supervisor, Noise session
+factory and coordinator as the existing concrete Koin types. The controller and
+connection-state interfaces resolve that same supervisor; Koin disposal closes
+the bundle. Independent hosts use `create(record)` and own their state outside
+these temporary app-wide aliases. See [bundle configuration](relay-repository-coordinator.md#configuration)
+and [Noise factory wiring](noise-ik-session.md#factory-wiring).
+
 ## Adding a binding
 
 1. Open `de/pyryco/mobile/di/AppModule.kt`.
 2. Add a definition inside the `module { ... }` block:
    - **Singleton** (e.g. a DataStore wrapper, repository): `single { AppPreferences(androidContext()) }`.
-   - **Interface binding**: `single { RelayConnectionSupervisor(get(), get()) } bind ConnectionStateSource::class`.
+   - **Interface binding**: alias the existing owner, e.g. `single<RelayConnectionSupervisor> { get<RelayConnectionBundle>().supervisor } binds arrayOf(ConnectionStateSource::class, RelayConnectionController::class)`.
    - **Flag-gated fake↔real binding** (#350): register every candidate *concrete-only* in `appModule`, then bind the interface in a dedicated `fun fooModule(useX: Boolean = BuildConfig.USE_X) = module { single<Foo> { if (useX) get<Real>() else get<Fake>() } }` loaded alongside `appModule`. The selector **resolves** the candidates by type (`get<…>()`) — it never constructs them, so it carries none of their dependency weight, and it stays unit-testable via `koinApplication { … }` in isolation. See [`../codebase/350.md`](../codebase/350.md).
    - **ViewModel**: `viewModel { ChannelListViewModel(get()) }` — DSL import `org.koin.core.module.dsl.viewModel` (the multiplatform-safe path; the older `org.koin.androidx.viewmodel.dsl.viewModel` is being phased out). Resolved in composables with `koinViewModel<ChannelListViewModel>()` from `koin-androidx-compose`.
 3. No registration step elsewhere. The modules are wired into `startKoin` once; the new definition flows through automatically. (A binding selected by a build flag goes in its own module per the #350 pattern above, not inside `appModule`.)

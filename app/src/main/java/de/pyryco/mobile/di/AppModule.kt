@@ -13,7 +13,6 @@ import de.pyryco.mobile.data.crypto.KeystorePairedServerStore
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.NoiseSessionFactory
-import de.pyryco.mobile.data.network.NoiseSessionPump
 import de.pyryco.mobile.data.network.OkHttpRelayTransport
 import de.pyryco.mobile.data.network.RelayConnectionController
 import de.pyryco.mobile.data.network.RelayConnectionSupervisor
@@ -40,6 +39,7 @@ import org.koin.core.module.dsl.viewModel
 import org.koin.dsl.bind
 import org.koin.dsl.binds
 import org.koin.dsl.module
+import org.koin.dsl.onClose
 
 val appModule =
     module {
@@ -52,21 +52,18 @@ val appModule =
         single { KeystoreDeviceStaticKeyStore(get()) } bind DeviceStaticKeyStore::class
         single { KeystorePairedServerStore(get()) } bind PairedServerStore::class
         single { NoiseClientInfo(deviceName = Build.MODEL, clientVersion = BuildConfig.VERSION_NAME) }
-        // #416: the factory holds a live read of the reconnect-spanning replay cursor (#412), so each
-        // reconnect's `hello` advertises `last_event_id` as of its own handshake-build. No DI cycle: the
-        // lambda is invoked only at hello-build (per connection, after the coordinator is constructed and
-        // started), so constructing the factory only STORES it — it never resolves the coordinator
-        // eagerly. The coordinator single resolves this factory eagerly at its own construction, but by
-        // the time the lambda fires, get<RelayRepositoryCoordinator>() returns the already-cached
-        // singleton. replayCursor is `internal` and AppModule is in the same module → accessible.
         single {
-            NoiseSessionFactory(
+            RelayConnectionFactory(
                 get(),
                 get(),
                 get(),
-                lastEventId = { get<RelayRepositoryCoordinator>().replayCursor.latest },
+                pushToken = { get<AppPreferences>().pushToken.first() },
             )
         }
+        single(createdAtStart = true) {
+            get<RelayConnectionFactory>().createCompatibility(get())
+        } onClose { it?.close() }
+        single<NoiseSessionFactory> { get<RelayConnectionBundle>().sessionFactory }
         single<WebSocket.Factory> { OkHttpRelayTransport.defaultClient() }
         single<RelayTransportFactory> {
             val client = get<WebSocket.Factory>()
@@ -76,11 +73,8 @@ val appModule =
         // Concrete-only: the ConversationRepository interface is bound by conversationRepositoryModule
         // (#350), which selects the StableConversationRepository facade by default or this demo Fake.
         single { FakeConversationRepository() }
-        // #307: real WS-backed source. Bound but dormant — #302's driver drives the first connect().
-        // #489: also expose the narrow RelayConnectionController seam so the Scanner confirm/paste flow
-        // can connect() right after a pairing persists (the concrete get<RelayConnectionSupervisor>()
-        // registration at :84/:95-96 is unchanged, so those resolutions still work).
-        single { RelayConnectionSupervisor(get(), get()) } binds
+        // Keep the concrete and narrow controller resolutions on the same compatibility owner.
+        single<RelayConnectionSupervisor> { get<RelayConnectionBundle>().supervisor } binds
             arrayOf(ConnectionStateSource::class, RelayConnectionController::class)
         // #302: process-lifecycle driver. Eagerly created at startKoin (Application.onCreate, main
         // thread) so it registers as a ProcessLifecycleOwner observer immediately; resolvable so a
@@ -91,21 +85,7 @@ val appModule =
                 lifecycle = ProcessLifecycleOwner.get().lifecycle,
             ).also { it.start() }
         }
-        // #351: connection-scoped coordinator. Eagerly started so it observes currentConnection for the
-        // process lifetime — per live connection it starts a fresh Noise pump and builds a remote repo,
-        // publishing it on currentRepository for the #352 facade. Does NOT bind ConversationRepository:
-        // that binding lives in conversationRepositoryModule (#350), flag-gated.
-        single(createdAtStart = true) {
-            val sessionFactory = get<NoiseSessionFactory>()
-            RelayRepositoryCoordinator(
-                connections = get<RelayConnectionSupervisor>().currentConnection,
-                relayStatus = get<RelayConnectionSupervisor>().relayStatus,
-                createPump = { transport -> NoiseSessionPump(transport, sessionFactory) },
-                // #365: close #359's device_name: "" defer + supply the connect-time token read.
-                deviceName = get<NoiseClientInfo>().deviceName,
-                pushToken = { get<AppPreferences>().pushToken.first() },
-            ).also { it.start() }
-        }
+        single<RelayRepositoryCoordinator> { get<RelayConnectionBundle>().coordinator }
         // #352: the stable facade ViewModels hold across connection churn — delegates to whichever
         // connection-scoped repo the coordinator publishes on currentRepository, switching on churn.
         // Registered as its own resolvable type only; conversationRepositoryModule (#350) flag-selects
