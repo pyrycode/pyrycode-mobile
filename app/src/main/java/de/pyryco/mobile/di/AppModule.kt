@@ -135,7 +135,16 @@ val appModule =
  */
 fun conversationRepositoryModule(useRelay: Boolean = BuildConfig.USE_RELAY_REPOSITORY): Module =
     module {
+        includes(hostConversationModule(useRelay))
         single<ConversationRepository> {
             if (useRelay) get<StableConversationRepository>() else get<FakeConversationRepository>()
         }
+    }
+
+/** Shared with relay instrumentation, which replaces only the compatibility repository binding. */
+fun hostConversationModule(useRelay: Boolean): Module =
+    module {
+        single {
+            if (useRelay) HostConversationSource.relay(get()) else HostConversationSource.demo(get<FakeConversationRepository>())
+        } onClose { it?.dispose() }
     }

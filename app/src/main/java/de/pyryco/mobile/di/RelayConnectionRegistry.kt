@@ -48,6 +48,8 @@ class RelayConnectionRegistry(
     private var disposed = false
     private val selection = MutableStateFlow<RelayConnectionBundle?>(null)
     val selected = selection.asStateFlow()
+    private val hosts = MutableStateFlow<List<HostConversationConnection>>(emptyList())
+    internal val hostConnections = hosts.asStateFlow()
 
     val currentRepository: StateFlow<ConversationRepository?> = project(null) { it.coordinator.currentRepository }
     val currentModal: StateFlow<ModalUiState> = project(ModalUiState.Hidden) { it.coordinator.currentModal }
@@ -106,6 +108,12 @@ class RelayConnectionRegistry(
                 if (foreground) bundle.supervisor.connect()
             }
         }
+        hosts.value =
+            saved.mapNotNull { (record, displayName) ->
+                entries[record.serverId]?.second?.coordinator?.let { coordinator ->
+                    HostConversationConnection(record.serverId, displayName, coordinator.currentRepository, coordinator.connectionStatus)
+                }
+            }
         selection.value =
             saved
                 .lastOrNull()
@@ -137,6 +145,7 @@ class RelayConnectionRegistry(
         disposed = true
         foreground = false
         selection.value = null
+        hosts.value = emptyList()
         entries.values.forEach { it.second.close() }
         entries.clear()
         scope.cancel()

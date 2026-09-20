@@ -10,6 +10,7 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.di.appModule
 import de.pyryco.mobile.di.conversationRepositoryModule
+import de.pyryco.mobile.di.hostConversationModule
 import kotlinx.coroutines.runBlocking
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.context.startKoin
@@ -90,6 +91,7 @@ class E2eTestApplication : Application() {
      */
     private fun tappedRelayRepositoryModule(): Module =
         module {
+            includes(hostConversationModule(useRelay = true))
             single<ConversationRepository> { TappingConversationRepository(get<StableConversationRepository>()) }
         }
 
