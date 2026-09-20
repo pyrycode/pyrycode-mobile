@@ -76,7 +76,11 @@ wrap-up at reversed index 1, and asserts the explanation is not displayed.
 waiting and asserts display. Keep the pre-action absence guard separate from this
 post-append non-display check. Both regressions run outside the excluded `e2e`
 package; see the [LIVE coverage](../../e2e-interactive-stream.md#live-mode-rung-3-live-relay).
-Daemon history can locate a failed step, but cannot prove phone rendering.
+Daemon history can locate a failed step, but cannot prove phone rendering. The
+[default/explicit-workspace recheck](../../e2e-interactive-stream.md#verification-status)
+demonstrates this distinction: successful daemon replies narrowed the failure
+boundary, while passing displayed-reply assertions established phone rendering
+after the count-based oracle was repaired.
 
 Compose parameter-order lint is a real gate. Put required parameters before
 defaulted ones, and keep `modifier` before trailing lambdas according to the
