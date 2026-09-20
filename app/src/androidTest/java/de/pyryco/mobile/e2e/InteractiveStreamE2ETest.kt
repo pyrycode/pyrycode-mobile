@@ -23,6 +23,8 @@ import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.repository.ConnectionStateSource
+import de.pyryco.mobile.ui.conversations.thread.PING_PROMPT
+import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedPingReply
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -46,8 +48,8 @@ import org.koin.core.context.GlobalContext
  * bash scripts/e2e-emulator.sh
  * ```
  *
- * Semi-deterministic by nature (real claude): every assertion is **tolerant** — substring + case
- * insensitive, generous timeouts, and never an assertion on delta counts or timing. The "reply with
+ * Semi-deterministic by nature (real claude): assertions use generous timeouts and case-insensitive
+ * text matching. Ping matches the exact constrained reply in the message list. The "reply with
  * exactly: ping" framing is what keeps real claude's output predictable enough to assert against while
  * still exercising the whole real path.
  *
@@ -105,19 +107,8 @@ class InteractiveStreamE2ETest {
         composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
         composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
 
-        // 5. The prompt itself contains "ping" (so does, possibly, the auto-derived thread title), so
-        //    we do not assert on a fixed count. Instead: wait for the sent prompt to render, snapshot
-        //    how many "ping"-bearing nodes exist, then wait for the assistant's streamed reply to add
-        //    at least one MORE. This is robust to whatever the prompt/title contribute.
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { pingNodeCount() >= 1 }
-        val baseline = pingNodeCount()
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { pingNodeCount() > baseline }
-
-        // The newest "ping" node is the assistant reply — confirm it is actually on screen.
-        composeTestRule
-            .onAllNodesWithText(PING, substring = true, ignoreCase = true)
-            .onFirst()
-            .assertIsDisplayed()
+        // 5. Match the displayed reply itself; queued prompt removal cannot offset this signal.
+        composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
     }
 
     /**
@@ -361,17 +352,9 @@ class InteractiveStreamE2ETest {
 
         // 5. AC-2: send the constrained ping in the new workspace and assert the streamed reply renders —
         //    proving the created folder is usable as a live session's workspace against a real claude turn.
-        //    Tail reused from the ping scenario; folderName does not contain "ping", so it never perturbs
-        //    the count. Snapshot the "ping"-bearing node count, then wait for the reply to add at least one.
         composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
         composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { pingNodeCount() >= 1 }
-        val baseline = pingNodeCount()
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { pingNodeCount() > baseline }
-        composeTestRule
-            .onAllNodesWithText(PING, substring = true, ignoreCase = true)
-            .onFirst()
-            .assertIsDisplayed()
+        composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
 
         // 6. AC-3: the thread now has messages, so the WorkspaceChip is gone (!hasMessages gate). Re-open
         //    the picker from the channel list — Back to the list, then long-press the FAB again — and assert
@@ -444,9 +427,7 @@ class InteractiveStreamE2ETest {
         //    Tail reused verbatim from the ping scenario — this spends the one real claude turn; /clear spends none.
         composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
         composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
-        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { pingNodeCount() >= 1 }
-        val baseline = pingNodeCount()
-        composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { pingNodeCount() > baseline }
+        composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
 
         // 5. Absence guard (AC-2, deterministic — no extra turn): the delimiter explanation must not be on
         //    screen yet, so its later appearance is attributable to the New-session tap.
@@ -1214,13 +1195,6 @@ class InteractiveStreamE2ETest {
         composeTestRule.onAllNodesWithText(uniqueName, substring = true).assertCountEquals(0)
     }
 
-    /** Count the on-screen semantic nodes whose text contains "ping" (case-insensitive, substring). */
-    private fun pingNodeCount(): Int =
-        composeTestRule
-            .onAllNodesWithText(PING, substring = true, ignoreCase = true)
-            .fetchSemanticsNodes()
-            .size
-
     /** Block until the relay connection reports [ConnectionState.Connected], or fail after a timeout. */
     private fun awaitConnected() {
         val source = GlobalContext.get().get<ConnectionStateSource>()
@@ -1232,12 +1206,6 @@ class InteractiveStreamE2ETest {
     }
 
     private companion object {
-        const val PING = "ping"
-
-        // Constrained prompt: real claude's output is predictable enough to assert against, while the
-        // path stays fully real. "exactly the word: ping" is the determinism lever.
-        const val PING_PROMPT = "Reply with exactly the word: ping (nothing else)."
-
         // Tool-use determinism lever (#481): a direct imperative to RUN a shell command reliably makes
         // real claude use its shell tool (claude names it "Bash"), where "what does X output?" might be
         // answered inline. `echo <fixed string>` is read-only, side-effect-free, and harmless on the
