@@ -131,6 +131,15 @@ incoming status, uses explicit optional branches, and returns that status.
 isolated home, including retention of failure artifacts. Check both the process
 status and executed XML results; neither overrides a disagreement with the other.
 
+The Android gate must search only the report path selected by `DEVICE`:
+`connected/debug` for `connected`, otherwise `managedDevice/debug/<DEVICE>`, under
+`app/build/outputs/androidTest-results`. Freshness alone is insufficient: a fresh
+report from another profile or execution path can falsely satisfy a broad search,
+while searching only managed reports misses a successful connected run.
+`test_android_test_gate.py` exercises both paths with fresh wrong-path reports,
+missing or stale selected reports, failed XML and a failing process despite passing
+XML. Preserve path selection and process-status checks together.
+
 ## Probe the evidence itself
 
 An injection or sanitizer test must forge the exact line shape its reader matches.
@@ -167,6 +176,15 @@ verifier. For a ticket labelled `needs-real-claude`, it runs
 or merge. Record the scenario, app/build version, daemon compatibility and executed
 test count. XML evidence is required; a zero exit code with every scenario skipped
 is not a passing proof.
+
+The current required profile is managed `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP
+ATD arm64; API 35 is deferred (2026-09-20 decision). See the
+[revision-linked live baseline](../../e2e-interactive-stream.md#verification-status).
+A configured profile name alone does not establish the runtime image. Capture ADB
+properties during execution and record the SDK image revision, Claude version,
+resolved runner and app/daemon revisions alongside sanitized XML and its checksum.
+A missing or unbootable required device is an environment blocker, not a product
+regression or a passing test.
 
 Choose an e2e rung from the producer that emits the event. The current mobile
 harness uses the daemon's stream-json runner and `fakeclaude` raw replay. Set
