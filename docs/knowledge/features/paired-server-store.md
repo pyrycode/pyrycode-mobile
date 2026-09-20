@@ -1,113 +1,230 @@
-# Paired server store — encrypted custody of the reconnect credential record
+# Paired server store — encrypted custody of retained host pairings
 
-The phone's **persisted pairing identity** in Mobile Protocol v2. After QR pairing, the phone holds four values it must re-present to reconnect after process death — the relay URL it dials, the bearer token it sends inside the encrypted hello, the server id, and the server's static Noise public key. This store persists that record **encrypted at rest** and recovers it **byte-faithfully**, so reconnect has the *real* server identity rather than a boolean.
+The phone retains an encrypted collection of host credentials and optional local
+names. Pairing another host preserves existing hosts; pairing the same server id
+replaces only its credentials. The four credential strings round-trip unchanged.
+Existing callers still use the most recently saved surviving record until
+connection construction and lifecycle routing adopt explicit host selection.
 
-Package: `de.pyryco.mobile.data.crypto` (`app/src/main/java/de/pyryco/mobile/data/crypto/`), co-located with the [device static keystore](device-static-keystore.md). Two files — `PairedServerStore.kt` (the portable contract) and `KeystorePairedServerStore.kt` (the Android-bound impl). Landed in [#294](../codebase/294.md); reuses the existing `app_prefs` DataStore — **no new file, no new dependency**. It is a **second consumer of [ADR 0006](../decisions/0006-keystore-wrap-at-rest-device-static-key.md)** (wrap-at-rest), not a new mechanism.
-
-> **Live as of #295; written with a real scanned record as of #320.** `MainActivity` reads this store (`load() != null`) to pick the NavHost start destination; #295 removed the old `pairedServerExists` boolean, so this store is now the sole live paired-state source. Since [#320](../codebase/320.md), the Scanner's scanned (`Decoded`) path writes a **real parsed `PairedServer`** through `save()` (via the [Pairing payload parser](pairing-payload-parser.md)) — the stub record now backs only the out-of-scope paste fallback. Still dormant: the credential consumers [#275](https://github.com/pyrycode/pyrycode-mobile/issues/275) (the Noise_IK session, which reads `serverStaticPublicKey`) and [#276](https://github.com/pyrycode/pyrycode-mobile/issues/276) (the relay WS client, which reads `relayUrl` + `token` + `serverId`).
+Package: `de.pyryco.mobile.data.crypto`. The portable contracts and models live in
+[`PairedServerStore.kt`](../../../app/src/main/java/de/pyryco/mobile/data/crypto/PairedServerStore.kt);
+[`KeystorePairedServerStore.kt`](../../../app/src/main/java/de/pyryco/mobile/data/crypto/KeystorePairedServerStore.kt)
+implements Android storage. The collection added in [#632](../../specs/architecture/632-retain-host-pairings.md)
+uses the existing `app_prefs` DataStore and
+[ADR 0006 wrap-at-rest mechanism](../decisions/0006-keystore-wrap-at-rest-device-static-key.md).
 
 ## The contract
 
 ```kotlin
 interface PairedServerStore {
-    /** Decrypt + return the persisted paired server, or null if absent OR
-     *  undecryptable / corrupt (graceful → re-pair; never throws, never crashes). */
     suspend fun load(): PairedServer?
-
-    /** Encrypt + persist the record, overwriting any existing one. Throws
-     *  PairedServerStoreException on a Keystore / IO failure (the pairing did
-     *  not persist — the caller surfaces "try again"). */
     suspend fun save(record: PairedServer)
+}
+
+interface PairedServerCollectionStore : PairedServerStore {
+    suspend fun list(): List<PairedServerEntry>
+    suspend fun loadById(serverId: String): PairedServerEntry?
+    suspend fun setDisplayName(serverId: String, displayName: String?)
+    suspend fun remove(serverId: String)
+}
+
+@Serializable
+data class PairedServerEntry(
+    val record: PairedServer,
+    val displayName: String? = null,
+) {
+    override fun toString(): String = "PairedServerEntry([REDACTED])"
 }
 
 @Serializable
 data class PairedServer(
-    val serverId: String,              // server identifier
-    val token: String,                 // hex; bearer secret, travels inside the encrypted hello
-    val relayUrl: String,              // dialed verbatim, /v1/client path included
-    val serverStaticPublicKey: String, // base64-STD, 32 bytes
+    val serverId: String,
+    val token: String,
+    val relayUrl: String,
+    val serverStaticPublicKey: String,
 ) {
-    override fun toString(): String = "PairedServer(serverId=$serverId)"  // redacts the bearer token
+    override fun toString(): String = "PairedServer([REDACTED])"
 }
-
-class PairedServerStoreException(message: String, cause: Throwable? = null) : Exception(message, cause)
 ```
 
-The interface + record have **zero `android.*` imports** (only `kotlinx.serialization.Serializable`, which is multiplatform) — it is the portable seam. The Keystore-bound impl (`KeystorePairedServerStore`) carries all the platform code, behind it. This is the CMP-walk-back-safe shape for a `data/` credential custodian: on a Compose Multiplatform move the impl becomes an `androidMain` actual, the interface stays in `commonMain`. (It does **not** trip the `data/` no-`android.*` rule — that trigger is a `Context` constructor param, and the constructor takes only `DataStore<Preferences>`. See [[data-layer-android-import-exception]].)
+**Identity is exact, case-sensitive `record.serverId` equality.** Neither relay
+URLs nor display names identify an entry. Different ids remain distinct even
+when their relay or name is identical. All four credential fields stay verbatim:
+the store neither normalizes strings nor validates their wire shape. Validation
+belongs to the [pairing payload parser](pairing-payload-parser.md). The
+[daemon pairing contract](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#pairing-flow)
+remains the source of truth for the four fields; local names are outside it.
 
-`PairedServer` is a **`data class`** (its fields are all `String`, so structural `equals`/`hashCode`/`copy` are correct and useful) whose **only** override is the redacting `toString()` — the compiler-generated one would render the bearer `token` and leak it to Logcat via a stray `Log.d("$record")`. Serialization is unaffected; the wire needs the real token. (Contrast [`DeviceStaticKeyPair`](device-static-keystore.md), a *plain* class precisely because its `ByteArray` fields make a `data class`'s structural equality a trap.)
+`PairedServerEntry.displayName` is nullable local metadata, stored verbatim inside
+the encrypted collection. New and legacy entries start unnamed. Setting or clearing
+one name leaves its credentials and save order unchanged. Re-pairing the same id
+preserves that name. Removing an id removes its credentials and name only; device
+static keys and unrelated preferences remain intact. For readable storage,
+renaming or removing an unknown id is a no-op and leaves the stored blob unchanged.
+
+`list()` returns a snapshot ordered oldest-save first. `save(record)` removes the
+matching entry, if any, and appends its replacement, preserving all other entries
+and their relative order. The temporary compatibility `load()` returns the last
+record: the most recently **successfully saved surviving** pairing, or `null` when
+none remains. Renaming does not change that choice; removing the latest falls back
+to the most recently saved remaining entry. The encrypted order survives reopening;
+there is no separate active-host pointer or cached selection.
+
+Both interfaces and the serializable models have no `android.*` imports. The
+collection interface is additive, so existing callers and single-record test
+doubles can continue using `PairedServerStore`. The models retain generated
+structural equality and `copy`; their `toString()` methods redact every field.
 
 ## How custody works (mechanism (a): wrap-at-rest)
 
-Same envelope as [#291](../codebase/291.md) / [ADR 0006](../decisions/0006-keystore-wrap-at-rest-device-static-key.md) — the one divergence is **what** gets encrypted: a JSON document, not raw key bytes.
+The whole collection is serialized as UTF-8 JSON and encrypted with AES-256-GCM
+under the dedicated, non-exportable, uid-scoped Android Keystore key
+`pyrycode.paired_server_wrap`. This remains separate from the device-key alias
+`pyrycode.device_static_wrap`. Encryption uses the fresh IV generated by the
+Keystore, with no user-auth requirement or forced StrongBox requirement; see
+[ADR 0006](../decisions/0006-keystore-wrap-at-rest-device-static-key.md).
 
-**Wrap key (Keystore-resident, dedicated):** a single AES-256-GCM key, alias **`pyrycode.paired_server_wrap`** — *distinct* from #291's `pyrycode.device_static_wrap` (no cross-purpose key reuse; this is a symmetric AEAD at-rest key, not #291's asymmetric X25519 identity material). Get-or-created in `AndroidKeyStore` (`PURPOSE_ENCRYPT or PURPOSE_DECRYPT`, GCM/NoPadding, 256-bit). Non-exportable, uid-scoped, TEE-backed on API-33. No user-auth requirement (headless reconnect must work), no forced StrongBox (avoids `StrongBoxUnavailableException`).
+| Preference in `app_prefs` | Value |
+| --- | --- |
+| `pyrycode.paired_server` | `base64(iv ‖ ciphertext)`, with the 12-byte IV prepended |
 
-**Persistence (one string pref in `app_prefs`):**
+One fixed preference holds every entry. Ids and names occur only inside the
+encrypted payload, never as preference keys, paths or Keystore aliases. The private
+`StoredPairings` payload has `version: 1` and an ordered `entries` list. Decode
+rejects unsupported versions and duplicate ids instead of selecting a winner.
 
-| Pref key | Value | Secret? |
-|---|---|---|
-| `pyrycode.paired_server` | `base64(iv ‖ ciphertext)` — the AES-GCM-wrapped JSON document, 12-byte IV prepended | yes (ciphertext) |
+Read, decrypt, transform, encrypt and preference replacement all happen inside
+one `DataStore.edit` transaction for mutations. This preserves overlapping saves
+from store instances sharing the DataStore. Reading outside that transaction would
+allow two saves to transform the same old snapshot and lose a successful write.
+No extra mutex or cache is used. Each operation runs on an injectable dispatcher,
+defaulting to `Dispatchers.IO`, in the caller's coroutine.
 
-**One record, one fixed pref key.** `serverId` lives *inside* the encrypted blob, never as a pref-key or filesystem-path component — so **none** of #291's attacker-influenced-key-collision surface exists, and there is no per-server namespacing to get wrong. The write is a single atomic `dataStore.edit { }` → no partial-record state, and no `Mutex` is needed (DataStore's `edit { }` is already serialised; concurrent `save()`s are last-writer-wins).
+### Legacy migration
 
-**Byte-faithfulness.** All four fields are stored and reloaded as `String`, verbatim. Only the *outer* JSON document is encrypted; the field Strings pass through `kotlinx.serialization` untouched, so the hex token, the base64-STD pubkey (incl. `+`/`/`/`=`), and the relayUrl (a `wss://host` origin — the transport appends `/v1/client`) survive byte-identical. #275/#276 receive exactly what the server sent — the store does **no** field-shape validation (it is a faithful persistence layer; validation is owned by the [Pairing payload parser](pairing-payload-parser.md), [#320](../codebase/320.md), which validates a scanned payload *before* it reaches `save()`).
+A decrypted bare `PairedServer` object with neither `version` nor `entries` is
+read as one unnamed entry. Reads do not rewrite it or create a wrap key. Startup
+therefore does not depend on a migration write.
+
+The next successful save, rename of an existing id, or removal of an existing id
+writes the versioned collection in the same preference. Unknown-id no-ops do not
+migrate. Removing the final entry persists an **encrypted empty collection**, so
+reopening cannot resurrect a removed legacy pairing. If the first migration write
+fails, the original legacy blob and compatibility choice remain unchanged.
 
 ## Data flow
 
+```text
+list() / loadById(id) / load()
+  read preference -> decode base64 -> check length -> look up existing wrap key
+  -> authenticate/decrypt -> decode legacy record or versioned collection
+  -> ordered entries / matching entry / last record
+  expected read failure -> empty list / null / null (no write or key creation)
+
+save(record) / setDisplayName(id, name) / remove(id)
+  DataStore.edit {
+    read -> strictly decode existing blob -> transform entries
+    -> encode version 1 collection -> encrypt with fresh IV -> replace preference
+  }
+  successful commit -> new credentials, names and save order become visible
+  expected failure -> PairedServerStoreException; previous blob/order preserved
 ```
-save(record)                              load()
-  └─ IO:                                    └─ IO:
-     JSON(record) → UTF-8 bytes                read prefs["pyrycode.paired_server"]
-     wrap(bytes)  (Keystore IV)                ├─ null → return null            (absent → re-pair)
-     edit { prefs[KEY] = b64(iv‖ct) }          └─ present → decode → (size>IV guard) →
-       └─ throws PairedServerStoreException                unwrap → UTF-8 → JSON
-          on Keystore/IO failure                          ├─ ok    → PairedServer
-                                                           └─ fail  → return null (undecryptable → re-pair)
-```
 
-`load()` uses a **non-creating** `KeyStore.getKey` lookup, so a read never mints a wrap key — a missing alias short-circuits straight to `null`.
+## Failure model — graceful reads, strict mutations
 
-## Failure model — graceful load, loud save
+Missing storage produces an empty list or `null`. Expected IO, Keystore and decode
+failures do the same for reads, including a lost key, invalid base64, a truncated
+or authentication-failing blob, malformed JSON, an unsupported version or duplicate
+ids. The key lookup is non-creating, and reads never erase or repair stored data.
 
-This is the **inverse** of [#291](../codebase/291.md)'s throw-don't-regenerate contract, and the discriminator is **identity-drift risk**:
+Mutations strictly decode existing storage before changing it. They throw
+`PairedServerStoreException` on expected storage, Keystore or malformed-data
+failures. Failed saves, renames, removals and migration writes preserve the
+previous persisted bytes and compatibility selection. A graceful `null` read
+therefore **does not mean the blob was deleted or that re-pairing can overwrite
+it**. This prevents a transient read failure from discarding retained hosts.
 
-- **`load()` is graceful — returns `null`, never throws.** Absent record, wrap key gone (reinstall / credential reset / restore-to-new-device), tampered/truncated blob, bad base64, malformed JSON — every one resolves to `null` → "no paired server" → re-pair. This is safe *here* because the record is **re-fetchable from the QR** (no identity-drift risk), unlike #291's device keypair which is unrecoverable if discarded.
-- **`save()` is loud — throws `PairedServerStoreException`** on a Keystore/IO failure (the pairing did *not* persist; the caller surfaces "try again").
+Failure classification is explicit: `GeneralSecurityException`, `ProviderException`
+and `SecurityException` map to `keystore`; `IOException` to `io`;
+`IllegalArgumentException` (including serialization failures) to `invalid_data`.
+Other exceptions, including coroutine cancellation, propagate unchanged. The
+length check precedes the IV split so a truncated blob is classified as invalid
+data rather than causing an index error.
 
-The graceful catch set on `load()` is the **specific** `{ GeneralSecurityException, IOException, IllegalArgumentException }` — **never `Exception`/`Throwable`**. This is load-bearing: it lets `CancellationException` propagate (structured-concurrency cancellation honoured) and stops genuine bugs being masked as a silent re-pair loop. Because the catch set is deliberately narrow, an explicit **`blob.size <= 12 → null`** guard sits before the IV split, so a truncated blob's `IndexOutOfBoundsException` (which the set does *not* catch) can't crash the read.
-
-**No secret material in logs or exception messages.** The `token`, the decrypted JSON, the plaintext field values, and the wrapped blob never reach `Log`/`Timber` or a `PairedServerStoreException` message (which carries the cause-class + failed operation, never bytes). The redacting `PairedServer.toString()` is the structural guard against an accidental `Log.d(tag, "$record")`.
+Mutation exceptions carry only the operation and a static failure code, with no
+original cause attached. Parser/provider exception messages can contain input;
+redacting only the outer message would still leak through a printed stack trace.
+Debug-only [RelayLog](relay-log.md) diagnostics likewise contain only operation,
+outcome and failure codes. Credentials, local names, plaintext and ciphertext
+stay out of these diagnostics. Record, entry and private collection string output
+redact all fields, so printing a returned list is also redacted.
 
 ## Wiring & usage
 
-DI (Koin, `AppModule.kt`), directly beneath the #291 binding:
+The Koin binding remains:
 
 ```kotlin
 single { KeystorePairedServerStore(get()) } bind PairedServerStore::class
 ```
 
-Consumer shape (#275/#276 will use):
+`MainActivity` uses `load()` for initial paired state and the Settings server
+label. `NoiseSessionFactory` and `RelayConnectionSupervisor` also still use the
+compatibility read. Scan and paste confirmation use
+[`confirmPairingAndConnect`](pairing-confirm-gate.md) to save before starting the
+connection; a failed save never proceeds to connect.
 
-```kotlin
-val paired = pairedServerStore.load() ?: return /* → re-pair: no stored server */
-// #276 (relay WS client): dial paired.relayUrl, send paired.token + paired.serverId
-// #275 (Noise_IK session): use paired.serverStaticPublicKey as the responder's static rs
-```
+The concrete store implements `PairedServerCollectionStore`, but the collection
+interface has no separate DI binding yet. Explicit host connection construction
+and lifecycle routing belong to [#633](https://github.com/pyrycode/pyrycode-mobile/issues/633)
+and [#634](https://github.com/pyrycode/pyrycode-mobile/issues/634); name/removal UI
+belongs to [#642](https://github.com/pyrycode/pyrycode-mobile/issues/642).
+
+## Testing
+
+[`KeystorePairedServerStoreTest`](../../../app/src/androidTest/java/de/pyryco/mobile/data/crypto/KeystorePairedServerStoreTest.kt)
+uses real Android Keystore on a device/emulator. Its 17 tests cover byte-faithful
+credentials, retained entries and save order, local names and targeted removal,
+device-key continuity, concurrent saves, legacy migration, failed mutations,
+cancellation, corruption/key loss and ciphertext/string/log/exception redaction.
+Compilation alone does not execute these assertions.
+
+**Recreating the store over the same DataStore can pass on cached preferences.**
+Persistence assertions must cancel and join the DataStore scope, reopen its file,
+and then construct the new store before reading. The collection, removal and
+migration tests use this sequence, including repeated reopening after legacy
+removal. The older fresh-store-only test is not sufficient persistence evidence.
+
+Legacy fixtures encrypt bare record JSON independently of the collection codec.
+The mutation fault fixture runs the transform and then throws before committing;
+this tests failure after encryption rather than only failure before work begins.
+Assertions compare the original blob and compatibility choice after failed save,
+rename and removal, including the first migration write, and reopen storage to
+check the entries. The overlap test gates two instances into mutation concurrently
+against the same DataStore before checking both records after reopening.
 
 ## Edge cases & limits
 
-- **No JVM unit test.** Real `AndroidKeyStore` needs a device/emulator, so the round-trip lives in `androidTest/` (`KeystorePairedServerStoreTest`, 7 scenarios incl. an adversarial `+`/`/`/`=` pubkey + `/v1/client` relayUrl with query + long hex token). `./gradlew check` compiles it; `connectedAndroidTest` on a device proves persistence. A fresh store over the same DataStore is the app-restart proxy (the DataStore file and the Keystore alias both outlive the process).
-- **No field-shape validation.** The store persists whatever it's given; relayUrl scheme, pubkey length/base64, and non-empty fields are the [Pairing payload parser](pairing-payload-parser.md)'s responsibility ([#320](../codebase/320.md)), which rejects malformed scanned payloads *before* `save()`. Structural validity still isn't authenticity — that's the #321 fingerprint gate; and the credential consumers (#275/#276) remain dormant.
-- **Backup.** Android auto-backup of `app_prefs` would copy only ciphertext; Keystore keys never migrate, so a restored backup can't decrypt → `load()` → `null` → re-pair (more benign than #291, which throws). Excluding `app_prefs` from backup is app-wide manifest hardening, deferred to a backup-policy ticket.
-- **Rollback/freshness.** GCM authenticates integrity, not freshness — replacing the at-rest blob with an older captured ciphertext needs uid-level file access, who could already read the current token; dominated by the accepted at-rest residual. Out of scope.
-- **Residual (accepted).** Code running *as this app's uid* on an unlocked device can call the Keystore to unwrap the blob — the same accepted residual as #291; bounded by the uid-scoped wrap key (no co-resident app can unwrap it).
+- **Validation and authenticity.** Credential shape is the parser's responsibility;
+  the [fingerprint confirmation gate](pairing-confirm-gate.md) handles user trust.
+  Local names are stored as supplied; any future rendering owns its presentation.
+- **Removal is local.** It neither revokes a daemon token nor deletes the phone's
+  [device static key](device-static-keystore.md) for that id.
+- **Backup.** A backup of `app_prefs` contains ciphertext but cannot migrate its
+  Keystore key. Restored unreadable pairings return empty/null on reads and block
+  mutations while the unreadable blob remains. Backup exclusions and recovery
+  policy are outside this store's scope.
+- **Rollback/freshness.** GCM authenticates integrity, not freshness; it does not
+  detect replacement with an older captured ciphertext.
+- **Accepted residual.** Code running as this app's uid can call the Keystore to
+  unwrap the blob, as described in ADR 0006. Encryption at rest does not remove
+  plaintext from process memory during use.
 
 ## Related
 
-- Ticket notes: [`../codebase/294.md`](../codebase/294.md)
-- Decision: [ADR 0006 — Keystore wrap-at-rest](../decisions/0006-keystore-wrap-at-rest-device-static-key.md) (this store is its second consumer)
-- Mirrors / precedent: [device static keystore](device-static-keystore.md) ([#291](../codebase/291.md)) — same portability split + wrap-at-rest mechanism, **inverse** load contract (throw-don't-regenerate vs graceful-null)
-- Sibling Phase 4 wire layer: [Mobile Protocol v2 — wire layer](mobile-protocol-v2-wire-layer.md) ([#273](../codebase/273.md))
-- Consumers (dormant): [#275](https://github.com/pyrycode/pyrycode-mobile/issues/275) (Noise_IK session) + [#276](https://github.com/pyrycode/pyrycode-mobile/issues/276) (relay WS client)
-- Wire contract: vault doc *"Phase 4 — Noise Client Spike Findings"* (`second-brain`, `2026-05-02-pyrycode-mobile/`); QR payload `{server, relay, token, server_static_pubkey}` produced server-side by `pyry pair` (pyrycode [#432](https://github.com/pyrycode/pyrycode/issues/432)).
+- [Collection design (#632)](../../specs/architecture/632-retain-host-pairings.md)
+- [Original store history (#294)](../codebase/294.md)
+- [ADR 0006 — Keystore wrap-at-rest](../decisions/0006-keystore-wrap-at-rest-device-static-key.md)
+- [Device static keystore](device-static-keystore.md): separate key custody and
+  throw-on-decrypt-failure contract
+- [Noise session](noise-ik-session.md) and [reconnect supervision](relay-reconnect-supervisor.md)
+- [Mobile Protocol v2 wire layer](mobile-protocol-v2-wire-layer.md)
