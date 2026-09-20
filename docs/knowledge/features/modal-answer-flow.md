@@ -195,14 +195,16 @@ viewModel {
 }
 ```
 
-The two new VM ctor params are **defaulted no-ops** (`{ _, _ -> }` / `{ _ -> }`), so in the default debug
-build (`USE_RELAY_REPOSITORY` OFF, fake repository) and every existing test the send path is inert — taps on
-a VM with no modal source no-op via the `as? Open ?: return` guard.
+The two VM ctor params default to no-ops (`{ _, _ -> }` / `{ _ -> }`) for direct
+test/preview construction that omits them. `AppModule` supplies the coordinator's
+send methods in both real and demo builds; the
+[repository build option](dependency-injection.md#how-it-works) does not gate them.
+Taps on a VM with no open modal no-op via the `as? Open ?: return` guard.
 
 ## Edge cases / limitations
 
 - **No modal open** — `onModalOption` / `onModalCancel` are no-ops (the `currentModal.value as? Open ?:
-  return` guard). The fake graph + existing tests stay inert.
+  return` guard), including tests that keep `currentModal` at `Hidden`.
 - **Send failure** — caught, emits one `modalSendErrors`; `currentModal` stays `Open` so the user can
   re-answer. No auto-retry, no error-code interpretation, no read-only degrade (that is #440/#452).
 - **VM teardown mid-send** — cancellation propagates cleanly (the rethrow); no spurious error signal.

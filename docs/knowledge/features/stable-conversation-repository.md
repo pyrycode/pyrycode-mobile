@@ -18,10 +18,12 @@ non-crashing surface while no connection is live.
 Package: `de.pyryco.mobile.data.repository` (`StableConversationRepository.kt`), co-located with the
 [contract](conversation-repository.md) it implements and the [coordinator](relay-repository-coordinator.md)
 it reads from. Landed in [#352](../codebase/352.md) (split from #349). Portable, `android.*`-free, emits
-**no logs**. It is registered as its own resolvable DI type; as of #350 it is **flag-selected** as the
-`ConversationRepository` binding by the `conversationRepositoryModule` selector — bound when
-`BuildConfig.USE_RELAY_REPOSITORY` is on, with the Fake as the default-OFF binding (see
-[`../codebase/350.md`](../codebase/350.md)).
+**no logs**. It is registered as its own resolvable DI type and is the **normal app build's
+`ConversationRepository` binding**. The `conversationRepositoryModule` selector reads
+`BuildConfig.USE_RELAY_REPOSITORY`, generated from the `useRelayRepository` Gradle property
+with a `true` default. `-PuseRelayRepository=false` selects the fake for a demo; tests and
+previews can explicitly inject fake independently of that flag. See
+[dependency injection](dependency-injection.md) and [build commands](../../../README.md#build).
 
 ## Where it sits in the Phase 4 stack
 
@@ -167,9 +169,9 @@ an app crash.
 
 While no connection is live, **cold reads render the disconnected state as the empty projection**
 (`emptyList()` / `null`) and resume on the next connection — they never error. This conflates "no
-connection" with "connected, genuinely zero items" at this layer; a distinct connection-status UI
-surface is a deferred follow-up (the flag-ON production flip's concern, not #350's binding-only slice).
-Note the remote
+connection" with "connected, genuinely zero items" at this layer; consumers use the separate
+[connection status](connection-status.md) / [connection banner](connection-banner.md) surfaces
+to distinguish connection state. Note the remote
 repo emits nothing until its first snapshot, so the empty fallback covers only the no-connection gap,
 not a connected-but-loading gap.
 
@@ -188,8 +190,8 @@ to it is the #350 `conversationRepositoryModule` selector**, not a `bind` on thi
 `get<RelayRepositoryCoordinator>()` resolves the eager coordinator singleton; `currentRepository` is a
 stable `StateFlow` instance for the coordinator's life.
 
-As of #350 the selector binds this facade when `BuildConfig.USE_RELAY_REPOSITORY` is on (default OFF →
-Fake):
+The selector binds this facade when `BuildConfig.USE_RELAY_REPOSITORY` is on, which is the
+default since #631. Demo builds explicitly turn it off:
 
 ```kotlin
 single<ConversationRepository> {
@@ -204,9 +206,8 @@ interface). See [`../codebase/350.md`](../codebase/350.md).
 
 ## Edge cases / limitations
 
-- **No connection-status surface.** Disconnected renders as the empty projection (per the contract
-  above), indistinguishable at this layer from a genuinely-empty connected repo. A distinct status
-  surface is a deferred follow-up.
+- **No connection-status field on the facade.** Disconnected renders as the empty projection
+  (per the contract above); connection status is supplied separately to the UI.
 - **One-shot while absent throws** rather than queuing — there is no offline outbox; a not-connected
   mutation is the caller's to catch and retry.
 - **No `distinctUntilChanged` on the outer switch** — `StateFlow` already conflates equal consecutive

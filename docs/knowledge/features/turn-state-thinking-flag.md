@@ -123,9 +123,10 @@ viewModel {
 }
 ```
 
-In the default debug build (`USE_RELAY_REPOSITORY` OFF, fake repository) there is no live coordinator
-event source reaching this factory path the same way, and the defaulted empty-flow keeps the flag
-inert — `isThinking` honestly holds `false` with no live daemon.
+`AppModule` supplies the coordinator's live events in both real and demo builds;
+the [repository build option](dependency-injection.md#how-it-works) does not gate
+this seam. Direct test/preview construction that omits `liveSessionEvents` uses
+the default empty flow, so `isThinking` remains `false`.
 
 ## Related
 
