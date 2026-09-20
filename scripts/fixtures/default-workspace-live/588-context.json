@@ -1,10 +1,5 @@
 {
   "issue": 588,
-  "result": "failed",
-  "run_started_at_utc": "2026-09-20T12:43:59.263Z",
-  "app_revision": "90de2cecdd16272612ee3170c5c8c2c00f28e714",
-  "main_revision": "595a94723d9bcfea3b306b8bc19515d8b62d3833",
-  "daemon_revision": "dccd18286b8f80d113c055322e22df3125bd1735",
   "device": {
     "name": "pixel2Api33Atd",
     "profile": "Pixel 2",
@@ -12,37 +7,30 @@
     "system_image_source": "aosp-atd"
   },
   "command": "python3 scripts/android-test-gate.py live",
-  "process_exit": 1,
-  "wall_clock_seconds": 316.1,
+  "xml_file": "588.xml",
+  "test_class": "de.pyryco.mobile.e2e.InteractiveStreamE2ETest",
+  "result": "passed",
+  "run_started_at_utc": "2026-09-20T15:12:16.872Z",
+  "app_revision": "1569fe03d8ac5cdb6b13995175fcb9c6ba5d4d2a",
+  "main_revision": "76a60126a9d66d714aa381387befb9b799c7f360",
+  "daemon_revision": "dccd18286b8f80d113c055322e22df3125bd1735",
+  "process_exit": 0,
+  "wall_clock_seconds": 69.5,
   "executed": 8,
-  "passed": 5,
-  "failed": 3,
+  "passed": 8,
+  "failed": 0,
   "errors": 0,
   "skipped": 0,
-  "xml_file": "588.xml",
-  "xml_sha256": "eceff35c11c2f1852cce68ade493442ae6c418c29e44ac123110f42516374e17",
-  "xml_source": "Exact sanitized dispatcher stdout from 2026-09-20T12-43-59-263Z_real-claude-gate_#588.log; original detached worktree was removed.",
-  "dispatcher_evidence": "https://github.com/pyrycode/pyrycode-mobile/issues/588#issuecomment-5749901060",
-  "test_class": "de.pyryco.mobile.e2e.InteractiveStreamE2ETest",
-  "failed_cases": [
-    "interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace",
-    "interactiveTurn_newSession_rendersSessionBoundaryDelimiter",
-    "interactiveTurn_pingPrompt_streamsPingReplyIntoThread"
+  "xml_sha256": "375216bad2c48b04ef2f0c0ec55e3c82b02d1fe42d0ddd7deb9c4f22da61496a",
+  "xml_source": "Exact sanitized dispatcher stdout from 2026-09-20T15-12-16-872Z_real-claude-gate_#588.log; original detached worktree was removed.",
+  "metadata_source": "Dispatcher PASS comment supplies app/main revisions, process exit and wall clock; matching stderr records daemon revision, device and eight executed cases. UTC start is the dispatcher log timestamp.",
+  "dispatcher_evidence": "https://github.com/pyrycode/pyrycode-mobile/issues/588#issuecomment-5750657992",
+  "required_cases": [
+    "interactiveTurn_pingPrompt_streamsPingReplyIntoThread",
+    "interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace"
   ],
-  "failed_assertion": "90-second wait for pingNodeCount() to exceed its post-send baseline",
-  "daemon_history_summary": {
-    "scope": "All three failed cases, correlated through send_message.enqueued conversation IDs in the isolated test daemon history",
-    "assistant_deltas_per_case": 1,
-    "assistant_text_characters": 4,
-    "assistant_text_matches_expected_reply": true,
-    "turn_end_outcome": "success",
-    "turn_end_is_error": false,
-    "turn_end_terminal_reason": "completed",
-    "turn_end_stop_reason": "end_turn",
-    "rate_limit_status": "allowed_warning"
-  },
-  "triage": "Daemon generated all expected replies successfully. Mobile receive/render/assertion path remains unproven; substring-count growth can be offset by queued text disappearing. No current authentication or workspace-generation failure established.",
-  "phone_rendering_verified": false,
-  "blocker": "https://github.com/pyrycode/pyrycode-mobile/issues/694",
-  "pending": "Repair reply assertion, then dispatcher live revalidation and builder commitment of passing artifacts. Retain needs-real-claude and needs-live-artifacts."
+  "phone_rendering_verified": true,
+  "resolved_blocker": "https://github.com/pyrycode/pyrycode-mobile/issues/694",
+  "triage": "Both required workspace scenarios pass with the displayed, exact list-scoped reply assertion from #694. No workspace product patch is warranted by this run.",
+  "pending": "Post-artifact review and dispatcher live gate remain required before final acceptance; documentation stage updates the ladder verification status."
 }
