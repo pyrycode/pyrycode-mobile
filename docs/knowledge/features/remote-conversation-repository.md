@@ -3,8 +3,9 @@
 The **live, server-backed implementation** of the [`ConversationRepository`](conversation-repository.md)
 contract — the Phase 4 counterpart to the in-memory `FakeConversationRepository`. It reads real server
 state over the [Mobile Protocol v2](mobile-protocol-v2-wire-layer.md) Noise session instead of an
-in-process seed store, and is swapped in for the Fake via a Koin module (per CLAUDE.md: the Phase 4
-backend swap is architectural — replace the binding, don't special-case the UI).
+in-process seed store. Normal builds reach it through the Koin-bound
+[`StableConversationRepository`](stable-conversation-repository.md) facade, keeping UI consumers
+independent of connection churn and repository selection.
 
 Package: `de.pyryco.mobile.data.repository` (`RemoteConversationRepository` + the consumer-defined
 `SessionPump` interface), same package as the contract and the Fake. Built **slice by slice**: the
@@ -15,17 +16,14 @@ path — `sendMessage` — landed in [#346](../codebase/346.md)** (which also in
 \#314 was split on a per-method axis into #346 (`sendMessage`) / #347 (`createDiscussion`) / #348
 (`promote`), each extending the **same class** as it lands. Portable, `android.*`-free.
 
-> **Constructed per connection by #351; not yet the UI's binding.** #312 landed
-> `RemoteConversationRepository` with no consumers. The
-> [`RelayRepositoryCoordinator`](relay-repository-coordinator.md) ([#351](../codebase/351.md), **landed**)
-> now constructs one **per live connection** against the pump + a connection-scoped child scope, and made
-> the concrete pump satisfy the contract (`NoiseSessionPump : ManagedSessionPump : SessionPump`). It
-> publishes the live repository on `currentRepository` for the **#352** stable facade to consume.
-> **[#350](../codebase/350.md) (landed)** added the flag-gated `conversationRepositoryModule` selector
-> that binds `ConversationRepository` to the facade when `BuildConfig.USE_RELAY_REPOSITORY` is on — but
-> the flag **defaults OFF**, so the UI still binds `FakeConversationRepository` today. (The build flag
-> selects Fake vs. facade; paired-state still governs whether the bound facade has a *live* delegate, per
-> [[phase4-no-central-flag-gate-per-piece]] — the two are orthogonal.) See [Hand-off](remote-conversation-repository-state-errors-and-handoff.md#hand-off--the-live-binding).
+> **Constructed per connection; consumed through the stable facade.** The
+> [`RelayRepositoryCoordinator`](relay-repository-coordinator.md) constructs one remote repository
+> against each connection's pump and child scope, publishing it on `currentRepository` when the
+> Noise pump is open. Normal builds select the facade through `conversationRepositoryModule`;
+> `-PuseRelayRepository=false` selects `FakeConversationRepository` for a demo. The build flag
+> selects the UI repository; pairing, lifecycle and connection readiness determine whether a live
+> delegate exists. See [live binding](remote-conversation-repository-state-errors-and-handoff.md#hand-off--the-live-binding)
+> and [dependency injection](dependency-injection.md).
 
 ## Map
 
@@ -45,7 +43,9 @@ The sections that stay here: `## Where it sits in the Phase 4 stack`, `## The `S
 ## Where it sits in the Phase 4 stack
 
 ```
-UI ViewModels  ◀── observeConversations(filter): Flow<List<Conversation>>   (binding-agnostic: Fake or Remote)
+UI ViewModels  ◀── observeConversations(filter): Flow<List<Conversation>>
+        ▲
+StableConversationRepository   ◀── normal build binding; switches over coordinator.currentRepository
         ▲
 RemoteConversationRepository (#312+)   ◀── this doc
         │  send(list_conversations) ; collect inbound conversations snapshots
@@ -229,5 +229,6 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   ([#351](../codebase/351.md), **landed**) — constructs this repository per live connection against the
   pump + a child scope, made `NoiseSessionPump : ManagedSessionPump : SessionPump`, and publishes the
   live instance on `currentRepository` (consumed by the **#352** facade). The flag-gated Koin binding
-  selector that picks the Fake or the facade is **[#350](../codebase/350.md)** (landed; default OFF → Fake).
+  selector that picks the Fake or the facade is **[#350](../codebase/350.md)**; since #631 it defaults
+  to the facade, with the fake selected explicitly for demo builds and ordinary instrumentation.
 </content>

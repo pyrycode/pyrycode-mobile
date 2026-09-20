@@ -5,7 +5,7 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import kotlinx.coroutines.flow.MutableStateFlow
-import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -60,18 +60,15 @@ class ConversationRepositoryBindingTest {
             assertTrue(koin.get<ConversationRepository>() is StableConversationRepository)
         }
 
-    /**
-     * AC #1: the default parameter tracks the build flag, and the safe default is fake.
-     *
-     * Tripwire: this pins `USE_RELAY_REPOSITORY == false`. If the `buildConfigField` literal in
-     * `app/build.gradle.kts` is ever flipped to `"true"`, this case goes red on purpose — turning the
-     * flag on for real use must be a deliberate, reviewed change, not a silent default flip.
-     */
+    /** Gradle supplies the requested mode independently of the generated BuildConfig field. */
     @Test
-    fun defaultParam_isSafeFakeDefault() {
-        assertFalse("USE_RELAY_REPOSITORY must default OFF", BuildConfig.USE_RELAY_REPOSITORY)
+    fun defaultParam_selectsRequestedBuildRepository() {
+        val expectedRelay = System.getProperty("expectedUseRelayRepository")?.toBooleanStrict() ?: true
+        assertEquals("generated repository flag", expectedRelay, BuildConfig.USE_RELAY_REPOSITORY)
         withSelector(conversationRepositoryModule()) { koin ->
-            assertTrue(koin.get<ConversationRepository>() is FakeConversationRepository)
+            val expected =
+                if (expectedRelay) koin.get<StableConversationRepository>() else koin.get<FakeConversationRepository>()
+            assertSame(expected, koin.get<ConversationRepository>())
         }
     }
 

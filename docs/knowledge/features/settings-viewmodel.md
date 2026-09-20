@@ -153,7 +153,14 @@ viewModel {
 }
 ```
 
-The first two `get()` calls resolve to the existing `AppPreferences` and `ConversationRepository` bindings (the latter is the same `FakeConversationRepository` instance `ChannelListViewModel` / `DiscussionListViewModel` / `ArchivedDiscussionsViewModel` share). The third arg (#398) fetches the `connectionStatus` flow off the concrete [`RelayRepositoryCoordinator`](relay-repository-coordinator.md) singleton — the same `get<RelayRepositoryCoordinator>().<property>` shape the adjacent `StableConversationRepository(...currentRepository)` line uses, **not** a `get()` (`StateFlow<ConnectionStatus>` is not a registered Koin type, and this avoids a new interface/binding). The coordinator is `single(createdAtStart = true)` *unconditionally*, so this resolves in every build regardless of the `USE_RELAY_REPOSITORY` flag (flag-off debug builds honestly read `Offline / Down`).
+The first two `get()` calls resolve `AppPreferences` and the shared `ConversationRepository`
+singleton: the stable facade in normal builds, or the fake in explicit demo builds.
+See [dependency injection](dependency-injection.md). The third argument fetches
+`connectionStatus` directly from the concrete
+[`RelayRepositoryCoordinator`](relay-repository-coordinator.md), avoiding a separate
+`StateFlow<ConnectionStatus>` binding. The coordinator is created eagerly in both
+build modes, so status reflects the actual connection independently of repository
+selection.
 
 Consumed once at the Settings NavHost destination:
 

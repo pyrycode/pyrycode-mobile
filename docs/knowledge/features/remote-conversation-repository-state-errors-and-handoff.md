@@ -41,9 +41,8 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
   is the only other shared mutable state: an in-flight mutation request registers a deferred keyed by its
   envelope id, the collector completes it on the correlated `ack`/`error`, and the awaiting caller
   removes its own entry in a `finally`. Bounded by caller concurrency (one entry per in-flight send,
-  removed on success/error/cancellation) — no unbounded growth. The one documented gap: a
-  connection-drop mid-await leaves a single stranded entry until the *caller* is cancelled (no timeout
-  added; see [Hand-off](#hand-off--the-live-binding)).
+  removed on success/error/cancellation). On collector termination, `failAllPending` also fails and
+  removes registered requests so connection loss does not strand an awaiting caller (#488).
 - **Dispatcher inherited from the injected scope** (DI uses `Dispatchers.Default`; this is pure CPU/JSON
   work — the socket I/O is the transport's, below the pump). Not hard-coded.
 - `observeConversations`, `observeLastMessage`, and `observeMessages` are cold; N concurrent collectors
@@ -93,9 +92,9 @@ errors, so dropping is the only interface-consistent option. An uncaught decode 
 **single** inbound consumer, silently freezing **all** future conversation updates for the connection — a
 severe failure against an untrusted (post-auth) server payload. The #316 mapper validates shape; the
 repository keeps the consumer alive. Pre-`Open` send loss is **not** defended here (no buffering /
-retry-on-`Open`): the [#351 coordinator](relay-repository-coordinator.md) wires the repository against
-an `Open` pump and builds a fresh chain per reconnect, so a pre-`Open` re-request stays out of scope here
-(a future concern if a lost first request is ever observed).
+retry-on-`Open`): the [coordinator](relay-repository-coordinator.md) publishes the repository through
+an Open-gated `currentRepository` and builds a fresh chain per reconnect. The facade only subscribes
+after that connection's pump is ready; see the [coordinator's Open gate](relay-repository-coordinator.md#the-single-connection-source-and-the-open-gated-currentrepository-421--493).
 
 ## Hand-off — the live binding
 
@@ -109,31 +108,26 @@ The downstream DI / connection-coordinator work, and where it landed:
 3. ✅ **Flag-gate the Koin binding `ConversationRepository`** between `FakeConversationRepository` and the
    live-backed facade. Landed in [#350](../codebase/350.md) as the `conversationRepositoryModule` selector
    (`if (useRelay) get<StableConversationRepository>() else get<FakeConversationRepository>()`), gated by
-   the build-time `BuildConfig.USE_RELAY_REPOSITORY` flag — **default OFF**, so the bound
-   `ConversationRepository` is still the Fake until the production flip. Flipping ON additionally depends
-   on the v2 mutations (#346/#347/#348) and the server gaps #336 (boundaries) / #337 (streaming).
+   the build-time `BuildConfig.USE_RELAY_REPOSITORY` flag. Since #631 the Gradle property
+   `useRelayRepository` defaults to `true`, making the stable facade the normal app binding;
+   `-PuseRelayRepository=false` selects the fake demo. Ordinary instrumentation without relay arguments
+   explicitly selects fake in either build mode. See [dependency injection](dependency-injection.md).
+   Connection establishment remains owned by the lifecycle driver, supervisor and coordinator;
+   the build flag only selects the repository injected into UI consumers.
 
-Open hand-off items: **pre-`Open` request loss** (if a subscribe's `send` lands before the handshake
-completes, the list stays empty until the next subscribe or a server push — the fix, if observed, is a
-re-request on `PumpState.Open`; #351 builds a fresh chain per reconnect but adds no re-request);
-**unsolicited `conversation_created`/`conversation_updated` delta-merge** (the *correlated*-reply case
+The live binding relies on the coordinator's [Open gate](relay-repository-coordinator.md#the-single-connection-source-and-the-open-gated-currentrepository-421--493)
+to prevent the initial list request from being lost during handshaking (#421/#493).
+
+Open hand-off items: **unsolicited `conversation_created`/`conversation_updated` delta-merge** (the *correlated*-reply case
 landed with #347/#348, but a server-pushed single-row delta with no `inReplyTo` match is still a no-op —
 the list refreshes on the next `conversations` snapshot; merging deltas live remains future work);
 **`isSleeping`/session enrichment** in the list (arrives via the detail/message read paths, not here).
 
-Two more hand-offs opened by the `sendMessage` slice ([#346](../codebase/346.md)):
+The earlier `sendMessage` hand-offs are implemented:
 
-- **ViewModel error surface (still a follow-up — *not* #350).** All three live mutations — `sendMessage`
-  (#346), `createDiscussion` (#347), and `promote` ([#348](../codebase/348.md)) — now throw
-  `RelayErrorException` / `IllegalStateException` (not just `IllegalArgumentException`). The UI call sites
-  (e.g. `ThreadViewModel.sendMessage`, `DiscussionListViewModel.confirmPromotion`) are currently
-  fire-and-forget with no `try/catch` — harmless under the fake, but once the live remote is bound those
-  exceptions would escape uncaught. **[#350](../codebase/350.md) did *not* address this** — it was the
-  binding-selector slice only, ships with the flag OFF, and touched no ViewModel. Widening the ViewModel
-  error handling (and documenting the widened exception set on the `ConversationRepository` interface
-  KDoc) belongs to the flag-ON production flip, which remains a future follow-up.
-- **Connection-drop-mid-send leak.** If the connection scope is cancelled while a caller still awaits a
-  reply, the deferred never completes and the suspend hangs until the *caller* is cancelled (the
-  ViewModel scope on screen exit). No timeout is added (no observed hang; a timeout value is a product
-  call). A future slice — or the [#351 connection coordinator](relay-repository-coordinator.md), which
-  already cancels the connection scope on drop — may fail all `pendingRequests` on disconnect.
+- **ViewModel relay failures:** `sendMessage`, `createDiscussion` and `promote` call sites use
+  [guarded repository calls](guarded-repo-launch.md), which catch relay/not-connected failures and
+  preserve cancellation. These existing guards remain in place when real becomes the default.
+- **Connection loss during an awaited reply:** the inbound collector's `finally` runs
+  `failAllPending`, completing registered requests with `IllegalStateException` and removing them
+  (#488). Callers can handle connection loss without waiting for their own scope to end.

@@ -74,7 +74,7 @@ val appModule =
             RelayTransportFactory { paired -> OkHttpRelayTransport(paired, info, client) }
         }
         // Concrete-only: the ConversationRepository interface is bound by conversationRepositoryModule
-        // (#350), which flag-selects this Fake (the default) or the StableConversationRepository facade.
+        // (#350), which selects the StableConversationRepository facade by default or this demo Fake.
         single { FakeConversationRepository() }
         // #307: real WS-backed source. Bound but dormant — #302's driver drives the first connect().
         // #489: also expose the narrow RelayConnectionController seam so the Scanner confirm/paste flow
@@ -144,9 +144,9 @@ val appModule =
  * Binds the [ConversationRepository] interface, flag-selecting the implementation (#350). This is the
  * **only** definition that binds the interface — [appModule] registers both candidates concrete-only.
  *
- * [useRelay] defaults to the compile-time [BuildConfig.USE_RELAY_REPOSITORY] (OFF), so the production
- * graph binds [FakeConversationRepository] until the relay backend is functional end-to-end. The
- * selector only resolves the two already-registered singletons by type — it never constructs either,
+ * [useRelay] defaults to the compile-time [BuildConfig.USE_RELAY_REPOSITORY] (ON). Build with
+ * `-PuseRelayRepository=false` to select [FakeConversationRepository] for a demo. The selector
+ * only resolves the two already-registered singletons by type — it never constructs either,
  * so it carries none of their dependency weight and opens no connection.
  *
  * Tests and `@Preview`s force fake mode by passing `useRelay = false` explicitly, independent of the

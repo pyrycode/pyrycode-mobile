@@ -194,9 +194,11 @@ viewModel {
 }
 ```
 
-In the default debug build (`USE_RELAY_REPOSITORY` OFF, fake repository) no live coordinator event source
-reaches this factory path; the defaulted `MutableStateFlow(Hidden)` keeps the state inert — `currentModal`
-honestly holds `Hidden` with no live daemon.
+`AppModule` supplies `coordinator.currentModal` in both real and demo builds; the
+[repository build option](dependency-injection.md#how-it-works) does not gate this flow.
+The defaulted `MutableStateFlow(Hidden)` is used by direct test/preview construction
+that omits the argument. A fresh coordinator also starts at `Hidden` until a modal
+event arrives; connection teardown retains its last state as described above.
 
 ## Related
 

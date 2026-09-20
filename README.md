@@ -4,7 +4,7 @@ Android client for [Pyrycode](https://github.com/pyrycode/pyrycode) — talk to 
 
 ## Status
 
-As of 2026-08-22: UI complete (Phases 0-2 shipped); **Phase 4 backend is live** — the client has held a stable v2 `Noise_IK` session against the production relay since 2026-07-03. The UI still binds `FakeConversationRepository` by default behind the compile-time `USE_RELAY_REPOSITORY = false` flag in `app/build.gradle.kts`; the [pre-ship gate](#pre-ship-gate) exercises the real stack end to end.
+As of 2026-09-20: UI complete (Phases 0-2 shipped); **Phase 4 backend is live** — the client has held a stable v2 `Noise_IK` session against the production relay since 2026-07-03. Normal app builds use the relay-backed `StableConversationRepository` facade to show the paired server's conversations. An explicit [demo build](#build) selects `FakeConversationRepository`; the [pre-ship gate](#pre-ship-gate) exercises the real stack end to end.
 
 This is a personal project under active development. Not yet on Play Store.
 
@@ -14,11 +14,21 @@ Native Kotlin + Jetpack Compose + Material 3. Single Gradle module. Min SDK 33 (
 
 ## Build
 
+Normal builds use the real server repository. The compile-time Gradle property
+`useRelayRepository` defaults to `true`; set it to `false` for the in-memory demo.
+
 ```bash
-./gradlew assembleDebug
+./gradlew assembleDebug                              # real (default)
+./gradlew assembleDebug -PuseRelayRepository=true     # real (explicit)
+./gradlew assembleDebug -PuseRelayRepository=false    # demo
 ./gradlew installDebug    # install on a connected device/emulator
 ./gradlew test
 ```
+
+Pass `-PuseRelayRepository=false` to `installDebug` too when installing the demo.
+Ordinary instrumented tests without relay arguments explicitly use the fake in
+either build mode. `scripts/e2e-emulator.sh` requests real mode through the same
+Gradle property without editing tracked source.
 
 Requires a recent Android Studio (Hedgehog or later).
 

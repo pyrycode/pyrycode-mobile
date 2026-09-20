@@ -148,9 +148,9 @@ Wired into Settings in [#398](../codebase/398.md) (slice B of #390): the
 verbatim onto [`SettingsViewModel`](settings-viewmodel.md), injected via Koin off the concrete
 coordinator, collected lifecycle-aware at the `MainActivity` Settings host, and this component is
 rendered under the **Server** row in the **Connection** section of the
-[Settings screen](settings-screen.md). Both legs now update live. In the default debug build
-(`USE_RELAY_REPOSITORY` OFF) the line honestly reads `Offline / Down` — there is no real relay link
-in that build; against a live, paired daemon the dots reflect reality.
+[Settings screen](settings-screen.md). Both legs reflect the coordinator's live connection state
+in real and demo builds. The [repository build option](dependency-injection.md#how-it-works)
+selects conversation data; it does not gate this status flow or connection establishment.
 
 ## Limits / not yet done
 

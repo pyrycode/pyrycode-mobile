@@ -1,10 +1,10 @@
 # ConversationRepository — data-layer contract
 
-The single interface every Phase 1 UI tier binds to and that the Phase 4 [`RemoteConversationRepository`](remote-conversation-repository.md) must satisfy.
+The single interface UI ViewModels consume, implemented by the in-memory fake and the relay-backed repositories.
 
 Package: `de.pyryco.mobile.data.repository` (`app/src/main/java/de/pyryco/mobile/data/repository/`).
 
-Phase 1 binding: `FakeConversationRepository` — in-memory implementation backing every Phase 1 ViewModel. See [Phase 1 implementation](#phase-1-implementation--fakeconversationrepository) below.
+Normal builds bind the [`StableConversationRepository`](stable-conversation-repository.md) facade over the live [`RemoteConversationRepository`](remote-conversation-repository.md). The Phase 1 `FakeConversationRepository` remains the explicit demo/test selection. See [Phase 1 implementation](#phase-1-implementation--fakeconversationrepository) below.
 
 ## Shape
 
@@ -111,6 +111,12 @@ The stream interleaves both kinds of row in order, so the consumer never paginat
 
 Same package; file `FakeConversationRepository.kt`. In-memory, no persistence, no network. Restart erases everything.
 
+Select it with `-PuseRelayRepository=false` for a demo build or
+`conversationRepositoryModule(useRelay = false)` for test/preview injection.
+Ordinary instrumentation without relay arguments explicitly selects it in either
+build mode. See [build commands](../../../README.md#build) and
+[dependency injection](dependency-injection.md#adding-a-binding).
+
 - **Storage:** `MutableStateFlow<Map<String, ConversationRecord>>` — a single state-holder keyed by `conversationId`. `ConversationRecord` is a private file-scoped wrapper that pairs the `Conversation` with the full `Session` values (the `Conversation` itself only stores session **ids**).
 - **`observeConversations(filter)`** is derived from the state-holder via `Flow.map`, `filter`ed per `ConversationFilter` (matrix below), and `sortedByDescending { it.lastUsedAt }`. The sort is filter-agnostic — channel list and discussions drilldown both want most-recently-used first. Initial emission carries the seed records (see "Seed data" below). The projection also stamps `Conversation.isSleeping` from `record.sessions[currentSessionId]?.endedAt != null` (#20) — true exactly when the conversation's current session is closed and no new one has started yet. This is the one place that holds both the conversation and its session map; downstream `UiState` shapes consume an unchanged `List<Conversation>`. The Phase 4 [`RemoteConversationRepository`](remote-conversation-repository.md) does **not** derive `isSleeping` — the v2 `conversations` list summary omits it (the #316 mapper defaults it to `false`); session/sleep state is enriched via the detail + message read paths (#313+), not the list read path (#312). Filter matrix (#93): `All` = everything (literally — including archived); `Channels` = `isPromoted && !archived`; `Discussions` = `!isPromoted && !archived`; `Archived` = `archived` (regardless of `isPromoted`). The `!archived` clauses on the live tiers are symmetric on purpose — `All` is the only filter that surfaces tombstones unconditionally.
 - **`observeMessages(conversationId)`** projects from the same state-holder via `state.map { records -> val record = records[id] ?: return@map emptyList(); buildThreadItems(record.messages, record.boundariesBySessionId) }`. Messages live inside `ConversationRecord` as a defaulted `messages: List<Message> = emptyList()` field — single source of truth, no sibling map. `buildThreadItems` sorts by `Message.timestamp` ascending, then walks the sorted list inserting a `ThreadItem.SessionBoundary` whenever consecutive messages differ in `sessionId`. On each delta it consults `boundariesBySessionId[message.sessionId]` (the new-session-id key): if an `AuthoredBoundary` is present (seed-authored, since #192), `reason` and `workspaceCwd` come from it; if absent, the boundary falls back to `BoundaryReason.Clear` + `workspaceCwd = null`. `occurredAt = message.timestamp` of the new session's first message — unchanged from #9. Unknown id and known-with-no-messages collapse to the same `emptyList()` path (observation is tolerant; mutation is strict). See `../codebase/9.md`, `../codebase/192.md`.
@@ -130,7 +136,7 @@ Same package; file `FakeConversationRepository.kt`. In-memory, no persistence, n
   `setSessionSettingsCalls` holds the verbatim request). The call always succeeds — there is no unknown-id
   throw, unlike every other mutator — because the fake has no notion of "unhosted session" to reject
   against. See [`../codebase/543.md`](../codebase/543.md).
-- **DI binding** first landed in #45 alongside the first `ViewModel` consumer (`ChannelListViewModel`) as `single { FakeConversationRepository() } bind ConversationRepository::class`. Since #350 the binding is **flag-gated**: `appModule` registers `FakeConversationRepository` (and the [`StableConversationRepository`](stable-conversation-repository.md) facade) *concrete-only*, and a dedicated `conversationRepositoryModule(useRelay = BuildConfig.USE_RELAY_REPOSITORY)` selector is the **only** definition that binds the `ConversationRepository` interface — `single<ConversationRepository> { if (useRelay) get<StableConversationRepository>() else get<FakeConversationRepository>() }`, defaulting OFF (Fake). Constructor-inject on the interface; the Fake↔Remote swap is a Koin-module flag flip with **no consumer-side change** (every ViewModel still resolves the interface, untouched). See [`../codebase/350.md`](../codebase/350.md) and [Dependency injection](dependency-injection.md).
+- **DI binding:** `appModule` registers the fake and the [`StableConversationRepository`](stable-conversation-repository.md) facade by concrete type. `conversationRepositoryModule(useRelay = BuildConfig.USE_RELAY_REPOSITORY)` alone binds the interface, resolving one of those existing singletons. Since #631 the generated flag defaults to `true` (facade); demo builds explicitly set `useRelayRepository=false`. Constructor-inject the interface so consumers stay unchanged across the selection. See [Dependency injection](dependency-injection.md).
 
 Out of scope for the Phase 1 fake: persistence, `Dispatchers.IO` (everything is CPU-cheap map manipulation). Sort order moved into the repo with #5; ViewModels can rely on the emission being `lastUsedAt`-descending.
 

@@ -11,7 +11,7 @@ class PyryApp : Application() {
         super.onCreate()
         startKoin {
             androidContext(this@PyryApp)
-            // conversationRepositoryModule reads the #350 flag via its default param (OFF → Fake).
+            // The build selects the real repository by default; demo builds explicitly opt out.
             modules(appModule, conversationRepositoryModule())
         }
     }

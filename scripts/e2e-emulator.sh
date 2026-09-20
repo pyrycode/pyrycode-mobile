@@ -568,7 +568,7 @@ else
 fi
 log "running ${DEVICE}DebugAndroidTest (headless emulator: boot → install → ${TEST_TARGET} → teardown)…"
 log "  phone relayUrl = ${PHONE_RELAY_URL}"
-GRADLE_TEST_ARGS=()
+GRADLE_TEST_ARGS=(-PuseRelayRepository=true)
 if [ "${PYRY_FORCE_TEST_RUN:-}" = "1" ]; then GRADLE_TEST_ARGS+=(--rerun); fi
 "${GRADLEW}" -p "${REPO_ROOT}" "${DEVICE}DebugAndroidTest" \
   "${GRADLE_TEST_ARGS[@]}" \

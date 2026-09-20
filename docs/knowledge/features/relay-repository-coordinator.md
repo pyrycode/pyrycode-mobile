@@ -505,8 +505,8 @@ flow.
 
 `createdAtStart` so it observes `currentConnection` for the process lifetime. It does **not** bind
 `ConversationRepository` — that binding lives in #350's flag-gated `conversationRepositoryModule` selector
-(the [Fake](conversation-repository.md) is the default-OFF binding; the facade is selected when
-`USE_RELAY_REPOSITORY` is on). With the coordinator eager and the supervisor already dialing in a paired+foregrounded
+(the facade is the normal build binding; `-PuseRelayRepository=false` selects the
+[Fake](conversation-repository.md) for a demo). With the coordinator eager and the supervisor already dialing in a paired+foregrounded
 app, a real `Noise_IK` handshake runs on each live connection; this is bounded — no
 `list_conversations`/`backfill_since` is sent until a subscriber calls a read path (only #352/#350 wire
 that up), so a live-but-unconsumed pump just completes the handshake and idles. #350's flag gates what
@@ -516,10 +516,10 @@ the **UI reads**, not whether the encrypted channel is established.
 
 - **`currentRepository` is `null` between connections** — by design. The #352 facade renders the
   no-connection state; consumers re-subscribe against the next connection's repository.
-- **In-flight reads are dropped on connection loss.** `childScope.cancel()` stops the repository's
-  collector; any cold `observeX` flow on a consumer completes/cancels naturally when its upstream scope
-  dies. The connection-drop-mid-send leak (an awaiting `sendMessage` deferred that never completes) is a
-  known open item carried by [#346](../codebase/346.md) — the coordinator adds no per-request timeout.
+- **Connection loss cancels the child scope.** This stops the repository's inbound collector;
+  its `finally` fails registered pending requests with `IllegalStateException` (#488).
+  The facade switches cold reads to their empty fallback while no live repository is published.
+  See [repository teardown handling](remote-conversation-repository-state-errors-and-handoff.md#hand-off--the-live-binding).
 - **No retry of its own.** Reconnect cadence is governed entirely by the supervisor's capped-exponential
   backoff (1/2/4/8/16/30 s); a failing relay cannot drive a tight pump-rebuild loop.
 - **The exposed observable is the only contract** — this slice does **not** implement the stable

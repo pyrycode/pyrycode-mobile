@@ -17,7 +17,7 @@ class PyryApp : Application() {
         super.onCreate()
         startKoin {
             androidContext(this@PyryApp)
-            // conversationRepositoryModule reads the #350 flag via its default param (OFF → Fake).
+            // Real repository by default; -PuseRelayRepository=false selects the demo.
             modules(appModule, conversationRepositoryModule())
         }
     }
@@ -40,6 +40,17 @@ fun conversationRepositoryModule(useRelay: Boolean = BuildConfig.USE_RELAY_REPOS
 }
 ```
 
+`app/build.gradle.kts` generates `BuildConfig.USE_RELAY_REPOSITORY` from the
+`useRelayRepository` Gradle property. It defaults to `true`, selecting the existing
+`StableConversationRepository` singleton; `-PuseRelayRepository=false` selects the
+existing `FakeConversationRepository` singleton. Only the exact values `true` and
+`false` are accepted; other values fail Gradle configuration. This is a build-time
+selection with no runtime setter. See [README Build](../../../README.md#build).
+
+The selector changes the repository injected into UI consumers. The lifecycle
+driver, supervisor and coordinator still control connection establishment in
+both modes; selecting the fake does not disable that stack.
+
 ## Adding a binding
 
 1. Open `de/pyryco/mobile/di/AppModule.kt`.
@@ -51,6 +62,22 @@ fun conversationRepositoryModule(useRelay: Boolean = BuildConfig.USE_RELAY_REPOS
 3. No registration step elsewhere. The modules are wired into `startKoin` once; the new definition flows through automatically. (A binding selected by a build flag goes in its own module per the #350 pattern above, not inside `appModule`.)
 
 The transient pending-consumers comment from #32 has been fully consumed (#11 + #45 together) — there's no longer a placeholder block in `AppModule.kt`. New bindings append directly inside `module { ... }`, singletons before `viewModel { }` lines for readability.
+
+Tests and previews that require the fake should pass
+`conversationRepositoryModule(useRelay = false)` explicitly. This keeps them
+independent of the build default and avoids relying on Koin override semantics.
+`E2eInstrumentationRunner` installs `E2eTestApplication` for every instrumented run:
+without `relayUrl`, it explicitly selects fake; with relay arguments, it replaces
+the selector with the existing tapped stable-facade binding so the parser tap is
+preserved.
+
+`ConversationRepositoryBindingTest` verifies the generated flag and resolved
+singleton against Gradle's separate `expectedUseRelayRepository` test property.
+Deriving the expected choice from `BuildConfig` itself would let an incorrectly
+generated flag pass. Exercise default, explicit-real and demo builds;
+`RepositoryBindingInstrumentedTest` separately checks the installed test
+application's fake binding. See [verification guidance](development-verification.md#test-scheduling-and-harnesses)
+for its placement outside the excluded `e2e` package.
 
 ## Configuration
 
@@ -70,4 +97,4 @@ The transient pending-consumers comment from #32 has been fully consumed (#11 + 
 
 - Ticket notes: `../codebase/32.md` (scaffold), `../codebase/11.md` (first real binding — `AppPreferences`), `../codebase/45.md` (first interface-bound singleton + first `viewModel { }` line), `../codebase/196.md` (`FakeConnectionStateSource` ↔ `ConnectionStateSource`), [`../codebase/350.md`](../codebase/350.md) (the flag-gated `conversationRepositoryModule` selector — the second module + the `buildConfigField` `USE_RELAY_REPOSITORY` flag)
 - Spec: `docs/specs/architecture/32-koin-di-scaffold.md`
-- Bindings landed so far: #11 (`AppPreferences`), #45 (`FakeConversationRepository` ↔ `ConversationRepository`, `ChannelListViewModel`), #196 (`FakeConnectionStateSource` ↔ `ConnectionStateSource` — see [Connection state](connection-state.md)), #307 (`RelayConnectionSupervisor` ↔ `ConnectionStateSource`, the real source), #350 (the `ConversationRepository` binding moved out of `appModule` into the flag-gated `conversationRepositoryModule` — Fake by default, relay-backed [`StableConversationRepository`](stable-conversation-repository.md) when `USE_RELAY_REPOSITORY` is on).
+- Repository selection: [Stable conversation repository](stable-conversation-repository.md) is the normal build binding; [FakeConversationRepository](conversation-repository.md#phase-1-implementation--fakeconversationrepository) is the explicit demo/test selection. The [#631 plan](../../specs/architecture/631-default-real-repository.md) records the default change on the existing #350 selector.

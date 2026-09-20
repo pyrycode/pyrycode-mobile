@@ -79,6 +79,13 @@ blast-radius decision.
 
 ## Test scheduling and harnesses
 
+The routine UI gate excludes `de.pyryco.mobile.e2e` through the instrumentation
+`notPackage` argument. A test in that package can compile without running in this
+gate. Keep ordinary application-wiring assertions in their owning package:
+`de.pyryco.mobile.di.RepositoryBindingInstrumentedTest` checks the installed test
+application's fake binding when no relay arguments are supplied. Confirm its
+testcase appears in the gate XML; compilation alone does not prove isolation.
+
 Use `runCurrent()` after pushing a fake relay item when the test path is a
 channel-to-StateFlow cascade with no timer. `advanceUntilIdle()` does not
 necessarily drain that background collector. Reserve it for tests whose contract
