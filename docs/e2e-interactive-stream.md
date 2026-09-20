@@ -27,7 +27,7 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    workspace is the created folder → send the ping prompt in it → re-open the picker and confirm the
    folder shows in "Recent" (exercises the #564 create wire and #565 recents wire end to end against
    real claude); a **new-session** scenario (#541): with a live, exercised session, open the thread
-   overflow menu → tap "New session" → the daemon runs `/clear` and broadcasts `session_transition`, and
+   overflow menu → tap "New session" → the daemon wraps up and rotates, then broadcasts `session_transition`, and
    the thread renders the session-boundary delimiter (exercises the #540 fire-and-forget wire and the
    #336 fold end to end against real claude); and a **delete-conversation** scenario (#554): rename a
    discussion to a runtime-unique name, confirm it is present on the channel list, then delete it from the
@@ -60,11 +60,15 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    the handler the verb had been answering `unsupported` without.
    Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581)**
    runs a **curated octet** of scenarios (ping + create-workspace-folder + new-session + delete +
-   archive-restore + change-workspace + rename + save-as-channel, still 3 real claude turns — delete,
+   archive-restore + change-workspace + rename + save-as-channel, three ping turns plus a possible
+   reset wrap-up turn — delete,
    archive-restore, change-workspace, rename, and save-as-channel spend none)
    against the **production relay** over `wss://`
    (TLS) — the pre-ship gate that catches the live-environment failure class a local relay cannot; see
-   [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay).
+   [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay). The ping, create-workspace-folder and
+   new-session scenarios in `InteractiveStreamE2ETest` require a displayed exact
+   ping reply in the message list (#694), independently of disappearing queued text.
+   New-session also reveals the delimiter after a potentially tall wrap-up reply.
 4. **Emulator + deterministic host** ← **shipped (#431).** The same real app + Noise/relay path, but
    claude is swapped for #642's scripted `fakeclaude` backend replaying raw stream-json fixture bytes.
    No real claude, **zero claude turns**; re-running back-to-back uses the same stream contract. Run it with
@@ -142,7 +146,7 @@ Picker → create a folder → land in a fresh discussion whose workspace is the
 ping prompt into it → re-open the picker from the channel list and assert the folder shows in "Recent",
 proving the #564 create wire and #565 recents wire end to end against real claude); a **new-session**
 scenario (#541 — `interactiveTurn_newSession_rendersSessionBoundaryDelimiter`: prove the session is live
-with the ping, then open the thread overflow menu → tap "New session" → the daemon runs `/clear` and
+with the ping, then open the thread overflow menu → tap "New session" → the daemon wraps up and rotates, then
 broadcasts `session_transition`, and the thread renders the session-boundary delimiter, proving the #540
 fire-and-forget wire and the #336 `session_transition` → `SessionBoundary` fold end to end against real
 claude); and a **delete-conversation** scenario (#554 —
@@ -193,8 +197,9 @@ line (`"Claude doesn't remember messages above this line"`), which can **only** 
 overflow menu item and so is not selective at rung 3. The delimiter's **absence is asserted before** the
 New-session tap (a deterministic guard, no extra claude turn), so its later appearance is attributable to
 the action. `new_session` is **fire-and-forget** (pyrycode#831, #540), so nothing waits on or asserts an
-ack — the only observable is the post-broadcast delimiter. Total real-claude cost: **one** turn (the ping
-proving the session is live); `/clear` spends none.
+ack — the observable is the displayed post-broadcast delimiter. The test scrolls to the newest
+row while waiting, since a tall wrap-up can keep it off-screen (#694). Cost is the ping turn
+plus the daemon's reset wrap-up turn when handoff notes are enabled.
 
 The **delete-conversation** scenario (#554) is likewise **always-on** (not `@Ignore`d): both post-conditions
 are **durable** structural facts — a conversation is in the channel list or not, and the thread has popped
@@ -402,12 +407,14 @@ save-as-channel, #581) ride the wrapped mode.
 - **when a daemon or relay change touching the mobile surface lands**, alongside the daemon's own
   `make e2e-realclaude` when that acceptance crosses repositories.
 
-**Cost:** three real claude turns across eight curated methods (the ping scenario + the
-create-workspace-folder scenario, #566 + the new-session scenario, #541 — one turn each; `/clear` spends
-none; the delete scenario, #554, the archive-restore scenario, #551, the change-workspace scenario, #562,
-the rename scenario, #537, and the save-as-channel scenario, #581, each spend **none** —
-create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips), a few minutes of
-wall clock, subscription-covered (it does **not** meter tokens).
+**Cost:** three ping turns across eight curated methods (ping, create-workspace-folder,
+and new-session), plus a reset wrap-up turn when handoff notes are enabled. Delete,
+archive-restore, change-workspace, rename and save-as-channel spend no Claude turns.
+Allow a few minutes of wall clock; the run is subscription-covered.
+
+The command must exit successfully and report eight executed passing tests, with no
+skips. Shell cleanup preserves the original result and retains failure artifacts;
+a clean XML report with a failing process status is not a passing gate.
 
 For the full mechanics — relay URLs, the isolated `e2e-live` instance, prerequisites, and first-run
 assumptions — see [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay). The workflow
@@ -720,12 +727,13 @@ only and must not be used to diagnose a current deterministic run.
   against daemon revision `dccd182` and relay revision `62f363f`. Unit tests, lint, formatting,
   app build and instrumented compilation passed. The strengthened delete-dialog suite then
   passed all ten tests.
-- **Live baseline pending:** the curated eight-test run executed all eight. Four passed; three
-  Claude-response tests failed because the host OAuth login had expired. The archive test
-  exposed a Settings scroll omission and a list decoder that discarded `is_archived`; both
-  are fixed and the archive-only live relay test now passes. A full authenticated run remains required. The wrapper now
-  checks Claude login before starting a live suite. Automatic runs receive the dispatcher's
-  existing 1Password credential. Missing credentials produce no passing XML.
+- **LIVE verified for #694:** the [recorded current-head run at `23218b5`](https://github.com/pyrycode/pyrycode-mobile/issues/694#issuecomment-5750540960)
+  executed all eight curated scenarios with eight passes, no failures or skips, and
+  process exit 0. The verifier also recorded 241 passing routine UI tests, including
+  both assertion regressions, at the preceding test revision. #588's passing-artifact
+  revalidation remains separate; daemon records alone do not prove phone rendering.
+  The wrapper checks Claude login before starting a live suite. Automatic runs use
+  the dispatcher's existing 1Password credential; missing credentials produce no passing XML.
 - **Dispatcher-run:** before verifier, `python3 scripts/android-test-gate.py ui` runs the non-E2E
   device tests, followed by one `scripted` invocation for each of `ping`, `stream`, `spinner`,
   `tool`, `tool-failed`, `reconnect` and `replay-order`. Tagged tickets run `live` after verifier.
@@ -771,6 +779,14 @@ The remaining checks here are specific to a real relay or real Claude execution:
 - **Rung 2 (Layer 1a shipped, #432):** the cheap Compose render harness — see
   [Layer 1 — component render harness (rung 2)](#layer-1--component-render-harness-rung-2). Layer 1b
   (#435, rides the same harness) adds tool rows, the session divider, and the connection banner.
+- **Coverage:** #694 strengthens `InteractiveStreamE2ETest` scenarios
+  `interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
+  `interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` and
+  `interactiveTurn_newSession_rendersSessionBoundaryDelimiter`: reply display is
+  independent of queued-message counts, and the new-session delimiter is revealed
+  after wrap-up. `PingReplyTest` and `SessionBoundaryVisibilityTest` provide routine
+  Compose regressions for these shared assertions. The eight LIVE selections and
+  workspace/session postconditions remain; #588 artifact revalidation is separate.
 - **Coverage:** thinking indicator (hardest, screen-sourced) — **shipped (#454)**, alongside the
   multi-delta `stream`-render scenario; tool-use event assertion (running → done, and failed) —
   **shipped (#455, Layer 2c)**; reconnect continuity (reply survives a mid-turn drop) —
@@ -790,25 +806,25 @@ The remaining checks here are specific to a real relay or real Claude execution:
   through the #532 delete wire against a real daemon, always-on (both post-conditions — gone from the list,
   thread popped back — are durable structural facts) and folded into the pre-ship `LIVE=1` gate as the 4th
   curated method (spending **no** extra claude turn — create/rename/delete are daemon round-trips), taking
-  the gate from a trio to a quartet at still 3 turns; Layer-3 (real claude) archive/restore round-trip —
+  the gate from a trio to a quartet at three ping turns plus an optional reset wrap-up; Layer-3 (real claude) archive/restore round-trip —
   **shipped (#551)**, driven end to end through the #549 archive/unarchive wire, the #556 archive-from-thread
   and #557 restore surfacings against a real daemon, always-on (both durable post-conditions — the unique
   name gone from the active list after archive, then back after restore, a genuine two-direction inversion)
   and folded into the pre-ship `LIVE=1` gate as the 5th curated method (spending **no** extra claude turn —
   create/rename/archive/restore are daemon round-trips), taking the gate from a quartet to a quintet at
-  still 3 turns; Layer-3 (real claude) change-workspace — **shipped (#562)**, driven end to end through the
+  three ping turns plus an optional reset wrap-up; Layer-3 (real claude) change-workspace — **shipped (#562)**, driven end to end through the
   #560 change_workspace wire and #561 surfacing against a real daemon, always-on (the recorded workspace is a
   durable fact — the `WorkspaceChip` re-labels to the new folder's basename, a genuine absence→presence
   inversion) and folded into the pre-ship `LIVE=1` gate as the 6th curated method (spending **no** extra
   claude turn — create-folder and change_workspace are conversation-scoped daemon round-trips), taking the
-  gate from a quintet to a sextet at still 3 turns; Layer-3 (real claude) rename-conversation —
+  gate from a quintet to a sextet at three ping turns plus an optional reset wrap-up; Layer-3 (real claude) rename-conversation —
   **shipped (#537)**, driven end to end through the #530 rename wire against a real daemon, always-on (the
   recorded name is a durable fact on two surfaces — the thread top bar in-thread and the conversation-list
   recents row, both genuine absence→presence inversions of the same runtime-unique title; rename is
   conversation-scoped with **no** session transition, so the assertion is the recorded name, never a session
   id) and folded into the pre-ship `LIVE=1` gate as the 7th curated method (spending **no** extra claude
   turn — create/rename are conversation-scoped daemon round-trips), taking the gate from a sextet to a septet
-  at still 3 turns; Layer-3 (real claude) save-as-channel (promote) — **shipped (#581)**, the **backfill** of
+  at three ping turns plus an optional reset wrap-up; Layer-3 (real claude) save-as-channel (promote) — **shipped (#581)**, the **backfill** of
   the one operator-facing flow that shipped (#348) before the real-stack definition-of-done rule
   (pyrycode-mobile-agents#9) and had therefore been answering `unsupported` on the real wire unnoticed until
   pyrycode/pyrycode#949 registered the daemon handler (desktop parallel: pyrycode-desktop#430), driven end to
@@ -819,7 +835,7 @@ The remaining checks here are specific to a real relay or real Claude execution:
   confirmed upsert, **not** a `conversation_updated` broadcast, so every assertion is on rendered UI) and folded
   into the pre-ship `LIVE=1` gate as the 8th curated method (spending **no** extra claude turn — create/promote
   are conversation-scoped daemon round-trips, promote being a pure registry op), taking the gate from a septet
-  to an octet at still 3 turns; API-retry status (attempt N/M) — **rung 2 shipped (#594)**, the
+  to an octet at three ping turns plus an optional reset wrap-up; API-retry status (attempt N/M) — **rung 2 shipped (#594)**, the
   `ScriptedApiRetryTest` scenarios driving `api_retry` edges through the real #593 repository projection
   into `ThreadViewModel.apiRetry` and `ApiRetryIndicator`, covering both edges (the rising edge, including
   a climbed counter that must re-render rather than dedup, and the clearing edge reverting to whatever the
@@ -871,5 +887,5 @@ explanation as a current limitation. Compaction status ("Compacting conversation
 ## Constraints
 
 - Runs as a local Gradle/script command, **not** a GitHub CI gate (the org does not gate on Actions).
-- Assert tolerantly (substring, trimmed, generous timeouts); never on delta counts or timing.
+- Use generous timeouts and selective text assertions; constrained ping replies use exact, case-insensitive message-list matching. Never infer reply arrival from substring-count growth or assert delta timing.
 - Keep the test to the single structured path; do not assert the coarse `message` path. As of 2026-06-22 there is no old-app-version support: the operator controls both ends and ships the app and daemon together, so every phone gets the structured stream and the coarse path is dead code slated for removal. See the 2026-06-22 amendment in pyrycode ADR 025.
