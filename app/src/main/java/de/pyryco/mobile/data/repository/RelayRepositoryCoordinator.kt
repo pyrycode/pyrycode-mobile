@@ -318,6 +318,16 @@ class RelayRepositoryCoordinator(
         scope.cancel()
     }
 
+    /** Reads current authenticated availability without the asynchronous [currentRepository] cache. */
+    @Synchronized
+    internal fun liveRepository(): ConversationRepository? {
+        val current = activeConnection.value
+        if (!job.isActive || current == null || current.transport !== connections.value || current.pump.state.value !is PumpState.Open) {
+            return null
+        }
+        return current.repo
+    }
+
     /** Request on this host's current authenticated connection; never wait, redirect or replay. */
     @Synchronized
     fun requestDebugBundle(): DebugBundleTransfer {

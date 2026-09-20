@@ -119,3 +119,39 @@ distinction from the selected-host compatibility facade.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-21
+
+## Revisions
+
+### 2026-09-21 — coherent availability after verifier review
+
+- PR #707 reproduced `repositoryFor` returning the retired repository at the new
+  transport edge, before the coordinator's `stateIn` projection caught up. The
+  original Design and Security review assumed that cache proved current readiness;
+  this revision supersedes that assumption.
+- Add internal `RelayRepositoryCoordinator.liveRepository(): ConversationRepository?`.
+  Under the coordinator's teardown lock, read one active connection and require
+  an active owner, identity with the supervisor's current transport, and that
+  connection's pump to be Open. `HostConversationSource.relay` uses this read after
+  exact `connectionFor` lookup; compatibility streams keep their existing behavior.
+- This necessary repair extends production scope beyond DI to the coordinator,
+  which alone owns the coherent connection. No new state, jobs, I/O or wire change.
+  Four production files overall, one added internal method consumer, three ACs,
+  and about 880 written lines including the original plan/tests and this repair.
+  The line ceiling is exceeded; the floor rule keeps this repair with its sole
+  consumer because the accessor is not an independently verifiable deliverable.
+  The refreshed feature-branch overlap check found none.
+- Regression: `repositoryForRejectsRetiredRepositoryAtReconnectTransportEdge`
+  checks null synchronously on replacement transport arrival, null while its
+  handshake is held, then the new repository after that same handshake completes.
+  Run its RED/GREEN proof, the affected DI classes, formatting, lint and assembly.
+
+### Security review update — PASS
+
+- Trust/concurrency: `liveRepository` checks transport identity and the same
+  connection's actual pump state under the coordinator lock, independent of cached
+  status/repository flows. A later disconnect can invalidate a returned reference,
+  as documented; an already replaced transport cannot authorize the old reference.
+- Credentials, storage, Android surfaces, cryptography, network and logs: no new
+  exposure or behavior. Existing bundle retirement, key teardown, in-memory cache,
+  single inbound consumer and content-free logs remain as reviewed above.
+- Reviewer: builder, re-applied `builder/security-review.md` on 2026-09-21.

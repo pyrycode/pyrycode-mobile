@@ -787,6 +787,50 @@ class RelayConnectionFactoryTest {
             }
         }
 
+    @Test
+    fun repositoryForRejectsRetiredRepositoryAtReconnectTransportEdge() =
+        runTest {
+            val f = Fixture(this)
+            f.store.save(f.a.record)
+            val registry = f.registry()
+            val source = HostConversationSource.relay(registry, StandardTestDispatcher(testScheduler))
+            try {
+                registry.connect()
+                runCurrent()
+                val bundle = registry.connectionFor("A")!!
+                val oldRepository = source.repositoryFor("A")
+                assertNotNull(oldRepository)
+                var reconnectEdges = 0
+                val edgeCheck =
+                    backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+                        bundle.supervisor.currentConnection.drop(1).collect { transport ->
+                            if (transport != null) {
+                                reconnectEdges++
+                                assertNull(source.repositoryFor("A"))
+                            }
+                        }
+                    }
+                f.handshaking = "A"
+                registry.close()
+                assertNull(source.repositoryFor("A"))
+                registry.connect()
+                runCurrent()
+                assertEquals(1, reconnectEdges)
+                assertNull(source.repositoryFor("A"))
+                f.transports.last().completeHandshake()
+                runCurrent()
+                val replacement = source.repositoryFor("A")
+                assertNotNull(replacement)
+                assertNotSame(oldRepository, replacement)
+                assertSame(bundle.coordinator.currentRepository.value, replacement)
+                edgeCheck.cancel()
+            } finally {
+                source.dispose()
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
     private class Fixture(
         scope: TestScope,
     ) {
@@ -900,7 +944,7 @@ class RelayConnectionFactoryTest {
         private val keys: Keys,
         private val unavailable: Boolean = false,
         private val interactive: Boolean = true,
-        private val holdHandshake: Boolean = false,
+        private var holdHandshake: Boolean = false,
     ) : RelayTransport {
         private val frames = Channel<InnerFrameV2>(Channel.UNLIMITED)
         private val links = Channel<TransportEvent>(Channel.UNLIMITED)
@@ -949,7 +993,10 @@ class RelayConnectionFactoryTest {
                 return true
             }
             assertEquals("noise_init", frame.type)
-            if (holdHandshake) return true
+            if (holdHandshake) {
+                initialFrame = base64StdDecode(frame.data)
+                return true
+            }
             val handshake = HandshakeState(PROTO, HandshakeState.RESPONDER)
             handshake.localKeyPair.setPrivateKey(host.key.privateKey, 0)
             handshake.start()
@@ -980,6 +1027,11 @@ class RelayConnectionFactoryTest {
             handshake.destroy()
             frames.trySend(InnerFrameV2(type = "noise_resp", data = base64StdEncode(out.copyOf(n))))
             return true
+        }
+
+        fun completeHandshake() {
+            holdHandshake = false
+            send(InnerFrameV2(type = "noise_init", data = base64StdEncode(initialFrame)))
         }
 
         fun emit(env: Envelope) {

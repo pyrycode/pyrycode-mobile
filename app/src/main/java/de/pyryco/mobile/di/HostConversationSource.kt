@@ -143,9 +143,7 @@ class HostConversationSource internal constructor(
             registry: RelayConnectionRegistry,
             dispatcher: CoroutineDispatcher = Dispatchers.Default,
         ) = HostConversationSource(registry.hostConnections, { serverId ->
-            registry.connectionFor(serverId)?.let { bundle ->
-                if (bundle.supervisor.currentConnection.value == null) null else bundle.coordinator.currentRepository.value
-            }
+            registry.connectionFor(serverId)?.coordinator?.liveRepository()
         }, dispatcher)
 
         fun demo(
