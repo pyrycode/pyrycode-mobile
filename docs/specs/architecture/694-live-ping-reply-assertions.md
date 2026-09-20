@@ -1,0 +1,54 @@
+# #694 — Reply-specific LIVE ping assertions
+
+## Files read
+
+- `app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt` — `pingNodeCount` and the ping, create-workspace-folder and new-session tests currently depend on substring-count growth.
+- `app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/QueuedBacklogTest.kt` — `stateWith` and the hoisted-state regression provide the fixture pattern.
+- `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt` — `ThreadScreen` puts messages in a `LazyColumn`, with title and queued backlog outside it.
+- `app/src/main/java/de/pyryco/mobile/ui/conversations/components/MessageBubble.kt` — `AssistantMessage` renders finalized content through `MarkdownText`; sent user prompts remain full text.
+- `app/src/main/java/de/pyryco/mobile/ui/conversations/components/MarkdownText.kt` — `MarkdownBlock` exposes paragraph text through Compose semantics.
+- `docs/knowledge/features/queued-backlog-section.md` — backlog descendants merge; unmerged semantics allow independent text matching.
+- `docs/knowledge/features/thread-screen.md` and `docs/knowledge/features/development-verification.md` — screen structure, routine UI package exclusion, and device-evidence boundaries.
+- `docs/e2e-interactive-stream.md`, `scripts/e2e-emulator.sh`, `scripts/android-test-gate.py` — rung vocabulary, unchanged LIVE selections and dispatcher execution ownership.
+
+## Change
+
+Replace `pingNodeCount` with a shared androidTest-only assertion in `ui/conversations/thread/PingReplyAssertions.kt`. Match case-insensitive, exact `ping` text under a scrollable ancestor in the unmerged tree. In these fresh discussions the only sent input is the full `PING_PROMPT`; exact matching excludes it, and list scoping excludes even a title or queued entry equal to `ping`. This is a constrained-prompt assertion, not a generic role detector. Wait for the matching node to be displayed within the existing `REPLY_TIMEOUT_MS`, then assert it is displayed. Share the prompt constant with the regression. Preserve scenario names, LIVE selection and workspace/session postconditions. No production change, new state, concurrency or error behavior is needed.
+
+## Testing strategy
+
+Add `PingReplyTest` beside `QueuedBacklogTest`, outside the excluded e2e package. Render the real `ThreadScreen` with the full user prompt, a title equal to `ping`, and queued text equal to `ping`. Assert no reply match; remove the queue and assert no match; restore it, then atomically replace it with a finalized assistant reply. Assert the shared LIVE helper succeeds and total substring matches have not increased. This exercises both exact-text and list-scope discrimination.
+
+Author the negative/transition regression before the matcher implementation. Device RED/GREEN execution belongs to the dispatcher; compilation is not execution evidence. Run Spotless, lint, assembleDebug and compileDebugAndroidTestKotlin locally. No JVM test class changes. Dispatcher runs the routine UI gate, then post-verifier `python3 scripts/android-test-gate.py live`, requiring executed passing results for `interactiveTurn_pingPrompt_streamsPingReplyIntoThread`, `interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` and `interactiveTurn_newSession_rendersSessionBoundaryDelimiter`. Keep `needs-real-claude`; #588 artifact revalidation remains separate.
+
+## Scope check
+
+One deliverable: reliable LIVE ping assertion with its regression. Approximately 200 written lines including this plan, 0 production files, 0 exported production declarations, 3 helper consumers, 3 acceptance criteria and 0 state-machine reject branches. The #461 analogue added 166 test lines. No in-flight feature branch overlaps the three planned test files after fetching origin. Codegraph found the entry points but no callers/callees for `pingNodeCount`; source inspection confirmed the three consumers.
+
+## Documentation handoff
+
+No documentation-only acceptance criteria or required reference-document edits in this ticket. Pending documentation-stage recording, if needed: `docs/knowledge/features/development-verification.md`, section “Compose evidence”, capture why substring-count growth is invalid when queued prompt text disappears. Do not claim daemon history proves phone rendering.
+
+## Open questions
+
+None. No Figma source is required for test-only work with no UI changes.
+
+## Revisions
+
+### 2026-09-20 — LIVE rework: reveal the session delimiter after wrap-up
+
+The dispatcher LIVE run at `2c0bff6` executed eight scenarios: seven passed; `interactiveTurn_newSession_rendersSessionBoundaryDelimiter` passed `awaitDisplayedPingReply` and timed out in its later delimiter wait. The retained daemon log and registry show the intended conversation rotated; its outgoing transcript contains a 2,560-character wrap-up reply after the ping. These records locate the failed step but are not phone-rendering evidence. The bare-frame targeting issue already tracked by #625 did not mis-target this observed reset.
+
+Additional files read: `ThreadScreen` retains keyed rows in a reversed `LazyColumn` and only auto-scrolls while streaming; `SessionBoundaryDelimiter` renders the explanation; the sibling daemon's protocol “New session (v2)” describes its new wrap-up turn. The original test assumes the boundary is already composed, which a tall wrap-up row can invalidate when the appended boundary is outside the viewport.
+
+Add `SessionBoundaryVisibilityTest` beside `PingReplyTest`, rendering a tall finalized wrap-up row before appending a boundary. Assert the explanation is initially absent from semantics, then use a shared androidTest-only `awaitDisplayedSessionBoundary` helper to scroll the reversed list to its newest row while waiting and assert the explanation is displayed. Use that helper for the LIVE postcondition, retaining the pre-tap absence guard, 90-second timeout, and all LIVE selections. No production fix or ignored test. The exact LIVE failure remains subject to dispatcher re-execution; the regression proves the viewport case independently.
+
+The existing LIVE timeout is the RED evidence; author the viewport regression before the helper. Device regression execution remains dispatcher-owned. Run Spotless, lint, assembleDebug and instrumented-test compilation. No JVM tests change. Revised scope remains one test-repair deliverable, approximately 300 written lines, zero production files/types, four helper consumers, three acceptance criteria, zero error branches. Refreshed feature branches have no overlap with the added files. Documentation-stage handoff also carries the viewport lesson to “Compose evidence” if the regression passes.
+
+### 2026-09-20 — Verifier rework: establish the off-screen precondition explicitly
+
+The routine UI gate at `ba14a2e` executed 241 tests with one failure: `SessionBoundaryVisibilityTest` found the appended explanation in semantics and stopped before calling `awaitDisplayedSessionBoundary`. Semantic existence does not establish display, and appending a row alone does not establish a deterministic viewport. This executed failure supplies RED evidence for the fixture repair.
+
+Use separate Markdown paragraphs for the wrap-up details, so the first and last detail have independently matchable text nodes. Assert the last detail is displayed and the first is not, proving the wrap-up exceeds the viewport. After appending the boundary, explicitly scroll to the wrap-up row at reversed index 1, assert its last detail is displayed, and assert the boundary explanation is not displayed. Only then invoke the unchanged shared helper and assert the explanation is displayed. This replaces the post-append semantic-absence contract with a verified non-display contract; the pre-append absence check remains valid.
+
+Only `SessionBoundaryVisibilityTest` and this plan change. Approximately 30 additional written lines keep the total below 350, with zero production files/types, unchanged helper consumers, three acceptance criteria and zero error branches. Refreshed branches have no file overlap. Codegraph did not locate the new test; source inspection of `ThreadScreen`, `MarkdownBlock` and `awaitDisplayedSessionBoundary` supplied the current layout and matcher contracts. Builder checks remain Spotless, lint, assembleDebug and instrumented-test compilation; dispatcher UI, scripted and post-verifier LIVE execution remain pending. Carry the distinction between non-display and semantic absence to the existing documentation handoff if the repaired regression passes.

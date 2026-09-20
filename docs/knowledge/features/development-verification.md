@@ -58,6 +58,26 @@ action, wait for a positive effect of that action, then assert the resulting
 absence or replacement. Use `useUnmergedTree = true` when a merged semantics
 container hides per-row text or controls.
 
+Reply assertions must not depend on total substring-count growth: removing queued
+prompt text can offset a newly displayed assistant reply. For fresh discussions
+sending only `PING_PROMPT`, `awaitDisplayedPingReply` matches exact,
+case-insensitive `ping` under a scrollable ancestor in the unmerged tree and waits
+for display. Exact text excludes the full prompt; list scope excludes the title
+and backlog. This is a constrained-prompt matcher, not an assistant-role detector.
+`PingReplyTest` checks both no-reply states (with and without queued text), then
+replaces the queue with a displayed reply while the substring count stays equal.
+
+Off-screen lazy-list content can still exist in semantics. Establish a viewport
+before asserting non-display; merely appending a row does not establish it.
+`SessionBoundaryVisibilityTest` uses separate Markdown paragraphs to prove a
+finalized wrap-up exceeds the viewport, appends the delimiter, scrolls to the
+wrap-up at reversed index 1, and asserts the explanation is not displayed.
+`awaitDisplayedSessionBoundary` then scrolls to the newest row (index 0) while
+waiting and asserts display. Keep the pre-action absence guard separate from this
+post-append non-display check. Both regressions run outside the excluded `e2e`
+package; see the [LIVE coverage](../../e2e-interactive-stream.md#live-mode-rung-3-live-relay).
+Daemon history can locate a failed step, but cannot prove phone rendering.
+
 Compose parameter-order lint is a real gate. Put required parameters before
 defaulted ones, and keep `modifier` before trailing lambdas according to the
 project convention. A screen can compile while `lint` still fails. Keep
@@ -98,6 +118,14 @@ the changed function into a scratch file, add strict shell options and test it w
 stubbed helpers. Exercise preflight guards with nonexistent `PYRY_BIN` and relay
 paths so the script cannot start a real process. Keep the scratch file outside the
 worktree.
+
+Shell teardown must preserve the original test result. A final optional check
+such as `[ -n "$ISO_HOME" ] && ...` can return failure when no isolated home exists,
+turning a passing suite into a failed command. `e2e-emulator.sh` captures the
+incoming status, uses explicit optional branches, and returns that status.
+`test_e2e_emulator_cleanup.py` exercises success and failure with and without an
+isolated home, including retention of failure artifacts. Check both the process
+status and executed XML results; neither overrides a disagreement with the other.
 
 ## Probe the evidence itself
 
