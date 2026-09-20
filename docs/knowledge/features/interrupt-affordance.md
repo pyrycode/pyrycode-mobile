@@ -1,15 +1,16 @@
 # Interrupt affordance — the busy-turn "Stop" control
 
 The **visible half** of remote interrupt: while the open conversation's agent is running a turn, the
-thread screen shows a "Stop" control; tapping it stops claude mid-response and the control disappears
-when the turn ends. Landed in [#459](../codebase/459.md) (split from #430, `blockedBy` #458), Phase 3 of
+thread screen shows a "Stop" control; tapping it requests a stop for that conversation,
+and the control disappears when its turn ends. Landed in [#459](../codebase/459.md) (split from #430, `blockedBy` #458), Phase 3 of
 epic pyrycode#597 (phone control), ADR 025.
 
 Unlike the thinking indicator — whose data (`isThinking`, [#406](../codebase/406.md)) and UI
 (`ThinkingIndicator`, [#407](../codebase/407.md)) were split across two tickets — #459 ships **both**
 halves: a new `ThreadViewModel.isBusy` flow **and** the `InterruptAffordance` composable. This doc covers
-both. The **send path** the tap invokes — `onInterrupt()` → the bare `interrupt` wire frame — is the
-sibling slice [#458](../codebase/458.md); see [Interrupt send path](interrupt-send-path.md).
+both. The **send path** the tap invokes — `onInterrupt()` → `interrupt` with the
+open conversation's id — preserves the callback introduced in [#458](../codebase/458.md).
+See [Interrupt send path](interrupt-send-path.md) for explicit targeting (#626).
 
 ## The "a turn is running" signal — `ThreadViewModel.isBusy`
 
@@ -17,8 +18,8 @@ sibling slice [#458](../codebase/458.md); see [Interrupt send path](interrupt-se
 latest `turn_state` for this `conversationId` is `thinking` **or** `responding`, `false` for `idle` /
 `turn_end` / before any event. `isThinking` is `true` for `thinking` **only** — so it can't drive the
 interrupt control, which must stay visible across the *whole* in-flight turn (including the
-`responding`/assistant-text phase). Because claude serialises turns, at most one conversation is busy at
-a time; the signal is routed by `conversationId` exactly like `isThinking`.
+`responding`/assistant-text phase). The signal is routed by `conversationId`
+exactly like `isThinking`; another conversation's events do not change this flag.
 
 It is declared **identically** to `isThinking` — same source, operator, and lifecycle — over the same
 [`liveSessionEvents`](live-session-events.md) coordinator seam ([#406](../codebase/406.md)):
@@ -127,8 +128,8 @@ turn_end / turn_state{idle} ─────┤  (liveSessionEvents, per conversa
                           ThreadScreen(isBusy, onInterrupt = vm::onInterrupt)
                                                  ▼
               InterruptAffordance(isBusy) ── tap ──▶ onInterrupt()
-                                                 ▼  (already built, #458)
-                  sendInterrupt() ──▶ coordinator::interrupt ──▶ bare `interrupt` frame
+                                                 ▼
+                  sendInterrupt() ──▶ interrupt(conversationId) ──▶ targeted `interrupt` frame
 ```
 
 ## Lifecycle, errors, edge cases
@@ -170,21 +171,25 @@ Test-first, mirroring the `isThinking` coverage.
   → `true`; **`responding` → `true` asserting `isBusy && !isThinking`** (the distinguishing case);
   `idle`/`turn_end` → `false`; other-conversation isolation; non-phase events hold the flag.
 - **Instrumented (`ScriptedThreadRenderTest`, AC#4)** — `interrupt_shownWhileBusy_invokesOnTap_goneAfterTurnEnd`
-  rides the real-graph [`ScriptedThreadHarness`](../codebase/432.md): `pushTurnState("responding")` → wait
-  until the affordance (by `cd_thread_interrupt`) shows → `performClick()` → assert
-  `interruptInvocations() == 1` → `pushTurnEnd("t1")` → wait until gone. The harness injects a **recording**
-  interrupt lambda (`interrupt = { interruptCount++ }`) into the VM and subscribes `isBusy` in `start()`'s
-  composition pass so the `replay = 0` upstream is live before any `push*`. Opens with **`responding`**
-  specifically to prove the control shows when the thinking spinner is hidden. `androidTest` is **not**
-  compiled by the mandatory gates — run `./gradlew compileDebugAndroidTestKotlin`
-  ([[androidtest-not-compiled-by-mandatory-gates]]).
+  rides the real-graph [`ScriptedThreadHarness`](../codebase/432.md): assert initial
+  absence → `thinking` shows Stop → `responding` hides the thinking spinner while
+  Stop stays visible → tap once → assert one callback targeting `c1` and Stop still
+  visible → `turn_end` hides Stop. The harness records callback ids with
+  `interrupt = { interruptTargets += it }` and subscribes `isBusy` in `start()`'s
+  composition pass before any `push*`. Recording only a count would miss a wrong
+  target. These fixtures prove callback routing and visibility, not a real daemon
+  stop; [#679's live scenario](interrupt-send-path.md#testing) remains separate.
+  Instrumented-source changes require `./gradlew compileDebugAndroidTestKotlin`;
+  aggregate JVM tests, lint and assemble do not compile them. See
+  [development verification](development-verification.md#gradle-and-source-checks).
 
 ## Related
 
 - Ticket notes: [`../codebase/459.md`](../codebase/459.md). Spec:
   `docs/specs/architecture/459-interrupt-affordance.md`.
 - Send path (the tap target, sibling slice): [Interrupt send path](interrupt-send-path.md)
-  ([#458](../codebase/458.md)) — `onInterrupt()` → `coordinator::interrupt` → bare `interrupt` frame.
+  ([#458](../codebase/458.md), targeting updated in #626) — `onInterrupt()` supplies
+  the open conversation's id through `coordinator::interrupt` into the wire payload.
 - The signal it broadens: [Turn-state thinking flag](turn-state-thinking-flag.md)
   ([#406](../codebase/406.md)) — `isThinking`, the `thinking`-only flag `isBusy` mirrors and broadens.
 - Component template + foot-of-list sibling: [Thinking indicator](thinking-indicator.md)

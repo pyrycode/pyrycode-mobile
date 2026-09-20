@@ -100,23 +100,29 @@ class ScriptedThreadRenderTest {
         composeRule.onNodeWithContentDescription(thinkingDescription).assertDoesNotExist()
     }
 
-    // Interrupt affordance (AC#4): a turn goes in flight (`responding` — busy ⊋ thinking, so this also
-    // proves the affordance shows when the thinking indicator would be hidden) → the affordance shows →
-    // tap it → the VM's interrupt-send action fires exactly once → turn_end → the affordance is gone.
+    // Stop stays visible across thinking/responding and after the tap until the daemon ends the turn.
     @Test
     fun interrupt_shownWhileBusy_invokesOnTap_goneAfterTurnEnd() {
+        composeRule.onNodeWithContentDescription(interruptDescription).assertDoesNotExist()
+        harness.pushTurnState("thinking")
+        composeRule.waitUntil(timeoutMillis = TIMEOUT_MS) {
+            composeRule.onAllNodesWithContentDescription(interruptDescription).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithContentDescription(interruptDescription).assertIsDisplayed()
         harness.pushTurnState("responding")
         composeRule.waitUntil(timeoutMillis = TIMEOUT_MS) {
             composeRule
-                .onAllNodesWithContentDescription(interruptDescription)
+                .onAllNodesWithContentDescription(thinkingDescription)
                 .fetchSemanticsNodes()
-                .isNotEmpty()
+                .isEmpty()
         }
         composeRule.onNodeWithContentDescription(interruptDescription).assertIsDisplayed()
 
         composeRule.onNodeWithContentDescription(interruptDescription).performClick()
         composeRule.waitForIdle()
         assertEquals(1, harness.interruptInvocations())
+        assertEquals(listOf("c1"), harness.interruptedConversations())
+        composeRule.onNodeWithContentDescription(interruptDescription).assertIsDisplayed()
 
         harness.pushTurnEnd("t1")
         composeRule.waitUntil(timeoutMillis = TIMEOUT_MS) {
