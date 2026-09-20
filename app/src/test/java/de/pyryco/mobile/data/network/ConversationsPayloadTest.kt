@@ -57,6 +57,15 @@ class ConversationsPayloadTest {
     }
 
     @Test
+    fun archivedListRows_preserveTheServerFlagAcrossRefresh() {
+        val fixture = twoRowFixture.replace("\"is_promoted\":true", "\"is_promoted\":true,\"is_archived\":true")
+        val rows = MobileJson.decodeFromJsonElement<ConversationsPayload>(MobileJson.parseToJsonElement(fixture)).toConversations()
+
+        assertTrue(rows[0].archived)
+        assertFalse(rows[1].archived)
+    }
+
+    @Test
     fun scratchCwd_isPreservedVerbatim() {
         val element = MobileJson.parseToJsonElement(twoRowFixture)
         val result = MobileJson.decodeFromJsonElement<ConversationsPayload>(element).toConversations()
@@ -72,7 +81,8 @@ class ConversationsPayloadTest {
         val mapped =
             MobileJson.decodeFromJsonElement<ConversationsPayload>(element).toConversations()[0]
 
-        // The four fields the wire summary does not carry are list-tier placeholders,
+        // Session and sleep fields remain list-tier placeholders. Older summaries
+        // without is_archived retain the active default,
         // never null-punned.
         assertEquals("", mapped.currentSessionId)
         assertEquals(emptyList<String>(), mapped.sessionHistory)

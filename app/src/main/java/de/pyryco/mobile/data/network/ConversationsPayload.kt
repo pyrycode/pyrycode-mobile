@@ -49,6 +49,7 @@ data class ConversationSummaryDto(
     @SerialName("last_used_at")
     @Serializable(with = InstantIso8601Serializer::class)
     val lastUsedAt: Instant,
+    @SerialName("is_archived") val isArchived: Boolean = false,
 )
 
 /**
@@ -69,11 +70,11 @@ private fun ConversationSummaryDto.toConversation(): Conversation =
         isPromoted = isPromoted,
         lastUsedAt = lastUsedAt,
         // List-tier placeholders: the conversation-list payload does not carry these.
-        // Full session / sleep / archive state arrives via the detail + message read paths.
+        // Full session and sleep state arrives via the detail and message read paths.
         // They are defined, non-null defaults — do NOT "fix" by null-punning or by plumbing
         // upstream enrichment here.
         currentSessionId = "",
         sessionHistory = emptyList(),
         isSleeping = false,
-        archived = false,
+        archived = isArchived,
     )

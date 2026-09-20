@@ -24,18 +24,18 @@ Requires a recent Android Studio (Hedgehog or later).
 
 ## Pre-ship gate
 
-Before the operator sees the real stack, run the live real-claude end-to-end gate — the mobile parallel of the daemon's `make e2e-realclaude`:
+For a ticket labelled `needs-real-claude`, the dispatcher runs the live real-Claude end-to-end gate after verifier and before documentation or merge — the mobile parallel of the daemon's `make e2e-realclaude`:
 
 ```bash
-bash scripts/e2e-preship-gate.sh
+python3 scripts/android-test-gate.py live
 ```
 
-This runs the curated live rung-3 scenarios (the real app on an emulator → host `pyry` daemon → real claude, against the production relay over `wss://`, on the isolated `e2e-live` instance). The command bakes in `LIVE=1` and the `e2e-live` defaults — there is no env-var incantation to remember.
+This runs the curated live rung-3 scenarios (the real app on an emulator → host `pyry` daemon → real claude, against the production relay over `wss://`, under a unique `e2e-auto-*` test identity. The wrapper selects `LIVE=1`, builds test-only host binaries from configured sibling sources, and checks Claude authentication before starting the suite. The dispatcher supplies the source paths, SDK paths and its existing 1Password credential. For a manual run, use the same environment.
 
-**Run it when:**
+**The dispatcher runs it when:**
 
-- **before installing a new APK build on a device**, so you are never the first to discover the real stack can't answer a live send; and
-- **whenever a daemon or relay change touching the mobile surface lands** — run it alongside the daemon's own `make e2e-realclaude`.
+- **the ticket carries `needs-real-claude`**, so the live stack is exercised after the verifier result; and
+- **the acceptance requires a real daemon and real Claude**, alongside the daemon's own `make e2e-realclaude` when that change crosses repositories.
 
 **Cost:** a few real claude turns and a few minutes of wall clock, subscription-covered (it does **not** meter tokens).
 

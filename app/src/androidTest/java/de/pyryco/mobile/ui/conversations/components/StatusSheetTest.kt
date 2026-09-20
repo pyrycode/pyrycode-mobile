@@ -6,7 +6,6 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
-import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isSelectable
@@ -134,7 +133,7 @@ class StatusSheetTest {
         }
 
         composeTestRule
-            .onNode(isSelectable() and hasAnyDescendant(hasText("Sonnet 4.6")))
+            .onNode(isSelectable() and hasText("Sonnet 4.6"))
             .assertIsSelected()
     }
 
@@ -201,10 +200,10 @@ class StatusSheetTest {
         }
 
         composeTestRule
-            .onNode(isSelectable() and hasAnyDescendant(hasText("max")))
+            .onNode(isSelectable() and hasText("max"))
             .assertIsSelected()
         composeTestRule
-            .onNode(isSelectable() and hasAnyDescendant(hasText("low")))
+            .onNode(isSelectable() and hasText("low"))
             .assertIsNotSelected()
     }
 

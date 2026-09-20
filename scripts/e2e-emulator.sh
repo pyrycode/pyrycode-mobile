@@ -16,25 +16,11 @@
 #     spawns NO real claude and the run consumes ZERO claude turns, so it can run often and assert
 #     exactly.
 #
-# What it does, in order:
-#   1. Start a local relay on plain ws:// (no TLS). (LIVE: skipped — the daemon dials the production relay.)
-#   2. Mint a mobile device pairing token with `pyry pair` and parse the payload.
-#   2b. (DETERMINISTIC) Pre-seed the scripted backend: build/locate fakeclaude, pre-create the
-#       bootstrap session JSONL, and write one PROMOTED conversation bound to the bootstrap session id.
-#   3. Start the pyry daemon (Mobile Protocol v2) pointed at the local relay (LIVE: the production
-#      relay over wss://, with NO insecure-relay flag).
-#   4. Run the Gradle Managed-Device instrumented test, injecting the pairing values as
-#      instrumentation arguments. The custom runner (E2eInstrumentationRunner) sees `relayUrl` and
-#      swaps in E2eTestApplication, which pre-pairs the app and binds the relay-backed repository.
-#   4b. (DETERMINISTIC) A background watcher drops the JSONL fixture once the daemon logs the
-#       `send_message.enqueued` cursor-stamp fence, so the scripted reply tails the real producer
-#       mid-test. The `spinner`, `tool`, and `reconnect` scenarios drop twice — a 2nd, turn-ending
-#       fixture on the 2nd enqueue — to hold the turn open long enough to observe the transient state
-#       (thinking spinner / running tool row) or to span a mid-turn link drop (reconnect). The
-#       `replay-order` scenario also drops twice but fences drop B on the relay logging the phone-leg
-#       disconnect (a severed phone cannot send a 2nd enqueue), so the ordered sequence accrues in the
-#       daemon's in-ring buffer entirely while the phone is offline, then replays in order on reconnect.
-#   5. Tear everything down (trap on EXIT).
+# Execution order: prepare an isolated scripted profile when needed, start the
+# relay and daemon, mint pairing against the running daemon, then run the real
+# relay-backed app on a managed device. Scripted replay uses stream-json stdout.
+# A first user envelope releases fragment one. A queued second message or phone
+# disconnect releases fragment two. The EXIT trap stops the owned processes.
 #
 # Prerequisites (host):
 #   * `pyrycode-relay` and `pyry` on PATH (override with RELAY_BIN / PYRY_BIN).
@@ -68,7 +54,7 @@
 #   PYRY_BIN=pyry  RELAY_BIN=pyrycode-relay
 #   LIVE=  LIVE_RELAY_HOST=pyrycode-relay.pyryco.de   (LIVE=1 → PAIR_NAME/PYRY_NAME default to e2e-live)
 #   DETERMINISTIC=  SCENARIO=ping  PYRYCODE_SRC=  FAKE_CLAUDE_BIN=  FIXTURE_FILE=  FIXTURE_FILE_2=
-#   INTERACTIVE_RUNNER=  (pty | stream-json; DETERMINISTIC only — pins the daemon's interactive runner.
+#   INTERACTIVE_RUNNER=  (stream-json; DETERMINISTIC only — pins the daemon's interactive runner.
 #                         Unset = the daemon's own default, unchanged. A real-HOME run (LIVE / default
 #                         rung 3) REFUSES the request rather than edit the operator's ~/.pyry/config.json;
 #                         every mode still REPORTS the runner its daemon will use. See #614 and
@@ -123,14 +109,8 @@ else
   PHONE_RELAY_URL="ws://10.0.2.2:${PORT}"
 fi
 
-# INTERACTIVE_RUNNER (#614): pin which interactive runner the spawned daemon builds — "pty" (the
-# terminal-driven supervisor) or "stream-json". The daemon has NO flag for this; it reads
-# `interactive_runner` from <HOME>/.pyry/config.json, and resolveConfigPath() is per-USER, not
-# per-instance (pyrycode cmd/pyry/pair.go), so -pyry-name does not namespace it. The only lever is
-# $HOME — which is why pinning is supported on the isolated-HOME DETERMINISTIC path ONLY, and a
-# real-HOME run refuses the request in preflight instead of editing production configuration.
-# Unset means DO NOTHING: no validation beyond this, no seed, no behaviour change in any mode.
-# Reporting (which runner the daemon will actually use) happens in EVERY mode either way.
+# Current daemons default to stream-json. Optional pinning writes only the
+# isolated scripted profile; real-HOME runs only read the operator's config.
 INTERACTIVE_RUNNER="${INTERACTIVE_RUNNER:-}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -156,8 +136,8 @@ SCENARIO="${SCENARIO:-ping}"                  # which deterministic scenario: pi
 # token is the chief first-run unknown (relay/daemon source lives in pyrycode, not verifiable here) —
 # override DISCONNECT_TOKEN / DISCONNECT_LOG and confirm on the first operator run. See docs.
 DISCONNECT_LOG="${DISCONNECT_LOG:-${RELAY_LOG}}"
-DISCONNECT_TOKEN="${DISCONNECT_TOKEN:-disconnect}"
-INITIAL_UUID="${INITIAL_UUID:-43143143-4314-4314-8314-431431431431}"  # bootstrap session JSONL stem
+DISCONNECT_TOKEN="${DISCONNECT_TOKEN:-phone_unregistered}"
+INITIAL_UUID="${INITIAL_UUID:-43143143-4314-4314-8314-431431431431}"  # seeded session id
 CONV_UUID="${CONV_UUID:-c0a70431-0431-4031-8031-043104310431}"        # seeded channel id
 SEED_CHANNEL_NAME="${SEED_CHANNEL_NAME:-e2e-seed}"  # MUST equal DeterministicInteractiveStreamE2ETest.SEED_CHANNEL_NAME
                                                     # Deliberately NOT containing "ping": the seeded channel name
@@ -178,7 +158,7 @@ die() { printf '\033[1;31m[e2e] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 #   something to REPORT, not to abort on (that would make read-only reporting a new failure mode for
 #   modes that work today). `set -e` would kill the script on a non-zero command substitution, so the
 #   python side catches everything and always exits 0 with one line.
-#   runner is one of a closed four-token set: pty | stream-json | unrecognised | unknown.
+#   runner is one of: stream-json | unrecognised | unknown.
 #   SECURITY (spec § Security review): report the ONE field and a fixed reason token — never the file
 #   body (the same file holds relay_url and is the natural home for future secrets) and never an
 #   interpolated parser exception (its text can carry a fragment of the document). Echoing the raw
@@ -196,7 +176,7 @@ def resolve(path):
     except FileNotFoundError:
         # Upstream config.Load treats a missing file as DefaultConfig() with NO error, and
         # InteractiveRunner has no DefaultConfig entry — so absent file == the daemon's default.
-        return ("pty", "daemon default — no config file at " + path)
+        return ("stream-json", "daemon default — no config file at " + path)
     except OSError:
         return ("unknown", "could not read " + path)
     try:
@@ -208,14 +188,14 @@ def resolve(path):
     value = obj.get("interactive_runner", "")
     if not isinstance(value, str):
         # Upstream decodes into a string field, so a non-string here fails config.Load outright —
-        # that is a parse failure, NOT the default. Reporting it as "pty (daemon default)" would
+        # that is a parse failure, NOT the default. Reporting it as "stream-json (daemon default)" would
         # name a runner the daemon will never reach.
         return ("unknown",
                 "could not parse " + path
                 + " (interactive_runner is not a string — the daemon will refuse to start)")
     if value == "":
-        return ("pty", "daemon default — interactive_runner unset in " + path)
-    if value in ("pty", "stream-json"):
+        return ("stream-json", "daemon default — interactive_runner unset in " + path)
+    if value == "stream-json":
         return (value, "from " + path)
     return ("unrecognised",
             "value in " + path + " is outside the accepted set — the daemon will refuse to start")
@@ -280,8 +260,9 @@ if [ -n "${INTERACTIVE_RUNNER}" ]; then
   # reaching the operator as an opaque "daemon exited early — see daemon.log" three seconds later;
   # the wording mirrors upstream's so the two messages agree.
   case "${INTERACTIVE_RUNNER}" in
-    pty | stream-json) ;;
-    *) die "INTERACTIVE_RUNNER=\"${INTERACTIVE_RUNNER}\" not recognized (accepted: \"pty\", \"stream-json\")" ;;
+    stream-json) ;;
+    pty) die "INTERACTIVE_RUNNER=pty was removed upstream; use stream-json" ;;
+    *) die "INTERACTIVE_RUNNER=\"${INTERACTIVE_RUNNER}\" not recognized (accepted: \"stream-json\")" ;;
   esac
   # Pinning writes <HOME>/.pyry/config.json. That path is per-USER, so on a real-HOME run it IS the
   # operator's production configuration — refuse rather than edit it. Only DETERMINISTIC runs under
@@ -368,21 +349,15 @@ if [ -n "${DETERMINISTIC}" ]; then
 fi
 
 # ---- deterministic setup (rung 4 only) --------------------------------------------------------
-# Compute the isolated HOME and sessions dir, and build/locate fakeclaude, before pairing. The
-# conversations.json seed lands later (after pairing creates .pyry/<name>/, before the daemon boots).
+# Create the isolated HOME and build/locate fakeclaude before daemon startup.
+# Seed the promoted channel before the daemon loads its conversation store.
 if [ -n "${DETERMINISTIC}" ]; then
   log "deterministic mode: scripted fakeclaude backend (no real claude, zero claude turns)."
   # Isolated, SHORT HOME under /tmp — NOT $TMPDIR. On macOS $TMPDIR is long and the daemon's unix
   # control socket path can exceed the ~104-char sun_path limit. os.UserHomeDir() reads $HOME, so this
   # redirects BOTH .pyry/<name>/ and .claude/projects/ for `pyry pair` and the daemon alike.
   ISO_HOME="$(mktemp -d /tmp/pyry-e2e-det.XXXXXX)"
-  ROTATE_TRIGGER="${WORK_DIR}/rotate.never"             # required by fakeclaude (mustEnv); never created
-  JSONL_TRIGGER="${WORK_DIR}/structured.jsonl.trigger"  # the fixture-drop path
-  # The daemon tails <HOME>/.claude/projects/<encode(workdir)> with workdir == HOME (we pass
-  # -pyry-workdir=<HOME>). encode replaces BOTH '/' and '.' with '-' (pyrycode reconcile.go
-  # encodeWorkdir); replicate it byte-for-byte so our pre-created JSONL lands where the daemon looks.
-  ENC="${ISO_HOME//\//-}"; ENC="${ENC//./-}"
-  SESSIONS_DIR="${ISO_HOME}/.claude/projects/${ENC}"
+  REPLAY_RELEASE="${WORK_DIR}/release-second-fragment"
   if [ -n "${FAKE_CLAUDE_BIN}" ]; then
     FAKE_BIN="${FAKE_CLAUDE_BIN}"
     log "  fakeclaude = ${FAKE_BIN} (prebuilt)"
@@ -393,7 +368,6 @@ if [ -n "${DETERMINISTIC}" ]; then
       || die "go build fakeclaude failed (see stderr above)"
   fi
   log "  isolated HOME = ${ISO_HOME}"
-  log "  sessions dir  = ${SESSIONS_DIR}"
 fi
 
 # ---- 1. relay ---------------------------------------------------------------------------------
@@ -416,69 +390,13 @@ else
   log "LIVE mode: skipping local relay — dialing the production relay at wss://${LIVE_RELAY_HOST} (TLS)."
 fi
 
-# ---- 2. pair (mint a device token before the daemon starts so it loads on boot) ---------------
-# `pyry pair` prints a QR plus one base64url-encoded JSON line: {server, relay, token,
-# server_static_pubkey}. We parse that line and ignore its `relay` (the daemon's loopback URL); the
-# phone must dial the 10.0.2.2 alias instead, so we override relayUrl below. In deterministic mode we
-# pair under the isolated HOME so the device identity and conversations.json live in the scratch
-# profile (and the daemon, also under that HOME, shares the same identity).
-log "minting device pairing token (name='${PAIR_NAME}', pyry-name='${PYRY_NAME}')…"
-if [ -n "${DETERMINISTIC}" ]; then
-  env "HOME=${ISO_HOME}" PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME}" --name="${PAIR_NAME}" \
-    >"${PAIR_OUT}" 2>&1 || { cat "${PAIR_OUT}" >&2; die "pyry pair failed"; }
-else
-  PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME}" --name="${PAIR_NAME}" \
-    >"${PAIR_OUT}" 2>&1 || { cat "${PAIR_OUT}" >&2; die "pyry pair failed"; }
-fi
-
-# Parse the first line that base64url-decodes to a JSON object with the expected keys.
-PARSED="$(python3 - "${PAIR_OUT}" <<'PY'
-import sys, json, base64, shlex
-def b64url(s):
-    s = s.strip()
-    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
-payload = None
-with open(sys.argv[1]) as f:
-    for line in f:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(b64url(line))
-        except Exception:
-            continue
-        if isinstance(obj, dict) and {"server", "token", "server_static_pubkey"} <= obj.keys():
-            payload = obj
-            break
-if payload is None:
-    sys.stderr.write("could not find the base64url pairing payload line in `pyry pair` output\n")
-    sys.exit(1)
-print("SERVER_ID=" + shlex.quote(payload["server"]))
-print("TOKEN=" + shlex.quote(payload["token"]))
-print("SERVER_STATIC_PUBKEY=" + shlex.quote(payload["server_static_pubkey"]))
-PY
-)" || { cat "${PAIR_OUT}" >&2; die "failed to parse pairing payload"; }
-eval "${PARSED}"
-[ -n "${SERVER_ID:-}" ] && [ -n "${TOKEN:-}" ] && [ -n "${SERVER_STATIC_PUBKEY:-}" ] || die "empty pairing fields"
-log "paired: serverId=${SERVER_ID}"
-
 # ---- 2b. pre-seed the scripted backend (rung 4 only) ------------------------------------------
-# Mirror pyrycode's #642 capstone (seedBoundConversation + pre-created <initialUUID>.jsonl), changed
-# to a PROMOTED channel so it surfaces tappable on the launch channel list. One conversation, one
-# session, one fixture file → the by-id producer tails exactly the file fakeclaude writes.
+# A promoted channel gives the app a stable entry point. Stream replay runs over
+# fakeclaude stdout; no transcript file or tailing cursor participates.
 if [ -n "${DETERMINISTIC}" ]; then
-  log "pre-seeding scripted backend (sessions dir, bootstrap JSONL, promoted conversation)…"
-  mkdir -p "${SESSIONS_DIR}"
-  # Pre-create <initialUUID>.jsonl BEFORE the daemon starts so the producer's first resolve succeeds
-  # immediately at a tiny offset — avoids the cold-start race where a later resolve lands PAST the
-  # fixture and the phone gets zero envelopes. "{}\n" maps to no structured event.
-  printf '{}\n' >"${SESSIONS_DIR}/${INITIAL_UUID}.jsonl"
-  # One promoted row bound to the bootstrap session id. current_session_id == INITIAL_UUID is
-  # load-bearing: sessionRouter.Route rejects an empty current_session_id (#678), and the daemon binds
-  # the bootstrap session to the most-recent (here: only) <uuid>.jsonl — INITIAL_UUID — so the by-id
-  # tail matches fakeclaude's file. is_promoted:true lists it as a Channel; name is the test's tap target.
+  log "pre-seeding scripted channel for stream-json replay…"
   CONV_DIR="${ISO_HOME}/.pyry/${PYRY_NAME}"
-  [ -d "${CONV_DIR}" ] || die "expected ${CONV_DIR} (created by 'pyry pair') — did pairing run under HOME=${ISO_HOME}?"
+  ( umask 077; mkdir -p "${CONV_DIR}" )
   cat >"${CONV_DIR}/conversations.json" <<EOF
 {"conversations":[{"id":"${CONV_UUID}","name":"${SEED_CHANNEL_NAME}","cwd":"${ISO_HOME}","current_session_id":"${INITIAL_UUID}","is_promoted":true,"last_used_at":"2026-01-01T00:00:00Z"}]}
 EOF
@@ -493,7 +411,7 @@ EOF
   #     wrong    <ISO_HOME>/.pyry/<PYRY_NAME>/config.json   ← copying the adjacent line's path
   # The wrong path is silent: config.Load reads a missing file as DefaultConfig() with NO error, so the
   # run goes green on the default runner and the pin does nothing. The pre-spawn report below reads the
-  # config back from the daemon's own path, so a misplaced seed shows up as "pty (daemon default)".
+  # config back from the daemon's own path, so a misplaced seed shows up as "stream-json (daemon default)".
   #
   # A partial file is legal — config.Load overlays it onto DefaultConfig(), so every other field keeps
   # its default. relay_url specifically is safe to leave defaulted here because this path already passes
@@ -526,18 +444,24 @@ else
   DAEMON_CONFIG_PATH="${HOME:-}/.pyry/config.json"   # real HOME: read, never written
 fi
 report_interactive_runner "${DAEMON_CONFIG_PATH}"
+log "app mode: E2eTestApplication with real relay repository; device: ${DEVICE}"
+if command -v go >/dev/null 2>&1; then
+  DAEMON_REVISION="$(go version -m "$(command -v "${PYRY_BIN}")" 2>/dev/null | sed -n 's/.*vcs.revision=//p')"
+  log "daemon revision: ${DAEMON_REVISION:-unavailable}; binary: ${PYRY_BIN}"
+fi
 log "starting pyry daemon (PYRY_MOBILE_V2=1) → ${DAEMON_RELAY_URL}…"
 if [ -n "${DETERMINISTIC}" ]; then
-  # Scripted backend: -pyry-claude=<fakeclaude>, -pyry-workdir=<HOME>, isolated HOME, and the
-  # PYRY_FAKE_CLAUDE_* env (inherited by the spawned child). TUI=1 emits the idle/thinking glyphs so
-  # the daemon's WaitReady/commit path confirms the turn fast and the send_message ack is prompt.
+  # The fake speaks the current runner protocol and replays the first fragment
+  # on its first user envelope. A second fragment waits for our release signal.
+  REPLAY_ENV=(PYRY_FAKE_CLAUDE_STREAM_JSON=1
+    "PYRY_FAKE_CLAUDE_STREAM_REPLAY_FIRST=${FIXTURE_FILE}")
+  if [ -n "${FIXTURE_FILE_2}" ]; then
+    REPLAY_ENV+=("PYRY_FAKE_CLAUDE_STREAM_REPLAY_SECOND=${FIXTURE_FILE_2}"
+      "PYRY_FAKE_CLAUDE_STREAM_REPLAY_RELEASE=${REPLAY_RELEASE}")
+  fi
   env "HOME=${ISO_HOME}" \
     PYRY_ALLOW_INSECURE_RELAY=1 PYRY_MOBILE_V2=1 PYRY_RELAY_URL="${DAEMON_RELAY_URL}" \
-    PYRY_FAKE_CLAUDE_SESSIONS_DIR="${SESSIONS_DIR}" \
-    PYRY_FAKE_CLAUDE_INITIAL_UUID="${INITIAL_UUID}" \
-    PYRY_FAKE_CLAUDE_TRIGGER="${ROTATE_TRIGGER}" \
-    PYRY_FAKE_CLAUDE_JSONL_TRIGGER="${JSONL_TRIGGER}" \
-    PYRY_FAKE_CLAUDE_TUI=1 \
+    "${REPLAY_ENV[@]}" \
     "${PYRY_BIN}" -pyry-name="${PYRY_NAME}" -pyry-claude="${FAKE_BIN}" -pyry-workdir="${ISO_HOME}" \
     >"${DAEMON_LOG}" 2>&1 &
   DAEMON_PID=$!
@@ -545,74 +469,82 @@ elif [ -n "${LIVE}" ]; then
   # LIVE (rung 3): dial the PRODUCTION relay over wss:// (TLS). PYRY_ALLOW_INSECURE_RELAY is NEVER set on
   # this path — TLS-only transport is enforced by omitting the flag here, not by a runtime toggle. Runs
   # under the real HOME (real claude needs ~/.claude auth); isolation is by -pyry-name (~/.pyry/e2e-live/).
-  PYRY_MOBILE_V2=1 PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" -pyry-name="${PYRY_NAME}" \
+  PYRY_MOBILE_V2=1 PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" -pyry-name="${PYRY_NAME}" -pyry-workdir="${HOME}" \
     >"${DAEMON_LOG}" 2>&1 &
   DAEMON_PID=$!
 else
-  PYRY_ALLOW_INSECURE_RELAY=1 PYRY_MOBILE_V2=1 PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" -pyry-name="${PYRY_NAME}" \
+  PYRY_ALLOW_INSECURE_RELAY=1 PYRY_MOBILE_V2=1 PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" -pyry-name="${PYRY_NAME}" -pyry-workdir="${HOME}" \
     >"${DAEMON_LOG}" 2>&1 &
   DAEMON_PID=$!
 fi
 sleep 3
-kill -0 "${DAEMON_PID}" 2>/dev/null || { cat "${DAEMON_LOG}" >&2; die "daemon exited early — see ${DAEMON_LOG}"; }
+kill -0 "${DAEMON_PID}" 2>/dev/null || die "daemon exited early; see private log ${DAEMON_LOG}"
 log "daemon up (the test waits for the relay session to open before sending)."
 
-# ---- 4b. fixture-drop watcher (rung 4 only) ---------------------------------------------------
-# The fixture must drop AFTER the producer cursor is stamped: `router.Route` stamps it, then logs
-# `send_message.enqueued` (pyrycode send_message.go); dropping earlier lets the producer tail PAST the
-# fixture (cold-start race) → the phone gets zero envelopes. So the host-observable fence is the
-# `send_message.enqueued` line in daemon.log (the post-#704/#721 token — confirm on first operator run
-# if the daemon is older). Run as a background job so it can fire concurrently with the foreground
-# gradle run (which sends the prompt mid-test). Poll the (tiny) log rather than `tail -F | grep` so a
-# single kill of this subshell fully reaps the watcher on EXIT — no orphaned `tail` following a deleted
-# file.
+# ---- pair against the running test daemon ---------------
+# `pyry pair` prints a QR plus one base64url-encoded JSON line: {server, relay, token,
+# server_static_pubkey}. We parse that line and ignore its `relay` (the daemon's loopback URL); the
+# phone must dial the 10.0.2.2 alias instead, so we override relayUrl below. In deterministic mode we
+# pair under the isolated HOME so the device identity and conversations.json live in the scratch
+# profile (and the daemon, also under that HOME, shares the same identity).
+log "minting device pairing token (name='${PAIR_NAME}', pyry-name='${PYRY_NAME}')…"
 if [ -n "${DETERMINISTIC}" ]; then
-  if [ -n "${FIXTURE_FILE_2}" ] && [ "${DROP_B_FENCE}" = "disconnect" ]; then
-    # Straddle-the-outage scenario (replay-order #477): two causally-fenced drops, but the sever/restore
-    # straddles drop B. Drop A on the 1st enqueue opens + HOLDS the turn (no end_turn); the test then severs
-    # the phone link. Drop B must fire DURING the offline window — but a severed phone cannot send a 2nd
-    # send_message, so it cannot fence on enqueue #2 (the reconnect path). Instead fence drop B on the relay
-    # logging the phone-leg disconnect: the ordered sequence then accrues in the daemon's in-ring buffer
-    # entirely while the phone is offline, and replays in order when the test restores the link. Baseline
-    # the disconnect-token count AFTER drop A, then wait for it to INCREASE — a bare `grep -q` would
-    # false-fire on a stale churn line from before the sever. (Robust `|| true` count idiom: `|| echo 0`
-    # would append a 2nd "0" and break the integer compare on a zero-count existing file — see PR notes.)
-    log "arming disconnect-fenced watcher (${FIXTURE_FILE##*/} on enqueue #1, ${FIXTURE_FILE_2##*/} on phone-leg disconnect)…"
-    log "  drop-B disconnect fence: token '${DISCONNECT_TOKEN}' in ${DISCONNECT_LOG##*/} (override DISCONNECT_TOKEN / DISCONNECT_LOG; confirm on first operator run)"
-    (
-      while [ "$(grep -cF 'send_message.enqueued' "${DAEMON_LOG}" 2>/dev/null || true)" -lt 1 ]; do sleep 0.5; done
-      cp "${FIXTURE_FILE}" "${JSONL_TRIGGER}"        # drop A: thinking, held open across the outage
-      drop_b_base="$(grep -cF "${DISCONNECT_TOKEN}" "${DISCONNECT_LOG}" 2>/dev/null || true)"; drop_b_base="${drop_b_base:-0}"
-      while [ "$(grep -cF "${DISCONNECT_TOKEN}" "${DISCONNECT_LOG}" 2>/dev/null || true)" -le "${drop_b_base}" ]; do sleep 0.5; done
-      cp "${FIXTURE_FILE_2}" "${JSONL_TRIGGER}"      # drop B: ordered sequence, produced while the phone is offline
-    ) &
-    WATCHER_PID=$!
-  elif [ -n "${FIXTURE_FILE_2}" ]; then
-    # Two-drop scenarios (spinner #454, tool #455, reconnect #476): two causally-fenced drops. Drop A on
-    # the 1st enqueue opens a turn and HOLDS it open (no end_turn) so the transient state is observable
-    # (thinking spinner / running tool row) or so the turn is still streaming when the test severs the
-    # phone link (reconnect); the test, after asserting that state / restoring the link, sends a 2nd
-    # message whose enqueue triggers drop B, ending the turn and resolving the state. Count enqueues (not a
-    # one-shot grep) to tell the 1st from the 2nd. Drop B waits for the 2nd enqueue — long after fakeclaude
-    # consumed drop A's trigger — so it never clobbers an unconsumed A.
-    log "arming two-drop watcher (${FIXTURE_FILE##*/} on enqueue #1, ${FIXTURE_FILE_2##*/} on #2)…"
-    (
-      while [ "$(grep -cF 'send_message.enqueued' "${DAEMON_LOG}" 2>/dev/null || echo 0)" -lt 1 ]; do sleep 0.5; done
-      cp "${FIXTURE_FILE}" "${JSONL_TRIGGER}"        # drop A: open + held (thinking / tool_use)
-      while [ "$(grep -cF 'send_message.enqueued' "${DAEMON_LOG}" 2>/dev/null || echo 0)" -lt 2 ]; do sleep 0.5; done
-      cp "${FIXTURE_FILE_2}" "${JSONL_TRIGGER}"      # drop B: turn-ending (responding / tool_result), state resolves
-    ) &
-    WATCHER_PID=$!
-  else
-    log "arming fixture-drop watcher (waits for send_message.enqueued, then drops ${FIXTURE_FILE##*/})…"
-    (
-      while ! grep -qF 'send_message.enqueued' "${DAEMON_LOG}" 2>/dev/null; do
-        sleep 0.5
-      done
-      cp "${FIXTURE_FILE}" "${JSONL_TRIGGER}"
-    ) &
-    WATCHER_PID=$!
-  fi
+  env "HOME=${ISO_HOME}" PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME}" --name="${PAIR_NAME}" \
+    >"${PAIR_OUT}" 2>&1 || die "pyry pair failed; see private log ${PAIR_OUT}"
+else
+  PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME}" --name="${PAIR_NAME}" \
+    >"${PAIR_OUT}" 2>&1 || die "pyry pair failed; see private log ${PAIR_OUT}"
+fi
+
+# Parse the first line that base64url-decodes to a JSON object with the expected keys.
+PARSED="$(python3 - "${PAIR_OUT}" <<'PY'
+import sys, json, base64, shlex
+def b64url(s):
+    s = s.strip()
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+payload = None
+with open(sys.argv[1]) as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(b64url(line))
+        except Exception:
+            continue
+        if isinstance(obj, dict) and {"server", "token", "server_static_pubkey"} <= obj.keys():
+            payload = obj
+            break
+if payload is None:
+    sys.stderr.write("could not find the base64url pairing payload line in `pyry pair` output\n")
+    sys.exit(1)
+print("SERVER_ID=" + shlex.quote(payload["server"]))
+print("TOKEN=" + shlex.quote(payload["token"]))
+print("SERVER_STATIC_PUBKEY=" + shlex.quote(payload["server_static_pubkey"]))
+PY
+)" || die "failed to parse pairing payload; see private log ${PAIR_OUT}"
+eval "${PARSED}"
+[ -n "${SERVER_ID:-}" ] && [ -n "${TOKEN:-}" ] && [ -n "${SERVER_STATIC_PUBKEY:-}" ] || die "empty pairing fields"
+log "paired: serverId=${SERVER_ID}"
+
+# ---- 4b. release a held stream fragment after an explicit test action ---------
+# First-fragment replay belongs to fakeclaude's user-envelope handler. Only the
+# second fragment needs a host signal: enqueue #2, or a phone disconnect while
+# replay-order deliberately keeps the phone offline.
+if [ -n "${DETERMINISTIC}" ] && [ -n "${FIXTURE_FILE_2}" ]; then
+  log "arming second-fragment release: ${DROP_B_FENCE}"
+  (
+    if [ "${DROP_B_FENCE}" = "disconnect" ]; then
+      disconnect_base="$(grep -cF "${DISCONNECT_TOKEN}" "${DISCONNECT_LOG}" 2>/dev/null || true)"
+      disconnect_base="${disconnect_base:-0}"
+      while [ "$(grep -cF "${DISCONNECT_TOKEN}" "${DISCONNECT_LOG}" 2>/dev/null || true)" -le "${disconnect_base}" ]; do sleep 0.2; done
+    else
+      while [ "$(grep -cF 'send_message.enqueued' "${DAEMON_LOG}" 2>/dev/null || true)" -lt 2 ]; do sleep 0.2; done
+    fi
+    touch "${REPLAY_RELEASE}"
+    log "released second stream fragment"
+  ) &
+  WATCHER_PID=$!
 fi
 
 # ---- 4. run the managed-device instrumented test ----------------------------------------------
@@ -636,7 +568,10 @@ else
 fi
 log "running ${DEVICE}DebugAndroidTest (headless emulator: boot → install → ${TEST_TARGET} → teardown)…"
 log "  phone relayUrl = ${PHONE_RELAY_URL}"
+GRADLE_TEST_ARGS=()
+if [ "${PYRY_FORCE_TEST_RUN:-}" = "1" ]; then GRADLE_TEST_ARGS+=(--rerun); fi
 "${GRADLEW}" -p "${REPO_ROOT}" "${DEVICE}DebugAndroidTest" \
+  "${GRADLE_TEST_ARGS[@]}" \
   -Pandroid.testInstrumentationRunnerArguments.class="${TEST_TARGET}" \
   -Pandroid.testInstrumentationRunnerArguments.relayUrl="${PHONE_RELAY_URL}" \
   -Pandroid.testInstrumentationRunnerArguments.token="${TOKEN}" \

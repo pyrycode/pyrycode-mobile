@@ -1,7 +1,9 @@
 package de.pyryco.mobile.ui.conversations.list
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDialog
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -57,7 +59,7 @@ class DiscussionListScreenTest {
             .onNodeWithText(string(R.string.promote_dialog_title))
             .assertIsDisplayed()
         composeTestRule
-            .onNode(hasText("alpha", substring = true))
+            .onNode(hasText("alpha", substring = true) and hasAnyAncestor(isDialog()))
             .assertIsDisplayed()
     }
 
@@ -143,7 +145,7 @@ class DiscussionListScreenTest {
         }
 
         composeTestRule
-            .onNode(hasText("ad-hoc kotlin question", substring = true))
+            .onNode(hasText("ad-hoc kotlin question", substring = true) and hasAnyAncestor(isDialog()))
             .assertIsDisplayed()
     }
 
@@ -163,7 +165,7 @@ class DiscussionListScreenTest {
         }
 
         composeTestRule
-            .onNode(hasText("Untitled discussion", substring = true))
+            .onNode(hasText("Untitled discussion", substring = true) and hasAnyAncestor(isDialog()))
             .assertIsDisplayed()
     }
 }
