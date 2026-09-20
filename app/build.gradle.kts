@@ -49,15 +49,14 @@ android {
         val gitSha = providers.of(GitShaValueSource::class.java) {}
         buildConfigField("String", "GIT_SHA", "\"${gitSha.get()}\"")
 
-        // #350: selects the bound ConversationRepository. OFF = FakeConversationRepository (the
-        // default — previews, tests, unchanged behaviour); ON = the relay-backed StableConversationRepository
-        // facade. A compile-time constant with no runtime setter — not flippable by any untrusted input.
-        // Stays "false" until the relay backend is functional end-to-end (depends on #346/#347/#348, #336, #337).
-        buildConfigField("boolean", "USE_RELAY_REPOSITORY", "false")
+        // Real by default; -PuseRelayRepository=false builds the demo repository binding.
+        // Compile-time only: runtime input cannot change the repository selection.
+        val useRelayRepository = providers.gradleProperty("useRelayRepository").map { it.toBooleanStrict() }.orElse(true)
+        buildConfigField("boolean", "USE_RELAY_REPOSITORY", useRelayRepository.get().toString())
 
-        // Custom runner for the interactive-stream e2e prototype (#337/#642 rung 3). Pass-through to
-        // the stock AndroidJUnitRunner for every existing component test; only swaps in the paired,
-        // relay-backed test Application when the run carries the e2e relay args (-e relayUrl …). Safe
+        // Custom runner for the interactive-stream e2e prototype (#337/#642 rung 3). Installs
+        // the test Application for every instrumented run; it selects fake unless the run carries
+        // the e2e relay args (-e relayUrl …), which select the paired, tapped relay repository. Safe
         // for `connectedAndroidTest` as well as the managed-device run.
         testInstrumentationRunner = "de.pyryco.mobile.e2e.E2eInstrumentationRunner"
     }
@@ -85,6 +84,10 @@ android {
         abortOnError = true
     }
     testOptions {
+        unitTests.all {
+            // Independent expectation lets the binding test catch an incorrectly generated flag.
+            it.systemProperty("expectedUseRelayRepository", providers.gradleProperty("useRelayRepository").orElse("true").get())
+        }
         managedDevices {
             // Headless Automated Test Device (ATD): GPU off, no window, no Play services. Generates the
             // Gradle task `pixel2Api33AtdDebugAndroidTest`, which creates, runs, and tears down the

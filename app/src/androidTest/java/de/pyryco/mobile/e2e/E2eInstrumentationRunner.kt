@@ -9,8 +9,8 @@ import androidx.test.runner.AndroidJUnitRunner
  * Instrumentation runner for the interactive-stream e2e prototype (#337 / #642 rung 3).
  *
  * It substitutes [E2eTestApplication] for the production app in **every** instrumented run. The
- * decision of whether to do e2e setup (pre-pair + bind the relay-backed repository) or to behave
- * exactly like the production app is made inside [E2eTestApplication.onCreate], based on whether the
+ * decision of whether to do e2e setup (pre-pair + bind the relay-backed repository) or to select
+ * the fake repository is made inside [E2eTestApplication.onCreate], based on whether the
  * run carries the e2e relay arguments. So this is safe for ordinary `connectedAndroidTest` runs too.
  *
  * Why not read the arguments here: Android calls [newApplication] **before** the instrumentation

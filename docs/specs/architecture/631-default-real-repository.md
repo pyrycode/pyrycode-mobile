@@ -37,7 +37,9 @@ Sizing: one deliverable (selecting the build repository consistently), approxima
 
 ## Documentation handoff
 
-Pending for the documentation stage, verbatim requirement: “Documentation stage: update README ‘Build’ with default-real, explicit-real and demo commands, and ‘Status’ to remove the fake-default claim. Reconcile the default description in the DI/repository topics.”
+Pending for the documentation stage, verbatim requirement:
+
+> Documentation stage: update README “Build” with default-real, explicit-real and demo commands, and “Status” to remove the fake-default claim. Reconcile the default description in the DI/repository topics.
 
 Paths/sections: `README.md` § Build and § Status; `docs/knowledge/features/dependency-injection.md` § How it works, Adding a binding and Related; `docs/knowledge/features/conversation-repository.md` § Phase 1 implementation; `docs/knowledge/features/stable-conversation-repository.md` introduction; `docs/knowledge/features/remote-conversation-repository.md` connection-wiring description. Commands: `./gradlew assembleDebug`, `./gradlew assembleDebug -PuseRelayRepository=true`, `./gradlew assembleDebug -PuseRelayRepository=false`.
 
@@ -61,3 +63,7 @@ Paths/sections: `README.md` § Build and § Status; `docs/knowledge/features/dep
 ## Open questions
 
 None.
+
+## Revisions
+
+- 2026-09-20: place `RepositoryBindingInstrumentedTest` in the `di` test package because the dispatcher UI gate excludes the `e2e` package. This keeps the no-relay binding assertion in the routine device gate. The harness's required real-mode option initializes `GRADLE_TEST_ARGS`, keeping that array nonempty even without forced rerun (compatible with Bash 3.2 nounset).

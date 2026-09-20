@@ -22,9 +22,8 @@ import org.koin.dsl.module
  * It reads the instrumentation arguments in [onCreate] — which runs **after** the instrumentation has
  * registered them (unlike the runner's `newApplication`, which runs before) — and branches:
  *
- *  * **No e2e relay arguments** → behaves exactly like the production [de.pyryco.mobile.PyryApp]:
- *    starts Koin with the default (fake) repository binding. This keeps every existing component test
- *    on its unchanged environment.
+ *  * **No e2e relay arguments** → explicitly starts Koin with the fake repository binding,
+ *    independent of the production build mode. Existing component tests keep their fake environment.
  *  * **e2e relay arguments present** (the interactive-stream prototype, #337 / #642 rung 3) → it
  *    1. binds the real relay-backed repository via [tappedRelayRepositoryModule] — the runtime equivalent
  *       of flipping the compile-time `USE_RELAY_REPOSITORY`, plus #586's parser-gap tap; and
@@ -41,11 +40,11 @@ class E2eTestApplication : Application() {
         val args = InstrumentationRegistry.getArguments()
         val relayUrl = args.getString(ARG_RELAY_URL)
         if (relayUrl == null) {
-            // Ordinary instrumented run: identical to PyryApp (default fake repository binding).
-            Log.i("E2E", "app.onCreate: no relayUrl arg → FAKE repository mode (PyryApp-equivalent)")
+            // Ordinary instrumented runs stay fake-backed in both real and demo builds.
+            Log.i("E2E", "app.onCreate: no relayUrl arg → FAKE repository mode")
             startKoin {
                 androidContext(this@E2eTestApplication)
-                modules(appModule, conversationRepositoryModule())
+                modules(appModule, conversationRepositoryModule(useRelay = false))
             }
             return
         }
