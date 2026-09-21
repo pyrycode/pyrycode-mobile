@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -41,18 +42,22 @@ import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.network.PairingParseResult
 import de.pyryco.mobile.data.network.RelayConnectionController
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.parsePairingPayload
 import de.pyryco.mobile.data.network.serverKeyFingerprint
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.ThemeMode
+import de.pyryco.mobile.di.ThreadDestinationFactory
 import de.pyryco.mobile.ui.conversations.list.ChannelListEvent
-import de.pyryco.mobile.ui.conversations.list.ChannelListNavigation
 import de.pyryco.mobile.ui.conversations.list.ChannelListScreen
+import de.pyryco.mobile.ui.conversations.list.ChannelListUiState
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListEvent
-import de.pyryco.mobile.ui.conversations.list.DiscussionListNavigation
 import de.pyryco.mobile.ui.conversations.list.DiscussionListScreen
+import de.pyryco.mobile.ui.conversations.list.DiscussionListUiState
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
+import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
+import de.pyryco.mobile.ui.conversations.list.PendingPromotion
 import de.pyryco.mobile.ui.conversations.thread.LiteralScreenSurface
 import de.pyryco.mobile.ui.conversations.thread.LiteralScreenViewModel
 import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
@@ -124,11 +129,12 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun PyryNavHost(
+internal fun PyryNavHost(
     startDestination: String,
     modifier: Modifier = Modifier,
+    navController: NavHostController = rememberNavController(),
 ) {
-    val navController = rememberNavController()
+    val destinations = koinInject<ThreadDestinationFactory>()
     NavHost(
         navController = navController,
         startDestination = startDestination,
@@ -290,58 +296,60 @@ private fun PyryNavHost(
         }
         composable(Routes.CHANNEL_LIST) {
             val vm = koinViewModel<ChannelListViewModel>()
-            val state by vm.state.collectAsStateWithLifecycle()
-            LaunchedEffect(vm) {
-                vm.navigationEvents.collect { event ->
-                    when (event) {
-                        is ChannelListNavigation.ToThread ->
-                            navController.navigate("conversation_thread/${event.conversationId}")
-                    }
+            val flatState by vm.state.collectAsStateWithLifecycle()
+            val hostState by vm.hostState.collectAsStateWithLifecycle()
+            val state =
+                when (val flat = flatState) {
+                    is ChannelListUiState.Loaded -> flat.copy(workspacePickerVisible = hostState.workspacePickerServerId != null)
+                    is ChannelListUiState.Empty -> flat.copy(workspacePickerVisible = hostState.workspacePickerServerId != null)
+                    else -> flat
                 }
+            LaunchedEffect(vm) {
+                vm.hostNavigationEvents.collect { navController.openThread(it) }
             }
             ChannelListScreen(
                 state = state,
                 onEvent = { event ->
                     when (event) {
                         is ChannelListEvent.RowTapped ->
-                            navController.navigate("conversation_thread/${event.conversationId}")
+                            destinations.selectedServerId()?.let { vm.onHostRowTapped(HostConversationTarget(it, event.conversationId)) }
                         ChannelListEvent.SettingsTapped ->
                             navController.navigate(Routes.SETTINGS)
                         ChannelListEvent.RecentDiscussionsTapped ->
                             navController.navigate(Routes.DISCUSSION_LIST)
-                        ChannelListEvent.CreateDiscussionTapped,
-                        ChannelListEvent.LongPressFab,
-                        is ChannelListEvent.WorkspacePicked,
-                        ChannelListEvent.WorkspacePickerDismissed,
-                        ->
-                            vm.onEvent(event)
+                        ChannelListEvent.CreateDiscussionTapped -> destinations.selectedServerId()?.let(vm::createHostDiscussion)
+                        ChannelListEvent.LongPressFab -> destinations.selectedServerId()?.let(vm::openHostWorkspacePicker)
+                        is ChannelListEvent.WorkspacePicked -> vm.pickHostWorkspace(event.workspace)
+                        ChannelListEvent.WorkspacePickerDismissed -> vm.dismissHostWorkspacePicker()
                     }
                 },
             )
         }
         composable(Routes.DISCUSSION_LIST) {
             val vm = koinViewModel<DiscussionListViewModel>()
-            val state by vm.state.collectAsStateWithLifecycle()
+            val flatState by vm.state.collectAsStateWithLifecycle()
+            val hostState by vm.hostState.collectAsStateWithLifecycle()
+            val state =
+                (flatState as? DiscussionListUiState.Loaded)?.copy(
+                    pendingPromotion = hostState.pendingPromotion?.let { PendingPromotion(it.target.conversationId, it.sourceName) },
+                ) ?: flatState
             LaunchedEffect(vm) {
-                vm.navigationEvents.collect { event ->
-                    when (event) {
-                        is DiscussionListNavigation.ToThread ->
-                            navController.navigate("conversation_thread/${event.conversationId}")
-                    }
-                }
+                vm.hostNavigationEvents.collect { navController.openThread(it) }
             }
             DiscussionListScreen(
                 state = state,
                 onEvent = { event ->
                     when (event) {
                         is DiscussionListEvent.RowTapped ->
-                            navController.navigate("conversation_thread/${event.conversationId}")
+                            destinations.selectedServerId()?.let { vm.onHostRowTapped(HostConversationTarget(it, event.conversationId)) }
                         is DiscussionListEvent.SaveAsChannelRequested ->
-                            vm.onEvent(event)
-                        DiscussionListEvent.PromoteConfirmed ->
-                            vm.onEvent(event)
-                        DiscussionListEvent.PromoteCancelled ->
-                            vm.onEvent(event)
+                            destinations.selectedServerId()?.let {
+                                vm.requestHostPromotion(
+                                    HostConversationTarget(it, event.conversationId),
+                                )
+                            }
+                        DiscussionListEvent.PromoteConfirmed -> vm.confirmHostPromotion()
+                        DiscussionListEvent.PromoteCancelled -> vm.cancelHostPromotion()
                         DiscussionListEvent.BackTapped ->
                             navController.popBackStack()
                     }
@@ -350,74 +358,73 @@ private fun PyryNavHost(
         }
         composable(
             route = Routes.CONVERSATION_THREAD,
-            arguments = listOf(navArgument("conversationId") { type = NavType.StringType }),
+            arguments = Routes.hostArguments(),
         ) { backStackEntry ->
-            val conversationId = backStackEntry.arguments?.getString("conversationId").orEmpty()
-            val vm = koinViewModel<ThreadViewModel>()
-            val state by vm.state.collectAsStateWithLifecycle()
-            val connectionState by vm.connectionState.collectAsStateWithLifecycle()
-            val isThinking by vm.isThinking.collectAsStateWithLifecycle()
-            val isStalled by vm.isStalled.collectAsStateWithLifecycle()
-            val apiRetry by vm.apiRetry.collectAsStateWithLifecycle()
-            val isCompacting by vm.isCompacting.collectAsStateWithLifecycle()
-            val isBusy by vm.isBusy.collectAsStateWithLifecycle()
-            val modalState by vm.currentModal.collectAsStateWithLifecycle()
-            val armedOptionId by vm.armedOptionId.collectAsStateWithLifecycle()
-            LaunchedEffect(vm) {
-                vm.navigationEvents.collect { event ->
-                    when (event) {
-                        ThreadNavigation.PopBack -> navController.popBackStack()
+            val target = Routes.target(backStackEntry.arguments)
+            HostDestination(target.serverId, destinations, navController) {
+                val vm = koinViewModel<ThreadViewModel>()
+                val state by vm.state.collectAsStateWithLifecycle()
+                val connectionState by vm.connectionState.collectAsStateWithLifecycle()
+                val isThinking by vm.isThinking.collectAsStateWithLifecycle()
+                val isStalled by vm.isStalled.collectAsStateWithLifecycle()
+                val apiRetry by vm.apiRetry.collectAsStateWithLifecycle()
+                val isCompacting by vm.isCompacting.collectAsStateWithLifecycle()
+                val isBusy by vm.isBusy.collectAsStateWithLifecycle()
+                val modalState by vm.currentModal.collectAsStateWithLifecycle()
+                val armedOptionId by vm.armedOptionId.collectAsStateWithLifecycle()
+                LaunchedEffect(vm) {
+                    vm.navigationEvents.collect { event ->
+                        when (event) {
+                            ThreadNavigation.PopBack -> navController.popBackStack()
+                        }
                     }
                 }
+                ThreadScreen(
+                    state = state,
+                    onBack = { navController.popBackStack() },
+                    onSendMessage = vm::sendMessage,
+                    connectionState = connectionState,
+                    onRetry = vm::retry,
+                    isThinking = isThinking,
+                    isStalled = isStalled,
+                    apiRetry = apiRetry,
+                    isCompacting = isCompacting,
+                    isBusy = isBusy,
+                    onInterrupt = vm::onInterrupt,
+                    modalState = modalState,
+                    armedOptionId = armedOptionId,
+                    modalSendErrors = vm.modalSendErrors,
+                    newSessionErrors = vm.newSessionErrors,
+                    archiveErrors = vm.archiveErrors,
+                    changeWorkspaceErrors = vm.changeWorkspaceErrors,
+                    sessionSettingsErrors = vm.sessionSettingsErrors,
+                    onModalOption = vm::onModalOption,
+                    onModalCancel = vm::onModalCancel,
+                    onDropQueued = vm::onDropQueued,
+                    onOverflowEvent = vm::onOverflowEvent,
+                    onShowLiteralScreen = { navController.navigate(Routes.literal(target)) },
+                    onModelSelected = vm::onModelSelected,
+                    onEffortSelected = vm::onEffortSelected,
+                    onYoloToggled = vm::onYoloToggled,
+                    onWorkspaceChipTapped = vm::onWorkspaceChipTapped,
+                    onWorkspacePicked = vm::onWorkspacePicked,
+                    onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
+                )
             }
-            ThreadScreen(
-                state = state,
-                onBack = { navController.popBackStack() },
-                onSendMessage = vm::sendMessage,
-                connectionState = connectionState,
-                onRetry = vm::retry,
-                isThinking = isThinking,
-                isStalled = isStalled,
-                apiRetry = apiRetry,
-                isCompacting = isCompacting,
-                isBusy = isBusy,
-                onInterrupt = vm::onInterrupt,
-                modalState = modalState,
-                armedOptionId = armedOptionId,
-                modalSendErrors = vm.modalSendErrors,
-                newSessionErrors = vm.newSessionErrors,
-                archiveErrors = vm.archiveErrors,
-                changeWorkspaceErrors = vm.changeWorkspaceErrors,
-                sessionSettingsErrors = vm.sessionSettingsErrors,
-                onModalOption = vm::onModalOption,
-                onModalCancel = vm::onModalCancel,
-                onDropQueued = vm::onDropQueued,
-                onOverflowEvent = vm::onOverflowEvent,
-                onShowLiteralScreen = { navController.navigate("literal_screen/$conversationId") },
-                onModelSelected = vm::onModelSelected,
-                onEffortSelected = vm::onEffortSelected,
-                onYoloToggled = vm::onYoloToggled,
-                onWorkspaceChipTapped = vm::onWorkspaceChipTapped,
-                onWorkspacePicked = vm::onWorkspacePicked,
-                onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
-            )
         }
         composable(
             route = Routes.LITERAL_SCREEN,
-            arguments = listOf(navArgument("conversationId") { type = NavType.StringType }),
-        ) {
-            // A fresh back-stack entry per open ⇒ a fresh ViewModelStoreOwner ⇒ koinViewModel() here
-            // yields a per-conversation LiteralScreenViewModel (its SavedStateHandle seeded from this
-            // entry's conversationId arg). Never hoist this above the destination / register as a Koin
-            // single — that would let one conversation's screen text bleed into the next (AC#3). The
-            // surface's LaunchedEffect(Unit) re-fetches on each fresh open.
-            val vm = koinViewModel<LiteralScreenViewModel>()
-            val state by vm.state.collectAsStateWithLifecycle()
-            LiteralScreenSurface(
-                state = state,
-                onEvent = vm::onEvent,
-                onBack = { navController.popBackStack() },
-            )
+            arguments = Routes.hostArguments(),
+        ) { backStackEntry ->
+            HostDestination(Routes.target(backStackEntry.arguments).serverId, destinations, navController) {
+                val vm = koinViewModel<LiteralScreenViewModel>()
+                val state by vm.state.collectAsStateWithLifecycle()
+                LiteralScreenSurface(
+                    state = state,
+                    onEvent = vm::onEvent,
+                    onBack = { navController.popBackStack() },
+                )
+            }
         }
         composable(Routes.SETTINGS) {
             val vm = koinViewModel<SettingsViewModel>()
@@ -499,14 +506,49 @@ private const val PARSE_FAILED_MSG =
 
 private const val SAVE_FAILED_MSG = "Couldn't save the pairing. Please try again."
 
-private object Routes {
+internal object Routes {
     const val WELCOME = "welcome"
     const val SCANNER = "scanner"
     const val CHANNEL_LIST = "channel_list"
     const val DISCUSSION_LIST = "discussions"
-    const val CONVERSATION_THREAD = "conversation_thread/{conversationId}"
-    const val LITERAL_SCREEN = "literal_screen/{conversationId}"
+    const val CONVERSATION_THREAD = "conversation_thread/{serverId}/{conversationId}"
+    const val LITERAL_SCREEN = "literal_screen/{serverId}/{conversationId}"
     const val SETTINGS = "settings"
     const val ARCHIVED_DISCUSSIONS = "archived_discussions"
     const val ABOUT = "about"
+
+    fun thread(target: HostConversationTarget) = "conversation_thread/${Uri.encode(target.serverId)}/${Uri.encode(target.conversationId)}"
+
+    fun literal(target: HostConversationTarget) = "literal_screen/${Uri.encode(target.serverId)}/${Uri.encode(target.conversationId)}"
+
+    fun hostArguments() = listOf("serverId", "conversationId").map { name -> navArgument(name) { type = NavType.StringType } }
+
+    fun target(arguments: Bundle?) =
+        HostConversationTarget(arguments?.getString("serverId").orEmpty(), arguments?.getString("conversationId").orEmpty())
+}
+
+@Composable
+private fun HostDestination(
+    serverId: String,
+    factory: ThreadDestinationFactory,
+    navController: NavHostController,
+    content: @Composable () -> Unit,
+) {
+    val hosts by factory.hostConnections.collectAsStateWithLifecycle()
+    val available = remember(serverId, hosts) { factory.hasHost(serverId) }
+    LaunchedEffect(serverId, hosts) {
+        if (!factory.hasHost(serverId) && !factory.isSavedHost(serverId)) {
+            RelayLog.d { "event=host_destination_rejected code=unknown_host" }
+            navController.navigate(Routes.CHANNEL_LIST) {
+                popUpTo(Routes.CHANNEL_LIST) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
+    }
+    if (available) content()
+}
+
+private fun NavHostController.openThread(target: HostConversationTarget) {
+    if (currentDestination?.route == Routes.CONVERSATION_THREAD && Routes.target(currentBackStackEntry?.arguments) == target) return
+    navigate(Routes.thread(target))
 }

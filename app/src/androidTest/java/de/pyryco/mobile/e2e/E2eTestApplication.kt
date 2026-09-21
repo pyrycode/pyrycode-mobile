@@ -91,7 +91,7 @@ class E2eTestApplication : Application() {
      */
     private fun tappedRelayRepositoryModule(): Module =
         module {
-            includes(hostConversationModule(useRelay = true))
+            includes(hostConversationModule(useRelay = true, decorateRepository = ::TappingConversationRepository))
             single<ConversationRepository> { TappingConversationRepository(get<StableConversationRepository>()) }
         }
 

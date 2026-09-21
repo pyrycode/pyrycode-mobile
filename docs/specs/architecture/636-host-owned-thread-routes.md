@@ -78,3 +78,7 @@ Pending documentation stage: update `docs/knowledge/features/navigation.md` (How
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-21
+
+## Revisions
+
+- 2026-09-21: `openThread` suppresses only an identical current target. Do not use `launchSingleTop` for the parameterized thread route: different host arguments can otherwise retain the same destination ViewModel. The production-graph regression sends A/A/B in one burst and checks distinct A/B owners and a single A entry.

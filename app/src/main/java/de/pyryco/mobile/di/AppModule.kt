@@ -6,21 +6,26 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.KeystoreDeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.KeystorePairedServerStore
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.NoiseSessionFactory
 import de.pyryco.mobile.data.network.OkHttpRelayTransport
 import de.pyryco.mobile.data.network.RelayConnectionController
 import de.pyryco.mobile.data.network.RelayConnectionSupervisor
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RelayTransportFactory
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
@@ -32,7 +37,10 @@ import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerViewModel
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
 import de.pyryco.mobile.ui.settings.SettingsViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import okhttp3.WebSocket
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.Module
@@ -101,23 +109,8 @@ val appModule =
             SettingsViewModel(get(), get(), get<RelayConnectionRegistry>().connectionStatus)
         }
         viewModel { ArchivedDiscussionsViewModel(get()) }
-        viewModel {
-            val registry = get<RelayConnectionRegistry>()
-            ThreadViewModel(
-                get(),
-                get(),
-                get(),
-                get(),
-                registry.liveSessionEvents,
-                registry.currentModal,
-                answerModal = registry::answerModal,
-                cancelModal = registry::cancelModal,
-                interrupt = registry::interrupt,
-            )
-        }
-        // #381: resolvable so #382's nav destination can obtain it (get() → SavedStateHandle +
-        // ConversationRepository). Per-conversation scoping of the obtained instance is #382's job.
-        viewModel { LiteralScreenViewModel(get(), get()) }
+        viewModel { get<ThreadDestinationFactory>().thread(get(), get()) }
+        viewModel { get<ThreadDestinationFactory>().literal(get()) }
     }
 
 /**
@@ -142,9 +135,88 @@ fun conversationRepositoryModule(useRelay: Boolean = BuildConfig.USE_RELAY_REPOS
     }
 
 /** Shared with relay instrumentation, which replaces only the compatibility repository binding. */
-fun hostConversationModule(useRelay: Boolean): Module =
+fun hostConversationModule(
+    useRelay: Boolean,
+    decorateRepository: (ConversationRepository) -> ConversationRepository = { it },
+): Module =
     module {
+        single { ThreadDestinationFactory(useRelay, get(), get(), get(), decorateRepository) }
         single {
             if (useRelay) HostConversationSource.relay(get()) else HostConversationSource.demo(get<FakeConversationRepository>())
         } onClose { it?.dispose() }
     }
+
+/** Destination ownership is captured once; compatibility selection is only a flat-list adapter. */
+internal class ThreadDestinationFactory(
+    private val useRelay: Boolean,
+    private val registry: RelayConnectionRegistry,
+    private val fake: FakeConversationRepository,
+    private val store: PairedServerCollectionStore,
+    private val decorateRepository: (ConversationRepository) -> ConversationRepository,
+) {
+    val hostConnections get() = registry.hostConnections
+
+    fun selectedServerId(): String? =
+        if (!useRelay) {
+            HostConversationSource.DEMO_SERVER_ID
+        } else {
+            registry.hostConnections.value
+                .firstOrNull {
+                    registry.connectionFor(it.serverId) === registry.selected.value
+                }?.serverId
+        }
+
+    fun hasHost(serverId: String): Boolean =
+        if (!useRelay) serverId == HostConversationSource.DEMO_SERVER_ID else registry.connectionFor(serverId) != null
+
+    suspend fun isSavedHost(serverId: String): Boolean =
+        if (!useRelay) serverId == HostConversationSource.DEMO_SERVER_ID else store.loadById(serverId) != null
+
+    private fun repository(
+        serverId: String,
+        bundle: RelayConnectionBundle? = if (useRelay) registry.connectionFor(serverId) else null,
+    ): ConversationRepository =
+        if (!useRelay && serverId == HostConversationSource.DEMO_SERVER_ID) {
+            fake
+        } else {
+            val repositories = bundle?.coordinator?.currentRepository ?: MutableStateFlow(null)
+            decorateRepository(StableConversationRepository(repositories))
+        }
+
+    fun thread(
+        handle: SavedStateHandle,
+        preferences: AppPreferences,
+    ): ThreadViewModel {
+        val serverId = handle.get<String>("serverId").orEmpty()
+        val bundle = if (useRelay) registry.connectionFor(serverId) else null
+        val repository = repository(serverId, bundle)
+        RelayLog.d { "event=thread_destination_bound" }
+        if (!useRelay && serverId == HostConversationSource.DEMO_SERVER_ID) {
+            return ThreadViewModel(handle, repository, FakeConnectionStateSource(), preferences)
+        }
+        val connection =
+            object : ConnectionStateSource {
+                override fun observe() = bundle?.supervisor?.observe() ?: flowOf(ConnectionState.Offline)
+
+                override suspend fun retry() {
+                    if (bundle != null && registry.connectionFor(serverId) === bundle) bundle.supervisor.retry()
+                }
+            }
+        return ThreadViewModel(
+            handle,
+            repository,
+            connection,
+            preferences,
+            liveSessionEvents = bundle?.coordinator?.liveSessionEvents ?: emptyFlow(),
+            currentModal = bundle?.coordinator?.currentModal ?: MutableStateFlow(ModalUiState.Hidden),
+            answerModal = { modal, option -> checkNotNull(bundle).coordinator.answerModal(modal, option) },
+            cancelModal = { modal -> checkNotNull(bundle).coordinator.cancelModal(modal) },
+            interrupt = { id -> checkNotNull(bundle).coordinator.interrupt(id) },
+        )
+    }
+
+    fun literal(handle: SavedStateHandle): LiteralScreenViewModel {
+        RelayLog.d { "event=literal_destination_bound" }
+        return LiteralScreenViewModel(handle, repository(handle.get<String>("serverId").orEmpty()))
+    }
+}

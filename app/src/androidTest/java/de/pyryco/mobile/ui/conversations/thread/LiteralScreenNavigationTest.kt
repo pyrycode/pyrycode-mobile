@@ -1,56 +1,226 @@
 package de.pyryco.mobile.ui.conversations.thread
 
-import androidx.compose.material3.Text
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.emptyPreferences
+import androidx.lifecycle.ViewModel
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavHostController
-import androidx.navigation.NavType
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import androidx.navigation.navArgument
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import de.pyryco.mobile.PyryNavHost
+import de.pyryco.mobile.Routes
+import de.pyryco.mobile.data.crypto.DeviceStaticKeyPair
+import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
+import de.pyryco.mobile.data.crypto.PairedServer
+import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
+import de.pyryco.mobile.data.crypto.PairedServerEntry
+import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.network.NoiseClientInfo
+import de.pyryco.mobile.data.network.RelayTransportFactory
+import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.di.ObservablePairedServerStore
+import de.pyryco.mobile.di.RelayConnectionFactory
+import de.pyryco.mobile.di.RelayConnectionRegistry
+import de.pyryco.mobile.di.appModule
+import de.pyryco.mobile.di.conversationRepositoryModule
+import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
+import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
+import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
+import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.koin.compose.KoinIsolatedContext
+import org.koin.core.KoinApplication
+import org.koin.dsl.binds
+import org.koin.dsl.module
 
-/**
- * Pins the route template + arg-name contract that [LiteralScreenViewModel] depends on: a
- * [NavType.StringType] argument named exactly `conversationId` must survive `navigate(...)` so the
- * destination's back-stack-entry [androidx.lifecycle.SavedStateHandle] seeds the VM. This guards the
- * AC#2/#3 routing half without depending on `MainActivity` (its `PyryNavHost` is private + Koin-bound);
- * it tests a copy of the route string under a minimal NavHost, matching the repo's existing inline-route
- * idiom. The per-back-stack-entry VM-freshness guarantee itself is a framework property covered by code
- * review, not asserted here.
- */
 @RunWith(AndroidJUnit4::class)
 class LiteralScreenNavigationTest {
-    @get:Rule
-    val composeTestRule = createComposeRule()
+    @get:Rule val compose = createComposeRule()
+    private lateinit var app: KoinApplication
+    private lateinit var registry: RelayConnectionRegistry
+    private lateinit var store: ObservablePairedServerStore
+    private lateinit var nav: NavHostController
+    private val a = HostConversationTarget("A /?#%", "same /?#%")
+    private val b = a.copy(serverId = "B")
 
-    @Test
-    fun navigating_to_literal_screen_carries_conversation_id_on_a_dedicated_destination() {
-        lateinit var navController: NavHostController
-        composeTestRule.setContent {
-            navController = rememberNavController()
-            NavHost(navController = navController, startDestination = "start") {
-                composable("start") { Text("start") }
-                composable(
-                    route = "literal_screen/{conversationId}",
-                    arguments = listOf(navArgument("conversationId") { type = NavType.StringType }),
-                ) {
-                    Text("literal")
+    @After fun close() {
+        if (::app.isInitialized) app.close()
+        if (::registry.isInitialized) registry.dispose()
+    }
+
+    @Test fun hostStreamsBackReopenAndRestorationKeepDestinationIdentity() {
+        val restoration = start()
+        lateinit var first: ThreadViewModel
+        lateinit var firstLiteral: LiteralScreenViewModel
+        compose.runOnIdle {
+            val list = model<ChannelListViewModel>()
+            list.onHostRowTapped(a)
+            list.onHostRowTapped(a)
+            list.onHostRowTapped(b)
+        }
+        awaitTarget(b, Routes.CONVERSATION_THREAD)
+        lateinit var other: ThreadViewModel
+        compose.runOnIdle {
+            other = model()
+            nav.popBackStack()
+        }
+        awaitTarget(a, Routes.CONVERSATION_THREAD)
+        compose.runOnIdle { assertNotSame(other, model<ThreadViewModel>()) }
+        compose.runOnIdle { first = model() }
+        restoration.emulateSavedInstanceStateRestore()
+        awaitTarget(a, Routes.CONVERSATION_THREAD)
+        compose.onNodeWithContentDescription("More actions").performClick()
+        compose.onNodeWithText("Show the literal screen").performClick()
+        awaitTarget(a, Routes.LITERAL_SCREEN)
+        compose.runOnIdle { firstLiteral = model() }
+        compose.onNodeWithText("Try again").performClick()
+        awaitTarget(a, Routes.LITERAL_SCREEN)
+        compose.runOnIdle { assertTrue(model<LiteralScreenViewModel>().state.value is LiteralScreenUiState.Error) }
+        compose.runOnIdle { nav.popBackStack() }
+        awaitTarget(a, Routes.CONVERSATION_THREAD)
+        compose.runOnIdle { nav.popBackStack() }
+        compose.runOnIdle {
+            assertEquals(Routes.CHANNEL_LIST, nav.currentDestination?.route)
+            nav.navigate(Routes.DISCUSSION_LIST)
+        }
+        compose.waitForIdle()
+        compose.runOnIdle { model<DiscussionListViewModel>().onHostRowTapped(b) }
+        awaitTarget(b, Routes.CONVERSATION_THREAD)
+        compose.runOnIdle { assertNotSame(first, model<ThreadViewModel>()) }
+        compose.onNodeWithContentDescription("More actions").performClick()
+        compose.onNodeWithText("Show the literal screen").performClick()
+        awaitTarget(b, Routes.LITERAL_SCREEN)
+        compose.runOnIdle { assertNotSame(firstLiteral, model<LiteralScreenViewModel>()) }
+        restoration.emulateSavedInstanceStateRestore()
+        awaitTarget(b, Routes.LITERAL_SCREEN)
+        compose.runOnIdle {
+            nav.popBackStack()
+            nav.popBackStack()
+        }
+        compose.waitForIdle()
+        compose.runOnIdle { model<DiscussionListViewModel>().onHostRowTapped(a) }
+        awaitTarget(a, Routes.CONVERSATION_THREAD)
+        compose.runOnIdle { assertNotSame(first, model<ThreadViewModel>()) }
+    }
+
+    @Test fun unknownAndRemovedHostsReturnToListWithoutResolvingAnotherHost() {
+        start()
+        compose.runOnIdle { nav.navigate(Routes.thread(a)) }
+        awaitTarget(a, Routes.CONVERSATION_THREAD)
+        compose.runOnIdle { runBlocking { store.remove(a.serverId) } }
+        compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.CHANNEL_LIST }
+        compose.runOnIdle { nav.navigate(Routes.literal(a)) }
+        compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.CHANNEL_LIST }
+        compose.runOnIdle { nav.navigate(Routes.thread(b)) }
+        awaitTarget(b, Routes.CONVERSATION_THREAD)
+    }
+
+    private fun start(): StateRestorationTester {
+        val raw =
+            object : PairedServerCollectionStore {
+                var entries =
+                    listOf(
+                        a.serverId,
+                        b.serverId,
+                    ).map { PairedServerEntry(PairedServer(it, "unused", "wss://unused.example", "unused")) }
+
+                override suspend fun list() = entries
+
+                override suspend fun load() = entries.lastOrNull()?.record
+
+                override suspend fun loadById(serverId: String) = entries.find { it.record.serverId == serverId }
+
+                override suspend fun save(record: PairedServer) {
+                    entries =
+                        entries.filterNot { it.record.serverId == record.serverId } + PairedServerEntry(record)
+                }
+
+                override suspend fun remove(serverId: String) {
+                    entries = entries.filterNot { it.record.serverId == serverId }
+                }
+
+                override suspend fun setDisplayName(
+                    serverId: String,
+                    displayName: String?,
+                ) = Unit
+            }
+        store = ObservablePairedServerStore(raw)
+        val keys =
+            object : DeviceStaticKeyStore {
+                override suspend fun loadOrCreate(serverId: String): DeviceStaticKeyPair = error("must not dial")
+
+                override suspend fun publicKey(serverId: String): ByteArray = error("must not dial")
+            }
+        registry =
+            RelayConnectionRegistry(
+                store,
+                RelayConnectionFactory(
+                    keys,
+                    RelayTransportFactory {
+                        error("must not dial")
+                    },
+                    NoiseClientInfo("test", "test"),
+                ),
+                Dispatchers.Main.immediate,
+            )
+        val preferences =
+            AppPreferences(
+                object : DataStore<Preferences> {
+                    override val data = flowOf(emptyPreferences())
+
+                    override suspend fun updateData(transform: suspend (Preferences) -> Preferences) = transform(emptyPreferences())
+                },
+            )
+        app =
+            KoinApplication.init().modules(
+                appModule,
+                conversationRepositoryModule(true),
+                module {
+                    single { registry }
+                    single { store } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
+                    single { preferences }
+                },
+            )
+        return StateRestorationTester(compose).also { tester ->
+            tester.setContent {
+                KoinIsolatedContext(app) {
+                    PyrycodeMobileTheme {
+                        nav = rememberNavController()
+                        PyryNavHost(Routes.CHANNEL_LIST, navController = nav)
+                    }
                 }
             }
+            compose.waitForIdle()
         }
-
-        composeTestRule.runOnUiThread {
-            navController.navigate("literal_screen/conv-42")
-        }
-        composeTestRule.waitForIdle()
-
-        val entry = navController.currentBackStackEntry
-        assertEquals("literal_screen/{conversationId}", entry?.destination?.route)
-        assertEquals("conv-42", entry?.arguments?.getString("conversationId"))
     }
+
+    private fun awaitTarget(
+        target: HostConversationTarget,
+        route: String,
+    ) {
+        compose.waitUntil(5_000) { nav.currentDestination?.route == route }
+        compose.waitForIdle()
+        compose.runOnIdle { assertEquals(target, Routes.target(nav.currentBackStackEntry?.arguments)) }
+    }
+
+    private inline fun <reified T : ViewModel> model(entry: NavBackStackEntry = nav.currentBackStackEntry!!): T =
+        entry.viewModelStore
+            .keys()
+            .mapNotNull { entry.viewModelStore[it] as? T }
+            .single()
 }
