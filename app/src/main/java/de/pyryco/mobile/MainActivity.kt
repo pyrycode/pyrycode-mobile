@@ -40,6 +40,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import de.pyryco.mobile.data.crypto.PairedServer
+import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.network.PairingParseResult
 import de.pyryco.mobile.data.network.RelayConnectionController
@@ -91,7 +92,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val appPreferences = koinInject<AppPreferences>()
-            val pairedServerStore = koinInject<PairedServerStore>()
+            val pairedServerStore = koinInject<PairedServerCollectionStore>()
             val themeMode by appPreferences.themeMode
                 .collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
             val useWallpaperColors by appPreferences.useWallpaperColors
@@ -107,8 +108,17 @@ class MainActivity : ComponentActivity() {
                     val paired: Boolean? by produceState<Boolean?>(
                         initialValue = null,
                         pairedServerStore,
+                        appPreferences,
                     ) {
-                        value = pairedServerStore.load() != null
+                        RelayLog.d { "event=workspace_startup_started" }
+                        val hosts = pairedServerStore.list()
+                        val migration = appPreferences.migrateDefaultWorkspace(hosts.map { it.record.serverId }.toSet())
+                        if (migration.isSuccess) {
+                            value = hosts.isNotEmpty()
+                            RelayLog.d { "event=workspace_startup_ready" }
+                        } else {
+                            RelayLog.w { "event=workspace_startup_blocked code=migration_failed" }
+                        }
                     }
                     when (val v = paired) {
                         null ->

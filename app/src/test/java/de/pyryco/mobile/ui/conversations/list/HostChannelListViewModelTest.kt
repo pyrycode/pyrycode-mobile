@@ -78,6 +78,7 @@ class HostChannelListViewModelTest {
         fixtures.forEach {
             it.vm.viewModelScope.cancel()
             it.source.dispose()
+            it.app.close()
         }
         RelayLog.sink = oldSink
         RelayLog.enabled = oldEnabled
@@ -222,7 +223,13 @@ class HostChannelListViewModelTest {
             f.selected.value = f.b.repo
             val replacement = Repo()
             f.a.live.value = replacement
-            preferences.emit(preferencesOf(stringPreferencesKey("default_workspace") to "chosen-default"))
+            val defaults =
+                preferencesOf(
+                    stringPreferencesKey("default_workspace") to "wrong-global",
+                    stringPreferencesKey("default_workspace_host:Host") to "chosen-default",
+                    stringPreferencesKey("default_workspace_host:host") to "other-default",
+                )
+            preferences.emit(defaults)
             runCurrent()
             assertEquals(listOf("chosen-default"), replacement.workspaces)
             assertTrue(
@@ -236,6 +243,17 @@ class HostChannelListViewModelTest {
             assertEquals(listOf("Host"), f.lookups)
             assertEquals(listOf(HostConversationTarget("Host", "returned-id")), f.nav)
             assertTrue(f.legacy.isEmpty())
+
+            f.vm.createHostDiscussion("host")
+            preferences.emit(defaults)
+            runCurrent()
+            assertEquals(listOf("other-default"), f.b.repo.workspaces)
+            assertEquals(HostConversationTarget("host", "returned-id"), f.nav.last())
+            f.vm.createHostDiscussion("Host")
+            preferences.emit(emptyPreferences())
+            runCurrent()
+            assertEquals(listOf("chosen-default", DEFAULT_SCRATCH_CWD), replacement.workspaces)
+            assertEquals(HostConversationTarget("Host", "returned-id"), f.nav.last())
         }
 
     @Test
@@ -373,12 +391,24 @@ class HostChannelListViewModelTest {
     @Test
     fun appModuleInjectsSharedDemoSourceAndCreatesThroughExistingFakeSingleton() =
         runTest(dispatcher) {
+            val values = MutableStateFlow(emptyPreferences())
+            val prefs =
+                AppPreferences(
+                    object : DataStore<Preferences> {
+                        override val data = values
+
+                        override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences =
+                            transform(values.value).also { values.value = it }
+                    },
+                )
+            prefs.setDefaultWorkspace("/paired-host-only")
+            prefs.migrateDefaultWorkspace(setOf("saved-host")).getOrThrow()
             val app =
                 KoinApplication.init().modules(
                     appModule,
                     conversationRepositoryModule(false),
                     module {
-                        single { preferences(flowOf(emptyPreferences())) }
+                        single { prefs }
                     },
                 )
             val vm = app.koin.get<ChannelListViewModel>()
@@ -415,6 +445,20 @@ class HostChannelListViewModelTest {
                 assertEquals("demo", target.serverId)
                 val created = fake.observeConversations(ConversationFilter.Discussions).first().single { it.id == target.conversationId }
                 assertEquals(DEFAULT_SCRATCH_CWD, created.cwd)
+                prefs.setDefaultWorkspace("demo", "/demo-only").getOrThrow()
+                val nextNavigation = async { vm.hostNavigationEvents.first() }
+                vm.createHostDiscussion("demo")
+                val next = nextNavigation.await()
+                assertEquals("demo", next.serverId)
+                assertEquals(
+                    "/demo-only",
+                    fake
+                        .observeConversations(ConversationFilter.Discussions)
+                        .first()
+                        .single { it.id == next.conversationId }
+                        .cwd,
+                )
+                assertEquals("/paired-host-only", prefs.defaultWorkspace("saved-host").first())
             } finally {
                 vm.viewModelScope.cancel()
                 app.close()
@@ -445,7 +489,16 @@ class HostChannelListViewModelTest {
                 lookups += id
                 listOf(a, b).find { it.entry.serverId == id && it.available && it.entry in hosts.value }?.live?.value
             }, dispatcher)
-        val vm = ChannelListViewModel(StableConversationRepository(selected), preferences(preferences), source)
+        val app =
+            KoinApplication.init().modules(
+                appModule,
+                module {
+                    single<ConversationRepository> { StableConversationRepository(selected) }
+                    single { preferences(preferences) }
+                    single { source }
+                },
+            )
+        val vm = app.koin.get<ChannelListViewModel>()
         val nav = mutableListOf<HostConversationTarget>()
         val legacy = mutableListOf<ChannelListNavigation>()
     }

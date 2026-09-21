@@ -46,14 +46,16 @@ Exposes preferences as typed `Flow<T>` reads + `suspend fun` writes, covering ap
   host. With no owner, legacy reads return scratch and writes are no-ops, while
   explicit host reads and writes remain available.
 
-  **Consumer integration.** [ChannelListViewModel](channel-list-viewmodel.md)
-  still reads the unqualified property for default discussion creation, and
-  [SettingsViewModel](settings-viewmodel.md) still reads and writes the legacy
-  API through the [workspace picker](workspace-picker.md). Explicit workspace
-  picks bypass the default. No production caller invokes migration yet:
-  [#712](https://github.com/pyrycode/pyrycode-mobile/issues/712) owns startup and
-  creation integration; [#713](https://github.com/pyrycode/pyrycode-mobile/issues/713)
-  and [#714](https://github.com/pyrycode/pyrycode-mobile/issues/714) own Settings.
+  **Consumer integration.** [MainActivity startup](navigation.md#how-it-works)
+  loads the full saved-host collection and awaits successful migration before
+  exposing pairing or creation. Production
+  [ChannelListViewModel](channel-list-viewmodel.md) creation reads
+  `defaultWorkspace(serverId).first()` for its captured host, including `demo`;
+  explicit workspace picks bypass the default. The compatibility reducer and
+  [SettingsViewModel](settings-viewmodel.md) still use the legacy API. Settings
+  edits its default through the [workspace picker](workspace-picker.md);
+  [#713](https://github.com/pyrycode/pyrycode-mobile/issues/713) and
+  [#714](https://github.com/pyrycode/pyrycode-mobile/issues/714) own its migration.
   See the [storage contract plan](../../specs/architecture/711-host-default-workspaces.md).
 
 Notifications key ([#268](../codebase/268.md)):
@@ -229,28 +231,15 @@ The threshold is crossed but the split stays deferred. Workspace keys and migrat
 
 ## Usage
 
-```kotlin
-// In MainActivity's composition root (#13's NavHost start-destination gate; #295 moved this read to PairedServerStore)
-val pairedServerStore = koinInject<PairedServerStore>()
-val paired: Boolean? by produceState<Boolean?>(initialValue = null, pairedServerStore) {
-    value = pairedServerStore.load() != null
-}
-when (val v = paired) {
-    null -> Surface(Modifier.fillMaxSize()) {}                  // neutral placeholder during first emit
-    else -> PyryNavHost(if (v) Routes.CHANNEL_LIST else Routes.WELCOME)
-}
+The [composition-root gate](navigation.md#how-it-works) owns workspace migration;
+callers must not infer legacy ownership from the current selection. A host-owned
+creation action reads its captured identity's default once, then resolves that
+host's current repository before sending:
 
-// In #12's Scanner destination on tap (no ViewModel — see Scanner screen feature doc)
-val appPreferences = koinInject<AppPreferences>()
-val scope = rememberCoroutineScope()
-// ...inside onTap:
-scope.launch {
-    appPreferences.setPairedServerExists(true)
-    navController.navigate(Routes.CHANNEL_LIST) {
-        popUpTo(Routes.SCANNER) { inclusive = true }
-        launchSingleTop = true
-    }
-}
+```kotlin
+// ChannelListViewModel.createHostDiscussion, inside launchGuardedRepoCall
+val workspace = appPreferences.defaultWorkspace(serverId).first()
+sendHostDiscussion(serverId, workspace)
 ```
 
 Collecting reactively is the right shape when a screen genuinely needs live re-composition on flag flips. `collectAsStateWithLifecycle` is on the classpath today via `lifecycle-runtime-compose` (pulled in by a prior ticket; earlier revisions of this doc called it absent — that caveat is stale as of #86):
