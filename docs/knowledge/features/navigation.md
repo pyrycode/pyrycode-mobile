@@ -20,12 +20,34 @@ both the owning `serverId` and the host-local `conversationId`.
 
 ## How it works
 
-`MainActivity.setContent` waits for `PairedServerStore.load()` using `produceState`,
-showing a neutral `Surface` until the initial pairing read completes. It then
-supplies the start destination to the internal `PyryNavHost`. The graph defaults to
-`rememberNavController()` and accepts a controller for production-route tests.
-Pairing later in the session navigates explicitly; it does not rewrite the graph's
-initial destination. Screens receive callbacks, never a `NavController`.
+`MainActivity.setContent` uses `produceState<Boolean?>`, keyed by both the injected
+`PairedServerCollectionStore` and `AppPreferences`, to read the full saved-host
+collection once with `list()`. It passes the set of exact `entry.record.serverId`
+values to `migrateDefaultWorkspace` and awaits success before composing `PyryNavHost`.
+Case and whitespace remain significant; the latest-host `load()` cannot establish
+ownership when several hosts are saved.
+
+While collection loading or migration is pending, the value stays null and the
+existing neutral `Surface` keeps both pairing and conversation creation unreachable.
+A returned migration failure keeps that surface in place, with no automatic retry
+or retry UI; restarting the Activity can retry. Composition disposal cancels the
+work, and cancellation does not open navigation. Startup logs contain only static
+event/outcome codes.
+
+On success, a nonempty snapshot selects `channel_list`; an empty snapshot selects
+`welcome`. One initial host receives an eligible legacy default only if its own
+key is absent. Zero or multiple initial hosts permanently record no legacy owner,
+so a later pairing cannot inherit the unowned path. Missing or unreadable paired
+storage counts as an empty snapshot. Restarts recheck migration, but its persisted
+decision prevents another transfer or owner change. See the
+[workspace storage contract](app-preferences.md#what-it-does). Completing this
+decision before exposing pairing prevents a new host from changing the initial
+ownership set.
+
+The internal graph defaults to `rememberNavController()` and accepts a controller
+for production-route tests. Pairing later in the session navigates explicitly; it
+does not rewrite the graph's initial destination. Screens receive callbacks, never
+a `NavController`.
 
 ### Host-qualified destinations
 
@@ -66,7 +88,8 @@ reads and actions to the retained owner. Reconnect switches its concrete reposit
 without changing route ownership; changing compatibility selection cannot redirect
 the open thread, permission prompt, picker or literal Retry. Demo routes carry the
 explicit `demo` id and use the existing fake singleton with inert live/modal/control
-dependencies, even when relay hosts are saved.
+dependencies, even when relay hosts are saved. Creation reads the `demo` workspace
+default or scratch, independently of any paired host's migrated legacy default.
 
 ### Temporary flat-list compatibility
 
@@ -76,8 +99,9 @@ the current relay owner or explicit demo id. Channel creation calls
 `createHostDiscussion(serverId)`; long-press opens `openHostWorkspacePicker(serverId)`.
 The host picker's captured id drives visibility in the flat `Loaded`/`Empty` states,
 and completion/dismissal use `pickHostWorkspace` / `dismissHostWorkspacePicker`.
-Asynchronous creation retains that host through the preference read and success
-navigation.
+Asynchronous creation reads that host's default and retains its identity through
+the preference read, repository lookup and success navigation; see
+[host creation](channel-list-viewmodel.md#one-shot-navigation-via-channelbuffered-22).
 
 Discussion promotion uses `requestHostPromotion(target)`, then
 `confirmHostPromotion` / `cancelHostPromotion`. The route projects the captured
@@ -105,7 +129,7 @@ Screens take navigation as `() -> Unit` callbacks, not a `NavController`. This i
 
 - **Dependency:** `androidx.navigation:navigation-compose`, pinned via `navigationCompose` in `gradle/libs.versions.toml`. Compose BOM does **not** cover this artifact group — it needs its own version pin.
 - **Back-stack policy:** ordinary `navigate(route)` creates destination entries. Thread navigation suppresses only an identical current host/conversation target. Scanner success pops the scanner inclusively; invalid-host rejection returns to the channel list and clears the invalid entries. Those list transitions use `launchSingleTop`; host-qualified thread navigation does not.
-- **Start-destination gating:** `NavHost` composition itself is gated on `PairedServerStore.load() != null` via `produceState` (#13; #295). The `startDestination` parameter is captured at first composition and is *not* reactive — later changes (the Scanner persisting a record mid-session) do not rewrite the back stack. Mid-session navigation continues through `navController.navigate(...)`, which is correct.
+- **Start-destination gating:** `NavHost` composition waits for the full saved-host read and successful workspace migration described [above](#how-it-works). Only then does snapshot emptiness choose the initial destination. Later pairing uses explicit navigation; it does not rewrite the back stack.
 - **Insets:** the outer `Scaffold` in `MainActivity` owns system-bar insets and passes them down via the NavHost's `Modifier.padding(innerPadding)`. Screens may apply their own `systemBarsPadding()` on top (harmless double-padding); don't refactor existing screens to drop it.
 
 ## Edge cases / limitations
@@ -114,11 +138,28 @@ Screens take navigation as `() -> Unit` callbacks, not a `NavController`. This i
 - **No deep links, no animations.** `composable(Routes.X) { ... }` only — no `deepLinks = listOf(...)`, no custom `enterTransition` / `exitTransition`.
 ## Testing
 
+[`StartupWorkspaceMigrationTest`](../../../app/src/androidTest/java/de/pyryco/mobile/StartupWorkspaceMigrationTest.kt)
+launches the actual `MainActivity` with a controlled collection store and real
+`AppPreferences` over a gated DataStore. Delay the collection read and migration
+write independently and assert that neither pairing nor creation is exposed.
+Returned IO failure must leave both navigation and the ownership decision pending;
+a fresh launch after recovery can succeed. Zero/multiple-host launches followed by
+a single-host launch must remain ownerless, while an initial sole owner remains
+unchanged. [Storage tests](app-preferences.md#testing) separately prove durable
+reopening and transaction atomicity.
+
+Close and relaunch the Activity for cold-start ownership tests.
+`ActivityScenario.recreate()` restores the existing navigation stack, including
+Welcome; expecting it to choose a new initial route tests the wrong lifecycle
+([#712 test finding](https://github.com/pyrycode/pyrycode-mobile/pull/717)).
+
 `LiteralScreenNavigationTest` mounts the production `PyryNavHost`, `Routes` and
-Koin bindings. It covers both host event streams, A/A/B duplicate suppression,
-reserved characters, distinct destination ViewModels, back/reopen, saved-state
-restoration, thread overflow to literal, Retry and invalid-host return. A copied
-minimal graph can pass while production route arguments or bindings are wrong.
+Koin bindings directly, bypassing the Activity startup gate. It cannot prove
+migration completes before navigation opens. It covers both host event streams,
+A/A/B duplicate suppression, reserved characters, distinct destination ViewModels,
+back/reopen, saved-state restoration, thread overflow to literal, Retry and
+invalid-host return. A copied minimal graph can pass while production route
+arguments or bindings are wrong.
 Its picker cases open the actual descendant component with two Noise peers,
 distinct recents and assertions that the other host receives no picker reads or
 writes across selection changes and reconnect.

@@ -182,11 +182,15 @@ replaying it to a later collector. `hostNavigationEvents` carries the full
 `HostConversationTarget`; `onHostRowTapped(target)` emits that exact pair without
 creating a conversation or checking live repository availability.
 
-Host creation uses explicit targets:
+The production graph exposes host creation only after
+[startup migration](navigation.md#how-it-works) succeeds using the full saved-host
+snapshot. Creation uses explicit targets:
 
 - `createHostDiscussion(serverId)` captures its argument before reading
-  `appPreferences.defaultWorkspace.first()`. It passes the value verbatim, including
-  the fresh-preferences `DEFAULT_SCRATCH_CWD` (`~/.pyrycode/scratch`) fallback.
+  `appPreferences.defaultWorkspace(serverId).first()`. This one-shot read uses the
+  exact, case-sensitive id and passes the value verbatim. An unset host default
+  yields `DEFAULT_SCRATCH_CWD` (`~/.pyrycode/scratch`); it never falls back to the
+  legacy owner's path or the currently selected host's default.
 - `openHostWorkspacePicker(serverId)` stores the chosen host, exposed as
   `hostState.workspacePickerServerId`. `pickHostWorkspace(workspace)` captures and
   synchronously clears that target before launching creation. The explicit path
@@ -241,7 +245,10 @@ for `useRelay = false`. Its included `hostConversationModule` selects the matchi
 host source. Demo mode exposes only `HostConversationSource.DEMO_SERVER_ID`
 (`demo`, display name `Demo`)
 and resolves that same fake singleton for host reads and creation. Saved relay hosts
-never enter the demo source. `AppPreferences` is shared with Settings.
+never enter the demo source. Demo creation reads `defaultWorkspace("demo")`: its
+explicit value or scratch, even when a paired host owns the migrated legacy path.
+`AppPreferences` is shared with Settings, whose workspace access still uses the
+[transitional legacy API](app-preferences.md#what-it-does).
 
 The temporary flat list still renders `state`; it does not flatten multi-host
 snapshots. Its `MainActivity` adapter captures `selectedServerId()` (or `demo`) at
@@ -262,30 +269,39 @@ through asynchronous creation. Tree layout and host-aware event producers remain
 
 ## Testing
 
-`HostChannelListViewModelTest` covers the host contract with controlled source and
-repository fixtures. Use colliding ids and unchanged paths on case-distinct hosts,
-and assert each host's own preview: globally unique fixture ids can conceal a
-cross-host merge. A silent host and silent preview must coexist with visible rows
-from another host; disconnect must preserve cached rows while removing previews.
+`HostChannelListViewModelTest` resolves the production `appModule` ViewModel binding
+with controlled source and repository fixtures. Use colliding ids and unchanged
+paths on case-distinct hosts, and assert each host's own preview: globally unique
+fixture ids can conceal a cross-host merge. A silent host and silent preview must
+coexist with visible rows from another host; disconnect must preserve cached rows
+while removing previews.
 
 For creation, suspend the preference flow, change compatibility selection and
 replace the original host's repository before releasing the preference value.
-Checking only a settled happy path would miss an early repository capture or a
-send redirected to the selected host. Picker coverage uses a preference flow that
-throws if read, changes selection while open, and holds creation suspended while
-checking immediate target clearing and duplicate completion suppression.
+Give case-distinct hosts different defaults and seed a conflicting global value;
+assert both hosts' workspace arguments and qualified navigation, then scratch for
+an unset default. A shared default or settled happy path can conceal use of the
+legacy property, an early repository capture or a send redirected to selection.
+Picker coverage uses a preference flow that throws if read, changes selection
+while open, and holds creation suspended while checking immediate target clearing
+and duplicate completion suppression.
 
 Unavailable-target coverage denies lookup even with cached rows and connected
 indicators. Failure tests inspect the action job's cancellation state as well as
 missing navigation: absence of navigation alone cannot prove cancellation was
 re-thrown. Collect both navigation streams to prove host and legacy actions remain
-isolated. The DI test resolves the actual `appModule` definition and proves demo
-creation reaches the existing fake singleton. These are deterministic contract
-tests; screen/route live coverage remains #676/#673.
+isolated. Demo coverage uses the production repository selector and a paired host
+owning a migrated legacy default, then checks scratch and an explicit `demo`
+default on the existing fake singleton. These are deterministic contract tests.
+The [live regression gate](../../e2e-interactive-stream.md#pre-ship-gate) does not
+prove different defaults on two live hosts; that daemon-confirmed workspace
+scenario remains [#676](https://github.com/pyrycode/pyrycode-mobile/issues/676).
 
-`ChannelListViewModelTest` retains the flat-screen compatibility checks. Both test
-classes live under `app/src/test/java/de/pyryco/mobile/ui/conversations/list/` and
-use JUnit 4. Compatibility coverage includes:
+`ChannelListViewModelTest` retains the flat-screen compatibility checks; its
+legacy reducer uses the unqualified property and cannot prove production host
+creation. Both test classes live under
+`app/src/test/java/de/pyryco/mobile/ui/conversations/list/` and use JUnit 4.
+Compatibility coverage includes:
 
 1. `initialState_isLoading` — reads `vm.state.value` before any subscriber attaches; relies on `stateIn`'s `initialValue` being immediately visible without a hot collector.
 2. `loaded_whenSourceEmitsNonEmpty` — launched collector, channels source emits `listOf(sampleChannel)`, asserts `Loaded(listOf(sampleChannel), recentDiscussions = emptyList(), recentDiscussionsCount = 0)` (#69 widened the assertion).
