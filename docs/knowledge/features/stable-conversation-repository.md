@@ -33,6 +33,8 @@ ViewModels  ◀── hold one stable ConversationRepository reference for their
 StableConversationRepository (#352)  ◀── this doc; identity fixed for the app's life
     │  flatMapLatest over currentRepository (cold reads) ; .value snapshot (one-shots)
     ▼
+RelayConnectionRegistry.currentRepository  ◀── selected-host compatibility projection
+    ▼
 RelayRepositoryCoordinator.currentRepository : StateFlow<ConversationRepository?>  (#351)
     │  null → repo1 → null → repo2 → …   (each repoN distinct; own projection state)
     ▼
@@ -111,6 +113,14 @@ previous connection's data after a reconnect. The intervening `null` the coordin
 is belt; `flatMapLatest`'s cancel-old-on-new semantics are the load-bearing suspenders — isolation
 would hold even on a hypothetical direct `repo1→repo2` emission.
 
+The app binds this facade to the registry's selected-host projection. Its empty
+fallback is unsuitable as input to a retained host list cache: it conflates
+disconnect with an actual empty reply. The separate
+[host snapshot source](dependency-injection.md#snapshot-lifetime) observes each
+host's coordinator directly, retains rows through null repositories and reconnect
+silence, and replaces them only on an actual list emission. This facade's
+compatibility behavior remains unchanged.
+
 ### One-shots — snapshot-or-throw
 
 ```kotlin
@@ -181,14 +191,15 @@ DI registration in `AppModule.kt` — a lazy `single` resolvable by its own type
 `ConversationRepository`:
 
 ```kotlin
-single { StableConversationRepository(get<RelayRepositoryCoordinator>().currentRepository) }
+single { StableConversationRepository(get<RelayConnectionRegistry>().currentRepository) }
 ```
 
 Lazy (no `createdAtStart`) is correct — the facade is stateless and does no work at construction. This
 `single` registers the facade by its own type only; **what binds the `ConversationRepository` interface
 to it is the #350 `conversationRepositoryModule` selector**, not a `bind` on this line.
-`get<RelayRepositoryCoordinator>()` resolves the eager coordinator singleton; `currentRepository` is a
-stable `StateFlow` instance for the coordinator's life.
+`get<RelayConnectionRegistry>()` resolves the eager registry singleton;
+`currentRepository` is its stable projection of the latest-saved surviving host's
+coordinator. It follows selection changes as well as that host's reconnects.
 
 The selector binds this facade when `BuildConfig.USE_RELAY_REPOSITORY` is on, which is the
 default since #631. Demo builds explicitly turn it off:
