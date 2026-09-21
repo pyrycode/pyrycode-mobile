@@ -5,7 +5,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
-import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.ModalUiState
@@ -21,6 +20,7 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
+import de.pyryco.mobile.ui.workspace.workspaceDisplayName
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -240,7 +240,7 @@ class ThreadViewModel(
                 displayName = conv?.displayName() ?: conversationId,
                 isPromoted = conv?.isPromoted ?: false,
                 hasMessages = content.items.any { it is ThreadItem.MessageItem },
-                workspaceLabel = conv?.workspaceLabel() ?: "scratch",
+                workspaceLabel = workspaceDisplayName(cwd = conv?.cwd ?: "", label = conv?.workspaceLabel),
                 workspacePickerVisible = pickerVisible,
                 showRenameDialog = dialogs.renameVisible,
                 saveAsChannelDialog = dialogs.saveAsChannel,
@@ -961,13 +961,6 @@ private fun Model.wire(): String =
 private fun Conversation.displayName(): String =
     name?.takeIf { it.isNotBlank() }
         ?: if (isPromoted) "Untitled channel" else "Untitled discussion"
-
-private fun Conversation.workspaceLabel(): String =
-    if (cwd.isEmpty() || cwd == DEFAULT_SCRATCH_CWD) {
-        "scratch"
-    } else {
-        cwd.substringAfterLast('/').ifEmpty { cwd }
-    }
 
 // ---- #337: live assistant-delta accumulation (pure, file-private) -------------------------------
 

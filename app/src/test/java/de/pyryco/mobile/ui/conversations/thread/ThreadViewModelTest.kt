@@ -40,6 +40,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -2271,6 +2272,68 @@ class ThreadViewModelTest {
         }
 
     @Test
+    fun state_workspaceLabel_prefersConversationLabel_overCwdBasename() =
+        runTest {
+            val labelled =
+                Conversation(
+                    id = "d-labelled",
+                    name = null,
+                    cwd = "pyry-workspace/my-app",
+                    currentSessionId = "d-labelled-s1",
+                    sessionHistory = listOf("d-labelled-s1"),
+                    isPromoted = false,
+                    lastUsedAt = Instant.parse("2026-09-21T00:00:00Z"),
+                    workspaceLabel = "Design system",
+                )
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "d-labelled"))
+            val vm = makeVm(handle, fixedRepo(listOf(labelled)))
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            // Label-first: the operator's chosen name wins over the "my-app" basename the cwd would yield.
+            assertEquals("Design system", vm.state.value.workspaceLabel)
+            collector.cancel()
+        }
+
+    @Test
+    fun state_workspaceLabel_followsLiveRenameAndClear_onOneSubscription() =
+        runTest {
+            val unlabelled =
+                Conversation(
+                    id = "d-live",
+                    name = null,
+                    cwd = "pyry-workspace/my-app",
+                    currentSessionId = "d-live-s1",
+                    sessionHistory = listOf("d-live-s1"),
+                    isPromoted = false,
+                    lastUsedAt = Instant.parse("2026-09-21T00:00:00Z"),
+                )
+            val records = MutableStateFlow(listOf(unlabelled))
+            var subscriptions = 0
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "d-live"))
+            val vm = makeVm(handle, fixedRepo(records.onStart { subscriptions++ }))
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals("my-app", vm.state.value.workspaceLabel)
+
+            // A rename on this thread's own host arrives as a re-emission of the already-subscribed
+            // observeConversations(All) arm — #721 writes the label onto the owning host's projection.
+            records.value = listOf(unlabelled.copy(workspaceLabel = "Design system"))
+            advanceUntilIdle()
+            assertEquals("Design system", vm.state.value.workspaceLabel)
+
+            // Clearing the label returns the thread to the cwd-derived fallback.
+            records.value = listOf(unlabelled.copy(workspaceLabel = null))
+            advanceUntilIdle()
+            assertEquals("my-app", vm.state.value.workspaceLabel)
+
+            // Neither transition reopened the thread or resubscribed: one collector, still running,
+            // over exactly one observeConversations subscription.
+            assertTrue(collector.isActive)
+            assertEquals(1, subscriptions)
+            collector.cancel()
+        }
+
+    @Test
     fun state_items_reflectsObserveMessagesStream() =
         runTest {
             val repository = FakeConversationRepository()
@@ -3147,9 +3210,12 @@ class ThreadViewModelTest {
         }
     }
 
-    private fun fixedRepo(conversations: List<Conversation>): ConversationRepository =
+    private fun fixedRepo(conversations: List<Conversation>): ConversationRepository = fixedRepo(flowOf(conversations))
+
+    /** Live-emitting variant: the same stub surface over a caller-owned conversations flow. */
+    private fun fixedRepo(conversations: Flow<List<Conversation>>): ConversationRepository =
         object : ConversationRepository {
-            override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = flowOf(conversations)
+            override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = conversations
 
             override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = flowOf(emptyList())
 
