@@ -252,6 +252,29 @@ and #731 and #732 fold into it too. If the section will not fit, split a new top
 way #729's documentation stage split `channel-list-viewmodel-projection.md` off
 `channel-list-viewmodel.md`.
 
+## Revisions
+
+### 2026-09-21 — implementation
+
+- **Open question 1 resolved, no design change.** `Icons.Filled.Dns` exists in the pinned
+  `material-icons-extended`; the `Icons.Filled.Storage` fallback was not needed.
+- **Open question 2 resolved, no design change.** The trailing dot order stays as the design draws
+  it — the pyrycode leg inboard, the relay leg outboard. Each dot carries `toLegVisual`'s own
+  description, so the pair is identifiable regardless of which side each sits on, and #668 owns the
+  pair's live meaning.
+- **Helper structure differs from the plan's sketch.** The plan listed `FoldChevron`, `LegDot` and
+  `TreeRowStatusDot` as siblings. What shipped folds the chevron into a shared `FoldableTreeRow` that
+  the host and workspace rows both delegate to, since the two rows differ only by glyph, indent and
+  trailing content; `LegDot` gained a `ConnectionLegPair` wrapper, and `TreeRowStatusDot` is named
+  `IdleStatusDot` to say in the name that it draws one treatment and takes no state.
+- **Size overage, recorded rather than hidden.** The § A5 re-check estimated ≤800 lines of total
+  written work. The actual is ~995: 391 production, 279 device test, 307 plan (of which ~70 are the
+  `security-sensitive` label's mandatory security-review section, which the 800-line boundary does
+  not separately account for), plus 2 strings. The boundary's other five lines all held — 1
+  production source file, 4 new exported composables, 0 consumer call sites, 5 acceptance criteria, 0
+  reject branches — and the overage cost no budget: the run finished well inside both its turn and
+  wall-clock caps. Flagged for the sizing calibration, not as a reason to re-split completed work.
+
 ## Security review
 
 **Verdict:** PASS
