@@ -24,6 +24,7 @@ import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.repository.ConnectionStateSource
+import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHAT_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.PING_PROMPT
@@ -58,8 +59,11 @@ import org.koin.core.context.GlobalContext
  * exactly: ping" framing is what keeps real claude's output predictable enough to assert against while
  * still exercising the whole real path.
  *
- * The Compose selectors are text / content-description based (no test tags in the production UI). If
- * the UI strings change, update the constants below.
+ * Most Compose selectors are text / content-description based; if those UI strings change, update the
+ * constants below. The exceptions are the handles the list screen authors for the device suites: the
+ * arrival marker [awaitChannelList] keys on (#736) and the tier tags the promote scenario reads (#731).
+ * Those survive chrome changes the strings do not — which is why arrival and creation are three shared
+ * helpers here rather than repeated in every scenario.
  */
 @RunWith(AndroidJUnit4::class)
 class InteractiveStreamE2ETest {
@@ -92,10 +96,8 @@ class InteractiveStreamE2ETest {
 
     @Test
     fun interactiveTurn_pingPrompt_streamsPingReplyIntoThread() {
-        // 1. A paired launch lands on the channel list. The "New discussion" FAB is the list marker.
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
-        }
+        // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
+        awaitChannelList()
 
         // 2. Wait for the relay connection to open before creating a conversation — createDiscussion
         //    round-trips to the daemon, so tapping before the session is Open would fail the send.
@@ -103,7 +105,7 @@ class InteractiveStreamE2ETest {
 
         // 3. Create a fresh discussion → the app navigates into its thread. The send button (only on
         //    the thread) is the marker that we have arrived.
-        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
+        createChat()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
@@ -126,11 +128,9 @@ class InteractiveStreamE2ETest {
     @Ignore("manual negative control — un-ignore to confirm the positive assertion can fail")
     @Test
     fun negativeControl_wordClaudeNeverSays_isNeverDisplayed() {
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
-        }
+        awaitChannelList()
         awaitConnected()
-        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
+        createChat()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
@@ -161,16 +161,14 @@ class InteractiveStreamE2ETest {
      */
     @Test
     fun interactiveTurn_toolPrompt_rendersToolStepInThread() {
-        // 1. A paired launch lands on the channel list. The "New discussion" FAB is the list marker.
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
-        }
+        // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
+        awaitChannelList()
 
         // 2. Wait for the relay connection to open before creating a conversation.
         awaitConnected()
 
         // 3. Create a fresh discussion → the app navigates into its thread; the send button marks arrival.
-        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
+        createChat()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
@@ -201,11 +199,9 @@ class InteractiveStreamE2ETest {
     @Ignore("manual negative control — un-ignore to confirm the tool-name matcher is selective")
     @Test
     fun negativeControl_toolClaudeNeverUses_isNeverDisplayed() {
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
-        }
+        awaitChannelList()
         awaitConnected()
-        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
+        createChat()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
@@ -255,16 +251,14 @@ class InteractiveStreamE2ETest {
     @Ignore("manual — transient spinner; un-ignore to attempt promotion, see KDoc")
     @Test
     fun interactiveTurn_thinkPrompt_showsThinkingSpinnerDuringTurn() {
-        // 1. A paired launch lands on the channel list. The "New discussion" FAB is the list marker.
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
-        }
+        // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
+        awaitChannelList()
 
         // 2. Wait for the relay connection to open before creating a conversation.
         awaitConnected()
 
         // 3. Create a fresh discussion → the app navigates into its thread; the send button marks arrival.
-        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
+        createChat()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
@@ -318,17 +312,15 @@ class InteractiveStreamE2ETest {
      */
     @Test
     fun interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace() {
-        // 1. A paired launch lands on the channel list. The "New discussion" FAB is the list marker.
+        // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
         //    Wait for the relay connection to open before creating — the picker's create round-trips to
         //    the daemon, so acting before the session is Open would fail the request.
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
-        }
+        awaitChannelList()
         awaitConnected()
 
-        // 2. Long-press the FAB to open the Workspace Picker. A *tap* would create a scratch discussion;
-        //    the long-press routes to ChannelListEvent.LongPressFab (combinedClickable.onLongClick).
-        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performTouchInput { longClick() }
+        // 2. Open the Workspace Picker — the long-press path, not the tap, which would create a scratch
+        //    discussion instead. The helper waits for the control it drives; see its KDoc.
+        openWorkspacePicker()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(CREATE_FOLDER_ROW, substring = true).fetchSemanticsNodes().isNotEmpty()
         }
@@ -362,15 +354,13 @@ class InteractiveStreamE2ETest {
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
 
         // 6. AC-3: the thread now has messages, so the WorkspaceChip is gone (!hasMessages gate). Re-open
-        //    the picker from the channel list — Back to the list, then long-press the FAB again — and assert
+        //    the picker from the channel list — Back to the list, then the same long-press again — and assert
         //    the freshly-used folder appears in "Recent" (the recents flow re-fetches cold on every open,
         //    #565). Waiting for the "Recent" header covers the daemon round-trip; an exact "Recent" match is
         //    unambiguous — more so since #731, which took the list's own "Recent discussions" header away.
         composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performTouchInput { longClick() }
+        awaitChannelList()
+        openWorkspacePicker()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(RECENT_SECTION).fetchSemanticsNodes().isNotEmpty()
         }
@@ -410,17 +400,15 @@ class InteractiveStreamE2ETest {
      */
     @Test
     fun interactiveTurn_newSession_rendersSessionBoundaryDelimiter() {
-        // 1. A paired launch lands on the channel list. The "New discussion" FAB is the list marker.
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
-        }
+        // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
+        awaitChannelList()
 
         // 2. Wait for the relay connection to open before creating a conversation.
         awaitConnected()
 
         // 3. Create a fresh discussion → the app navigates into its thread; the send button marks arrival. A
         //    plain discussion suffices — the "Reset session" item is gated on mutationsSupported only, not promotion.
-        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
+        createChat()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
@@ -504,17 +492,15 @@ class InteractiveStreamE2ETest {
      */
     @Test
     fun interactiveTurn_deleteConversation_removesFromListAndClosesThread() {
-        // 1. A paired launch lands on the channel list. The "New discussion" FAB is the list marker.
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
-        }
+        // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
+        awaitChannelList()
 
         // 2. Wait for the relay connection to open before creating — rename/delete round-trip to the daemon.
         awaitConnected()
 
         // 3. Create a fresh discussion → the app navigates into its thread; the send button marks arrival. A
         //    plain discussion suffices — "Rename" (mutationsSupported) and "Channel info" (ungated) both reach it.
-        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
+        createChat()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
@@ -542,9 +528,7 @@ class InteractiveStreamE2ETest {
         //    the new name; the waitUntil covers that round-trip. This is the genuine presence observation on the
         //    same surface where absence is later asserted (step 9).
         composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
-        }
+        awaitChannelList()
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
         }
@@ -586,9 +570,7 @@ class InteractiveStreamE2ETest {
         //    completes (conversation_deleted → removeConversation clears all projections) BEFORE PopBack fires
         //    (sequential in the same coroutine), so the re-projection has landed by the time the list renders →
         //    a direct assertCountEquals(0). Tolerant: presence/absence, generous timeout — never a delta count.
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
-        }
+        awaitChannelList()
         composeTestRule.onAllNodesWithText(uniqueName, substring = true).assertCountEquals(0)
     }
 
@@ -651,17 +633,15 @@ class InteractiveStreamE2ETest {
      */
     @Test
     fun interactiveTurn_archiveRestore_roundTripsListMembership() {
-        // 1. A paired launch lands on the channel list. The "New discussion" FAB is the list marker.
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
-        }
+        // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
+        awaitChannelList()
 
         // 2. Wait for the relay connection to open before creating — rename/archive/restore round-trip to the daemon.
         awaitConnected()
 
         // 3. Create a fresh discussion → the app navigates into its thread; the send button marks arrival. A
         //    plain discussion suffices — "Rename" and "Archive" are both gated on mutationsSupported, reachable on it.
-        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
+        createChat()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
@@ -685,9 +665,7 @@ class InteractiveStreamE2ETest {
         // 5. Presence check #1 (AC-1): back to the list, wait for it, then confirm the unique name is displayed on
         //    a recents row — the genuine presence observation on the surface where absence is later asserted (step 8).
         composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
-        }
+        awaitChannelList()
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
         }
@@ -712,9 +690,7 @@ class InteractiveStreamE2ETest {
         //    assert the unique name is gone from the active list — a genuine inversion of step 5. archive folds
         //    the conversation out of the active projection on the repo's demux loop before PopBack renders the
         //    list, so a direct assertCountEquals(0). Tolerant: presence/absence, generous timeout — never a delta count.
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
-        }
+        awaitChannelList()
         composeTestRule.onAllNodesWithText(uniqueName, substring = true).assertCountEquals(0)
 
         // 9. Navigate to the Archived screen: tap the channel-list settings button, wait for the Settings marker
@@ -758,9 +734,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodesWithText(ARCHIVED_ROW).fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
-        }
+        awaitChannelList()
 
         // 13. Presence check #2 (AC-2 — round-trip closes). Wait for the unique name on the active list, then
         //     confirm it is displayed. The re-appearance is attributable to the restore (asserted absent in
@@ -835,17 +809,15 @@ class InteractiveStreamE2ETest {
      */
     @Test
     fun interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace() {
-        // 1. A paired launch lands on the channel list. The "New discussion" FAB is the list marker. Wait
+        // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736). Wait
         //    for the relay connection to open before creating — the picker's create + change round-trip to
         //    the daemon, so acting before the session is Open would fail the request.
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
-        }
+        awaitChannelList()
         awaitConnected()
 
         // 2. Create a fresh discussion → the app navigates into its thread; the send button marks arrival. A
         //    plain discussion suffices — "Change workspace…" is mutationsSupported-gated only, reachable on it.
-        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
+        createChat()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
@@ -940,17 +912,15 @@ class InteractiveStreamE2ETest {
      */
     @Test
     fun interactiveTurn_renameConversation_relabelsTopBarAndListRow() {
-        // 1. A paired launch lands on the channel list. The "New discussion" FAB is the list marker.
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
-        }
+        // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
+        awaitChannelList()
 
         // 2. Wait for the relay connection to open before creating — rename round-trips to the daemon.
         awaitConnected()
 
         // 3. Create a fresh discussion → the app navigates into its thread; the send button marks arrival. A
         //    plain discussion suffices — "Rename" is mutationsSupported-gated only, reachable on it.
-        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
+        createChat()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
@@ -994,9 +964,7 @@ class InteractiveStreamE2ETest {
         //    re-emits with the new name; the waitUntil covers that round-trip. A genuine inversion of step 4's
         //    absence, on the list surface, same unique token.
         composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
-        }
+        awaitChannelList()
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
         }
@@ -1090,10 +1058,8 @@ class InteractiveStreamE2ETest {
      */
     @Test
     fun interactiveTurn_saveAsChannel_promotesToChannelTier() {
-        // 1. A paired launch lands on the channel list. The "New discussion" FAB is the list marker.
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
-        }
+        // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
+        awaitChannelList()
 
         // 2. Wait for the relay connection to open before creating — promote round-trips to the daemon.
         awaitConnected()
@@ -1101,7 +1067,7 @@ class InteractiveStreamE2ETest {
         // 3. Create a fresh discussion → the app navigates into its thread; the send button marks arrival. A
         //    plain discussion is exactly what is needed — "Save as channel…" is !isPromoted-gated (NOT
         //    mutationsSupported-gated), and a fresh discussion is unpromoted by construction.
-        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
+        createChat()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
         }
@@ -1159,9 +1125,7 @@ class InteractiveStreamE2ETest {
         //    then wait for the unique name on the list and confirm it is displayed — a genuine inversion of
         //    step 4's absence, same unique token. The same upsert feeds both list projections.
         composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
-        }
+        awaitChannelList()
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
         }
@@ -1180,6 +1144,48 @@ class InteractiveStreamE2ETest {
         composeTestRule
             .onAllNodes(hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(uniqueName, substring = true))
             .assertCountEquals(0)
+    }
+
+    /**
+     * Block until the channel list is on screen, keyed on the app-authored marker the list screen sets
+     * ([CHANNEL_LIST_TEST_TAG], #736) rather than on anything drawn on it. Every scenario arrives through
+     * here, including the two `@Ignore`d manual ones.
+     *
+     * Deliberately **weaker** than the "New discussion" wait it replaced. That control draws only on
+     * [de.pyryco.mobile.ui.conversations.list.ChannelListUiState.Loaded] and `Empty`, so waiting for it
+     * implied a loaded list; this marker is on all four of the list's draws and implies only that the list
+     * is the destination on screen. [createChat] and [openWorkspacePicker] carry that wait now — the only
+     * place it was load-bearing, since acting on a control before it is drawn fails the drive, not the wait.
+     */
+    private fun awaitChannelList() {
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /**
+     * Create a fresh chat from the channel list; the app navigates into its thread.
+     *
+     * With [openWorkspacePicker], one of the **two** places in this class that name the create control —
+     * the two bodies #738 edits when the control changes, in place of the 33 sites they replaced. Each
+     * carries its own wait rather than sharing a third helper, so the count stays at two.
+     */
+    private fun createChat() {
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
+    }
+
+    /**
+     * Long-press the same control to open the Workspace Picker — a *tap* would create a scratch chat
+     * instead (the long press routes to `ChannelListEvent.LongPressFab`, `combinedClickable.onLongClick`).
+     */
+    private fun openWorkspacePicker() {
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performTouchInput { longClick() }
     }
 
     /** Block until the relay connection reports [ConnectionState.Connected], or fail after a timeout. */
@@ -1216,8 +1222,10 @@ class InteractiveStreamE2ETest {
             "Without using any tools, take a moment to reason this through silently, then reply with only " +
                 "the single word: ready. (Reason through first: what is the 12th prime number?)"
 
-        // Production UI strings (no test tags exist). Keep in sync with res/values/strings.xml:
+        // Production UI strings. Keep in sync with res/values/strings.xml:
         //   cd_new_discussion = "New discussion", cd_send_message = "Send message", cd_back = "Back".
+        // CD_NEW_DISCUSSION is named by createChat and openWorkspacePicker and by nothing else in this
+        // class — those two bodies are what #738 edits when the control goes.
         const val CD_NEW_DISCUSSION = "New discussion"
         const val CD_SEND_MESSAGE = "Send message"
         const val CD_BACK = "Back"
