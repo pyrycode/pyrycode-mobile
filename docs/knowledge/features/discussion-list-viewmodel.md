@@ -254,7 +254,7 @@ host list stays empty without inventing a host identity.
 
 `onHostRowTapped(target)` emits the exact `HostConversationTarget` on the separate
 buffered `hostNavigationEvents` flow, reusing the
-[channel-list target](channel-list-viewmodel.md#one-shot-navigation-via-channelbuffered-22).
+[channel-list target](channel-list-viewmodel-projection.md#one-shot-navigation-via-channelbuffered-22).
 Consumers must preserve both host and conversation id through routing. Display
 names and workspace paths never select a host; host identity stays outside domain
 and wire serialization.

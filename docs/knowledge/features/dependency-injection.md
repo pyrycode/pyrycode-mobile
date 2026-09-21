@@ -227,7 +227,7 @@ mode; in relay mode it captures the current exact selected host only for tempora
 flat-list entry points.
 
 `ChannelListViewModel` receives this shared source as its third constructor
-dependency and exposes [host-qualified state and actions](channel-list-viewmodel.md#state-projection).
+dependency and exposes [host-qualified state and actions](channel-list-viewmodel-projection.md#state-projection).
 `DiscussionListViewModel` receives it as its second dependency for
 [host-qualified navigation and captured promotion](discussion-list-viewmodel.md#wiring).
 Both retain compatibility state/events and bare-id navigation APIs, but production

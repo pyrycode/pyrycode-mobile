@@ -61,12 +61,16 @@ sealed interface ChannelListNavigation {
     ) : ChannelListNavigation
 }
 
-/** Rows and preview keys are local to [host]; never flatten them across hosts. */
+/** Rows, preview keys and workspace groups are local to [host]; never flatten them across hosts. */
 data class HostChannelListEntry(
     val host: HostConversationSnapshot,
     val recentChats: List<Conversation>,
     val chatCount: Int,
     val recentChatLastMessages: Map<String, Message> = emptyMap(),
+    /** Every active channel of [host], grouped by exact `cwd` — not the recent slice. */
+    val channelGroups: List<HostWorkspaceGroup> = emptyList(),
+    /** Every active chat of [host], grouped by exact `cwd` — not the recent slice. */
+    val chatGroups: List<HostWorkspaceGroup> = emptyList(),
 )
 
 data class HostChannelListState(
@@ -99,7 +103,16 @@ class ChannelListViewModel(
 
     private fun observeHostEntry(host: HostConversationSnapshot): Flow<HostChannelListEntry> {
         val recent = host.chats.take(RECENT_DISCUSSIONS_LIMIT)
-        val entry = HostChannelListEntry(host, recent, host.chats.size)
+        // Grouped once per snapshot emission; the preview combine below carries them through its
+        // copy, so a preview never recomputes a group.
+        val entry =
+            HostChannelListEntry(
+                host = host,
+                recentChats = recent,
+                chatCount = host.chats.size,
+                channelGroups = groupConversationsByWorkspace(host.serverId, host.channels),
+                chatGroups = groupConversationsByWorkspace(host.serverId, host.chats),
+            )
         val live = hostSource.repositoryFor(host.serverId)
         if (live == null || recent.isEmpty()) return flowOf(entry)
         return combine(

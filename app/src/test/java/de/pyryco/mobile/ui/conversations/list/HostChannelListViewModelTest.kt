@@ -179,6 +179,152 @@ class HostChannelListViewModelTest {
         }
 
     @Test
+    fun workspaceGroupsCoverEveryActiveRowInSourceOrderAndNeverCrossHosts() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            val alphaOne = row("c1", true, "/w/alpha")
+            val beta = row("c2", true, "/w/beta")
+            val alphaTwo = row("c3", true, "/w/alpha")
+            val chats =
+                listOf(
+                    row("d1", cwd = "/w/beta"),
+                    row("d2", cwd = DEFAULT_SCRATCH_CWD),
+                    row("d3", cwd = "/w/beta"),
+                    row("d4", cwd = "/w/alpha"),
+                    row("d5"),
+                )
+            f.a.repo.rows.value =
+                listOf(alphaOne, beta, alphaTwo) + chats +
+                listOf(
+                    row("archived-channel", true, "/w/alpha").copy(archived = true),
+                    row("archived-chat", cwd = "/w/beta").copy(archived = true),
+                )
+            f.b.repo.rows.value = listOf(row("c1", true, "/w/alpha"))
+            runCurrent()
+
+            val host = f.vm.hostState.value.hosts[0]
+            // A group takes the position of its first conversation, and gathers rows that are not
+            // adjacent in the source list without re-sorting either level.
+            assertEquals(listOf("/w/alpha", "/w/beta"), host.channelGroups.map { it.cwd })
+            assertEquals(
+                listOf(listOf("c1", "c3"), listOf("c2")),
+                host.channelGroups.map { group -> group.conversations.map { it.conversation.id } },
+            )
+            assertSame(alphaTwo, host.channelGroups[0].conversations[1].conversation)
+            // The full active chat list, not the recent-three slice; exact cwd, never normalised.
+            assertEquals(
+                listOf("/w/beta", DEFAULT_SCRATCH_CWD, "/w/alpha", " /same/../Path "),
+                host.chatGroups.map { it.cwd },
+            )
+            assertEquals(chats.size, host.chatGroups.sumOf { it.conversations.size })
+            assertEquals(listOf("d1", "d3"), host.chatGroups[0].conversations.map { it.conversation.id })
+            assertEquals(3, host.recentChats.size)
+            assertEquals(chats.size, host.chatCount)
+            val everyRow = (host.channelGroups + host.chatGroups).flatMap { it.conversations }
+            assertTrue(everyRow.none { it.conversation.archived })
+            assertTrue((host.channelGroups + host.chatGroups).all { it.serverId == "Host" })
+            assertTrue(everyRow.all { it.serverId == "Host" })
+
+            val other = f.vm.hostState.value.hosts[1]
+            assertEquals(listOf("/w/alpha"), other.channelGroups.map { it.cwd })
+            assertEquals("host", other.channelGroups.single().serverId)
+            assertEquals(
+                listOf("host"),
+                other.channelGroups
+                    .single()
+                    .conversations
+                    .map { it.serverId },
+            )
+            assertTrue(other.chatGroups.isEmpty())
+        }
+
+    @Test
+    fun groupDisplayNamesFollowTheSharedRuleAndRelabelTouchesOnlyTheOwningHostsGroup() =
+        runTest(dispatcher) {
+            val f = fixture()
+            // Deny both live repositories while the source keeps collecting rows: observeHostEntry
+            // then short-circuits before subscribing to any preview, so complete groups here prove
+            // the grouping subscribes to nothing of its own.
+            f.a.available = false
+            f.b.available = false
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            val rows =
+                listOf(
+                    row("c1", true, "/w/secret-path", "Secret Label"),
+                    row("c2", true, "/w/plain"),
+                    row("c3", true, "/w/blank", "   "),
+                    row("c4", true, DEFAULT_SCRATCH_CWD),
+                    row("c5", true, "", "Named scratch"),
+                    row("d1", cwd = "/w/secret-path", label = "Secret Label"),
+                )
+            f.a.repo.rows.value = rows
+            f.b.repo.rows.value = listOf(row("c1", true, "/w/secret-path"))
+            runCurrent()
+
+            assertEquals(
+                listOf("Secret Label", "plain", "blank", "scratch", "Named scratch"),
+                f.vm.hostState.value.hosts[0]
+                    .channelGroups
+                    .map { it.displayName },
+            )
+            assertEquals(
+                "Secret Label",
+                f.vm.hostState.value.hosts[0]
+                    .chatGroups
+                    .single()
+                    .displayName,
+            )
+            assertTrue(
+                f.vm.hostState.value.hosts
+                    .all { it.recentChatLastMessages.isEmpty() },
+            )
+            // Same path on the other host is its own group, unlabelled there.
+            assertEquals(
+                "secret-path",
+                f.vm.hostState.value.hosts[1]
+                    .channelGroups
+                    .single()
+                    .displayName,
+            )
+
+            val relabel = { label: String? ->
+                f.a.repo.rows.value = rows.map { if (it.cwd == "/w/secret-path") it.copy(workspaceLabel = label) else it }
+                runCurrent()
+            }
+            relabel("Renamed")
+            val renamed =
+                f.vm.hostState.value.hosts[0]
+                    .channelGroups
+            assertEquals(listOf("Renamed", "plain", "blank", "scratch", "Named scratch"), renamed.map { it.displayName })
+            assertEquals("/w/secret-path", renamed[0].cwd)
+            assertEquals(listOf("c1"), renamed[0].conversations.map { it.conversation.id })
+            assertEquals(
+                "Renamed",
+                f.vm.hostState.value.hosts[0]
+                    .chatGroups
+                    .single()
+                    .displayName,
+            )
+            assertEquals(
+                "secret-path",
+                f.vm.hostState.value.hosts[1]
+                    .channelGroups
+                    .single()
+                    .displayName,
+            )
+
+            relabel(null)
+            val cleared =
+                f.vm.hostState.value.hosts[0]
+                    .channelGroups
+            assertEquals(listOf("secret-path", "plain", "blank", "scratch", "Named scratch"), cleared.map { it.displayName })
+            assertEquals("/w/secret-path", cleared[0].cwd)
+            assertEquals(listOf("c1"), cleared[0].conversations.map { it.conversation.id })
+            assertTrue(logs.none { "Secret" in it || "Renamed" in it || "secret-path" in it })
+        }
+
+    @Test
     fun previewFailureIsLocalAndRetiredPreviewCannotCrossIntoAnotherHost() =
         runTest(dispatcher) {
             val f = fixture()
@@ -557,7 +703,18 @@ class HostChannelListViewModelTest {
         private fun row(
             id: String,
             promoted: Boolean = false,
-        ) = Conversation(id, null, " /same/../Path ", "session", emptyList(), promoted, Instant.parse("2026-09-01T00:00:00Z"))
+            cwd: String = " /same/../Path ",
+            label: String? = null,
+        ) = Conversation(
+            id,
+            null,
+            cwd,
+            "session",
+            emptyList(),
+            promoted,
+            Instant.parse("2026-09-01T00:00:00Z"),
+            workspaceLabel = label,
+        )
 
         private fun message(content: String) =
             Message("message", "session", Role.Assistant, content, Instant.parse("2026-09-01T00:00:00Z"), false)
