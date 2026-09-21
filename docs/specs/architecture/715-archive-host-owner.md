@@ -148,6 +148,30 @@ Pending for the documentation stage, per the ticket's own section — the builde
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-21
 
+## Revisions
+
+**2026-09-21 — Open Questions resolved; no design change.**
+
+- `HostDestination`'s bounce **does** fire on an unpair while Archive is open: removing the owner's
+  record takes the destination to the channel list rather than leaving an empty-but-rendered archive.
+  Proven on the managed API 33 device by `ArchiveNavigationTest`'s removal case, which asserts the
+  departure rather than the absence of the other host's rows, for the reason the security review
+  gives. The explicit in-block guard the plan held in reserve is not needed and was not built.
+- The two-line `TopAppBar` title renders without clipping at the device's default font scale in all
+  three device runs. It was **not** exercised at the largest supported font scale — that is a gap in
+  what these runs prove, not a passing result: the fallback of moving the owner beside the tab row
+  stays available if a later accessibility pass finds the bar too tight.
+
+**2026-09-21 — measured size, against the plan's own estimate.** Actual total written work is
+~723 added lines including this plan, against the ~600 forecast in § Size check and the ticket's
+~560 estimate — inside the 800-line boundary but above both forecasts. One underestimate accounts
+for nearly all of it: the device test came in at 309 lines rather than the ~230 allowed, because its
+Koin + registry + `NavigationPeer` harness is ~130 lines before its first assertion and was again
+counted as reuse rather than as the duplication it is. That is the same miss #749 recorded, at the
+same magnitude, which makes it a property of this harness rather than an estimating slip — a shared
+device-harness fixture would remove it from three tickets at once. Production files (5), exported
+types (0), call sites (2), acceptance criteria (3) and reject branches (0) all landed as forecast.
+
 ## Size check
 
 Production `.kt` under `app/src/main/`: 5 (`MainActivity`, `AppModule`, `SettingsScreen`, `ArchivedDiscussionsViewModel`, `ArchivedDiscussionsScreen`) — at the boundary. Total written work ≈ 600 lines. New exported types: 0. Consumer call sites needing simultaneous update: 2 (`ArchivedDiscussionsScreen` in `MainActivity`, the `viewModel { }` binding) — both new parameters are defaulted or nullable, so no existing call site is forced. Acceptance criteria: 3. Reject branches: 0 new. Within every line of the one-ticket boundary; no split.
