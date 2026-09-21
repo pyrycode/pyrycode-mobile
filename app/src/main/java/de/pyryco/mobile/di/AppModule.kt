@@ -96,7 +96,7 @@ val appModule =
         single { StableConversationRepository(get<RelayConnectionRegistry>().currentRepository) }
         viewModel { ScannerViewModel() }
         viewModel { ChannelListViewModel(get(), get(), get()) }
-        viewModel { DiscussionListViewModel(get()) }
+        viewModel { DiscussionListViewModel(get(), get()) }
         viewModel {
             SettingsViewModel(get(), get(), get<RelayConnectionRegistry>().connectionStatus)
         }
