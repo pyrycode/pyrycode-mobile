@@ -227,6 +227,80 @@ Sibling placement (not inside Scaffold) matches #78's `SaveAsChannelDialog` rend
 
 Each is a single `Text` centred inside `Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center)`. The private `CenteredText(text, modifier)` helper is the shared shape. AC permits a single `Text(...)`; centring is a basic layout decision, not a spinner or illustration. The `Empty` copy was upgraded in #23 from the placeholder `"No channels yet"` to the call-to-action `"Tap + to start a conversation"` (resource `R.string.channel_list_empty`) — the "+" refers to the FAB rendered in the same Scaffold. Plan.md's optional illustration above the copy is unrealised; text-only is correct for Phase 1.
 
+## Tree rows (#730)
+
+`ui/conversations/components/ConversationTreeRows.kt` adds four stateless composables that draw the
+supplied Sidebar design's host/workspace/conversation tree at its own indentation: `TreeSectionHeader`,
+`TreeHostRow`, `TreeWorkspaceRow` and `TreeConversationRow`. Nothing consumes them yet — #731 assembles
+them into this screen in place of the flat `ConversationRow` list; until then they exist only behind
+their own `@Preview`s and `ConversationTreeRowsTest`. `ConversationRow` and `DiscussionPreviewRow` are
+untouched, and `DiscussionListScreen` still renders `ConversationRow`.
+
+**Stateless, resolves nothing.** Every parameter is display text the caller already resolved, a flag
+the caller owns, or a callback. No row takes a `serverId`, a `cwd`, a `Conversation` or a
+`HostWorkspaceGroup` — the row decides nothing about which host or workspace it belongs to. A host's
+name is `HostConversationSnapshot.displayName`, nullable at the source; choosing what a nameless host
+reads as is #731's call, and this row's `hostName` parameter is non-null. `TreeWorkspaceRow` takes
+[`HostWorkspaceGroup.displayName`](./channel-list-viewmodel-projection.md) verbatim — already resolved
+through `workspaceDisplayName`, so the row resolves nothing further.
+
+**Daemon-authored text reaches only a text node or a formatted content description.** Host, workspace
+and conversation names are daemon-authored and cross the trust boundary at render time. The private
+`boundedRowText(raw)` clamps every one of them to `MAX_WORKSPACE_LABEL_CHARS` — the same bound
+`workspaceDisplayName` already applies — before it reaches either a `Text` node or a formatted
+`contentDescription` (the fold label, built from the row's own name). `maxLines = 1` alone would not
+have been enough: Compose still measures the full string before painting it, and an unclamped name
+handed to the fold control's description would reach TalkBack whole, so an oversized or hostile name
+was a list-screen ANR risk rather than a rendering glitch. None of the three names is ever used as a
+key, a path, a filename, a URL or a log field — everything that acts on a host or workspace reads
+`serverId` or the exact `cwd` instead. `ConversationTreeRowsTest` proves truncation against row bounds
+with a name far wider than the row but inside the clamp, and separately proves the clamp itself with a
+4000-character name.
+
+**Truncation is structural, not incidental.** Each row is a `Row` at `heightIn(min = 48.dp)` — the
+Android touch-target minimum already asserted for `ConversationRow`, in place of the Figma drawing's
+28/28/24dp rows; the visual hierarchy those heights carried is preserved here by indent, leading glyph
+and type scale (`titleSmall` for host/workspace, `bodySmall` for conversation) instead. The name (and,
+on the host/workspace rows, the fold chevron beside it) sits in a `Modifier.weight(1f)` group that
+absorbs all leftover row width, with the name itself at `Modifier.weight(1f, fill = false)` plus
+`maxLines = 1` and `TextOverflow.Ellipsis`. A long name therefore ellipsizes and cannot push the
+chevron or the host row's trailing indicator pair past the row's trailing edge.
+
+**The host row's indicator pair reuses `ConnectionStatusLine`'s mapping, not a second one.**
+`RelayLinkStatus.toLegVisual()` and `PyrycodeLinkStatus.toLegVisual()` (both `internal` in this
+package, defined in `ConnectionStatusLine.kt`) already map each leg to a `ConnectionLegVisual`
+(colour category, visible label, content description); `ConnectionLegCategory.color()` is the package's
+one colour-resolution site. The host row's private `ConnectionLegPair` calls the same two functions and
+renders each result as an 8.dp filled `LegDot` carrying `visual.contentDescription` via
+`clearAndSetSemantics` — the pyrycode leg's dot inboard, the relay leg's dot outboard, per the Figma
+layer order. No new mapping is derived; the host row is a more compact arrangement of the same data
+`ConnectionStatusLine` shows on the Settings screen. Keeping the pair accurate as a host fails live is
+\#668's; this slice only draws it from whatever `ConnectionStatus` the caller passes in.
+
+**Selection departs from the Figma literal for contrast, not for taste.** The drawing highlights two
+conversation rows because it is a desktop sidebar: the brighter fill is hover (with the #665 edit
+pencil), the plainer fill is selection, drawn as `onPrimary` — `#FFFFFF` in the light scheme, which
+would vanish. `TreeConversationRow` instead fills a selected row with `primaryContainer` at a 60%
+alpha composited over the list's surface: visible in both themes, keeps `onSurface` row text legible,
+lands within a shade of the drawing's dark-scheme value, and leaves full-opacity `primaryContainer`
+free for the brighter hover/pencil tier #665 will add. The phone has no hover, so only this one
+treatment is drawn.
+
+**Fold control is touch-only by construction.** The whole host/workspace row is the tap target for
+`onToggleExpanded` (`Modifier.clickable(onClickLabel = …, role = Role.Button)`), so nothing depends on
+a pointer hovering. `KeyboardArrowRight` (collapsed) vs. `KeyboardArrowDown` (expanded) differ by
+glyph, not by colour or rotation, and the row sets no overriding `contentDescription` — doing so would
+replace the chevron's and the leg dots' own descriptions and defeat the pair's identifiability. Two new
+strings, `cd_tree_row_expand` / `cd_tree_row_collapse` (`"Expand %1$s"` / `"Collapse %1$s"`), are shared
+by both rows.
+
+**Nothing reserved for later trailing content.** The host row's edit control (#642), the section
+header's and host row's add controls (#732, with #664 behind the latter), the conversation row's edit
+content (#665), the disconnected-host repair control (#675), and the conversation row's leading
+unread/activity state and the indicator pair's live accuracy (both #668) are all deliberately undrawn —
+no placeholder slot is reserved, since an empty reserved slot would read as a rendering fault today.
+Each of those tickets adds its own trailing content to the row it owns.
+
 ## Wiring
 
 `PyryNavHost` resolves `ChannelListViewModel` inside the channel-list back-stack
@@ -286,6 +360,6 @@ Six `@Preview` composables, all `widthDp = 412` (matches the `ConversationRow.kt
 ## Related
 
 - Ticket notes: [`../codebase/46.md`](../codebase/46.md) (LazyColumn + tap nav), [`../codebase/21.md`](../codebase/21.md) (TopAppBar + settings-gear wiring), [`../codebase/22.md`](../codebase/22.md) (FAB + one-shot nav channel), [`../codebase/23.md`](../codebase/23.md) (Empty-state copy + preview), [`../codebase/26.md`](../codebase/26.md) (Recent-discussions pill + Loaded/Empty body restructure + `RecentDiscussionsTapped` event), [`../codebase/68.md`](../codebase/68.md) (Figma polish — TopAppBar logo, leading avatars, "Channels" section header, dark previews), [`../codebase/69.md`](../codebase/69.md) (inline Recent-discussions section replaces the pill; widens `Loaded` / `Empty` with `recentDiscussions: List<Conversation>`; previews reshaped), [`../codebase/99.md`](../codebase/99.md) (instrumented Compose test class — six `@Test` methods covering structure + event dispatch), [`../codebase/162.md`](../codebase/162.md) (`RecentDiscussionsSection` forwards `state.recentDiscussionLastMessages` to each `DiscussionPreviewRow`; placeholder body resource retired), [`../codebase/221.md`](../codebase/221.md) (FAB long-press → `WorkspacePicker`; M3 `FloatingActionButton` widget replaced by manually-composed `Surface` + `combinedClickable` to escape the inner-clickable shadowing failure mode from #25; three new `ChannelListEvent` variants + `WorkspacePicker` host as Scaffold sibling)
-- Specs: `docs/specs/architecture/46-channellistscreen-lazycolumn-tap-nav.md`, `docs/specs/architecture/21-channel-list-top-app-bar.md`, `docs/specs/architecture/22-channel-list-fab-new-discussion.md`, `docs/specs/architecture/23-channel-list-empty-state.md`, `docs/specs/architecture/26-recent-discussions-pill.md`, `docs/specs/architecture/68-channel-list-figma-polish.md`, `docs/specs/architecture/69-channel-list-recent-discussions-section.md`, `docs/specs/architecture/99-channel-list-screen-compose-tests.md`, `docs/specs/architecture/162-channel-list-discussion-preview-row-last-message.md`, `docs/specs/architecture/221-channel-list-fab-long-press-workspace-picker.md`
+- Specs: `docs/specs/architecture/46-channellistscreen-lazycolumn-tap-nav.md`, `docs/specs/architecture/21-channel-list-top-app-bar.md`, `docs/specs/architecture/22-channel-list-fab-new-discussion.md`, `docs/specs/architecture/23-channel-list-empty-state.md`, `docs/specs/architecture/26-recent-discussions-pill.md`, `docs/specs/architecture/68-channel-list-figma-polish.md`, `docs/specs/architecture/69-channel-list-recent-discussions-section.md`, `docs/specs/architecture/99-channel-list-screen-compose-tests.md`, `docs/specs/architecture/162-channel-list-discussion-preview-row-last-message.md`, `docs/specs/architecture/221-channel-list-fab-long-press-workspace-picker.md`, `docs/specs/architecture/730-mobile-tree-rows.md`
 - Upstream: [ChannelListViewModel](./channel-list-viewmodel.md) (state producer + `onEvent` reducer + `navigationEvents`; #26 widened `Loaded` / `Empty` to carry `recentDiscussionsCount`; #69 added `recentDiscussions: List<Conversation>` alongside; #161 added `recentDiscussionLastMessages: Map<String, Message>`; #221 added `workspacePickerVisible: Boolean = false`), [ConversationRow](./conversation-row.md) (per-channel-row primitive), [DiscussionPreviewRow](./discussion-preview-row.md) (per-preview-row primitive, #69; signature gained `lastMessage: Message?` in #162), [ConversationAvatar](./conversation-avatar.md) (leading bubble, #68), [WorkspacePicker](./workspace-picker.md) (host composable wired in #221 as a Scaffold sibling; first consumer of #220's host), [Navigation](./navigation.md) (host graph, route constants, destination wiring), [Dependency injection](./dependency-injection.md) (Koin VM binding)
-- Downstream: #154 (walks `ConversationRow` back to the Figma 15:8 single-line shape — the workspace label from #19 and the leading sleep dot from #20 both removed; the sleeping dot reappears *after* the name, between the name and timestamp), follow-up Retry ticket (adds `ChannelListEvent.RetryClicked` + VM-side reducer), Phase 3 Settings (replaces `SettingsPlaceholder` body — gear wiring already in place since #21), Phase 4 (real backend behind the same `ConversationRepository` bind — zero screen change; adds error + loading UI for the create call), follow-up discussion-aware empty CTA (deferred from #23)
+- Downstream: #154 (walks `ConversationRow` back to the Figma 15:8 single-line shape — the workspace label from #19 and the leading sleep dot from #20 both removed; the sleeping dot reappears *after* the name, between the name and timestamp), follow-up Retry ticket (adds `ChannelListEvent.RetryClicked` + VM-side reducer), Phase 3 Settings (replaces `SettingsPlaceholder` body — gear wiring already in place since #21), Phase 4 (real backend behind the same `ConversationRepository` bind — zero screen change; adds error + loading UI for the create call), follow-up discussion-aware empty CTA (deferred from #23), #731 (assembles `TreeSectionHeader` / `TreeHostRow` / `TreeWorkspaceRow` / `TreeConversationRow`, added in #730, into this screen in place of the flat `ConversationRow` list; decides what a nameless host reads as), #668 (indicator-pair live accuracy, conversation-row unread/activity state), #665 (conversation-row edit pencil), #642 (host-row edit control), #732 (section-header and host-row add controls), #664 (add-workspace content behind #732's control), #675 (disconnected-host repair control)
