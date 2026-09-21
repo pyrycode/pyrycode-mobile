@@ -95,7 +95,7 @@ val appModule =
         // whether this facade or the Fake wins the ConversationRepository binding.
         single { StableConversationRepository(get<RelayConnectionRegistry>().currentRepository) }
         viewModel { ScannerViewModel() }
-        viewModel { ChannelListViewModel(get(), get()) }
+        viewModel { ChannelListViewModel(get(), get(), get()) }
         viewModel { DiscussionListViewModel(get()) }
         viewModel {
             SettingsViewModel(get(), get(), get<RelayConnectionRegistry>().connectionStatus)
