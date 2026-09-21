@@ -22,6 +22,7 @@ import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.di.HostConversationConnection
 import de.pyryco.mobile.di.HostConversationSource
+import de.pyryco.mobile.di.KoinHostSources
 import de.pyryco.mobile.di.appModule
 import de.pyryco.mobile.di.conversationRepositoryModule
 import kotlinx.coroutines.CancellationException
@@ -62,6 +63,7 @@ import org.koin.dsl.module
 class HostChannelListViewModelTest {
     private val dispatcher = UnconfinedTestDispatcher()
     private val fixtures = mutableListOf<Fixture>()
+    private val hostSources = KoinHostSources()
     private val oldSink = RelayLog.sink
     private val oldEnabled = RelayLog.enabled
     private val logs = mutableListOf<String>()
@@ -80,6 +82,9 @@ class HostChannelListViewModelTest {
             it.source.dispose()
             it.app.close()
         }
+        // Must precede resetMain: a Koin-built source collects on Dispatchers.Default, so a publish
+        // that outlives this line resumes a Main-bound collector into a torn-down dispatcher (#726).
+        hostSources.assertAllClosed()
         RelayLog.sink = oldSink
         RelayLog.enabled = oldEnabled
         Dispatchers.resetMain()
@@ -403,17 +408,21 @@ class HostChannelListViewModelTest {
                 )
             prefs.setDefaultWorkspace("/paired-host-only")
             prefs.migrateDefaultWorkspace(setOf("saved-host")).getOrThrow()
-            val app =
-                KoinApplication.init().modules(
-                    appModule,
-                    conversationRepositoryModule(false),
-                    module {
-                        single { prefs }
-                    },
-                )
-            val vm = app.koin.get<ChannelListViewModel>()
+            // Built inside the guard: resolving the ViewModel starts a Dispatchers.Default-backed
+            // source and attaches a Main-bound collector, so it must never happen on a path with no
+            // finally to close it (#726).
+            var viewModel: ChannelListViewModel? = null
             try {
-                val source = app.koin.get<HostConversationSource>()
+                val app =
+                    KoinApplication.init().modules(
+                        appModule,
+                        conversationRepositoryModule(false),
+                        module {
+                            single { prefs }
+                        },
+                    )
+                val source = hostSources.source(app)
+                val vm = app.koin.get<ChannelListViewModel>().also { viewModel = it }
                 val fake = app.koin.get<FakeConversationRepository>()
                 assertSame(source, app.koin.get<HostConversationSource>())
                 assertSame(fake, source.repositoryFor("demo"))
@@ -460,8 +469,8 @@ class HostChannelListViewModelTest {
                 )
                 assertEquals("/paired-host-only", prefs.defaultWorkspace("saved-host").first())
             } finally {
-                vm.viewModelScope.cancel()
-                app.close()
+                viewModel?.viewModelScope?.cancel()
+                hostSources.closeAndAssertStopped()
             }
         }
 

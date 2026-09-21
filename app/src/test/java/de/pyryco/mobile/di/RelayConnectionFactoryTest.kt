@@ -97,6 +97,7 @@ class RelayConnectionFactoryTest {
     private val previousSink = RelayLog.sink
     private val previousEnabled = RelayLog.enabled
     private val logs = mutableListOf<String>()
+    private val hostSources = KoinHostSources()
 
     @Before
     fun captureLogs() {
@@ -106,6 +107,9 @@ class RelayConnectionFactoryTest {
 
     @After
     fun restoreLogs() {
+        // A Koin-built source collects on Dispatchers.Default; leaving one open outlives this class
+        // and fails whichever test runs next once Main is reset (#726).
+        hostSources.assertAllClosed()
         RelayLog.sink = previousSink
         RelayLog.enabled = previousEnabled
     }
@@ -813,7 +817,8 @@ class RelayConnectionFactoryTest {
                         module { single { registry } },
                         conversationRepositoryModule(useRelay),
                     )
-                val source = app.koin.get<HostConversationSource>()
+                val liveHostId = if (useRelay) "A" else HostConversationSource.DEMO_SERVER_ID
+                val source = hostSources.source(app, liveHostId)
                 try {
                     assertSame(source, app.koin.get<HostConversationSource>())
                     registry.connect()
@@ -831,12 +836,11 @@ class RelayConnectionFactoryTest {
                         assertNull(source.repositoryFor("A"))
                     }
                 } finally {
-                    app.close()
+                    // Closes the container and proves the source stopped, before the registry goes.
+                    hostSources.closeAndAssertStopped()
                     registry.dispose()
                     runCurrent()
                 }
-                assertTrue(source.snapshots.value.isEmpty())
-                assertNull(source.repositoryFor(if (useRelay) "A" else "demo"))
             }
         }
 
