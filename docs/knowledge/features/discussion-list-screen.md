@@ -13,7 +13,14 @@ Stateless `(state: DiscussionListUiState, onEvent: (DiscussionListEvent) -> Unit
 - `Error(message)` → centered `"Couldn't load discussions: $message"`.
 - `Loaded(discussions)` → `LazyColumn` of `DiscussionRow`s keyed by `Conversation.id`. Each `DiscussionRow` is a private composable in the same file that wraps the shared [`ConversationRow`](conversation-row.md) with the two gesture surfaces from #25 (long-press → `DropdownMenu`, right-to-left swipe → `SwipeToDismissBox`), and applies the `Modifier.alpha(0.65f)` de-emphasis on the inner row.
 
-Emits `DiscussionListEvent.RowTapped(id)` on row tap, `DiscussionListEvent.SaveAsChannelRequested(id)` from both long-press menu selection and swipe completion (#25), `DiscussionListEvent.PromoteConfirmed` / `PromoteCancelled` from the promotion confirmation dialog (#78), and `DiscussionListEvent.BackTapped` on the back-arrow tap. The destination block in `MainActivity` routes `RowTapped` directly (`navController.navigate(...)`), forwards `SaveAsChannelRequested` / `PromoteConfirmed` / `PromoteCancelled` to `vm.onEvent(event)`, and translates `BackTapped` into `navController.popBackStack()`. The VM additionally emits `RowTapped` onto its one-shot `navigationEvents` channel so the unit test can observe it (see [VM doc](discussion-list-viewmodel.md#dual-nav-wiring-24)).
+Emits `RowTapped(id)`, `SaveAsChannelRequested(id)` from long-press/swipe,
+`PromoteConfirmed` / `PromoteCancelled` from the confirmation dialog, and
+`BackTapped` from the back arrow. `MainActivity` captures the selected/demo host
+for row and promotion entry, invokes the host-aware ViewModel commands, and opens
+threads only from `hostNavigationEvents`. Confirmation keeps the captured target;
+Back pops the stack. The route projects the host prompt into the existing flat
+screen state. See [navigation streams](discussion-list-viewmodel.md#navigation-streams)
+and [route adapters](navigation.md#temporary-flat-list-compatibility).
 
 Since #78 the screen also renders a private `PromotionConfirmationDialog` as an overlay (outside the `Scaffold` body) when `(state as? Loaded)?.pendingPromotion != null`. The dialog is wired through the existing `(state, onEvent)` shape — no `MutableState` is hoisted into the screen.
 
@@ -108,41 +115,15 @@ No `Empty` / `Error` previews — those branches are placeholders awaiting desig
 
 ## Destination block (in `PyryNavHost`)
 
-```kotlin
-composable(Routes.DISCUSSION_LIST) {
-    val vm = koinViewModel<DiscussionListViewModel>()
-    val state by vm.state.collectAsStateWithLifecycle()
-    LaunchedEffect(vm) {
-        vm.navigationEvents.collect { event ->
-            when (event) {
-                is DiscussionListNavigation.ToThread ->
-                    navController.navigate("conversation_thread/${event.conversationId}")
-            }
-        }
-    }
-    DiscussionListScreen(
-        state = state,
-        onEvent = { event ->
-            when (event) {
-                is DiscussionListEvent.RowTapped ->
-                    navController.navigate("conversation_thread/${event.conversationId}")
-                is DiscussionListEvent.SaveAsChannelRequested ->
-                    vm.onEvent(event)
-                DiscussionListEvent.PromoteConfirmed ->          // #78
-                    vm.onEvent(event)
-                DiscussionListEvent.PromoteCancelled ->          // #78
-                    vm.onEvent(event)
-                DiscussionListEvent.BackTapped ->
-                    navController.popBackStack()
-            }
-        },
-    )
-}
-```
-
-`Routes.DISCUSSION_LIST = "discussions"` (in the private `Routes` object alongside `CHANNEL_LIST`, `CONVERSATION_THREAD`, etc.). The entry point is the channel-list inline Recent-discussions section's "See all discussions (N) →" link (#69; previously the #26 pill), which calls `navController.navigate(Routes.DISCUSSION_LIST)` from `ChannelListEvent.RecentDiscussionsTapped`.
-
-`RowTapped` is dispatched on both wires (destination-side `navigate` *and* VM-side `navigationChannel`); see the VM doc for the rationale. `BackTapped` routes only at the destination — the VM treats it as a no-op `Unit` arm. `SaveAsChannelRequested`, `PromoteConfirmed`, and `PromoteCancelled` all route through `vm.onEvent(event)` — the VM owns the `pendingPromotion` state and the `repository.promote(...)` call. The destination wiring stayed structurally identical between #25 and #78; #78 only added the two new arms.
+The production destination resolves `DiscussionListViewModel` in its back-stack
+entry, collects both `state` and `hostState`, and supplies the existing stateless
+screen. Flat rows still come from compatibility state; `Loaded.pendingPromotion`
+is copied from the captured host prompt for display. Row and promotion events use
+host-aware commands, while `LaunchedEffect(vm)` consumes only
+`hostNavigationEvents`. See [ViewModel wiring](discussion-list-viewmodel.md#wiring)
+for target capture and confirmation ownership, and
+[navigation](navigation.md#temporary-flat-list-compatibility) for the shared route
+adapter. The screen's event signatures and visual components are unchanged.
 
 ## Configuration
 

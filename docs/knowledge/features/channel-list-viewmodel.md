@@ -1,9 +1,10 @@
 # ChannelListViewModel
 
 Exposes ordered host-qualified channel/chat state and explicit host actions through
-`HostConversationSource`. The existing flat-screen state, reducer and bare-id
-navigation remain bound to the selected-host repository or demo fake until the
-[screen](channel-list-screen.md) and [navigation](navigation.md) consumers migrate.
+`HostConversationSource`. The flat-screen state still reads the selected-host
+repository or demo fake; production [navigation](navigation.md#temporary-flat-list-compatibility)
+captures host-qualified targets for actions. Legacy reducer and bare-id navigation
+APIs remain available but are not consumed by the production graph.
 
 Package: `de.pyryco.mobile.ui.conversations.list` (`app/src/main/java/de/pyryco/mobile/ui/conversations/list/`). File: `ChannelListViewModel.kt`.
 
@@ -20,8 +21,8 @@ repository's Channels and Discussions flows, recent-message previews and picker
 visibility. It starts at `Loading`, then emits `Empty` or `Loaded` with recent-three
 discussions and the full count, or `Error` when an upstream fails. `onEvent` handles
 creation and picker events; successful legacy creation emits `ToThread(id)` on
-`navigationEvents`. Legacy row/settings/discussion-list navigation remains in the
-destination. These two contracts have separate picker state and navigation channels.
+`navigationEvents`. These two contracts have separate picker state and navigation
+channels; the production destination adapts flat UI events to the host contract.
 
 ## Shape
 
@@ -207,11 +208,10 @@ propagates. Debug events contain static action/failure codes, never exception te
 host ids, paths or message content. A disconnect after lookup can still fail the
 repository call; lookup is not a reservation.
 
-The compatibility `navigationEvents` still carries `ChannelListNavigation.ToThread(id)`.
-`MainActivity` collects it in the channel-list destination's `LaunchedEffect(vm)` and
-navigates to `conversation_thread/${event.conversationId}`. Host actions never feed
-this bare-id channel; adapting a host target by dropping its host would route through
-the wrong compatibility selection. The host-aware route consumer remains #636.
+The compatibility `navigationEvents` still carries `ChannelListNavigation.ToThread(id)`,
+but `MainActivity` collects only `hostNavigationEvents` and calls the shared
+host-qualified route builder. Host actions never feed the bare-id channel;
+dropping the host would reintroduce selection-dependent routing.
 Action coroutines and preview collection are cancelled when the ViewModel is cleared.
 
 ### `onEvent` reducer (#22, widened in #221)
@@ -243,17 +243,15 @@ host source. Demo mode exposes only `HostConversationSource.DEMO_SERVER_ID`
 and resolves that same fake singleton for host reads and creation. Saved relay hosts
 never enter the demo source. `AppPreferences` is shared with Settings.
 
-This is a temporary compatibility boundary: `state`, `onEvent(ChannelListEvent)`
-and `navigationEvents` continue to serve the flat screen through the injected
-repository. They receive neither a flattened multi-host list nor host navigation
-with its host discarded. The source dependency adds `hostState`, explicit host
-actions and `hostNavigationEvents`; screen layout/event producers remain #641 and
-host-qualified route consumption remains #636. Existing screen consumers still use:
-
-```kotlin
-val vm = koinViewModel<ChannelListViewModel>()
-val state by vm.state.collectAsStateWithLifecycle()
-```
+The temporary flat list still renders `state`; it does not flatten multi-host
+snapshots. Its `MainActivity` adapter captures `selectedServerId()` (or `demo`) at
+row/create/picker entry and calls `onHostRowTapped`, `createHostDiscussion` or
+`openHostWorkspacePicker`. Picker visibility comes from
+`hostState.workspacePickerServerId`; pick/dismiss call the host methods. The route
+also provides that captured owner's reconnecting repository to the nested
+`WorkspacePicker`. Only `hostNavigationEvents` opens threads, preserving the host
+through asynchronous creation. Tree layout and host-aware event producers remain
+\#641; see [flat-list navigation](navigation.md#temporary-flat-list-compatibility).
 
 `koinViewModel<…>()` (from `org.koin.androidx.compose`) routes through `LocalViewModelStoreOwner`, which Compose Navigation 2.9+ auto-wires to the current `NavBackStackEntry` — so the VM is scoped to the back-stack entry, surviving configuration changes and tearing down on pop. `collectAsStateWithLifecycle()` requires `androidx.lifecycle:lifecycle-runtime-compose` (added to the catalog in #46), distinct from the `-ktx` artifacts already on the classpath.
 

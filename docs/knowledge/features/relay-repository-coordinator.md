@@ -490,12 +490,13 @@ pending requests and replay positions remain within their host's bundle.
 
 The registry's `selected` flow follows the last saved surviving entry, matching
 `PairedServerStore.load()`. Removing it selects the latest survivor; removing the
-last leaves no owner. Selection switches the stable repository, banner/status,
-events, modal and outbound actions together without redialing unaffected bundles.
+last leaves no owner. Selection switches compatibility repository/status/event/control
+projections together without redialing unaffected bundles.
 An empty selection yields no repository/events, hidden modal, relay `Idle` /
 pyrycode `Down` and a hidden legacy banner. Modal/interrupt calls without a
 selection throw `IllegalStateException`; retry is a no-op while empty, backgrounded
-or disposed. Host-aware screen routing remains #635–#637.
+or disposed. Threads use [exact-host dependencies and Retry](dependency-injection.md#destination-ownership);
+Settings/archive migration remains #637.
 
 Compatibility state must read through the current selection. An independently
 `stateIn`-cached switch briefly exposed the previous host's repository after
@@ -508,8 +509,9 @@ revision collector, while each bundle owns its coordinator projections.
 
 Concrete Koin bundle/supervisor/session-factory/coordinator aliases resolve the
 selected retained bundle for tests and diagnostics and refuse without a selection.
-Stable app consumers use the registry. `createCompatibility(store)` remains a
-helper, not an app-owned connection. See [DI wiring](dependency-injection.md#how-it-works).
+Compatibility consumers use registry projections; thread routes capture exact bundles.
+`createCompatibility(store)` remains a helper, not an app-owned connection. See
+[DI wiring](dependency-injection.md#how-it-works).
 
 `bundle.close()` is permanent and idempotent: stop the supervisor's socket/retry
 loop, cancel the coordinator and repository collectors, and explicitly close the

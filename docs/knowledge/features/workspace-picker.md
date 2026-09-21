@@ -1,6 +1,6 @@
 # WorkspacePicker
 
-Stateful host composable (#220) that owns the workspace-picker flow: it composes [`WorkspacePickerSheet`](./workspace-picker-sheet.md) (#212) and [`CreateFolderDialog`](./create-folder-dialog.md) (#213), reads [`recentWorkspaces()`](./conversation-repository.md), calls [`createWorkspaceFolder(name)`](./conversation-repository.md) on submit, and reports the picked path back to the caller via a single `onPicked` callback. Each consumer screen contributes one `Boolean` (`visible`) to its `UiState` and one callback (`onPicked(path)`) — every other piece of wiring (repository binding, sheet ↔ dialog sequencing, single-invocation guarantee) lives inside the host. First consumer (#221): [`ChannelListScreen`](./channel-list-screen.md)'s FAB long-press → picker → `repository.createDiscussion(workspace = path)` → navigate.
+Stateful host composable (#220) that owns the workspace-picker flow: it composes [`WorkspacePickerSheet`](./workspace-picker-sheet.md) (#212) and [`CreateFolderDialog`](./create-folder-dialog.md) (#213), reads [`recentWorkspaces()`](./conversation-repository.md), calls [`createWorkspaceFolder(name)`](./conversation-repository.md) on submit, and reports the picked path back to the caller via a single `onPicked` callback. Each consumer screen contributes one `Boolean` (`visible`) to its `UiState` and one callback (`onPicked(path)`) — the route supplies repository ownership, while sheet ↔ dialog sequencing and the single-invocation guarantee live inside the host. First consumer (#221): [`ChannelListScreen`](./channel-list-screen.md)'s FAB long-press → picker → `repository.createDiscussion(workspace = path)` → navigate.
 
 Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). File: `WorkspacePicker.kt`. Sibling to [`WorkspacePickerSheet`](./workspace-picker-sheet.md) and [`CreateFolderDialog`](./create-folder-dialog.md) — the host that the other two were designed to compose into.
 
@@ -24,7 +24,7 @@ fun WorkspacePicker(
 
 ## What it does
 
-The public `WorkspacePicker` is a one-line gate: `if (!visible) return`, otherwise it obtains the repository via `koinInject<ConversationRepository>()` and delegates to a package-`internal` seam `WorkspacePickerInternal(repository, onPicked, onDismiss, modifier)`. The seam holds all behaviour:
+The public `WorkspacePicker` is a one-line gate: `if (!visible) return`, otherwise it obtains `LocalWorkspacePickerRepository.current` or, when absent, the compatibility `koinInject<ConversationRepository>()` binding and delegates to a package-`internal` seam `WorkspacePickerInternal(repository, onPicked, onDismiss, modifier)`. The seam holds all behaviour:
 
 ```kotlin
 val recents by repository
@@ -80,9 +80,28 @@ Behaviour:
 
 ### Internal testing seam
 
-`WorkspacePickerInternal(repository, onPicked, onDismiss, modifier)` is `internal` (not `private`) so the `androidTest/` source set can reach it. The seam exists for one reason: the project has no `KoinTestRule` plumbing (no androidTest in this repo bootstraps Koin), so the tests would otherwise need to set up `startKoin` / `stopKoin` per test. The seam takes the repository as a parameter, the test passes [`FakeConversationRepository()`](./conversation-repository.md) directly, and the public Koin path stays untouched. Same shape as [`CreateFolderDialog`](./create-folder-dialog.md)'s `CreateFolderDialogInternal` seam (#213) — but **here the seam is `internal`, not `private`**, because the test reaches in. The early-return `if (!visible) return` lives in the public composable, NOT in the seam; the seam is always-visible because the visibility flag is trivially-correct conditional rendering and doesn't need its own test.
+`WorkspacePickerInternal(repository, onPicked, onDismiss, modifier)` takes an
+explicit repository for component tests. It is always visible; the public
+composable owns the early return and repository resolution. Runtime consumers use
+the public `WorkspacePicker`, so the route's ownership provider is respected.
+Direct seam tests verify behavior but cannot prove production repository ownership.
 
-**Rule:** consumers MUST call the public `WorkspacePicker`. The seam is for tests only; runtime use would bypass the Koin lookup that production code depends on.
+### Repository ownership
+
+`MainActivity` wraps host-owned thread destinations and the flat channel screen in
+`HostWorkspaceRepository`, which provides `LocalWorkspacePickerRepository`.
+Thread pickers use the route host; channel-list pickers use the captured
+`hostState.workspacePickerServerId`, independent of subsequent compatibility
+selection changes. The factory returns a reconnecting facade for that owner, or
+the existing fake singleton in demo mode. See
+[DI ownership](dependency-injection.md#destination-ownership).
+
+Recents and `createWorkspaceFolder` must use the same owner as the caller's final
+workspace change or discussion creation. Binding only the ViewModel leaves this
+component's independent Koin lookup free to read/create folders on another host.
+During disconnect, recents empty and creation keeps the existing generic error
+UI; reconnect resumes the same host. The nullable local's Koin fallback preserves
+Settings and standalone/demo callers; Settings migration remains #637.
 
 ### Single-invocation guarantee for `createWorkspaceFolder`
 
@@ -119,46 +138,27 @@ If the consumer flips `visible = false` while a `createWorkspaceFolder` coroutin
 ## Configuration
 
 - **No new dependencies.** `koinInject`, `collectAsStateWithLifecycle`, `rememberCoroutineScope`, `rememberSaveable`, `launch` all ship in the existing `org.koin:koin-androidx-compose` / `androidx.lifecycle:lifecycle-runtime-compose` / `androidx.compose.runtime` / `kotlinx.coroutines` artifacts. [#564](../codebase/564.md) added `AlertDialog`/`Text`/`TextButton` (already-used `androidx.compose.material3` types) and `kotlinx.coroutines.CancellationException` — no new Gradle artifact either. No `gradle/libs.versions.toml` edit, no `app/build.gradle.kts` edit.
-- **No new DI registrations.** `single { FakeConversationRepository() } bind ConversationRepository::class` is already registered in [`AppModule`](./dependency-injection.md) by [#209](../codebase/209.md) / [#210](../codebase/210.md); the host's `koinInject<ConversationRepository>()` lookup resolves to the same singleton that ViewModels consume via constructor injection.
+- **Repository resolution:** `LocalWorkspacePickerRepository` carries the captured route/picker owner. Without a provider, the public host uses the build-selected compatibility `ConversationRepository` binding. The internal component-test seam takes its repository explicitly.
 - **No previews.** The host's behaviour is sequencing, not pixels — the two children carry their own previews ([`WorkspacePickerSheet`](./workspace-picker-sheet.md): two; [`CreateFolderDialog`](./create-folder-dialog.md): three). Adding a host preview would require a fake-repo wrap and would duplicate what the children's previews already show.
 
 ## Usage
 
-Consumers add one `Boolean` to their `UiState` and one callback to forward the picked path. The established pattern is a `combine` arm on the ViewModel, mirroring [`DiscussionListViewModel`](./discussion-list-viewmodel.md)'s `pendingPromotion`. [`ChannelListViewModel`](./channel-list-viewmodel.md) (#221) is the first concrete instance:
+Consumer screens keep the `visible`, `onPicked` and `onDismiss` contract:
 
 ```kotlin
-// In the UiState (each non-Loading/Error variant):
-data class Loaded(
-    /* … other state … */
-    val workspacePickerVisible: Boolean = false,
-) : ChannelListUiState
-
-// In the ViewModel:
-private val pendingWorkspacePicker = MutableStateFlow(false)
-// … combine(upstreams…, pendingWorkspacePicker) { …, pickerVisible -> Loaded(…, workspacePickerVisible = pickerVisible) }
-
-fun onEvent(event: ChannelListEvent) {
-    when (event) {
-        ChannelListEvent.LongPressFab -> pendingWorkspacePicker.value = true
-        is ChannelListEvent.WorkspacePicked -> {
-            pendingWorkspacePicker.value = false   // clear BEFORE the suspend
-            viewModelScope.launch {
-                val c = repository.createDiscussion(workspace = event.workspace)
-                navigationChannel.send(ChannelListNavigation.ToThread(c.id))
-            }
-        }
-        ChannelListEvent.WorkspacePickerDismissed -> pendingWorkspacePicker.value = false
-        // … other arms …
-    }
-}
-
-// In the screen composable, as a sibling of the Scaffold:
 WorkspacePicker(
-    visible = pickerVisible,   // derived from an exhaustive when (state)
+    visible = pickerVisible,
     onPicked = { path -> onEvent(ChannelListEvent.WorkspacePicked(path)) },
     onDismiss = { onEvent(ChannelListEvent.WorkspacePickerDismissed) },
 )
 ```
+
+The production channel-list route adapts `LongPressFab` to
+`openHostWorkspacePicker(capturedServerId)`, projects the captured owner's presence
+into flat-screen visibility, and sends pick/dismiss to `pickHostWorkspace` /
+`dismissHostWorkspacePicker`. It also supplies that owner through the composition
+local. Successful creation emits the full host/conversation target; see
+[channel-list wiring](channel-list-viewmodel.md#wiring).
 
 Two important conventions established by the first consumer (#221) that future consumers should follow:
 
@@ -169,7 +169,15 @@ The host is typically mounted as a sibling of the screen's `Scaffold` (not insid
 
 ## Tests
 
-Three Compose UI tests in `app/src/androidTest/java/de/pyryco/mobile/ui/conversations/components/WorkspacePickerTest.kt` (`createComposeRule()` + `AndroidJUnit4`, matching [`CreateFolderDialogTest.kt`](../codebase/213.md) and [`WorkspacePickerSheetTest.kt`](../codebase/212.md) — no MockK, no Turbine, no shared fixtures; `assertEquals` for callback verification, `hasText` / `hasSetTextAction` lookups for selectors, real `FakeConversationRepository` not a hand-rolled mock). All three target the `WorkspacePickerInternal` seam directly because the seam takes the repository as a parameter and the androidTest source set cannot easily bootstrap Koin:
+`WorkspacePickerTest` uses the explicit-repository internal seam for component
+behavior with a real fake repository or a throwing delegate. Production ownership
+is covered separately by `LiteralScreenNavigationTest`'s
+`threadWorkspacePickerKeepsOwnerAcrossSelectionChanges` and
+`flatListWorkspacePickerKeepsCapturedOwnerAcrossSelectionChanges`. Those tests open
+the real picker through the production graph, use distinct A/B recents, and assert
+that B receives no picker reads/writes after selection changes. The thread case
+also covers disconnected creation failure and reconnect. A direct seam test alone
+would pass with the wrong public injection.
 
 - **`dialog_submit_calls_createWorkspaceFolder_exactly_once_and_forwards_returned_path_to_onPicked`** — tap "Create new folder under pyry-workspace…", type `"my-workspace"`, tap Create. Asserts `picked == listOf("pyry-workspace/my-workspace")` (exactly one invocation, exact path) **and** `repo.recentWorkspaces().first().first() == "pyry-workspace/my-workspace"` (the bump landed at position 0; re-asserts the repo contract from the host's vantage and validates end-to-end wiring).
 - **`cancelling_create_dialog_keeps_sheet_visible_and_does_not_invoke_host_onDismiss`** — tap "Create new folder under pyry-workspace…", then tap Cancel. Asserts `dismissed == 0`, the sheet's `"Choose workspace"` title still displays, and the dialog's `"Create workspace"` title `assertDoesNotExist()`. This is the load-bearing test for the "two flag-flips that share the surface verb 'dismiss' route differently" contract.

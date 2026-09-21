@@ -425,6 +425,10 @@ incantation to remember — the eight curated `@Test` methods (ping + create-wor
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
 save-as-channel, #581) ride the wrapped mode.
 
+These `InteractiveStreamE2ETest` cases preserve the ping and Reset-session
+regressions after host-owned routing. They do not prove two-host navigation,
+reconnect or phone-reply continuity; that rung-3 coverage remains #673.
+
 **When the dispatcher runs it:**
 
 - **after verifier on a ticket labelled `needs-real-claude`**, so the live stack is checked before
@@ -876,6 +880,12 @@ The remaining checks here are specific to a real relay or real Claude execution:
 
 ## Follow-ups to ticket
 
+- **Coverage — pending:** [#673](https://github.com/pyrycode/pyrycode-mobile/issues/673)
+  owns two-host navigation/reconnect and phone-reply continuity in the rung-3
+  `InteractiveStreamE2ETest` harness. The production-route Compose tests and
+  two-peer DI tests for #636 establish deterministic ownership boundaries; passing
+  the existing eight-test live gate does not establish that future scenario.
+
 - **Coverage — pending:** [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679)
   owns the cross-device Stop scenario in `InteractiveStreamE2ETest`: with real turns
   in A and B and another device most recently using A, Stop while the phone views B
@@ -981,7 +991,10 @@ explanation as a current limitation. Compaction status ("Compacting conversation
   wiring. Red does **not** mean broken: it means claude gained a message kind and the daemon's measured
   ignore-list needs re-taking. Shape: the rule resets a process-global recorder before the body and checks
   it after, fed by an inert pass-through `TappingConversationRepository` installed in
-  `E2eTestApplication`'s relay branch — it taps the subscription the app **already** makes rather than
+  `E2eTestApplication`'s relay branch. Its `hostConversationModule` also supplies
+  `decorateRepository = ::TappingConversationRepository` for exact-host destination
+  facades; wrapping only the compatibility binding would miss host-owned thread reads.
+  It taps the subscription the app **already** makes rather than
   opening its own, because `observeMessages` issues a full-history `backfill_since` on *every*
   subscription, so a guard with one collector per conversation would put that traffic on the live wire
   during a timing-sensitive real-claude turn (a sentinel that adds flakiness of its own is worse than no
