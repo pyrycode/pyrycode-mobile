@@ -40,6 +40,7 @@ val appModule = module {
     single { StableConversationRepository(get<RelayConnectionRegistry>().currentRepository) }
     viewModel { ChannelListViewModel(get(), get(), get()) }
     viewModel { DiscussionListViewModel(get(), get()) }
+    viewModel { get<ThreadDestinationFactory>().settings(get(), get(), get()) }   // #749
     viewModel { get<ThreadDestinationFactory>().thread(get(), get()) }
     viewModel { get<ThreadDestinationFactory>().literal(get()) }
 }
@@ -166,6 +167,34 @@ The Koin `viewModel` definitions call `thread(handle, preferences)` and
 `conversationId`. [Navigation](navigation.md#host-qualified-destinations) supplies
 both arguments and scopes ViewModels to individual back-stack entries.
 
+`ThreadDestinationFactory.settings(handle, preferences, repository)` (#749) is the third
+destination method, in the same shape but with two deliberate differences from `thread`/`literal`:
+the owner it reads from the `SavedStateHandle` is **optional** (`handle.get<String>("serverId").orEmpty()`
+— a blank owner is a valid destination state, not an error), and it never resolves that id to a
+connection bundle — `SettingsViewModel` reads a saved host's identity and status only, so a
+saved-but-disconnected owner is still its owner. `preferences` and `repository` are the same
+compatibility-bound `AppPreferences` / `ConversationRepository` singletons every other
+`SettingsViewModel` dependency already used; `#749` does not touch them, per its explicit deferral
+of `archivedDiscussionCount` and the default-workspace picker to #715/#714.
+
+`settings` also builds the private `hosts(): Flow<List<SettingsHost>>` that becomes
+`SettingsViewModel`'s fourth constructor argument — every saved host's identity plus its own live
+status, joined from two sources because neither alone carries all four display fields:
+`registry.hostConnections` (`RelayConnectionRegistry`, exposed here as the factory's own
+`hostConnections` property) carries the per-host `status: StateFlow<ConnectionStatus>` and
+`displayName`, and re-emits on every store revision so a rename, a pairing and an unpair all reach
+the projection; the relay URL lives only in the stored record, so the `map` reads
+`store.list()` once per `hostConnections` emission and joins by exact `serverId` — one decrypt for
+the whole saved-host blob per revision, not one `PairedServerCollectionStore.loadById` per host
+decrypting it N times for the same data. The three display fields (`serverId`, `displayName`,
+`relayUrl`) are copied out explicitly into `SettingsHost`; the joined `PairedServerEntry` never
+escapes the `map` block, because it carries the pairing token and server static key and
+`SettingsHost` has no redacting `toString`. In demo mode (`useRelay = false`) `hosts()` instead
+yields a single fixed `SettingsHost` for `HostConversationSource.DEMO_SERVER_ID`, mirroring the
+`selectedServerId()` demo shape below. The returned `Flow` is deliberately cold — `SettingsViewModel`
+lifts it with its own `stateIn`, so two Settings entries on the back stack (e.g. after Back and
+reopen under a different capture) do not share one projection or its subscription lifetime.
+
 Relay destinations capture the exact `connectionFor(serverId)` retained bundle.
 Their repository is a `StableConversationRepository` over **that coordinator's**
 `currentRepository` stream. Capturing `HostConversationSource.repositoryFor`'s
@@ -193,7 +222,9 @@ remembering a factory repository for the route host or captured picker host.
 and the ViewModel's final action reach the same host across selection/reconnect.
 Without that provider, a correctly bound ViewModel can still combine B's folders
 with A's workspace change. The picker's nullable-local fallback remains the
-compatibility Koin binding for Settings; that destination's migration is #637.
+compatibility Koin binding for Settings; #749 gave the Settings destination itself
+exact-host ownership of its identity and connection status, but deliberately left
+the default-workspace picker on this compatibility binding — that migration is #714.
 
 ### Exact-host Retry and lifecycle
 
@@ -223,8 +254,11 @@ Demo thread, literal and picker repositories also resolve that same singleton.
 The thread gets `FakeConnectionStateSource` (`Connected`) and its inert default
 live-event, hidden-modal and control dependencies. Saved real hosts never supply
 demo content, permissions or controls. `selectedServerId()` returns `demo` in this
-mode; in relay mode it captures the current exact selected host only for temporary
-flat-list entry points.
+mode; in relay mode it captures the current exact selected host for temporary
+flat-list entry points, and (since #749) for the channel list's settings gear —
+`ChannelListEvent.SettingsTapped → navController.navigate(Routes.settings(destinations.selectedServerId()))`
+captures the owner once, at tap time, into the Settings route; see
+[Navigation § Settings](navigation.md#settings-an-optionally-owned-destination).
 
 `ChannelListViewModel` receives this shared source as its third constructor
 dependency and exposes [host-qualified state and actions](channel-list-viewmodel-projection.md#state-projection).
@@ -236,7 +270,10 @@ selected facade or fake; its adapters call host-aware row/create/picker/promotio
 commands and project captured picker/promotion visibility into the existing screen
 state. Asynchronous completion retains the captured host. See
 [flat-list compatibility](navigation.md#temporary-flat-list-compatibility);
-tree rendering remains #641, and Settings/archive migration remains #637.
+tree rendering remains #641. #749 moved the Settings destination itself (identity +
+connection status) to exact-host ownership; the archived-discussion count and the
+default-workspace picker it still shows stay on this compatibility binding, pending
+\#715 and #714 respectively.
 
 ## Adding a binding
 
@@ -278,6 +315,14 @@ that Retry holds the registry monitor at dial and rejects queued calls after
 replacement/removal/disposal.
 `queuedDestinationRetryCannotReopenAfterBackgroundClose` checks the background
 edge. Settled identity checks alone would miss the removal race.
+
+`SettingsNavigationTest` (#749) exercises `ThreadDestinationFactory.settings` and its `hosts()`
+projection against the production graph and Koin bindings, with two Noise peers: a captured owner
+outlives a compatibility-selection change (closing one host's supervisor first, so the assertion is
+discriminating — see [Settings ViewModel § Testing](settings-viewmodel.md#testing)), saved-state
+restoration and Back/reopen under a different selection, and both an unknown and an absent owner
+keep the destination open with no saved host's identity on screen. See
+[Navigation § Testing](navigation.md#testing) for the scenario list.
 
 `LiteralScreenNavigationTest` exercises the production graph and bindings,
 including the actual workspace picker with distinct A/B recents, folder creation,
