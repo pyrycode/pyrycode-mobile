@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Dns
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Icon
@@ -142,7 +143,8 @@ fun TreeSectionHeader(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f).semantics { heading() },
         )
-        TreeAddControl(
+        TreeRowControl(
+            icon = Icons.Filled.Add,
             contentDescription = stringResource(R.string.cd_tree_section_pair_host, title),
             onClick = onAddTapped,
         )
@@ -151,17 +153,19 @@ fun TreeSectionHeader(
 
 /**
  * One host in the tree: a server glyph, the host's name, a fold control, the two connection legs shown
- * separately, and the add control that starts a chat on **this** host (#738).
+ * separately, the edit control that opens the Edit host modal for **this** host (#744), and the add
+ * control that starts a chat on it (#738).
  *
  * Stateless — [hostName] is display text the caller resolved (a nameless host reads as whatever
  * #731 decides), [expanded] is the caller's flag, and the row reports a fold request back through
  * [onToggleExpanded]. The row resolves nothing: [serverId] is reported straight back through
- * [onAddTapped] / [onAddLongPressed] and is otherwise used only to name the control for the device
- * suites, so that handle stays unambiguous once a second host is paired. Keeping the indicator pair
- * accurate as hosts fail live is #668; the edit control is #642.
+ * [onAddTapped] / [onAddLongPressed] / [onEditTapped] and is otherwise used only to name the two
+ * controls for the device suites, so those handles stay unambiguous once a second host is paired.
+ * Keeping the indicator pair accurate as hosts fail live is #668.
  *
- * The design's hover treatment swaps the leg dots for the pencil and the plus. The phone has no hover,
- * so the plus is drawn persistently, outboard of the dots the design would have hidden.
+ * The design's hover treatment swaps the leg dots for the pencil and the plus, in that order. The phone
+ * has no hover, so both are drawn persistently in the same order, outboard of the dots the design would
+ * have hidden.
  */
 @Composable
 fun TreeHostRow(
@@ -170,12 +174,13 @@ fun TreeHostRow(
     connectionStatus: ConnectionStatus,
     expanded: Boolean,
     onToggleExpanded: () -> Unit,
+    onEditTapped: () -> Unit,
     onAddTapped: () -> Unit,
     onAddLongPressed: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // Clamped once here and reused for both the row's own name and the add control's two labels, so no
-    // path can format an unbounded daemon-authored name into a content description.
+    // Clamped once here and reused for the row's own name and for all three control labels, so no path
+    // can format an unbounded daemon-authored name into a content description.
     val bounded = boundedRowText(hostName)
     FoldableTreeRow(
         glyph = Icons.Filled.Dns,
@@ -188,7 +193,16 @@ fun TreeHostRow(
     ) {
         Spacer(modifier = Modifier.width(TreeGlyphGap))
         ConnectionLegPair(status = connectionStatus)
-        TreeAddControl(
+        TreeRowControl(
+            // Matched to the Material set the same way this file matched `Dns` and `FolderOpen` to the
+            // design's own glyphs, rather than vendoring the frame's drawable.
+            icon = Icons.Filled.Edit,
+            contentDescription = stringResource(R.string.cd_tree_host_edit, bounded),
+            onClick = onEditTapped,
+            modifier = Modifier.testTag(treeHostEditTestTag(serverId)),
+        )
+        TreeRowControl(
+            icon = Icons.Filled.Add,
             contentDescription = stringResource(R.string.cd_tree_host_new_chat, bounded),
             onClick = onAddTapped,
             onLongClickLabel = stringResource(R.string.cd_tree_host_pick_workspace, bounded),
@@ -199,24 +213,26 @@ fun TreeHostRow(
 }
 
 /**
- * The device suites' handle for one host's add control — app-authored prefix, the host's own id, and
- * nothing drawn on the row (#736's convention, now per-host because the control repeats).
+ * The device suites' handles for one host's two controls — an app-authored prefix, the host's own id, and
+ * nothing drawn on the row (#736's convention, per-host because the controls repeat).
  *
  * The id comes from the saved `PairedServer` record the operator scanned, not from a daemon frame, but a
  * hostile QR could still make it enormous and a `testTag` is re-evaluated on every recomposition of the
  * row. So it is clamped exactly as `treeItemKey` clamps its parts — truncated with the original length
  * appended, which keeps two ids sharing a prefix from collapsing onto one tag. `testTag` is invisible to
- * accessibility services, so this carries the id no further than the test tree.
+ * accessibility services, so this carries the id no further than the test tree. Both tags share one
+ * clamp so the two cannot drift apart.
  */
-fun treeHostAddTestTag(serverId: String): String {
-    val bounded =
-        if (serverId.length <= MAX_TEST_TAG_ID_CHARS) {
-            serverId
-        } else {
-            serverId.take(MAX_TEST_TAG_ID_CHARS) + "~" + serverId.length
-        }
-    return "tree-host-add:$bounded"
-}
+fun treeHostAddTestTag(serverId: String): String = "tree-host-add:${boundedTagId(serverId)}"
+
+fun treeHostEditTestTag(serverId: String): String = "tree-host-edit:${boundedTagId(serverId)}"
+
+private fun boundedTagId(serverId: String): String =
+    if (serverId.length <= MAX_TEST_TAG_ID_CHARS) {
+        serverId
+    } else {
+        serverId.take(MAX_TEST_TAG_ID_CHARS) + "~" + serverId.length
+    }
 
 private const val MAX_TEST_TAG_ID_CHARS = 256
 
@@ -360,14 +376,17 @@ private fun FoldableTreeRow(
 }
 
 /**
- * The add control both the section header and the host row draw (#738) — the design's trailing plus.
+ * The trailing row control: the section header's and the host row's plus (#738) and the host row's
+ * pencil (#744). The body was already glyph-agnostic, so the caller supplies the [icon] and nothing else
+ * differs between them.
  *
- * [contentDescription] is the whole accessible name, because the control repeats down the screen and has
- * to say which section or host it acts on. Callers that want a long-press path supply both
- * [onLongClickLabel] and [onLongClick]; the pair is what keeps the retired button's second path — pick a
- * workspace first — reachable, and it is built the same way the button built it.
+ * [contentDescription] is the whole accessible name, because the controls repeat down the screen and two
+ * of them sit on one row, so each has to say which section or host it acts on and what it does there.
+ * Callers that want a long-press path supply both [onLongClickLabel] and [onLongClick]; the pair is what
+ * keeps the retired button's second path — pick a workspace first — reachable, and it is built the same
+ * way the button built it. The pencil passes neither: it has one action.
  *
- * **The 48dp trade.** The design pins a [TreeGlyphSize] plus with its centre 10dp from the content edge.
+ * **The 48dp trade.** The design pins a [TreeGlyphSize] glyph with its centre 10dp from the content edge.
  * Touch needs [TreeAddTouchSize] and the glyph centres in that box, so behind the rows' own
  * [TreeRowEndPadding] the glyph's centre lands about 22dp further inboard than the design draws it. Taken
  * deliberately, and the same trade #731 took growing the design's 28dp pointer rows to a size a thumb can
@@ -379,7 +398,8 @@ private fun FoldableTreeRow(
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TreeAddControl(
+private fun TreeRowControl(
+    icon: ImageVector,
     contentDescription: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -401,7 +421,7 @@ private fun TreeAddControl(
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            imageVector = Icons.Filled.Add,
+            imageVector = icon,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.primary,
             modifier = Modifier.size(TreeGlyphSize),
@@ -462,6 +482,7 @@ private fun TreeRowsPreviewMatrix() {
                     ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected),
                 expanded = true,
                 onToggleExpanded = {},
+                onEditTapped = {},
                 onAddTapped = {},
                 onAddLongPressed = {},
             )
@@ -483,6 +504,7 @@ private fun TreeRowsPreviewMatrix() {
                     ),
                 expanded = false,
                 onToggleExpanded = {},
+                onEditTapped = {},
                 onAddTapped = {},
                 onAddLongPressed = {},
             )

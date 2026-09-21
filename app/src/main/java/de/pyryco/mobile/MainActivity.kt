@@ -330,6 +330,11 @@ internal fun PyryNavHost(
                             // selected-host adapter the retired button resolved through (#738).
                             is ChannelListEvent.TreeHostAddTapped -> vm.createHostDiscussion(event.serverId)
                             is ChannelListEvent.TreeHostAddLongPressed -> vm.openHostWorkspacePicker(event.serverId)
+                            // Same rule again for editing (#744): the control's own host. The view model
+                            // reads that host's stored record and owns the modal's target and flags.
+                            is ChannelListEvent.TreeHostEditTapped -> vm.openHostEditor(event.serverId)
+                            is ChannelListEvent.HostEditNameSubmitted -> vm.submitHostName(event.name)
+                            ChannelListEvent.HostEditDismissed -> vm.dismissHostEditor()
                             is ChannelListEvent.WorkspacePicked -> vm.pickHostWorkspace(event.workspace)
                             ChannelListEvent.WorkspacePickerDismissed -> vm.dismissHostWorkspacePicker()
                         }

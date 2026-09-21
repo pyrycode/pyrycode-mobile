@@ -108,7 +108,8 @@ val appModule =
             val registry = get<RelayConnectionRegistry>()
             PairCodeViewModel(get(), registry, registry::pairingStatus)
         }
-        viewModel { ChannelListViewModel(get(), get()) }
+        // The third dependency is the paired-server store the Edit host modal reads and writes (#744).
+        viewModel { ChannelListViewModel(get(), get(), get()) }
         viewModel { DiscussionListViewModel(get(), get()) }
         viewModel {
             SettingsViewModel(get(), get(), get<RelayConnectionRegistry>().connectionStatus)

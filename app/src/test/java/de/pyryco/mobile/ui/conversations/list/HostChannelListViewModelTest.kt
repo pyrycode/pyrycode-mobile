@@ -6,6 +6,10 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.preferencesOf
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.viewModelScope
+import de.pyryco.mobile.data.crypto.PairedServer
+import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
+import de.pyryco.mobile.data.crypto.PairedServerEntry
+import de.pyryco.mobile.data.crypto.PairedServerStoreException
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
@@ -25,6 +29,7 @@ import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.KoinHostSources
 import de.pyryco.mobile.di.appModule
 import de.pyryco.mobile.di.conversationRepositoryModule
+import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -718,6 +723,192 @@ class HostChannelListViewModelTest {
             assertEquals(HostConversationTarget("Host", "returned-id"), f.vm.hostState.value.selected)
         }
 
+    @Test
+    fun editorOpensOnTheRowsOwnStoredRecordAndSurvivesAnIncomingSnapshot() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            runCurrent()
+            assertNull(f.vm.hostState.value.hostEditor)
+
+            f.vm.openHostEditor("Host")
+            runCurrent()
+            val editor = requireNotNull(f.vm.hostState.value.hostEditor)
+            assertEquals("Host", editor.serverId)
+            assertEquals("Host", editor.serverIdentity)
+            assertEquals("wss://first.example:8443", editor.relayAddress)
+            assertEquals("Pyrybox", editor.initialName)
+            assertFalse(editor.saving)
+            assertFalse(editor.failed)
+
+            // The open state is the list's, so an arriving snapshot must not disturb the open modal.
+            f.a.repo.rows.value = listOf(row("a-1", promoted = true))
+            runCurrent()
+            assertSame(editor, f.vm.hostState.value.hostEditor)
+
+            // An unnamed host opens an empty field — never its id, and never the row's placeholder.
+            f.vm.openHostEditor("host")
+            runCurrent()
+            assertEquals(
+                "",
+                f.vm.hostState.value.hostEditor
+                    ?.initialName,
+            )
+
+            // A stored blank is unnamed too, exactly as the row reads it.
+            f.store.put("host", "wss://second.example", "   ")
+            f.vm.openHostEditor("host")
+            runCurrent()
+            assertEquals(
+                "",
+                f.vm.hostState.value.hostEditor
+                    ?.initialName,
+            )
+            assertEquals(
+                "host",
+                f.vm.hostState.value.hostEditor
+                    ?.serverIdentity,
+            )
+        }
+
+    @Test
+    fun editorOpenIgnoresAnUnknownIdAndAnOpenSupersededByALaterTap() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+
+            f.vm.openHostEditor("absent")
+            runCurrent()
+            assertNull(f.vm.hostState.value.hostEditor)
+
+            // Two pencils tapped while the first read is still decrypting: the second must win, or the
+            // modal renames a host the operator did not tap last.
+            val gate = CompletableDeferred<Unit>()
+            f.store.readGate = gate
+            f.vm.openHostEditor("Host")
+            runCurrent()
+            assertNull(f.vm.hostState.value.hostEditor)
+
+            f.store.readGate = null
+            f.vm.openHostEditor("host")
+            runCurrent()
+            assertEquals(
+                "host",
+                f.vm.hostState.value.hostEditor
+                    ?.serverId,
+            )
+
+            gate.complete(Unit)
+            runCurrent()
+            assertEquals(
+                "host",
+                f.vm.hostState.value.hostEditor
+                    ?.serverId,
+            )
+        }
+
+    @Test
+    fun submitSavesTheTrimmedClampedNameOrClearsItAndClosesTheEditor() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+
+            // No open editor: nothing to save, and no store write to attribute to a stale target.
+            f.vm.submitHostName("orphan")
+            runCurrent()
+            assertTrue(f.store.renames.isEmpty())
+
+            f.vm.openHostEditor("Host")
+            runCurrent()
+            f.vm.submitHostName("  Renamed  ")
+            runCurrent()
+            assertEquals(listOf("Host" to "Renamed"), f.store.renames)
+            assertNull(f.vm.hostState.value.hostEditor)
+
+            // Blank clears the name, so the row falls back to its unnamed treatment.
+            f.vm.openHostEditor("Host")
+            runCurrent()
+            f.vm.submitHostName("   ")
+            runCurrent()
+            assertEquals("Host" to null, f.store.renames.last())
+            assertNull(f.vm.hostState.value.hostEditor)
+
+            // Clamped at the write: the stored value is the only one any surface could render.
+            f.vm.openHostEditor("Host")
+            runCurrent()
+            f.vm.submitHostName("x".repeat(MAX_WORKSPACE_LABEL_CHARS + 40))
+            runCurrent()
+            assertEquals(
+                "x".repeat(MAX_WORKSPACE_LABEL_CHARS),
+                f.store.renames
+                    .last()
+                    .second,
+            )
+        }
+
+    @Test
+    fun failedSaveKeepsTheEditorOpenAndActionableWhileADismissedOneStaysClosed() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openHostEditor("Host")
+            runCurrent()
+
+            f.store.failWrite = true
+            f.vm.submitHostName("Renamed")
+            runCurrent()
+            val failed = requireNotNull(f.vm.hostState.value.hostEditor)
+            assertTrue(failed.failed)
+            assertFalse(failed.saving)
+            // The identity keys the component's own name buffer: changing it would discard the typing.
+            assertEquals("Host", failed.serverIdentity)
+            assertEquals("Pyrybox", requireNotNull(f.store.loadById("Host")).displayName)
+            assertTrue(logs.any { it.contains("host_name_save_failed") })
+            assertTrue(logs.none { it.contains("Renamed") })
+
+            // Still actionable: a retry that succeeds clears the failure and closes.
+            f.store.failWrite = false
+            f.vm.submitHostName("Renamed")
+            runCurrent()
+            assertEquals("Host" to "Renamed", f.store.renames.last())
+            assertNull(f.vm.hostState.value.hostEditor)
+
+            // A save that lands after a dismissal must not resurrect the modal.
+            f.vm.openHostEditor("Host")
+            runCurrent()
+            val write = CompletableDeferred<Unit>()
+            f.store.writeGate = write
+            f.vm.submitHostName("Later")
+            runCurrent()
+            f.vm.dismissHostEditor()
+            runCurrent()
+            assertNull(f.vm.hostState.value.hostEditor)
+            write.complete(Unit)
+            runCurrent()
+            assertNull(f.vm.hostState.value.hostEditor)
+            assertEquals("Host" to "Later", f.store.renames.last())
+        }
+
+    @Test
+    fun dismissClosesTheEditorWithoutWriting() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openHostEditor("Host")
+            runCurrent()
+            assertEquals(
+                "Host",
+                f.vm.hostState.value.hostEditor
+                    ?.serverId,
+            )
+
+            f.vm.dismissHostEditor()
+            runCurrent()
+            assertNull(f.vm.hostState.value.hostEditor)
+            assertTrue(f.store.renames.isEmpty())
+            assertEquals("Pyrybox", requireNotNull(f.store.loadById("Host")).displayName)
+        }
+
     private fun preferences(values: Flow<Preferences>) =
         AppPreferences(
             object : DataStore<Preferences> {
@@ -742,6 +933,14 @@ class HostChannelListViewModelTest {
                 lookups += id
                 listOf(a, b).find { it.entry.serverId == id && it.available && it.entry in hosts.value }?.live?.value
             }, dispatcher)
+
+        // Bound explicitly: appModule's own binding is the Keystore-backed store, which needs a
+        // Context the JVM suite has none of, and the view model now resolves this type.
+        val store =
+            Store().apply {
+                put("Host", "wss://first.example:8443", "Pyrybox")
+                put("host", "wss://second.example", null)
+            }
         val app =
             KoinApplication.init().modules(
                 appModule,
@@ -749,6 +948,7 @@ class HostChannelListViewModelTest {
                     single<ConversationRepository> { StableConversationRepository(selected) }
                     single { preferences(preferences) }
                     single { source }
+                    single<PairedServerCollectionStore> { store }
                 },
             )
         val vm = app.koin.get<ChannelListViewModel>()
@@ -763,6 +963,47 @@ class HostChannelListViewModelTest {
         val live = MutableStateFlow<ConversationRepository?>(repo)
         val status = MutableStateFlow(ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected))
         val entry = HostConversationConnection(id, "Local $id", live, status)
+    }
+
+    /** In-memory paired-server store: the two reads and the one write this screen makes, plus gates. */
+    private class Store : PairedServerCollectionStore {
+        private var entries = emptyList<PairedServerEntry>()
+        val renames = mutableListOf<Pair<String, String?>>()
+        var failWrite = false
+        var readGate: CompletableDeferred<Unit>? = null
+        var writeGate: CompletableDeferred<Unit>? = null
+
+        fun put(
+            serverId: String,
+            relayUrl: String,
+            displayName: String?,
+        ) {
+            val record = PairedServer(serverId, "token-$serverId", relayUrl, "key-$serverId")
+            entries = entries.filterNot { it.record.serverId == serverId } + PairedServerEntry(record, displayName)
+        }
+
+        override suspend fun load(): PairedServer? = entries.lastOrNull()?.record
+
+        override suspend fun list(): List<PairedServerEntry> = entries.toList()
+
+        override suspend fun loadById(serverId: String): PairedServerEntry? {
+            readGate?.await()
+            return entries.find { it.record.serverId == serverId }
+        }
+
+        override suspend fun save(record: PairedServer) = error("unused")
+
+        override suspend fun remove(serverId: String) = error("unused")
+
+        override suspend fun setDisplayName(
+            serverId: String,
+            displayName: String?,
+        ) {
+            writeGate?.await()
+            if (failWrite) throw PairedServerStoreException("test failure")
+            renames += serverId to displayName
+            entries = entries.map { if (it.record.serverId == serverId) it.copy(displayName = displayName) else it }
+        }
     }
 
     private class Repo : ConversationRepository by FakeConversationRepository() {

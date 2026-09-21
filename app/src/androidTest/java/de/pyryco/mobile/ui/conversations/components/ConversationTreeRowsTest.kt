@@ -16,6 +16,8 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isHeading
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.Dp
@@ -98,6 +100,7 @@ class ConversationTreeRowsTest {
                 connectionStatus = mixedStatus,
                 expanded = true,
                 onToggleExpanded = {},
+                onEditTapped = {},
                 onAddTapped = {},
                 onAddLongPressed = {},
             )
@@ -151,6 +154,7 @@ class ConversationTreeRowsTest {
                     connectionStatus = mixedStatus,
                     expanded = true,
                     onToggleExpanded = { toggles++ },
+                    onEditTapped = {},
                     onAddTapped = {},
                     onAddLongPressed = {},
                 )
@@ -182,6 +186,7 @@ class ConversationTreeRowsTest {
                     connectionStatus = mixedStatus,
                     expanded = false,
                     onToggleExpanded = {},
+                    onEditTapped = {},
                     onAddTapped = {},
                     onAddLongPressed = {},
                 )
@@ -205,6 +210,7 @@ class ConversationTreeRowsTest {
                     connectionStatus = mixedStatus,
                     expanded = true,
                     onToggleExpanded = {},
+                    onEditTapped = {},
                     onAddTapped = {},
                     onAddLongPressed = {},
                 )
@@ -268,6 +274,63 @@ class ConversationTreeRowsTest {
     }
 
     @Test
+    fun hostRow_editControl_isNamedForItsHostAndReportsOnlyItsOwnTap() {
+        var edits = 0
+        var adds = 0
+        var toggles = 0
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                TreeHostRow(
+                    serverId = "pyrybox",
+                    hostName = "Pyrybox",
+                    connectionStatus = mixedStatus,
+                    expanded = true,
+                    onToggleExpanded = { toggles++ },
+                    onEditTapped = { edits++ },
+                    onAddTapped = { adds++ },
+                    onAddLongPressed = {},
+                )
+            }
+        }
+
+        // Named for the host, at its own per-host handle, and distinguishable from the add control
+        // beside it — the whole reason both descriptions carry the host.
+        composeTestRule
+            .onAllNodes(hasContentDescription(string(R.string.cd_tree_host_edit, "Pyrybox")), useUnmergedTree = true)
+            .assertCountEquals(1)
+        val control = composeTestRule.onNodeWithTag(treeHostEditTestTag("pyrybox"))
+        control.assertHeightIsAtLeast(48.dp)
+        control.performClick()
+
+        assertEquals(1, edits)
+        // The control is its own merging node inside the row's clickable, so a tap on it must not fold
+        // the row or reach the add control.
+        assertEquals(0, toggles)
+        assertEquals(0, adds)
+    }
+
+    @Test
+    fun hostRow_editControl_clampsAnOversizedIdIntoItsTestHandle() {
+        setBoundedContent {
+            TreeHostRow(
+                serverId = oversizedName,
+                hostName = "Pyrybox",
+                connectionStatus = mixedStatus,
+                expanded = true,
+                onToggleExpanded = {},
+                onEditTapped = {},
+                onAddTapped = {},
+                onAddLongPressed = {},
+            )
+        }
+
+        // Truncated with the original length appended, which is what keeps two ids sharing a prefix on
+        // separate handles; the raw id never reaches a tag.
+        composeTestRule.onNodeWithTag("tree-host-edit:${"x".repeat(256)}~4000").assertExists()
+        composeTestRule.onAllNodesWithTag("tree-host-edit:$oversizedName").assertCountEquals(0)
+    }
+
+    @Test
     fun everyTappableRow_meetsTheMinimumTouchTargetHeight() {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
@@ -278,6 +341,7 @@ class ConversationTreeRowsTest {
                         connectionStatus = mixedStatus,
                         expanded = true,
                         onToggleExpanded = {},
+                        onEditTapped = {},
                         onAddTapped = {},
                         onAddLongPressed = {},
                     )

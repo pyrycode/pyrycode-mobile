@@ -19,6 +19,7 @@
       is the section title for the first and the host's (clamped) name for the other two.
     -->
     <string name="cd_tree_section_pair_host">Pair another host, %1$s</string>
+    <string name="cd_tree_host_edit">Edit host %1$s</string>
     <string name="cd_tree_host_new_chat">New chat on %1$s</string>
     <string name="cd_tree_host_pick_workspace">Pick a workspace for the new chat on %1$s</string>
     <string name="untitled_discussion">Untitled discussion</string>
@@ -130,4 +131,9 @@
     <string name="edit_host_relay_address_label">Relay address:</string>
     <string name="edit_host_name_label">Host name:</string>
     <string name="edit_host_unpair">Unpair host</string>
+    <!--
+      The modal's only failure text (#744). Deliberately generic: the shell renders it verbatim into a
+      live region, so it must name neither the server identity nor the relay address.
+    -->
+    <string name="edit_host_save_failed">Couldn\'t save the host name. Try again.</string>
 </resources>

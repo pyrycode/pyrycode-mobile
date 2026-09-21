@@ -10,6 +10,7 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
@@ -17,8 +18,10 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -29,11 +32,14 @@ import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.di.HostConversationSnapshot
+import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.conversations.components.LocalWorkspacePickerRepository
 import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
+import de.pyryco.mobile.ui.conversations.components.treeHostEditTestTag
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Rule
 import org.junit.Test
@@ -90,9 +96,12 @@ class ChannelListScreenTest {
     private fun setTree(
         vararg hosts: HostChannelListEntry,
         selected: HostConversationTarget? = null,
+        hostEditor: HostEditorState? = null,
     ) {
         composeTestRule.setContent {
-            var hostState by remember { mutableStateOf(HostChannelListState(hosts.toList(), selected = selected)) }
+            var hostState by remember {
+                mutableStateOf(HostChannelListState(hosts.toList(), selected = selected, hostEditor = hostEditor))
+            }
             PyrycodeMobileTheme {
                 ChannelListScreen(
                     hostState = hostState,
@@ -388,6 +397,103 @@ class ChannelListScreenTest {
 
         composeTestRule.onNode(hasText("alpha channel")).assertExists()
         assertEquals(listOf(ChannelListEvent.TreeHostAddTapped("pyrybox")), events)
+    }
+
+    @Test
+    fun hostRowEditControl_targetsItsOwnHost_andDoesNotFoldTheRowItSitsIn() {
+        setTree(
+            entry(serverId = "pyrybox", displayName = "Pyrybox"),
+            entry(
+                serverId = "macbook",
+                displayName = "Macbook",
+                channels = listOf(conversation("c1", "alpha channel", "/w/one", true)),
+            ),
+        )
+
+        assertNotEquals(
+            string(R.string.cd_tree_host_edit, "Pyrybox"),
+            string(R.string.cd_tree_host_edit, "Macbook"),
+        )
+        // Same shape as the add control's own test: the Chats section draws the host again, so the tag
+        // matches twice and either instance is the same control on the same host.
+        val macbook = composeTestRule.onAllNodes(hasTestTag(treeHostEditTestTag("macbook"))).onFirst()
+        macbook.assert(hasContentDescription(string(R.string.cd_tree_host_edit, "Macbook")))
+
+        macbook.performClick()
+
+        // The row's whole surface is its fold control, so this also asserts the control kept its own
+        // click action rather than the row swallowing the tap.
+        composeTestRule.onNode(hasText("alpha channel")).assertExists()
+        assertEquals(listOf(ChannelListEvent.TreeHostEditTapped("macbook")), events)
+    }
+
+    /** One open editor on `pyrybox`, whose flags each test sets to the state it is asserting. */
+    private fun openEditor(
+        saving: Boolean = false,
+        failed: Boolean = false,
+    ) = HostEditorState(
+        serverId = "pyrybox",
+        serverIdentity = "server-777",
+        relayAddress = "wss://relay.example:8443",
+        initialName = "Pyrybox",
+        saving = saving,
+        failed = failed,
+    )
+
+    @Test
+    fun editHostModal_drawsTheOpenEditorsOwnValuesAndReportsOkAndDismissal() {
+        setTree(entry(serverId = "pyrybox", displayName = "Pyrybox"), hostEditor = openEditor())
+
+        // The identity and the relay address are read from that host's own stored record and drawn as
+        // the design's two inert rows; the name arrives as the editable value.
+        composeTestRule.onNode(hasText("server-777", substring = true)).assertIsDisplayed()
+        composeTestRule.onNode(hasText("wss://relay.example:8443", substring = true)).assertIsDisplayed()
+        composeTestRule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).assertTextContains("Pyrybox")
+
+        composeTestRule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).performTextReplacement("  Renamed  ")
+        composeTestRule.onNode(hasText("OK")).performClick()
+        // The component trims before it reports, so the screen forwards a trimmed name.
+        assertEquals(listOf(ChannelListEvent.HostEditNameSubmitted("Renamed")), events)
+
+        events.clear()
+        composeTestRule.onNode(hasText("Cancel")).performClick()
+        assertEquals(listOf(ChannelListEvent.HostEditDismissed), events)
+    }
+
+    @Test
+    fun editHostModal_whileSaving_cannotStartASecondSave() {
+        setTree(entry(serverId = "pyrybox", displayName = "Pyrybox"), hostEditor = openEditor(saving = true))
+
+        // The caller's loading flag disables the shell's OK, so a second tap cannot start a second save.
+        composeTestRule.onNode(hasText("OK")).performClick()
+        assertEquals(emptyList<ChannelListEvent>(), events)
+    }
+
+    @Test
+    fun editHostModal_afterAFailure_staysOpenAndActionableAndStatesItGenerically() {
+        setTree(entry(serverId = "pyrybox", displayName = "Pyrybox"), hostEditor = openEditor(failed = true))
+
+        // Generic by construction: one static string, naming neither the identity nor the relay address.
+        val failure = string(R.string.edit_host_save_failed)
+        composeTestRule.onNode(hasText(failure)).assertIsDisplayed()
+        assertFalse(failure.contains("server-777"))
+        assertFalse(failure.contains("relay.example"))
+
+        // Still open and still actionable with the entered value.
+        composeTestRule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).performTextReplacement("Retry")
+        composeTestRule.onNode(hasText("OK")).performClick()
+        assertEquals(listOf(ChannelListEvent.HostEditNameSubmitted("Retry")), events)
+    }
+
+    @Test
+    fun editHostModal_unpairActionIsInertInThisSlice() {
+        setTree(entry(serverId = "pyrybox", displayName = "Pyrybox"), hostEditor = openEditor())
+
+        composeTestRule.onNode(hasText(string(R.string.edit_host_unpair))).performClick()
+
+        // #745 wires it: for now the host stays paired, its name unchanged and the modal open.
+        assertEquals(emptyList<ChannelListEvent>(), events)
+        composeTestRule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).assertIsDisplayed()
     }
 
     @Test

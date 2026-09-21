@@ -321,6 +321,26 @@ Pending for the documentation stage; not written here.
 2. Should a dismissal cancel an in-flight save rather than letting it complete? Kept as let-it-complete
    for now: the operator pressed OK, and AC3's "change nothing" is about Cancel/Close/Back on their own.
 
+## Revisions
+
+**2026-09-21 — open questions resolved during implementation.** Neither changed the design.
+
+1. **The pencil-then-plus run fits, and the dots stay.** Resolved empirically rather than by preview
+   inspection: `ConversationTreeRowsTest`'s pre-existing
+   `hostRow_longName_staysOnOneLineAndLeavesTheIndicatorPairInsideTheRow` renders the row inside a
+   **240 dp** box — narrower than the 320 dp viewport the question worried about — and asserts the relay
+   dot's right edge stays inside the row and the name stays on one line. It passes with the pencil added,
+   as does `everyTappableRow_meetsTheMinimumTouchTargetHeight`. So the design's fallback of hiding the
+   dots is not needed, and the phone keeps them as #738 decided.
+2. **A dismissal still lets an in-flight save complete**, as planned, and that is now asserted rather
+   than merely intended — `failedSaveKeepsTheEditorOpenAndActionableWhileADismissedOneStaysClosed` drives
+   the dismiss-then-complete order and checks both that the write lands and that the modal stays closed.
+
+One implementation departure, in test structure only: the planned single saving-and-failure UI test is
+two tests, `editHostModal_whileSaving_cannotStartASecondSave` and
+`editHostModal_afterAFailure_staysOpenAndActionableAndStatesItGenerically`. `createComposeRule` permits
+one `setContent` per test, so a single test could not render two different editor states.
+
 ## Security review
 
 **Verdict:** PASS (second run — the first run's verdict was FAIL on the concurrency finding below, and
