@@ -326,6 +326,10 @@ internal fun PyryNavHost(
                             is ChannelListEvent.TreeFoldToggled -> vm.onFoldToggled(event.key)
                             ChannelListEvent.SettingsTapped ->
                                 navController.navigate(Routes.SETTINGS)
+                            // One destination, two doors: Settings' archived-discussions row opens the same
+                            // route (#737). Rebinding it to a specific host is #715.
+                            ChannelListEvent.ArchiveTapped ->
+                                navController.navigate(Routes.ARCHIVED_DISCUSSIONS)
                             ChannelListEvent.CreateDiscussionTapped -> destinations.selectedServerId()?.let(vm::createHostDiscussion)
                             ChannelListEvent.LongPressFab -> destinations.selectedServerId()?.let(vm::openHostWorkspacePicker)
                             is ChannelListEvent.WorkspacePicked -> vm.pickHostWorkspace(event.workspace)

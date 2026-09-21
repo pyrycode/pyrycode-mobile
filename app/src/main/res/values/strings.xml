@@ -1,6 +1,7 @@
 <resources>
     <string name="app_name">Pyrycode Mobile</string>
     <string name="cd_open_settings">Open settings</string>
+    <string name="cd_open_archive">Open archive</string>
     <string name="cd_new_discussion">New discussion</string>
     <string name="cd_long_press_fab_pick_workspace">Pick a workspace for the new discussion</string>
     <string name="channel_list_empty">Tap + to start a conversation</string>
@@ -15,7 +16,6 @@
     <string name="cd_tree_row_expand">Expand %1$s</string>
     <string name="cd_tree_row_collapse">Collapse %1$s</string>
     <string name="untitled_discussion">Untitled discussion</string>
-    <string name="cd_pyrycode_logo">Pyrycode logo</string>
     <string name="channels_section_header">Channels</string>
     <string name="chats_section_header">Chats</string>
     <string name="unnamed_host">Unnamed host</string>

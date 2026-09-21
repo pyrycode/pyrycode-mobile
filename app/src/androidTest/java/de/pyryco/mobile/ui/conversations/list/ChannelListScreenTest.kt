@@ -255,14 +255,66 @@ class ChannelListScreenTest {
         composeTestRule.onNode(hasText(string(R.string.untitled_discussion))).assertIsDisplayed()
     }
 
+    /**
+     * The list draws its own bar (#737), so both entries have to survive every draw — not just the one a
+     * single-state test happens to pick. A bar placed inside the tree's scroll container would pass on the
+     * loaded draw and vanish on the three centred placeholders, which is exactly the mistake this walks.
+     *
+     * Same four-draw shape as [arrivalMarker_isCarriedByEveryDrawOfTheList_exactlyOnce], and each draw is
+     * identified by its own copy first, so a bar that matched while the screen kept rendering the same thing
+     * would prove nothing. The retired chrome is asserted absent on each one too: the app name and the logo's
+     * description went with the generic top app bar.
+     */
     @Test
-    fun topAppBar_rendersTitleAndSettingsAction_whenLoaded() {
-        setTree(entry(serverId = "pyrybox", displayName = "Pyrybox"))
+    fun listBar_drawsBothEntriesAndNoneOfTheRetiredChrome_onEveryDraw() {
+        var state: ChannelListUiState by mutableStateOf(ChannelListUiState.Loading)
+        var hostState: HostChannelListState by mutableStateOf(HostChannelListState())
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ChannelListScreen(state = state, hostState = hostState, onEvent = {})
+            }
+        }
 
-        composeTestRule.onNode(hasText(string(R.string.app_name))).assertIsDisplayed()
-        composeTestRule
-            .onNode(hasContentDescription(string(R.string.cd_open_settings)))
-            .assertIsDisplayed()
+        // 1. Loading.
+        composeTestRule.onNode(hasText("Loading…")).assertExists()
+        assertBarDrawn()
+
+        // 2. Error — matched on the carried message, so this is the error draw and not the loading one.
+        composeTestRule.runOnIdle { state = ChannelListUiState.Error("relay is down") }
+        composeTestRule.onNode(hasText("relay is down", substring = true)).assertExists()
+        assertBarDrawn()
+
+        // 3. The empty placeholder: a loaded state with no host at all.
+        composeTestRule.runOnIdle {
+            state = ChannelListUiState.Empty(recentDiscussions = emptyList(), recentDiscussionsCount = 0)
+        }
+        composeTestRule.onNode(hasText(string(R.string.channel_list_empty))).assertExists()
+        assertBarDrawn()
+
+        // 4. The tree — a host arrives, so the placeholder gives way to real rows.
+        composeTestRule.runOnIdle {
+            state = loaded()
+            hostState =
+                HostChannelListState(
+                    listOf(
+                        entry(
+                            serverId = "pyrybox",
+                            displayName = "Pyrybox",
+                            channels = listOf(conversation("c1", "alpha channel", "/w/one", true)),
+                        ),
+                    ),
+                )
+        }
+        composeTestRule.onNode(hasText("alpha channel")).assertIsDisplayed()
+        assertBarDrawn()
+    }
+
+    private fun assertBarDrawn() {
+        composeTestRule.onNode(hasContentDescription(string(R.string.cd_open_settings))).assertIsDisplayed()
+        composeTestRule.onNode(hasContentDescription(string(R.string.cd_open_archive))).assertIsDisplayed()
+        // The generic top app bar's app name and Pyry logo go with it.
+        composeTestRule.onNode(hasText(string(R.string.app_name))).assertDoesNotExist()
+        composeTestRule.onNode(hasContentDescription("Pyrycode logo")).assertDoesNotExist()
     }
 
     @Test
@@ -285,6 +337,17 @@ class ChannelListScreenTest {
             .performClick()
 
         assertEquals(listOf(ChannelListEvent.SettingsTapped), events)
+    }
+
+    @Test
+    fun archiveEntry_emitsArchiveTapped() {
+        setTree(entry(serverId = "pyrybox", displayName = "Pyrybox"))
+
+        composeTestRule
+            .onNode(hasContentDescription(string(R.string.cd_open_archive)))
+            .performClick()
+
+        assertEquals(listOf(ChannelListEvent.ArchiveTapped), events)
     }
 
     /**

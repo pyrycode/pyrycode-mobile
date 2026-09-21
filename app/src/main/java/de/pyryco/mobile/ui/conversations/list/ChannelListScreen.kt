@@ -3,9 +3,13 @@ package de.pyryco.mobile.ui.conversations.list
 import android.content.res.Configuration
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -13,8 +17,8 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -23,12 +27,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -95,6 +98,21 @@ private val TreeSectionRuleBottomGap = 16.dp
 // Keeps the floating action button off the tree's last row.
 private val TreeBottomInset = 88.dp
 
+// The list's own bar (#737). The supplied design draws 24dp glyphs with their centres 32dp and 84dp from the
+// screen edge, a rule 20dp below them and 28dp of air between that rule and the first section header. Touch
+// needs 48dp, the same minimum the tree rows already hold to — and wrapping a 24dp glyph in a 48dp target adds
+// `BarTouchSlack` on every side of it. So each of the design's offsets is taken less that slack, which puts
+// both glyphs exactly where the design puts them while giving each entry a target a thumb can hit.
+private val BarGlyphSize = 24.dp
+private val BarTouchSize = 48.dp
+private val BarTouchSlack = (BarTouchSize - BarGlyphSize) / 2
+private val BarTopGap = 24.dp - BarTouchSlack
+private val BarRuleGap = 20.dp - BarTouchSlack
+private val BarBottomGap = 28.dp
+
+// 52dp between the glyph centres, less the two 48dp targets they sit in.
+private val BarEntryGap = 4.dp
+
 private const val SECTION_RULE_ALPHA = 0.60f
 
 // A daemon-authored identity is clamped before it reaches an item key, for the same reason every render
@@ -114,6 +132,9 @@ sealed interface ChannelListEvent {
 
     data object SettingsTapped : ChannelListEvent
 
+    /** The list's own archive entry — the same destination Settings' archived-discussions row opens (#737). */
+    data object ArchiveTapped : ChannelListEvent
+
     data object CreateDiscussionTapped : ChannelListEvent
 
     data object LongPressFab : ChannelListEvent
@@ -131,9 +152,10 @@ sealed interface ChannelListEvent {
  *
  * Stateless. [hostState] carries the host-qualified rows (#729), the collapsed nodes and the
  * last-opened target; [state] still carries the compatibility loading, empty and error placeholders and
- * the workspace picker's visibility, both of which #732 retires along with the top bar and the button.
+ * the workspace picker's visibility, which #738 retires along with the button. The generic top app bar is
+ * already gone — the list draws its own bar instead (#737, [ChannelListTopBar]).
  */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChannelListScreen(
     state: ChannelListUiState,
@@ -146,32 +168,7 @@ fun ChannelListScreen(
     Scaffold(
         // The arrival marker goes on the root, above the branch below, so all four draws carry it (#736).
         modifier = modifier.testTag(CHANNEL_LIST_TEST_TAG),
-        topBar = {
-            TopAppBar(
-                navigationIcon = {
-                    Box(
-                        modifier = Modifier.size(40.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_pyry_logo),
-                            contentDescription = stringResource(R.string.cd_pyrycode_logo),
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(28.dp),
-                        )
-                    }
-                },
-                title = { Text(stringResource(R.string.app_name)) },
-                actions = {
-                    IconButton(onClick = { onEvent(ChannelListEvent.SettingsTapped) }) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = stringResource(R.string.cd_open_settings),
-                        )
-                    }
-                },
-            )
-        },
+        topBar = { ChannelListTopBar(onEvent) },
         floatingActionButton = {
             if (state is ChannelListUiState.Loaded || state is ChannelListUiState.Empty) {
                 ChannelListFab(
@@ -208,6 +205,73 @@ fun ChannelListScreen(
         onPicked = { path -> onEvent(ChannelListEvent.WorkspacePicked(path)) },
         onDismiss = { onEvent(ChannelListEvent.WorkspacePickerDismissed) },
     )
+}
+
+/**
+ * The list's own bar: a settings entry at the leading content edge, an archive entry beside it, and the rule
+ * that closes the bar (#737). The generic top app bar the supplied design marks hidden took the app name and
+ * the Pyry logo with it — the bar holds these two entries and the rule, nothing else.
+ *
+ * It lives in the `Scaffold`'s `topBar` slot rather than in the tree's scroll container, so it draws above the
+ * branch on `hostState.hosts` and is therefore carried by all four of the screen's draws: the loading and
+ * error texts, the empty placeholder and the assembled tree.
+ *
+ * No window insets of its own, unlike the `TopAppBar` it replaces: the outer `Scaffold` in `MainActivity`
+ * already pads the whole `PyryNavHost` past the system bars, and the old bar applied its own on top of that.
+ */
+@Composable
+private fun ChannelListTopBar(onEvent: (ChannelListEvent) -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.padding(start = TreeGutter - BarTouchSlack, top = BarTopGap),
+            horizontalArrangement = Arrangement.spacedBy(BarEntryGap),
+        ) {
+            ChannelListBarEntry(
+                icon = Icons.Default.Settings,
+                // Carried forward verbatim: the live archive/restore scenario reaches Settings by this
+                // description, mirrored in its own CD_OPEN_SETTINGS constant.
+                label = stringResource(R.string.cd_open_settings),
+                onClick = { onEvent(ChannelListEvent.SettingsTapped) },
+            )
+            ChannelListBarEntry(
+                // The design draws FontAwesome's `box-archive-solid`. Matched to the Material icon for the
+                // same affordance, as the tree rows matched theirs (`Dns` for a host, `FolderOpen` for a
+                // workspace), rather than vendoring a drawable: same lidded-box silhouette, and the name says
+                // what the entry does. `Inventory2` is the closer silhouette — a slot where this has an
+                // arrow — but it reads as inventory, not archive, at the call site.
+                icon = Icons.Default.Archive,
+                label = stringResource(R.string.cd_open_archive),
+                onClick = { onEvent(ChannelListEvent.ArchiveTapped) },
+            )
+        }
+        HorizontalDivider(
+            modifier =
+                Modifier.padding(
+                    start = TreeGutter,
+                    end = TreeGutter,
+                    top = BarRuleGap,
+                    bottom = BarBottomGap,
+                ),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = SECTION_RULE_ALPHA),
+        )
+    }
+}
+
+/** One bar entry: the design's 24dp glyph centred in a target touch can actually hit. */
+@Composable
+private fun ChannelListBarEntry(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+) {
+    IconButton(onClick = onClick, modifier = Modifier.size(BarTouchSize)) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(BarGlyphSize),
+        )
+    }
 }
 
 /** Both sections in one scroll container — no nested scroll region, so the last row is reachable. */

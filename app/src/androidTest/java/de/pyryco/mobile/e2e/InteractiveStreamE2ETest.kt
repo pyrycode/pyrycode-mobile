@@ -1293,7 +1293,7 @@ class InteractiveStreamE2ETest {
 
         // #551 archive/restore round-trip scenario. Archive from the thread overflow (ARCHIVE_ITEM,
         // mutationsSupported-gated) is IMMEDIATE — no confirm dialog, unlike #554's DELETE_ACTION. Restore
-        // navigates channel list → Settings: CD_OPEN_SETTINGS is the list top-bar settings button;
+        // navigates channel list → Settings: CD_OPEN_SETTINGS is the settings entry on the list's own bar (#737);
         // ARCHIVED_ROW is the Settings row that opens the Archived screen AND doubles as the Settings-screen
         // return-nav marker; ARCHIVED_TITLE is the Archived-screen top-bar arrival anchor; RESTORED_SNACKBAR
         // is the restore-completion guard (a prefix of "Restored %1$s", appearing in no other on-screen
