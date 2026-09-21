@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 #
-# docs-guard.sh — bounds the size of the feature overviews under docs/knowledge/features
-# and keeps their heading structure honest.
+# docs-guard.sh — bounds the size of the feature overviews under docs/knowledge/features,
+# keeps their heading structure honest, and holds them to the formatting spotless applies.
 #
 #   scripts/docs-guard.sh
 #
-# Scans every .md file under docs/knowledge/features and exits non-zero on either of
-# two faults: a file over the size cap, and a line that markdown reads as a heading only
-# because a wrapped paragraph put a ticket reference first.
+# Scans every .md file under docs/knowledge/features and exits non-zero on any of four
+# faults: a file over the size cap; a line that markdown reads as a heading only because a
+# wrapped paragraph put a ticket reference first; a line with trailing whitespace; and an
+# end of file that is not exactly one newline. One run reports every problem it finds.
 #
 # Ported rule-for-rule from pyrycode's cmd/docs-guard (Go, in `make check`) and desktop's
 # scripts/docs-guard.mjs (`npm run check:docs`) on 2026-09-05. Keep the three in step:
@@ -29,6 +30,21 @@
 # "#623 pages a conversation's history...", is a top-level heading as far as markdown is
 # concerned. It corrupts the document outline and moves the boundaries the chunker
 # prefers to cut on.
+#
+# Why the two formatting checks: format("misc") in the root build.gradle.kts covers every
+# *.md in the repo with trimTrailingWhitespace() and endWithNewline(), so a trailing space
+# or a blank line at EOF fails ./gradlew spotlessCheck — and because check fails fast at
+# :spotlessMiscCheck, it aborts the whole gate chain ahead of the unit suite, lint,
+# assembleDebug, the androidTest compile and both device gates. These overviews are written
+# by the documentation stage, which runs after the verifier gate and after merge, so its own
+# output is the one thing in the tree that no Gradle gate ever sees before it lands on main.
+# Nor can any pre-merge stage repair it: these files are documentation-stage-owned and the
+# builder and verifier prompts both forbid writing them. That leaves this script — the check
+# the documentation stage runs before it commits — as the only gate standing in front of the
+# only role allowed to fix the fault. Measured on 2026-09-22 (#754): the same trailing blank
+# line was written into settings-screen-how-it-works.md on three separate runs, two builders
+# correctly reverted the spotlessApply fix to preserve byte-identity with main, and four
+# verifier passes spent budget proving the red was not theirs.
 #
 # Why code and not a rule in a prompt: both faults are produced by the documentation
 # phase, which already carries a prose rule against them. A prose rule is advisory. A
@@ -66,6 +82,26 @@ while IFS= read -r path; do
   while IFS=: read -r lineno _; do
     report "$path:$lineno: parses as a heading because it opens with a ticket reference — join it to the line above, or escape the hash"
   done < <(grep -nE '^#[0-9]' "$path" || true)
+  # What trimTrailingWhitespace() would strip. grep hands each line over without its
+  # newline, so [[:space:]]$ is the end of the line's own text. [[:space:]] rather than
+  # [[:blank:]] deliberately: it also catches a stray CR, and this guard should err toward
+  # a red that costs one edit over a green that deadlocks the pipeline behind spotless.
+  while IFS=: read -r lineno _; do
+    report "$path:$lineno: trailing whitespace — spotless would strip it; delete the spaces or tabs at the end of the line"
+  done < <(grep -nE '[[:space:]]+$' "$path" || true)
+  # What endWithNewline() would rewrite: it collapses every newline at EOF to exactly one,
+  # and adds one where there is none. Command substitution strips those trailing newlines,
+  # so the file's size minus the size of its stripped body counts them — no byte dump
+  # needed, and the arithmetic agrees with spotless on the empty and newline-only files too.
+  body_bytes=$(printf '%s' "$(cat "$path")" | wc -c | tr -d ' ')
+  newlines=$((bytes - body_bytes))
+  if [ "$newlines" -eq 0 ]; then
+    report "$path: does not end in a newline — spotless would add one; put a single newline after the last line"
+  elif [ "$newlines" -eq 2 ]; then
+    report "$path: ends in a blank line — spotless would collapse it; delete the blank line so the file ends in exactly one newline"
+  elif [ "$newlines" -gt 2 ]; then
+    report "$path: ends in $newlines newlines — spotless would collapse them to one; delete the $((newlines - 1)) blank lines at the end of the file"
+  fi
 done < <(find "$FEATURES_DIR" -type f -name '*.md' | sort)
 
 if [ "$problems" -gt 0 ]; then
