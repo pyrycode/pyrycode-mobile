@@ -131,9 +131,31 @@ class SettingsScreenTest {
             .assertHasNoClickAction()
     }
 
+    /**
+     * The host's chosen name for the default workspace wins over its directory basename (#723). The
+     * row's own path is still `~/Workspace/Projects/pyrycode-mobile`, which must not be on screen —
+     * asserting its basename is absent is what separates "the label won" from "both are rendered".
+     */
+    @Test
+    fun defaultWorkspaceRow_rendersTheHostsLabel_whenOneNamesThePath() {
+        setSettings(defaultWorkspace = BOUND_PATH, defaultWorkspaceLabel = "Pyrycode Mobile")
+
+        composeTestRule.onNode(hasText("Pyrycode Mobile")).performScrollTo().assertExists()
+        composeTestRule.onNode(hasText("pyrycode-mobile")).assertDoesNotExist()
+    }
+
+    @Test
+    fun defaultWorkspaceRow_fallsBackToTheLastPathSegment_whenNothingNamesIt() {
+        setSettings(defaultWorkspace = BOUND_PATH, defaultWorkspaceLabel = null)
+
+        composeTestRule.onNode(hasText("pyrycode-mobile")).performScrollTo().assertExists()
+    }
+
     private fun setSettings(
         connection: SettingsConnectionState = SettingsConnectionState.Resolving,
         archivedDiscussionCount: Int = 0,
+        defaultWorkspace: String = DEFAULT_SCRATCH_CWD,
+        defaultWorkspaceLabel: String? = null,
         onOpenArchivedDiscussions: (() -> Unit)? = {},
         onOpenHost: (String) -> Unit = {},
         onPairServer: () -> Unit = {},
@@ -150,7 +172,8 @@ class SettingsScreenTest {
                     defaultEffort = Effort.HIGH,
                     defaultYolo = false,
                     pushNotifications = true,
-                    defaultWorkspace = DEFAULT_SCRATCH_CWD,
+                    defaultWorkspace = defaultWorkspace,
+                    defaultWorkspaceLabel = defaultWorkspaceLabel,
                     workspacePickerVisible = false,
                     onSelectTheme = {},
                     onToggleUseWallpaperColors = {},
@@ -172,6 +195,8 @@ class SettingsScreenTest {
     }
 
     private companion object {
+        const val BOUND_PATH = "~/Workspace/Projects/pyrycode-mobile"
+
         val OWNER =
             SettingsHostRow(
                 serverId = "pyrybox-2026-0f3a",

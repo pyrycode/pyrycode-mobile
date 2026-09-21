@@ -47,6 +47,7 @@ import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.data.preferences.label
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.workspace.workspaceDisplayName
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -60,6 +61,12 @@ fun SettingsScreen(
     defaultYolo: Boolean,
     pushNotifications: Boolean,
     defaultWorkspace: String,
+    /**
+     * The owning host's chosen name for [defaultWorkspace]'s directory, or null when nothing there
+     * names it (#723). Display text only: [defaultWorkspace] stays the stored path, and it is the
+     * path — never this — that the picker writes and that a new discussion is created in.
+     */
+    defaultWorkspaceLabel: String?,
     workspacePickerVisible: Boolean,
     onSelectTheme: (ThemeMode) -> Unit,
     onToggleUseWallpaperColors: (Boolean) -> Unit,
@@ -234,7 +241,9 @@ fun SettingsScreen(
             )
             SettingsRow(
                 headline = "Default workspace",
-                supporting = workspaceLabel(defaultWorkspace),
+                // The one shared display rule (#722), which also bounds what daemon-authored text
+                // reaches layout — this row resolves nothing of its own.
+                supporting = workspaceDisplayName(cwd = defaultWorkspace, label = defaultWorkspaceLabel),
                 trailing = { ChevronIcon() },
                 onClick = onDefaultWorkspaceTapped,
             )
@@ -394,13 +403,6 @@ private val PREVIEW_CONNECTION =
         ownerMissing = false,
     )
 
-private fun workspaceLabel(cwd: String): String =
-    if (cwd.isEmpty() || cwd == DEFAULT_SCRATCH_CWD) {
-        "scratch"
-    } else {
-        cwd.substringAfterLast('/').ifEmpty { cwd }
-    }
-
 @Preview(name = "Settings — Light", showBackground = true, widthDp = 412)
 @Composable
 private fun SettingsScreenLightPreview() {
@@ -414,7 +416,9 @@ private fun SettingsScreenLightPreview() {
             defaultEffort = Effort.HIGH,
             defaultYolo = false,
             pushNotifications = true,
+            // The frame's own unbound state, so this preview stays comparable to it.
             defaultWorkspace = DEFAULT_SCRATCH_CWD,
+            defaultWorkspaceLabel = null,
             workspacePickerVisible = false,
             onSelectTheme = {},
             onToggleUseWallpaperColors = {},
@@ -447,7 +451,9 @@ private fun SettingsScreenDarkPreview() {
             defaultEffort = Effort.HIGH,
             defaultYolo = false,
             pushNotifications = true,
-            defaultWorkspace = DEFAULT_SCRATCH_CWD,
+            // The named state the light preview above cannot show: a bound path whose host named it.
+            defaultWorkspace = "~/Workspace/Projects/pyrycode-mobile",
+            defaultWorkspaceLabel = "Pyrycode Mobile",
             workspacePickerVisible = false,
             onSelectTheme = {},
             onToggleUseWallpaperColors = {},

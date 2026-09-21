@@ -483,6 +483,9 @@ internal fun PyryNavHost(
             val defaultYolo by vm.defaultYolo.collectAsStateWithLifecycle()
             val pushNotifications by vm.pushNotifications.collectAsStateWithLifecycle()
             val defaultWorkspace by vm.defaultWorkspace.collectAsStateWithLifecycle()
+            // Resolved against this destination's own host's conversations (#723); the row renders
+            // the two through the shared display rule, and the path above stays the stored one.
+            val defaultWorkspaceLabel by vm.defaultWorkspaceLabel.collectAsStateWithLifecycle()
             // One value drives both the picker's repository and whether it is on screen at all
             // (#714), the way the flat list already drives its own picker: the sheet cannot be
             // visible without a host bound, so it can never fall back to the compatibility
@@ -499,6 +502,7 @@ internal fun PyryNavHost(
                     defaultYolo = defaultYolo,
                     pushNotifications = pushNotifications,
                     defaultWorkspace = defaultWorkspace,
+                    defaultWorkspaceLabel = defaultWorkspaceLabel,
                     // Read off the picker's own target, as the flat channel screen reads off its.
                     workspacePickerVisible = workspacePickerOwner != null,
                     onSelectTheme = vm::onSelectTheme,

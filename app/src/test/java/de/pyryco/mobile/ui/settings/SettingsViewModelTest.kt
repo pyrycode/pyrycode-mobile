@@ -490,6 +490,13 @@ class SettingsViewModelTest {
             collector.cancel()
         }
 
+    /**
+     * The count asks for exactly [ConversationFilter.Archived] — and, since #723, it is one of two
+     * streams this VM asks the repository for. The chains are built in the constructor, so both
+     * filters are recorded here regardless of what is collected: `All` is
+     * [SettingsViewModel.defaultWorkspaceLabel]'s arm, the only filter admitting archived rows, and
+     * asserting the exact pair keeps either arm's filter from drifting unnoticed.
+     */
     @Test
     fun archivedDiscussionCount_passesArchivedFilter() =
         runTest(dispatcher) {
@@ -499,7 +506,7 @@ class SettingsViewModelTest {
             val vm = makeVm(prefs, stubRepo(source, captureFiltersInto = captured))
             val collector = launch { vm.archivedDiscussionCount.collect { } }
             advanceUntilIdle()
-            assertEquals(listOf(ConversationFilter.Archived), captured)
+            assertEquals(listOf(ConversationFilter.All, ConversationFilter.Archived), captured)
             collector.cancel()
         }
 
@@ -686,6 +693,145 @@ class SettingsViewModelTest {
                 ),
                 picker.filterNot { it.startsWith("event=workspace_default_set") },
             )
+        }
+
+    /** A bound default named on this host reads back that host's chosen name, not a basename. */
+    @Test
+    fun defaultWorkspaceLabel_namesTheBoundPath_fromItsOwnHostsConversation() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            prefs.setDefaultWorkspace(OWNER, FOO).getOrThrow()
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val vm = makeVm(prefs, repo = stubRepo(source), ownerServerId = OWNER)
+            val collector = launch { vm.defaultWorkspaceLabel.collect { } }
+            advanceUntilIdle()
+            source.emit(listOf(conversationAt(BAR, label = "Bar"), conversationAt(FOO, label = "Foo")))
+            advanceUntilIdle()
+            assertEquals("Foo", vm.defaultWorkspaceLabel.value)
+            collector.cancel()
+        }
+
+    /**
+     * An archived conversation still names its workspace, so a row matching only one must still read
+     * that name. That this reaches production depends on the arm asking for [ConversationFilter.All],
+     * the only filter `RemoteConversationRepository.project` admits archived rows under — pinned by
+     * `archivedDiscussionCount_passesArchivedFilter`, which asserts this VM's exact filter pair.
+     */
+    @Test
+    fun defaultWorkspaceLabel_readsEveryConversation_soAnArchivedOneStillNames() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            prefs.setDefaultWorkspace(OWNER, FOO).getOrThrow()
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val vm = makeVm(prefs, repo = stubRepo(source), ownerServerId = OWNER)
+            val collector = launch { vm.defaultWorkspaceLabel.collect { } }
+            advanceUntilIdle()
+            source.emit(listOf(conversationAt(FOO, label = "Foo", archived = true)))
+            advanceUntilIdle()
+            assertEquals("Foo", vm.defaultWorkspaceLabel.value)
+            collector.cancel()
+        }
+
+    /**
+     * Nothing at that path, and a blank name at it, both read as unnamed — a blank one must not mask
+     * a real name later in the list, which is why the scan selects on non-blank rather than non-null.
+     */
+    @Test
+    fun defaultWorkspaceLabel_isNull_forAnUnmatchedCwdOrABlankLabel() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            prefs.setDefaultWorkspace(OWNER, FOO).getOrThrow()
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val vm = makeVm(prefs, repo = stubRepo(source), ownerServerId = OWNER)
+            val collector = launch { vm.defaultWorkspaceLabel.collect { } }
+            advanceUntilIdle()
+            source.emit(listOf(conversationAt(BAR, label = "Bar")))
+            advanceUntilIdle()
+            assertEquals(null, vm.defaultWorkspaceLabel.value)
+            source.emit(listOf(conversationAt(FOO, label = "   ", id = "blank"), conversationAt(FOO, label = "Foo")))
+            advanceUntilIdle()
+            assertEquals("Foo", vm.defaultWorkspaceLabel.value)
+            collector.cancel()
+        }
+
+    /**
+     * AC2's live half, across one VM and one collector: a rename and then a clear on this host's own
+     * conversation move the row, and neither touches the stored path the picker wrote.
+     */
+    @Test
+    fun defaultWorkspaceLabel_followsRenameAndClear_withoutRewritingTheSavedPath() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            prefs.setDefaultWorkspace(OWNER, FOO).getOrThrow()
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val vm = makeVm(prefs, repo = stubRepo(source), ownerServerId = OWNER)
+            val collector = launch { vm.defaultWorkspaceLabel.collect { } }
+            advanceUntilIdle()
+            source.emit(listOf(conversationAt(FOO, label = "Foo")))
+            advanceUntilIdle()
+            assertEquals("Foo", vm.defaultWorkspaceLabel.value)
+            source.emit(listOf(conversationAt(FOO, label = "Renamed")))
+            advanceUntilIdle()
+            assertEquals("Renamed", vm.defaultWorkspaceLabel.value)
+            source.emit(listOf(conversationAt(FOO, label = null)))
+            advanceUntilIdle()
+            assertEquals(null, vm.defaultWorkspaceLabel.value)
+            assertEquals(FOO, prefs.defaultWorkspace(OWNER).first())
+            collector.cancel()
+        }
+
+    /**
+     * The sentinel and the empty string mean *no bound workspace*, and every unbound conversation
+     * shares them — so a name found at one of them belongs to some other conversation, never to this
+     * host's default. The row reads `scratch` through the shared rule instead of borrowing it.
+     */
+    @Test
+    fun defaultWorkspaceLabel_isNull_forAnUnboundDefault() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val vm = makeVm(prefs, repo = stubRepo(source), ownerServerId = OWNER)
+            val collector = launch { vm.defaultWorkspaceLabel.collect { } }
+            advanceUntilIdle()
+            source.emit(
+                listOf(
+                    conversationAt(DEFAULT_SCRATCH_CWD, label = "Scratchpad"),
+                    conversationAt("", label = "Nowhere", id = "empty"),
+                ),
+            )
+            advanceUntilIdle()
+            assertEquals(null, vm.defaultWorkspaceLabel.value)
+            prefs.setDefaultWorkspace(OWNER, "").getOrThrow()
+            advanceUntilIdle()
+            assertEquals(null, vm.defaultWorkspaceLabel.value)
+            collector.cancel()
+        }
+
+    /**
+     * Two hosts whose defaults are the same directory: each row reads only its own host's repository,
+     * so neither can show the other's name. This is also the at-this-layer form of "a compatibility
+     * selection change cannot retarget the row" — selection is not observable here at all, because
+     * the repository is bound to the destination's captured owner at construction.
+     */
+    @Test
+    fun defaultWorkspaceLabel_cannotReadAnotherHostsLabelForTheSameCwd() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            prefs.setDefaultWorkspace(OWNER, FOO).getOrThrow()
+            prefs.setDefaultWorkspace(OTHER, FOO).getOrThrow()
+            val ownerSource = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val otherSource = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val vm = makeVm(prefs, repo = stubRepo(ownerSource), ownerServerId = OWNER)
+            val other = makeVm(prefs, repo = stubRepo(otherSource), ownerServerId = OTHER)
+            val collectors =
+                listOf(vm, other).map { target -> launch { target.defaultWorkspaceLabel.collect { } } }
+            advanceUntilIdle()
+            ownerSource.emit(listOf(conversationAt(FOO, label = "Mine")))
+            otherSource.emit(listOf(conversationAt(FOO, label = "Theirs")))
+            advanceUntilIdle()
+            assertEquals("Mine", vm.defaultWorkspaceLabel.value)
+            assertEquals("Theirs", other.defaultWorkspaceLabel.value)
+            collectors.forEach { it.cancel() }
         }
 
     @Test
@@ -946,6 +1092,25 @@ class SettingsViewModelTest {
                 text: String,
             ): Message = TODO("not used")
         }
+
+    /** A conversation bound to [cwd], optionally carrying the host's chosen name for it (#723). */
+    private fun conversationAt(
+        cwd: String,
+        label: String?,
+        archived: Boolean = false,
+        id: String = "c-$cwd",
+    ): Conversation =
+        Conversation(
+            id = id,
+            name = null,
+            cwd = cwd,
+            currentSessionId = "s-$id",
+            sessionHistory = listOf("s-$id"),
+            isPromoted = false,
+            lastUsedAt = Instant.parse("2026-04-15T12:00:00Z"),
+            archived = archived,
+            workspaceLabel = label,
+        )
 
     private fun archivedDiscussion(id: String): Conversation =
         Conversation(

@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -199,6 +200,58 @@ class SettingsViewModel(
                 started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
                 initialValue = DEFAULT_SCRATCH_CWD,
             )
+
+    /**
+     * The name this destination's own host gives [defaultWorkspace]'s directory, or null when no
+     * conversation there names it (#723) — display text for the row's subtitle, never a path.
+     *
+     * Matched on [ConversationFilter.All] and exact `cwd` equality against the conversations of the
+     * repository this destination was constructed with, which [de.pyryco.mobile.di.ThreadDestinationFactory]
+     * builds from the route's captured owner (#715). So another host's conversation cannot name this
+     * row even when both hosts default to the same directory, and a later compatibility-selection
+     * change cannot retarget it — selection is not an input here at all. `All` is load-bearing: it is
+     * the only filter that admits archived conversations, and an archived one still names its
+     * workspace. The saved-host list cache, which drops archived rows, is deliberately not the source.
+     *
+     * An empty or [DEFAULT_SCRATCH_CWD] path yields null without scanning. Those mean *no bound
+     * workspace* and every unbound conversation shares them, so a name found at one belongs to some
+     * other conversation — presenting it here would claim this host's unbound default is a named
+     * workspace. The shared rule's own fallback then renders "scratch". This is not a divergence from
+     * the thread's rule, which is untouched and still prefers a label unconditionally: there the
+     * subject is a conversation that owns its label, here it is a path, and the sentinel is not one.
+     *
+     * Selecting on non-blank rather than non-null keeps this consistent with
+     * [de.pyryco.mobile.ui.workspace.workspaceDisplayName], which treats a blank label as absent, so
+     * a conversation carrying `""` cannot mask a properly named one later in the list.
+     *
+     * [kotlinx.coroutines.flow.onStart] is what keeps the row honest while the host is slow or
+     * offline: the remote projection emits only after the first `list_conversations` reply, so
+     * without a synchronous empty emission [combine] would hold this at null — the row reading
+     * "scratch" over a saved path — until the daemon answered. With it the row shows the directory
+     * fallback immediately and upgrades to the name once it is known. The [catch] sits on this arm
+     * alone so a failing conversation stream costs the name only: [combine] keeps the completed
+     * flow's last value, so the path half still updates the row.
+     */
+    val defaultWorkspaceLabel: StateFlow<String?> =
+        combine(
+            defaultWorkspace,
+            conversationRepository
+                .observeConversations(ConversationFilter.All)
+                .onStart { emit(emptyList()) }
+                .catch { emit(emptyList()) },
+        ) { path, conversations ->
+            if (path.isEmpty() || path == DEFAULT_SCRATCH_CWD) {
+                null
+            } else {
+                conversations
+                    .firstOrNull { it.cwd == path && !it.workspaceLabel.isNullOrBlank() }
+                    ?.workspaceLabel
+            }
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = null,
+        )
 
     /**
      * The host the open picker reads folders from and writes its pick to, or null while none is open.
