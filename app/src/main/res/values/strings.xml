@@ -15,6 +15,8 @@
     <string name="cd_conversation_row">%1$s, %2$s</string>
     <string name="cd_conversation_row_idle">%1$s, idle, %2$s</string>
     <string name="cd_discussion_preview_row">%1$s, %2$s</string>
+    <string name="cd_tree_row_expand">Expand %1$s</string>
+    <string name="cd_tree_row_collapse">Collapse %1$s</string>
     <string name="untitled_discussion">Untitled discussion</string>
     <string name="cd_pyrycode_logo">Pyrycode logo</string>
     <string name="channels_section_header">Channels</string>
