@@ -1,9 +1,11 @@
 package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -33,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -66,6 +70,10 @@ private val TreeRowEndPadding = 8.dp
 private val TreeRowShape = RoundedCornerShape(6.dp)
 private val TreeGlyphSize = 16.dp
 private val TreeChevronSize = 18.dp
+
+// The add control's target (#738). The same accessibility minimum TreeRowMinHeight holds the rows to,
+// applied on both axes because this one is a control rather than a whole row.
+private val TreeAddTouchSize = 48.dp
 private val TreeGlyphGap = 12.dp
 private val TreeNameGap = 6.dp
 private val TreeLegDotGap = 6.dp
@@ -105,50 +113,73 @@ private fun foldActionLabel(
     }
 
 /**
- * A tree section's header — "Channels", "Chats".
+ * A tree section's header — "Channels", "Chats" — and its add control, which opens the pairing flow for
+ * an additional host (#738).
  *
  * [title] is app-authored, so it is not run through [boundedRowText]; it is a resource string the
- * caller resolved, never daemon text. The trailing add control is #732's.
+ * caller resolved, never daemon text. It names the control too: the tree draws one header per section,
+ * so two identically-named controls would be ambiguous in the accessibility tree.
+ *
+ * The band grows from the design's 20dp text line to [TreeRowMinHeight] because it carries a control
+ * now rather than being a bare label — the same trade [TreeConversationRow] and [FoldableTreeRow] took
+ * when #731 grew the design's 28dp pointer rows to a size touch can hit.
  */
 @Composable
 fun TreeSectionHeader(
     title: String,
+    onAddTapped: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Text(
-        text = title,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = SECTION_HEADER_ALPHA),
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        modifier =
-            modifier
-                .fillMaxWidth()
-                .padding(top = 12.dp, bottom = 4.dp, end = TreeRowEndPadding)
-                .semantics { heading() },
-    )
+    Row(
+        modifier = modifier.fillMaxWidth().heightIn(min = TreeRowMinHeight).padding(end = TreeRowEndPadding),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = SECTION_HEADER_ALPHA),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).semantics { heading() },
+        )
+        TreeAddControl(
+            contentDescription = stringResource(R.string.cd_tree_section_pair_host, title),
+            onClick = onAddTapped,
+        )
+    }
 }
 
 /**
- * One host in the tree: a server glyph, the host's name, a fold control, and the two connection legs
- * shown separately.
+ * One host in the tree: a server glyph, the host's name, a fold control, the two connection legs shown
+ * separately, and the add control that starts a chat on **this** host (#738).
  *
  * Stateless — [hostName] is display text the caller resolved (a nameless host reads as whatever
  * #731 decides), [expanded] is the caller's flag, and the row reports a fold request back through
- * [onToggleExpanded]. The row knows no `serverId` and resolves nothing. Keeping the indicator pair
- * accurate as hosts fail live is #668; the edit control is #642 and the add control #732.
+ * [onToggleExpanded]. The row resolves nothing: [serverId] is reported straight back through
+ * [onAddTapped] / [onAddLongPressed] and is otherwise used only to name the control for the device
+ * suites, so that handle stays unambiguous once a second host is paired. Keeping the indicator pair
+ * accurate as hosts fail live is #668; the edit control is #642.
+ *
+ * The design's hover treatment swaps the leg dots for the pencil and the plus. The phone has no hover,
+ * so the plus is drawn persistently, outboard of the dots the design would have hidden.
  */
 @Composable
 fun TreeHostRow(
+    serverId: String,
     hostName: String,
     connectionStatus: ConnectionStatus,
     expanded: Boolean,
     onToggleExpanded: () -> Unit,
+    onAddTapped: () -> Unit,
+    onAddLongPressed: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // Clamped once here and reused for both the row's own name and the add control's two labels, so no
+    // path can format an unbounded daemon-authored name into a content description.
+    val bounded = boundedRowText(hostName)
     FoldableTreeRow(
         glyph = Icons.Filled.Dns,
-        name = boundedRowText(hostName),
+        name = bounded,
         nameStyle = MaterialTheme.typography.titleSmall,
         startIndent = HostRowIndent,
         expanded = expanded,
@@ -157,14 +188,44 @@ fun TreeHostRow(
     ) {
         Spacer(modifier = Modifier.width(TreeGlyphGap))
         ConnectionLegPair(status = connectionStatus)
+        TreeAddControl(
+            contentDescription = stringResource(R.string.cd_tree_host_new_chat, bounded),
+            onClick = onAddTapped,
+            onLongClickLabel = stringResource(R.string.cd_tree_host_pick_workspace, bounded),
+            onLongClick = onAddLongPressed,
+            modifier = Modifier.testTag(treeHostAddTestTag(serverId)),
+        )
     }
 }
+
+/**
+ * The device suites' handle for one host's add control — app-authored prefix, the host's own id, and
+ * nothing drawn on the row (#736's convention, now per-host because the control repeats).
+ *
+ * The id comes from the saved `PairedServer` record the operator scanned, not from a daemon frame, but a
+ * hostile QR could still make it enormous and a `testTag` is re-evaluated on every recomposition of the
+ * row. So it is clamped exactly as `treeItemKey` clamps its parts — truncated with the original length
+ * appended, which keeps two ids sharing a prefix from collapsing onto one tag. `testTag` is invisible to
+ * accessibility services, so this carries the id no further than the test tree.
+ */
+fun treeHostAddTestTag(serverId: String): String {
+    val bounded =
+        if (serverId.length <= MAX_TEST_TAG_ID_CHARS) {
+            serverId
+        } else {
+            serverId.take(MAX_TEST_TAG_ID_CHARS) + "~" + serverId.length
+        }
+    return "tree-host-add:$bounded"
+}
+
+private const val MAX_TEST_TAG_ID_CHARS = 256
 
 /**
  * One workspace under a host: an open-folder glyph, the workspace's name and a fold control.
  *
  * [workspaceName] is #729's already-resolved `HostWorkspaceGroup.displayName` — display text only,
- * never the `cwd`. The add-workspace control is #732, with its content behind #664.
+ * never the `cwd`. This row draws **no** add control: adding a workspace is #663's control and #664's
+ * content, deliberately not the host row's plus that #738 landed one tier above.
  */
 @Composable
 fun TreeWorkspaceRow(
@@ -299,6 +360,56 @@ private fun FoldableTreeRow(
 }
 
 /**
+ * The add control both the section header and the host row draw (#738) — the design's trailing plus.
+ *
+ * [contentDescription] is the whole accessible name, because the control repeats down the screen and has
+ * to say which section or host it acts on. Callers that want a long-press path supply both
+ * [onLongClickLabel] and [onLongClick]; the pair is what keeps the retired button's second path — pick a
+ * workspace first — reachable, and it is built the same way the button built it.
+ *
+ * **The 48dp trade.** The design pins a [TreeGlyphSize] plus with its centre 10dp from the content edge.
+ * Touch needs [TreeAddTouchSize] and the glyph centres in that box, so behind the rows' own
+ * [TreeRowEndPadding] the glyph's centre lands about 22dp further inboard than the design draws it. Taken
+ * deliberately, and the same trade #731 took growing the design's 28dp pointer rows to a size a thumb can
+ * hit; the alternative is a target below the accessibility minimum every other row here holds to.
+ *
+ * Nested inside the host row's own `clickable`, which merges descendants — but `combinedClickable` merges
+ * too, and merging stops at a merging descendant, so this stays its own node with its own name, tag and
+ * click action and a tap on it never reaches the row's fold.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun TreeAddControl(
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    onLongClickLabel: String? = null,
+    onLongClick: (() -> Unit)? = null,
+) {
+    Box(
+        modifier =
+            modifier
+                .size(TreeAddTouchSize)
+                .clip(CircleShape)
+                .combinedClickable(
+                    onClick = onClick,
+                    onClickLabel = contentDescription,
+                    onLongClick = onLongClick,
+                    onLongClickLabel = onLongClickLabel,
+                    role = Role.Button,
+                ).semantics { this.contentDescription = contentDescription },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.Add,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(TreeGlyphSize),
+        )
+    }
+}
+
+/**
  * The host row's trailing indicator pair: the relay-to-server leg inboard and the phone-to-relay leg
  * outboard, as the design places them.
  *
@@ -343,13 +454,16 @@ private fun IdleStatusDot() {
 private fun TreeRowsPreviewMatrix() {
     Surface {
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-            TreeSectionHeader(title = "Channels")
+            TreeSectionHeader(title = "Channels", onAddTapped = {})
             TreeHostRow(
+                serverId = "pyrybox",
                 hostName = "Pyrybox",
                 connectionStatus =
                     ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected),
                 expanded = true,
                 onToggleExpanded = {},
+                onAddTapped = {},
+                onAddLongPressed = {},
             )
             TreeWorkspaceRow(workspaceName = "Second Brain", expanded = true, onToggleExpanded = {})
             TreeConversationRow(conversationName = "kitchenclaw refactor", selected = false, onClick = {})
@@ -360,6 +474,7 @@ private fun TreeRowsPreviewMatrix() {
             )
             TreeConversationRow(conversationName = "rocd-thinking", selected = false, onClick = {})
             TreeHostRow(
+                serverId = "macbook",
                 hostName = "Macbook",
                 connectionStatus =
                     ConnectionStatus(
@@ -368,6 +483,8 @@ private fun TreeRowsPreviewMatrix() {
                     ),
                 expanded = false,
                 onToggleExpanded = {},
+                onAddTapped = {},
+                onAddLongPressed = {},
             )
         }
     }

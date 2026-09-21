@@ -53,7 +53,6 @@ import de.pyryco.mobile.di.ThreadDestinationFactory
 import de.pyryco.mobile.ui.conversations.components.LocalWorkspacePickerRepository
 import de.pyryco.mobile.ui.conversations.list.ChannelListEvent
 import de.pyryco.mobile.ui.conversations.list.ChannelListScreen
-import de.pyryco.mobile.ui.conversations.list.ChannelListUiState
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListEvent
 import de.pyryco.mobile.ui.conversations.list.DiscussionListScreen
@@ -303,20 +302,12 @@ internal fun PyryNavHost(
         }
         composable(Routes.CHANNEL_LIST) {
             val vm = koinViewModel<ChannelListViewModel>()
-            val flatState by vm.state.collectAsStateWithLifecycle()
             val hostState by vm.hostState.collectAsStateWithLifecycle()
-            val state =
-                when (val flat = flatState) {
-                    is ChannelListUiState.Loaded -> flat.copy(workspacePickerVisible = hostState.workspacePickerServerId != null)
-                    is ChannelListUiState.Empty -> flat.copy(workspacePickerVisible = hostState.workspacePickerServerId != null)
-                    else -> flat
-                }
             LaunchedEffect(vm) {
                 vm.hostNavigationEvents.collect { navController.openThread(it) }
             }
             HostWorkspaceRepository(hostState.workspacePickerServerId, destinations) {
                 ChannelListScreen(
-                    state = state,
                     hostState = hostState,
                     onEvent = { event ->
                         when (event) {
@@ -330,8 +321,15 @@ internal fun PyryNavHost(
                             // route (#737). Rebinding it to a specific host is #715.
                             ChannelListEvent.ArchiveTapped ->
                                 navController.navigate(Routes.ARCHIVED_DISCUSSIONS)
-                            ChannelListEvent.CreateDiscussionTapped -> destinations.selectedServerId()?.let(vm::createHostDiscussion)
-                            ChannelListEvent.LongPressFab -> destinations.selectedServerId()?.let(vm::openHostWorkspacePicker)
+                            // Pairing's existing entry, reused rather than a second flow (#738): both of its
+                            // completions already land back here — the camera path pops SCANNER inclusive
+                            // onto this very entry, the paste-code path pops the graph.
+                            ChannelListEvent.PairHostTapped ->
+                                navController.navigate(Routes.SCANNER)
+                            // Same rule as a row tap, now for creation: the control's own host, never the
+                            // selected-host adapter the retired button resolved through (#738).
+                            is ChannelListEvent.TreeHostAddTapped -> vm.createHostDiscussion(event.serverId)
+                            is ChannelListEvent.TreeHostAddLongPressed -> vm.openHostWorkspacePicker(event.serverId)
                             is ChannelListEvent.WorkspacePicked -> vm.pickHostWorkspace(event.workspace)
                             ChannelListEvent.WorkspacePickerDismissed -> vm.dismissHostWorkspacePicker()
                         }

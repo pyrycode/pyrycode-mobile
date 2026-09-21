@@ -50,8 +50,8 @@ import org.koin.core.context.GlobalContext
  *    (drop B fenced on the relay-logged phone-leg disconnect, not a 2nd send a severed phone cannot
  *    make), then the link is restored and the buffered sequence replays in order (see the method KDoc).
  *
- * It is a thin variant of [InteractiveStreamE2ETest] (rung 3). **One** step differs: instead of
- * tapping "New discussion" (which mints a *fresh* per-conversation claude session that `fakeclaude` —
+ * It is a thin variant of [InteractiveStreamE2ETest] (rung 3). **One** step differs: instead of tapping
+ * the host row's add control (which mints a *fresh* per-conversation claude session that `fakeclaude` —
  * being env-only — never writes to), it taps a **seeded promoted channel** the host pre-binds to the
  * bootstrap session id. One conversation, one session, one fixture file → the daemon's by-id producer
  * tails exactly the file `fakeclaude` writes. See `scripts/e2e-emulator.sh` (DETERMINISTIC mode) and

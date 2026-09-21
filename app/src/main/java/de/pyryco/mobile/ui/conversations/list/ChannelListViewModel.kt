@@ -6,8 +6,6 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.preferences.AppPreferences
-import de.pyryco.mobile.data.repository.ConversationFilter
-import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
@@ -20,7 +18,6 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
@@ -32,35 +29,6 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-
-sealed interface ChannelListUiState {
-    data object Loading : ChannelListUiState
-
-    data class Empty(
-        val recentDiscussions: List<Conversation>,
-        val recentDiscussionsCount: Int,
-        val recentDiscussionLastMessages: Map<String, Message> = emptyMap(),
-        val workspacePickerVisible: Boolean = false,
-    ) : ChannelListUiState
-
-    data class Loaded(
-        val channels: List<Conversation>,
-        val recentDiscussions: List<Conversation>,
-        val recentDiscussionsCount: Int,
-        val recentDiscussionLastMessages: Map<String, Message> = emptyMap(),
-        val workspacePickerVisible: Boolean = false,
-    ) : ChannelListUiState
-
-    data class Error(
-        val message: String,
-    ) : ChannelListUiState
-}
-
-sealed interface ChannelListNavigation {
-    data class ToThread(
-        val conversationId: String,
-    ) : ChannelListNavigation
-}
 
 /** Rows, preview keys and workspace groups are local to [host]; never flatten them across hosts. */
 data class HostChannelListEntry(
@@ -111,12 +79,18 @@ data class HostConversationTarget(
     val conversationId: String,
 )
 
+/**
+ * The conversation tree's view model.
+ *
+ * Every action it exposes is host-qualified: the flat `ChannelListUiState` projection, its events and its
+ * `ChannelListNavigation` channel went with the floating action button that was their only consumer
+ * (#738), and with them the selected-host adapter the button's two paths resolved through. The repository
+ * left the constructor at the same time — it was read only by that projection.
+ */
 class ChannelListViewModel(
-    private val repository: ConversationRepository,
     private val appPreferences: AppPreferences,
     private val hostSource: HostConversationSource,
 ) : ViewModel() {
-    private val pendingWorkspacePicker = MutableStateFlow(false)
     private val pendingHostWorkspacePicker = MutableStateFlow<String?>(null)
 
     // Fold and selection are the screen's, but they live here so they survive recomposition, LazyColumn
@@ -181,7 +155,7 @@ class ChannelListViewModel(
         }
     }
 
-    // Separate from the legacy channel: its collector can only navigate with a bare id.
+    // Carries the row's own host, which is why it outlived the bare-id channel it was separated from.
     private val hostNavigationChannel = Channel<HostConversationTarget>(Channel.BUFFERED)
     val hostNavigationEvents: Flow<HostConversationTarget> = hostNavigationChannel.receiveAsFlow()
 
@@ -236,100 +210,6 @@ class ChannelListViewModel(
         lastOpenedTarget.value = HostConversationTarget(serverId, conversation.id)
         hostNavigationChannel.send(HostConversationTarget(serverId, conversation.id))
         RelayLog.d { "event=host_chat_created" }
-    }
-
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val state: StateFlow<ChannelListUiState> =
-        run {
-            val channelsFlow = repository.observeConversations(ConversationFilter.Channels)
-            val discussionsFlow = repository.observeConversations(ConversationFilter.Discussions)
-            val recentIdsFlow =
-                discussionsFlow
-                    .map { it.take(RECENT_DISCUSSIONS_LIMIT).map(Conversation::id) }
-                    .distinctUntilChanged()
-            val lastMessagesFlow: Flow<Map<String, Message>> =
-                recentIdsFlow.flatMapLatest { ids ->
-                    if (ids.isEmpty()) {
-                        flowOf(emptyMap())
-                    } else {
-                        combine(
-                            ids.map { id ->
-                                repository.observeLastMessage(id).map { msg -> id to msg }
-                            },
-                        ) { pairs ->
-                            pairs
-                                .mapNotNull { (id, msg) -> msg?.let { id to it } }
-                                .toMap()
-                        }
-                    }
-                }
-            combine(
-                channelsFlow,
-                discussionsFlow,
-                lastMessagesFlow,
-                pendingWorkspacePicker,
-            ) { channels, discussions, lastMessages, pickerVisible ->
-                val recent = discussions.take(RECENT_DISCUSSIONS_LIMIT)
-                val count = discussions.size
-                if (channels.isEmpty()) {
-                    ChannelListUiState.Empty(
-                        recentDiscussions = recent,
-                        recentDiscussionsCount = count,
-                        recentDiscussionLastMessages = lastMessages,
-                        workspacePickerVisible = pickerVisible,
-                    )
-                } else {
-                    ChannelListUiState.Loaded(
-                        channels = channels,
-                        recentDiscussions = recent,
-                        recentDiscussionsCount = count,
-                        recentDiscussionLastMessages = lastMessages,
-                        workspacePickerVisible = pickerVisible,
-                    )
-                }
-            }.catch { e ->
-                val raw = e.message
-                emit(
-                    ChannelListUiState.Error(
-                        if (raw.isNullOrBlank()) "Failed to load channels." else raw,
-                    ),
-                )
-            }.stateIn(
-                scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
-                initialValue = ChannelListUiState.Loading,
-            )
-        }
-
-    private val navigationChannel = Channel<ChannelListNavigation>(capacity = Channel.BUFFERED)
-    val navigationEvents: Flow<ChannelListNavigation> = navigationChannel.receiveAsFlow()
-
-    fun onEvent(event: ChannelListEvent) {
-        when (event) {
-            ChannelListEvent.CreateDiscussionTapped ->
-                launchGuardedRepoCall {
-                    val workspace = appPreferences.defaultWorkspace.first()
-                    val conversation = repository.createDiscussion(workspace = workspace)
-                    navigationChannel.send(ChannelListNavigation.ToThread(conversation.id))
-                }
-            ChannelListEvent.LongPressFab ->
-                pendingWorkspacePicker.value = true
-            is ChannelListEvent.WorkspacePicked -> {
-                pendingWorkspacePicker.value = false
-                launchGuardedRepoCall {
-                    val conversation = repository.createDiscussion(workspace = event.workspace)
-                    navigationChannel.send(ChannelListNavigation.ToThread(conversation.id))
-                }
-            }
-            ChannelListEvent.WorkspacePickerDismissed ->
-                pendingWorkspacePicker.value = false
-            // Handled by the navigation host, or by onHostRowTapped / onFoldToggled directly.
-            is ChannelListEvent.TreeRowTapped,
-            is ChannelListEvent.TreeFoldToggled,
-            ChannelListEvent.SettingsTapped,
-            ChannelListEvent.ArchiveTapped,
-            -> Unit
-        }
     }
 
     private companion object {
