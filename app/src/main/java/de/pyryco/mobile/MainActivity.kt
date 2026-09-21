@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,6 +49,7 @@ import de.pyryco.mobile.data.network.serverKeyFingerprint
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.di.ThreadDestinationFactory
+import de.pyryco.mobile.ui.conversations.components.LocalWorkspacePickerRepository
 import de.pyryco.mobile.ui.conversations.list.ChannelListEvent
 import de.pyryco.mobile.ui.conversations.list.ChannelListScreen
 import de.pyryco.mobile.ui.conversations.list.ChannelListUiState
@@ -307,23 +309,27 @@ internal fun PyryNavHost(
             LaunchedEffect(vm) {
                 vm.hostNavigationEvents.collect { navController.openThread(it) }
             }
-            ChannelListScreen(
-                state = state,
-                onEvent = { event ->
-                    when (event) {
-                        is ChannelListEvent.RowTapped ->
-                            destinations.selectedServerId()?.let { vm.onHostRowTapped(HostConversationTarget(it, event.conversationId)) }
-                        ChannelListEvent.SettingsTapped ->
-                            navController.navigate(Routes.SETTINGS)
-                        ChannelListEvent.RecentDiscussionsTapped ->
-                            navController.navigate(Routes.DISCUSSION_LIST)
-                        ChannelListEvent.CreateDiscussionTapped -> destinations.selectedServerId()?.let(vm::createHostDiscussion)
-                        ChannelListEvent.LongPressFab -> destinations.selectedServerId()?.let(vm::openHostWorkspacePicker)
-                        is ChannelListEvent.WorkspacePicked -> vm.pickHostWorkspace(event.workspace)
-                        ChannelListEvent.WorkspacePickerDismissed -> vm.dismissHostWorkspacePicker()
-                    }
-                },
-            )
+            HostWorkspaceRepository(hostState.workspacePickerServerId, destinations) {
+                ChannelListScreen(
+                    state = state,
+                    onEvent = { event ->
+                        when (event) {
+                            is ChannelListEvent.RowTapped ->
+                                destinations.selectedServerId()?.let {
+                                    vm.onHostRowTapped(HostConversationTarget(it, event.conversationId))
+                                }
+                            ChannelListEvent.SettingsTapped ->
+                                navController.navigate(Routes.SETTINGS)
+                            ChannelListEvent.RecentDiscussionsTapped ->
+                                navController.navigate(Routes.DISCUSSION_LIST)
+                            ChannelListEvent.CreateDiscussionTapped -> destinations.selectedServerId()?.let(vm::createHostDiscussion)
+                            ChannelListEvent.LongPressFab -> destinations.selectedServerId()?.let(vm::openHostWorkspacePicker)
+                            is ChannelListEvent.WorkspacePicked -> vm.pickHostWorkspace(event.workspace)
+                            ChannelListEvent.WorkspacePickerDismissed -> vm.dismissHostWorkspacePicker()
+                        }
+                    },
+                )
+            }
         }
         composable(Routes.DISCUSSION_LIST) {
             val vm = koinViewModel<DiscussionListViewModel>()
@@ -545,7 +551,17 @@ private fun HostDestination(
             }
         }
     }
-    if (available) content()
+    if (available) HostWorkspaceRepository(serverId, factory, content)
+}
+
+@Composable
+private fun HostWorkspaceRepository(
+    serverId: String?,
+    factory: ThreadDestinationFactory,
+    content: @Composable () -> Unit,
+) {
+    val repository = remember(factory, serverId) { serverId?.let { factory.repository(it) } }
+    CompositionLocalProvider(LocalWorkspacePickerRepository provides repository, content = content)
 }
 
 private fun NavHostController.openThread(target: HostConversationTarget) {

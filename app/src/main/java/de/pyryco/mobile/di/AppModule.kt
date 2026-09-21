@@ -172,7 +172,7 @@ internal class ThreadDestinationFactory(
     suspend fun isSavedHost(serverId: String): Boolean =
         if (!useRelay) serverId == HostConversationSource.DEMO_SERVER_ID else store.loadById(serverId) != null
 
-    private fun repository(
+    fun repository(
         serverId: String,
         bundle: RelayConnectionBundle? = if (useRelay) registry.connectionFor(serverId) else null,
     ): ConversationRepository =
@@ -199,7 +199,7 @@ internal class ThreadDestinationFactory(
                 override fun observe() = bundle?.supervisor?.observe() ?: flowOf(ConnectionState.Offline)
 
                 override suspend fun retry() {
-                    if (bundle != null && registry.connectionFor(serverId) === bundle) bundle.supervisor.retry()
+                    if (bundle != null) registry.retryHost(serverId, bundle)
                 }
             }
         return ThreadViewModel(

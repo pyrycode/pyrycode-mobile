@@ -1,10 +1,12 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
@@ -23,6 +25,7 @@ import de.pyryco.mobile.data.crypto.PairedServerEntry
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.RelayTransportFactory
+import de.pyryco.mobile.data.network.base64StdEncode
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.di.ObservablePairedServerStore
 import de.pyryco.mobile.di.RelayConnectionFactory
@@ -36,8 +39,11 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -57,6 +63,7 @@ class LiteralScreenNavigationTest {
     private lateinit var nav: NavHostController
     private val a = HostConversationTarget("A /?#%", "same /?#%")
     private val b = a.copy(serverId = "B")
+    private val peers = mutableMapOf<String, NavigationPeer>()
 
     @After fun close() {
         if (::app.isInitialized) app.close()
@@ -130,14 +137,100 @@ class LiteralScreenNavigationTest {
         awaitTarget(b, Routes.CONVERSATION_THREAD)
     }
 
-    private fun start(): StateRestorationTester {
+    @Test fun threadWorkspacePickerKeepsOwnerAcrossSelectionChanges() {
+        start(live = true)
+        compose.runOnIdle { nav.navigate(Routes.thread(a)) }
+        awaitTarget(a, Routes.CONVERSATION_THREAD)
+        compose.onNodeWithContentDescription("More actions").performClick()
+        compose.onNodeWithText("Change workspace…").performClick()
+        assertOwnerPicker()
+        select(a.serverId)
+        select(b.serverId)
+        assertOwnerPicker()
+        compose.runOnIdle { registry.connectionFor(a.serverId)!!.supervisor.close() }
+        compose.waitForIdle()
+        compose.onNodeWithText("/${a.serverId}/recent").assertDoesNotExist()
+        createFolder()
+        compose.onNodeWithText("Couldn't create folder").assertIsDisplayed()
+        compose.onNodeWithText("OK").performClick()
+        compose.runOnIdle { model<ThreadViewModel>().retry() }
+        assertOwnerPicker()
+        createFolder()
+        compose.waitUntil(5_000) { peers.getValue(a.serverId).outbound.any { it.type == "change_workspace" } }
+        compose.runOnIdle {
+            val request = peers.getValue(a.serverId).outbound.last { it.type == "change_workspace" }
+            assertEquals(
+                a.conversationId,
+                request.payload.jsonObject
+                    .getValue("conversation_id")
+                    .jsonPrimitive.content,
+            )
+            assertEquals(
+                "/${a.serverId}/created",
+                request.payload.jsonObject
+                    .getValue("cwd")
+                    .jsonPrimitive.content,
+            )
+            assertNoOtherPickerCalls()
+        }
+    }
+
+    @Test fun flatListWorkspacePickerKeepsCapturedOwnerAcrossSelectionChanges() {
+        start(live = true)
+        select(a.serverId)
+        compose.runOnIdle { model<ChannelListViewModel>().openHostWorkspacePicker(a.serverId) }
+        assertOwnerPicker()
+        select(b.serverId)
+        assertOwnerPicker()
+        createFolder()
+        awaitTarget(a, Routes.CONVERSATION_THREAD)
+        compose.runOnIdle {
+            assertEquals(1, peers.getValue(a.serverId).outbound.count { it.type == "create_conversation" })
+            assertNoOtherPickerCalls()
+        }
+    }
+
+    private fun assertOwnerPicker() {
+        compose.waitForIdle()
+        compose.runOnIdle {
+            assertTrue(peers.getValue(a.serverId).outbound.any { it.type == "recent_workspaces" })
+            assertNoOtherPickerCalls()
+        }
+        compose.onNodeWithText("/${a.serverId}/recent").assertIsDisplayed()
+        compose.onNodeWithText("/${b.serverId}/recent").assertDoesNotExist()
+        compose.runOnIdle { assertNoOtherPickerCalls() }
+    }
+
+    private fun assertNoOtherPickerCalls() {
+        assertFalse(
+            peers.getValue(b.serverId).outbound.any {
+                it.type in setOf("recent_workspaces", "create_workspace_folder", "change_workspace", "create_conversation")
+            },
+        )
+    }
+
+    private fun select(serverId: String) {
+        compose.runOnIdle { runBlocking { store.save(store.loadById(serverId)!!.record) } }
+        compose.waitForIdle()
+        compose.runOnIdle { assertTrue(registry.selected.value === registry.connectionFor(serverId)) }
+    }
+
+    private fun createFolder() {
+        compose.onNodeWithText("Create new folder under pyry-workspace…").performClick()
+        compose.onNodeWithText("What should this workspace be called?").performTextInput("owned-folder")
+        compose.onNodeWithText("Create", ignoreCase = false).performClick()
+    }
+
+    private fun start(live: Boolean = false): StateRestorationTester {
+        val serverKey = NavigationPeer.key()
+        val deviceKey = NavigationPeer.key()
         val raw =
             object : PairedServerCollectionStore {
                 var entries =
                     listOf(
                         a.serverId,
                         b.serverId,
-                    ).map { PairedServerEntry(PairedServer(it, "unused", "wss://unused.example", "unused")) }
+                    ).map { PairedServerEntry(PairedServer(it, "unused", "wss://unused.example", base64StdEncode(serverKey.publicKey))) }
 
                 override suspend fun list() = entries
 
@@ -162,22 +255,27 @@ class LiteralScreenNavigationTest {
         store = ObservablePairedServerStore(raw)
         val keys =
             object : DeviceStaticKeyStore {
-                override suspend fun loadOrCreate(serverId: String): DeviceStaticKeyPair = error("must not dial")
+                override suspend fun loadOrCreate(serverId: String) =
+                    DeviceStaticKeyPair(deviceKey.publicKey.copyOf(), deviceKey.privateKey.copyOf())
 
-                override suspend fun publicKey(serverId: String): ByteArray = error("must not dial")
+                override suspend fun publicKey(serverId: String) = deviceKey.publicKey.copyOf()
             }
         registry =
             RelayConnectionRegistry(
                 store,
                 RelayConnectionFactory(
                     keys,
-                    RelayTransportFactory {
-                        error("must not dial")
+                    RelayTransportFactory { record ->
+                        check(live) { "must not dial" }
+                        NavigationPeer(record.serverId, a.conversationId, serverKey).also { peers[record.serverId] = it }
                     },
                     NoiseClientInfo("test", "test"),
+                    dispatcher = Dispatchers.Main.immediate,
+                    ioDispatcher = Dispatchers.Main.immediate,
                 ),
                 Dispatchers.Main.immediate,
             )
+        if (live) registry.connect()
         val preferences =
             AppPreferences(
                 object : DataStore<Preferences> {

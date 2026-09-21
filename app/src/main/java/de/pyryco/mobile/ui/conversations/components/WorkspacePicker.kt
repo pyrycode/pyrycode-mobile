@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -26,6 +27,9 @@ import org.koin.compose.koinInject
 private const val CREATE_FOLDER_ERROR_MESSAGE =
     "Something went wrong. Check your connection and try again."
 
+/** Routes bind the captured picker owner; settings retains its compatibility binding until #637. */
+internal val LocalWorkspacePickerRepository = staticCompositionLocalOf<ConversationRepository?> { null }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WorkspacePicker(
@@ -35,7 +39,7 @@ fun WorkspacePicker(
     modifier: Modifier = Modifier,
 ) {
     if (!visible) return
-    val repository = koinInject<ConversationRepository>()
+    val repository = LocalWorkspacePickerRepository.current ?: koinInject<ConversationRepository>()
     WorkspacePickerInternal(
         repository = repository,
         onPicked = onPicked,
