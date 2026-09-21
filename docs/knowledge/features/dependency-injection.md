@@ -40,7 +40,8 @@ val appModule = module {
     single { StableConversationRepository(get<RelayConnectionRegistry>().currentRepository) }
     viewModel { ChannelListViewModel(get(), get(), get()) }
     viewModel { DiscussionListViewModel(get(), get()) }
-    viewModel { get<ThreadDestinationFactory>().settings(get(), get(), get()) }   // #749
+    viewModel { get<ThreadDestinationFactory>().settings(get(), get()) }   // #749; dropped its `repository` arg in #715
+    viewModel { get<ThreadDestinationFactory>().archive(get()) }           // #715, replacing the pre-#715 one-arg ArchivedDiscussionsViewModel(get())
     viewModel { get<ThreadDestinationFactory>().thread(get(), get()) }
     viewModel { get<ThreadDestinationFactory>().literal(get()) }
 }
@@ -167,21 +168,41 @@ The Koin `viewModel` definitions call `thread(handle, preferences)` and
 `conversationId`. [Navigation](navigation.md#host-qualified-destinations) supplies
 both arguments and scopes ViewModels to individual back-stack entries.
 
-`ThreadDestinationFactory.settings(handle, preferences, repository)` (#749) is the third
-destination method, in the same shape but with two deliberate differences from `thread`/`literal`:
-the owner it reads from the `SavedStateHandle` is **optional** (`handle.get<String>("serverId").orEmpty()`
-— a blank owner is a valid destination state, not an error), and it never resolves that id to a
-connection bundle — `SettingsViewModel` reads a saved host's identity and status only, so a
-saved-but-disconnected owner is still its owner. `preferences` and `repository` are the same `AppPreferences` / `ConversationRepository` singletons
-every other `SettingsViewModel` dependency already used; `#749` did not touch them, per its explicit
-deferral of `archivedDiscussionCount` and the default-workspace picker to #715/#714. `#714` closed
-the workspace half of that deferral: `preferences` is still the one process-wide `AppPreferences`
-singleton, but `SettingsViewModel` now reads and writes `defaultWorkspace` through it under the
-destination's own `ownerServerId` key rather than app-wide, and the workspace picker's own
-repository is bound by the route (`HostWorkspaceRepository`, keyed by
-`SettingsViewModel.workspacePickerServerId`), not by this `repository` argument — see
-[SettingsViewModel § Configuration/usage](settings-viewmodel.md#configuration--usage). `repository`
-itself stays compatibility-bound for `archivedDiscussionCount`, deferred to #715.
+`ThreadDestinationFactory.settings(handle, preferences)` (#749; dropped its third `repository`
+parameter in #715) is the third destination method, in the same shape but with two deliberate
+differences from `thread`/`literal`: the owner it reads from the `SavedStateHandle` is **optional**
+(`handle.get<String>("serverId").orEmpty()` — a blank owner is a valid destination state, not an
+error), and it never resolves that id to a connection bundle — `SettingsViewModel` reads a saved
+host's identity and status only, so a saved-but-disconnected owner is still its owner. `preferences`
+is the same `AppPreferences` singleton every other `SettingsViewModel` dependency already used; #749
+did not touch it, per its explicit deferral of `archivedDiscussionCount` and the default-workspace
+picker to #715/#714. #714 closed the workspace half of that deferral: `preferences` is still the one
+process-wide `AppPreferences` singleton, but `SettingsViewModel` now reads and writes
+`defaultWorkspace` through it under the destination's own `ownerServerId` key rather than app-wide,
+and the workspace picker's own repository is bound by the route (`HostWorkspaceRepository`, keyed by
+`SettingsViewModel.workspacePickerServerId`), not by a repository argument here — see
+[SettingsViewModel § Configuration/usage](settings-viewmodel.md#configuration--usage). #715 closed
+the other half: `settings` now builds `SettingsViewModel(preferences, repository(serverId), serverId, hosts())`
+— `archivedDiscussionCount` reads the **owner's** exact-host repository (below) rather than the
+compatibility one, so the number on the Storage row matches the archive its own row opens. Under a
+blank owner that facade is backed by a permanently-`null` repository, whose cold reads are
+`emptyList()` — a count of zero, the honest answer for a destination owning no host.
+
+`ThreadDestinationFactory.archive(handle)` (#715) is the fourth destination method, and the Archive
+route's owner counterpart to `settings` above: it reads the **same** `serverId` key from the
+`SavedStateHandle`, but — unlike `settings` — a blank owner here is never valid (`Routes.ARCHIVED_DISCUSSIONS`
+is a required path segment, and [`HostDestination`](navigation.md#archive-a-required-owner-destination-two-doors-715)
+rejects an unresolvable one before this method is reached). It builds
+`ArchivedDiscussionsViewModel(repository(serverId), hostLabel(serverId))`, where `repository(serverId)`
+is #636's exact-host seam verbatim — resolved **once**, at construction, so a selection change,
+reconnect or unpair can move neither the rows nor a pending restore, and a host holding the same
+conversation id under a different owner is unreachable by construction. The private `hostLabel(serverId): Flow<String>`
+helper maps the existing `hosts()` projection (below) down to a single resolved display name
+(`displayName` when non-blank, else `serverId`) — the same name-or-id fallback `SettingsHostRow.name`
+uses, deliberately duplicated rather than shared (one line; sharing it would mean exporting a
+resolution helper for a single caller, following #177's precedent for `Conversation.displayName()`).
+Only that resolved `String` crosses into `ArchivedDiscussionsViewModel`; neither a `SettingsHost` nor
+a stored `PairedServerEntry` reaches it, so no pairing token or server static key does either.
 
 `settings` also builds the private `hosts(): Flow<List<SettingsHost>>` that becomes
 `SettingsViewModel`'s fourth constructor argument — every saved host's identity plus its own live
@@ -277,9 +298,10 @@ commands and project captured picker/promotion visibility into the existing scre
 state. Asynchronous completion retains the captured host. See
 [flat-list compatibility](navigation.md#temporary-flat-list-compatibility);
 tree rendering remains #641. #749 moved the Settings destination itself (identity +
-connection status) to exact-host ownership; the archived-discussion count and the
-default-workspace picker it still shows stay on this compatibility binding, pending
-\#715 and #714 respectively.
+connection status) to exact-host ownership; #714 and #715 closed the two remaining
+compatibility-bound pieces Settings still showed — the default-workspace picker and
+the archived-discussion count, respectively — so nothing on this destination reads
+compatibility selection any longer.
 
 ## Adding a binding
 
@@ -329,6 +351,15 @@ discriminating — see [Settings ViewModel § Testing](settings-viewmodel.md#tes
 restoration and Back/reopen under a different selection, and both an unknown and an absent owner
 keep the destination open with no saved host's identity on screen. See
 [Navigation § Testing](navigation.md#testing) for the scenario list.
+
+`ArchiveNavigationTest` (#715) exercises `ThreadDestinationFactory.archive` and `hostLabel` the same
+way, but with both peers holding an archived conversation under the **same** id: the owner's
+repository (and only the owner's) receives `unarchive_conversation`, the other host's identically-numbered
+row stays archived, and removing the owner while Archive is open leaves the destination for the
+channel list rather than rendering the other host's rows. A fourth case covers the channel list's own
+archive door, added after a rework found it still navigating to the pre-#715 unscoped route. See
+[Navigation § Archive](navigation.md#archive-a-required-owner-destination-two-doors-715) and
+[Archived Discussions screen § Testing](archived-discussions-screen.md#testing).
 
 `LiteralScreenNavigationTest` exercises the production graph and bindings,
 including the actual workspace picker with distinct A/B recents, folder creation,

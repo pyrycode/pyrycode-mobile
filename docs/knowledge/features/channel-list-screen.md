@@ -366,9 +366,14 @@ ChannelListEvent.TreeHostEditTapped -> vm.openHostEditor(event.serverId)`,
 `ChannelListEvent.HostUnpairConfirmed -> vm.confirmHostUnpair()` and
 `ChannelListEvent.HostUnpairDeclined -> vm.declineHostUnpair()`. `ChannelListEvent.SettingsTapped` still
 navigates to `Routes.SETTINGS`;
-`ChannelListEvent.ArchiveTapped` navigates to `Routes.ARCHIVED_DISCUSSIONS` (#737) — the same argument-free
-route Settings' `onOpenArchivedDiscussions` already opens, one destination reached by two doors rather than a
-second route. `ChannelListEvent.PairHostTapped` navigates to `Routes.SCANNER` (#738) — no pop, no flag: the
+`ChannelListEvent.ArchiveTapped` reads the current selection and navigates to that host's archive since
+\#715 (`destinations.selectedServerId()?.let { navController.navigate(Routes.archive(it)) }`; a null
+selection taps to nothing) — the same destination Settings' `onOpenArchivedDiscussions` opens, but the
+two capture their owner from different sources: this door re-reads selection on every tap, Settings'
+row inherits the owner its own destination already holds. Before #715 this called the bare
+`Routes.ARCHIVED_DISCUSSIONS`, and a rework was needed after that constant became a route pattern —
+see [Navigation § Archive](navigation.md#archive-a-required-owner-destination-two-doors-715).
+`ChannelListEvent.PairHostTapped` navigates to `Routes.SCANNER` (#738) — no pop, no flag: the
 scanner's own completions already return here (see [Add controls](#add-controls-738) above). The
 `RecentDiscussionsTapped` branch that navigated to `Routes.DISCUSSION_LIST` is gone with the event, and so
 are the FAB's own branches (`CreateDiscussionTapped`, `LongPressFab`) — #738 retired the button and the
@@ -574,8 +579,8 @@ distinction from the tree's own blank at all — see the next section.
   section-header and host-row add controls), #744 (done, split from #642 — the host row's edit control and
   the rename path this section describes), #745 (done, split from #642 — wires `Unpair host` behind a
   confirmation, this section's own [Host row edit control](#host-row-edit-control-744)), #676 (the live
-  emulator scenario for #744's rename flow and #745's removal, blocked by both and still open), #715 (rebinds the
-  archive entry to a specific host instead of the unscoped `Routes.ARCHIVED_DISCUSSIONS`), #668
+  emulator scenario for #744's rename flow, #745's removal and #715's two-host archive/restore case,
+  blocked by all three and still open), #668
   (indicator-pair live accuracy, conversation-row unread/activity state), #665 (conversation-row edit
   pencil), #663 (the workspace row's own add control — not #738's), #664 (the add controls' modal content,
   beyond #738's reuse of the existing pairing scanner for the section header), #675 (disconnected-host
