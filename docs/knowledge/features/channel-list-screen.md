@@ -258,7 +258,11 @@ cannot drift apart — and is attached to the pencil's own `Modifier.testTag(...
 Opening the modal, filling it from the host's stored pairing record, and saving the entered name are the
 view model's job — see [Wiring](#wiring) below and [ChannelListViewModel](channel-list-viewmodel.md). The
 modal itself, [`EditHostModal`](mobile-modal.md#callers), is unchanged by this ticket; its `Unpair host`
-action is wired to an empty lambda here — inert until #745 gives it an event.
+action was wired to an empty lambda here until #745, which gives it a confirmation-gated removal — the
+modal swaps its own content in place for a prompt naming the host, and the shell's own Cancel/OK footer
+carries the decision. See [ChannelListViewModel](channel-list-viewmodel.md#wiring) for the removal's three
+methods, the ordering that keeps a failed store write from clearing the host's cached workspace, and the
+`saving` guard that stops a decline or a second request from racing an in-flight write.
 
 ## How it works
 
@@ -356,7 +360,11 @@ vm.openHostWorkspacePicker(event.serverId)`, both against the control's own row,
 `destinations.selectedServerId()`. #744 carries the same discipline into editing: `is
 ChannelListEvent.TreeHostEditTapped -> vm.openHostEditor(event.serverId)`,
 `is ChannelListEvent.HostEditNameSubmitted -> vm.submitHostName(event.name)` and
-`ChannelListEvent.HostEditDismissed -> vm.dismissHostEditor()`. `ChannelListEvent.SettingsTapped` still
+`ChannelListEvent.HostEditDismissed -> vm.dismissHostEditor()`. #745 adds three more, none carrying a
+`serverId` because the target is the open editor's, held in the view model:
+`ChannelListEvent.HostUnpairRequested -> vm.requestHostUnpair()`,
+`ChannelListEvent.HostUnpairConfirmed -> vm.confirmHostUnpair()` and
+`ChannelListEvent.HostUnpairDeclined -> vm.declineHostUnpair()`. `ChannelListEvent.SettingsTapped` still
 navigates to `Routes.SETTINGS`;
 `ChannelListEvent.ArchiveTapped` navigates to `Routes.ARCHIVED_DISCUSSIONS` (#737) — the same argument-free
 route Settings' `onOpenArchivedDiscussions` already opens, one destination reached by two doors rather than a
@@ -378,15 +386,22 @@ their `NavBackStackEntry`, and `collectAsStateWithLifecycle()` controls screen s
 **The editor's target lives in the view model, not the screen (#744).** `ChannelListScreen` composes
 [`EditHostModal`](mobile-modal.md#callers) as a `Scaffold` sibling, the same placement `WorkspacePicker`
 already uses, drawn only while `hostState.hostEditor != null` and reading its `serverIdentity`,
-`relayAddress`, `initialName`, `saving` and `failed` straight off that state — no screen-local copy. A
-failed save's string is resolved here from `R.string.edit_host_save_failed` rather than in the view model,
-which keeps that free of `Context` and keeps an identity or a relay address from ever reaching the shell's
-live region. `submissionEnabled` keeps the shell's default `true`: a blank name must stay submittable,
-since clearing it is how a host returns to its unnamed treatment. `ChannelListViewModel` owns the read
-(`openHostEditor`, via `PairedServerCollectionStore.loadById`), the write (`submitHostName`, via
-`setDisplayName`) and the close (`dismissHostEditor`) — see
-[ChannelListViewModel](channel-list-viewmodel.md) for the editor state's shape and its concurrency guard
-against two rows' pencils racing on the same publish.
+`relayAddress`, `initialName`, `saving`, `failed` and (since #745) `confirmingUnpair` straight off that
+state — no screen-local copy. The error slot resolves `unpairFailed` ahead of `failed`
+(`R.string.edit_host_unpair_failed` / `R.string.edit_host_save_failed`) from an explicit flag rather than by
+inferring the failing operation from `confirmingUnpair`, so the slot cannot report the wrong operation's
+string after a step change. Both flags are resolved here rather than in the view model, which keeps that
+free of `Context` and keeps an identity or a relay address from ever reaching the shell's live region.
+`submissionEnabled` keeps the shell's default `true`: a blank name must stay submittable, since clearing it
+is how a host returns to its unnamed treatment; the same flag also gates the shell's OK while confirming a
+removal, so a future caller that passes `false` to block a rename would also make the destructive step
+unconfirmable — a latent coupling the verifier flagged as a NIT, not addressed, worth a KDoc line next time
+the file is opened. `ChannelListViewModel` owns the read (`openHostEditor`, via
+`PairedServerCollectionStore.loadById`), the write (`submitHostName`, via `setDisplayName`), the close
+(`dismissHostEditor`) and, since #745, the confirmation gate (`requestHostUnpair`, `declineHostUnpair`) and
+the removal itself (`confirmHostUnpair`) — see [ChannelListViewModel](channel-list-viewmodel.md) for the
+editor state's shape, its concurrency guard against two rows' pencils racing on the same publish, and the
+removal's ordering and `saving` guard.
 
 ## Configuration
 
@@ -498,11 +513,24 @@ distinction from the tree's own blank at all — see the next section.
   — a two-host tree's pencil still resolves to its own row even where a second section repeats the same tag.
   `ChannelListScreenTest` gained `editHostModal_drawsTheOpenEditorsOwnValuesAndReportsOkAndDismissal` (the
   identity and relay address as the design's two inert rows, the name as the editable value, OK reporting
-  the already-trimmed name), `editHostModal_whileSaving_cannotStartASecondSave`,
+  the already-trimmed name), `editHostModal_whileSaving_cannotStartASecondSave` and
   `editHostModal_afterAFailure_staysOpenAndActionableAndStatesItGenerically` (one generic string, naming
-  neither the identity nor the relay address) and `editHostModal_unpairActionIsInertInThisSlice` — split
-  from one planned saving-and-failure test into two because `createComposeRule` permits only one
-  `setContent` per test, so a single test could not render two different editor states.
+  neither the identity nor the relay address) — split from one planned saving-and-failure test into two
+  because `createComposeRule` permits only one `setContent` per test, so a single test could not render two
+  different editor states.
+
+  #745 replaced `editHostModal_unpairActionIsInertInThisSlice`, per the ticket's own instruction, with three
+  cases that walk the confirmation rather than assert its absence:
+  `editHostModal_unpairAction_asksForConfirmationNamingTheHost_andDecliningReturnsToTheEditor` (tapping
+  `Unpair host` emits `HostUnpairRequested`, the confirmation names the host and the name field is gone,
+  Cancel emits `HostUnpairDeclined` — not `HostEditDismissed` — and the field returns with its draft
+  intact), `editHostModal_unpairConfirmation_namesAnUnnamedHostByItsRowsOwnFallback` (the fallback matches
+  the row's own rule) and `editHostModal_afterAFailedUnpair_namesTheUnpairRatherThanTheSaveAndStaysActionable`
+  (the unpair string shows, the save string does not, and OK still emits `HostUnpairConfirmed`).
+  `EditHostModalTest` gained the matching component-level case,
+  `unpairConfirmationReplacesTheContentInPlaceAndEveryDismissalRouteDeclines`: confirming swaps the identity
+  rows and name field for the prompt inside the same shell, Cancel / the close glyph / system Back each
+  decline rather than dismiss, and OK confirms exactly once.
 
 ## Related
 
@@ -527,10 +555,12 @@ distinction from the tree's own blank at all — see the next section.
   `docs/specs/architecture/731-assemble-conversation-tree.md`,
   `docs/specs/architecture/737-list-settings-archive-bar.md`,
   `docs/specs/architecture/738-list-add-controls-retire-fab.md`,
-  `docs/specs/architecture/744-host-row-edit-and-rename.md`
+  `docs/specs/architecture/744-host-row-edit-and-rename.md`,
+  `docs/specs/architecture/745-unpair-host-from-edit-modal.md`
 - Upstream: [ChannelListViewModel](./channel-list-viewmodel.md) (`hostState` producer — fold/selection state,
-  `onHostRowTapped`, `onFoldToggled`, `createHostDiscussion`, `openHostWorkspacePicker`, and since #744
-  `openHostEditor`, `submitHostName`, `dismissHostEditor`; the compatibility `state` producer, `onEvent`
+  `onHostRowTapped`, `onFoldToggled`, `createHostDiscussion`, `openHostWorkspacePicker`, since #744
+  `openHostEditor`, `submitHostName`, `dismissHostEditor`, and since #745 `requestHostUnpair`,
+  `confirmHostUnpair`, `declineHostUnpair`; the compatibility `state` producer, `onEvent`
   reducer and `navigationEvents` this screen once also consumed retired with the button in #738), [Tree
   rows](#tree-rows-730) (`TreeSectionHeader` / `TreeHostRow` / `TreeWorkspaceRow` / `TreeConversationRow`,
   #730; `TreeRowControl` since #738, renamed from `TreeAddControl` in #744), [`EditHostModal`](mobile-modal.md#callers)
@@ -542,8 +572,9 @@ distinction from the tree's own blank at all — see the next section.
   archive entry rather than Settings'), #738 (done — the remaining half of #732's split; retired the FAB and
   the compatibility `ChannelListUiState` placeholders #731 deliberately kept, and gave the list its own
   section-header and host-row add controls), #744 (done, split from #642 — the host row's edit control and
-  the rename path this section describes; `Unpair host` stays inert), #745 (wires `Unpair host` on the same
-  modal), #676 (the live emulator scenario for #744's flow, blocked by it and still open), #715 (rebinds the
+  the rename path this section describes), #745 (done, split from #642 — wires `Unpair host` behind a
+  confirmation, this section's own [Host row edit control](#host-row-edit-control-744)), #676 (the live
+  emulator scenario for #744's rename flow and #745's removal, blocked by both and still open), #715 (rebinds the
   archive entry to a specific host instead of the unscoped `Routes.ARCHIVED_DISCUSSIONS`), #668
   (indicator-pair live accuracy, conversation-row unread/activity state), #665 (conversation-row edit
   pencil), #663 (the workspace row's own add control — not #738's), #664 (the add controls' modal content,
