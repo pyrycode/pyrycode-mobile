@@ -245,6 +245,10 @@ internal class ThreadDestinationFactory(
      * compatibility one, so the number on the row matches the archive the row opens. Under a blank
      * owner that facade is backed by a permanently-`null` repository, whose cold reads are
      * `emptyList()` — a count of zero, which is the honest answer for a destination owning no host.
+     *
+     * Since #751 the view model also drives the Edit host modal for its own host, so it takes the
+     * paired-server store this factory already holds — no new Koin definition, and the same single
+     * instance the channel list's own editor writes through.
      */
     fun settings(
         handle: SavedStateHandle,
@@ -252,7 +256,7 @@ internal class ThreadDestinationFactory(
     ): SettingsViewModel {
         val serverId = handle.get<String>("serverId").orEmpty()
         RelayLog.d { "event=settings_destination_bound" }
-        return SettingsViewModel(preferences, repository(serverId), serverId, hosts())
+        return SettingsViewModel(preferences, repository(serverId), serverId, hosts(), store)
     }
 
     /**

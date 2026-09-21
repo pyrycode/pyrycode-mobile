@@ -491,6 +491,9 @@ internal fun PyryNavHost(
             // visible without a host bound, so it can never fall back to the compatibility
             // repository and show — or create a folder on — whichever host was selected last.
             val workspacePickerOwner by vm.workspacePickerServerId.collectAsStateWithLifecycle()
+            // The editor this destination opens on its own host (#751), driven by the same machine
+            // the channel list drives — the view model holds its own instance of it, not a shared one.
+            val hostEditor by vm.hostEditor.collectAsStateWithLifecycle()
             HostWorkspaceRepository(workspacePickerOwner, destinations) {
                 SettingsScreen(
                     connection = connection,
@@ -529,6 +532,18 @@ internal fun PyryNavHost(
                             popUpTo(Routes.SETTINGS) { inclusive = true }
                         }
                     },
+                    hostEditor = hostEditor,
+                    // The owner's row is the only caller, and the view model opens on the id this
+                    // destination captured — never on a row's own id and never on selection (#751).
+                    // Nothing here reacts to the removal that follows a confirmation: the host list
+                    // re-emits without it, this destination stays put and falls back to the copy #750
+                    // already ships for an owner that is no longer paired.
+                    onEditHost = vm::openOwnerHostEditor,
+                    onEditHostNameSubmitted = vm::submitHostName,
+                    onHostUnpairRequested = vm::requestHostUnpair,
+                    onHostUnpairConfirmed = vm::confirmHostUnpair,
+                    onHostUnpairDeclined = vm::declineHostUnpair,
+                    onEditHostDismissed = vm::dismissHostEditor,
                     // The same destination the channel list's own pairing entry opens (#738), so an
                     // unpaired phone has a working way out of this screen's no-host state.
                     onPairServer = { navController.navigate(Routes.SCANNER) },

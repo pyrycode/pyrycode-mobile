@@ -2,6 +2,7 @@ package de.pyryco.mobile.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.network.RelayLog
@@ -11,6 +12,8 @@ import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.ui.host.HostEditorController
+import de.pyryco.mobile.ui.host.HostEditorState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -86,7 +89,18 @@ class SettingsViewModel(
     private val ownerServerId: String,
     /** Every saved host's identity and status; the owner is resolved out of it, never selected. */
     hosts: Flow<List<SettingsHost>>,
+    /** The Edit host modal's read and write (#751), handed straight to the shared machine below. */
+    pairedServers: PairedServerCollectionStore,
 ) : ViewModel() {
+    /**
+     * The Edit host modal, driven by the same machine the channel list drives (#751).
+     *
+     * One instance per destination, over this view model's own scope, so two Settings entries on the
+     * back stack never share an open editor and clearing either cancels only its own writes.
+     */
+    private val hostEditorController = HostEditorController(viewModelScope, pairedServers, appPreferences)
+    val hostEditor: StateFlow<HostEditorState?> = hostEditorController.state
+
     /**
      * Every saved host with its own live status, and the destination's owner marked among them
      * (#750, widening #749's single-host resolution).
@@ -330,6 +344,42 @@ class SettingsViewModel(
         pendingWorkspacePicker.value = null
         RelayLog.d { "event=settings_workspace_picker_dismissed" }
     }
+
+    /**
+     * Opens the Edit host modal on **this destination's own** host (#751).
+     *
+     * The id is the one captured into the route, never a row's own and never compatibility selection:
+     * a host is edited from its own Settings, and the same id is what the id-exact
+     * `PairedServerCollectionStore.remove` is later handed, so which host a removal takes has exactly
+     * one source. A destination that captured none has nothing to edit, and the screen offers no
+     * affordance for it — this guard is the second lock, not the only one.
+     *
+     * An owner that is no longer paired needs no branch here: the machine reads the record before it
+     * publishes anything and rejects an absent one with `code=unknown_host`.
+     */
+    fun openOwnerHostEditor() {
+        if (ownerServerId.isBlank()) {
+            RelayLog.d { "event=settings_host_editor_rejected code=no_owner" }
+            return
+        }
+        hostEditorController.open(ownerServerId)
+    }
+
+    /**
+     * The modal's five remaining transitions, delegating to the shared machine.
+     *
+     * Named as the channel list names them so the two screens' wiring reads alike; nothing about the
+     * rename, the confirmation or the removal is re-derived here.
+     */
+    fun submitHostName(name: String) = hostEditorController.submitName(name)
+
+    fun requestHostUnpair() = hostEditorController.requestUnpair()
+
+    fun declineHostUnpair() = hostEditorController.declineUnpair()
+
+    fun confirmHostUnpair() = hostEditorController.confirmUnpair()
+
+    fun dismissHostEditor() = hostEditorController.dismiss()
 
     private companion object {
         const val STOP_TIMEOUT_MILLIS = 5_000L

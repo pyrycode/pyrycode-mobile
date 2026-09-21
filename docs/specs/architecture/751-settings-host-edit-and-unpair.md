@@ -264,6 +264,25 @@ Floor beats ceiling, so the merged ticket is the right unit even at 7 files.
    That assertion must be updated in this ticket, not deleted — the property it protects (exactly one
    badge, and the two rows' taps going to different places) survives in a changed form.
 
+## Revisions
+
+**2026-09-22 — Open questions resolved in Phase B.** Neither changed the design.
+
+1. *Trailing order.* Badge then chevron, as predicted: the frame puts the chevron last at the right
+   edge, so `HostOwnerTrailing` draws `HostOwnerBadge()`, an 8dp spacer, then `ChevronIcon()`.
+2. *The existing owner-row assertion.* `SettingsScreenTest.connectionSection_rendersEverySavedHostAndMarksTheOwner`
+   asserted the owner's row has no click action, which this ticket deliberately reverses. Updated
+   rather than deleted: it now asserts both rows act, and that exactly one "This server" badge is on
+   screen. Which callback each row fires is pinned by the two new scenarios beside it.
+
+**2026-09-22 — device assertions rescoped after a red run.** Two new `SettingsScreenTest` methods
+first asserted against the whole screen ("the relay address is nowhere", "the host name is present")
+and failed: the owner's row is still drawn behind the modal's scrim, so it renders both values
+legitimately (#750). The properties were restated against what the modal itself draws — the
+confirmation is matched on its own wording, and the relay address is *counted* at one occurrence
+rather than asserted absent, which is what actually proves the modal adds no second rendering of it.
+Production code unchanged by this; the tests were wrong, not the screen.
+
 ## Documentation handoff
 
 Pending for the documentation stage, per the ticket's own handoff section — not written here:
