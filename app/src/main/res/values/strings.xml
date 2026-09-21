@@ -9,9 +9,6 @@
     <string name="cd_back">Back</string>
     <string name="cd_more_actions">More actions</string>
     <string name="save_as_channel_action">Save as channel…</string>
-    <string name="recent_discussions_section_header">Recent discussions</string>
-    <string name="see_all_discussions_label">See all discussions (%d)</string>
-    <string name="cd_see_all_discussions">See all %d recent discussions</string>
     <string name="cd_conversation_row">%1$s, %2$s</string>
     <string name="cd_conversation_row_idle">%1$s, idle, %2$s</string>
     <string name="cd_discussion_preview_row">%1$s, %2$s</string>
