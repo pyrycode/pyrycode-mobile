@@ -83,7 +83,7 @@ class ConversationTreeRowsTest {
     @Test
     fun sectionHeader_rendersTitleAsHeading() {
         composeTestRule.setContent {
-            PyrycodeMobileTheme { TreeSectionHeader(title = "Channels") }
+            PyrycodeMobileTheme { TreeSectionHeader(title = "Channels", onAddTapped = {}) }
         }
 
         composeTestRule.onNodeWithText("Channels").assert(isHeading())
@@ -93,10 +93,13 @@ class ConversationTreeRowsTest {
     fun hostRow_longName_staysOnOneLineAndLeavesTheIndicatorPairInsideTheRow() {
         setBoundedContent {
             TreeHostRow(
+                serverId = "pyrybox",
                 hostName = longName,
                 connectionStatus = mixedStatus,
                 expanded = true,
                 onToggleExpanded = {},
+                onAddTapped = {},
+                onAddLongPressed = {},
             )
         }
 
@@ -143,10 +146,13 @@ class ConversationTreeRowsTest {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
                 TreeHostRow(
+                    serverId = "pyrybox",
                     hostName = "Pyrybox",
                     connectionStatus = mixedStatus,
                     expanded = true,
                     onToggleExpanded = { toggles++ },
+                    onAddTapped = {},
+                    onAddLongPressed = {},
                 )
             }
         }
@@ -171,10 +177,13 @@ class ConversationTreeRowsTest {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
                 TreeHostRow(
+                    serverId = "pyrybox",
                     hostName = "Pyrybox",
                     connectionStatus = mixedStatus,
                     expanded = false,
                     onToggleExpanded = {},
+                    onAddTapped = {},
+                    onAddLongPressed = {},
                 )
             }
         }
@@ -191,10 +200,13 @@ class ConversationTreeRowsTest {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
                 TreeHostRow(
+                    serverId = "pyrybox",
                     hostName = "Pyrybox",
                     connectionStatus = mixedStatus,
                     expanded = true,
                     onToggleExpanded = {},
+                    onAddTapped = {},
+                    onAddLongPressed = {},
                 )
             }
         }
@@ -261,10 +273,13 @@ class ConversationTreeRowsTest {
             PyrycodeMobileTheme {
                 Column {
                     TreeHostRow(
+                        serverId = "pyrybox",
                         hostName = "Pyrybox",
                         connectionStatus = mixedStatus,
                         expanded = true,
                         onToggleExpanded = {},
+                        onAddTapped = {},
+                        onAddLongPressed = {},
                     )
                     TreeWorkspaceRow(workspaceName = "Second Brain", expanded = true, onToggleExpanded = {})
                     TreeConversationRow(conversationName = "rocd-thinking", selected = false, onClick = {})

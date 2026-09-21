@@ -368,7 +368,6 @@ class HostChannelListViewModelTest {
             val preferences = MutableSharedFlow<Preferences>()
             val f = fixture(preferences)
             backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
-            backgroundScope.launch(dispatcher) { f.vm.navigationEvents.collect { f.legacy += it } }
             f.vm.createHostDiscussion("Host")
             runCurrent()
             assertTrue(f.lookups.isEmpty())
@@ -394,7 +393,6 @@ class HostChannelListViewModelTest {
             )
             assertEquals(listOf("Host"), f.lookups)
             assertEquals(listOf(HostConversationTarget("Host", "returned-id")), f.nav)
-            assertTrue(f.legacy.isEmpty())
 
             f.vm.createHostDiscussion("host")
             preferences.emit(defaults)
@@ -514,28 +512,27 @@ class HostChannelListViewModelTest {
         }
 
     @Test
-    fun rowTargetsAndLegacySelectedProjectionAndActionsUseSeparateNavigationStreams() =
+    fun rowTapsAndCreationTargetTheirNamedHostRegardlessOfTheSelectedAdapter() =
         runTest(dispatcher) {
             val f = fixture()
             f.a.repo.rows.value = listOf(row("A-channel", true))
             f.b.repo.rows.value = listOf(row("B-channel", true))
-            backgroundScope.launch(dispatcher) { f.vm.state.collect {} }
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
             backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
-            backgroundScope.launch(dispatcher) { f.vm.navigationEvents.collect { f.legacy += it } }
             runCurrent()
-            assertEquals(listOf("A-channel"), (f.vm.state.value as ChannelListUiState.Loaded).channels.map { it.id })
+            // The selected-host adapter the retired button's two paths resolved through is still bound and
+            // still moves (#738). Nothing this view model does may follow it any more: the flat projection
+            // that did, and the bare-id stream it navigated on, went with the button.
             f.selected.value = f.b.repo
             runCurrent()
-            assertEquals(listOf("B-channel"), (f.vm.state.value as ChannelListUiState.Loaded).channels.map { it.id })
             val target = HostConversationTarget("Host", "same")
             f.vm.onHostRowTapped(target)
-            f.vm.onEvent(ChannelListEvent.CreateDiscussionTapped)
+            f.vm.createHostDiscussion("Host")
             runCurrent()
-            assertEquals(listOf(target), f.nav)
-            assertEquals(listOf(ChannelListNavigation.ToThread("returned-id")), f.legacy)
-            assertEquals(listOf(DEFAULT_SCRATCH_CWD), f.b.repo.workspaces)
+            assertEquals(listOf(target, HostConversationTarget("Host", "returned-id")), f.nav)
+            assertEquals(listOf(DEFAULT_SCRATCH_CWD), f.a.repo.workspaces)
             assertTrue(
-                f.a.repo.workspaces
+                f.b.repo.workspaces
                     .isEmpty(),
             )
         }
@@ -756,7 +753,6 @@ class HostChannelListViewModelTest {
             )
         val vm = app.koin.get<ChannelListViewModel>()
         val nav = mutableListOf<HostConversationTarget>()
-        val legacy = mutableListOf<ChannelListNavigation>()
     }
 
     private class Host(

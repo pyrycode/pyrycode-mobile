@@ -1,5 +1,6 @@
 package de.pyryco.mobile.e2e
 
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnySibling
@@ -24,6 +25,8 @@ import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.repository.ConnectionStateSource
+import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
+import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHAT_ROW_TEST_TAG
@@ -1151,11 +1154,11 @@ class InteractiveStreamE2ETest {
      * ([CHANNEL_LIST_TEST_TAG], #736) rather than on anything drawn on it. Every scenario arrives through
      * here, including the two `@Ignore`d manual ones.
      *
-     * Deliberately **weaker** than the "New discussion" wait it replaced. That control draws only on
-     * [de.pyryco.mobile.ui.conversations.list.ChannelListUiState.Loaded] and `Empty`, so waiting for it
-     * implied a loaded list; this marker is on all four of the list's draws and implies only that the list
-     * is the destination on screen. [createChat] and [openWorkspacePicker] carry that wait now — the only
-     * place it was load-bearing, since acting on a control before it is drawn fails the drive, not the wait.
+     * Deliberately **weaker** than the "New discussion" wait it replaced. That control drew only on a loaded
+     * flat state, so waiting for it implied a loaded list; this marker is on both of the list's draws — the
+     * blank placeholder and the assembled tree — and implies only that the list is the destination on
+     * screen. [awaitHostAddControl] carries that wait now, for the two helpers where it was load-bearing:
+     * acting on a control before it is drawn fails the drive, not the wait.
      */
     private fun awaitChannelList() {
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
@@ -1171,21 +1174,33 @@ class InteractiveStreamE2ETest {
      * carries its own wait rather than sharing a third helper, so the count stays at two.
      */
     private fun createChat() {
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
-        }
-        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performClick()
+        awaitHostAddControl().performClick()
     }
 
     /**
      * Long-press the same control to open the Workspace Picker — a *tap* would create a scratch chat
-     * instead (the long press routes to `ChannelListEvent.LongPressFab`, `combinedClickable.onLongClick`).
+     * instead (the long press routes to `ChannelListEvent.TreeHostAddLongPressed`,
+     * `combinedClickable.onLongClick`).
      */
     private fun openWorkspacePicker() {
+        awaitHostAddControl().performTouchInput { longClick() }
+    }
+
+    /**
+     * Wait for the paired host's own add control and return it (#738).
+     *
+     * The floating button's single fixed content description is gone; each host row's control carries a
+     * per-host name instead, so the durable handle is the per-host test tag keyed on the `serverId` the
+     * harness itself passed in — unambiguous the moment a second host is paired, which a name-based or
+     * position-based match would not be. The tree draws the same host in both sections, so the tag matches
+     * twice; either node is the same control on the same host.
+     */
+    private fun awaitHostAddControl(): SemanticsNodeInteraction {
+        val tag = treeHostAddTestTag(requireNotNull(InstrumentationRegistry.getArguments().getString(ARG_SERVER_ID)))
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodes(hasTestTag(tag)).fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onNode(hasContentDescription(CD_NEW_DISCUSSION)).performTouchInput { longClick() }
+        return composeTestRule.onAllNodes(hasTestTag(tag)).onFirst()
     }
 
     /** Block until the relay connection reports [ConnectionState.Connected], or fail after a timeout. */
@@ -1223,10 +1238,10 @@ class InteractiveStreamE2ETest {
                 "the single word: ready. (Reason through first: what is the 12th prime number?)"
 
         // Production UI strings. Keep in sync with res/values/strings.xml:
-        //   cd_new_discussion = "New discussion", cd_send_message = "Send message", cd_back = "Back".
-        // CD_NEW_DISCUSSION is named by createChat and openWorkspacePicker and by nothing else in this
-        // class — those two bodies are what #738 edits when the control goes.
-        const val CD_NEW_DISCUSSION = "New discussion"
+        //   cd_send_message = "Send message", cd_back = "Back".
+        // The button's fixed "New discussion" description went with the button (#738). Creation is now
+        // addressed by the paired host's own tag, built in awaitHostAddControl from the harness's own
+        // serverId argument, so nothing here has to name it.
         const val CD_SEND_MESSAGE = "Send message"
         const val CD_BACK = "Back"
 

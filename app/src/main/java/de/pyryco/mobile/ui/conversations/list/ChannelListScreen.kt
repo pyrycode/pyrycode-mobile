@@ -1,8 +1,6 @@
 package de.pyryco.mobile.ui.conversations.list
 
 import android.content.res.Configuration
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,16 +14,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -33,9 +28,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
@@ -77,12 +69,12 @@ internal const val TREE_CHAT_ROW_TEST_TAG: String = "tree-chat-row"
  * literal, no daemon text, invisible to accessibility services.
  *
  * It names the destination and nothing drawn on it, deliberately: the suites used to wait for the floating
- * action button's content description, which the chrome work retires (#738), and a marker bound to a visible
- * element or to a [ChannelListUiState] case would need migrating again with it.
+ * action button's content description, which #738 retired along with the button and the flat state case that
+ * gated it. A marker bound to either would have needed migrating again; this one did not.
  *
- * Weaker than the button wait it replaces, on purpose. The button draws only on [ChannelListUiState.Loaded]
- * and [ChannelListUiState.Empty], so waiting for it implied a loaded list; this matches on all four draws.
- * A caller that needs the loaded list must wait for the control it is about to drive.
+ * Weaker than the button wait it replaced, on purpose — it matches the blank placeholder as readily as the
+ * assembled tree. A caller that needs the loaded list must wait for the control it is about to drive, which
+ * is what the device suites' creation helpers do through [de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag].
  */
 internal const val CHANNEL_LIST_TEST_TAG: String = "channel-list"
 
@@ -95,8 +87,10 @@ private val TreeHostGap = 16.dp
 private val TreeSectionRuleGap = 28.dp
 private val TreeSectionRuleBottomGap = 16.dp
 
-// Keeps the floating action button off the tree's last row.
-private val TreeBottomInset = 88.dp
+// The 88dp that kept the floating action button off the tree's last row went with the button (#738). What
+// remains is the air the last row needs not to sit flush against the screen's bottom edge — the outer
+// Scaffold in MainActivity already pads the whole nav host past the system bars.
+private val TreeBottomInset = 16.dp
 
 // The list's own bar (#737). The supplied design draws 24dp glyphs with their centres 32dp and 84dp from the
 // screen edge, a rule 20dp below them and 28dp of air between that rule and the first section header. Touch
@@ -135,9 +129,24 @@ sealed interface ChannelListEvent {
     /** The list's own archive entry — the same destination Settings' archived-discussions row opens (#737). */
     data object ArchiveTapped : ChannelListEvent
 
-    data object CreateDiscussionTapped : ChannelListEvent
+    /**
+     * A section header's add control: pair an additional host (#738).
+     *
+     * Carries no section, deliberately. Both headers open the same existing pairing flow, so a section
+     * identifier would establish no capability the route could act on; the section is what each control's
+     * *name* disambiguates, for the operator and for TalkBack.
+     */
+    data object PairHostTapped : ChannelListEvent
 
-    data object LongPressFab : ChannelListEvent
+    /** A host row's add control: a chat on **that** row's host, in its default workspace. */
+    data class TreeHostAddTapped(
+        val serverId: String,
+    ) : ChannelListEvent
+
+    /** The same control held: pick that host's workspace first — the path the retired button long-pressed. */
+    data class TreeHostAddLongPressed(
+        val serverId: String,
+    ) : ChannelListEvent
 
     data class WorkspacePicked(
         val workspace: String,
@@ -150,58 +159,35 @@ sealed interface ChannelListEvent {
  * The conversation tree: a Channels section and a Chats section, each holding host rows, their
  * workspace rows and those workspaces' conversation rows.
  *
- * Stateless. [hostState] carries the host-qualified rows (#729), the collapsed nodes and the
- * last-opened target; [state] still carries the compatibility loading, empty and error placeholders and
- * the workspace picker's visibility, which #738 retires along with the button. The generic top app bar is
- * already gone — the list draws its own bar instead (#737, [ChannelListTopBar]).
+ * Stateless, and fed by exactly one model: [hostState] carries the host-qualified rows (#729), the
+ * collapsed nodes, the last-opened target and the workspace picker's target. The flat `ChannelListUiState`
+ * went with the floating action button that was its last consumer (#738), taking the loading and error
+ * placeholders with it — a tree with no hosts is the only blank the list draws. The generic top app bar
+ * is gone too; the list draws its own bar instead (#737, [ChannelListTopBar]).
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChannelListScreen(
-    state: ChannelListUiState,
     hostState: HostChannelListState,
     onEvent: (ChannelListEvent) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val newDiscussionLabel = stringResource(R.string.cd_new_discussion)
-    val longPressLabel = stringResource(R.string.cd_long_press_fab_pick_workspace)
     Scaffold(
-        // The arrival marker goes on the root, above the branch below, so all four draws carry it (#736).
+        // The arrival marker goes on the root, above the branch below, so both draws carry it (#736).
         modifier = modifier.testTag(CHANNEL_LIST_TEST_TAG),
         topBar = { ChannelListTopBar(onEvent) },
-        floatingActionButton = {
-            if (state is ChannelListUiState.Loaded || state is ChannelListUiState.Empty) {
-                ChannelListFab(
-                    onTap = { onEvent(ChannelListEvent.CreateDiscussionTapped) },
-                    onLongPress = { onEvent(ChannelListEvent.LongPressFab) },
-                    onTapLabel = newDiscussionLabel,
-                    onLongPressLabel = longPressLabel,
-                )
-            }
-        },
     ) { inner ->
         val bodyModifier = Modifier.padding(inner)
         if (hostState.hosts.isEmpty()) {
             // No host at all is the only blank tree: a paired host with no conversations still draws its
             // own rows, which is content rather than an empty screen.
-            when (state) {
-                ChannelListUiState.Loading -> CenteredText("Loading…", bodyModifier)
-                is ChannelListUiState.Error -> CenteredText("Couldn't load channels: ${state.message}", bodyModifier)
-                is ChannelListUiState.Loaded, is ChannelListUiState.Empty ->
-                    CenteredText(stringResource(R.string.channel_list_empty), bodyModifier)
-            }
+            CenteredText(stringResource(R.string.channel_list_empty), bodyModifier)
         } else {
             ConversationTree(hostState = hostState, onEvent = onEvent, modifier = bodyModifier)
         }
     }
-    val pickerVisible =
-        when (state) {
-            is ChannelListUiState.Loaded -> state.workspacePickerVisible
-            is ChannelListUiState.Empty -> state.workspacePickerVisible
-            ChannelListUiState.Loading, is ChannelListUiState.Error -> false
-        }
     WorkspacePicker(
-        visible = pickerVisible,
+        // Read straight off the picker's own target rather than from a copy the route made of it.
+        visible = hostState.workspacePickerServerId != null,
         onPicked = { path -> onEvent(ChannelListEvent.WorkspacePicked(path)) },
         onDismiss = { onEvent(ChannelListEvent.WorkspacePickerDismissed) },
     )
@@ -309,17 +295,25 @@ private fun LazyListScope.treeSection(
     onEvent: (ChannelListEvent) -> Unit,
 ) {
     item(key = treeItemKey("header", section.name)) {
-        TreeSectionHeader(title = stringResource(section.titleRes))
+        TreeSectionHeader(
+            title = stringResource(section.titleRes),
+            onAddTapped = { onEvent(ChannelListEvent.PairHostTapped) },
+        )
     }
     hostState.hosts.forEachIndexed { index, entry ->
         val host = entry.host
         val hostKey = TreeFoldKey(section, host.serverId)
         item(key = treeItemKey("host", section.name, host.serverId)) {
             TreeHostRow(
+                serverId = host.serverId,
                 hostName = host.displayName?.takeIf { it.isNotBlank() } ?: stringResource(R.string.unnamed_host),
                 connectionStatus = host.connectionStatus,
                 expanded = hostKey !in hostState.collapsed,
                 onToggleExpanded = { onEvent(ChannelListEvent.TreeFoldToggled(hostKey)) },
+                // The row's own host, as with a conversation row's target: the tree draws rows from every
+                // host, so a globally selected one would create the chat on the wrong machine.
+                onAddTapped = { onEvent(ChannelListEvent.TreeHostAddTapped(host.serverId)) },
+                onAddLongPressed = { onEvent(ChannelListEvent.TreeHostAddLongPressed(host.serverId)) },
                 modifier = Modifier.padding(top = if (index == 0) TreeFirstHostGap else TreeHostGap),
             )
         }
@@ -396,37 +390,6 @@ private fun CenteredText(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun ChannelListFab(
-    onTap: () -> Unit,
-    onLongPress: () -> Unit,
-    onTapLabel: String,
-    onLongPressLabel: String,
-) {
-    Surface(
-        modifier =
-            Modifier
-                .size(56.dp)
-                .combinedClickable(
-                    onClick = onTap,
-                    onLongClick = onLongPress,
-                    onClickLabel = onTapLabel,
-                    onLongClickLabel = onLongPressLabel,
-                    role = Role.Button,
-                ).semantics { contentDescription = onTapLabel },
-        shape = FloatingActionButtonDefaults.shape,
-        color = MaterialTheme.colorScheme.primaryContainer,
-        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        tonalElevation = 6.dp,
-        shadowElevation = 6.dp,
-    ) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Icon(imageVector = Icons.Default.Add, contentDescription = null)
-        }
-    }
-}
-
 private fun previewConversation(
     id: String,
     name: String?,
@@ -492,20 +455,12 @@ private fun previewHostState(now: Instant): HostChannelListState {
     )
 }
 
-// The tree is fed by hostState; the compatibility state only has to be Loaded for the button to draw.
-private fun previewLoaded() =
-    ChannelListUiState.Loaded(
-        channels = emptyList(),
-        recentDiscussions = emptyList(),
-        recentDiscussionsCount = 0,
-    )
-
 @Preview(name = "Tree — Light", showBackground = true, widthDp = 412, heightDp = 900)
 @Composable
 private fun ChannelListScreenTreePreview() {
     val now: Instant = Clock.System.now()
     PyrycodeMobileTheme(darkTheme = false) {
-        ChannelListScreen(state = previewLoaded(), hostState = previewHostState(now), onEvent = {})
+        ChannelListScreen(hostState = previewHostState(now), onEvent = {})
     }
 }
 
@@ -520,7 +475,7 @@ private fun ChannelListScreenTreePreview() {
 private fun ChannelListScreenTreeDarkPreview() {
     val now: Instant = Clock.System.now()
     PyrycodeMobileTheme(darkTheme = true) {
-        ChannelListScreen(state = previewLoaded(), hostState = previewHostState(now), onEvent = {})
+        ChannelListScreen(hostState = previewHostState(now), onEvent = {})
     }
 }
 
@@ -528,10 +483,6 @@ private fun ChannelListScreenTreeDarkPreview() {
 @Composable
 private fun ChannelListScreenEmptyPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
-        ChannelListScreen(
-            state = ChannelListUiState.Empty(recentDiscussions = emptyList(), recentDiscussionsCount = 0),
-            hostState = HostChannelListState(),
-            onEvent = {},
-        )
+        ChannelListScreen(hostState = HostChannelListState(), onEvent = {})
     }
 }

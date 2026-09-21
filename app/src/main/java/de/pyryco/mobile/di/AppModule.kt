@@ -108,7 +108,7 @@ val appModule =
             val registry = get<RelayConnectionRegistry>()
             PairCodeViewModel(get(), registry, registry::pairingStatus)
         }
-        viewModel { ChannelListViewModel(get(), get(), get()) }
+        viewModel { ChannelListViewModel(get(), get()) }
         viewModel { DiscussionListViewModel(get(), get()) }
         viewModel {
             SettingsViewModel(get(), get(), get<RelayConnectionRegistry>().connectionStatus)

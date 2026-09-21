@@ -1,9 +1,11 @@
 package de.pyryco.mobile.ui.conversations.list
 
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
@@ -13,9 +15,11 @@ import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTouchInput
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
@@ -23,10 +27,14 @@ import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
+import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.di.HostConversationSnapshot
+import de.pyryco.mobile.ui.conversations.components.LocalWorkspacePickerRepository
+import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -75,13 +83,6 @@ class ChannelListScreenTest {
             chatGroups = groupConversationsByWorkspace(serverId, chats),
         )
 
-    private fun loaded(): ChannelListUiState.Loaded =
-        ChannelListUiState.Loaded(
-            channels = emptyList(),
-            recentDiscussions = emptyList(),
-            recentDiscussionsCount = 0,
-        )
-
     /**
      * Renders the stateless screen over a fold-state holder that behaves as the ViewModel does, so a
      * tap on a fold control really does hide or restore the subtree under it.
@@ -94,7 +95,6 @@ class ChannelListScreenTest {
             var hostState by remember { mutableStateOf(HostChannelListState(hosts.toList(), selected = selected)) }
             PyrycodeMobileTheme {
                 ChannelListScreen(
-                    state = loaded(),
                     hostState = hostState,
                     onEvent = { event ->
                         events += event
@@ -112,7 +112,10 @@ class ChannelListScreenTest {
         }
     }
 
-    private fun string(resId: Int): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(resId)
+    private fun string(
+        resId: Int,
+        vararg formatArgs: Any,
+    ): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(resId, *formatArgs)
 
     @Test
     fun tree_rendersBothSectionsFromRealHostData_expandedOnFirstShow() {
@@ -258,42 +261,30 @@ class ChannelListScreenTest {
     /**
      * The list draws its own bar (#737), so both entries have to survive every draw — not just the one a
      * single-state test happens to pick. A bar placed inside the tree's scroll container would pass on the
-     * loaded draw and vanish on the three centred placeholders, which is exactly the mistake this walks.
+     * loaded draw and vanish on the centred placeholder, which is exactly the mistake this walks.
      *
-     * Same four-draw shape as [arrivalMarker_isCarriedByEveryDrawOfTheList_exactlyOnce], and each draw is
-     * identified by its own copy first, so a bar that matched while the screen kept rendering the same thing
-     * would prove nothing. The retired chrome is asserted absent on each one too: the app name and the logo's
-     * description went with the generic top app bar.
+     * Two draws now rather than four: the loading and error placeholders went with the flat state (#738),
+     * so a tree with no hosts is the only blank left. Same shape as
+     * [arrivalMarker_isCarriedByEveryDrawOfTheList_exactlyOnce], and each draw is identified by its own copy
+     * first, so a bar that matched while the screen kept rendering the same thing would prove nothing. The
+     * retired chrome is asserted absent on each one too: the app name and the logo's description went with
+     * the generic top app bar, and the floating button's description with #738.
      */
     @Test
     fun listBar_drawsBothEntriesAndNoneOfTheRetiredChrome_onEveryDraw() {
-        var state: ChannelListUiState by mutableStateOf(ChannelListUiState.Loading)
         var hostState: HostChannelListState by mutableStateOf(HostChannelListState())
         composeTestRule.setContent {
             PyrycodeMobileTheme {
-                ChannelListScreen(state = state, hostState = hostState, onEvent = {})
+                ChannelListScreen(hostState = hostState, onEvent = {})
             }
         }
 
-        // 1. Loading.
-        composeTestRule.onNode(hasText("Loading…")).assertExists()
-        assertBarDrawn()
-
-        // 2. Error — matched on the carried message, so this is the error draw and not the loading one.
-        composeTestRule.runOnIdle { state = ChannelListUiState.Error("relay is down") }
-        composeTestRule.onNode(hasText("relay is down", substring = true)).assertExists()
-        assertBarDrawn()
-
-        // 3. The empty placeholder: a loaded state with no host at all.
-        composeTestRule.runOnIdle {
-            state = ChannelListUiState.Empty(recentDiscussions = emptyList(), recentDiscussionsCount = 0)
-        }
+        // 1. The empty placeholder: no host at all.
         composeTestRule.onNode(hasText(string(R.string.channel_list_empty))).assertExists()
         assertBarDrawn()
 
-        // 4. The tree — a host arrives, so the placeholder gives way to real rows.
+        // 2. The tree — a host arrives, so the placeholder gives way to real rows.
         composeTestRule.runOnIdle {
-            state = loaded()
             hostState =
                 HostChannelListState(
                     listOf(
@@ -315,17 +306,88 @@ class ChannelListScreenTest {
         // The generic top app bar's app name and Pyry logo go with it.
         composeTestRule.onNode(hasText(string(R.string.app_name))).assertDoesNotExist()
         composeTestRule.onNode(hasContentDescription("Pyrycode logo")).assertDoesNotExist()
+        // The floating action button's own name is retired with it (#738) — no draw may still carry it.
+        composeTestRule.onNode(hasContentDescription("New discussion")).assertDoesNotExist()
     }
 
+    /**
+     * The tree draws a header per section, so the pairing control repeats — and the two must be separately
+     * addressable rather than sharing one name. Both are driven here, so neither header can ship a control
+     * that is drawn but inert.
+     */
     @Test
-    fun fab_emitsCreateDiscussionTapped() {
+    fun sectionHeaders_eachCarryTheirOwnPairingControl() {
         setTree(entry(serverId = "pyrybox", displayName = "Pyrybox"))
 
+        val channels = string(R.string.cd_tree_section_pair_host, string(R.string.channels_section_header))
+        val chats = string(R.string.cd_tree_section_pair_host, string(R.string.chats_section_header))
+        assertNotEquals(channels, chats)
+
+        composeTestRule.onNode(hasContentDescription(channels)).performClick()
+        composeTestRule.onNode(hasContentDescription(chats)).performClick()
+
+        assertEquals(listOf(ChannelListEvent.PairHostTapped, ChannelListEvent.PairHostTapped), events)
+    }
+
+    /**
+     * The host row's add control, on the two gestures the retired floating button owned.
+     *
+     * Driven on the **second** host of a two-host tree and asserted against that host's own id: a control
+     * wired to a globally selected host would pass a single-host test and create the chat on the wrong
+     * machine here. The control is addressed by its per-host tag — the same handle the device suites hold —
+     * and its name is asserted distinct from the other host's, since both repeat down the screen.
+     */
+    @Test
+    fun hostRowAddControl_targetsItsOwnHost_onTapAndOnLongPress() {
+        setTree(
+            entry(serverId = "pyrybox", displayName = "Pyrybox"),
+            entry(serverId = "macbook", displayName = "Macbook"),
+        )
+
+        assertNotEquals(
+            string(R.string.cd_tree_host_new_chat, "Pyrybox"),
+            string(R.string.cd_tree_host_new_chat, "Macbook"),
+        )
+        // The Chats section draws the same host again, so the tag matches twice; either instance is the
+        // same control on the same host, which is the point — tap the one the suites would reach first.
+        val macbook = composeTestRule.onAllNodes(hasTestTag(treeHostAddTestTag("macbook"))).onFirst()
+        macbook.assert(hasContentDescription(string(R.string.cd_tree_host_new_chat, "Macbook")))
+
+        macbook.performClick()
+        macbook.performTouchInput { longClick() }
+
+        assertEquals(
+            listOf(
+                ChannelListEvent.TreeHostAddTapped("macbook"),
+                ChannelListEvent.TreeHostAddLongPressed("macbook"),
+            ),
+            events,
+        )
+    }
+
+    /**
+     * The add control sits inside the host row, whose whole surface is the fold control. Compose stops
+     * merging semantics at a descendant that merges too, so the control keeps its own click action — but
+     * that is an inherited guarantee, and this asserts it rather than assuming it: a tap on the plus must
+     * not also fold the row it sits in.
+     */
+    @Test
+    fun hostRowAddControl_doesNotFoldTheRowItSitsIn() {
+        setTree(
+            entry(
+                serverId = "pyrybox",
+                displayName = "Pyrybox",
+                channels = listOf(conversation("c1", "alpha channel", "/w/one", true)),
+            ),
+        )
+
         composeTestRule
-            .onNode(hasContentDescription(string(R.string.cd_new_discussion)))
+            .onAllNodes(hasTestTag(treeHostAddTestTag("pyrybox")))
+            .onFirst()
             .performClick()
 
-        assertEquals(listOf(ChannelListEvent.CreateDiscussionTapped), events)
+        composeTestRule.onNode(hasText("alpha channel")).assertExists()
+        assertEquals(listOf(ChannelListEvent.TreeHostAddTapped("pyrybox")), events)
     }
 
     @Test
@@ -352,39 +414,26 @@ class ChannelListScreenTest {
 
     /**
      * The arrival marker (#736) is set once, on the screen's root, so every draw carries it. This walks the
-     * same composition through all four — loading, error, the empty placeholder and the tree — asserting on
-     * each that exactly one node carries it, and that the draw really is the one intended: a marker that
-     * matched while the screen kept rendering the same thing would prove nothing.
+     * same composition through both draws that remain after #738 retired the loading and error placeholders
+     * — the empty placeholder and the tree — asserting on each that exactly one node carries it, and that
+     * the draw really is the one intended: a marker that matched while the screen kept rendering the same
+     * thing would prove nothing.
      */
     @Test
     fun arrivalMarker_isCarriedByEveryDrawOfTheList_exactlyOnce() {
-        var state: ChannelListUiState by mutableStateOf(ChannelListUiState.Loading)
         var hostState: HostChannelListState by mutableStateOf(HostChannelListState())
         composeTestRule.setContent {
             PyrycodeMobileTheme {
-                ChannelListScreen(state = state, hostState = hostState, onEvent = {})
+                ChannelListScreen(hostState = hostState, onEvent = {})
             }
         }
 
-        // 1. Loading.
-        composeTestRule.onNode(hasText("Loading…")).assertExists()
-        assertMarkedOnce()
-
-        // 2. Error — matched on the carried message, so this is the error draw and not the loading one.
-        composeTestRule.runOnIdle { state = ChannelListUiState.Error("relay is down") }
-        composeTestRule.onNode(hasText("relay is down", substring = true)).assertExists()
-        assertMarkedOnce()
-
-        // 3. The empty placeholder: a loaded state with no host at all.
-        composeTestRule.runOnIdle {
-            state = ChannelListUiState.Empty(recentDiscussions = emptyList(), recentDiscussionsCount = 0)
-        }
+        // 1. The empty placeholder: no host at all.
         composeTestRule.onNode(hasText(string(R.string.channel_list_empty))).assertExists()
         assertMarkedOnce()
 
-        // 4. The tree — a host arrives, so the placeholder gives way to real rows.
+        // 2. The tree — a host arrives, so the placeholder gives way to real rows.
         composeTestRule.runOnIdle {
-            state = loaded()
             hostState =
                 HostChannelListState(
                     listOf(
@@ -409,20 +458,47 @@ class ChannelListScreenTest {
     fun emptyState_rendersPlaceholder_whenThereAreNoHosts() {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
-                ChannelListScreen(
-                    state =
-                        ChannelListUiState.Empty(
-                            recentDiscussions = emptyList(),
-                            recentDiscussionsCount = 0,
-                        ),
-                    hostState = HostChannelListState(),
-                    onEvent = {},
-                )
+                ChannelListScreen(hostState = HostChannelListState(), onEvent = {})
             }
         }
 
         composeTestRule
             .onNode(hasText(string(R.string.channel_list_empty)))
             .assertIsDisplayed()
+    }
+
+    /**
+     * The picker's visibility reads `workspacePickerServerId` straight off the tree's own state now that the
+     * route has no flat state to copy it into (#738), so a non-null target must be all it takes to draw —
+     * and a null one must still draw nothing.
+     */
+    @Test
+    fun workspacePicker_drawsExactlyWhenItsTargetIsSet() {
+        var target: String? by mutableStateOf(null)
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                CompositionLocalProvider(LocalWorkspacePickerRepository provides FakeConversationRepository()) {
+                    ChannelListScreen(
+                        hostState =
+                            HostChannelListState(
+                                hosts = listOf(entry(serverId = "pyrybox", displayName = "Pyrybox")),
+                                workspacePickerServerId = target,
+                            ),
+                        onEvent = { events += it },
+                    )
+                }
+            }
+        }
+
+        composeTestRule.onNode(hasText(PICKER_CREATE_ROW, substring = true)).assertDoesNotExist()
+
+        composeTestRule.runOnIdle { target = "pyrybox" }
+        composeTestRule.onNode(hasText(PICKER_CREATE_ROW, substring = true)).assertIsDisplayed()
+    }
+
+    private companion object {
+        // The picker sheet's own create row, matched as a substring so its trailing ellipsis need not be
+        // reproduced — the same handle the rung-3 create-workspace scenario holds it by.
+        const val PICKER_CREATE_ROW = "Create new folder under pyry-workspace"
     }
 }

@@ -2,8 +2,8 @@ package de.pyryco.mobile
 
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
-import androidx.compose.ui.test.onAllNodesWithContentDescription
-import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
@@ -17,6 +17,7 @@ import de.pyryco.mobile.data.crypto.PairedServerEntry
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
@@ -153,16 +154,23 @@ class StartupWorkspaceMigrationTest {
         launch()
     }
 
+    /**
+     * Neither screen yet: the Welcome copy is absent and so is the list itself.
+     *
+     * Keyed on the list's arrival marker since #738 retired the floating button this read before — and the
+     * marker is the stronger check here, because it is on the screen's root rather than on one control that
+     * only some draws carried.
+     */
     private fun assertPending() {
         compose.onNodeWithText("I already have pyrycode").assertDoesNotExist()
-        compose.onNodeWithContentDescription("New discussion").assertDoesNotExist()
+        compose.onNodeWithTag(CHANNEL_LIST_TEST_TAG).assertDoesNotExist()
     }
 
     private fun assertChannelList() {
         compose.waitUntil(5_000) {
-            compose.onAllNodesWithContentDescription("New discussion").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithTag(CHANNEL_LIST_TEST_TAG).fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithContentDescription("New discussion").assertIsDisplayed()
+        compose.onNodeWithTag(CHANNEL_LIST_TEST_TAG).assertIsDisplayed()
         compose.onNodeWithText("I already have pyrycode").assertDoesNotExist()
     }
 
