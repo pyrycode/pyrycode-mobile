@@ -25,11 +25,14 @@ hook is the first live caller of `registerPushToken`. So `""` is **no longer the
 [`registerPushToken`](remote-conversation-repository-workspace-and-push.md#registerpushtokentoken--the-device-concern-push-registration-359).
 
 **The list projection.** One `private val projection = MutableStateFlow<List<Conversation>?>(null)`
-(`null` = list not yet loaded); every cold read derives from it. It has **two writers** since
-[#347](../codebase/347.md): the `init` collector's authoritative full-replace on each `conversations`
-snapshot, **and** the two mutations' confirmed folds (an atomic CAS upsert via `upsertConversation`) —
-`createDiscussion`'s insert (#347) and `promote`'s in-place upsert ([#348](../codebase/348.md)). All go
-through `MutableStateFlow.update {}`, so they retry-merge rather than clobber — see
+(`null` = list not yet loaded); every cold read derives from it. Since [#721](#721-apply-workspace-label-updates-and-the-conversation_updated-split)
+it has **four writers**, all inside the single inbound collector or a caller coroutine it hands off to: the
+`init` collector's authoritative full-replace on each `conversations` snapshot; the two mutations' confirmed
+folds (an atomic CAS upsert via `upsertConversation`) — `createDiscussion`'s insert
+([#347](../codebase/347.md)) and `promote`'s in-place upsert ([#348](../codebase/348.md)); the unsolicited
+`conversation_updated` fold, which reuses that same `upsertConversation`; and `applyWorkspaceLabel`'s
+cwd-keyed relabel from `workspace_updated`. All go through `MutableStateFlow.update {}`, so they retry-merge
+rather than clobber — see
 [State & concurrency model](remote-conversation-repository-state-errors-and-handoff.md#state--concurrency-model). `promote` additionally **reads** `projection.value`
 (a lock-free snapshot) to resolve a conversation's existing cwd when its `workspace` argument is null. No
 parallel mutable state.
@@ -43,22 +46,59 @@ demultiplexes each envelope by `Envelope.type`:
 | `"conversations"` | Decode `MobileJson.decodeFromJsonElement<ConversationsPayload>(payload).toConversations()` (#316) → assign to `projection`. A **full-list snapshot** — both the reply to our request and any unsolicited server change-push arrive this way, so re-emission needs **no `in_reply_to` correlation**. Decode is wrapped in a per-envelope `try/catch` (a malformed snapshot is dropped, the collector survives). |
 | `"message"` | Decode `MobileJson.decodeFromJsonElement<MessagePayloadDto>(payload)` (#317) → key by `conversation_id` (**read off the DTO before mapping** — the domain `Message` carries none) → `toMessage(envelope, sessionId = "")`, then **two folds** off the one decoded DTO: (a) the strictly-greater-by-`timestamp` `lastMessages` preview fold ([#329](../codebase/329.md)); (b) an arrival-order append into the `threadByConversation` thread ([#313](../codebase/313.md)). Same per-envelope `try/catch` drop; **silent** (no payload logged, content may be sensitive). The singular live/echo `message`. See [`observeLastMessage`](#observelastmessageconversationid--the-live-last-message-preview-329) and [`observeMessages`](#observemessagesconversationid--the-live-thread-read-313) below. |
 | `"message_chunk"` | The `backfill_since` **response** body ([#313](../codebase/313.md)): `MobileJson.decodeFromJsonElement<MessageChunkPayloadDto>(payload)` → map **each** row via the same `toMessage(envelope, sessionId = "")` (one envelope `ts` covers every row) → append the whole batch into `threadByConversation` in one atomic `update`. Each row **self-routes** by its own `conversation_id` — no `in_reply_to` correlation. A single bad row drops the **whole chunk** in one `catch (IllegalArgumentException)`; silent. |
-| `"ack"` / `"conversation_created"` / `"conversation_updated"` / `"screen_snapshot"` | Correlated **success** reply to an outgoing request, **one shared arm** ([#346](../codebase/346.md) / [#347](../codebase/347.md) / [#348](../codebase/348.md) / [#375](../codebase/375.md)): `envelope.inReplyTo?.let { pendingRequests[it]?.complete(envelope.payload) }`. An `ack` payload is the empty `{}` a bare-`ack` caller (`sendMessage`) ignores; a `conversation_created` (`createDiscussion`) / `conversation_updated` (`promote`) payload is the **bare conversation object** the mutation decodes for its typed return; a `screen_snapshot` (`requestScreenSnapshot`, #375) payload is the **rendered-screen object** the read decodes for its `text`. The payload is handed verbatim to the waiting suspend, which decodes (or ignores) it **in the caller's coroutine** — so a malformed reply never throws inside this collector. An `inReplyTo` matching no pending entry (or null) is a no-op; `complete` is idempotent (duplicate reply harmless). `screen_snapshot` is **always** a correlated reply (no unsolicited snapshot push), so an unmatched one is the same harmless no-op; `conversation_updated` is also the server's **unsolicited broadcast** on change (no `inReplyTo`), which must stay a harmless no-op here — the authoritative `conversations` snapshot, not this delta, drives an unsolicited list refresh. |
+| `"ack"` / `"conversation_created"` / `"screen_snapshot"` | Correlated **success** reply to an outgoing request, **one shared arm** ([#346](../codebase/346.md) / [#347](../codebase/347.md) / [#375](../codebase/375.md)): `envelope.inReplyTo?.let { pendingRequests[it]?.complete(envelope.payload) }`. An `ack` payload is the empty `{}` a bare-`ack` caller (`sendMessage`) ignores; a `conversation_created` (`createDiscussion`) payload is the **bare conversation object** the mutation decodes for its typed return; a `screen_snapshot` (`requestScreenSnapshot`, #375) payload is the **rendered-screen object** the read decodes for its `text`. The payload is handed verbatim to the waiting suspend, which decodes (or ignores) it **in the caller's coroutine** — so a malformed reply never throws inside this collector. An `inReplyTo` matching no pending entry (or null) is a no-op; `complete` is idempotent (duplicate reply harmless). `screen_snapshot` and `conversation_created` are **always** correlated replies (no unsolicited push for either — the daemon never broadcasts a create), so an unmatched one is a harmless no-op. |
+| `"conversation_updated"` | Split into its own arm since [#721](#721-apply-workspace-label-updates-and-the-conversation_updated-split), because unlike the three types above this one has **two producers**: a frame whose `inReplyTo` matches a registered `pendingRequests` entry completes that waiter verbatim (the correlated reply to `promote`, #348 — unchanged); one that doesn't — no `inReplyTo`, or it matches no pending request — decodes via [#318](mobile-protocol-v2-wire-layer.md#application-payloads-decoded-on-top-of-envelope)'s `ConversationResponseDto.toConversation()` and folds into `projection` by the payload's own `id` through `upsertConversation`, decode-or-drop so a malformed push mutates nothing and the collector survives. |
+| `"workspace_updated"` | New arm since [#721](#721-apply-workspace-label-updates-and-the-conversation_updated-split): decodes `WorkspaceUpdatedPayloadDto` (`{path, label}`, see [mobile-protocol-v2-wire-layer.md](mobile-protocol-v2-wire-layer.md#workspace-label-pushes-721-a-new-dto-and-conversation_updateds-second-producer)) and calls `applyWorkspaceLabel(path, label)`, **unconditionally** whether or not `inReplyTo` is set — the record is identical either way, and nothing in this repository sends `rename_workspace` yet (#663 adds the sender and its completion together). Not capability-gated: a hostile daemon ignoring the negotiated set could reach the same label change through an ungated `conversations` snapshot, so gating this arm would only break the correlated half for no security gain. Decode-or-drop; malformed leaves the projection untouched and the collector alive. |
 | `"error"` | Correlated **failure** reply ([#346](../codebase/346.md)): `envelope.inReplyTo?.let { pendingRequests[it]?.completeExceptionally(mapError(envelope.payload)) }` — unblocks the waiter exceptionally with the mapped domain error. `mapError` **never throws** (a malformed payload yields a fallback exception), so the lone collector survives; `completeExceptionally` is idempotent and a no-op when no entry matches. |
-| anything else | **No-op** (intentional `else`, not a bug). `backfill_done` (`{delivered}`) needs no action — the `message_chunk` already delivered the history, the count is informational. **Unsolicited** single-row deltas (a server-pushed `conversation_created`/`conversation_updated` with no `inReplyTo` match) are caught by the success arm above and no-op there — merging them into the live projection is future work; the list refreshes on the next `conversations` snapshot. |
+| anything else | **No-op** (intentional `else`, not a bug). `backfill_done` (`{delivered}`) needs no action — the `message_chunk` already delivered the history, the count is informational. |
 
-> **Correlated reply vs unsolicited delta — a single-`Conversation` payload is handled two ways.**
+> **Correlated reply vs unsolicited delta — a single-`Conversation` payload is handled two ways (#721).**
 > `conversation_created` / `conversation_updated` are single-`Conversation` payloads mapped by
 > [#318](mobile-protocol-v2-wire-layer.md#application-payloads-decoded-on-top-of-envelope)'s
 > `ConversationResponseDto`, **not** #316's list mapper. When such a payload arrives as the **correlated
-> reply** to *our own* mutation request (matching `inReplyTo`), it routes through the success arm and the
+> reply** to *our own* mutation request (matching `inReplyTo`), it routes through its owning arm and the
 > mutation method decodes it + confirmed-folds it into the projection — `conversation_created` for
-> `createDiscussion` ([#347](../codebase/347.md), **landed**), `conversation_updated` for `promote`
-> ([#348](../codebase/348.md), **landed**). When the **same** payload arrives **unsolicited** (a promote/rename/archive made on *another*
-> device, no `inReplyTo` match), it is still a no-op here — merging an unsolicited delta into the live
-> projection is future work; the production list refreshes on the next `conversations` snapshot
-> (re-subscribe / reconnect). This is why the *read* path depends on **#316 only, not #318**: #318 entered
-> via the mutation slices.
+> `createDiscussion` ([#347](../codebase/347.md)), `conversation_updated` for `promote`
+> ([#348](../codebase/348.md)). When the **same** payload arrives **unsolicited** (a rename/archive made on
+> *another* device, no `inReplyTo` match), [#721](#721-apply-workspace-label-updates-and-the-conversation_updated-split)
+> folds it into the live projection by the payload's `id` via the same `upsertConversation` the correlated
+> mutations use — no duplicate row, since `upsertConversation` dedups by id. `conversation_created` has no
+> unsolicited half (the daemon never broadcasts a create), so it stays correlated-only. This is why the
+> *read* path now depends on **#318 for both directions**, not #316 alone.
+
+### #721 — apply workspace-label updates, and the `conversation_updated` split
+
+Before [#721](../codebase/721.md), `RemoteConversationRepository.onInbound` dropped `workspace_updated`
+outright (no arm, no constant) and routed `conversation_updated` through the shared correlation-only success
+arm above, which discarded any frame without a matching `pendingRequests` entry — so a workspace renamed or
+a conversation created on another client reached this phone only on the next full `conversations` snapshot,
+even though #720 had already landed `Conversation.workspaceLabel` and `workspace_label` on both DTOs.
+
+- **`applyWorkspaceLabel(path, label)`** is a direct sibling of `updateCurrentSessionId`: `projection.update
+  { current?.map { if (it.cwd == path) it.copy(workspaceLabel = label) else it } }`. A `null`
+  (pre-first-snapshot) projection stays `null` — a push with no rows to label must not invent one. A path
+  matching no row is a genuine no-op (`map` returns an element-equal list, so `StateFlow` conflation
+  suppresses re-emission). Archived rows are included — archiving a conversation does not un-name its
+  folder — and a `String` label replaces the stored one while `null` clears it. `MutableStateFlow.update` is
+  load-bearing, not stylistic: `projection` is written from caller coroutines too (`upsertConversation` via
+  the correlated mutations), so a `.value = …` read-modify-write would open a real check-then-mutate window.
+- **Host- and path-scoped by construction.** Each `RemoteConversationRepository` instance owns one
+  connection's `projection`, so two hosts holding byte-identical `cwd` strings or conversation ids cannot
+  cross-contaminate — pinned by a two-repository test over two pumps, not a runtime check. Path comparison
+  is **exact-bytes**: no trim, normalization or filesystem access, matching `updateCurrentSessionId`'s
+  existing posture — the daemon treats two paths differing by a trailing separator as distinct workspaces.
+- **Reconnect recovery, not replay.** Neither `workspace_updated` nor an unsolicited `conversation_updated`
+  carries an `event_id`, so neither rides the [replay cursor](replay-cursor.md); a client disconnected during
+  a rename or a clear reads the current label off its next `conversations` snapshot, which stays
+  authoritative (see the malformed-`conversations`-drop row and the `queue_state` full-replace precedent
+  elsewhere in this document for the same "next snapshot wins" shape).
+- **A known pre-existing clobber becomes reachable by a second route, not a new one.**
+  `ConversationResponseDto.toConversation()` maps `currentSessionId`/`sessionHistory`/`isSleeping` to
+  placeholders (true on the correlated arm since #348); the unsolicited fold now reaches the same mapper.
+  It stays unreachable in practice because both `conversation_updated` push producers (host-side `pyry
+  channel new`, and one-shot auto-naming) target conversations with no live session id yet — a future
+  producer that fires mid-session would make `ThreadUiState.currentSessionId` go blank and is the follow-up
+  to watch for, not a defect to guard against speculatively today.
 
 ## `observeConversations(filter)` — the live method
 

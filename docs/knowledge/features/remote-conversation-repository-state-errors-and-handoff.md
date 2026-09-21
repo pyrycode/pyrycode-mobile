@@ -22,21 +22,27 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
   it `reset()`s the coordinator's process-scoped [`ReplayCursor`](replay-cursor.md) (the **same single
   writer** as `recordReplayCursor`, so reset and record never race within a connection) and `tryEmit`s a
   `ReplayGap` on `liveSessionEvents`.
-- **Two-or-more writers per projection, still data-safe (#346 / #347 / #348).** The mutations relaxed
-  each projection from single-writer to **collector + confirmed fold(s)**: `sendMessage` (#346) is the
-  second writer of `lastMessages` and `threadByConversation`; `createDiscussion` (#347) and `promote`
-  ([#348](../codebase/348.md)) both write the list `projection` via `upsertConversation`. Data-safety
+- **Two-or-more writers per projection, still data-safe (#346 / #347 / #348 / #721).** The mutations
+  relaxed each projection from single-writer to **collector + confirmed fold(s)**: `sendMessage` (#346) is
+  the second writer of `lastMessages` and `threadByConversation`; `createDiscussion` (#347) and `promote`
+  ([#348](../codebase/348.md)) both write the list `projection` via `upsertConversation`. [#721](remote-conversation-repository-reads-and-thread-store.md#721-apply-workspace-label-updates-and-the-conversation_updated-split)
+  adds two more writers **inside the collector itself**: an unsolicited `conversation_updated` reuses
+  `upsertConversation`, and `workspace_updated` writes through the new `applyWorkspaceLabel` fold. Data-safety
   holds in every case: each write goes through an atomic `MutableStateFlow.update {}` (CAS) over a **pure**
   fold (`recordLastMessage`'s strictly-greater rule / `appendMessages`'s id-dedup / `upsertConversation`'s
-  id-upsert), so concurrent writes from the caller coroutines retry-merge rather than clobber. For
-  `projection` the collector's full-replace stays authoritative and convergent; the only race — a stale
-  in-flight snapshot landing after the fold and transiently dropping/reverting the row — is harmless (the
-  server's post-mutation snapshots include it) and is accepted under Evidence-Based Fix Selection.
-  `promote` additionally **reads** `projection.value` (a lock-free snapshot) to resolve the cwd; the
-  read-then-upsert pair is intentionally **not** atomic-as-a-pair — the resolved cwd is request data, not
-  a guarded invariant, so a concurrent snapshot landing between only changes which authoritative cwd the
-  request carries (benign — no TOCTOU of consequence). The KDoc on every affected field was updated to
-  name its writers (and, for `projection`, `promote`'s read).
+  id-upsert / `applyWorkspaceLabel`'s cwd-keyed relabel), so concurrent writes from the caller coroutines
+  retry-merge rather than clobber. For `projection` the collector's full-replace stays authoritative and
+  convergent; the only race — a stale in-flight snapshot landing after a fold and transiently
+  dropping/reverting the row — is harmless (the server's post-mutation snapshots include it) and is
+  accepted under Evidence-Based Fix Selection. `promote` additionally **reads** `projection.value` (a
+  lock-free snapshot) to resolve the cwd; the read-then-upsert pair is intentionally **not**
+  atomic-as-a-pair — the resolved cwd is request data, not a guarded invariant, so a concurrent snapshot
+  landing between only changes which authoritative cwd the request carries (benign — no TOCTOU of
+  consequence). `#721`'s unsolicited-`conversation_updated` arm reads `pendingRequests[id]` after a caller
+  may have already removed its own entry in `finally`; a duplicate reply arriving in that window is treated
+  as unsolicited and folds as an idempotent re-upsert of the same record by the same id — benign by
+  `upsertConversation`'s dedup, not a new race. The KDoc on every affected field was updated to name its
+  writers (and, for `projection`, `promote`'s read).
 - **The `pendingRequests` registry (#346)** (`ConcurrentHashMap<Long, CompletableDeferred<JsonElement>>`)
   tracks awaited replies: an in-flight mutation request registers a deferred keyed by its
   envelope id, the collector completes it on the correlated `ack`/`error`, and the awaiting caller
@@ -70,7 +76,10 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
 | Malformed `message_chunk` (any one row bad) | the **whole chunk** dropped in one `catch (IllegalArgumentException)` (decode + map-all under one `try`); collector survives; thread unchanged ([#313](../codebase/313.md)) |
 | `pump.send` returns `false` (session not `Open`) | request (`list_conversations` or `backfill_since`) silently not sent (no throw); the projection stays empty until a later subscribe succeeds or a push arrives — the live stream still fills the thread, and the next subscribe re-issues |
 | `pump.inbound` completes (teardown) | collector completes; last projections retained; live `StateFlow` collectors simply stop receiving updates (do not complete) |
-| Unknown `Envelope.type` | no-op — `backfill_done` (informational) falls to the intentional `else`; `messages` (a never-defined type) stays ignored. **Unsolicited** single-row deltas (a `conversation_created`/`conversation_updated` with no `inReplyTo` match) are caught by the success arm and no-op there. A *correlated* `conversation_created` / `conversation_updated` is **not** a no-op — it routes through the success arm (#347 / #348) |
+| Unknown `Envelope.type` | no-op — `backfill_done` (informational) falls to the intentional `else`; `messages` (a never-defined type) stays ignored. `conversation_created` has no unsolicited half (the daemon never broadcasts a create), so an unmatched one is a harmless no-op in its own correlated-only arm |
+| Malformed `conversation_updated` payload, **unsolicited** (no `in_reply_to`, or matching no pending request, #721) | decode via `ConversationResponseDto.toConversation()` throws `IllegalArgumentException` (⊃ `SerializationException`) before any fold; envelope **dropped**; collector survives; `projection` unchanged. A *correlated* `conversation_updated` (matches a pending request) is **not** decoded by the collector at all — the payload is handed verbatim to the waiter, which decodes in the caller's coroutine, so it can never throw inside this collector |
+| Malformed `workspace_updated` payload — missing/wrong-typed `path` (#721) | `WorkspaceUpdatedPayloadDto` decode throws `IllegalArgumentException` (⊃ `SerializationException`), caught before `applyWorkspaceLabel` runs; envelope **dropped**; collector survives; `projection` unchanged; a later valid `workspace_updated` still applies. Neither `path` nor `label` is logged on this or any other branch |
+| `workspace_updated` / unsolicited `conversation_updated` whose `path` / `id` matches no row (#721) | no-op by `StateFlow` conflation (the fold returns an element-equal list) — not an error; nothing re-emits |
 | `sendMessage` — server `error` `conversation.not_found` (#346) | `IllegalArgumentException` (fake parity); **no projection mutated** (the confirmed-insert runs only after a successful `ack`) |
 | `sendMessage` — any other server `error` (#346) | `RelayErrorException(code, retryable, message)` — structured for ViewModel branching; no projection mutated |
 | `sendMessage` — `pump.send` returns `false` (not `Open`, #346) | `IllegalStateException` from `sendAndAwaitReply`'s `check`; no request awaited, no projection mutated |
@@ -131,10 +140,12 @@ The downstream DI / connection-coordinator work, and where it landed:
 The live binding relies on the coordinator's [Open gate](relay-repository-coordinator.md#the-single-connection-source-and-the-open-gated-currentrepository-421--493)
 to prevent the initial list request from being lost during handshaking (#421/#493).
 
-Open hand-off items: **unsolicited `conversation_created`/`conversation_updated` delta-merge** (the *correlated*-reply case
-landed with #347/#348, but a server-pushed single-row delta with no `inReplyTo` match is still a no-op —
-the list refreshes on the next `conversations` snapshot; merging deltas live remains future work);
-**`isSleeping`/session enrichment** in the list (arrives via the detail/message read paths, not here).
+Open hand-off items: **`conversation_created`** stays correlated-reply-only by design — the daemon never
+broadcasts a create, so there is no unsolicited case to merge (the *correlated* half landed with #347); the
+matching `conversation_updated` item is **closed**, since [#721](remote-conversation-repository-reads-and-thread-store.md#721-apply-workspace-label-updates-and-the-conversation_updated-split)
+now folds an unsolicited `conversation_updated` into the live projection by id instead of waiting for the
+next snapshot. **`isSleeping`/session enrichment** in the list remains open (arrives via the detail/message
+read paths, not here).
 
 The earlier `sendMessage` hand-offs are implemented:
 
