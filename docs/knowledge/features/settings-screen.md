@@ -163,5 +163,6 @@ Both previews must pass `themeMode` and `onSelectTheme` explicitly since #87 dro
 - About sub-screen (since #271): [About screen](about-screen.md) — the extracted Version / Open source / Privacy / License rows now live there, reached via the `onOpenAbout` entry
 - Figma node: `17:2` — https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=17-2
 - Phase 1 stub it replaces: ticket #16 (`SettingsPlaceholder` in `MainActivity`)
-- Entry point: [Channel list screen](channel-list-screen.md) — settings-gear `IconButton` in the `TopAppBar`
+- Entry point: [Channel list screen](channel-list-screen.md) — settings entry on the list's own bar (its
+  `TopAppBar` until #737 replaced it with that bar)
 - Sibling back-nav screen pattern: [Discussion list screen](discussion-list-screen.md) — same `TopAppBar` + `IconButton(onBack)` shape

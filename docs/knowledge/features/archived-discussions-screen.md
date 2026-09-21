@@ -217,11 +217,11 @@ Plurals deferred: `"0 / 1 / 3 archived"` are all grammatical without inflection,
 
 ## Configuration / usage
 
-Mounted at `Routes.ARCHIVED_DISCUSSIONS` (`"archived_discussions"`) in [`PyryNavHost`](navigation.md). Sole entry point: the [Settings screen](settings-screen.md) Storage section's "Archived discussions" row. No deep-link, no back-stack policy beyond the default `popBackStack()` on `BackTapped`.
+Mounted at `Routes.ARCHIVED_DISCUSSIONS` (`"archived_discussions"`) in [`PyryNavHost`](navigation.md). Entry points: the [Settings screen](settings-screen.md) Storage section's "Archived discussions" row, and, since #737, the archive entry on the [channel list](channel-list-screen.md)'s own bar — same argument-free route, two doors. No deep-link, no back-stack policy beyond the default `popBackStack()` on `BackTapped`.
 
 Manual verification path (post-#177):
 
-1. `./gradlew installDebug` → open app → tap settings gear in the channel-list `TopAppBar` → scroll Settings to **Storage** → tap **Archived discussions**.
+1. `./gradlew installDebug` → open app → tap the archive entry on the channel list's own bar (or tap the settings entry → scroll Settings to **Storage** → tap **Archived discussions**).
 2. The seeded archived discussion (`seed-discussion-archived`, lastUsedAt `2026-04-15`) renders under the **Discussions** tab (default) as an `ArchiveRow`: 40dp avatar + `titleMedium` headline + `bodySmall` "Archived 1mo ago"-shaped subtitle + trailing 40dp restore `IconButton`. No row-level alpha dimming. Both tab labels show counts (`Channels (0)`, `Discussions (1)`).
 3. Tap the **Channels** tab → "No archived channels" centered empty body; tab header stays visible, count badges unchanged.
 4. Tap back to **Discussions** → row reappears. Tap the trailing restore icon-button (one tap, no long-press) → row animates out, `Snackbar` appears at the bottom reading `Restored Untitled discussion` (or the configured name if non-null), Discussions tab body shows "No archived discussions".

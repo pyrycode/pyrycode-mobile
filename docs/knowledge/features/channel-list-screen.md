@@ -1,7 +1,8 @@
 # ChannelListScreen
 
-Stateless `(state, hostState, onEvent)` composable that renders a Material 3 `Scaffold` with a `TopAppBar`
-(leading Pyrycode logo + app-name title + trailing settings gear, #68) and a manually-composed FAB (#22 →
+Stateless `(state, hostState, onEvent)` composable that renders a Material 3 `Scaffold` with the list's own
+top bar (a settings entry and an archive entry above a rule, #737 — see
+[The list's own top bar](#the-lists-own-top-bar-737) below) and a manually-composed FAB (#22 →
 \#221) above a single-`LazyColumn` conversation tree (#731): a Channels section and a Chats section, each
 holding host rows, their workspace rows and those workspaces' conversation rows, drawn from `hostState`
 (#729's `HostChannelListEntry.channelGroups` / `chatGroups`) using the row composables from
@@ -16,7 +17,8 @@ Package: `de.pyryco.mobile.ui.conversations.list` (`app/src/main/java/de/pyryco/
 
 ## What it does
 
-Wraps its body in a `Scaffold` whose `topBar` is a Material 3 `TopAppBar` (rendered in **every** state) and
+Wraps its body in a `Scaffold` whose `topBar` is the file-private `ChannelListTopBar` (rendered in **every**
+state — see [The list's own top bar](#the-lists-own-top-bar-737) below) and
 whose `floatingActionButton` slot hosts the file-private `ChannelListFab` (rendered only when
 `state is Loaded || state is Empty`, #22; a manually-composed `Surface` rather than the M3 widget, so an
 outer `combinedClickable` can own tap + long-press — see [Manual FAB](#channellistfab--manually-composed-surface-not-m3-floatingactionbutton-221)).
@@ -32,8 +34,10 @@ The body branches on `hostState.hosts`, not on `state`, now that `hostState` car
   two-section tree. See [Conversation tree (#731)](#conversation-tree-731).
 
 The `state` compatibility placeholders (loading/error/empty copy, `workspacePickerVisible`) and the FAB's
-visibility gate are otherwise untouched from their pre-#731 shape; #732 retires `state`, the top bar and the
-button together, along with the now-unreachable `Routes.DISCUSSION_LIST` / `DiscussionListScreen`.
+visibility gate are otherwise untouched from their pre-#731 shape; #738 retires `state` and the button
+together, along with the now-unreachable `Routes.DISCUSSION_LIST` / `DiscussionListScreen`. The generic top
+app bar #732 was going to retire is already gone — #737 replaced it with the list's own bar, split off as the
+first of #732's two slices.
 
 ## Shape
 
@@ -43,13 +47,15 @@ sealed interface ChannelListEvent {
     data class TreeRowTapped(val target: HostConversationTarget) : ChannelListEvent
     data class TreeFoldToggled(val key: TreeFoldKey) : ChannelListEvent
     data object SettingsTapped : ChannelListEvent
+    /** The list's own archive entry — the same destination Settings' archived-discussions row opens (#737). */
+    data object ArchiveTapped : ChannelListEvent
     data object CreateDiscussionTapped : ChannelListEvent
     data object LongPressFab : ChannelListEvent
     data class WorkspacePicked(val workspace: String) : ChannelListEvent
     data object WorkspacePickerDismissed : ChannelListEvent
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChannelListScreen(
     state: ChannelListUiState,
@@ -57,11 +63,14 @@ fun ChannelListScreen(
     onEvent: (ChannelListEvent) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    /* … Scaffold { TopAppBar, ChannelListFab } wrapping either the placeholder branch or
+    /* … Scaffold { ChannelListTopBar, ChannelListFab } wrapping either the placeholder branch or
          ConversationTree(hostState, onEvent, bodyModifier); WorkspacePicker host as a
          Scaffold sibling, unchanged since #221 … */
 }
 ```
+
+`ExperimentalMaterial3Api` dropped from the file's `@OptIn` in #737 along with the `TopAppBar` import — the
+list's own bar is a plain `Column`/`Row`/`IconButton`/`HorizontalDivider`, none of them experimental.
 
 `RowTapped` and `RecentDiscussionsTapped` are gone — the two composables that emitted them
 (`ConversationRow` at the top level, `SeeAllDiscussionsRow`) no longer exist in this file, and an event
@@ -182,13 +191,52 @@ loading/empty/error placeholders and `workspacePickerVisible`; `hostState` carri
 the collapsed nodes and the last-opened target. The canonical CLAUDE.md shape (hoist state to the ViewModel;
 UI receives state + `onEvent`) is unchanged, just with a second state parameter.
 
-### `Scaffold` + `TopAppBar` chrome (#21) + `ChannelListFab` (#22 → #221)
+### The list's own top bar (#737)
 
-Unchanged by #731. The screen owns its own chrome rather than relying on a shared `TopAppBar` slot threaded
-through the NavHost; the outer `Scaffold` in `MainActivity` carries system-bar insets only. The `TopAppBar` is
-the small/leading-aligned Material 3 default, with no scroll behaviour or navigation icon. The FAB sits at
-default `FabPosition.End`; the conditional `if (state is Loaded || state is Empty)` lives inside the slot's
-composable lambda because `Scaffold.floatingActionButton` is a non-nullable `@Composable () -> Unit`.
+Replaced the M3 `TopAppBar` #21 gave the screen — the design retires the app's generic top app bar (with it,
+the app name and the Pyry logo, #68) and gives the list its own chrome: a settings entry at the leading
+content edge, an archive entry beside it, and a one-pixel rule closing the bar. The screen still owns its own
+chrome rather than relying on a shared `TopAppBar` slot threaded through the NavHost; the outer `Scaffold` in
+`MainActivity` carries system-bar insets only.
+
+The file-private `ChannelListTopBar(onEvent)` is a `Column`: a `Row` of two 48dp `IconButton`s (`Icons.Default.Settings`
+emitting `SettingsTapped`, `Icons.Default.Archive` emitting `ArchiveTapped`, each a 24dp `Icon` tinted
+`colorScheme.primary` with its own `contentDescription`), then a `HorizontalDivider` in `outlineVariant` held
+back to the tree's existing `SECTION_RULE_ALPHA` — the same treatment the tree's between-sections rule already
+gives the design's identically-styled rectangle.
+
+**It lives in the `Scaffold`'s `topBar` slot, not the tree's scroll container**, so it draws above the
+`hostState.hosts` branch and is carried by **all four** of the screen's draws — the loading and error texts,
+the empty placeholder and the assembled tree — without that branch being touched. This is what makes the
+"bar on every draw" requirement fall out of the structure rather than needing to be re-proven per state.
+
+**Geometry.** Figma's glyphs are 24dp with centres 32dp and 84dp from the screen edge, a rule 20dp below them
+and 28dp of air above the first section header. Touch needs 48dp (the same minimum `TreeRowMinHeight` holds
+the tree rows to), and wrapping a 24dp glyph in a 48dp `IconButton` adds `BarTouchSlack = (48dp − 24dp) / 2 =
+12dp` of slack on every side of it — so each of the design's offsets is taken *less that slack*
+(`BarTopGap = 24dp − 12dp`, `BarRuleGap = 20dp − 12dp`), which lands both glyph centres exactly where the
+design puts them while giving each entry a full 48dp touch target. The row is inset by `TreeGutter -
+BarTouchSlack` and its two entries spaced by `BarEntryGap = 4.dp` (52dp between centres, less the two 48dp
+targets). A 48dp target does not have to move a 24dp glyph off its design position — for a glyph in a
+fixed-size target this is arithmetic, not the trade-off the tree rows' 28/28/24 → 48dp note describes.
+
+**Known spacing gap (verifier SHOULD-FIX, not blocking, unresolved at merge).** `BarBottomGap`, the
+`HorizontalDivider`'s bottom padding, is `28.dp` — but `TreeSectionHeader` carries its own `padding(top =
+12.dp)`, so the first `Channels` header actually sits **40dp** below the rule, not the design's 28dp. The file
+already solves this same relationship correctly for the *between-sections* rule (`TreeSectionRuleBottomGap =
+16.dp` + the header's own 12dp = 28dp) — the fix here is the same shape, `BarBottomGap = 16.dp`. Worth taking
+before #738 builds more chrome on this same rule.
+
+**Insets.** No window insets of its own, unlike the `TopAppBar` it replaced. M3's `Scaffold` gives the body a
+top padding equal to the measured `topBar` height and leaves the window inset to the bar itself; the retired
+`TopAppBar` applied `TopAppBarDefaults.windowInsets` on top of the status-bar padding `MainActivity`'s outer
+`Scaffold` already applies to the whole `PyryNavHost` — a doubled status-bar inset that went unnoticed until
+this replacement quietly removed it. Worth checking before the same `TopAppBar` → plain-`topBar` swap is made
+on a screen whose outer `Scaffold` isn't already padding for it.
+
+The FAB sits at default `FabPosition.End`; the conditional `if (state is Loaded || state is Empty)` lives
+inside the slot's composable lambda because `Scaffold.floatingActionButton` is a non-nullable
+`@Composable () -> Unit`.
 
 #### `ChannelListFab` — manually-composed `Surface`, not M3 `FloatingActionButton` (#221)
 
@@ -233,8 +281,10 @@ VM: `is ChannelListEvent.TreeRowTapped -> vm.onHostRowTapped(event.target)` and
 lookup, because the row already carries its own host. This is the wrong-host fix #731 landed with the render:
 before it, every row tap (including rows this tree would draw from a second host) resolved through
 `destinations.selectedServerId()`, one host for the whole screen. `ChannelListEvent.SettingsTapped` still
-navigates to `Routes.SETTINGS`; the `RecentDiscussionsTapped` branch that navigated to `Routes.DISCUSSION_LIST`
-is gone with the event. The FAB paths (`CreateDiscussionTapped`, `LongPressFab`, `WorkspacePicked`,
+navigates to `Routes.SETTINGS`; `ChannelListEvent.ArchiveTapped` navigates to `Routes.ARCHIVED_DISCUSSIONS`
+(#737) — the same argument-free route Settings' `onOpenArchivedDiscussions` already opens, one destination
+reached by two doors rather than a second route. The `RecentDiscussionsTapped` branch that navigated to
+`Routes.DISCUSSION_LIST` is gone with the event. The FAB paths (`CreateDiscussionTapped`, `LongPressFab`, `WorkspacePicked`,
 `WorkspacePickerDismissed`) are unchanged and still resolve through `destinations.selectedServerId()` /
 `pickHostWorkspace` / `dismissHostWorkspacePicker`, since the FAB has no per-row host to read from.
 `Routes.DISCUSSION_LIST` and `DiscussionListScreen` stay in the graph, unreachable — removing them is out of
@@ -248,16 +298,22 @@ screen subscriptions.
 
 ## Configuration
 
-- **Dependencies:** `androidx.lifecycle:lifecycle-runtime-compose` (catalog: `androidx-lifecycle-runtime-compose`) for `collectAsStateWithLifecycle`. **Koin compose:** `org.koin.androidx.compose.koinViewModel`. **Icons:** `androidx.compose.material:material-icons-core` — `Icons.Default.Settings` / `Icons.Default.Add`; don't reach for `material-icons-extended` for single-glyph needs.
+- **Dependencies:** `androidx.lifecycle:lifecycle-runtime-compose` (catalog: `androidx-lifecycle-runtime-compose`) for `collectAsStateWithLifecycle`. **Koin compose:** `org.koin.androidx.compose.koinViewModel`. **Icons:** `androidx.compose.material:material-icons-core` — `Icons.Default.Settings` / `Icons.Default.Add` / `Icons.Default.Archive` (#737, matched to the design's `box-archive-solid` FontAwesome glyph rather than vendoring a drawable, the same precedent the tree rows set); don't reach for `material-icons-extended` for single-glyph needs.
 - **Strings added in #731:** `R.string.chats_section_header` ("Chats") and `R.string.unnamed_host`
   ("Unnamed host"). **Strings retired in #731:** `recent_discussions_section_header`,
   `see_all_discussions_label`, `cd_see_all_discussions` — deleted from `res/values/strings.xml` alongside the
   section they described.
-- **Strings retained:** `R.string.app_name`, `cd_open_settings`, `cd_new_discussion`,
-  `cd_long_press_fab_pick_workspace`, `channel_list_empty`, `cd_pyrycode_logo`, `channels_section_header`,
-  `untitled_discussion` (reused by both the tree's conversation fallback and the pre-existing discussion-row
-  fallback).
-- **Drawables:** `R.drawable.ic_pyry_logo` (since #68).
+- **Strings added in #737:** `R.string.cd_open_archive` ("Open archive") — the list's own archive entry,
+  deliberately distinct from the Archived screen's own `archived_title` and from Settings'
+  `archived_discussions_settings_row` so no existing device-suite matcher collides with it. **Strings retired
+  in #737:** `cd_pyrycode_logo` — its only consumer was the retired top app bar's logo.
+- **Strings retained:** `R.string.app_name` (still the manifest label; no longer rendered on this screen since
+  #737), `cd_open_settings` (carried forward verbatim onto the new settings entry so
+  `InteractiveStreamE2ETest`'s `CD_OPEN_SETTINGS` mirror keeps matching), `cd_new_discussion`,
+  `cd_long_press_fab_pick_workspace`, `channel_list_empty`, `channels_section_header`, `untitled_discussion`
+  (reused by both the tree's conversation fallback and the pre-existing discussion-row fallback).
+- **Drawables:** `R.drawable.ic_pyry_logo` (since #68) — no longer used on this screen since #737 retired the
+  logo along with the old bar; its only remaining consumer is [`WelcomeScreen`](welcome-screen.md).
 
 ## Preview
 
@@ -271,8 +327,11 @@ Three `@Preview` composables (re-cut in #731 from the prior six flat/discussion 
   two sections, host containers, workspace rows, one collapsed host, one selected conversation row.
 - `ChannelListScreenTreeDarkPreview` — same data, dark theme (`uiMode = Configuration.UI_MODE_NIGHT_YES`).
 - `ChannelListScreenEmptyPreview` (`@Preview(name = "No hosts — Light", …)`) — `hostState = HostChannelListState()`
-  (no hosts), `state = ChannelListUiState.Empty(...)`. Renders the TopAppBar above the centred empty-state copy
-  and the FAB — the one placeholder path #731 retains.
+  (no hosts), `state = ChannelListUiState.Empty(...)`. Renders the list's own bar above the centred empty-state
+  copy and the FAB — the one placeholder path #731 retains.
+
+All three previews render the list's own bar since #737 and were compared against the Figma screenshot of
+node `133-259` before that PR.
 
 `Loading` and `Error` are still not previewed — transient placeholders, unchanged rationale from #45.
 
@@ -305,9 +364,15 @@ Three `@Preview` composables (re-cut in #731 from the prior six flat/discussion 
   `assertIsSelected` / `assertIsNotSelected` (a semantics read, not a colour read); each row carries its
   section's test tag; a tree far taller than the viewport reaches its last row via
   `performScrollToNode(hasScrollAction())`; a nameless host and a nameless conversation render their fallback
-  labels; and the retained chrome tests (`TopAppBar` title + settings gear, FAB tap, no-hosts placeholder)
-  keep passing. Navigation itself is not re-proven here — the scripted device gate drives tap-to-thread end to
-  end.
+  labels; and the retained chrome tests (FAB tap, no-hosts placeholder) keep passing.
+  `listBar_drawsBothEntriesAndNoneOfTheRetiredChrome_onEveryDraw` (#737) walks one composition through all
+  four draws — loading, error, the empty placeholder and the tree — identifying each by its own distinguishing
+  copy before asserting both bar entries `assertIsDisplayed` and the app name / logo description
+  `assertDoesNotExist`; a bar placed inside the tree's scroll container would have passed on the loaded draw
+  alone and vanished on the three placeholders, which is the mistake this walk exists to catch.
+  `archiveEntry_emitsArchiveTapped` (#737) guards the new event, mirroring the unchanged
+  `settingsGear_emitsSettingsTapped` that guards `cd_open_settings` surviving. Navigation itself is not
+  re-proven here — the scripted device gate drives tap-to-thread end to end.
 
 ## Related
 
@@ -328,16 +393,20 @@ Three `@Preview` composables (re-cut in #731 from the prior six flat/discussion 
   `docs/specs/architecture/162-channel-list-discussion-preview-row-last-message.md`,
   `docs/specs/architecture/221-channel-list-fab-long-press-workspace-picker.md`,
   `docs/specs/architecture/730-mobile-tree-rows.md`,
-  `docs/specs/architecture/731-assemble-conversation-tree.md`
+  `docs/specs/architecture/731-assemble-conversation-tree.md`,
+  `docs/specs/architecture/737-list-settings-archive-bar.md`
 - Upstream: [ChannelListViewModel](./channel-list-viewmodel.md) (`hostState` producer — fold/selection state,
   `onHostRowTapped`, `onFoldToggled`, `sendHostDiscussion`; compatibility `state` producer + `onEvent` reducer
   + `navigationEvents`), [Tree rows](#tree-rows-730) (`TreeSectionHeader` / `TreeHostRow` / `TreeWorkspaceRow`
   / `TreeConversationRow`, #730), [`HostWorkspaceGroup`](channel-list-viewmodel-projection.md) (#729's
   workspace projection this screen iterates), [ConversationAvatar](./conversation-avatar.md),
   [WorkspacePicker](./workspace-picker.md), [Navigation](./navigation.md), [Dependency injection](./dependency-injection.md)
-- Downstream: #732 (removes the top bar, the FAB and the compatibility `ChannelListUiState` placeholders this
-  slice deliberately kept; adds the section-header and host-row add controls), #668 (indicator-pair live
-  accuracy, conversation-row unread/activity state), #665 (conversation-row edit pencil), #642 (host-row edit
-  control), #664 (add-workspace content behind #732's control), #675 (disconnected-host repair control), #154
-  / Phase 3 Settings / Phase 4 items predating #731 remain as recorded in
-  [`../codebase/`](../codebase/) history.
+- Downstream: #737 (done — draws the list's own settings + archive bar in the `topBar` slot this section
+  describes; #740 files the still-open follow-up, a rung-3 scenario reaching Archived through the list's own
+  archive entry rather than Settings'), #738 (the remaining half of #732's split — retires the FAB and the
+  compatibility `ChannelListUiState` placeholders this slice deliberately kept; adds the section-header and
+  host-row add controls), #715 (rebinds the archive entry to a specific host instead of the unscoped
+  `Routes.ARCHIVED_DISCUSSIONS`), #668 (indicator-pair live accuracy, conversation-row unread/activity state),
+  #665 (conversation-row edit pencil), #642 (host-row edit control), #664 (add-workspace content behind #738's
+  control), #675 (disconnected-host repair control), #154 / Phase 3 Settings / Phase 4 items predating #731
+  remain as recorded in [`../codebase/`](../codebase/) history.
