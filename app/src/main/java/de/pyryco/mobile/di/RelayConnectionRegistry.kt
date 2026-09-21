@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 
@@ -85,6 +86,30 @@ class RelayConnectionRegistry(
 
     @Synchronized
     fun connectionFor(serverId: String): RelayConnectionBundle? = entries[serverId]?.second
+
+    /** Observe only the saved credentials, including replacement keys/tokens after re-pairing. */
+    internal fun pairingStatus(record: PairedServer): Flow<ConnectionStatus?> =
+        hosts.flatMapLatest {
+            val bundle = synchronized(this) { entries[record.serverId]?.takeIf { it.first == record }?.second }
+            flow {
+                if (bundle == null) {
+                    emit(null)
+                } else {
+                    var initial = true
+                    bundle.coordinator.connectionStatus.collect { status ->
+                        val retry = initial && (status.relay == RelayLinkStatus.DaemonAbsent || status.relay == RelayLinkStatus.Offline)
+                        initial = false
+                        if (retry) {
+                            // Subscribe before retry; the previous attempt's terminal status is stale.
+                            retryHost(record.serverId, bundle)
+                            emit(null)
+                        } else {
+                            emit(status)
+                        }
+                    }
+                }
+            }
+        }
 
     /** Exact host routing shares the removal lock; selection never participates. */
     @Synchronized

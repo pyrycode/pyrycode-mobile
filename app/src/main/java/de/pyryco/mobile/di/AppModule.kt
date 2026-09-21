@@ -34,6 +34,7 @@ import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.thread.LiteralScreenViewModel
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
+import de.pyryco.mobile.ui.onboarding.PairCodeViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerViewModel
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
 import de.pyryco.mobile.ui.settings.SettingsViewModel
@@ -103,6 +104,10 @@ val appModule =
         // whether this facade or the Fake wins the ConversationRepository binding.
         single { StableConversationRepository(get<RelayConnectionRegistry>().currentRepository) }
         viewModel { ScannerViewModel() }
+        viewModel {
+            val registry = get<RelayConnectionRegistry>()
+            PairCodeViewModel(get(), registry, registry::pairingStatus)
+        }
         viewModel { ChannelListViewModel(get(), get(), get()) }
         viewModel { DiscussionListViewModel(get(), get()) }
         viewModel {
