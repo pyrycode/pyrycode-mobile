@@ -1,6 +1,6 @@
 # Pairing confirm gate
 
-The **security checkpoint of the QR-pairing flow** ([#343](../codebase/343.md)) — the mobile half of
+The **security checkpoint of QR and manual pairing** ([#343](../codebase/343.md)) — the mobile half of
 the QR trust-on-first-use MITM control. Structural QR validity (proven by the
 [Pairing payload parser](pairing-payload-parser.md), #320) shows the scanned payload is *well-formed*,
 **not** that it came from the user's own server: an attacker's well-formed QR persists identically to a
@@ -40,6 +40,15 @@ Decoded(payload)
                                   └─ save fails ──► PairingFailed(SAVE_FAILED_MSG) ─► Error
         Decline / system Back ──DeclinePairing──► ReadyToScan   (nothing persisted)
 ```
+
+The [pair-with-code screen](paste-code-dialog.md) uses the same immutable
+`AwaitingConfirm` value and `ScannerScreen` confirmation surface. Its own
+`PairCodeViewModel` parses the trimmed draft, then handles Confirm through
+`confirmPairingAndConnect`; it no longer sends a paste through the camera's
+`QrDecoded`/`Decoded` events. Decline/Back restores the draft. After saving it
+applies an optional local name and waits for the exact saved credentials' relay
+and encrypted-session readiness before navigation. See
+[manual pairing entry and return](navigation.md#manual-pairing-entry-and-return).
 
 ## How it works
 
@@ -92,13 +101,15 @@ prominent, not reflexively dismissed, and it extends the screen's existing state
 - **Decline** — `OutlinedButton`, `fillMaxWidth().heightIn(min = 48.dp)`, label *"Don't pair"*.
 
 **The token never reaches this composable** — it receives only the public-key `fingerprint` string +
-two callbacks; the token-bearing `PairedServer` stays in `MainActivity` (read only for the save).
+two callbacks; the token-bearing `PairedServer` stays in the owning confirmation
+state (`ScannerViewModel` or `PairCodeViewModel`) for the save.
 
 ### Confirm is a callback, Decline is an event
 
-The persist is a `suspend save` + navigation the `ScannerViewModel` cannot own (its contract: no
-`viewModelScope`, no Android types). So **Confirm is deliberately not a `ScannerEvent`** — it is a
-route-scope lambda (`confirmPairAndNavigate`, mirroring `stubPairAndNavigate`) wired like
+On the camera path, persistence and navigation are suspend work the
+`ScannerViewModel` cannot own (its contract: no `viewModelScope`, no Android types).
+So **Confirm is deliberately not a `ScannerEvent`** — it is a
+route-scope lambda (`confirmPairAndNavigate`) wired like
 `onPasteCode`/`onNavigateBack`. Only **Decline** is an event (`DeclinePairing → ReadyToScan`, a pure
 state transition). This preserves #320's "orchestration lives in the composable, the VM stays a pure
 reducer" decision rather than reintroducing a scope into the VM.
@@ -111,23 +122,29 @@ to Welcome. Disabled otherwise, so Back pops normally.
 
 ## Security properties
 
-- **Nothing persists before the human confirms.** The store is touched in exactly **one** place:
-  `confirmPairAndNavigate`, gated behind the Confirm button — and since [#501](../codebase/501.md)
-  **both** entry paths (QR scan and manual paste) reach it the same way (each produces a raw payload →
-  `QrDecoded → Decoded → AwaitingConfirm`). The rewired `Decoded` effect touches the store **never**.
-  Parse failures, derive failures, Decline, and Back all persist nothing — #320's never-throw /
-  nothing-persisted-on-failure boundary stays intact.
+- **Nothing persists before the human confirms.** Camera parsing prepares the
+  gate in the route's `Decoded` effect; manual parsing prepares it in
+  `PairCodeViewModel`. Neither writes. Both Confirm handlers call
+  `confirmPairingAndConnect` with the record held in `AwaitingConfirm`.
+  Parse/derive failures and Decline/Back from confirmation persist nothing.
+  After Confirm, manual pairing can retain saved credentials despite a later
+  name or connection failure; its feedback explicitly reports that partial success.
 - **No shown-vs-saved gap.** See the fingerprint↔record binding above — the display and the persist read
   the same immutable object.
 - **Confirm-after-close is a no-op by construction.** `onConfirmPairing` reads the *current* collected
   state via `as? AwaitingConfirm`; if a back/decline already moved state to `ReadyToScan`, the cast is
-  `null` and confirm does nothing — a save cannot fire after the gate closed.
-- **No secret leak.** The token lives only inside the `PairedServer` in VM state and never reaches the
-  rendered surface; `PairedServer.toString()` redacts it (so even a stray `Log("$state")` of
+  `null` and confirm does nothing — a save cannot fire after the camera gate closed.
+  Manual Confirm is accepted only in Confirming and synchronously changes phase
+  to Saving, so stale or repeated confirmation events cannot start another write.
+- **No secret in confirmation content or diagnostics.** Tokens remain in the
+  credential record and, for manual input, the editable draft; confirmation
+  content receives only the public fingerprint. `PairedServer.toString()` redacts
+  the record (so even a stray `Log("$state")` of
   `AwaitingConfirm`/`PairingPrepared` is byte-safe). The displayed fingerprint is a **public-key digest**
   (also printed by the desktop) — its display, content description, and copyability are the feature, not
-  a leak. `serverKeyFingerprint` does no logging; derive/save failures log only fixed category strings +
-  `e.javaClass.simpleName`.
+  a leak. `serverKeyFingerprint` does no logging. Camera derive/save failures use
+  fixed categories and exception class names; manual pairing logs only static
+  lifecycle/failure codes and never exception details or draft fields.
 - **The comparison is performed by the human eye** (phone vs. desktop), not by code — so constant-time
   comparison is N/A (there is no code-level compare of attacker input against a secret; that *is* the
   design).
@@ -139,23 +156,21 @@ to Welcome. Disabled otherwise, so Back pops normally.
   non-decorative** Material 3 surface; a visual-fidelity retrofit is owed as a follow-up when the view is
   drawn, and the spec's design source re-anchors to the new `node-id` then. The security behavior
   (AC #1–#4) is visual-independent, so it does not wait on the pixels.
-- **Double-confirm is benign and not guarded.** A fast double-tap fires two idempotent same-record
-  `save`s (last-writer-wins overwrite) + two `navigate`s (`launchSingleTop` + `popUpTo` dedupe). A
-  `Saving` state purely to prevent an unobserved, harmless double-write would be over-engineering —
-  omitted (Evidence-Based Fix Selection). Same posture as the existing `stubPairAndNavigate`.
+- **Camera double-confirm is not guarded.** A fast double-tap fires two idempotent same-record
+  `save`s (last-writer-wins overwrite) + two `navigate`s (`launchSingleTop` + `popUpTo` dedupe).
+  Manual pairing has a synchronous Saving guard,
+  also blocking editing and dismissal until credential/name persistence finishes.
 - **Tapjacking / overlay is out of scope (named).** A malicious overlay that hides the fingerprint and
   synthesizes a Confirm tap would bypass the human verification. Not introduced by this slice (every
   existing tap target shares it), requires a separately-installed app holding `SYSTEM_ALERT_WINDOW`
   (heavily gated on this min-SDK-33 target). The correct mitigation — obscured-touch filtering at the
   Activity-window level — is a cross-cutting hardening, **not a one-composable bolt-on**; a
   security-hardening follow-up is recommended for it (and any future sensitive confirm).
-- **The paste path is now gated too (since [#501](../codebase/501.md)).** The manual paste dialog
-  ([`PasteCodeDialog`](paste-code-dialog.md)) is store-free: on a valid parse it hands the raw payload
-  to `MainActivity`, which feeds it to the same `ScannerEvent.QrDecoded` the camera uses, so paste
-  flows through **this exact gate** before any persist. (This note earlier predicted a future
-  real-paste ticket would do this; [#503](https://github.com/pyrycode/pyrycode-mobile/issues/503)
-  shipped the dialog *without* the gate as an explicit operator decision, and #501 closed the gap. The
-  `stubPairAndNavigate` stub older notes reference was removed in [#489](../codebase/489.md).)
+- **Manual pairing shares the gate, with its own draft lifecycle.** The
+  [full-screen form](paste-code-dialog.md) replaced the production paste-dialog
+  entry. It reuses fingerprint derivation, immutable record binding and the
+  confirmation content; declining returns to the form rather than re-arming a
+  camera. The legacy store-free dialog remains in source but is not mounted.
 - **TalkBack reads the raw colon-hex.** Whether TalkBack should spell the fingerprint group-by-group for
   easier audible verification is a design-time polish item for the owed Figma retrofit, not a blocker —
   the fingerprint is selectable/copyable today.
