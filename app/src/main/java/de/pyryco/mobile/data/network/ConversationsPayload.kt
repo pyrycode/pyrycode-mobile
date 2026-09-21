@@ -50,6 +50,7 @@ data class ConversationSummaryDto(
     @Serializable(with = InstantIso8601Serializer::class)
     val lastUsedAt: Instant,
     @SerialName("is_archived") val isArchived: Boolean = false,
+    @SerialName("workspace_label") val workspaceLabel: String? = null,
 )
 
 /**
@@ -67,6 +68,7 @@ private fun ConversationSummaryDto.toConversation(): Conversation =
         id = id,
         name = name,
         cwd = cwd,
+        workspaceLabel = workspaceLabel,
         isPromoted = isPromoted,
         lastUsedAt = lastUsedAt,
         // List-tier placeholders: the conversation-list payload does not carry these.

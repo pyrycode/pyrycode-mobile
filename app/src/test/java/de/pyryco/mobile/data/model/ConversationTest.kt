@@ -4,6 +4,7 @@ import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ConversationTest {
@@ -17,6 +18,11 @@ class ConversationTest {
             isPromoted = true,
             lastUsedAt = Instant.fromEpochSeconds(0),
         )
+
+    @Test
+    fun existingConstructor_defaultsWorkspaceLabelToNull() {
+        assertNull(sample().workspaceLabel)
+    }
 
     @Test
     fun equals_and_hashCode_match_for_identical_instances() {

@@ -12,6 +12,8 @@ data class Conversation(
     val lastUsedAt: Instant,
     val isSleeping: Boolean = false,
     val archived: Boolean = false,
+    /** Opaque daemon-authored display text; independent of [cwd] and never a path. */
+    val workspaceLabel: String? = null,
 )
 
 /**

@@ -33,6 +33,27 @@ class ConversationsPayloadTest {
         """.trimIndent()
 
     @Test
+    fun workspaceLabels_preserveEachRowsExactPairIncludingArchivedNullAndLegacy() {
+        val fixture =
+            """
+            {"conversations":[
+              {"id":"active","name":"Channel","is_promoted":true,"cwd":" /work/../A ","workspace_label":"  Työ 🛠 <b>A</b>  ","last_message_ts":"2026-05-08T10:31:02Z","last_used_at":"2026-05-08T10:31:02Z"},
+              {"id":"archived","name":null,"is_promoted":false,"is_archived":true,"cwd":"/work/B","workspace_label":"Archive B","last_message_ts":"2026-05-08T10:31:02Z","last_used_at":"2026-05-08T10:31:02Z"},
+              {"id":"null","name":null,"is_promoted":false,"cwd":"/work/C","workspace_label":null,"last_message_ts":"2026-05-08T10:31:02Z","last_used_at":"2026-05-08T10:31:02Z"},
+              {"id":"legacy","name":null,"is_promoted":false,"cwd":"~/.pyrycode/scratch","last_message_ts":"2026-05-08T10:31:02Z","last_used_at":"2026-05-08T10:31:02Z"}
+            ]}
+            """.trimIndent()
+        val rows = MobileJson.decodeFromJsonElement<ConversationsPayload>(MobileJson.parseToJsonElement(fixture)).toConversations()
+
+        assertEquals(listOf("active", "archived", "null", "legacy"), rows.map { it.id })
+        assertEquals(
+            listOf(" /work/../A " to "  Työ 🛠 <b>A</b>  ", "/work/B" to "Archive B", "/work/C" to null, DEFAULT_SCRATCH_CWD to null),
+            rows.map { it.cwd to it.workspaceLabel },
+        )
+        assertEquals(listOf(false, true, false, false), rows.map { it.archived })
+    }
+
+    @Test
     fun conversationsPayload_mapsBothBranchesPreservingOrder() {
         val element = MobileJson.parseToJsonElement(twoRowFixture)
         val payload = MobileJson.decodeFromJsonElement<ConversationsPayload>(element)
