@@ -3,10 +3,10 @@
 [`MobileModal`](../../../app/src/main/java/de/pyryco/mobile/ui/components/MobileModal.kt)
 is the reusable full-height editing shell in `de.pyryco.mobile.ui.components`.
 It supplies presentation and callbacks; callers own visibility, form values,
-validation, submission and operation cancellation. It currently has no production
-consumers. Existing dialogs such as [CreateFolderDialog](create-folder-dialog.md)
-remain separate; consumer tickets own their migration and operation-specific
-acceptance.
+validation, submission and operation cancellation. Its first production consumer is
+[`EditHostModal`](#callers) (#743). Existing dialogs such as
+[CreateFolderDialog](create-folder-dialog.md) remain separate; consumer tickets own
+their migration and operation-specific acceptance.
 
 ## Caller contract
 
@@ -81,3 +81,37 @@ Keep the keyboard-mode and IME lifecycle setup described in
 these fixtures. The test-only IME exercises platform insets independently of a
 consumer's operation. The [plan revisions](../../specs/architecture/638-mobile-modal.md#revisions)
 record the activity-recreation failure and the required setup order.
+
+## Callers
+
+[`EditHostModal`](../../../app/src/main/java/de/pyryco/mobile/ui/components/EditHostModal.kt)
+(#743) draws the shell's content with two inert identity rows, a name field
+pre-filled from the caller, and an outlined unpair action. It is stateless and
+caller-driven like the shell itself — no storage, connection or navigation — which
+is what lets both the list's host-row wiring (#744) and Settings' host entry (#713)
+compose the same component instead of a second removal flow. Patterns worth reusing
+for the next caller that pre-fills an editable field inside this shell:
+
+- **Key a pre-filled edit buffer on the identity of the thing being edited, not on
+  its current value.** `EditHostModal` keys its `remember`ed `TextFieldValue` on the
+  raw `serverIdentity`, never the display name and never a value clamped for layout.
+  Keying on the display value would discard what the operator typed the moment the
+  caller's stored copy changed underneath it (an error or loading flip must not lose
+  typed input); keying on a clamped value risks two different edited entities
+  collapsing onto one buffer if their unclamped identities happen to share a long
+  prefix.
+- **A dark-only Figma frame can hide a scheme-inverting fill token.** `on-primary` at
+  low alpha reads as a recessed well only because the reference frame never renders
+  in light, where that token turns white and the fill would vanish — composite the
+  candidate colour against the real light and dark `Color.kt` values before
+  committing to an alpha, rather than eyeballing a single dark preview.
+- **Proving a row is read-only means asserting the absence of field semantics**
+  (`EditableText`, `SetText`, `Focused`), not asserting that its text is displayed —
+  the latter passes identically against a real editable field seeded with the same
+  value.
+- Attacker-influenceable display text (here, a server identity and relay address
+  from a scanned QR payload) is clamped through the same
+  [`MAX_WORKSPACE_LABEL_CHARS`](../../../app/src/main/java/de/pyryco/mobile/ui/workspace/WorkspaceDisplayName.kt)
+  bound `boundedRowText` uses on the host row this modal opens from, applied before
+  layout and before any merged-semantics description is built — including the
+  pre-filled seed value, not only the two fields the acceptance criteria named.
