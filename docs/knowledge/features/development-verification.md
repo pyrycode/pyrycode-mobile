@@ -149,6 +149,25 @@ really advances virtual time. When adding a finite watchdog or timeout, drive on
 the intended deadline with `advanceTimeBy(...)` followed by `runCurrent()`;
 `advanceUntilIdle()` also advances newly armed watchdogs.
 
+A JVM unit test that constructs or resolves a component backed by `Dispatchers.Default` — a Koin
+singleton reached without an injected test dispatcher, for example — must stop it before that test
+class's `Dispatchers.resetMain()`, not merely dispose it. The failure this produces attaches to
+whichever test happens to be running next, not to the test that actually leaked the collector,
+because the background thread throws asynchronously: watch for "Module with the Main dispatcher had
+failed to initialize" raised from a `CoroutineScheduler$Worker` frame. Closing the owning container
+in a `finally` is necessary but not sufficient — the close has to be ordered ahead of `resetMain()`
+and the source has to be asserted stopped, not merely assumed disposed. `KoinHostSources`
+(`app/src/test/java/de/pyryco/mobile/di/KoinHostSources.kt`) is the shared helper for
+`HostConversationSource`: it registers every Koin container a test resolves the source from, closes
+them, and proves each source stopped by reading the `@Synchronized` `repositoryFor` — the
+load-bearing check, since it shares the monitor the worker threads take and returns `null` only once
+`dispose()` has actually run, while a raw `snapshots.value.isEmpty()` read has no such
+happens-before edge and can pass vacuously. `HostChannelListViewModelTest`,
+`HostDiscussionListViewModelTest` and `RelayConnectionFactoryTest` call it from each resolving
+test's own `finally`, and each class's `@After` calls `assertAllClosed()` before
+`Dispatchers.resetMain()` runs (#726). A `JUnit4` `TestRule` cannot enforce that ordering: a rule's
+`after`-block runs after every `@After` method, which is the wrong side of the reset.
+
 Gradle gates do not exercise shell scripts. For a change under `scripts/`, extract
 the changed function into a scratch file, add strict shell options and test it with
 stubbed helpers. Exercise preflight guards with nonexistent `PYRY_BIN` and relay
