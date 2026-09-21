@@ -318,7 +318,7 @@ class ChannelListViewModelTest {
         }
 
     @Test
-    fun recentDiscussionsTapped_isNoOp() =
+    fun navigationHandledEvent_isNoOpForTheCompatibilityState() =
         runTest(dispatcher) {
             val channels = MutableSharedFlow<List<Conversation>>(replay = 0)
             val discussions = MutableSharedFlow<List<Conversation>>(replay = 0)
@@ -329,7 +329,8 @@ class ChannelListViewModelTest {
             discussions.emit(listOf(sampleDiscussion("d1")))
             advanceUntilIdle()
             val before = vm.state.value
-            vm.onEvent(ChannelListEvent.RecentDiscussionsTapped)
+            // Settings is routed by the navigation host, so the reducer must leave the state alone.
+            vm.onEvent(ChannelListEvent.SettingsTapped)
             advanceUntilIdle()
             assertEquals(before, vm.state.value)
             collector.cancel()

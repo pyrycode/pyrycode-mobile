@@ -51,6 +51,7 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -618,6 +619,106 @@ class HostChannelListViewModelTest {
                 viewModel?.viewModelScope?.cancel()
                 hostSources.closeAndAssertStopped()
             }
+        }
+
+    @Test
+    fun foldStateStartsExpandedAndFoldsEachSectionAndHostIndependently() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.a.repo.rows.value = listOf(row("a-channel", promoted = true), row("a-chat"))
+            runCurrent()
+            // Nothing starts folded: the device suites reach the seeded channel by tapping its row.
+            assertTrue(
+                f.vm.hostState.value.collapsed
+                    .isEmpty(),
+            )
+
+            val channelsHost = TreeFoldKey(ConversationTreeSection.Channels, "Host")
+            f.vm.onFoldToggled(channelsHost)
+            runCurrent()
+            assertEquals(setOf(channelsHost), f.vm.hostState.value.collapsed)
+            // The same host's row in the other section, and every other host, stay open.
+            assertFalse(TreeFoldKey(ConversationTreeSection.Chats, "Host") in f.vm.hostState.value.collapsed)
+            assertFalse(TreeFoldKey(ConversationTreeSection.Channels, "host") in f.vm.hostState.value.collapsed)
+
+            f.vm.onFoldToggled(channelsHost)
+            runCurrent()
+            assertTrue(
+                f.vm.hostState.value.collapsed
+                    .isEmpty(),
+            )
+        }
+
+    @Test
+    fun foldStateKeysOnServerIdAndExactCwdAndSurvivesARelabelAndAListUpdate() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.a.repo.rows.value = listOf(row("a-1", promoted = true))
+            f.b.repo.rows.value = listOf(row("b-1", promoted = true))
+            runCurrent()
+            val shared =
+                f.vm.hostState.value.hosts
+                    .first()
+                    .channelGroups
+                    .single()
+                    .cwd
+            // Both hosts hold the same path; each is its own node.
+            assertEquals(
+                shared,
+                f.vm.hostState.value.hosts[1]
+                    .channelGroups
+                    .single()
+                    .cwd,
+            )
+            val workspace = TreeFoldKey(ConversationTreeSection.Channels, "Host", shared)
+            f.vm.onFoldToggled(workspace)
+            runCurrent()
+            assertEquals(setOf(workspace), f.vm.hostState.value.collapsed)
+            assertFalse(TreeFoldKey(ConversationTreeSection.Channels, "host", shared) in f.vm.hostState.value.collapsed)
+
+            // A relabel moves display text only, and the added row is an incoming list update: the fold holds.
+            f.a.repo.rows.value = listOf(row("a-1", promoted = true, label = "Renamed"), row("a-2", promoted = true))
+            runCurrent()
+            assertEquals(
+                "Renamed",
+                f.vm.hostState.value.hosts
+                    .first()
+                    .channelGroups
+                    .single()
+                    .displayName,
+            )
+            assertEquals(setOf(workspace), f.vm.hostState.value.collapsed)
+        }
+
+    @Test
+    fun selectionRecordsEachOpenedTargetAndSurvivesAnIncomingSnapshot() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.a.repo.rows.value = listOf(row("a-1", promoted = true))
+            runCurrent()
+            assertNull(f.vm.hostState.value.selected)
+
+            val first = HostConversationTarget("Host", "a-1")
+            f.vm.onHostRowTapped(first)
+            runCurrent()
+            assertEquals(first, f.vm.hostState.value.selected)
+
+            f.b.repo.rows.value = listOf(row("b-1"))
+            runCurrent()
+            assertEquals(first, f.vm.hostState.value.selected)
+
+            val second = HostConversationTarget("host", "b-1")
+            f.vm.onHostRowTapped(second)
+            runCurrent()
+            assertEquals(second, f.vm.hostState.value.selected)
+
+            // A discussion created from this list is opened from it too, so it takes the highlight.
+            f.vm.createHostDiscussion("Host")
+            runCurrent()
+            assertEquals(HostConversationTarget("Host", "returned-id"), f.vm.hostState.value.selected)
         }
 
     private fun preferences(values: Flow<Preferences>) =

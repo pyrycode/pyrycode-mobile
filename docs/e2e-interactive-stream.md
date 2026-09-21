@@ -54,8 +54,9 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    overflow "Save as channel…" → `SaveAsChannelDialog` to a runtime-unique channel name **keeping it in
    scratch**, submit, and assert the promote round-trip lands on **three** durable surfaces — the thread top bar
    re-labels in place (no pop-back), the `WorkspaceChip` unmounts (the `isPromoted` tier flip), and after
-   backing out the name is present on the main list but absent from the Discussions drilldown (the promoted
-   tier) — exercising the #348 promote wire against a real daemon; no claude turn — promote is a
+   backing out the name presents on a channel-tagged row and on no chat-tagged row of the assembled
+   conversation tree (the promoted tier, read via tag since #731 retired the Discussions drilldown this
+   scenario used to tap into) — exercising the #348 promote wire against a real daemon; no claude turn — promote is a
    conversation-scoped daemon round-trip (a pure registry op) with no session transition. This is the
    **backfill** of the one operator-facing flow that shipped before the real-stack definition-of-done rule
    (pyrycode-mobile-agents#9), and is **red on any daemon older than pyrycode/pyrycode#949**, which registered
@@ -185,9 +186,10 @@ round-trips with no session transition); and a **save-as-channel (promote)** sce
 overflow "Save as channel…" → `SaveAsChannelDialog` to a runtime-unique channel name **keeping it in scratch**,
 submit, and assert the promote round-trip lands on **three** durable surfaces — the thread top bar re-labels
 **in place** (there is **no** PopBack), the `WorkspaceChip` **unmounts** (the `isPromoted` tier flip, in-thread),
-and after backing out the name is **present on the main list** but **absent from the Discussions drilldown**
-(i.e. presented in the promoted channel tier, not as a recent discussion) — proving the #348 promote wire
-against a real daemon; **zero** claude turns — create/promote are conversation-scoped daemon round-trips,
+and after backing out the name is **present on a channel-tagged row** and **absent from every chat-tagged
+row** of the assembled conversation tree (i.e. presented in the promoted channel tier, not among the chats —
+since #731 replaced the flat list's Discussions drilldown with a tag read on the single assembled list) —
+proving the #348 promote wire against a real daemon; **zero** claude turns — create/promote are conversation-scoped daemon round-trips,
 promote being a pure registry op daemon-side). The tool-use
 test asserts the **durable** terminal signal — the tool name in the resolved row —
 not the transient running spinner: rung 3 has no scripted backend to hold the turn open, so racing the
@@ -294,8 +296,9 @@ name (`"e2e581-" + System.currentTimeMillis()`) whose **absence is asserted befo
 re-emits: the **thread top bar** (in-thread — `SaveAsChannelSubmit` performs **no** PopBack, so the thread stays
 open and `state.displayName` re-labels in place), the **`WorkspaceChip` unmount** (the `isPromoted` tier flip —
 the chip is gated `!isPromoted && !hasMessages` and no message is sent, so its disappearance is attributable
-solely to the promote; the #562 gating fact read in the opposite direction), and **presence on the main list ∧
-absence from the Discussions drilldown**. Because `promote` is **conversation-scoped** with **no** session
+solely to the promote; the #562 gating fact read in the opposite direction), and, on the assembled
+conversation tree (#731), **presence on a channel-tagged row ∧ absence from every chat-tagged row**. Because
+`promote` is **conversation-scoped** with **no** session
 transition, the assertion is the recorded name and flag, never a session id (the #545 lesson); and the reply is
 a **bare conversation object folded by a confirmed upsert**, **not** a `conversation_updated` broadcast (that is
 *rename's* shape, from #530), which is why every assertion is on rendered UI rather than a named wire message.
@@ -308,18 +311,24 @@ on the pre-filled+selected `"New channel"` — the #537 selector verbatim); and 
 `"Save as channel…"` (U+2026) is matched **exactly**, because the dialog title is the same literal without the
 ellipsis. Total real-claude cost: **zero** turns — create/promote are daemon round-trips, so no ping is sent.
 
-**Why the tier read needs the drilldown** (the non-obvious fact a future sibling will want): the main list
-**cannot** discriminate the two tiers with a tolerant matcher. `ConversationRow` and `DiscussionPreviewRow` both
-set a merged `contentDescription` from **byte-identical** format strings (`cd_conversation_row` ==
-`cd_discussion_preview_row` == `"%1$s, %2$s"`, both rendering `"<name>, <relativeTime>"`), there are no test
-tags, and `RecentDiscussionsSection`'s `Column` carries **no** semantics modifier — so it is not a
-`SemanticsNode` and any `hasAnyAncestor` / `hasAnySibling` scoping would be a bet on merge behaviour. The
-`See all discussions (N)` counter would decrement on promote, but that is a **delta count**, which the
-[Constraints](#constraints) forbid. So the tier read goes where the tiers are unambiguous: the
-Discussions-only screen, fed by `observeConversations(ConversationFilter.Discussions)`. Its arrival marker is
-the **FAB's disappearance**, never its title — `discussion_list_title` is byte-identical to the main list's
-`recent_discussions_section_header`, so a title wait would pass **instantly, before navigating**, and the
-absence assertion would then run against the main list: a **false green**.
+**Why the tier read needs a tag, not a `contentDescription` match** (the non-obvious fact a future sibling
+will want; mechanism changed by #731 — the paragraph below describes the read as it works today, not the
+pre-#731 drilldown). The assembled conversation tree **cannot** discriminate its two tiers with a tolerant
+text or description matcher: both sections instance the same `TreeConversationRow`, with the same glyph, the
+same type scale and no tier word anywhere on the row, and a section's header and its rows are **siblings**
+inside one `LazyColumn` — no ancestor/sibling scoping to bet on. (Pre-#731, the flat list had the identical
+problem for the same reason: `ConversationRow` and `DiscussionPreviewRow` set a merged `contentDescription`
+from byte-identical format strings, `cd_conversation_row` == `cd_discussion_preview_row` == `"%1$s, %2$s"`.)
+So the assembling screen tags each conversation row with the tier it drew it in
+(`TREE_CHANNEL_ROW_TEST_TAG` / `TREE_CHAT_ROW_TEST_TAG`, `internal const` in `ChannelListScreen.kt`) and the
+tier read matches the tag: presence on a channel-tagged row ∧ absence from every chat-tagged row **is** "in
+the promoted (channel) tier, not among the chats" — entirely presence/absence, never a delta count (there is
+no longer a "See all discussions (N)" counter on this screen at all). Because both tiers are drawn on the one
+screen already on display, the read needs no navigation and therefore no arrival marker to get wrong — the
+pre-#731 version had to dodge exactly that: `discussion_list_title` was byte-identical to the flat list's own
+`recent_discussions_section_header`, so a title wait would have passed instantly, before navigating, and the
+absence assertion would then have run against the main list — a false green. That whole failure class is
+gone with the drilldown hop itself.
 
 The **thinking-spinner** scenario (#482) is the **flakiest** rung-3 scenario and ships **`@Ignore`-gated /
 manual**: the spinner has **no durable equivalent** of the tool name — once real claude emits its first
@@ -958,7 +967,9 @@ The remaining checks here are specific to a real relay or real Claude execution:
   pyrycode/pyrycode#949 registered the daemon handler (desktop parallel: pyrycode-desktop#430), driven end to
   end through the #348 promote wire against a real daemon, always-on (three durable post-conditions — the
   runtime-unique channel name on the thread top bar in-thread, the `WorkspaceChip` unmount as the `isPromoted`
-  tier flip, and presence on the main list ∧ absence from the Discussions drilldown; promote is
+  tier flip, and presence on a channel-tagged row ∧ absence from every chat-tagged row of the assembled
+  conversation tree (the tier read moved onto that tree, off the Discussions drilldown, when #731 retired the
+  drilldown); promote is
   conversation-scoped with **no** session transition, and its reply is a bare conversation object folded by a
   confirmed upsert, **not** a `conversation_updated` broadcast, so every assertion is on rendered UI) and folded
   into the pre-ship `LIVE=1` gate as the 8th curated method (spending **no** extra claude turn — create/promote
