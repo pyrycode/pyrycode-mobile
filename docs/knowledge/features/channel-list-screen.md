@@ -151,6 +151,16 @@ codebase (`ScannerScreen`'s reticle and hint) and is invisible to TalkBack. `Int
 `interactiveTurn_saveAsChannel_promotesToChannelTier` reads them directly — see
 [`docs/e2e-interactive-stream.md`](../../e2e-interactive-stream.md).
 
+**Arrival marker.** The screen's own root — the `Scaffold`'s `modifier`, above the `when (hostState.hosts)`
+branch that picks between the loading text, the error text, the empty placeholder and the tree — carries
+`internal const val CHANNEL_LIST_TEST_TAG = "channel-list"` (#736), so all four draws carry it by
+construction. Same shape as the two tags above (app-authored literal, no daemon text, invisible to
+TalkBack), but it names the destination rather than any chrome drawn on it: unlike the button wait it
+replaced, it does not imply a loaded list, and it is built to survive #732/#738's chrome changes without a
+second migration. `InteractiveStreamE2ETest`'s shared `awaitChannelList()` helper reads it; `createChat()`
+and `openWorkspacePicker()` are the only two remaining sites that name the floating action button
+(`CD_NEW_DISCUSSION`) — see [`docs/e2e-interactive-stream.md`](../../e2e-interactive-stream.md).
+
 **Item keys.** A private `treeItemKey(vararg parts: String)` length-prefixes each part before joining them
 with `|`, so no daemon-authored `serverId`, `cwd` or conversation id can forge another row's key by embedding
 the separator — a `LazyColumn` duplicate key is a crash, not a rendering glitch. Any part over
