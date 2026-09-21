@@ -186,13 +186,21 @@ selection nor bundle identity. Removing the latest selects the latest survivor;
 an empty collection leaves no connection owner. See
 [lifecycle wiring and guarantees](lifecycle-connection-driver.md#wiring--eager-koin-singleton-no-pyryapp-change).
 
-`MainActivity` still uses `load()` for initial paired state and the Settings server
-label. Scan and paste confirmation use
+`MainActivity` reads `list()` for [startup pairing and workspace migration](navigation.md#how-it-works);
+the Settings server label still uses `load()`. Scan and manual confirmation use
 [`confirmPairingAndConnect`](pairing-confirm-gate.md) to save before calling the
 registry's controller; a failed save never proceeds to connect. Each bundle's
 supervisor and [Noise factory](noise-ik-session.md#factory-wiring) instead read an
 immutable record supplied by the registry, so saving another host cannot retarget
-them. Name/removal UI remains [#642](https://github.com/pyrycode/pyrycode-mobile/issues/642).
+them.
+
+The [pair-with-code form](paste-code-dialog.md#persistence-and-local-names) writes
+a nonblank trimmed local name after credentials. Blank input skips that write,
+preserving an existing name. The writes are separate: a name-write or connection
+failure retains successfully saved credentials. The screen reports that state and
+retries the same id behind fingerprint confirmation. Its readiness wait observes
+the complete saved record rather than `load()` or compatibility status. Renaming
+and removal management UI remains [#642](https://github.com/pyrycode/pyrycode-mobile/issues/642).
 
 ## Testing
 

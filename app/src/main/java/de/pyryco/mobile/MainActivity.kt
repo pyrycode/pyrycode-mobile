@@ -67,7 +67,9 @@ import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.onboarding.CameraPreview
-import de.pyryco.mobile.ui.onboarding.PasteCodeDialog
+import de.pyryco.mobile.ui.onboarding.PairCodePhase
+import de.pyryco.mobile.ui.onboarding.PairCodeScreen
+import de.pyryco.mobile.ui.onboarding.PairCodeViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerEvent
 import de.pyryco.mobile.ui.onboarding.ScannerScreen
 import de.pyryco.mobile.ui.onboarding.ScannerUiState
@@ -173,17 +175,7 @@ internal fun PyryNavHost(
             val vm = koinViewModel<ScannerViewModel>()
             val state by vm.state.collectAsStateWithLifecycle()
 
-            var showPasteDialog by remember { mutableStateOf(false) }
-
-            // The ONLY persist (#343/#501): runs solely behind the Confirm button, after the user has
-            // compared the fingerprint. BOTH entry paths — the QR camera and the manual paste dialog —
-            // reach it the same way: each produces a raw payload → ScannerEvent.QrDecoded → the Decoded
-            // effect below derives the fingerprint and parks in AwaitingConfirm (it never saves) → the
-            // user confirms. A store failure routes to the Error surface so nothing half-persists. The
-            // save reuses the lifecycle-scoped `scope` (cancelled on screen exit). #489: on a successful
-            // persist, confirmPairingAndConnect also starts the relay loop (before navigating) so the
-            // connection comes up immediately, without a background→foreground cycle; connect() runs on
-            // the supervisor's own scope, so popping the Scanner here does not cancel it.
+            // Camera confirmation retains its existing save/connect path.
             val confirmPairAndNavigate: (PairedServer) -> Unit = { server ->
                 scope.launch {
                     confirmPairingAndConnect(
@@ -274,7 +266,7 @@ internal fun PyryNavHost(
                         ),
                     )
                 },
-                onPasteCode = { showPasteDialog = true },
+                onPasteCode = { navController.navigate(Routes.PAIR_CODE) },
                 // Confirm reads the CURRENT collected state: if back/decline already moved it off
                 // AwaitingConfirm, the cast is null and confirm is a no-op — a save cannot fire after
                 // the gate closed. Persists exactly the parsed record the displayed fingerprint was
@@ -292,19 +284,22 @@ internal fun PyryNavHost(
                     }
                 },
             )
-
-            // A valid paste is not persisted here — it feeds the raw payload into the same
-            // QrDecoded event the camera path uses, so paste routes through the identical
-            // fingerprint-confirm gate (Decoded → AwaitingConfirm) before any persist (#501).
-            if (showPasteDialog) {
-                PasteCodeDialog(
-                    onDismiss = { showPasteDialog = false },
-                    onValidPayload = { payload ->
-                        showPasteDialog = false
-                        vm.onEvent(ScannerEvent.QrDecoded(payload))
-                    },
-                )
+        }
+        composable(Routes.PAIR_CODE) {
+            val vm = koinViewModel<PairCodeViewModel>()
+            val state by vm.state.collectAsStateWithLifecycle()
+            LaunchedEffect(state.phase) {
+                when (state.phase) {
+                    PairCodePhase.Cancelled -> navController.popBackStack()
+                    PairCodePhase.Complete ->
+                        navController.navigate(Routes.CHANNEL_LIST) {
+                            popUpTo(navController.graph.id) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    else -> Unit
+                }
             }
+            PairCodeScreen(state, vm::onEvent)
         }
         composable(Routes.CHANNEL_LIST) {
             val vm = koinViewModel<ChannelListViewModel>()
@@ -525,6 +520,7 @@ private const val SAVE_FAILED_MSG = "Couldn't save the pairing. Please try again
 internal object Routes {
     const val WELCOME = "welcome"
     const val SCANNER = "scanner"
+    const val PAIR_CODE = "pair_code"
     const val CHANNEL_LIST = "channel_list"
     const val DISCUSSION_LIST = "discussions"
     const val CONVERSATION_THREAD = "conversation_thread/{serverId}/{conversationId}"

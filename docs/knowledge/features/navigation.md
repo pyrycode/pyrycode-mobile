@@ -5,11 +5,12 @@ Single-activity Compose Navigation host. `MainActivity` is the only Activity; al
 ## What it does
 
 Boots into `welcome` on a fresh install or `channel_list` when a saved pairing
-exists. The graph has nine routes; thread and literal-screen destinations carry
+exists. The graph has ten routes; thread and literal-screen destinations carry
 both the owning `serverId` and the host-local `conversationId`.
 
 - **`welcome`** (start destination when no paired-server record exists) — renders `WelcomeScreen` (#7).
-- **`scanner`** — renders `ScannerScreen` (#12), stateful + camera-permission-driven since #326 and showing a **live CameraX preview** since #334. A **decoded QR** (not a tap) is parsed + validated into a **real `PairedServer`** (#320 — the [Pairing payload parser](pairing-payload-parser.md)) and, on success, persisted via `PairedServerStore.save(...)` before navigating to `channel_list` with the scanner popped from the back stack (`popUpTo(SCANNER){inclusive=true}`, driven by a `LaunchedEffect(state)` on the `Decoded` state); a parse/persist failure routes to `ScannerUiState.Error`. The TopAppBar back arrow `popBackStack()`s to Welcome. The route owns a `ScannerViewModel`, the runtime permission launcher, and the [Camera preview](camera-preview.md) (injected through a `cameraPreview` slot gated on `ReadyToScan`). See [Scanner screen](scanner-screen.md).
+- **`scanner`** — renders [ScannerScreen](scanner-screen.md) with its destination-scoped ViewModel, camera permission launcher and live preview. A decoded QR is parsed into an immutable fingerprint/record confirmation state without writing. Confirm saves, starts the controller and navigates to `channel_list`, popping the scanner inclusively; this camera path does not await encrypted readiness. Decline/Back from confirmation re-arms scanning. Paste actions navigate to `pair_code`; ordinary Back pops to the caller.
+- **`pair_code`** — renders [PairCodeScreen](paste-code-dialog.md) with a destination-scoped `PairCodeViewModel`. Its optional-name form, fingerprint confirmation and saved-target connection wait stay within one route. Cancel returns to the caller; success clears the previous graph entries and opens `channel_list` only after both target connection legs are ready.
 - **`channel_list`** — renders [ChannelListScreen](channel-list-screen.md). The temporary flat list still reads selected-host state, while its route adapter captures a host for row/create/picker actions and consumes `hostNavigationEvents`.
 - **`discussions`** — renders [DiscussionListScreen](discussion-list-screen.md), reached from the channel list's recent-discussions link. Its adapter captures host-qualified row and promotion targets and consumes only `hostNavigationEvents`; Back pops the stack.
 - **`conversation_thread/{serverId}/{conversationId}`** — renders [ThreadScreen](thread-screen.md#wiring) with a destination-scoped ViewModel and dependencies from the exact retained host. Back pops the stack; “Show the literal screen” passes the same target to `Routes.literal(target)`.
@@ -48,6 +49,46 @@ The internal graph defaults to `rememberNavController()` and accepts a controlle
 for production-route tests. Pairing later in the session navigates explicitly; it
 does not rewrite the graph's initial destination. Screens receive callbacks, never
 a `NavController`.
+
+### Manual pairing entry and return
+
+Every scanner paste action (viewport, denied and error) navigates to
+`Routes.PAIR_CODE`; the scanner remains underneath. The route resolves
+`koinViewModel<PairCodeViewModel>()` from `appModule`, using the observable
+collection store and registry. Its state holds both drafts in memory, without
+saving the pairing code in navigation arguments or saved instance state.
+List entry points remain the separate #641 work.
+
+Pair validates the trimmed code and opens the existing fingerprint surface in
+the same destination. Confirm uses exactly the record displayed there. The host
+name is trimmed only for persistence: nonblank names are local metadata, while
+blank names leave new hosts unnamed and preserve existing names. Writes target
+the exact case-sensitive server id; names and relay URLs never identify a host.
+
+| Phase | Cancel, toolbar Back or Android Back |
+| --- | --- |
+| Editing, including failure feedback | Enter Cancelled and pop to the invoking destination; make no further writes. |
+| Confirming | Decline/Android Back returns to the unchanged draft without saving. |
+| Saving credentials/name | Dismissal and editing are blocked until persistence finishes. |
+| Connecting | Cancel the wait, enter Cancelled and pop; later readiness cannot navigate. |
+
+Credential-save failure cannot start a new connection. Name-write or connection
+failure after saving returns to the draft with explicit retained-pairing feedback
+and Retry. Retry crosses the fingerprint gate again and upserts the same host for
+an unchanged code. Cancel does not undo saved credentials or a successful name
+write. See [failure behavior](paste-code-dialog.md#failure-and-cancellation).
+
+The connection wait follows the complete saved record through registry
+reconciliation, including replacement credentials on re-pairing. Another host's
+connection, a stale bundle or bare relay readiness cannot complete it. Both relay
+and encrypted-session status must be Connected within 30 seconds; a new
+unavailable status ends the wait earlier.
+
+`LaunchedEffect(state.phase)` translates Cancelled to `popBackStack()` and Complete
+to `navigate(CHANNEL_LIST)` with `popUpTo(navController.graph.id) { inclusive = true }`
+and `launchSingleTop = true`. Successful manual pairing therefore leaves no
+onboarding entry to return to. Registry connection lifetime remains independent
+of the destination and follows app lifecycle.
 
 ### Host-qualified destinations
 
@@ -128,7 +169,7 @@ Screens take navigation as `() -> Unit` callbacks, not a `NavController`. This i
 ## Configuration
 
 - **Dependency:** `androidx.navigation:navigation-compose`, pinned via `navigationCompose` in `gradle/libs.versions.toml`. Compose BOM does **not** cover this artifact group — it needs its own version pin.
-- **Back-stack policy:** ordinary `navigate(route)` creates destination entries. Thread navigation suppresses only an identical current host/conversation target. Scanner success pops the scanner inclusively; invalid-host rejection returns to the channel list and clears the invalid entries. Those list transitions use `launchSingleTop`; host-qualified thread navigation does not.
+- **Back-stack policy:** ordinary `navigate(route)` creates destination entries. Thread navigation suppresses only an identical current host/conversation target. Camera success pops the scanner inclusively; manual pairing success clears the graph's previous entries. Invalid-host rejection returns to the channel list and clears the invalid entries. Those list transitions use `launchSingleTop`; host-qualified thread navigation does not.
 - **Start-destination gating:** `NavHost` composition waits for the full saved-host read and successful workspace migration described [above](#how-it-works). Only then does snapshot emptiness choose the initial destination. Later pairing uses explicit navigation; it does not rewrite the back stack.
 - **Insets:** the outer `Scaffold` in `MainActivity` owns system-bar insets and passes them down via the NavHost's `Modifier.padding(innerPadding)`. Screens may apply their own `systemBarsPadding()` on top (harmless double-padding); don't refactor existing screens to drop it.
 
@@ -137,6 +178,14 @@ Screens take navigation as `() -> Unit` callbacks, not a `NavController`. This i
 - **No type-safe routes yet.** The first parameterized route (`conversation_thread/{conversationId}`, #15; VM-backed since #126) landed on string constants by design — partially migrating one route while siblings stay as `String` is worse than either end-state. A full migration of `Routes` to `@Serializable` data classes remains a separate, larger future ticket; do not bundle it with a feature ticket.
 - **No deep links, no animations.** `composable(Routes.X) { ... }` only — no `deepLinks = listOf(...)`, no custom `enterTransition` / `exitTransition`.
 ## Testing
+
+`PairCodeScreenTest.cancelToolbarAndAndroidBackReturnToCallerWithoutSaving`
+mounts the production graph and opens `pair_code` over both Welcome and the
+channel list. It exercises all three exit actions after validation failure and
+checks the collection is unchanged. Directly navigating from the list here tests
+return semantics, not the future #641 entry affordance. The
+[pair-code tests](paste-code-dialog.md#testing) separately cover confirmation,
+failure/retry, cancellation fencing and actual keyboard reachability.
 
 [`StartupWorkspaceMigrationTest`](../../../app/src/androidTest/java/de/pyryco/mobile/StartupWorkspaceMigrationTest.kt)
 launches the actual `MainActivity` with a controlled collection store and real
@@ -174,5 +223,5 @@ those rung-3 scenarios remain #673.
 
 - Ticket notes: `../codebase/8.md` (NavHost setup), `../codebase/12.md` (Scanner stub + first destination-block Koin/coroutine wiring), `../codebase/13.md` (conditional start destination + `produceState` gating), `../codebase/14.md` (Welcome `onSetup` → `Intent.ACTION_VIEW` + `LocalContext.current` capture in a `composable` block), `../codebase/15.md` (first parameterized route), `../codebase/16.md` (Settings placeholder + interactive-placeholder factoring rule), `../codebase/46.md` (first VM-backed destination — `koinViewModel<…>()` + `collectAsStateWithLifecycle()` shape, inline `when (event)` → `navigate` translation), `../codebase/21.md` (channel-list `SettingsTapped` → `Routes.SETTINGS` wiring + `material-icons-core` on the classpath), `../codebase/24.md` (`discussions` route — first destination with dual nav wiring + a back-arrow `navigationIcon` reusing `R.string.cd_back`), `../codebase/26.md` (`discussions` route wired into the live graph — `ChannelListEvent.RecentDiscussionsTapped → navController.navigate(Routes.DISCUSSION_LIST)`), `../codebase/126.md` (`conversation_thread/{conversationId}` body flipped from placeholder `Text(...)` to real `ThreadScreen` + `ThreadViewModel`; path-argument extraction moves from `backStackEntry.arguments?.getString(...)` into the VM's `SavedStateHandle` via Koin's `viewModel { ThreadViewModel(get()) }` block), `../codebase/271.md` (`about` route — first static sub-screen added with no VM, mirroring the `archived_discussions` block minus the state-collection machinery), [`../codebase/382.md`](../codebase/382.md) (`literal_screen/{conversationId}` route — second parameterized route; per-back-stack-entry `koinViewModel()` for a fresh, per-conversation VM, plus the `onShowLiteralScreen` pure-navigation callback threaded from the thread overflow menu, mirroring `onOpenAbout`)
 - Specs: `docs/specs/architecture/8-navigation-compose-setup.md`, `docs/specs/architecture/12-stub-scanner-screen.md`, `docs/specs/architecture/13-conditional-navhost-start-destination.md`, `docs/specs/architecture/15-conversation-thread-placeholder-route.md`, `docs/specs/architecture/16-settings-placeholder-route.md`, `docs/specs/architecture/21-channel-list-top-app-bar.md`, `docs/specs/architecture/126-thread-screen-skeleton.md`, `docs/specs/architecture/271-dedicated-about-screen.md`
-- Consumers: [Welcome screen](welcome-screen.md), [Scanner screen](scanner-screen.md), [Paired server store](paired-server-store.md) (read by the start-destination gate + written by the Scanner placeholder, #295), [Thread screen](thread-screen.md) (VM-backed destination since #126), [Settings screen](settings-screen.md) + [About screen](about-screen.md) (the `settings` → `about` sub-screen pair, #271), [Archived Discussions screen](archived-discussions-screen.md)
-- Follow-ups: Phase 2 thread UI (the outer shell at `conversation_thread/{conversationId}` shipped in #126; downstream slices #128–#140 / #145 fill the message list, input bar, status row, connection banner, session-boundary delimiter, empty states, and TopAppBar overflow), Phase 3 Settings sections (data-layer wiring for remaining no-op rows; `SettingsScreen` shell + About-section Version/Open-source rows already wired since #64 / #90; License row is text-only since #163), Phase 4 pairing — the `scanner` body is now real CameraX + ML Kit QR (#326 permission flow, #333 decode core, #334 live preview); remaining: payload parse → real `PairedServer` (#320), fingerprint/safety-number gate (#321)
+- Consumers: [Welcome screen](welcome-screen.md), [Scanner screen](scanner-screen.md), [Paired server store](paired-server-store.md) (read by startup and written by confirmed camera/manual pairing), [Thread screen](thread-screen.md) (VM-backed destination since #126), [Settings screen](settings-screen.md) + [About screen](about-screen.md) (the `settings` → `about` sub-screen pair, #271), [Archived Discussions screen](archived-discussions-screen.md)
+- Follow-ups: Phase 2 thread UI (the outer shell at `conversation_thread/{conversationId}` shipped in #126; downstream slices #128–#140 / #145 fill the message list, input bar, status row, connection banner, session-boundary delimiter, empty states, and TopAppBar overflow), Phase 3 Settings sections (data-layer wiring for remaining no-op rows; `SettingsScreen` shell + About-section Version/Open-source rows already wired since #64 / #90; License row is text-only since #163), pairing — parsing and fingerprint confirmation are shipped for both camera and manual input; scanner redesign remains #640, list entry points #641, and the real two-host pairing/rename/unpair scenario #676

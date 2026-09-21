@@ -111,6 +111,66 @@ class RelayConnectionFactoryTest {
     }
 
     @Test
+    fun pairingStatusWaitsForExactCredentialsAndKeepsConnectedPeer() =
+        runTest {
+            val f = Fixture(this)
+            f.store.save(f.a.record)
+            f.store.setDisplayName("A", "Shared")
+            val registry = f.registry()
+            registry.connect()
+            runCurrent()
+            val a = registry.connectionFor("A")
+            val aStatus = a?.coordinator?.connectionStatus?.value
+            assertEquals(de.pyryco.mobile.data.model.PyrycodeLinkStatus.Connected, aStatus?.pyrycode)
+            val statuses = mutableListOf<de.pyryco.mobile.data.model.ConnectionStatus?>()
+            val changed = f.b.record.copy(token = "new-secret")
+            val observer = registry.pairingStatus(changed).onEach { statuses += it }.launchIn(backgroundScope)
+            try {
+                f.handshaking = "B"
+                f.store.save(f.b.record)
+                f.store.setDisplayName("B", "Shared")
+                runCurrent()
+                assertNull(statuses.last())
+                f.store.save(changed)
+                runCurrent()
+                assertEquals(de.pyryco.mobile.data.model.PyrycodeLinkStatus.Handshaking, statuses.last()?.pyrycode)
+                assertEquals(RelayLinkStatus.Connected, statuses.last()?.relay)
+                assertSame(a, registry.connectionFor("A"))
+                assertEquals(aStatus, a?.coordinator?.connectionStatus?.value)
+                assertEquals(listOf("Shared", "Shared"), f.store.list().map { it.displayName })
+                assertEquals(f.a.record, f.store.loadById("A")?.record)
+                assertEquals(changed, f.store.loadById("B")?.record)
+                f.handshaking = null
+                registry.connectionFor("B")?.supervisor?.close()
+                registry.connectionFor("B")?.supervisor?.connect()
+                runCurrent()
+                assertEquals(de.pyryco.mobile.data.model.PyrycodeLinkStatus.Connected, statuses.last()?.pyrycode)
+                assertSame(a, registry.connectionFor("A"))
+                observer.cancel()
+                f.unavailable = "B"
+                registry.connectionFor("B")?.supervisor?.close()
+                registry.connectionFor("B")?.supervisor?.connect()
+                runCurrent()
+                f.transports.last().reportAbsent()
+                runCurrent()
+                f.unavailable = null
+                val retry =
+                    async {
+                        registry.pairingStatus(changed).first {
+                            it?.relay == RelayLinkStatus.DaemonAbsent ||
+                                it?.pyrycode == de.pyryco.mobile.data.model.PyrycodeLinkStatus.Connected
+                        }
+                    }
+                runCurrent()
+                assertEquals(de.pyryco.mobile.data.model.PyrycodeLinkStatus.Connected, retry.await()?.pyrycode)
+                assertSame(a, registry.connectionFor("A"))
+            } finally {
+                observer.cancel()
+                registry.dispose()
+            }
+        }
+
+    @Test
     fun explicitRecordsKeepDialHandshakeAndRekeyIdentityAfterLatestSaveChanges() =
         runTest {
             val f = Fixture(this)
@@ -1381,6 +1441,11 @@ class RelayConnectionFactoryTest {
                     collectors--
                 }
             }
+
+        fun reportAbsent() {
+            links.trySend(TransportEvent.Down(4404, null, null))
+            links.close()
+        }
 
         override fun connect() {
             if (!unavailable) links.trySend(TransportEvent.Up)
