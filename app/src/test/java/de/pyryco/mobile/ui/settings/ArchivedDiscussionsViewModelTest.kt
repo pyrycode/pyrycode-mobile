@@ -15,8 +15,10 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -453,6 +455,60 @@ class ArchivedDiscussionsViewModelTest {
                 "message must be non-blank",
                 (state as ArchivedDiscussionsUiState.Error).message.isNotBlank(),
             )
+            collector.cancel()
+        }
+
+    @Test
+    fun host_surfacesOwnerLabel_andFollowsRenames() =
+        runTest {
+            // #715: the header identifies the owning host, and keeps identifying it while the screen
+            // stays open — a rename is an emission on the same flow, not a re-navigation.
+            val label = MutableStateFlow("Alpha")
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val vm = ArchivedDiscussionsViewModel(stubRepo(source), label)
+            val collector = launch { vm.host.collect { } }
+            advanceUntilIdle()
+
+            assertEquals("Alpha", vm.host.value)
+            label.value = "Alpha renamed"
+            advanceUntilIdle()
+
+            assertEquals("Alpha renamed", vm.host.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun host_isBlank_whenOwnerIsNotSaved() =
+        runTest {
+            // An unknown owner names no host rather than falling back to another one's. The route
+            // guard sends such a destination away; this is the layer below that, proving the label
+            // itself cannot borrow an identity.
+            val source = MutableSharedFlow<List<Conversation>>(replay = 0)
+            val vm = ArchivedDiscussionsViewModel(stubRepo(source), flowOf(""))
+            val collector = launch { vm.host.collect { } }
+            advanceUntilIdle()
+
+            assertEquals("", vm.host.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun restoreRequested_callsOnlyTheConstructedRepository_whenIdsCollide() =
+        runTest {
+            // #715 AC #2, at unit scope: conversation ids are host-local, so two hosts can hold the
+            // same one. Restore must reach the repository this view model was constructed with and no
+            // other — the guarantee the host-bound facade makes structural, asserted here as behaviour.
+            val owner = RecordingRepo(MutableSharedFlow(replay = 0))
+            val other = RecordingRepo(MutableSharedFlow(replay = 0))
+            val vm = ArchivedDiscussionsViewModel(owner, flowOf("Alpha"))
+            val collector = launch { vm.state.collect { } }
+            advanceUntilIdle()
+
+            vm.onEvent(ArchivedDiscussionsEvent.RestoreRequested("shared-id", "old-project-experiments"))
+            advanceUntilIdle()
+
+            assertEquals(listOf("shared-id"), owner.unarchiveCalls)
+            assertEquals(emptyList<String>(), other.unarchiveCalls)
             collector.cancel()
         }
 

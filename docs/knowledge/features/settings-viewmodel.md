@@ -2,7 +2,7 @@
 
 Thin ViewModel for the Settings screen. Exposes persisted preferences (`themeMode`, `useWallpaperColors`, `defaultModel`, `defaultEffort`, `defaultYolo`, `pushNotifications`) as hot `StateFlow`s and matching fire-and-forget setter callbacks, plus a host-keyed `defaultWorkspace` projection and picker-host triple (since #714; #235 shipped the row unqualified), plus (since #164) a derived `archivedDiscussionCount` projection over `ConversationRepository`, plus (since #750, widening #749's single-host `host: StateFlow<SettingsHostState>`) a `connection: StateFlow<SettingsConnectionState>` projection that lists every saved host and marks the destination's own captured owner among them. Introduced in #87 (Theme row); extended in #89 (Use-wallpaper-colors switch), #164 (archived-discussion count for the Storage row), #232 (Default-model picker), #233 (Default-effort picker), #234 (Default-YOLO switch), #235 (Default-workspace picker host, unqualified), #268 (Push-notifications switch — the first pair outside the "Defaults for new conversations" group, and the first preference here to default `true`), #398 (a forwarded `connectionStatus` flow for the Connection-section status line — the **first** signal exposed here that is *not* a DataStore preference, sourced from the [`RelayRepositoryCoordinator`](relay-repository-coordinator.md) and forwarded verbatim), #749 (`connectionStatus` **removed** — it followed compatibility selection, which is the defect #749 fixes — and replaced by the host-owned `host` projection), #750 (`host` **replaced** by `connection`, which lists every saved host rather than resolving to one), and #714 (`defaultWorkspace` and the picker triple **rebound** to the destination's captured owner — see below).
 
-App-wide settings (the six preference pairs, `archivedDiscussionCount`) stay exactly as they were; #749 and #750 touch only the Connection-section identity/status signal, and #714 touches only the workspace-picker triple and `defaultWorkspace`. `archivedDiscussionCount` remains compatibility-bound pending #715.
+App-wide settings (the six preference pairs) stay exactly as they were; #749 and #750 touch only the Connection-section identity/status signal, and #714 touches only the workspace-picker triple and `defaultWorkspace`. This class's own code is untouched by #715 too — `archivedDiscussionCount`'s projection already consumed whatever `ConversationRepository` it was constructed with; what #715 changed is *which* repository [`ThreadDestinationFactory.settings`](dependency-injection.md#destination-ownership) hands it — the destination's own owner rather than the compatibility facade — so the Storage row's count now matches the archive its own row opens.
 
 ## What it does
 
@@ -69,7 +69,8 @@ visibility, so an open sheet can never be bound to the compatibility repository 
 `ChannelListScreen` already used for its own picker:
 
 ```kotlin
-composable(route = Routes.SETTINGS, arguments = Routes.settingsArguments()) {
+composable(route = Routes.SETTINGS, arguments = Routes.settingsArguments()) { backStackEntry ->
+    val settingsOwner = Routes.settingsOwner(backStackEntry.arguments)   // #715
     val vm = koinViewModel<SettingsViewModel>()
     val connection by vm.connection.collectAsStateWithLifecycle()   // #750, replacing #749's host
     val themeMode by vm.themeMode.collectAsStateWithLifecycle()
@@ -114,7 +115,11 @@ composable(route = Routes.SETTINGS, arguments = Routes.settingsArguments()) {
             },
             onPairServer = { navController.navigate(Routes.SCANNER) },   // #749
             onBack = { navController.popBackStack() },
-            onOpenArchivedDiscussions = { navController.navigate(Routes.ARCHIVED_DISCUSSIONS) },
+            // Nullable since #715: this destination's own owner, not selection.
+            onOpenArchivedDiscussions =
+                settingsOwner.takeIf { it.isNotEmpty() }?.let { owner ->
+                    { navController.navigate(Routes.archive(owner)) }
+                },
             onOpenAbout = { navController.navigate(Routes.ABOUT) },
         )
     }

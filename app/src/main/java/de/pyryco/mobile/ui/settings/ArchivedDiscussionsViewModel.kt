@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -55,10 +56,33 @@ sealed interface ArchivedDiscussionsEffect {
     data object RestoreFailed : ArchivedDiscussionsEffect
 }
 
+/**
+ * @param repository the owning host's own repository (#715), bound by the route rather than by
+ *   compatibility selection. Every read and every write on this screen goes through it, so a
+ *   selection change, a reconnect or an unpair can move neither the rows nor the restore target.
+ * @param hostLabel that host's resolved display name, or blank when it names none. Defaulted so the
+ *   seventeen unit-test construction sites that predate this ownership stay call-compatible, the way
+ *   `ThreadViewModel`'s own collaborators are; Koin always passes it.
+ */
 class ArchivedDiscussionsViewModel(
     private val repository: ConversationRepository,
+    hostLabel: Flow<String> = flowOf(""),
 ) : ViewModel() {
     private val selectedTab = MutableStateFlow(ArchiveTab.Discussions)
+
+    /**
+     * The owning host, for the header.
+     *
+     * Its own flow rather than a field on [ArchivedDiscussionsUiState.Loaded], because the header is
+     * drawn outside the state branch and has to stay stable across `Loading` and `Error` too. Blank
+     * means no host is named — never another host's identity.
+     */
+    val host: StateFlow<String> =
+        hostLabel.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = "",
+        )
 
     private val _effects = Channel<ArchivedDiscussionsEffect>(Channel.BUFFERED)
     val effects: Flow<ArchivedDiscussionsEffect> = _effects.receiveAsFlow()

@@ -17,12 +17,20 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-/** In-process Noise peer: the production registry, repositories and routes remain in the test. */
+/**
+ * In-process Noise peer: the production registry, repositories and routes remain in the test.
+ *
+ * @param archivedId an extra archived discussion this host holds, or null for none (#715). Opt-in so
+ *   the peers the thread and settings route tests build are unchanged; the id is deliberately
+ *   caller-supplied, because proving host-local ids means giving two hosts the same one.
+ */
 internal class NavigationPeer(
     private val serverId: String,
     private val conversationId: String,
     private val key: DeviceStaticKeyPair,
+    private val archivedId: String? = null,
 ) : RelayTransport {
+    private var restored = false
     private val frames = Channel<InnerFrameV2>(Channel.UNLIMITED)
     private val links = Channel<TransportEvent>(Channel.UNLIMITED)
     private var pair: CipherStatePair? = null
@@ -69,7 +77,13 @@ internal class NavigationPeer(
             outbound += request
             val response =
                 when (request.type) {
-                    "list_conversations" -> envelope("conversations", """{"conversations":[${row()}]}""")
+                    "list_conversations" -> envelope("conversations", """{"conversations":[${row()}${archivedRow()}]}""")
+                    // Restore is request/reply: the row leaves the archive only on this confirmation,
+                    // so a test that never replies proves the row stays put.
+                    "unarchive_conversation" -> {
+                        restored = true
+                        envelope("conversation_updated", archived(false))
+                    }
                     "recent_workspaces" -> envelope("recent_workspaces_list", """{"workspaces":[{"path":"/$serverId/recent"}]}""")
                     "create_workspace_folder" -> envelope("workspace_folder_created", """{"path":"/$serverId/created"}""")
                     "change_workspace" ->
@@ -88,6 +102,13 @@ internal class NavigationPeer(
         }
         return true
     }
+
+    /** Named per host, so which host's archive is on screen is readable from the row itself. */
+    private fun archived(isArchived: Boolean) =
+        """{"id":"$archivedId","name":"$serverId archived","is_promoted":false,"is_archived":$isArchived,""" +
+            """"cwd":"/$serverId/original","last_message_ts":"2026-09-01T00:00:00Z","last_used_at":"2026-09-01T00:00:00Z"}"""
+
+    private fun archivedRow() = if (archivedId == null || restored) "" else ",${archived(true)}"
 
     private fun row(cwd: String = "/$serverId/original") =
         """{"id":"$conversationId","name":"$serverId chat","is_promoted":true,"cwd":"$cwd","last_message_ts":"2026-09-01T00:00:00Z","last_used_at":"2026-09-01T00:00:00Z"}"""

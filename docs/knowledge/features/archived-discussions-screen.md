@@ -43,8 +43,17 @@ sealed interface ArchivedDiscussionsEffect {                  // since #177
     data object RestoreFailed : ArchivedDiscussionsEffect      // since #557, payload-free
 }
 
-class ArchivedDiscussionsViewModel(private val repository: ConversationRepository) : ViewModel()
+class ArchivedDiscussionsViewModel(
+    private val repository: ConversationRepository,
+    hostLabel: Flow<String> = flowOf(""),                      // since #715
+) : ViewModel() {
+    val host: StateFlow<String> = hostLabel.stateIn(viewModelScope, WhileSubscribed(STOP_TIMEOUT_MILLIS), "")
+}
 ```
+
+**Since #715, `repository` is the owning host's own facade, not the compatibility one — every read and every write on this screen goes through it.** [`ThreadDestinationFactory.archive(handle)`](dependency-injection.md#destination-ownership) resolves it once, at construction, via #636's exact-host seam (a `StableConversationRepository` over that host's `currentRepository`), so a compatibility-selection change, a reconnect or an unpair can move neither the rows nor a pending restore — and a host holding the same conversation id under a different host is unreachable by construction rather than by a check. `unarchive` against the real relay was already reachable before this ticket (the `mutationsSupported` gate flipped to `true` in #572); what #715 fixes is *which* host's relay it reaches.
+
+`hostLabel` (second constructor parameter, defaulted to `flowOf("")` so the pre-#715 unit-test construction sites stay call-compatible — Koin always passes it explicitly) is that same host's resolved display name, or blank when it names none. `host` lifts it with its own `stateIn(WhileSubscribed(STOP_TIMEOUT_MILLIS), "")` because the header it feeds is drawn outside the `UiState` branch (see [`ArchivedDiscussionsScreen`](#archiveddiscussionsscreen-stateless) below) and has to stay stable across `Loading`, `Error` and `Loaded` alike — a field on `Loaded` couldn't do that.
 
 State is built by combining the data stream with a UI-driven tab selector:
 
@@ -93,10 +102,15 @@ fun ArchivedDiscussionsScreen(
     onEvent: (ArchivedDiscussionsEvent) -> Unit,
     modifier: Modifier = Modifier,
     effects: Flow<ArchivedDiscussionsEffect> = emptyFlow(),   // since #177
+    hostName: String = "",                                    // since #715
 )
 ```
 
-`Scaffold` with an M3 `TopAppBar` — title `stringResource(R.string.archived_title)` ("Archived" since #176; replaces the pre-#176 "Archived discussions"), `navigationIcon` the canonical back-arrow `IconButton` (`Icons.AutoMirrored.Filled.ArrowBack` + reused `R.string.cd_back`) that dispatches `BackTapped`, and (since #177) `snackbarHost = { SnackbarHost(snackbarHostState) }` — first `SnackbarHost` in the codebase. Above the `Scaffold`: `val snackbarHostState = remember { SnackbarHostState() }`, `val resources = LocalResources.current`, and a `LaunchedEffect(effects, snackbarHostState) { effects.collect { effect -> when (effect) { is RestoreSucceeded -> snackbarHostState.showSnackbar(resources.getString(R.string.restored_snackbar, effect.displayName)) } } }`. The default `effects = emptyFlow()` keeps the three `@Preview`s (which don't care about effects) call-site-compatible. Body branches on the `UiState`:
+`Scaffold` with an M3 `TopAppBar` — title `stringResource(R.string.archived_title)` ("Archived" since #176; replaces the pre-#176 "Archived discussions"; still a single line, matching Figma `18:2` exactly — see the header note below), `navigationIcon` the canonical back-arrow `IconButton` (`Icons.AutoMirrored.Filled.ArrowBack` + reused `R.string.cd_back`) that dispatches `BackTapped`, and (since #177) `snackbarHost = { SnackbarHost(snackbarHostState) }` — first `SnackbarHost` in the codebase. Above the `Scaffold`: `val snackbarHostState = remember { SnackbarHostState() }`, `val resources = LocalResources.current`, and a `LaunchedEffect(effects, snackbarHostState) { effects.collect { effect -> when (effect) { is RestoreSucceeded -> snackbarHostState.showSnackbar(resources.getString(R.string.restored_snackbar, effect.displayName)) } } }`. The default `effects = emptyFlow()` keeps the three `@Preview`s (which don't care about effects) call-site-compatible.
+
+**Owning-host header (since #715).** The Scaffold's body `Column` opens with a conditional `Text(hostName.take(MAX_WORKSPACE_LABEL_CHARS), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)`, rendered only when `hostName.isNotBlank()`, sitting **below** the `TopAppBar` and above `SecondaryTabRow` — outside the `when (state)` branch, so it reads the same across `Loading`/`Error`/`Loaded`. This is a plan revision, not the original design: the first pass put the owner on a second `TopAppBar` title line, but M3's small `TopAppBar` is a fixed 64dp container that a two-line title overruns at large font scale, and this would have been the first two-line bar title in the codebase — nothing carried that risk. A `Text` in a `Column` grows with the font scale instead of being clipped, and Figma `18:2`'s single-line "Archived" bar is now matched exactly; the owning host is identified one line lower rather than in the bar itself. `MAX_WORKSPACE_LABEL_CHARS` ([`ui/workspace/WorkspaceDisplayName.kt`](workspace-picker.md)) clamps the name at the render boundary because it can originate in a scanned QR payload or locally-entered host metadata, neither of which `parsePairingPayload` bounds by length. Two of the three `@Preview`s pass a `hostName` — see [Previews](#previews) below.
+
+Body branches on the `UiState`:
 
 - `Loading` → centered `"Loading…"` via a file-private `CenteredText(text, modifier)` helper.
 - `Error(message)` → centered `"Couldn't load archived discussions: $message"`. Note the literal still reads "discussions" — error-path copy refresh is explicitly out of scope per the #176 spec, even though the title flipped to the single word "Archived". Refresh in a follow-up if/when error UX is revisited.
@@ -154,46 +168,68 @@ Notes:
 
 ### Settings row + nav graph
 
-`SettingsScreen` carries a required `onOpenArchivedDiscussions: () -> Unit` parameter (no default — navigation/event callbacks never carry defaults; rule established in #87 and #91); the Storage row's headline reads `stringResource(R.string.archived_discussions_settings_row)` ("Archived discussions" — the Settings copy literal kept the pre-#176 wording even after the screen title flipped to "Archived"; the two are deliberately separate string ids so they can diverge without forking a usage site). The row's `supporting = stringResource(R.string.archived_discussions_count_supporting, archivedDiscussionCount)` ("N archived") is driven by [`SettingsViewModel.archivedDiscussionCount`](settings-viewmodel.md) since #164.
+`SettingsScreen` carries an `onOpenArchivedDiscussions: (() -> Unit)?` parameter — **nullable since #715**, the one exception to the "navigation callbacks never carry defaults" rule from #87/#91, because a destination that owns no host has no archive to open. `SettingsRow`'s own `onClick: (() -> Unit)?` already draws its `ListItem` inert (no `clickable`, no ripple) when passed `null`, so the row degrades gracefully rather than offering a tap that could only be rejected; it still draws its trailing `ChevronIcon()` regardless, so the inert state isn't visually distinguished from a live one (flagged as a verifier NIT, not fixed here). The Storage row's headline reads `stringResource(R.string.archived_discussions_settings_row)` ("Archived discussions" — the Settings copy literal kept the pre-#176 wording even after the screen title flipped to "Archived"; the two are deliberately separate string ids so they can diverge without forking a usage site). The row's `supporting = stringResource(R.string.archived_discussions_count_supporting, archivedDiscussionCount)` ("N archived") is driven by [`SettingsViewModel.archivedDiscussionCount`](settings-viewmodel.md) since #164, and since #715 that count is projected from the **same owning host** this row opens — see [Dependency injection § Destination ownership](dependency-injection.md#destination-ownership).
+
+**Two doors, one destination, both owner-bound since #715.** Settings' row is one; the [channel list](channel-list-screen.md)'s own archive entry (`ChannelListEvent.ArchiveTapped`, since #737) is the other. The two capture their owner from deliberately different sources: Settings' row inherits the owner its own destination already holds (read back from its route argument), while the channel list's entry reads compatibility selection fresh at tap time, the same way the settings gear beside it does. Neither can pass a blank id — Settings draws its row inert as above, and with no host selected the list's tap does nothing.
 
 `MainActivity.PyryNavHost`:
 
 ```kotlin
-composable(Routes.SETTINGS) {
+composable(
+    route = Routes.SETTINGS,
+    arguments = Routes.settingsArguments(),
+) { backStackEntry ->
+    val settingsOwner = Routes.settingsOwner(backStackEntry.arguments)
     val vm = koinViewModel<SettingsViewModel>()
-    val themeMode by vm.themeMode.collectAsStateWithLifecycle()
-    val useWallpaperColors by vm.useWallpaperColors.collectAsStateWithLifecycle()
     val archivedDiscussionCount by vm.archivedDiscussionCount.collectAsStateWithLifecycle()
+    // ...
     SettingsScreen(
-        themeMode = themeMode,
-        useWallpaperColors = useWallpaperColors,
-        archivedDiscussionCount = archivedDiscussionCount,
-        onSelectTheme = vm::onSelectTheme,
-        onToggleUseWallpaperColors = vm::onToggleUseWallpaperColors,
-        onBack = { navController.popBackStack() },
-        onOpenArchivedDiscussions = { navController.navigate(Routes.ARCHIVED_DISCUSSIONS) },
+        // ...
+        onOpenArchivedDiscussions =
+            settingsOwner.takeIf { it.isNotEmpty() }?.let { owner ->
+                { navController.navigate(Routes.archive(owner)) }
+            },
+        onOpenAbout = { navController.navigate(Routes.ABOUT) },
     )
 }
-composable(Routes.ARCHIVED_DISCUSSIONS) {
-    val vm = koinViewModel<ArchivedDiscussionsViewModel>()
-    val state by vm.state.collectAsStateWithLifecycle()
-    ArchivedDiscussionsScreen(
-        state = state,
-        onEvent = { event ->
-            when (event) {
-                ArchivedDiscussionsEvent.BackTapped -> navController.popBackStack()
-                is ArchivedDiscussionsEvent.RestoreRequested -> vm.onEvent(event)
-                is ArchivedDiscussionsEvent.TabSelected -> vm.onEvent(event)
-            }
-        },
-        effects = vm.effects,                          // since #177
-    )
+// Wrapped in HostDestination, unlike Settings and like thread/literal: an unknown or newly-unpaired
+// owner bounces to the channel list rather than falling through to another host's archive.
+composable(
+    route = Routes.ARCHIVED_DISCUSSIONS,
+    arguments = Routes.archiveArguments(),
+) { backStackEntry ->
+    HostDestination(Routes.archiveOwner(backStackEntry.arguments), destinations, navController) {
+        val vm = koinViewModel<ArchivedDiscussionsViewModel>()
+        val state by vm.state.collectAsStateWithLifecycle()
+        val hostName by vm.host.collectAsStateWithLifecycle()
+        ArchivedDiscussionsScreen(
+            state = state,
+            onEvent = { event ->
+                when (event) {
+                    ArchivedDiscussionsEvent.BackTapped -> navController.popBackStack()
+                    is ArchivedDiscussionsEvent.RestoreRequested -> vm.onEvent(event)
+                    is ArchivedDiscussionsEvent.TabSelected -> vm.onEvent(event)
+                }
+            },
+            effects = vm.effects,
+            hostName = hostName,
+        )
+    }
 }
 ```
 
-`Routes.ARCHIVED_DISCUSSIONS = "archived_discussions"`. The NavHost intercepts `BackTapped` before forwarding to the VM (the VM's `Unit` arm is a no-op); `RestoreRequested` and `TabSelected` (since #176) are forwarded as-is. The `effects` flow is passed straight through from the VM to the screen — the destination block doesn't collect it (the screen owns the `SnackbarHostState` and collects internally).
+The channel list's own door, in the `PyryNavHost` destination block that handles `ChannelListEvent`:
 
-Koin: `viewModel { ArchivedDiscussionsViewModel(get()) }` in `appModule` — constructor signature is unchanged across #94/#176 (the `selectedTab` flow is constructed in the field initializer, not injected).
+```kotlin
+ChannelListEvent.ArchiveTapped ->
+    destinations.selectedServerId()?.let {
+        navController.navigate(Routes.archive(it))
+    }
+```
+
+`Routes.ARCHIVED_DISCUSSIONS = "archived_discussions/{serverId}"` — a **required path segment**, unlike `Routes.SETTINGS`'s optional query argument: Settings has to stay open for an unpaired phone, Archive has no such case, and a route that cannot express "no owner" is the cheapest way to keep one from being invented. Three helpers mirror the existing `thread`/`literal`/`settings` trio: `Routes.archive(serverId: String)` (`Uri.encode`d into the path segment, same per-component encoding discipline), `Routes.archiveArguments()` (one `NavType.StringType` argument named `serverId`), and `Routes.archiveOwner(arguments: Bundle?)`. Because the route changed from a bare constant into a route *pattern*, **every** caller had to change — a rework caught one that the original plan's reading list missed: the channel list's own door still called `navController.navigate(Routes.ARCHIVED_DISCUSSIONS)`, which matched the pattern and bound the literal text `{serverId}` as the owner; `HostDestination` rejected it as unknown and bounced the tap straight back to the list. The two callers above are current. The NavHost intercepts `BackTapped` before forwarding to the VM (the VM's `Unit` arm is a no-op); `RestoreRequested` and `TabSelected` (since #176) are forwarded as-is. The `effects` flow is passed straight through from the VM to the screen — the destination block doesn't collect it (the screen owns the `SnackbarHostState` and collects internally).
+
+Koin: `viewModel { get<ThreadDestinationFactory>().archive(get()) }` in `appModule`, replacing the pre-#715 `viewModel { ArchivedDiscussionsViewModel(get()) }`. `ThreadDestinationFactory.archive(handle: SavedStateHandle)` reads `serverId` from the entry's `SavedStateHandle` and builds `ArchivedDiscussionsViewModel(repository(serverId), hostLabel(serverId))` — `repository(serverId)` is [#636's exact-host seam](dependency-injection.md#exact-host-repository-access) verbatim, and `hostLabel` is a private helper mapping the factory's existing `hosts()` projection to the owner's resolved display name (`displayName` when non-blank, else the server id — the same fallback `SettingsHostRow`/`HostIdentityRow` use), narrowed to a single `String` so no `SettingsHost` or stored pairing record ever reaches this ViewModel. See [Dependency injection § Destination ownership](dependency-injection.md#destination-ownership).
 
 ### Strings
 
@@ -217,12 +253,12 @@ Plurals deferred: `"0 / 1 / 3 archived"` are all grammatical without inflection,
 
 ## Configuration / usage
 
-Mounted at `Routes.ARCHIVED_DISCUSSIONS` (`"archived_discussions"`) in [`PyryNavHost`](navigation.md). Entry points: the [Settings screen](settings-screen.md) Storage section's "Archived discussions" row, and, since #737, the archive entry on the [channel list](channel-list-screen.md)'s own bar — same argument-free route, two doors. No deep-link, no back-stack policy beyond the default `popBackStack()` on `BackTapped`.
+Mounted at `Routes.ARCHIVED_DISCUSSIONS` (`"archived_discussions/{serverId}"`, a required path segment since #715) in [`PyryNavHost`](navigation.md), wrapped in `HostDestination` so an unknown or newly-removed owner leaves for the channel list rather than falling through to another host's rows. Entry points: the [Settings screen](settings-screen.md) Storage section's "Archived discussions" row (inherits the owner Settings' own destination already holds), and, since #737, the archive entry on the [channel list](channel-list-screen.md)'s own bar (reads compatibility selection fresh at tap time) — one destination, two doors, each capturing its owner from a different source since #715. No deep-link, no back-stack policy beyond the default `popBackStack()` on `BackTapped`.
 
-Manual verification path (post-#177):
+Manual verification path (post-#715):
 
-1. `./gradlew installDebug` → open app → tap the archive entry on the channel list's own bar (or tap the settings entry → scroll Settings to **Storage** → tap **Archived discussions**).
-2. The seeded archived discussion (`seed-discussion-archived`, lastUsedAt `2026-04-15`) renders under the **Discussions** tab (default) as an `ArchiveRow`: 40dp avatar + `titleMedium` headline + `bodySmall` "Archived 1mo ago"-shaped subtitle + trailing 40dp restore `IconButton`. No row-level alpha dimming. Both tab labels show counts (`Channels (0)`, `Discussions (1)`).
+1. `./gradlew installDebug` → open app with at least one paired host → tap the archive entry on the channel list's own bar (or tap the settings entry → scroll Settings to **Storage** → tap **Archived discussions**).
+2. The seeded archived discussion (`seed-discussion-archived`, lastUsedAt `2026-04-15`) renders under the **Discussions** tab (default) as an `ArchiveRow`: 40dp avatar + `titleMedium` headline + `bodySmall` "Archived 1mo ago"-shaped subtitle + trailing 40dp restore `IconButton`. No row-level alpha dimming. Both tab labels show counts (`Channels (0)`, `Discussions (1)`). Below the "Archived" app bar, a `labelMedium` line names the owning host.
 3. Tap the **Channels** tab → "No archived channels" centered empty body; tab header stays visible, count badges unchanged.
 4. Tap back to **Discussions** → row reappears. Tap the trailing restore icon-button (one tap, no long-press) → row animates out, `Snackbar` appears at the bottom reading `Restored Untitled discussion` (or the configured name if non-null), Discussions tab body shows "No archived discussions".
 5. Back-arrow twice → channel list → restored discussion appears under Recent discussions.
@@ -234,8 +270,8 @@ Tab selection survives recomposition / rotation (`MutableStateFlow` in the VM, V
 
 - **"Archive date" trailing slot is `formatRelativeTime(lastUsedAt)`, not a true `archivedAt`.** `Conversation` has no `archivedAt: Instant?` field; `archive(id)` (#93) flips a boolean without stamping a timestamp. The existing trailing slot prints "Apr 15" for the seed — close to the AC's "archive date" but not literally it. The natural owner of `archivedAt` is the 30-day auto-archive worker (it needs the timestamp to decide which records to evict); add the field there, then switch this screen's trailing slot to format it.
 - **Restore failure surfaces since #557** — a fixed-string `restore_failed` snackbar covers both the server-`error` (`RelayErrorException`) and disconnected (`IllegalStateException`) cases; the server-supplied message is never shown. Resolves the gap this bullet used to describe (pre-#557 silent `runCatching` no-op). See [`codebase/557.md`](../codebase/557.md).
-- **Restore against the real relay is currently unreachable.** `unarchive` sits behind `RemoteConversationRepository`'s `mutationsSupported == false` gate (the #508/#537 family gate) — the success/failure paths above are exercised via fakes in unit tests, not live UI, until that gate is flipped per-mutation. #557 deliberately left the gate untouched; the rung-3 e2e (#551) is parked pending the family-wide decision.
-- **Settings entry-row count counts only archived discussions, not archived channels.** Since #164 the Settings row reads `"N archived"` where N = `count { !it.isPromoted }` on the same `Archived` upstream — the pre-#176 screen-side filter that #176 walked back. Archived channels are now first-class in this screen but invisible on the Settings entry. A follow-up could promote the Settings projection to `count { archived = true }` for parity; not done here because (a) the Settings copy literal is still "Archived discussions" and (b) the count number's contract with users hasn't changed yet. Documented divergence.
+- **Restore against the real relay is reachable — this overview previously said otherwise.** `RemoteConversationRepository.mutationsSupported` was flipped from `false` to `true` in #572, before this ticket; the pre-#572 statement here (that `unarchive` sat behind a disabled family gate) was already stale by the time #715 landed and is corrected as part of #715's documentation handoff. What #715 fixes is *which* host's relay a restore reaches — see [`ArchivedDiscussionsViewModel`](#archiveddiscussionsviewmodel) above. The rung-3 two-host archive/restore e2e is #676, tracked separately from this correction.
+- **Settings entry-row count counts only archived discussions, not archived channels.** Since #164 the Settings row reads `"N archived"` where N = `count { !it.isPromoted }` on the same `Archived` upstream — the pre-#176 screen-side filter that #176 walked back. Archived channels are now first-class in this screen but invisible on the Settings entry. A follow-up could promote the Settings projection to `count { archived = true }` for parity; not done here because (a) the Settings copy literal is still "Archived discussions" and (b) the count number's contract with users hasn't changed yet. Documented divergence — preserved by #715, which moved *which host's* repository the count reads from without touching the projection itself.
 - **`SecondaryTabRow`'s `selectedTabIndex = state.selectedTab.ordinal` mapping is positional.** `ArchiveTab.Channels.ordinal == 0` matches the first `Tab` child position; `ArchiveTab.Discussions.ordinal == 1` matches the second. If the enum grows a new value **in front of** `Channels` (e.g. `enum class ArchiveTab { All, Channels, Discussions }`), the ordinal mapping silently shifts and the wrong tab is rendered as active. Adding values to the end is safe; reordering is the risk. The mitigation in the screen is to read the ordinal once at `selectedTabIndex = state.selectedTab.ordinal` and to spell out the per-`Tab` `selected = (state.selectedTab == <variant>)` check explicitly, so a re-ordering would surface as a "tab indicator under tab X but tab Y's body content" visual mismatch in previews. Not enforced in code; carry as a known risk if the enum ever grows.
 - **Tab selection resets to `Discussions` after the `WhileSubscribed(5_000L)` grace expires.** Documented above; tolerable because Phase 0 has no process-death scenario reachable on the fake-data path. If Phase 4's real backend introduces durable session state, revisit whether tab selection should survive longer (probably via `SavedStateHandle`, not `rememberSaveable` — the VM is still the right home).
 
@@ -260,10 +296,24 @@ Tab selection survives recomposition / rotation (`MutableStateFlow` in the VM, V
 - `backTapped_doesNotCallUnarchive` — `BackTapped` is a no-op for the repo. (Unchanged from #94.)
 - `error_whenSourceFlowThrows` — stream throws → `Error("network down")`. (Unchanged from #94.)
 - `error_messageIsNonBlank_whenExceptionMessageIsNull` — null message → non-blank fallback. (Unchanged from #94.)
+- `host_surfacesOwnerLabel_andFollowsRenames` (since #715) — a `MutableStateFlow<String>` label fed as `hostLabel`; asserts `vm.host.value` tracks a later rename emission on the same flow rather than requiring re-navigation.
+- `host_isBlank_whenOwnerIsNotSaved` (since #715) — `hostLabel = flowOf("")` → `vm.host.value == ""`. The layer below `HostDestination`'s route guard: proves the label itself cannot borrow another host's identity.
+- `restoreRequested_callsOnlyTheConstructedRepository_whenIdsCollide` (since #715) — two independent `RecordingRepo`s holding the *same* conversation id; only the one the VM was constructed with (`owner`) sees `unarchiveCalls`, the other (`other`) sees none. The colliding-id guarantee (AC #2) asserted at unit scope.
 
-No instrumented Compose tests. Pre-#177 the screen had none and #177 didn't add any; the `@Preview`s (three for `ArchivedDiscussionsScreen` + two for `ArchiveRow` = five total post-#177; the pre-#177 `ArchivedDiscussionsRowMenuPreview` was deleted with the long-press dropdown) provide the visual coverage. A follow-up belt-and-suspenders Compose test can mirror `DiscussionListScreenTest`'s shape if a regression appears — the `Snackbar` text is one obvious candidate but verifying it requires `composeTestRule.waitUntil { … }` against the live `SnackbarHostState`, which doesn't have prior art in this codebase.
+No instrumented Compose tests on `ArchivedDiscussionsScreen` itself. Pre-#177 the screen had none and #177 didn't add any; the `@Preview`s (three for `ArchivedDiscussionsScreen` + two for `ArchiveRow` = five total post-#177; the pre-#177 `ArchivedDiscussionsRowMenuPreview` was deleted with the long-press dropdown) provide the visual coverage. A follow-up belt-and-suspenders Compose test can mirror `DiscussionListScreenTest`'s shape if a regression appears — the `Snackbar` text is one obvious candidate but verifying it requires `composeTestRule.waitUntil { … }` against the live `SnackbarHostState`, which doesn't have prior art in this codebase. Route-level and cross-host behavior is now covered on-device instead — see below.
 
-`SettingsScreenTest`'s `setContent` blocks were not touched by #176 — the Settings-side parameters and the new `archivedDiscussionCount` arg are #164 territory, independent of this slice.
+`SettingsScreenTest`'s `setContent` blocks were not touched by #176 — the Settings-side parameters and the new `archivedDiscussionCount` arg are #164 territory, independent of this slice. Since #715, `setSettings()`'s `onOpenArchivedDiscussions` parameter defaults to a non-null `{}` (preserving every existing call site) with one new method, `archiveRow_isNotClickable_whenNoOwnerToOpenItFor`, passing `null` and asserting `assertHasNoClickAction()` on the "Archived discussions" row — the layer below the route guard that proves a blank owner never gets a tap to reject.
+
+### Device test — `ArchiveNavigationTest` (since #715)
+
+`app/src/androidTest/.../ui/settings/ArchiveNavigationTest.kt` copies `SettingsNavigationTest`'s production-route harness (`PyryNavHost` + `Routes` + Koin bindings + two Noise peers, no Activity startup gate) and, like [`LiteralScreenNavigationTest`](literal-screen-surface.md), gives both hosts the **same** archived conversation id (`SHARED_ID`) — proving the colliding-id guarantee means giving two hosts the same id, not merely two different ones:
+
+- `archiveKeepsItsCapturedOwnerAcrossSelectionChangeAndRestoration` — opens Archive through the Settings row under host Alpha (id carrying reserved characters `"A /?#%"`, proving the path-segment encoding round-trips), asserts the route argument and rendered row are Alpha's; a compatibility-selection change to Bravo, a `StateRestorationTester` saved-instance-state restore, and a Back-then-reopen-under-Bravo all leave (or correctly change) the captured owner.
+- `restoreReachesOnlyTheOwnerAndLeavesTheOtherHostsMatchingIdArchived` — restores Alpha's row while selection points at Bravo; asserts Bravo's peer received **no `unarchive_conversation` frame at all**, Alpha's did, the snackbar reads the success copy, and the row leaves the list only after the peer's `conversation_updated` reply (`NavigationPeer.unarchived(false)` since #715 — the frame is request/reply, so a peer that never answers proves the row stays put).
+- `removingTheOwnerLeavesTheDestinationRatherThanShowingAnotherHost` — removes Alpha's paired-server record while its Archive is open; asserts the destination departs for `Routes.CHANNEL_LIST` rather than rendering Bravo's rows. Asserted on the *departure*, not on the other host's absence — a host-bound facade under an unknown owner emits `emptyList()`, which renders as a plausible "no archived discussions," so the weaker assertion would pass even with the route guard silently failing to fire.
+- `theChannelListsArchiveEntryOpensTheSelectedHostsArchive` — the channel list's own door (not Settings'); opens Alpha's archive via the list's archive icon, then, after popping back and changing selection to Bravo, opens Bravo's — proving this door re-reads selection on every tap rather than inheriting a captured owner the way Settings' row does. Added in rework after the verifier's MUST FIX (the plan's reading list had missed this second call site entirely — see [Navigation § Testing](navigation.md#testing)).
+
+`NavigationPeer` gained an optional `archivedId` constructor parameter and an `unarchive_conversation` handler (opt-in, so `LiteralScreenNavigationTest` and `SettingsNavigationTest` see an unchanged peer).
 
 ## Previews
 
@@ -271,9 +321,9 @@ Five `@Preview`s, all `private`, all `widthDp = 412` (post-#177):
 
 Inside `ArchivedDiscussionsScreen.kt` — three previews, all `darkTheme = false`:
 
-- `ArchivedScreenDiscussionsPreview` — Discussions tab active, one archived channel + one archived discussion seeded so both tab counts are non-zero. Discussions list renders as the body.
-- `ArchivedScreenChannelsPreview` — Channels tab active, same seeds, channel list renders as the body.
-- `ArchivedScreenDiscussionsEmptyPreview` — Discussions tab active, one archived channel seeded + zero archived discussions, body renders the "No archived discussions" centered empty state with the tab header still visible (AC §5 visual lock).
+- `ArchivedScreenDiscussionsPreview` — Discussions tab active, one archived channel + one archived discussion seeded so both tab counts are non-zero. Discussions list renders as the body. Since #715, passes `hostName = "studio-mini"` — an ordinary short name that renders whole, the common case for the new header line.
+- `ArchivedScreenChannelsPreview` — Channels tab active, same seeds, channel list renders as the body. Since #715, passes a deliberately long `hostName` (well past `MAX_WORKSPACE_LABEL_CHARS`) so the clamp and the ellipsis overflow both render in this preview — added in rework after the verifier flagged that no preview exercised the one new visual element in the PR.
+- `ArchivedScreenDiscussionsEmptyPreview` — Discussions tab active, one archived channel seeded + zero archived discussions, body renders the "No archived discussions" centered empty state with the tab header still visible (AC §5 visual lock). Still defaults `hostName = ""` — the empty-state visual contract doesn't depend on the header line.
 
 Inside `ArchiveRow.kt` (since #177) — two previews, light + dark:
 
@@ -290,15 +340,16 @@ The pre-#177 `ArchivedDiscussionsRowMenuPreview` (long-press menu open via `menu
   - [`../codebase/177.md`](../codebase/177.md) — `ArchiveRow` + inline restore + `Snackbar` via `ArchivedDiscussionsEffect`
   - [`../codebase/557.md`](../codebase/557.md) — `RestoreFailed` effect + try/catch rewrite closing the restore-failure gap
   - [`../codebase/164.md`](../codebase/164.md) — Settings-side live-count projection over the same `Archived` upstream
-- Specs: `docs/specs/architecture/94-archived-discussions-screen.md`, `docs/specs/architecture/176-archive-2-tab-header.md`, `docs/specs/architecture/177-archive-row-inline-restore-snackbar.md`
-- Parent: split from #125 (the broader archive overhaul). #176 + #177 together close out the #125 split — there is no further child ticket.
+  - #715 has no `../codebase/715.md` — the per-ticket archive was frozen 2026-09-05, before this ticket; its design, security review and revisions live in `docs/specs/architecture/715-archive-host-owner.md`, and its lessons live in this document, [Navigation](navigation.md) and [Dependency injection](dependency-injection.md) instead.
+- Specs: `docs/specs/architecture/94-archived-discussions-screen.md`, `docs/specs/architecture/176-archive-2-tab-header.md`, `docs/specs/architecture/177-archive-row-inline-restore-snackbar.md`, `docs/specs/architecture/715-archive-host-owner.md` (host-bound repository + route ownership + host-identified header)
+- Parent: split from #125 (the broader archive overhaul). #176 + #177 together closed out the #125 split; #715 (host ownership, split from #637 via #749) is a later, independent slice.
 - Data foundations: [`../codebase/93.md`](../codebase/93.md) (`Conversation.archived` + `ConversationFilter.Archived` + seed), [`../codebase/96.md`](../codebase/96.md) (`unarchive(id)` primitive)
 - Sibling screens: [Discussion list screen](discussion-list-screen.md) (shape this screen mirrored at the row level pre-#177 — `Scaffold` + back-arrow + `LazyColumn` + long-press menu + `alpha(0.65f)`; #177's `ArchiveRow` walked the per-row alpha + long-press menu back for the archive surface specifically); the segmented-tab pattern is new to the codebase with #176 and a future tabbed screen should follow the `MutableStateFlow<X> + combine` shape established here. Was siblings with `LicenseScreen` (#91) under `ui/settings/` until #163 deleted that screen.
 - Hosted ViewModel pattern: similar in shape to [Discussion list view-model](discussion-list-viewmodel.md), now with a UI-state slot (`selectedTab`) `combine`d alongside the data source (#176) and a `Channel<Effect>` for one-shot UI signals (#177) — see [`codebase/177.md`](../codebase/177.md) § Patterns established for the rule on splitting `navigationEvents` from `effects`.
 - Reused primitives in `ArchiveRow`: [Conversation avatar](conversation-avatar.md) (40dp leading bubble), `formatRelativeTime` (`internal` in `ui/conversations/components/RelativeTime.kt`).
 - Entry point: [Settings screen](settings-screen.md) Storage section row
-- Navigation: [Navigation](navigation.md) — route `archived_discussions`
+- Navigation: [Navigation](navigation.md) — route `archived_discussions/{serverId}` (since #715; a bare `archived_discussions` before it)
 - Figma:
   - Original (no dedicated frame) — pre-#176 visuals derived from Recent Discussions row treatment in #69 with muted-alpha state signal
-  - 18:2 — https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=18-2 (locked since #176; `ArchiveRow` anatomy locked since #177)
-- Follow-ups: (a) `Conversation.archivedAt: Instant?` stamped by the 30-day auto-archive worker, then this screen formats it instead of `lastUsedAt`; (b) snackbar "Undo" action — out of scope per the #177 issue body; (c) Settings projection promoted to `count { archived = true }` for parity with the new Channels tab; (d) ~~visible-error / retry surface when Phase 4's Ktor remote arrives~~ — shipped #557 as the payload-free `RestoreFailed`; (e) flip the `mutationsSupported` gate for `unarchive` so the restore affordance (and its failure surface) is reachable against the real relay — family-wide decision tracked under #537, blocks the rung-3 e2e (#551).
+  - 18:2 — https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=18-2 (locked since #176; `ArchiveRow` anatomy locked since #177; the #715 owner line is this ticket's own AC-driven adaptation, drawn below the bar rather than in the frame itself)
+- Follow-ups: (a) `Conversation.archivedAt: Instant?` stamped by the 30-day auto-archive worker, then this screen formats it instead of `lastUsedAt`; (b) snackbar "Undo" action — out of scope per the #177 issue body; (c) Settings projection promoted to `count { archived = true }` for parity with the new Channels tab; (d) ~~visible-error / retry surface when Phase 4's Ktor remote arrives~~ — shipped #557 as the payload-free `RestoreFailed`; (e) ~~flip the `mutationsSupported` gate for `unarchive` so restore is reachable against the real relay~~ — shipped #572, before this ticket; (f) the rung-3 two-host archive/restore e2e remains #676.
