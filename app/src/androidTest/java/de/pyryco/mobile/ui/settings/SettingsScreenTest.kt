@@ -1,5 +1,6 @@
 package de.pyryco.mobile.ui.settings
 
+import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
@@ -115,9 +116,25 @@ class SettingsScreenTest {
         composeTestRule.onNode(hasText("No host is paired")).assertDoesNotExist()
     }
 
+    /**
+     * A destination owning no host draws the Archive entry inert (#715). Load-bearing rather than
+     * cosmetic: the callback is null exactly when there is no owner to put in the route, and a blank
+     * owner would build `archived_discussions/`, which matches no destination.
+     */
+    @Test
+    fun archiveRow_isNotClickable_whenNoOwnerToOpenItFor() {
+        setSettings(onOpenArchivedDiscussions = null)
+
+        composeTestRule
+            .onNode(hasText("Archived discussions"))
+            .performScrollTo()
+            .assertHasNoClickAction()
+    }
+
     private fun setSettings(
         connection: SettingsConnectionState = SettingsConnectionState.Resolving,
         archivedDiscussionCount: Int = 0,
+        onOpenArchivedDiscussions: (() -> Unit)? = {},
         onOpenHost: (String) -> Unit = {},
         onPairServer: () -> Unit = {},
         onOpenAbout: () -> Unit = {},
@@ -147,7 +164,7 @@ class SettingsScreenTest {
                     onOpenHost = onOpenHost,
                     onPairServer = onPairServer,
                     onBack = {},
-                    onOpenArchivedDiscussions = {},
+                    onOpenArchivedDiscussions = onOpenArchivedDiscussions,
                     onOpenAbout = onOpenAbout,
                 )
             }
