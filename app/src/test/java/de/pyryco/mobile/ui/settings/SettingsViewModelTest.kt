@@ -3,6 +3,10 @@ package de.pyryco.mobile.ui.settings
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
+import de.pyryco.mobile.data.crypto.PairedServer
+import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
+import de.pyryco.mobile.data.crypto.PairedServerEntry
+import de.pyryco.mobile.data.crypto.PairedServerStoreException
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
@@ -35,6 +39,8 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -78,7 +84,8 @@ class SettingsViewModelTest {
         repo: ConversationRepository = stubRepo(),
         ownerServerId: String = "",
         hosts: Flow<List<SettingsHost>> = MutableStateFlow(emptyList()),
-    ): SettingsViewModel = SettingsViewModel(prefs, repo, ownerServerId, hosts)
+        pairedServers: PairedServerCollectionStore = Store(),
+    ): SettingsViewModel = SettingsViewModel(prefs, repo, ownerServerId, hosts, pairedServers)
 
     private fun host(
         serverId: String,
@@ -1043,6 +1050,249 @@ class SettingsViewModelTest {
             assertEquals(SettingsConnectionState.Resolving, vm.connection.value)
             collector.cancel()
         }
+
+    // ---- Host editor (#751): the owner's row, and only the owner's ----
+
+    /** AC1: the editor opens on the **captured** owner and carries that record's three display facts. */
+    @Test
+    fun hostEditor_opensOnTheCapturedOwnerWithItsIdentityRelayAndName() =
+        runTest(dispatcher) {
+            val store = Store().apply { put(OWNER, "wss://relay.example/owner", "Pyrybox") }
+            val vm = makeVm(AppPreferences(newDataStore()), ownerServerId = OWNER, pairedServers = store)
+
+            vm.openOwnerHostEditor()
+            advanceUntilIdle()
+
+            val editor = requireNotNull(vm.hostEditor.value)
+            assertEquals(OWNER, editor.serverId)
+            assertEquals(OWNER, editor.serverIdentity)
+            assertEquals("wss://relay.example/owner", editor.relayAddress)
+            assertEquals("Pyrybox", editor.initialName)
+        }
+
+    /**
+     * AC1/AC4: a destination owning no host opens no editor, and says so content-free.
+     *
+     * The screen offers no affordance in that case, so this is the second lock rather than the only
+     * one — but it is the one that holds if a future caller wires the callback unconditionally.
+     */
+    @Test
+    fun hostEditor_rejectsABlankOwnerWithoutOpening() =
+        runTest(dispatcher) {
+            val store = Store().apply { put(OWNER, "wss://relay.example/owner", "Pyrybox") }
+            val vm = makeVm(AppPreferences(newDataStore()), ownerServerId = "", pairedServers = store)
+
+            vm.openOwnerHostEditor()
+            advanceUntilIdle()
+
+            assertNull(vm.hostEditor.value)
+            assertTrue(logs.any { it.contains("settings_host_editor_rejected") && it.contains("code=no_owner") })
+        }
+
+    /** AC4: an owner that is no longer paired has no record to draw, so the modal never opens. */
+    @Test
+    fun hostEditor_doesNotOpenForAnOwnerThatIsNoLongerPaired() =
+        runTest(dispatcher) {
+            val store = Store().apply { put(OTHER, "wss://relay.example/other", "Mac mini") }
+            val vm = makeVm(AppPreferences(newDataStore()), ownerServerId = OWNER, pairedServers = store)
+
+            vm.openOwnerHostEditor()
+            advanceUntilIdle()
+
+            assertNull(vm.hostEditor.value)
+        }
+
+    /** AC1: a saved rename writes through under the owner's own id, and closes the editor. */
+    @Test
+    fun hostEditor_savesTheNameUnderTheOwnersOwnId() =
+        runTest(dispatcher) {
+            val store =
+                Store().apply {
+                    put(OWNER, "wss://relay.example/owner", "Pyrybox")
+                    put(OTHER, "wss://relay.example/other", "Mac mini")
+                }
+            val vm = makeVm(AppPreferences(newDataStore()), ownerServerId = OWNER, pairedServers = store)
+
+            vm.openOwnerHostEditor()
+            advanceUntilIdle()
+            vm.submitHostName("  Renamed  ")
+            advanceUntilIdle()
+
+            assertEquals(listOf(OWNER to "Renamed"), store.renames)
+            assertNull(vm.hostEditor.value)
+        }
+
+    /** AC2: declining returns to the editor with nothing written and nothing removed. */
+    @Test
+    fun hostEditor_decliningTheUnpairWritesNothingAndKeepsTheEditorOpen() =
+        runTest(dispatcher) {
+            val store = Store().apply { put(OWNER, "wss://relay.example/owner", "Pyrybox") }
+            val vm = makeVm(AppPreferences(newDataStore()), ownerServerId = OWNER, pairedServers = store)
+
+            vm.openOwnerHostEditor()
+            advanceUntilIdle()
+            vm.requestHostUnpair()
+            assertTrue(requireNotNull(vm.hostEditor.value).confirmingUnpair)
+
+            vm.declineHostUnpair()
+            advanceUntilIdle()
+
+            val editor = requireNotNull(vm.hostEditor.value)
+            assertEquals(false, editor.confirmingUnpair)
+            assertEquals(emptyList<String>(), store.removals)
+            // The typed name is the modal's own buffer, which survives because this instance still is
+            // the one published — the flags moved, the target did not.
+            assertEquals("Pyrybox", editor.initialName)
+        }
+
+    /**
+     * AC2, the whole of it: confirming takes this host's pairing and this host's #711 workspace, and
+     * leaves the second host's pairing, the second host's workspace and every app-wide preference.
+     *
+     * The second host's connection is not asserted here because no call closes it: the store's own
+     * revision bump is what `RelayConnectionRegistry` reconciles, and it reconciles by id.
+     */
+    @Test
+    fun hostEditor_unpairingRemovesOnlyTheOwnersPairingWorkspaceAndNothingElse() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            prefs.setDefaultWorkspace(OWNER, FOO)
+            prefs.setDefaultWorkspace(OTHER, BAR)
+            prefs.setDefaultModel(Model.SONNET_4_6)
+            prefs.setNotificationsEnabled(false)
+            val store =
+                Store().apply {
+                    put(OWNER, "wss://relay.example/owner", "Pyrybox")
+                    put(OTHER, "wss://relay.example/other", "Mac mini")
+                }
+            val vm = makeVm(prefs, ownerServerId = OWNER, pairedServers = store)
+
+            vm.openOwnerHostEditor()
+            advanceUntilIdle()
+            vm.requestHostUnpair()
+            vm.confirmHostUnpair()
+            advanceUntilIdle()
+
+            assertEquals(listOf(OWNER), store.removals)
+            assertEquals(listOf(OTHER), store.list().map { it.record.serverId })
+            assertEquals(DEFAULT_SCRATCH_CWD, prefs.defaultWorkspace(OWNER).first())
+            assertEquals(BAR, prefs.defaultWorkspace(OTHER).first())
+            assertEquals(Model.SONNET_4_6, prefs.defaultModel.first())
+            assertEquals(false, prefs.notificationsEnabled.first())
+            assertNull(vm.hostEditor.value)
+        }
+
+    /** AC3: a failed removal reports its own generic flag, removes nothing, and keeps the modal up. */
+    @Test
+    fun hostEditor_aFailedRemovalKeepsTheEditorOpenAndThePairingIntact() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            prefs.setDefaultWorkspace(OWNER, FOO)
+            val store =
+                Store().apply {
+                    put(OWNER, "wss://relay.example/owner", "Pyrybox")
+                    failRemove = true
+                }
+            val vm = makeVm(prefs, ownerServerId = OWNER, pairedServers = store)
+
+            vm.openOwnerHostEditor()
+            advanceUntilIdle()
+            vm.requestHostUnpair()
+            vm.confirmHostUnpair()
+            advanceUntilIdle()
+
+            val editor = requireNotNull(vm.hostEditor.value)
+            assertTrue(editor.unpairFailed)
+            assertEquals(false, editor.saving)
+            assertEquals(listOf(OWNER), store.list().map { it.record.serverId })
+            // Not cleared: a failed removal must never leave evidence the host is gone.
+            assertEquals(FOO, prefs.defaultWorkspace(OWNER).first())
+            // No id, no relay address and no name in any line this path logged.
+            assertTrue(logs.any { it.contains("host_unpair_failed") })
+            assertTrue(logs.none { it.contains(OWNER) || it.contains("Pyrybox") || it.contains("relay.example") })
+        }
+
+    /** AC3: a failed rename does the same, and keeps the same state instance so the draft survives. */
+    @Test
+    fun hostEditor_aFailedRenameKeepsTheEditorOpenWithoutReopeningIt() =
+        runTest(dispatcher) {
+            val store =
+                Store().apply {
+                    put(OWNER, "wss://relay.example/owner", "Pyrybox")
+                    failWrite = true
+                }
+            val vm = makeVm(AppPreferences(newDataStore()), ownerServerId = OWNER, pairedServers = store)
+
+            vm.openOwnerHostEditor()
+            advanceUntilIdle()
+            vm.submitHostName("Renamed")
+            advanceUntilIdle()
+
+            val editor = requireNotNull(vm.hostEditor.value)
+            assertTrue(editor.failed)
+            assertEquals(false, editor.saving)
+            assertEquals(emptyList<Pair<String, String?>>(), store.renames)
+        }
+
+    /** Dismissal closes it from any step, writing nothing. */
+    @Test
+    fun hostEditor_dismissClosesItWithoutWriting() =
+        runTest(dispatcher) {
+            val store = Store().apply { put(OWNER, "wss://relay.example/owner", "Pyrybox") }
+            val vm = makeVm(AppPreferences(newDataStore()), ownerServerId = OWNER, pairedServers = store)
+
+            vm.openOwnerHostEditor()
+            advanceUntilIdle()
+            vm.requestHostUnpair()
+            vm.dismissHostEditor()
+            advanceUntilIdle()
+
+            assertNull(vm.hostEditor.value)
+            assertEquals(emptyList<String>(), store.removals)
+            assertEquals(emptyList<Pair<String, String?>>(), store.renames)
+        }
+
+    /** In-memory paired-server store: the reads and writes the editor makes, plus failure gates. */
+    private class Store : PairedServerCollectionStore {
+        private var entries = emptyList<PairedServerEntry>()
+        val renames = mutableListOf<Pair<String, String?>>()
+        val removals = mutableListOf<String>()
+        var failWrite = false
+        var failRemove = false
+
+        fun put(
+            serverId: String,
+            relayUrl: String,
+            displayName: String?,
+        ) {
+            val record = PairedServer(serverId, "token-$serverId", relayUrl, "key-$serverId")
+            entries = entries.filterNot { it.record.serverId == serverId } + PairedServerEntry(record, displayName)
+        }
+
+        override suspend fun load(): PairedServer? = entries.lastOrNull()?.record
+
+        override suspend fun list(): List<PairedServerEntry> = entries.toList()
+
+        override suspend fun loadById(serverId: String): PairedServerEntry? = entries.find { it.record.serverId == serverId }
+
+        override suspend fun save(record: PairedServer) = error("unused")
+
+        override suspend fun remove(serverId: String) {
+            if (failRemove) throw PairedServerStoreException("test failure")
+            removals += serverId
+            // Id-exact, as the real store is: a removal can never take a second entry with it.
+            entries = entries.filterNot { it.record.serverId == serverId }
+        }
+
+        override suspend fun setDisplayName(
+            serverId: String,
+            displayName: String?,
+        ) {
+            if (failWrite) throw PairedServerStoreException("test failure")
+            renames += serverId to displayName
+            entries = entries.map { if (it.record.serverId == serverId) it.copy(displayName = displayName) else it }
+        }
+    }
 
     private fun SettingsViewModel.rows(): List<SettingsHostRow> = (connection.value as SettingsConnectionState.Loaded).hosts
 

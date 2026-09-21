@@ -6,9 +6,10 @@ It supplies presentation and callbacks; callers own visibility, form values,
 validation, submission and operation cancellation. Its first production consumer is
 [`EditHostModal`](#callers) (#743), first driven onto a screen by
 [`ChannelListScreen`](channel-list-screen.md#host-row-edit-control-744)'s host-row edit
-control (#744). Existing dialogs such as
-[CreateFolderDialog](create-folder-dialog.md) remain separate; consumer tickets own
-their migration and operation-specific acceptance.
+control (#744), and since #751 also driven by [Settings](settings-screen.md)'s owner
+row — both through the shared [`HostEditorModal`](host-editor.md) binding. Existing
+dialogs such as [CreateFolderDialog](create-folder-dialog.md) remain separate;
+consumer tickets own their migration and operation-specific acceptance.
 
 ## Caller contract
 
@@ -109,8 +110,23 @@ unbounded name into the confirmation. Declining returns to the editor rather tha
 closing it — `onDismissRequest` is unreachable while confirming, so no route out of a
 destructive step (Cancel, the close glyph, system Back) is ambiguous about whether it
 removed anything. See [ChannelListViewModel](channel-list-viewmodel.md#wiring) for the
-removal itself. Settings' host entry (#713) is planned as a second caller of the same
-component; not yet in this codebase as of #745. Patterns worth reusing for the next
+removal itself.
+
+**Settings landed as the second caller in #751** — the same component, the same
+`EditHostModal`, reached through a shared binding rather than a second inline call.
+The Edit host state machine (open/save/request-unpair/decline/confirm/dismiss) that
+used to live only in `ChannelListViewModel` moved to `HostEditorController` in
+`ui/host/HostEditor.kt`, and a new `HostEditorModal` composable in that same file is
+now the *only* place either screen calls `EditHostModal` — `ChannelListScreen` swapped
+its own inline call for it, and `SettingsScreen` never had one. That binding owns the
+presence rule (drawn exactly while a `HostEditorState?` is non-null), the
+`loading = saving` mapping, and the `failed`/`unpairFailed` → generic-string resolution
+this document described as the channel list's own responsibility until #751 — see
+[Host editor](host-editor.md) for the full contract and why a plain controller, not a
+second `ViewModel`, is the seam. Settings' own caller is `SettingsViewModel`'s
+`openOwnerHostEditor()`: it opens the modal on the destination's own captured host —
+never a row's own id, never selection — so the row that opens it is "the owner's, and
+only the owner's" as the ticket required. Patterns worth reusing for the next
 caller that pre-fills an editable field inside this shell:
 
 - **Key a pre-filled edit buffer on the identity of the thing being edited, not on

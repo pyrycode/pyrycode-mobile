@@ -37,12 +37,12 @@ import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.di.HostConversationSnapshot
-import de.pyryco.mobile.ui.components.EditHostModal
 import de.pyryco.mobile.ui.conversations.components.TreeConversationRow
 import de.pyryco.mobile.ui.conversations.components.TreeHostRow
 import de.pyryco.mobile.ui.conversations.components.TreeSectionHeader
 import de.pyryco.mobile.ui.conversations.components.TreeWorkspaceRow
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
+import de.pyryco.mobile.ui.host.HostEditorModal
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
@@ -230,33 +230,16 @@ fun ChannelListScreen(
         onPicked = { path -> onEvent(ChannelListEvent.WorkspacePicked(path)) },
         onDismiss = { onEvent(ChannelListEvent.WorkspacePickerDismissed) },
     )
-    // Present exactly while the view model holds a target, read straight off that state: the component
-    // closes on none of its three callbacks, so removing it from composition is the caller's job (#743).
-    hostState.hostEditor?.let { editor ->
-        EditHostModal(
-            serverIdentity = editor.serverIdentity,
-            relayAddress = editor.relayAddress,
-            initialHostName = editor.initialName,
-            onDismissRequest = { onEvent(ChannelListEvent.HostEditDismissed) },
-            onSubmit = { name -> onEvent(ChannelListEvent.HostEditNameSubmitted(name)) },
-            onUnpairRequested = { onEvent(ChannelListEvent.HostUnpairRequested) },
-            onUnpairConfirmed = { onEvent(ChannelListEvent.HostUnpairConfirmed) },
-            onUnpairDeclined = { onEvent(ChannelListEvent.HostUnpairDeclined) },
-            loading = editor.saving,
-            // Resolved here rather than in the view model, which keeps that free of Context and makes it
-            // impossible for an identity or a relay address to reach the shell's live region. Which
-            // failure is read from its own flag rather than inferred from the step the modal is on.
-            error =
-                when {
-                    editor.unpairFailed -> stringResource(R.string.edit_host_unpair_failed)
-                    editor.failed -> stringResource(R.string.edit_host_save_failed)
-                    else -> null
-                },
-            confirmingUnpair = editor.confirmingUnpair,
-        )
-    }
-    // `submissionEnabled` keeps its default: a blank name must be submittable, because clearing the name
-    // is how a host returns to its unnamed treatment.
+    // The shared binding (#751), which owns the presence rule, the loading flag and the failure-string
+    // resolution this screen used to spell out — Settings draws the same editor through the same call.
+    HostEditorModal(
+        state = hostState.hostEditor,
+        onSubmit = { name -> onEvent(ChannelListEvent.HostEditNameSubmitted(name)) },
+        onUnpairRequested = { onEvent(ChannelListEvent.HostUnpairRequested) },
+        onUnpairConfirmed = { onEvent(ChannelListEvent.HostUnpairConfirmed) },
+        onUnpairDeclined = { onEvent(ChannelListEvent.HostUnpairDeclined) },
+        onDismissRequest = { onEvent(ChannelListEvent.HostEditDismissed) },
+    )
 }
 
 /**

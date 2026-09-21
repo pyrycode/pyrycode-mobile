@@ -4,6 +4,7 @@ import android.os.Build
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -32,6 +33,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
@@ -46,6 +48,8 @@ import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.data.preferences.label
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
+import de.pyryco.mobile.ui.host.HostEditorModal
+import de.pyryco.mobile.ui.host.HostEditorState
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
 
@@ -78,6 +82,22 @@ fun SettingsScreen(
     onSelectDefaultWorkspace: (String) -> Unit,
     onWorkspacePickerDismissed: () -> Unit,
     onOpenHost: (String) -> Unit,
+    /**
+     * The open Edit host modal, or null when none is (#751). Non-null only ever describes this
+     * destination's own host: [onEditHost] is reachable from the owner's row alone.
+     */
+    hostEditor: HostEditorState?,
+    /**
+     * Opens the editor on this destination's own host. Wired to the owner's row, so a destination
+     * owning no host — or one whose host is no longer paired — never reaches it: no row carries
+     * `isOwner`, so there is no chevron to tap and no editor to draw.
+     */
+    onEditHost: () -> Unit,
+    onEditHostNameSubmitted: (String) -> Unit,
+    onHostUnpairRequested: () -> Unit,
+    onHostUnpairConfirmed: () -> Unit,
+    onHostUnpairDeclined: () -> Unit,
+    onEditHostDismissed: () -> Unit,
     onPairServer: () -> Unit,
     onBack: () -> Unit,
     /**
@@ -149,6 +169,17 @@ fun SettingsScreen(
             onDismiss = onWorkspacePickerDismissed,
         )
 
+        // The same binding the channel list draws its editor through (#751), so the presence rule,
+        // the loading flag and the generic-failure strings are resolved in one place for both.
+        HostEditorModal(
+            state = hostEditor,
+            onSubmit = onEditHostNameSubmitted,
+            onUnpairRequested = onHostUnpairRequested,
+            onUnpairConfirmed = onHostUnpairConfirmed,
+            onUnpairDeclined = onHostUnpairDeclined,
+            onDismissRequest = onEditHostDismissed,
+        )
+
         Column(
             modifier =
                 Modifier
@@ -175,8 +206,12 @@ fun SettingsScreen(
                                 serverId = row.serverId,
                                 relayUrl = row.relayUrl,
                                 status = row.status,
-                                onClick = if (row.isOwner) null else ({ onOpenHost(row.serverId) }),
-                                trailing = if (row.isOwner) ({ HostOwnerBadge() }) else ({ ChevronIcon() }),
+                                // The owner's row is the one free affordance in this section, so it
+                                // is the one that edits (#751); every other row keeps #750's
+                                // host-to-host navigation. A host is edited from its own Settings,
+                                // which is why no row opens the editor on some other host's id.
+                                onClick = if (row.isOwner) ({ onEditHost() }) else ({ onOpenHost(row.serverId) }),
+                                trailing = if (row.isOwner) ({ HostOwnerTrailing() }) else ({ ChevronIcon() }),
                             )
                         }
                     }
@@ -344,6 +379,23 @@ private fun HostOwnerBadge() {
     )
 }
 
+/**
+ * The owner row's trailing pair (#751): #750's "This server" badge and the design frame's chevron,
+ * alongside each other rather than one replacing the other.
+ *
+ * The badge says which host this Settings belongs to; the chevron says the row opens something. The
+ * frame draws the Server row with a chevron and the marking is ours, so the row needs both — and a
+ * row that only badged would offer no visible affordance for the editor it now opens.
+ */
+@Composable
+private fun HostOwnerTrailing() {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        HostOwnerBadge()
+        Spacer(Modifier.width(8.dp))
+        ChevronIcon()
+    }
+}
+
 @Composable
 private fun ChevronIcon() {
     Icon(
@@ -430,6 +482,14 @@ private fun SettingsScreenLightPreview() {
             onSelectDefaultWorkspace = {},
             onWorkspacePickerDismissed = {},
             onOpenHost = {},
+            // Closed, which is the frame's own state; the modal has its own two previews (#743).
+            hostEditor = null,
+            onEditHost = {},
+            onEditHostNameSubmitted = {},
+            onHostUnpairRequested = {},
+            onHostUnpairConfirmed = {},
+            onHostUnpairDeclined = {},
+            onEditHostDismissed = {},
             onPairServer = {},
             onBack = {},
             onOpenArchivedDiscussions = {},
@@ -465,6 +525,14 @@ private fun SettingsScreenDarkPreview() {
             onSelectDefaultWorkspace = {},
             onWorkspacePickerDismissed = {},
             onOpenHost = {},
+            // Closed, which is the frame's own state; the modal has its own two previews (#743).
+            hostEditor = null,
+            onEditHost = {},
+            onEditHostNameSubmitted = {},
+            onHostUnpairRequested = {},
+            onHostUnpairConfirmed = {},
+            onHostUnpairDeclined = {},
+            onEditHostDismissed = {},
             onPairServer = {},
             onBack = {},
             onOpenArchivedDiscussions = {},
