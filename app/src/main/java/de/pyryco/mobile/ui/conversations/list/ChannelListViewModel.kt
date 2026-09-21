@@ -327,6 +327,7 @@ class ChannelListViewModel(
             is ChannelListEvent.TreeRowTapped,
             is ChannelListEvent.TreeFoldToggled,
             ChannelListEvent.SettingsTapped,
+            ChannelListEvent.ArchiveTapped,
             -> Unit
         }
     }
