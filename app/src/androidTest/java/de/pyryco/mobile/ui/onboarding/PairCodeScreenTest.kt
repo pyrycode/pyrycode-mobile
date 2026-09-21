@@ -1,5 +1,6 @@
 package de.pyryco.mobile.ui.onboarding
 
+import android.Manifest
 import android.graphics.Bitmap
 import android.os.ParcelFileDescriptor
 import android.provider.Settings
@@ -33,6 +34,7 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import androidx.test.espresso.Espresso
@@ -162,6 +164,40 @@ class PairCodeScreenTest {
             }
         }
         assertEquals(before, runBlocking { store.list() })
+    }
+
+    @Test fun scannerPasteReturnsFromEveryRecoveryStateWithoutSaving() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
+        val store = GlobalContext.get().get<PairedServerCollectionStore>()
+        val before = runBlocking { store.list() }
+        lateinit var nav: NavHostController
+        rule.setContent {
+            PyrycodeMobileTheme {
+                nav = rememberNavController()
+                PyryNavHost(Routes.WELCOME, navController = nav)
+            }
+        }
+        rule.runOnIdle { nav.navigate(Routes.SCANNER) }
+        rule.onNodeWithText("Pairing").assertIsDisplayed()
+        val vm = rule.runOnIdle { ViewModelProvider(nav.getBackStackEntry(Routes.SCANNER))[ScannerViewModel::class.java] }
+        for ((event, label) in listOf(
+            ScannerEvent.PermissionGranted to "Trouble scanning? Paste the pairing code instead",
+            ScannerEvent.PermissionDenied to "Paste code instead",
+            ScannerEvent.CameraError("Camera unavailable") to "Paste the pairing code instead",
+        )) {
+            repeat(2) { exit ->
+                rule.runOnIdle { vm.onEvent(event) }
+                rule.onNodeWithText(label).assertIsDisplayed().performClick()
+                rule.onNodeWithText("Pairing code").assertIsDisplayed()
+                if (exit == 0) rule.onNodeWithText("Cancel").performScrollTo().performClick() else Espresso.pressBack()
+                rule.waitUntil(5_000) { nav.currentDestination?.route == Routes.SCANNER }
+                assertEquals(before, runBlocking { store.list() })
+            }
+        }
+        rule.runOnIdle { vm.onEvent(ScannerEvent.PermissionGranted) }
+        rule.onNodeWithContentDescription("Back").performClick()
+        rule.waitUntil(5_000) { nav.currentDestination?.route == Routes.WELCOME }
     }
 
     @Test fun fullSizeLightAndDarkFrames() {

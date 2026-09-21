@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,7 +21,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -28,8 +29,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,6 +42,8 @@ import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
@@ -51,6 +52,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -99,7 +101,6 @@ fun ScannerScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ScannerViewport(
     onNavigateBack: () -> Unit,
@@ -120,27 +121,25 @@ private fun ScannerViewport(
                     .fillMaxSize()
                     .systemBarsPadding(),
         ) {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "Pair with pyrycode",
-                        style = MaterialTheme.typography.titleLarge,
+            Row(
+                Modifier.fillMaxWidth().padding(start = 8.dp, end = 20.dp, top = 18.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onNavigateBack, modifier = Modifier.size(48.dp)) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back",
                     )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                        )
-                    }
-                },
-                colors =
-                    TopAppBarDefaults.topAppBarColors(
-                        containerColor = Color.Transparent,
-                        titleContentColor = MaterialTheme.colorScheme.onSurface,
-                        navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
-                    ),
+                }
+                Text(
+                    text = "Pairing",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+            }
+            HorizontalDivider(
+                modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 24.dp).testTag("scanner_divider"),
+                color = MaterialTheme.colorScheme.inversePrimary.copy(alpha = 0.6f),
             )
             Box(
                 modifier =
@@ -154,6 +153,7 @@ private fun ScannerViewport(
                 // Back-most layer: the live camera feed (route injects it for ReadyToScan; renders
                 // nothing otherwise). The atmosphere/reticle/hint overlay below composites over it.
                 cameraPreview()
+                // Figma uses elliptical gradients; retain the existing circular atmospheric approximation.
                 // Atmosphere gradients, moved off the Box's own drawBehind (which paints behind ALL
                 // children incl. the camera) into a matchParentSize child so they layer over the feed.
                 Box(
@@ -197,30 +197,48 @@ private fun ScannerViewport(
                         y += spacing
                     }
                 }
-                Reticle(modifier = Modifier.align(Alignment.Center))
-                HintCard(
-                    modifier =
-                        Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(16.dp)
-                            .fillMaxWidth(),
-                )
+                ScannerGuides(Modifier.matchParentSize())
             }
             Box(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .padding(8.dp),
+                        .padding(16.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                TextButton(onClick = onPasteCode) {
+                TextButton(onClick = onPasteCode, modifier = Modifier.heightIn(min = 48.dp)) {
                     Text(
                         text = "Trouble scanning? Paste the pairing code instead",
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary,
+                        textAlign = TextAlign.Center,
                     )
                 }
             }
+        }
+    }
+}
+
+// Measure the helper first: preserve Figma's centered reticle when it fits, then move it
+// upward (and only shrink if necessary) to keep a 16 dp gap on compact windows.
+@Composable
+private fun ScannerGuides(modifier: Modifier = Modifier) {
+    Layout(
+        modifier = modifier,
+        content = {
+            HintCard(Modifier.padding(16.dp).fillMaxWidth())
+            Reticle(Modifier.testTag("scanner_reticle"))
+        },
+    ) { measurables, constraints ->
+        val hint = measurables[0].measure(constraints.copy(minWidth = 0, minHeight = 0))
+        val side = minOf(248.dp.roundToPx(), constraints.maxWidth, (constraints.maxHeight - hint.height).coerceAtLeast(0))
+        val reticle = measurables[1].measure(Constraints.fixed(side, side))
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            hint.placeRelative(0, constraints.maxHeight - hint.height)
+            reticle.placeRelative(
+                (constraints.maxWidth - side) / 2,
+                minOf((constraints.maxHeight - side) / 2, constraints.maxHeight - hint.height - side),
+            )
         }
     }
 }
@@ -302,7 +320,8 @@ private fun HintCard(modifier: Modifier = Modifier) {
         modifier =
             modifier
                 .clip(RoundedCornerShape(12.dp))
-                .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.72f))
+                .testTag("scanner_hint")
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))
                 .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         Text(

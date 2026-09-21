@@ -60,3 +60,7 @@ Pending documentation stage: update `docs/knowledge/features/scanner-screen.md` 
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-21
+
+## Revisions
+
+- 2026-09-21 — Frame tests combine reported system insets with minimum 24 dp top/bottom bands so the bar-clearance assertion is meaningful even on an ATD image without system chrome. Bounds checks measure the helper card itself, not just its text, and allow half a dp of density-conversion rounding for the square reticle. Back explicitly sizes its M3 button to 48 dp; the stock icon button's smaller visual bounds otherwise differ from its expanded touch target. No state or navigation contract changed.
