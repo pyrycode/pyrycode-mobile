@@ -7,17 +7,20 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.network.RelayErrorException
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.ui.conversations.ThrowingConversationRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
@@ -44,14 +47,19 @@ class ChannelListViewModelTest {
     val tmp = TemporaryFolder()
 
     private val dispatcher = UnconfinedTestDispatcher()
+    private val sources = mutableListOf<HostConversationSource>()
+    private val oldLogEnabled = RelayLog.enabled
 
     @Before
     fun setUpMainDispatcher() {
         Dispatchers.setMain(dispatcher)
+        RelayLog.enabled = false
     }
 
     @After
     fun tearDownMainDispatcher() {
+        sources.forEach { it.dispose() }
+        RelayLog.enabled = oldLogEnabled
         Dispatchers.resetMain()
     }
 
@@ -64,7 +72,12 @@ class ChannelListViewModelTest {
     private fun TestScope.makeVm(
         repository: ConversationRepository,
         prefs: AppPreferences = AppPreferences(newDataStore()),
-    ): ChannelListViewModel = ChannelListViewModel(repository, prefs)
+    ): ChannelListViewModel =
+        ChannelListViewModel(
+            repository,
+            prefs,
+            HostConversationSource(MutableStateFlow(emptyList()), { null }, dispatcher).also { sources += it },
+        )
 
     @Test
     fun initialState_isLoading() =
