@@ -142,7 +142,7 @@ The host picker's captured id drives visibility in the flat `Loaded`/`Empty` sta
 and completion/dismissal use `pickHostWorkspace` / `dismissHostWorkspacePicker`.
 Asynchronous creation reads that host's default and retains its identity through
 the preference read, repository lookup and success navigation; see
-[host creation](channel-list-viewmodel.md#one-shot-navigation-via-channelbuffered-22).
+[host creation](channel-list-viewmodel-projection.md#one-shot-navigation-via-channelbuffered-22).
 
 Discussion promotion uses `requestHostPromotion(target)`, then
 `confirmHostPromotion` / `cancelHostPromotion`. The route projects the captured
