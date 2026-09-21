@@ -84,7 +84,7 @@ The mobile wire protocol's single source of truth is the pyrycode repo's `docs/p
 - Shared knowledge ownership: `docs/shared-knowledge.md`.
 - Verification topic: `docs/knowledge/features/development-verification.md`.
 - `docs/PROJECT-MEMORY.md` is a compatibility pointer; do not append to it.
-- `scripts/docs-guard.sh` keeps the overviews under 50000 bytes and free of lines that markdown misreads as headings. It is the first entry in the dispatcher's verifier gate list; run it before committing docs.
+- `scripts/docs-guard.sh` keeps the overviews under 50000 bytes, free of lines that markdown misreads as headings, and clean of the trailing-whitespace and end-of-file conditions `format("misc")` would otherwise rewrite. It is the first entry in the dispatcher's verifier gate list; run it before committing docs.
 
 ## Conventions
 

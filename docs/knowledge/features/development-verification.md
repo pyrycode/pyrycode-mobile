@@ -46,6 +46,20 @@ fresh worktree, Gradle may need `ANDROID_HOME` set because `local.properties` is
 ignored. Preserve the command's exit status when inspecting output; piping Gradle
 through `tail` can hide a failure.
 
+`scripts/docs-guard.sh` is the only gate that ever sees the documentation stage's
+own output before it lands on `main`. That stage writes `docs/knowledge/features/`
+*after* the verifier gate and after merge, so no Gradle task — including
+`spotlessCheck`, which `check` runs first and which fails fast on the whole gate
+chain when it is red — ever runs against those files before they ship. The guard
+closes that gap by re-checking, in shell, the two conditions `format("misc")`
+in the root `build.gradle.kts` applies to every `*.md`: no trailing whitespace, and
+exactly one newline at end of file (#754). A file left red here fails
+`./gradlew spotlessCheck` on every branch cut from `main` afterward, and because
+`check` aborts before the unit suite, lint, `assembleDebug`, the androidTest
+compile and both device gates, the next several verifier passes see no device
+evidence at all rather than a narrow one-file failure — run the guard and repair
+everything it reports before committing, not just the files touched this run.
+
 The dispatcher owns routine device execution through
 `python3 scripts/android-test-gate.py ui`, which uses the Gradle-managed Android
 13 device and does not require Android Studio to be open or an emulator to be
