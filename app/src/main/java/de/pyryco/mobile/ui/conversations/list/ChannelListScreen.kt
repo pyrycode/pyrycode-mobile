@@ -66,6 +66,23 @@ internal const val TREE_CHANNEL_ROW_TEST_TAG: String = "tree-channel-row"
 
 internal const val TREE_CHAT_ROW_TEST_TAG: String = "tree-chat-row"
 
+/**
+ * The channel list itself — the device suites' handle for "a paired launch has landed here" (#736).
+ *
+ * Set once, on the screen's root, so every draw carries it: the loading and error texts, the empty
+ * placeholder and the assembled tree. Same shape and same reasoning as the row tags above — an app-authored
+ * literal, no daemon text, invisible to accessibility services.
+ *
+ * It names the destination and nothing drawn on it, deliberately: the suites used to wait for the floating
+ * action button's content description, which the chrome work retires (#738), and a marker bound to a visible
+ * element or to a [ChannelListUiState] case would need migrating again with it.
+ *
+ * Weaker than the button wait it replaces, on purpose. The button draws only on [ChannelListUiState.Loaded]
+ * and [ChannelListUiState.Empty], so waiting for it implied a loaded list; this matches on all four draws.
+ * A caller that needs the loaded list must wait for the control it is about to drive.
+ */
+internal const val CHANNEL_LIST_TEST_TAG: String = "channel-list"
+
 // The list's own horizontal gutter — the tree rows carry only their own indent (#730). Vertical rhythm
 // follows the supplied design: 12dp from a section header to its first host, 16dp between host
 // containers, and 28dp of air on each side of the rule between the two sections.
@@ -127,7 +144,8 @@ fun ChannelListScreen(
     val newDiscussionLabel = stringResource(R.string.cd_new_discussion)
     val longPressLabel = stringResource(R.string.cd_long_press_fab_pick_workspace)
     Scaffold(
-        modifier = modifier,
+        // The arrival marker goes on the root, above the branch below, so all four draws carry it (#736).
+        modifier = modifier.testTag(CHANNEL_LIST_TEST_TAG),
         topBar = {
             TopAppBar(
                 navigationIcon = {

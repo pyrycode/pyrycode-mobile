@@ -140,6 +140,20 @@ delimiter positioned between the two cross-session messages, driven through the 
 | Test-only credential injection seam | `app/src/androidTest/.../e2e/E2eInstrumentationRunner.kt` + `E2eTestApplication.kt` |
 | The instrumented test | `app/src/androidTest/.../e2e/InteractiveStreamE2ETest.kt` |
 | Host orchestration | `scripts/e2e-emulator.sh` |
+| Arrival marker + create-chat helpers (#736): `awaitChannelList()` / `createChat()` / `openWorkspacePicker()`, keyed on `CHANNEL_LIST_TEST_TAG` | `app/src/main/.../ui/conversations/list/ChannelListScreen.kt` (marker) + `app/src/androidTest/.../e2e/InteractiveStreamE2ETest.kt` (helpers) |
+
+**Arrival and creation handles (#736).** Every scenario reaches the channel list through the shared
+`awaitChannelList()` helper, which waits on the list's own app-authored arrival marker
+(`CHANNEL_LIST_TEST_TAG`, set once on the screen's root so all four draws — loading, error, the empty
+placeholder and the tree — carry it) instead of waiting on the floating action button's content
+description. `createChat()` (tap) and `openWorkspacePicker()` (long-press) are the only two remaining
+places that name the button (`CD_NEW_DISCUSSION`); each now carries its own wait for the control before
+driving it, since the marker matches on all four draws and no longer implies the list has loaded the way
+the old button wait did. This moved 33 call sites (20 arrival waits, 11 taps, 2 long-presses, the two
+`@Ignore`d manual scenarios included) onto the three helpers while the button was still there, so the live
+gate proved the replacement handles before #738 removes the button and leaves only the two creation
+helpers to edit. See [Conversation tree](../knowledge/features/channel-list-screen.md#conversation-tree-731) for
+the marker's production-side KDoc and its relationship to the tier tags #731 minted the same way.
 
 Rung 3 covers eight scenarios on this one harness: the **ping** happy path (a constrained reply renders);
 a **tool-use** scenario (#481 — a constrained prompt makes real claude run a shell tool, asserting the
