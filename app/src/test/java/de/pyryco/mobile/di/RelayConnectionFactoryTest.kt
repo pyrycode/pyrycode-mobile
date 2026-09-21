@@ -647,6 +647,190 @@ class RelayConnectionFactoryTest {
             }
         }
 
+    @Test
+    fun hostSnapshotsFollowSavedBundlesAcrossBackgroundRenameAndCredentialRotation() =
+        runTest {
+            val f = Fixture(this)
+            val registry = f.registry()
+            val source = HostConversationSource.relay(registry, StandardTestDispatcher(testScheduler))
+            try {
+                runCurrent()
+                assertTrue(source.snapshots.value.isEmpty())
+                f.store.save(f.a.record)
+                f.store.save(f.b.record)
+                runCurrent()
+                assertEquals(listOf("A", "B"), source.snapshots.value.map { it.serverId })
+                assertNull(source.repositoryFor("A"))
+                registry.connect()
+                runCurrent()
+                val a = registry.connectionFor("A")!!
+                val b = registry.connectionFor("B")!!
+                assertSame(a.coordinator.currentRepository.value, source.repositoryFor("A"))
+                assertSame(b.coordinator.currentRepository.value, source.repositoryFor("B"))
+                assertNull(source.repositoryFor("a"))
+                assertNull(source.repositoryFor("unknown"))
+                assertEquals(listOf("list_conversations"), f.transports[0].outbound.map { it.type })
+                assertEquals(listOf("list_conversations"), f.transports[1].outbound.map { it.type })
+                val rows =
+                    envelope(
+                        "conversations",
+                        """{"conversations":[{"id":"same","name":"A","is_promoted":true,"cwd":"/same","last_message_ts":"2026-09-01T00:00:00Z","last_used_at":"2026-09-01T00:00:00Z"}]}""",
+                    )
+                f.transports[0].emit(rows)
+                runCurrent()
+                val cached = source.snapshots.value[0].channels
+                assertEquals("same", cached.single().id)
+                assertTrue(
+                    source.snapshots.value[1]
+                        .channels
+                        .isEmpty(),
+                )
+                f.store.setDisplayName("A", "Local A")
+                runCurrent()
+                assertEquals("Local A", source.snapshots.value[0].displayName)
+                assertSame(a, registry.connectionFor("A"))
+                assertEquals(cached, source.snapshots.value[0].channels)
+                registry.close()
+                assertNull(source.repositoryFor("A"))
+                runCurrent()
+                assertEquals(cached, source.snapshots.value[0].channels)
+                registry.connect()
+                runCurrent()
+                assertEquals(cached, source.snapshots.value[0].channels)
+                f.store.save(f.a.record.copy(token = "rotated-secret"))
+                runCurrent()
+                assertNotSame(a, registry.connectionFor("A"))
+                assertSame(b, registry.connectionFor("B"))
+                assertTrue(
+                    source.snapshots.value
+                        .first { it.serverId == "A" }
+                        .channels
+                        .isEmpty(),
+                )
+                f.store.remove("A")
+                runCurrent()
+                assertNull(source.repositoryFor("A"))
+                assertEquals(listOf("B"), source.snapshots.value.map { it.serverId })
+                registry.dispose()
+                runCurrent()
+                assertTrue(source.snapshots.value.isEmpty())
+                assertTrue(f.transports.all { it.collectors == 0 })
+            } finally {
+                source.dispose()
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun selectorSharesHostSourceAndKeepsDemoLookupSeparateFromSavedRelayHosts() =
+        runTest {
+            for (useRelay in listOf(false, true)) {
+                val f = Fixture(this)
+                f.store.save(f.a.record)
+                val registry = f.registry()
+                val app =
+                    KoinApplication.init().modules(
+                        appModule,
+                        module { single { registry } },
+                        conversationRepositoryModule(useRelay),
+                    )
+                val source = app.koin.get<HostConversationSource>()
+                try {
+                    assertSame(source, app.koin.get<HostConversationSource>())
+                    registry.connect()
+                    runCurrent()
+                    if (useRelay) {
+                        assertSame(
+                            registry
+                                .connectionFor("A")!!
+                                .coordinator.currentRepository.value,
+                            source.repositoryFor("A"),
+                        )
+                        assertNull(source.repositoryFor("demo"))
+                    } else {
+                        assertSame(app.koin.get<FakeConversationRepository>(), source.repositoryFor("demo"))
+                        assertNull(source.repositoryFor("A"))
+                    }
+                } finally {
+                    app.close()
+                    registry.dispose()
+                    runCurrent()
+                }
+                assertTrue(source.snapshots.value.isEmpty())
+                assertNull(source.repositoryFor(if (useRelay) "A" else "demo"))
+            }
+        }
+
+    @Test
+    fun handshakingHostHasStatusButNoExactRepositoryWhileAnotherHostIsLive() =
+        runTest {
+            val f = Fixture(this)
+            f.handshaking = "A"
+            f.store.save(f.a.record)
+            f.store.save(f.b.record)
+            val registry = f.registry()
+            val source = HostConversationSource.relay(registry, StandardTestDispatcher(testScheduler))
+            try {
+                registry.connect()
+                runCurrent()
+                val a = source.snapshots.value.first { it.serverId == "A" }
+                assertEquals(RelayLinkStatus.Connected, a.connectionStatus.relay)
+                assertEquals(de.pyryco.mobile.data.model.PyrycodeLinkStatus.Handshaking, a.connectionStatus.pyrycode)
+                assertTrue(a.channels.isEmpty())
+                assertNull(source.repositoryFor("A"))
+                assertNotNull(source.repositoryFor("B"))
+            } finally {
+                source.dispose()
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
+    @Test
+    fun repositoryForRejectsRetiredRepositoryAtReconnectTransportEdge() =
+        runTest {
+            val f = Fixture(this)
+            f.store.save(f.a.record)
+            val registry = f.registry()
+            val source = HostConversationSource.relay(registry, StandardTestDispatcher(testScheduler))
+            try {
+                registry.connect()
+                runCurrent()
+                val bundle = registry.connectionFor("A")!!
+                val oldRepository = source.repositoryFor("A")
+                assertNotNull(oldRepository)
+                var reconnectEdges = 0
+                val edgeCheck =
+                    backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+                        bundle.supervisor.currentConnection.drop(1).collect { transport ->
+                            if (transport != null) {
+                                reconnectEdges++
+                                assertNull(source.repositoryFor("A"))
+                            }
+                        }
+                    }
+                f.handshaking = "A"
+                registry.close()
+                assertNull(source.repositoryFor("A"))
+                registry.connect()
+                runCurrent()
+                assertEquals(1, reconnectEdges)
+                assertNull(source.repositoryFor("A"))
+                f.transports.last().completeHandshake()
+                runCurrent()
+                val replacement = source.repositoryFor("A")
+                assertNotNull(replacement)
+                assertNotSame(oldRepository, replacement)
+                assertSame(bundle.coordinator.currentRepository.value, replacement)
+                edgeCheck.cancel()
+            } finally {
+                source.dispose()
+                registry.dispose()
+                runCurrent()
+            }
+        }
+
     private class Fixture(
         scope: TestScope,
     ) {
@@ -656,6 +840,7 @@ class RelayConnectionFactoryTest {
         val store = ObservablePairedServerStore(rawStore)
         var beforeDial: (PairedServer) -> Unit = {}
         var unavailable: String? = null
+        var handshaking: String? = null
         var interactive = true
         val keys = Keys()
         val transports = mutableListOf<PeerTransport>()
@@ -677,6 +862,7 @@ class RelayConnectionFactoryTest {
                         keys,
                         record.serverId == unavailable,
                         interactive,
+                        record.serverId == handshaking,
                     ).also { transports += it }
                 },
                 NoiseClientInfo("test-device", "test-version"),
@@ -758,6 +944,7 @@ class RelayConnectionFactoryTest {
         private val keys: Keys,
         private val unavailable: Boolean = false,
         private val interactive: Boolean = true,
+        private var holdHandshake: Boolean = false,
     ) : RelayTransport {
         private val frames = Channel<InnerFrameV2>(Channel.UNLIMITED)
         private val links = Channel<TransportEvent>(Channel.UNLIMITED)
@@ -806,6 +993,10 @@ class RelayConnectionFactoryTest {
                 return true
             }
             assertEquals("noise_init", frame.type)
+            if (holdHandshake) {
+                initialFrame = base64StdDecode(frame.data)
+                return true
+            }
             val handshake = HandshakeState(PROTO, HandshakeState.RESPONDER)
             handshake.localKeyPair.setPrivateKey(host.key.privateKey, 0)
             handshake.start()
@@ -836,6 +1027,11 @@ class RelayConnectionFactoryTest {
             handshake.destroy()
             frames.trySend(InnerFrameV2(type = "noise_resp", data = base64StdEncode(out.copyOf(n))))
             return true
+        }
+
+        fun completeHandshake() {
+            holdHandshake = false
+            send(InnerFrameV2(type = "noise_init", data = base64StdEncode(initialFrame)))
         }
 
         fun emit(env: Envelope) {

@@ -1,10 +1,17 @@
 # Dependency injection
 
-Koin is the project's DI framework. Two modules, both declared at `de/pyryco/mobile/di/AppModule.kt`, owned by `PyryApp.onCreate`: `appModule` (every singleton, repository, and ViewModel) and `conversationRepositoryModule(useRelay)` (the #350 flag-gated `ConversationRepository` binding selector — see [Adding a binding](#adding-a-binding)).
+Koin is the project's DI framework. `PyryApp.onCreate` loads `appModule` and
+`conversationRepositoryModule(useRelay)` from `de/pyryco/mobile/di/AppModule.kt`.
+The selector includes `hostConversationModule(useRelay)` for the shared host list
+source and binds the compatibility `ConversationRepository` interface.
 
 ## What it does
 
-Every singleton, repository, and ViewModel that needs construction wiring is declared as a Koin definition in `appModule`. Composables resolve dependencies with `koinViewModel()` / `koinInject()` from `koin-androidx-compose`; non-Compose code uses `by inject()` / `get()`. Bindings land here as tickets need them — see `AppModule.kt` for the current set.
+`appModule` wires concrete repositories, connection owners, settings and ViewModels;
+the selector modules choose the shared host source and compatibility repository.
+Composables resolve dependencies with `koinViewModel()` / `koinInject()` from
+`koin-androidx-compose`; non-Compose code uses `by inject()` / `get()`.
+See `AppModule.kt` for the current bindings.
 
 ## How it works
 
@@ -34,9 +41,17 @@ val appModule = module {
 
 // The #350 selector — the *only* module that binds the ConversationRepository interface.
 fun conversationRepositoryModule(useRelay: Boolean = BuildConfig.USE_RELAY_REPOSITORY) = module {
+    includes(hostConversationModule(useRelay))
     single<ConversationRepository> {
         if (useRelay) get<StableConversationRepository>() else get<FakeConversationRepository>()
     }
+}
+
+fun hostConversationModule(useRelay: Boolean) = module {
+    single {
+        if (useRelay) HostConversationSource.relay(get())
+        else HostConversationSource.demo(get<FakeConversationRepository>())
+    } onClose { it?.dispose() }
 }
 ```
 
@@ -47,9 +62,9 @@ existing `FakeConversationRepository` singleton. Only the exact values `true` an
 `false` are accepted; other values fail Gradle configuration. This is a build-time
 selection with no runtime setter. See [README Build](../../../README.md#build).
 
-The selector changes the repository injected into UI consumers. The lifecycle
-driver and registry still control every saved host's connection establishment in
-both modes; selecting the fake does not disable that stack.
+The selector chooses both the compatibility repository and the host source. The
+lifecycle driver and registry still control every saved host's connection
+establishment in both modes; selecting the fake does not disable that stack.
 
 `appModule` eagerly owns `RelayConnectionRegistry` and disposes it on Koin close.
 Both pairing-store interfaces resolve one [observable decorator](paired-server-store.md#wiring--usage).
@@ -61,8 +76,7 @@ per exact server id. Foreground/background lifetime belongs to this registry.
 The stable repository, Settings status, and Thread events, modal and outbound
 actions follow its latest-saved surviving selection. No separate compatibility
 connection is created. With no selection, these dependencies remain resolvable
-with empty repository/events, hidden modal and idle/down status. Host-aware lists,
-thread routing and settings remain #635–#637. See
+with empty repository/events, hidden modal and idle/down status. See
 [bundle configuration](relay-repository-coordinator.md#configuration).
 
 Concrete `RelayConnectionBundle`, `RelayConnectionSupervisor`, `NoiseSessionFactory`
@@ -72,6 +86,78 @@ They serve test/diagnostic callers, including deterministic reconnect helpers;
 resolving them without a selection fails with `no paired host`. Long-lived app
 consumers use the registry projections rather than holding these selected aliases.
 See [Noise factory wiring](noise-ik-session.md#factory-wiring).
+
+### Host identity and snapshots
+
+`HostConversationSource.snapshots` is a shared
+`StateFlow<List<HostConversationSnapshot>>` in `di/`. Each relay snapshot carries
+the exact, case-sensitive saved `serverId`, nullable local `displayName`, separate
+relay/pyrycode legs in `connectionStatus`, and `channels` / `chats` lists. Host
+identity belongs to this aggregation boundary: `Conversation` and wire payloads
+remain host-local. Equal conversation ids or workspace paths on different hosts
+stay distinct; display names and paths are never routing aliases. Snapshots expose
+no pairing records, tokens or keys.
+
+Registry reconciliation publishes every saved host, including hosts awaiting their
+first reply with empty lists; no saved hosts produces an empty source. The source
+collects `ConversationFilter.All` once per current repository and partitions active
+rows into promoted Channels and unpromoted Chats (discussions), excluding archived
+rows. It preserves each partition's repository order and the original records,
+including ids and workspace paths verbatim. It adds no frame consumer.
+
+### Snapshot lifetime
+
+The Koin singleton starts collection on first resolution and owns its in-memory
+cache until Koin close calls `dispose()`. Collection continues with zero screen
+subscribers. Each host's status and list collectors run independently, so a silent
+host cannot delay another host's rows or status.
+
+A null repository, disconnect, background close or reconnect awaiting its first
+list emission retains that host's last rows. Each actual emission atomically
+replaces both lists for that host, including an empty result. Feed this cache from
+the per-host coordinator streams: the selected-host
+[stable facade's cold reads](stable-conversation-repository.md#cold-reads--flatmaplatest-switch-with-an-empty-fallback)
+emit an empty fallback on disconnect and cannot distinguish it from a real empty
+reply. The compatibility facade keeps that behavior.
+
+The coordinator's repository-stream identity identifies a retained bundle
+generation. A display-name-only edit updates metadata while preserving its bundle,
+collectors and rows. Removal or credential-driven bundle replacement cancels the
+old collectors and discards that host's rows; a replacement starts empty. Updates
+check both the registered generation and current repository identity, because
+cancellation alone cannot reject every late callback. Source disposal cancels its
+collectors, clears the cache and disables lookup; registry disposal publishes no
+hosts. Nothing is persisted across app restart.
+
+### Exact-host repository access
+
+`repositoryFor(serverId)` resolves `RelayConnectionRegistry.connectionFor` by exact
+id, without consulting compatibility selection. Unknown, removed, disconnected or
+handshaking hosts return `null`, even if their snapshots still contain rows.
+The coordinator's internal `liveRepository()` checks one active connection under
+its teardown lock: the owner must be active, its transport must be identical to
+the supervisor's current transport, and that connection's actual pump must be
+`Open`.
+
+The asynchronous `currentRepository` cache can still hold a retired repository
+when a replacement transport first arrives. Cached rows or status therefore do
+not establish current availability. This lookup returns availability at the time
+of the check; a later disconnect can still make an operation fail. See the
+[coordinator's availability checks](relay-repository-coordinator.md#the-single-connection-source-and-the-open-gated-currentrepository-421--493).
+
+### Demo binding
+
+With `useRelay = false`, the same source type exposes exactly one host:
+`HostConversationSource.DEMO_SERVER_ID` (`demo`), local name `Demo`, with both link
+states `Connected`. Lists and exact lookup use the existing
+`FakeConversationRepository` singleton. Only the exact id `demo` resolves; saved
+relay hosts never enter these snapshots or lookups, even though their connection
+owners still exist.
+
+The source is available for host-aware consumers; Channel/Discussion list-model
+integration remains #705/#706, thread routing #636 and tree rendering #641. Existing
+consumers of `ConversationRepository` continue using the selected-host facade or
+the fake chosen by the build selector.
 
 ## Adding a binding
 
@@ -91,7 +177,10 @@ independent of the build default and avoids relying on Koin override semantics.
 `E2eInstrumentationRunner` installs `E2eTestApplication` for every instrumented run:
 without `relayUrl`, it explicitly selects fake; with relay arguments, it replaces
 the selector with the existing tapped stable-facade binding so the parser tap is
-preserved.
+preserved. Both selectors include `hostConversationModule` so relay instrumentation
+also resolves the shared relay source without replacing its tapped facade.
+
+## Testing
 
 `ConversationRepositoryBindingTest` verifies the generated flag and resolved
 singleton against Gradle's separate `expectedUseRelayRepository` test property.
@@ -108,6 +197,22 @@ and matching repository, event, modal, status and action targets without extra
 transports. Its JVM container loads definitions with a fixture registry, avoiding
 Android's eager `ProcessLifecycleOwner` initialization.
 
+`HostConversationSourceTest` exercises collection without screen subscribers,
+silent hosts, case-sensitive ids, unchanged row order/paths, empty replies and
+cache retirement. Its manual repository deliberately retains a collector callback
+after cancellation and emits through it after reconnect, generation replacement,
+removal and disposal. A cancellation-cooperative fake alone would pass while a
+missing identity guard still allowed late writes. Real Noise registry fixtures in
+`RelayConnectionFactoryTest` cover saved metadata, background/resume, credential
+rotation and both selectors' singleton identity and disposal.
+
+`repositoryForRejectsRetiredRepositoryAtReconnectTransportEdge` observes replacement
+transport arrival with an unconfined collector and calls lookup synchronously,
+before cached repository projections catch up. It requires `null` at that edge
+and throughout a held handshake, then the new repository after completing that
+same handshake. A settled assertion after `runCurrent()` misses the
+[reproduced reconnect race](https://github.com/pyrycode/pyrycode-mobile/pull/707#issuecomment-5753640430).
+
 ## Configuration
 
 - **Dependencies:** `io.insert-koin:koin-bom` (pinned in `[versions]` as `koinBom`) and `koin-androidx-compose` (version pinned transitively by the BOM, no `version.ref` in the catalog). `koin-android` and `koin-core` come in transitively — do not add them explicitly.
@@ -117,7 +222,7 @@ Android's eager `ProcessLifecycleOwner` initialization.
 
 ## Edge cases / limitations
 
-- **Two modules today** (`appModule` + the #350 `conversationRepositoryModule`). The second module exists *not* as a feature-module split but because the flag-gated `ConversationRepository` binding must be unit-testable in isolation — `modules(...)` is a varargs slot, and Koin resolves `get<…>()` cross-module, so the selector reads the two concrete singletons out of `appModule` lazily. Don't pre-split `appModule` itself (e.g. into a `dataModule`) before there are ~30 bindings or a feature-module extraction lands.
+- **Shared selector definitions.** `conversationRepositoryModule` includes `hostConversationModule`; the tapped instrumentation selector includes that same host-source module. Koin resolves the concrete owners from `appModule` lazily. Keep shared source bindings in the included module so replacing the compatibility interface binding does not silently omit them.
 - **Module-level `val`, not an `object` / function.** Downstream tickets append single lines; an `object AppModule { val module = … }` form would force every binding to qualify through the object and adds no upside.
 - **No `try/catch` around `startKoin`.** Initialisation failure (duplicate definition, missing factory) crashes the process — the stack trace is the debugging surface. No fallback path makes sense at the composition root.
 - **Kotlin 2.2 alignment:** stay on Koin BOM `4.0.x`. Do not downgrade to `3.5.x` — it predates Kotlin 2.2 toolchain alignment. Bump *up* to the latest stable `4.0.x` patch if Gradle reports a compiler-version mismatch.
@@ -126,4 +231,5 @@ Android's eager `ProcessLifecycleOwner` initialization.
 
 - Ticket notes: `../codebase/32.md` (scaffold), `../codebase/11.md` (first real binding — `AppPreferences`), `../codebase/45.md` (first interface-bound singleton + first `viewModel { }` line), `../codebase/196.md` (`FakeConnectionStateSource` ↔ `ConnectionStateSource`), [`../codebase/350.md`](../codebase/350.md) (the flag-gated `conversationRepositoryModule` selector — the second module + the `buildConfigField` `USE_RELAY_REPOSITORY` flag)
 - Spec: `docs/specs/architecture/32-koin-di-scaffold.md`
+- Host source: [snapshot design and coherent-lookup revision](../../specs/architecture/704-host-conversation-snapshots.md).
 - Repository selection: [Stable conversation repository](stable-conversation-repository.md) is the normal build binding; [FakeConversationRepository](conversation-repository.md#phase-1-implementation--fakeconversationrepository) is the explicit demo/test selection. The [#631 plan](../../specs/architecture/631-default-real-repository.md) records the default change on the existing #350 selector.

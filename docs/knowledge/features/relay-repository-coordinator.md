@@ -25,9 +25,9 @@ transfer categories and accepted chunk counts.
 ## Where it sits in the Phase 4 stack
 
 ```
-StableConversationRepository facade
-        ▲
-RelayConnectionRegistry ── latest saved survivor selects compatibility projections
+StableConversationRepository facade     HostConversationSource snapshots
+        ▲                                      ▲
+RelayConnectionRegistry ── selected compatibility view + all-host descriptors
         ▲  one retained bundle/coordinator per exact serverId
 RelayRepositoryCoordinator (#351) ─ per-connection pump + repository lifecycle   ◀── this doc
         │  observes currentConnection ; publishes currentRepository
@@ -134,10 +134,13 @@ One `flatMapLatest` closes over the same `Connection` for both values. Test this
 collecting **every emission**: a settled `.value` after draining the scheduler is
 `null` with either implementation and misses the transient.
 
-Diagnostic admission also compares `Connection.transport` by identity with
-`connections.value`. An old pump may still say `Open` before the connection
-collector processes a replacement or disconnect. The identity check rejects a
-request in that interval instead of sending it through the stale repository.
+Internal `liveRepository()` and diagnostic admission read one `activeConnection`
+under the teardown lock, requiring an active owner, transport identity with
+`connections.value`, and that connection's actual `Open` pump. The asynchronous
+`currentRepository` cache can still hold an old repository when a replacement
+transport arrives, even if the old pump says `Open`. Exact-host lookup therefore
+uses `liveRepository()`; compatibility streams retain their existing behavior.
+See [host access and its reconnect regression](dependency-injection.md#exact-host-repository-access).
 
 ### Scope ownership (three distinct scopes)
 
@@ -516,7 +519,9 @@ bundle and cancels revision observation. Never reuse a disposed bundle.
 The factory does not bind `ConversationRepository`: the existing selector chooses
 the stable facade by default or the [fake](conversation-repository.md) with
 `-PuseRelayRepository=false`. Both modes retain registry connection ownership.
-Conversation-list and backfill requests still wait for repository subscribers.
+In relay mode, the [host source](dependency-injection.md#snapshot-lifetime), once resolved,
+owns per-host list subscriptions without screen subscribers. Backfill still waits
+for thread subscribers.
 
 ### Host diagnostic archive transfer
 
@@ -574,8 +579,8 @@ recordings, credentials, daemon error bodies or exception details.
   See [repository teardown handling](remote-conversation-repository-state-errors-and-handoff.md#hand-off--the-live-binding).
 - **No retry of its own.** Reconnect cadence is governed entirely by the supervisor's capped-exponential
   backoff (1/2/4/8/16/30 s); a failing relay cannot drive a tight pump-rebuild loop.
-- **The exposed observable is the only contract** — this slice does **not** implement the stable
-  `ConversationRepository` facade (#352) and does **not** touch ViewModels.
+- **Availability can change after lookup.** `liveRepository()` does not keep the
+  connection alive for a later operation.
 
 ## Testing
 
