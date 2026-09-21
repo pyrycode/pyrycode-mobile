@@ -1,16 +1,39 @@
 # DiscussionListViewModel
 
-Sibling of [`ChannelListViewModel`](channel-list-viewmodel.md) for the unpromoted (discussion) tier. Exposes `observeConversations(ConversationFilter.Discussions)` as a hot `StateFlow<DiscussionListUiState>` consumed by [`DiscussionListScreen`](discussion-list-screen.md) (#24), a stateless `(state, onEvent)` composable mounted at the `discussions` route.
+Sibling of [`ChannelListViewModel`](channel-list-viewmodel.md) for the unpromoted
+(discussion) tier. Exposes host-qualified snapshots, navigation and promotion
+through the shared `HostConversationSource`. The selected-host compatibility
+`StateFlow<DiscussionListUiState>` still feeds
+[`DiscussionListScreen`](discussion-list-screen.md), a stateless `(state, onEvent)`
+composable mounted at the `discussions` route.
 
 Package: `de.pyryco.mobile.ui.conversations.list` (`app/src/main/java/de/pyryco/mobile/ui/conversations/list/`). File: `DiscussionListViewModel.kt`.
 
 ## What it does
 
-Observes the discussion slice of the conversation repository **combined with** a private `MutableStateFlow<PendingPromotion?>` (#78), projects each emission into a `DiscussionListUiState` variant (`Loading` initially, then `Empty` or `Loaded(discussions, pendingPromotion)` depending on the emitted list, `Error(message)` if the upstream throws), and exposes the result as a `StateFlow` via the same `WhileSubscribed(5_000)` cold-to-hot pattern as the channel VM.
+`hostState: StateFlow<HostDiscussionListState>` combines shared snapshots with
+VM-owned `PendingHostPromotion?`. Its `hosts` list passes through every snapshot
+in source order: exact case-sensitive `serverId`, local `displayName`, separate
+relay/pyrycode states in `connectionStatus`, and complete active `chats` (alongside
+the source's `channels`). Conversation records, ids and workspace paths remain
+verbatim. Equal ids or paths on different hosts remain distinct. Empty hosts
+awaiting a reply and disconnected hosts with cached rows stay present; no source
+hosts produces an empty list. The VM adds no list cache or message subscription;
+see [source ownership](dependency-injection.md#snapshot-lifetime).
+
+The compatibility `state` observes the discussion slice of the injected repository
+combined with a private `MutableStateFlow<PendingPromotion?>`. It projects
+`Loading`, then `Empty` or `Loaded(discussions, pendingPromotion)`, or
+`Error(message)` if the upstream throws, using `WhileSubscribed(5_000)`.
 
 `fun onEvent(event: DiscussionListEvent)` handles five arms: `RowTapped(id) → viewModelScope.launch { navigationChannel.send(ToThread(id)) }` (so the unit test can assert the nav target — see "Dual nav wiring" below), `SaveAsChannelRequested(id) → openPromotionDialog(id)` (#78 — opens the confirmation dialog by setting `pendingPromotion`), `PromoteConfirmed → confirmPromotion()` (#78 — clears `pendingPromotion`, then `launchGuardedRepoCall { repository.promote(...) }`, guarded since #490), `PromoteCancelled → pendingPromotion.value = null` (#78 — also fired by scrim taps and back-press via M3 `AlertDialog`'s default `onDismissRequest` routing), and `BackTapped → Unit` (the destination handles back at the composable side via `navController.popBackStack()`; the no-op arm keeps the `when` exhaustive and documents intent).
 
 ## Shape
+
+The compatibility contract below retains its defaulted pending field and
+repository-only construction. Host state and actions are described under
+[promotion](#promotion-confirmation-flow-78) and [wiring](#wiring); their
+implementation is omitted from this excerpt.
 
 ```kotlin
 sealed interface DiscussionListUiState {
@@ -34,6 +57,7 @@ sealed interface DiscussionListNavigation {
 
 class DiscussionListViewModel(
     private val repository: ConversationRepository,
+    private val hostSource: HostConversationSource? = null,
 ) : ViewModel() {
     private val pendingPromotion = MutableStateFlow<PendingPromotion?>(null)
 
@@ -113,7 +137,12 @@ The two file-scope helpers (`derivedChannelName` / `displayLabel`) are `internal
 
 ### Cold-to-hot projection
 
-Same lifecycle as [`ChannelListViewModel`](channel-list-viewmodel.md): `stateIn(viewModelScope, WhileSubscribed(5_000), Loading)` shares one upstream collection across subscribers, starts on first subscriber, stops 5s after the last unsubscribes. Configuration changes (rotation) re-subscribe within milliseconds; the 5s grace prevents churn. The `pendingPromotion` `MutableStateFlow` is preserved across that grace window, so a dialog open at rotation time re-appears after the rebuild.
+The compatibility `state` has the same lifecycle as [`ChannelListViewModel`](channel-list-viewmodel.md): `stateIn(viewModelScope, WhileSubscribed(5_000), Loading)` shares one upstream collection across subscribers, starts on first subscriber, stops 5s after the last unsubscribes. Configuration changes (rotation) re-subscribe within milliseconds; the 5s grace prevents churn. The `pendingPromotion` `MutableStateFlow` is preserved across that grace window, so a dialog open at rotation time re-appears after the rebuild.
+
+`hostState` instead uses `SharingStarted.Eagerly` in `viewModelScope`, starting
+from `HostDiscussionListState(hosts = emptyList(), pendingPromotion = null)`.
+Pending-host invalidation must continue with no screen subscribers. VM teardown
+cancels its projection and actions; Koin retains ownership of the shared source.
 
 Since #78 the upstream pipeline is `combine(observeConversations, pendingPromotion) → catch → stateIn` rather than the prior `.map → .catch → .stateIn`. `combine` does not emit until *both* upstreams have produced — `pendingPromotion` has the initial `null`, so the seed gap is purely the first repository emission; `stateIn(initialValue = Loading)` covers it. The error fallback is `"Failed to load discussions."` (not `"Failed to load channels."`). Otherwise the error path is structurally identical to the channel VM.
 
@@ -132,11 +161,12 @@ If the upstream collapses to `emptyList()` while a dialog is open (extreme edge 
 
 ### Dual nav wiring (#24)
 
-`RowTapped` emits on the VM-side `navigationChannel` *and* is also handled at the destination block via `navController.navigate("conversation_thread/${event.conversationId}")`. Both wires fire on every tap. The production path is the composable-side `navController.navigate(...)` — that's what the user sees. The VM-side path exists because AC #4 demands a unit-testable navigation event:
-
-> Tapping a row emits a navigation event whose target is `conversation_thread/{id}` for the tapped discussion's id (asserted via the ViewModel's navigation flow in a unit test)
-
-A single-wire shape (composable-only) would require either a `TestNavHostController` setup (deferred since #8) or brittle `navController` interaction assertions to satisfy the AC. Two wires, both emit, the test observes the VM one. Don't optimize the redundancy away — if a future ticket consolidates navigation through the VM, the composable-side branch comes out then.
+The compatibility destination handles screen `RowTapped` directly with
+`navController.navigate("conversation_thread/${event.conversationId}")`; it does
+not forward that event to the VM. Calling `vm.onEvent(RowTapped(id))` independently
+emits `DiscussionListNavigation.ToThread(id)` on `navigationEvents`, which the
+destination also collects. JVM tests exercise this VM event seam. Host-qualified
+navigation uses a separate stream described under [Wiring](#wiring).
 
 ### `BackTapped` is intentionally a no-op in the VM
 
@@ -144,7 +174,9 @@ A single-wire shape (composable-only) would require either a `TestNavHostControl
 
 ### Promotion confirmation flow (#78)
 
-The Phase 0 `Unit` stub on `SaveAsChannelRequested` (#25) was wired in #78 to a minimal Material 3 confirmation dialog. The dialog *is* the promotion flow — no separate name-entry or workspace-picker UI; the richer flow is a follow-up ticket when its Figma lands.
+The flat-screen `SaveAsChannelRequested` event opens a minimal Material 3
+confirmation dialog. It uses the compatibility `PendingPromotion(conversationId,
+sourceName)` contract; host-aware consumers use the separate pending state below.
 
 Three behaviour seams sit between the four event variants:
 
@@ -154,7 +186,38 @@ Three behaviour seams sit between the four event variants:
 
 The `repository.promote(conversationId, name, workspace)` call awaits no result and mutates no `isLoading` UiState — there is no user-facing error surface. **Since #490 the launch is [`launchGuardedRepoCall`](guarded-repo-launch.md)**, so under the relay repository a `RelayErrorException` / `IllegalStateException` / `UnsupportedOperationException` is inertly swallowed (fail-quietly) rather than crashing the process; a stale-id `IllegalArgumentException` is still **deliberately uncaught** (the guard treats an own-id programmer error as fail-fast — and `openPromotionDialog` already filters most stale ids at request time). `FakeConversationRepository.promote` is in-memory and never fails for a valid id, so the guard is transparent in Phase 0. A user-facing error affordance for promote is still owed; the guard is crash-safety only.
 
-The promote completion is observed by the next `observeConversations` emission dropping the now-promoted row from the discussion list (it's now a channel). The dialog has already dismissed by then; no spinner is needed.
+Host promotion uses `HostDiscussionListState.pendingPromotion:
+PendingHostPromotion?`, containing the exact
+`HostConversationTarget(serverId, conversationId)` and captured `sourceName`:
+
+- `requestHostPromotion(target)` finds the chat in the exact source host's current
+  `chats` and captures its name. Unknown hosts or absent chats do not open a
+  request. A later rename or compatibility-selection change cannot retarget it
+  or change the captured name.
+- `confirmHostPromotion()` atomically takes and clears pending before launching
+  the guarded call. Inside the action it rechecks membership in the latest source
+  snapshot, then resolves `repositoryFor(target.serverId)` immediately before
+  calling that repository's `promote`. It sends the captured conversation id,
+  `derivedChannelName(sourceName)` and `workspace = null`. Repeated or re-entrant
+  confirmation finds no pending request and sends nothing.
+- `cancelHostPromotion()` clears host pending without sending. The eager host
+  projection also clears pending when its host or chat disappears, including
+  archive or promotion; later reappearance cannot revive it. Host and flat-screen
+  confirmation/cancellation consume only their own pending state.
+
+Cached rows can supply a request's name but cannot authorize a send. A missing
+chat or a null [exact-host live lookup](dependency-injection.md#exact-host-repository-access)
+rejects confirmation; unknown, removed, disconnected and handshaking hosts send
+nothing even if cached indicators say connected. Membership and lookup occur
+without an intervening suspension. A disconnect after lookup can still fail in
+the existing repository guard.
+
+Both promotion paths retain the guarded failure behavior above and propagate
+coroutine cancellation. Host diagnostics use static events/rejection codes through
+`RelayLog.d`; they omit ids, names, paths, payloads and exception text, and do not
+report cancellation as failure. Promotion returns no UI success event and emits
+no success navigation. Rows remain until repository list updates remove the
+now-promoted chat; neither path removes them optimistically or adds a spinner.
 
 ### Name derivation — two helpers, two consumers (#78)
 
@@ -178,10 +241,31 @@ For named discussions, both return the same `sourceName` verbatim. Since #154 `C
 Koin binding (registered in [`AppModule`](dependency-injection.md)):
 
 ```kotlin
-viewModel { DiscussionListViewModel(get()) }
+viewModel { DiscussionListViewModel(get(), get()) }
 ```
 
-Constructor parameter is the `ConversationRepository` interface; the singleton bound via `single { FakeConversationRepository() } bind ConversationRepository::class` resolves through `get()`. Phase 4's `RemoteConversationRepository` drops in behind the same bind line.
+The first argument is the compatibility `ConversationRepository`: the selected-host
+`StableConversationRepository` facade in normal builds or the existing fake
+singleton with `useRelay = false`. The second is the shared `HostConversationSource`
+from `hostConversationModule`, included by the repository selector. Fake mode
+exposes only the identified `demo` host and promotes through that same fake
+singleton. Repository-only fixtures may omit `hostSource` (default `null`); their
+host list stays empty without inventing a host identity.
+
+`onHostRowTapped(target)` emits the exact `HostConversationTarget` on the separate
+buffered `hostNavigationEvents` flow, reusing the
+[channel-list target](channel-list-viewmodel.md#one-shot-navigation-via-channelbuffered-22).
+Consumers must preserve both host and conversation id through routing. Display
+names and workspace paths never select a host; host identity stays outside domain
+and wire serialization.
+
+Until [#641](https://github.com/pyrycode/pyrycode-mobile/issues/641) supplies the
+host/workspace tree and [#636](https://github.com/pyrycode/pyrycode-mobile/issues/636)
+consumes host targets, `DiscussionListScreen` and `MainActivity` keep using `state`,
+`onEvent`, `PendingPromotion` and bare-id `navigationEvents` against the selected
+repository or fake. Their rows are never flattened from the multi-host snapshots,
+and host navigation is never forwarded to the bare-id stream with its host dropped.
+The host contract adds no UI event producer, promotion visual or route migration.
 
 Composable resolution at the `composable(Routes.DISCUSSION_LIST) { ... }` destination:
 
@@ -201,6 +285,27 @@ LaunchedEffect(vm) {
 `koinViewModel<…>()` scopes the VM to the current `NavBackStackEntry` (Compose Navigation 2.9+ auto-wiring). `LaunchedEffect(vm)` re-keys on VM identity — exactly when the user enters this back-stack entry — so the collector restarts cleanly on each new instance and cancels on pop.
 
 ## Testing
+
+`HostDiscussionListViewModelTest` uses the real shared source, independent host
+flows and a selected-host facade. Colliding `Host`/`host` ids, conversation ids
+and unchanged workspace paths verify host projection and routing isolation.
+Removal tests deliberately omit `hostState` subscribers and keep another chat
+alive: a subscriber-only projection or whole-list-empty check would miss this
+invalidation requirement.
+
+The queued-confirmation test uses `StandardTestDispatcher` to change membership
+or replace the repository after confirmation but before the action runs. Checking
+only a settled successful send would miss request-time repository capture. A
+re-entrant confirmation from `beforePromote` proves pending was consumed before
+entering the repository. The recording repository returns a promoted conversation
+without changing its list, so tests distinguish repository-driven completion from
+optimistic removal or success navigation. Failure tests inspect the action job's
+`isCancelled`, including VM teardown, and capture content-free logs.
+
+`appModuleInjectsSharedDemoSourceAndPromotesThroughExistingFakeSingleton` resolves
+the actual Koin ViewModel binding and observes promotion in the existing fake's
+rows. Direct construction alone would miss a missing optional source argument in
+DI. The existing compatibility tests below remain independent of host state.
 
 `app/src/test/java/de/pyryco/mobile/ui/conversations/list/DiscussionListViewModelTest.kt`. JUnit 4. Two repo doubles share the file: the existing `stubRepo` (returns the source flow, `TODO("not used")` for the rest) for tests that don't need to observe `promote`, and a new `RecordingRepo` (#78) that captures each `promote` call into a `mutableListOf<PromoteCall>` so confirm-arm tests can assert the `(id, name, workspace)` triple.
 
@@ -231,13 +336,14 @@ Test infrastructure conventions are unchanged from the channel VM tests — `Dis
 - **No `isLoading` UiState during promote** (#78). The dialog clears synchronously *before* the `viewModelScope.launch`; the promote completes in the background; the next `observeConversations` emission drops the now-promoted row. No spinner, no in-flight flag.
 - **No `flowOn(Dispatchers.IO)`.** Same dispatcher policy as the channel VM — upstream inherits `Dispatchers.Main.immediate` from `viewModelScope`; the fake's projection is CPU map manipulation.
 - **No retry / refresh method.** Cold-flow re-collection on resubscription is the existing retry surface. Phase 4 adds a designed `Error` screen with explicit retry; the current centered-text error is a placeholder.
-- **No logging in `catch`.** Phase 4 introduces the logging strategy alongside the network layer.
+- **Logging boundaries.** The compatibility read-path `catch` adds no logging. Host promotion uses static debug events only; see [RelayLog](relay-log.md).
 
 ## Related
 
 - Ticket notes: [`../codebase/24.md`](../codebase/24.md), [`../codebase/25.md`](../codebase/25.md), [`../codebase/78.md`](../codebase/78.md)
 - Specs: `docs/specs/architecture/24-discussion-list-drilldown-screen.md`, `docs/specs/architecture/25-save-as-channel-affordances.md`, `docs/specs/architecture/78-promote-discussion-confirmation-dialog.md`
+- Host contract: [#706 design](../../specs/architecture/706-host-discussion-targets.md).
 - Sibling: [ChannelListViewModel](channel-list-viewmodel.md) — structural clone source; see it for the `.map / .catch / .stateIn` pattern, the `Channel<…>(BUFFERED) → receiveAsFlow()` one-shot navigation seam, and the test-infrastructure conventions
 - Upstream: [Conversation repository](conversation-repository.md) (the `observeConversations(ConversationFilter.Discussions)` projection — `FakeConversationRepository` projection stamps `isSleeping` on every emission, so the discussion list inherits the sleeping-dot affordance without VM work), [data model](data-model.md) (`Conversation`), [dependency injection](dependency-injection.md) (Koin wiring)
-- Downstream: [DiscussionListScreen](discussion-list-screen.md), richer promotion flow (name entry + workspace radios — pins to Figma when design lands; integration point is extending `PendingPromotion` with the additional fields and replacing `PromotionConfirmationDialog`'s body), Phase 4 (`RemoteConversationRepository` replaces the fake behind the same bind line; `repository.promote(...)` does its own dispatcher switching internally)
+- Downstream: [DiscussionListScreen](discussion-list-screen.md); host/workspace tree #641 and host-qualified thread routing #636 consume the additive contract described under [Wiring](#wiring).
 - Guard: [Guarded repo launch](guarded-repo-launch.md) (#490 — the `launchGuardedRepoCall` seam `confirmPromotion` routes through)
