@@ -13,7 +13,7 @@ Wraps its body in a `Scaffold` whose `topBar` is a Material 3 `TopAppBar` (rende
 - **`Error(message)`** — centred `Text("Couldn't load channels: $message")` placeholder. No FAB, no section.
 - **`Loaded(channels, recentDiscussions, recentDiscussionsCount, recentDiscussionLastMessages)`** — `Column(bodyModifier.fillMaxSize())` containing a private `ChannelsSectionHeader()` (#68 — `labelLarge` "Channels" on `onSurfaceVariant @ 0.85f`, padding `(start=16, end=16, top=12, bottom=4)`), then `LazyColumn(Modifier.weight(1f))` of `ConversationRow`s (one per channel, keyed by `Conversation.id`) followed by a trailing `item(key = "recent-discussions-section")` hosting `RecentDiscussionsSection` (#69 — placement moved *inside* the `LazyColumn` so the section scrolls with the channels, matching the Figma `15:8` single-scroll layout; since #162 forwards `state.recentDiscussionLastMessages` so each row reads its own most-recent `Message`). FAB rendered.
 
-The `TopAppBar`'s `navigationIcon` slot (#68) is a 28dp `Icon(painter = painterResource(R.drawable.ic_pyry_logo), tint = MaterialTheme.colorScheme.primary)` centred inside a 40dp `Box`; the drawable's own `#FFFFFF` fills are overridden by Compose's `SrcIn` `ColorFilter` (`Icon(painter, tint = …)` applies it across the painter, so the logo always renders in `primary` regardless of the asset's internal fills). Its title is `stringResource(R.string.app_name)` ("Pyrycode Mobile"); its single trailing `actions` slot is an `IconButton` wrapping `Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.cd_open_settings))`. The FAB wraps `Icon(Icons.Default.Add, contentDescription = null)` (since #221 the `contentDescription` lives on the outer `combinedClickable`'s `onClickLabel` / `onLongClickLabel`, not the inner `Icon`) at default `FabPosition.End`. Each row's `onClick` emits `ChannelListEvent.RowTapped(channel.id)` (channels) or `ChannelListEvent.RowTapped(discussion.id)` (preview rows inside the section), the gear's `onClick` emits `SettingsTapped`, the FAB's `onClick` emits `CreateDiscussionTapped`, the FAB's `onLongClick` (#221) emits `LongPressFab`, the `WorkspacePicker` host's `onPicked(path)` emits `WorkspacePicked(path)` and its `onDismiss` emits `WorkspacePickerDismissed`, and the See-all row's `onClick` emits `RecentDiscussionsTapped` through the screen's `onEvent` lambda. The NavHost destination is the only place that lambda resolves to concrete actions (row/gear/See-all dispatched directly to `navController.navigate(...)`; `CreateDiscussionTapped` and the three #221 variants forwarded into `vm.onEvent(event)` so the suspend-shaped create can run and emit a `ChannelListNavigation.ToThread` event); the screen itself is `NavController`-free.
+The `TopAppBar`'s `navigationIcon` slot (#68) is a 28dp `Icon(painter = painterResource(R.drawable.ic_pyry_logo), tint = MaterialTheme.colorScheme.primary)` centred inside a 40dp `Box`; the drawable's own `#FFFFFF` fills are overridden by Compose's `SrcIn` `ColorFilter` (`Icon(painter, tint = …)` applies it across the painter, so the logo always renders in `primary` regardless of the asset's internal fills). Its title is `stringResource(R.string.app_name)` ("Pyrycode Mobile"); its single trailing `actions` slot is an `IconButton` wrapping `Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.cd_open_settings))`. The FAB wraps `Icon(Icons.Default.Add, contentDescription = null)` (since #221 the `contentDescription` lives on the outer `combinedClickable`'s `onClickLabel` / `onLongClickLabel`, not the inner `Icon`) at default `FabPosition.End`. Each row's `onClick` emits `ChannelListEvent.RowTapped(channel.id)` (channels) or `ChannelListEvent.RowTapped(discussion.id)` (preview rows inside the section), the gear's `onClick` emits `SettingsTapped`, the FAB's `onClick` emits `CreateDiscussionTapped`, the FAB's `onLongClick` (#221) emits `LongPressFab`, the `WorkspacePicker` host's `onPicked(path)` emits `WorkspacePicked(path)` and its `onDismiss` emits `WorkspacePickerDismissed`, and the See-all row's `onClick` emits `RecentDiscussionsTapped` through the screen's `onEvent` lambda. The NavHost destination adapts these events into host-qualified row/create/picker commands and direct Settings/discussions navigation; the screen itself is `NavController`-free. See [Wiring](#wiring).
 
 The section's "render only when non-empty" guard lives inside `RecentDiscussionsSection` itself (`if (discussions.isEmpty()) return`) — call sites in both `Empty` and `Loaded` branches invoke it unconditionally. This is the "no orphan header" AC: when there are no recent discussions, the entire block (divider + header + rows + See-all link) collapses to nothing.
 
@@ -229,50 +229,24 @@ Each is a single `Text` centred inside `Box(Modifier.fillMaxSize(), contentAlign
 
 ## Wiring
 
-At the `composable(Routes.CHANNEL_LIST) { ... }` block in `MainActivity.PyryNavHost`:
+`PyryNavHost` resolves `ChannelListViewModel` inside the channel-list back-stack
+entry and collects both `state` and `hostState`. Flat rows still come from
+compatibility `state`; the route copies `workspacePickerVisible` from the presence
+of `hostState.workspacePickerServerId` into the existing `Loaded`/`Empty` variants.
 
-```kotlin
-composable(Routes.CHANNEL_LIST) {
-    val vm = koinViewModel<ChannelListViewModel>()
-    val state by vm.state.collectAsStateWithLifecycle()
-    LaunchedEffect(vm) {
-        vm.navigationEvents.collect { event ->
-            when (event) {
-                is ChannelListNavigation.ToThread ->
-                    navController.navigate("conversation_thread/${event.conversationId}")
-            }
-        }
-    }
-    ChannelListScreen(
-        state = state,
-        onEvent = { event ->
-            when (event) {
-                is ChannelListEvent.RowTapped ->
-                    navController.navigate("conversation_thread/${event.conversationId}")
-                ChannelListEvent.SettingsTapped ->
-                    navController.navigate(Routes.SETTINGS)
-                ChannelListEvent.RecentDiscussionsTapped ->
-                    navController.navigate(Routes.DISCUSSION_LIST)
-                ChannelListEvent.CreateDiscussionTapped,
-                ChannelListEvent.LongPressFab,
-                is ChannelListEvent.WorkspacePicked,
-                ChannelListEvent.WorkspacePickerDismissed,
-                ->
-                    vm.onEvent(event)
-            }
-        },
-    )
-}
-```
+The adapter captures the selected/demo host for `RowTapped`,
+`CreateDiscussionTapped` and `LongPressFab`, invoking `onHostRowTapped`,
+`createHostDiscussion` and `openHostWorkspacePicker` respectively. Pick/dismiss use
+`pickHostWorkspace` / `dismissHostWorkspacePicker`. `HostWorkspaceRepository` wraps
+the screen so the nested picker's recents and folder creation use that captured
+owner. `LaunchedEffect(vm)` collects only `hostNavigationEvents` to open threads;
+Settings and the discussions drilldown remain direct route navigation.
 
-Key points:
-
-- **`koinViewModel<ChannelListViewModel>()` resolves against the existing Koin binding** (`viewModel { ChannelListViewModel(get()) }` from #45's `AppModule.kt`). Every `composable { ... }` block is a `NavBackStackEntry`-keyed scope; Compose Navigation 2.9+ auto-wires `LocalViewModelStoreOwner` to the current entry, so the bare call resolves to the entry-scoped store — the VM is created on first entry, retained across configuration changes, cleared on pop. No `viewModelStoreOwner = backStackEntry` argument needed.
-- **`collectAsStateWithLifecycle()`, not `collectAsState()`.** The lifecycle-aware variant pauses upstream collection when the lifecycle drops below `STARTED`, which is what makes the VM's `WhileSubscribed(5_000)` actually save work when the screen is backgrounded.
-- **Inline `when (event)` dispatch with mixed routing.** Seven variants today: `RowTapped`, `SettingsTapped`, and `RecentDiscussionsTapped` (#26) resolve to `navController.navigate(...)` directly; `CreateDiscussionTapped`, `LongPressFab`, `WorkspacePicked`, and `WorkspacePickerDismissed` (#22 / #221) forward into `vm.onEvent(event)` via a comma-grouped arm because each needs VM state mutation or a suspend-shaped side effect. The rule: events with no VM-side side effect stay routed at the destination; events that need a suspend or VM state mutation forward into `onEvent`. Comma-grouping the four VM-forwarded variants keeps the arm to one body and makes the nav-vs-VM split visually obvious.
-- **`LaunchedEffect(vm) { vm.navigationEvents.collect { … } }` for one-shot nav events.** Sits alongside the `state` read inside `composable(Routes.CHANNEL_LIST)`. The `vm` key restarts the collector exactly when the VM identity changes (per `NavBackStackEntry` scope), which is the correct boundary for a one-shot channel. See [`channel-list-viewmodel.md`](./channel-list-viewmodel.md) for the `Channel<ChannelListNavigation>` + `receiveAsFlow()` shape on the emitter side.
-- **Concrete navigation target built inline:** `"conversation_thread/${event.conversationId}"`. No `Routes.conversationThread(id)` helper — matches the navigation feature doc's "build inline until a second caller appears" rule.
-- **No `popUpTo` / `launchSingleTop`.** Default `navigate(route)` semantics are correct: tapping a channel pushes the thread onto the back stack; back-press returns to the channel list. The only exceptional case in the graph is the `scanner` → `channel_list` transition.
+See [ViewModel wiring](channel-list-viewmodel.md#wiring) and
+[temporary flat-list compatibility](navigation.md#temporary-flat-list-compatibility).
+The screen keeps its `(state, onEvent)` contract; the host/workspace tree remains
+\#641. ViewModels remain scoped to their `NavBackStackEntry`, and
+`collectAsStateWithLifecycle()` controls screen subscriptions.
 
 ## Configuration
 

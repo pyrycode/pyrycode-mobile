@@ -3,12 +3,14 @@
 Koin is the project's DI framework. `PyryApp.onCreate` loads `appModule` and
 `conversationRepositoryModule(useRelay)` from `de/pyryco/mobile/di/AppModule.kt`.
 The selector includes `hostConversationModule(useRelay)` for the shared host list
-source and binds the compatibility `ConversationRepository` interface.
+source and destination factory, and binds the compatibility `ConversationRepository`
+interface.
 
 ## What it does
 
 `appModule` wires concrete repositories, connection owners, settings and ViewModels;
-the selector modules choose the shared host source and compatibility repository.
+the selector modules choose the shared host source, destination dependencies and
+compatibility repository.
 Composables resolve dependencies with `koinViewModel()` / `koinInject()` from
 `koin-androidx-compose`; non-Compose code uses `by inject()` / `get()`.
 See `AppModule.kt` for the current bindings.
@@ -38,6 +40,8 @@ val appModule = module {
     single { StableConversationRepository(get<RelayConnectionRegistry>().currentRepository) }
     viewModel { ChannelListViewModel(get(), get(), get()) }
     viewModel { DiscussionListViewModel(get(), get()) }
+    viewModel { get<ThreadDestinationFactory>().thread(get(), get()) }
+    viewModel { get<ThreadDestinationFactory>().literal(get()) }
 }
 
 // The #350 selector — the *only* module that binds the ConversationRepository interface.
@@ -48,7 +52,11 @@ fun conversationRepositoryModule(useRelay: Boolean = BuildConfig.USE_RELAY_REPOS
     }
 }
 
-fun hostConversationModule(useRelay: Boolean) = module {
+fun hostConversationModule(
+    useRelay: Boolean,
+    decorateRepository: (ConversationRepository) -> ConversationRepository = { it },
+) = module {
+    single { ThreadDestinationFactory(useRelay, get(), get(), get(), decorateRepository) }
     single {
         if (useRelay) HostConversationSource.relay(get())
         else HostConversationSource.demo(get<FakeConversationRepository>())
@@ -63,9 +71,10 @@ existing `FakeConversationRepository` singleton. Only the exact values `true` an
 `false` are accepted; other values fail Gradle configuration. This is a build-time
 selection with no runtime setter. See [README Build](../../../README.md#build).
 
-The selector chooses both the compatibility repository and the host source. The
-lifecycle driver and registry still control every saved host's connection
-establishment in both modes; selecting the fake does not disable that stack.
+The selector chooses the compatibility repository, host source and destination
+factory together. The lifecycle driver and registry still control every saved
+host's connection establishment in both modes; selecting the fake does not disable
+that stack.
 
 `appModule` eagerly owns `RelayConnectionRegistry` and disposes it on Koin close.
 Both pairing-store interfaces resolve one [observable decorator](paired-server-store.md#wiring--usage).
@@ -74,18 +83,20 @@ the registry uses `RelayConnectionFactory.create(record)` for one retained bundl
 per exact server id. Foreground/background lifetime belongs to this registry.
 
 `RelayConnectionController` and `ConnectionStateSource` resolve the registry.
-The stable repository, Settings status, and Thread events, modal and outbound
-actions follow its latest-saved surviving selection. No separate compatibility
-connection is created. With no selection, these dependencies remain resolvable
-with empty repository/events, hidden modal and idle/down status. See
+The compatibility stable repository and Settings status follow its latest-saved
+surviving selection. Host-qualified threads use the exact owner described below.
+No separate compatibility connection is created. With no selection, the registry
+projections remain resolvable with empty repository/events, hidden modal and
+idle/down status. See
 [bundle configuration](relay-repository-coordinator.md#configuration).
 
 Concrete `RelayConnectionBundle`, `RelayConnectionSupervisor`, `NoiseSessionFactory`
 and `RelayRepositoryCoordinator` bindings are Koin **factory resolutions of the
 selected retained owner**, not singleton snapshots or newly constructed bundles.
 They serve test/diagnostic callers, including deterministic reconnect helpers;
-resolving them without a selection fails with `no paired host`. Long-lived app
-consumers use the registry projections rather than holding these selected aliases.
+resolving them without a selection fails with `no paired host`. Long-lived
+compatibility consumers use registry projections; host-qualified destinations
+resolve `connectionFor(serverId)` rather than these selected aliases.
 See [Noise factory wiring](noise-ik-session.md#factory-wiring).
 
 ### Host identity and snapshots
@@ -146,6 +157,59 @@ not establish current availability. This lookup returns availability at the time
 of the check; a later disconnect can still make an operation fail. See the
 [coordinator's availability checks](relay-repository-coordinator.md#the-single-connection-source-and-the-open-gated-currentrepository-421--493).
 
+### Destination ownership
+
+`ThreadDestinationFactory` is a scope-free singleton in `hostConversationModule`.
+The Koin `viewModel` definitions call `thread(handle, preferences)` and
+`literal(handle)`; the factory reads `serverId` from the destination's
+`SavedStateHandle`, while each ViewModel reads its unchanged host-local
+`conversationId`. [Navigation](navigation.md#host-qualified-destinations) supplies
+both arguments and scopes ViewModels to individual back-stack entries.
+
+Relay destinations capture the exact `connectionFor(serverId)` retained bundle.
+Their repository is a `StableConversationRepository` over **that coordinator's**
+`currentRepository` stream. Capturing `HostConversationSource.repositoryFor`'s
+concrete live repository would strand the destination after reconnect; injecting
+the global compatibility facade would redirect it on selection changes. The
+destination facade adds no scope or jobs: cold reads switch with the owner stream,
+and one-shot calls retain their existing arguments and errors. Disconnected or
+handshaking owners yield empty/default reads and unavailable writes; B's healthy
+connection cannot substitute for A's unavailable one.
+
+The same bundle supplies the thread's supervisor state, live-session events,
+current modal, modal answer/cancel and interrupt callbacks. Repository-backed
+session/queue state, Send, Reset session, queue drop and existing thread actions
+use the owner facade. Literal Request/Retry use a facade over that same host's
+coordinator. Compatibility selection cannot change an open prompt's display or
+answer target, even with colliding conversation/modal ids. App preferences remain
+shared. The navigation guard waits for saved-host initialization and rejects
+unknown/removed hosts before constructing their ViewModels; there is no fallback
+to selection.
+
+Ownership also covers descendant injection. `HostWorkspaceRepository` provides
+`LocalWorkspacePickerRepository` around the thread and flat channel screen,
+remembering a factory repository for the route host or captured picker host.
+`WorkspacePicker` uses it for recents and folder creation, so its returned path
+and the ViewModel's final action reach the same host across selection/reconnect.
+Without that provider, a correctly bound ViewModel can still combine B's folders
+with A's workspace change. The picker's nullable-local fallback remains the
+compatibility Koin binding for Settings; that destination's migration is #637.
+
+### Exact-host Retry and lifecycle
+
+The thread's `ConnectionStateSource.retry()` calls
+`RelayConnectionRegistry.retryHost(serverId, expectedBundle)`. The registry holds
+the same monitor used by reconciliation, removal, replacement, background close
+and disposal while checking foreground state, disposal and exact bundle identity,
+then running the supervisor's nonblocking Retry. A queued Retry cannot reopen a
+retired or background owner, and it never retries another selected host.
+
+Checking identity before calling the supervisor outside this monitor leaves a
+check/use race: bundle teardown closes the supervisor but does not permanently
+disable its `retry()`/`connect()` path. Keep validation and the nonblocking call
+under one lifecycle boundary. Literal-screen Retry is a separate snapshot re-fetch;
+it retains the destination repository and existing snapshot error mapping.
+
 ### Demo binding
 
 With `useRelay = false`, the same source type exposes exactly one host:
@@ -155,13 +219,24 @@ states `Connected`. Lists and exact lookup use the existing
 relay hosts never enter these snapshots or lookups, even though their connection
 owners still exist.
 
+Demo thread, literal and picker repositories also resolve that same singleton.
+The thread gets `FakeConnectionStateSource` (`Connected`) and its inert default
+live-event, hidden-modal and control dependencies. Saved real hosts never supply
+demo content, permissions or controls. `selectedServerId()` returns `demo` in this
+mode; in relay mode it captures the current exact selected host only for temporary
+flat-list entry points.
+
 `ChannelListViewModel` receives this shared source as its third constructor
 dependency and exposes [host-qualified state and actions](channel-list-viewmodel.md#state-projection).
 `DiscussionListViewModel` receives it as its second dependency for
 [host-qualified navigation and captured promotion](discussion-list-viewmodel.md#wiring).
-Both retain flat-screen state/events and bare-id navigation through the selected-host
-facade or fake; host actions use exact lookup and separate navigation streams.
-Thread routing remains #636 and tree rendering #641.
+Both retain compatibility state/events and bare-id navigation APIs, but production
+routes collect only `hostNavigationEvents`. The flat list still displays the
+selected facade or fake; its adapters call host-aware row/create/picker/promotion
+commands and project captured picker/promotion visibility into the existing screen
+state. Asynchronous completion retains the captured host. See
+[flat-list compatibility](navigation.md#temporary-flat-list-compatibility);
+tree rendering remains #641, and Settings/archive migration remains #637.
 
 ## Adding a binding
 
@@ -181,10 +256,34 @@ independent of the build default and avoids relying on Koin override semantics.
 `E2eInstrumentationRunner` installs `E2eTestApplication` for every instrumented run:
 without `relayUrl`, it explicitly selects fake; with relay arguments, it replaces
 the selector with the existing tapped stable-facade binding so the parser tap is
-preserved. Both selectors include `hostConversationModule` so relay instrumentation
-also resolves the shared relay source without replacing its tapped facade.
+preserved. Both selectors include `hostConversationModule`. The relay selector also
+passes `decorateRepository = ::TappingConversationRepository`, wrapping the
+factory's exact-host facades as well as the compatibility facade. Decorating only
+the global interface would miss thread reads after the route migration. The
+identity-default decorator adds no production subscription; instrumentation taps
+the existing `observeMessages` collection without another backfill request.
 
 ## Testing
+
+`RelayConnectionFactoryTest.destinationBindingsKeepCollidingIdsOnTheirHostAcrossSelectionAndReconnect`
+resolves production thread/literal bindings against two Noise peers. It combines
+colliding conversation, modal and queue ids with distinct content and snapshots,
+then checks owner-specific outbound frames and no corresponding action on B.
+It covers selection changes, A disconnect/handshake/reconnect while B remains
+usable, literal Retry, and demo isolation with both real hosts saved.
+
+The same class's
+`destinationRetryKeepsLifecycleLockThroughDialAndRejectsRetiredOwners` asserts
+that Retry holds the registry monitor at dial and rejects queued calls after
+replacement/removal/disposal.
+`queuedDestinationRetryCannotReopenAfterBackgroundClose` checks the background
+edge. Settled identity checks alone would miss the removal race.
+
+`LiteralScreenNavigationTest` exercises the production graph and bindings,
+including the actual workspace picker with distinct A/B recents, folder creation,
+selection changes and reconnect. Constructor-only tests and direct
+`WorkspacePickerInternal(repository = fake)` tests bypass the descendant's
+independent injection and cannot establish that ownership boundary.
 
 `HostChannelListViewModelTest.appModuleInjectsSharedDemoSourceAndCreatesThroughExistingFakeSingleton`
 resolves the actual `appModule` ViewModel definition with JVM preferences and the

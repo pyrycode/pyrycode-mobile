@@ -26,7 +26,7 @@ combined with a private `MutableStateFlow<PendingPromotion?>`. It projects
 `Loading`, then `Empty` or `Loaded(discussions, pendingPromotion)`, or
 `Error(message)` if the upstream throws, using `WhileSubscribed(5_000)`.
 
-`fun onEvent(event: DiscussionListEvent)` handles five arms: `RowTapped(id) → viewModelScope.launch { navigationChannel.send(ToThread(id)) }` (so the unit test can assert the nav target — see "Dual nav wiring" below), `SaveAsChannelRequested(id) → openPromotionDialog(id)` (#78 — opens the confirmation dialog by setting `pendingPromotion`), `PromoteConfirmed → confirmPromotion()` (#78 — clears `pendingPromotion`, then `launchGuardedRepoCall { repository.promote(...) }`, guarded since #490), `PromoteCancelled → pendingPromotion.value = null` (#78 — also fired by scrim taps and back-press via M3 `AlertDialog`'s default `onDismissRequest` routing), and `BackTapped → Unit` (the destination handles back at the composable side via `navController.popBackStack()`; the no-op arm keeps the `when` exhaustive and documents intent).
+`fun onEvent(event: DiscussionListEvent)` handles five arms: `RowTapped(id) → viewModelScope.launch { navigationChannel.send(ToThread(id)) }` (so the unit test can assert the nav target — see "Navigation streams" below), `SaveAsChannelRequested(id) → openPromotionDialog(id)` (#78 — opens the confirmation dialog by setting `pendingPromotion`), `PromoteConfirmed → confirmPromotion()` (#78 — clears `pendingPromotion`, then `launchGuardedRepoCall { repository.promote(...) }`, guarded since #490), `PromoteCancelled → pendingPromotion.value = null` (#78 — also fired by scrim taps and back-press via M3 `AlertDialog`'s default `onDismissRequest` routing), and `BackTapped → Unit` (the destination handles back at the composable side via `navController.popBackStack()`; the no-op arm keeps the `when` exhaustive and documents intent).
 
 ## Shape
 
@@ -159,14 +159,14 @@ The combine projection has four observable arms:
 
 If the upstream collapses to `emptyList()` while a dialog is open (extreme edge — the only discussion got archived externally), the dialog disappears and the `pendingPromotion` flow is *also* cleared inline from the combine body, so a later non-empty emission cannot revive a stale dialog. Side-effecting inside `combine` is awkward but correct here — the alternative `onEach { … }` would cost an extra coroutine and put the invalidation further from the projection.
 
-### Dual nav wiring (#24)
+### Navigation streams
 
-The compatibility destination handles screen `RowTapped` directly with
-`navController.navigate("conversation_thread/${event.conversationId}")`; it does
-not forward that event to the VM. Calling `vm.onEvent(RowTapped(id))` independently
-emits `DiscussionListNavigation.ToThread(id)` on `navigationEvents`, which the
-destination also collects. JVM tests exercise this VM event seam. Host-qualified
-navigation uses a separate stream described under [Wiring](#wiring).
+The production destination adapts a flat `RowTapped` into
+`onHostRowTapped(HostConversationTarget(capturedServerId, conversationId))` and
+collects only `hostNavigationEvents`. It does not also navigate inline. The
+compatibility `onEvent(RowTapped(id))` still emits bare-id
+`DiscussionListNavigation.ToThread(id)` for legacy callers/tests, but the graph no
+longer collects that stream. See [Wiring](#wiring).
 
 ### `BackTapped` is intentionally a no-op in the VM
 
@@ -259,28 +259,14 @@ Consumers must preserve both host and conversation id through routing. Display
 names and workspace paths never select a host; host identity stays outside domain
 and wire serialization.
 
-Until [#641](https://github.com/pyrycode/pyrycode-mobile/issues/641) supplies the
-host/workspace tree and [#636](https://github.com/pyrycode/pyrycode-mobile/issues/636)
-consumes host targets, `DiscussionListScreen` and `MainActivity` keep using `state`,
-`onEvent`, `PendingPromotion` and bare-id `navigationEvents` against the selected
-repository or fake. Their rows are never flattened from the multi-host snapshots,
-and host navigation is never forwarded to the bare-id stream with its host dropped.
-The host contract adds no UI event producer, promotion visual or route migration.
-
-Composable resolution at the `composable(Routes.DISCUSSION_LIST) { ... }` destination:
-
-```kotlin
-val vm = koinViewModel<DiscussionListViewModel>()
-val state by vm.state.collectAsStateWithLifecycle()
-LaunchedEffect(vm) {
-    vm.navigationEvents.collect { event ->
-        when (event) {
-            is DiscussionListNavigation.ToThread ->
-                navController.navigate("conversation_thread/${event.conversationId}")
-        }
-    }
-}
-```
+Until #641 supplies the host/workspace tree, `DiscussionListScreen` keeps rendering
+selected-host flat rows. Its `MainActivity` adapter captures the selected/demo host
+for row taps and `requestHostPromotion(target)`, then forwards confirmation and
+cancellation to the captured host methods. It projects
+`hostState.pendingPromotion` into the flat `Loaded.pendingPromotion` display model
+without dropping the action's owner. Selection changes cannot redirect confirmation.
+The production graph collects only `hostNavigationEvents`; the bare-id API remains
+for compatibility. See [route adapters](navigation.md#temporary-flat-list-compatibility).
 
 `koinViewModel<…>()` scopes the VM to the current `NavBackStackEntry` (Compose Navigation 2.9+ auto-wiring). `LaunchedEffect(vm)` re-keys on VM identity — exactly when the user enters this back-stack entry — so the collector restarts cleanly on each new instance and cancels on pop.
 
@@ -345,5 +331,5 @@ Test infrastructure conventions are unchanged from the channel VM tests — `Dis
 - Host contract: [#706 design](../../specs/architecture/706-host-discussion-targets.md).
 - Sibling: [ChannelListViewModel](channel-list-viewmodel.md) — structural clone source; see it for the `.map / .catch / .stateIn` pattern, the `Channel<…>(BUFFERED) → receiveAsFlow()` one-shot navigation seam, and the test-infrastructure conventions
 - Upstream: [Conversation repository](conversation-repository.md) (the `observeConversations(ConversationFilter.Discussions)` projection — `FakeConversationRepository` projection stamps `isSleeping` on every emission, so the discussion list inherits the sleeping-dot affordance without VM work), [data model](data-model.md) (`Conversation`), [dependency injection](dependency-injection.md) (Koin wiring)
-- Downstream: [DiscussionListScreen](discussion-list-screen.md); host/workspace tree #641 and host-qualified thread routing #636 consume the additive contract described under [Wiring](#wiring).
+- Downstream: [DiscussionListScreen](discussion-list-screen.md); host/workspace tree #641 remains pending; production [host-qualified routing](navigation.md#how-it-works) consumes the contract described under [Wiring](#wiring).
 - Guard: [Guarded repo launch](guarded-repo-launch.md) (#490 — the `launchGuardedRepoCall` seam `confirmPromotion` routes through)

@@ -1,8 +1,13 @@
 package de.pyryco.mobile.di
 
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.viewModelScope
 import com.southernstorm.noise.protocol.CipherStatePair
 import com.southernstorm.noise.protocol.HandshakeState
 import com.southernstorm.noise.protocol.Noise
@@ -29,6 +34,7 @@ import de.pyryco.mobile.data.network.RelayTransportFactory
 import de.pyryco.mobile.data.network.TransportEvent
 import de.pyryco.mobile.data.network.base64StdDecode
 import de.pyryco.mobile.data.network.base64StdEncode
+import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -36,15 +42,24 @@ import de.pyryco.mobile.data.repository.DebugBundleStatus
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
+import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
+import de.pyryco.mobile.ui.conversations.thread.LiteralScreenEvent
+import de.pyryco.mobile.ui.conversations.thread.LiteralScreenUiState
+import de.pyryco.mobile.ui.conversations.thread.LiteralScreenViewModel
+import de.pyryco.mobile.ui.conversations.thread.ThreadEvent
+import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -53,8 +68,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -70,6 +87,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.koin.core.KoinApplication
+import org.koin.core.parameter.parametersOf
 import org.koin.dsl.binds
 import org.koin.dsl.module
 import java.io.ByteArrayOutputStream
@@ -831,8 +849,404 @@ class RelayConnectionFactoryTest {
             }
         }
 
+    @Test
+    fun destinationBindingsKeepCollidingIdsOnTheirHostAcrossSelectionAndReconnect() =
+        runTest {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            val f = Fixture(this)
+            val registry = f.registry()
+            val prefs =
+                AppPreferences(
+                    object : DataStore<Preferences> {
+                        override val data = flowOf(emptyPreferences())
+
+                        override suspend fun updateData(transform: suspend (Preferences) -> Preferences) = transform(emptyPreferences())
+                    },
+                )
+            val app =
+                KoinApplication.init().modules(
+                    appModule,
+                    conversationRepositoryModule(true),
+                    module {
+                        single { registry }
+                        single { f.store } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
+                        single { prefs }
+                    },
+                )
+            val vms = mutableListOf<androidx.lifecycle.ViewModel>()
+            try {
+                f.store.save(f.a.record)
+                f.store.save(f.b.record)
+                registry.connect()
+                runCurrent()
+                val ta = f.transports[0]
+                val tb = f.transports[1]
+
+                fun handle(host: String) = SavedStateHandle(mapOf("serverId" to host, "conversationId" to "c"))
+                val a = app.koin.get<ThreadViewModel> { parametersOf(handle("A")) }.also { vms += it }
+                val b = app.koin.get<ThreadViewModel> { parametersOf(handle("B")) }.also { vms += it }
+                val literalA = app.koin.get<LiteralScreenViewModel> { parametersOf(handle("A")) }.also { vms += it }
+                val literalB = app.koin.get<LiteralScreenViewModel> { parametersOf(handle("B")) }.also { vms += it }
+                assertNotSame(a, b)
+                backgroundScope.launch { a.state.collect {} }
+                backgroundScope.launch { b.state.collect {} }
+                backgroundScope.launch { a.isThinking.collect {} }
+                backgroundScope.launch { b.isThinking.collect {} }
+                runCurrent()
+                ta.emit(modal("A"))
+                tb.emit(modal("B"))
+                ta.emit(turn(1))
+                runCurrent()
+                assertEquals("A", (a.currentModal.value as ModalUiState.Open).title)
+                assertEquals("B", (b.currentModal.value as ModalUiState.Open).title)
+                assertTrue(a.isThinking.value)
+                assertFalse(b.isThinking.value)
+                f.store.save(f.a.record)
+                runCurrent()
+                assertEquals("B", (b.currentModal.value as ModalUiState.Open).title)
+                f.store.save(f.b.record)
+                runCurrent()
+
+                fun replyRows(
+                    t: PeerTransport,
+                    name: String,
+                ) {
+                    t.emit(
+                        envelope(
+                            "conversations",
+                            """{"conversations":[{"id":"c","name":"$name","is_promoted":true,"cwd":"/same","last_message_ts":"2026-09-01T00:00:00Z","last_used_at":"2026-09-01T00:00:00Z"}]}""",
+                        ),
+                    )
+                    t.emit(envelope("message", """{"conversation_id":"c","message_id":"same","role":"assistant","text":"$name"}"""))
+                }
+                replyRows(ta, "A content")
+                replyRows(tb, "B content")
+                ta.emit(
+                    envelope(
+                        "queue_state",
+                        """{"conversation_id":"c","queued":[{"queued_msg_id":42,"text":"A queue","ts":"2026-09-20T00:00:00Z"}]}""",
+                    ),
+                )
+                tb.emit(
+                    envelope(
+                        "queue_state",
+                        """{"conversation_id":"c","queued":[{"queued_msg_id":42,"text":"B queue","ts":"2026-09-20T00:00:00Z"}]}""",
+                    ),
+                )
+                runCurrent()
+                assertEquals(
+                    "A queue",
+                    a.state.value.queuedMessages
+                        .single()
+                        .text,
+                )
+                assertEquals(
+                    "B queue",
+                    b.state.value.queuedMessages
+                        .single()
+                        .text,
+                )
+                assertEquals("A content", a.state.value.displayName)
+                assertEquals("B content", b.state.value.displayName)
+                assertEquals(
+                    "A content",
+                    a.state.value.items
+                        .filterIsInstance<ThreadItem.MessageItem>()
+                        .single()
+                        .message.content,
+                )
+                assertEquals(
+                    "B content",
+                    b.state.value.items
+                        .filterIsInstance<ThreadItem.MessageItem>()
+                        .single()
+                        .message.content,
+                )
+                ta.outbound.clear()
+                tb.outbound.clear()
+                a.sendMessage("phone reply")
+                a.onInterrupt()
+                a.onOverflowEvent(ThreadEvent.NewSession)
+                a.onModalOption("deny")
+                a.onModalCancel()
+                a.onDropQueued(42)
+                a.onOverflowEvent(ThreadEvent.RenameSubmit("A renamed"))
+                literalA.onEvent(LiteralScreenEvent.Request)
+                literalB.onEvent(LiteralScreenEvent.Request)
+                runCurrent()
+                assertEquals(
+                    listOf(
+                        "send_message",
+                        "interrupt",
+                        "new_session",
+                        "modal_answer",
+                        "modal_cancel",
+                        "dequeue_message",
+                        "rename_conversation",
+                        "request_snapshot",
+                    ),
+                    ta.outbound.map {
+                        it.type
+                    },
+                )
+                assertEquals(listOf("request_snapshot"), tb.outbound.map { it.type })
+                for (frame in ta.outbound.filter {
+                    it.type in
+                        listOf("send_message", "interrupt", "new_session", "dequeue_message", "request_snapshot")
+                }) {
+                    assertEquals(
+                        "c",
+                        frame.payload.jsonObject["conversation_id"]
+                            ?.jsonPrimitive
+                            ?.content,
+                    )
+                }
+                assertEquals(
+                    "same",
+                    ta.outbound
+                        .single { it.type == "modal_answer" }
+                        .payload.jsonObject["modal_id"]
+                        ?.jsonPrimitive
+                        ?.content,
+                )
+
+                fun snapshot(
+                    t: PeerTransport,
+                    text: String,
+                ) {
+                    val request = t.outbound.last { it.type == "request_snapshot" }
+                    t.emit(
+                        envelope(
+                            "screen_snapshot",
+                            """{"conversation_id":"c","text":"$text","ts":"2026-09-20T00:00:00Z"}""",
+                        ).copy(inReplyTo = request.id),
+                    )
+                }
+                snapshot(ta, "A snapshot")
+                snapshot(tb, "B snapshot")
+                runCurrent()
+                assertEquals(LiteralScreenUiState.Content("A snapshot"), literalA.state.value)
+                assertEquals(LiteralScreenUiState.Content("B snapshot"), literalB.state.value)
+                registry.connectionFor("A")!!.supervisor.close()
+                runCurrent()
+                b.onInterrupt()
+                runCurrent()
+                assertEquals("interrupt", tb.outbound.last().type)
+                literalA.onEvent(LiteralScreenEvent.Retry)
+                runCurrent()
+                assertTrue(literalA.state.value is LiteralScreenUiState.Error)
+                f.handshaking = "A"
+                a.retry()
+                runCurrent()
+                literalA.onEvent(LiteralScreenEvent.Retry)
+                a.onInterrupt()
+                runCurrent()
+                assertTrue(literalA.state.value is LiteralScreenUiState.Error)
+                val nextA = f.transports.last()
+                assertEquals("A", nextA.record.serverId)
+                assertTrue(nextA.outbound.isEmpty())
+                nextA.completeHandshake()
+                runCurrent()
+                replyRows(nextA, "A reconnected")
+                runCurrent()
+                assertEquals("A reconnected", a.state.value.displayName)
+                assertEquals("B content", b.state.value.displayName)
+                literalA.onEvent(LiteralScreenEvent.Retry)
+                runCurrent()
+                snapshot(nextA, "A resumed snapshot")
+                runCurrent()
+                assertEquals(LiteralScreenUiState.Content("A resumed snapshot"), literalA.state.value)
+                val demoApp =
+                    KoinApplication.init().modules(
+                        appModule,
+                        conversationRepositoryModule(false),
+                        module {
+                            single { registry }
+                            single { f.store } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
+                            single { prefs }
+                        },
+                    )
+                try {
+                    assertEquals("demo", demoApp.koin.get<ThreadDestinationFactory>().selectedServerId())
+                    assertFalse(demoApp.koin.get<ThreadDestinationFactory>().hasHost("A"))
+                    val fake = demoApp.koin.get<FakeConversationRepository>()
+                    val chat = fake.createDiscussion(null)
+                    val handle = SavedStateHandle(mapOf("serverId" to "demo", "conversationId" to chat.id))
+                    val demo = demoApp.koin.get<ThreadViewModel> { parametersOf(handle) }.also { vms += it }
+                    val literal = demoApp.koin.get<LiteralScreenViewModel> { parametersOf(handle) }.also { vms += it }
+                    backgroundScope.launch { demo.state.collect {} }
+                    backgroundScope.launch { demo.isThinking.collect {} }
+                    backgroundScope.launch { demo.connectionState.collect {} }
+                    runCurrent()
+                    val frames = f.transports.map { it.outbound.size }
+                    demo.onOverflowEvent(ThreadEvent.RenameSubmit("Demo renamed"))
+                    demo.onInterrupt()
+                    demo.onModalOption("deny")
+                    demo.onModalCancel()
+                    demo.retry()
+                    literal.onEvent(LiteralScreenEvent.Request)
+                    runCurrent()
+                    assertEquals(
+                        "Demo renamed",
+                        fake
+                            .observeConversations(ConversationFilter.All)
+                            .first()
+                            .single { it.id == chat.id }
+                            .name,
+                    )
+                    assertEquals(ModalUiState.Hidden, demo.currentModal.value)
+                    assertFalse(demo.isThinking.value)
+                    assertEquals(de.pyryco.mobile.data.model.ConnectionState.Connected, demo.connectionState.value)
+                    assertEquals(LiteralScreenUiState.Content(fake.requestScreenSnapshot(chat.id)), literal.state.value)
+                    assertEquals(frames, f.transports.map { it.outbound.size })
+                } finally {
+                    demoApp.close()
+                }
+            } finally {
+                vms.forEach { it.viewModelScope.cancel() }
+                app.close()
+                registry.dispose()
+                runCurrent()
+                Dispatchers.resetMain()
+            }
+        }
+
+    @Test
+    fun destinationRetryKeepsLifecycleLockThroughDialAndRejectsRetiredOwners() =
+        runTest {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            val f = Fixture(this, UnconfinedTestDispatcher(testScheduler))
+            val registry = f.registry()
+            val prefs =
+                AppPreferences(
+                    object : DataStore<Preferences> {
+                        override val data = flowOf(emptyPreferences())
+
+                        override suspend fun updateData(transform: suspend (Preferences) -> Preferences) = transform(emptyPreferences())
+                    },
+                )
+            val app =
+                KoinApplication.init().modules(
+                    appModule,
+                    conversationRepositoryModule(true),
+                    module {
+                        single { registry }
+                        single { f.store } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
+                        single { prefs }
+                    },
+                )
+            val vms = mutableListOf<ThreadViewModel>()
+
+            fun thread() =
+                app.koin
+                    .get<ThreadViewModel> {
+                        parametersOf(SavedStateHandle(mapOf("serverId" to "A", "conversationId" to "c")))
+                    }.also { vms += it }
+            try {
+                f.store.save(f.a.record)
+                f.store.save(f.b.record)
+                registry.connect()
+                runCurrent()
+                val b = f.transports[1]
+                val a = thread()
+                registry.connectionFor("A")!!.supervisor.close()
+                runCurrent()
+                f.beforeDial = {
+                    assertTrue("Retry must hold the registry lock through the dial", Thread.holdsLock(registry))
+                }
+                a.retry()
+                runCurrent()
+                assertEquals(3, f.transports.size)
+                f.beforeDial = {}
+                // Retry is queued before each mutation, but executes after the lifecycle edge.
+                a.retry()
+                f.store.save(f.a.record.copy(token = "replacement"))
+                runCurrent()
+                assertEquals(4, f.transports.size)
+                assertTrue(f.transports[2].closed)
+                val replacement = thread()
+                replacement.retry()
+                f.store.remove("A")
+                runCurrent()
+                assertEquals(4, f.transports.size)
+                assertTrue(f.transports[3].closed)
+                assertFalse(b.closed)
+                assertTrue(b.outbound.isEmpty())
+                f.store.save(f.a.record)
+                runCurrent()
+                val restored = thread()
+                restored.retry()
+                registry.close()
+                runCurrent()
+                assertEquals(5, f.transports.size)
+                assertTrue(f.transports.all { it.closed })
+                registry.connect()
+                runCurrent()
+                assertEquals(7, f.transports.size)
+                restored.retry()
+                registry.dispose()
+                runCurrent()
+                assertEquals(7, f.transports.size)
+            } finally {
+                vms.forEach { it.viewModelScope.cancel() }
+                app.close()
+                registry.dispose()
+                runCurrent()
+                Dispatchers.resetMain()
+            }
+        }
+
+    @Test
+    fun queuedDestinationRetryCannotReopenAfterBackgroundClose() =
+        runTest {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            val f = Fixture(this)
+            val registry = f.registry()
+            val prefs =
+                AppPreferences(
+                    object : DataStore<Preferences> {
+                        override val data = flowOf(emptyPreferences())
+
+                        override suspend fun updateData(transform: suspend (Preferences) -> Preferences) = transform(emptyPreferences())
+                    },
+                )
+            val app =
+                KoinApplication.init().modules(
+                    appModule,
+                    conversationRepositoryModule(true),
+                    module {
+                        single { registry }
+                        single { f.store } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
+                        single { prefs }
+                    },
+                )
+            var vm: ThreadViewModel? = null
+            try {
+                f.store.save(f.a.record)
+                f.store.save(f.b.record)
+                registry.connect()
+                runCurrent()
+                vm =
+                    app.koin.get<ThreadViewModel> {
+                        parametersOf(SavedStateHandle(mapOf("serverId" to "A", "conversationId" to "c")))
+                    }
+                vm.retry()
+                registry.close()
+                runCurrent()
+                assertEquals("background Retry must not create a transport", 2, f.transports.size)
+                assertTrue(f.transports.all { it.closed })
+            } finally {
+                vm?.viewModelScope?.cancel()
+                app.close()
+                registry.dispose()
+                runCurrent()
+                Dispatchers.resetMain()
+            }
+        }
+
     private class Fixture(
         scope: TestScope,
+        private val dispatcher: kotlinx.coroutines.CoroutineDispatcher = StandardTestDispatcher(scope.testScheduler),
     ) {
         val a = Host("A")
         val b = Host("B")
@@ -844,7 +1258,6 @@ class RelayConnectionFactoryTest {
         var interactive = true
         val keys = Keys()
         val transports = mutableListOf<PeerTransport>()
-        private val dispatcher = StandardTestDispatcher(scope.testScheduler)
         val factory =
             RelayConnectionFactory(
                 keys,

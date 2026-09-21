@@ -1,13 +1,10 @@
 # LiteralScreenSurface
 
-The **render half** of the manual "show the literal screen" feature ([#381](../codebase/381.md)). A
-stateless Compose surface that renders the merged [`LiteralScreenViewModel`](literal-screen-viewmodel.md)'s
-hoisted three-state `LiteralScreenUiState` and dispatches its two `LiteralScreenEvent`s. The thread
-entry-point action + navigation destination that *open* this surface for a conversation shipped in the
-sibling slice **#382** ([codebase note](../codebase/382.md)) — an always-available "Show the literal
-screen" overflow item that routes to a dedicated `literal_screen/{conversationId}` destination rendering
-this surface. (#381 shipped this surface tested + DI-wired before any UI reached it; #382 wires that
-path.)
+Stateless Compose surface for the manual “Show the literal screen” action. It
+renders [LiteralScreenViewModel](literal-screen-viewmodel.md)'s three-state
+`LiteralScreenUiState` and dispatches `LiteralScreenEvent`s. The thread overflow
+opens `literal_screen/{serverId}/{conversationId}` with the same owning host and
+conversation; see [navigation](navigation.md#host-qualified-destinations).
 
 `security-sensitive`: the snapshot text is server-originated and may carry sensitive on-screen content,
 so it is rendered **verbatim** as plain monospace, **never logged**, **never persisted**, and screen
@@ -40,8 +37,8 @@ fun LiteralScreenSurface(
 
 Stateless — holds **no** state of its own beyond the `rememberScrollState()` for the scroll container
 (UI-only scroll position, non-sensitive, intentionally *not* saveable). The stateful wrapper
-(`koinViewModel()` + `collectAsStateWithLifecycle()`) lives in the `literal_screen/{conversationId}`
-destination ([#382](../codebase/382.md)), not here.
+(`koinViewModel()` + `collectAsStateWithLifecycle()`) lives in the `literal_screen/{serverId}/{conversationId}`
+destination, not here.
 
 A shared `Surface` → `Column` → `TopAppBar` scaffold wraps all three states, so `FLAG_SECURE` and the
 once-only `Request` apply for the whole surface lifecycle, not just `Content`:
@@ -153,19 +150,21 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 
 ## Wiring
 
-- **DI registration (this slice):** `viewModel { LiteralScreenViewModel(get(), get()) }` in
-  [`AppModule`](dependency-injection.md). `get()` resolves `SavedStateHandle` (Koin's `viewModel { }` scope
-  provides it, as for [`ThreadViewModel`](thread-screen.md)) + the flag-selected
-  [`ConversationRepository`](conversation-repository.md) ([#350](../codebase/350.md)). This makes the VM
-  **resolvable**; it does **not** touch navigation or `MainActivity`.
-- **Obtaining + scoping (shipped in [#382](../codebase/382.md)):** the `literal_screen/{conversationId}`
-  destination obtains the VM via `koinViewModel<LiteralScreenViewModel>()` **inside the destination
-  composable**, binding it to that back-stack entry's `ViewModelStoreOwner` so (a) `SavedStateHandle`
-  carries `conversationId` and (b) a **fresh VM exists per open with no cross-conversation `text` bleed**
-  (the fresh VM starts in `Loading`; this surface's `LaunchedEffect(Unit) { Request }` re-fetches). A
-  process/activity-singleton scope (or a Koin `single`) would leak one conversation's snapshot into the
-  next — it is deliberately a `viewModel { }` factory and the `koinViewModel()` call is never hoisted
-  above the destination. #382 ran its own `security-sensitive` review (PASS).
+`appModule` registers `viewModel { get<ThreadDestinationFactory>().literal(get()) }`.
+The factory reads the entry's `serverId` from `SavedStateHandle` and supplies an
+[exact-host reconnecting repository](dependency-injection.md#destination-ownership),
+or the existing fake singleton for a demo destination. The ViewModel reads the
+unchanged host-local `conversationId`; Request and Retry retain the same target across
+compatibility selection changes and reconnect.
+
+The `literal_screen/{serverId}/{conversationId}` destination resolves
+`koinViewModel<LiteralScreenViewModel>()` inside `HostDestination`, after host
+membership is checked. Each new entry owns a fresh ViewModel, including A and B
+with equal conversation ids. Back-stack restoration retains both route identifiers;
+snapshot text stays out of saved state and is re-fetched on surface entry. Never
+hoist the resolution above the destination or register the ViewModel as a `single`.
+See [navigation](navigation.md#host-qualified-destinations) for route encoding,
+thread-to-literal traversal and unknown/removed-host handling.
 
 ## Edge cases / limitations
 
@@ -186,7 +185,7 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 
 ## Testing
 
-Instrumented Compose tests only (`createComposeRule`, not `createAndroidComposeRule` — same idiom as
+Component render tests use `createComposeRule` (not `createAndroidComposeRule` — same idiom as
 [`ThreadOverflowMenuTest`](thread-overflow-menu.md)): render `LiteralScreenSurface` directly with canned
 `state` + recording lambdas; no VM, no Koin. The 7 tests cover loading→spinner, verbatim/markdown-bypass,
 each of the three error reasons + retry-fires-`Retry`, `Request`-fired-once-on-open, and
@@ -195,6 +194,10 @@ non-`Activity` host without crashing. **Monospace is not asserted** (`FontFamily
 via the test API); the verbatim assertion + code review cover it. CI gate: `./gradlew test` / `lint` /
 `spotlessCheck` (instrumented tests run on-device per repo convention).
 
+`LiteralScreenNavigationTest` separately mounts the production graph and Koin
+bindings to cover host-qualified traversal, destination isolation and saved-state
+restoration; see [navigation testing](navigation.md#testing).
+
 ## Related
 
 - [#381 implementation notes](../codebase/381.md) · spec `docs/specs/architecture/381-literal-screen-render-surface-di.md`
@@ -202,6 +205,6 @@ via the test API); the verbatim assertion + code review cover it. CI gate: `./gr
 - [Conversation repository](conversation-repository.md) — `requestScreenSnapshot`, the consumed read ([#375](../codebase/375.md))
 - [Scanner screen](scanner-screen.md) — the `(state, …)` surface + verbatim-render pattern mirrored; [Thread overflow menu](thread-overflow-menu.md) — the compose-test idiom mirrored
 - [MarkdownText](markdown-text.md) ([ADR 0002](../decisions/0002-markdown-renderer-library.md)) — the renderer this surface deliberately bypasses
-- Sibling **[#382](../codebase/382.md)** (shipped) — thread entry-point action + `literal_screen/{conversationId}` destination that obtains + per-conversation-scopes this VM and renders this surface; the first path here
-- **[#396](../codebase/396.md)** (shipped) — the [stall promotion banner](stall-promotion-banner.md): a **second** entry point into the same `literal_screen/{conversationId}` destination, reusing #382's `onShowLiteralScreen` navigation verbatim (no new path). It promotes this action prominently while the conversation is stalled ([stall state](stall-state.md), #395)
+- [#382](../codebase/382.md) — original thread entry point and destination scoping; [#636 design](../../specs/architecture/636-host-owned-thread-routes.md) adds host-qualified ownership.
+- **[#396](../codebase/396.md)** (shipped) — the [stall promotion banner](stall-promotion-banner.md): a **second** entry point into the same `literal_screen/{serverId}/{conversationId}` destination, reusing the thread's host-qualified `onShowLiteralScreen` callback. It promotes this action prominently while the conversation is stalled ([stall state](stall-state.md), #395)
 - pyrycode ADR 025 § Safe degradation / Security model · pyrycode#596 (Phase 2 structured streaming) · pyrycode#618 (daemon snapshot handler)

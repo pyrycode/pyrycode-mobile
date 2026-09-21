@@ -4,136 +4,99 @@ Single-activity Compose Navigation host. `MainActivity` is the only Activity; al
 
 ## What it does
 
-Boots the app into the route that matches the persisted pairing state (`welcome` on a fresh install, `channel_list` once a `PairedServerStore` record exists (since #295)) and provides the route graph that subsequent screens plug into. Currently nine routes (#382 added `literal_screen/{conversationId}`, the **second** parameterized route after `conversation_thread/{conversationId}`; #271 added `about`, restoring the count to its pre-#163 level — #163 had dropped it to seven by deleting the `license` route along with the now-orphaned `LicenseScreen`; `conversation_thread/{conversationId}` flipped from placeholder `Text(...)` body to real `ThreadScreen` + `ThreadViewModel` in #126):
+Boots into `welcome` on a fresh install or `channel_list` when a saved pairing
+exists. The graph has nine routes; thread and literal-screen destinations carry
+both the owning `serverId` and the host-local `conversationId`.
 
 - **`welcome`** (start destination when no paired-server record exists) — renders `WelcomeScreen` (#7).
 - **`scanner`** — renders `ScannerScreen` (#12), stateful + camera-permission-driven since #326 and showing a **live CameraX preview** since #334. A **decoded QR** (not a tap) is parsed + validated into a **real `PairedServer`** (#320 — the [Pairing payload parser](pairing-payload-parser.md)) and, on success, persisted via `PairedServerStore.save(...)` before navigating to `channel_list` with the scanner popped from the back stack (`popUpTo(SCANNER){inclusive=true}`, driven by a `LaunchedEffect(state)` on the `Decoded` state); a parse/persist failure routes to `ScannerUiState.Error`. The TopAppBar back arrow `popBackStack()`s to Welcome. The route owns a `ScannerViewModel`, the runtime permission launcher, and the [Camera preview](camera-preview.md) (injected through a `cameraPreview` slot gated on `ReadyToScan`). See [Scanner screen](scanner-screen.md).
-- **`channel_list`** (start destination when a paired-server record exists) — renders `ChannelListScreen` (#46) backed by `ChannelListViewModel` (#45); destination block resolves the VM via `koinViewModel<…>()`, collects state via `collectAsStateWithLifecycle()`, and translates `ChannelListEvent.RowTapped` inline into `navController.navigate("conversation_thread/$id")`. See [ChannelListScreen](channel-list-screen.md).
-- **`discussions`** — renders `DiscussionListScreen` (#24) backed by `DiscussionListViewModel`; sibling of `channel_list` for the unpromoted tier. Destination block follows the same `koinViewModel<…>()` + `collectAsStateWithLifecycle()` shape and translates `RowTapped` into `navController.navigate("conversation_thread/$id")` *and* collects `vm.navigationEvents` in a `LaunchedEffect(vm)` for the same nav target (dual wiring — the VM-side path exists so a unit test can assert the nav target; see [DiscussionListViewModel](discussion-list-viewmodel.md)). `BackTapped → navController.popBackStack()`. Reached from the channel list's inline Recent-discussions section's "See all discussions (N) →" link (#69; previously the #26 pill) via `ChannelListEvent.RecentDiscussionsTapped → navController.navigate(Routes.DISCUSSION_LIST)`. See [DiscussionListScreen](discussion-list-screen.md).
-- **`conversation_thread/{conversationId}`** — renders [`ThreadScreen`](thread-screen.md) (#126) backed by `ThreadViewModel`; first replacement slice for the #15 placeholder `Text(...)` body. Destination block follows the `koinViewModel<…>()` + `collectAsStateWithLifecycle()` shape with `onBack = { navController.popBackStack() }` passed in directly (no `onEvent` lambda yet — the VM owns no events in this slice). The path-argument extraction shape `backStackEntry.arguments?.getString("conversationId").orEmpty()` is gone from the destination — `SavedStateHandle` injected into the Koin `viewModel { ThreadViewModel(get()) }` block owns the parse now. Body is intentionally minimal (back-arrow `TopAppBar` + empty `LazyColumn(reverseLayout = true)`); downstream `feat(ui/thread):` work (#128–#140, #145) lands additively. The `Routes.CONVERSATION_THREAD` constant and `navArgument("conversationId") { type = NavType.StringType }` are unchanged from #15; all four call sites that build `"conversation_thread/$id"` continue to work without modification.
-- **`literal_screen/{conversationId}`** — renders [`LiteralScreenSurface`](literal-screen-surface.md) (#382) backed by [`LiteralScreenViewModel`](literal-screen-viewmodel.md) (#378); the manual "Show the literal screen" feature's destination, reached from the Conversation Thread overflow menu's always-available item via `onShowLiteralScreen = { navController.navigate("literal_screen/$conversationId") }` (the thread destination reads `conversationId` from its own back-stack entry; see [`ThreadOverflowMenu`](thread-overflow-menu.md)). Destination block follows the `koinViewModel<…>()` + `collectAsStateWithLifecycle()` shape with `onBack = { navController.popBackStack() }`. **Security-load-bearing:** `koinViewModel<LiteralScreenViewModel>()` is obtained **inside** this composable so it binds to the destination's own `NavBackStackEntry`/`ViewModelStoreOwner` — a **fresh VM per open** (its `SavedStateHandle` seeded from this entry's `conversationId` arg) ⇒ no cross-conversation snapshot-text bleed + an automatic re-fetch. Same mechanism as the `conversation_thread` block; the VM is a `viewModel { }` factory (never a Koin `single`) and the `koinViewModel()` call is never hoisted above the destination. The arg name **must** be exactly `conversationId` (the VM reads it from `SavedStateHandle`). See [#382](../codebase/382.md).
+- **`channel_list`** — renders [ChannelListScreen](channel-list-screen.md). The temporary flat list still reads selected-host state, while its route adapter captures a host for row/create/picker actions and consumes `hostNavigationEvents`.
+- **`discussions`** — renders [DiscussionListScreen](discussion-list-screen.md), reached from the channel list's recent-discussions link. Its adapter captures host-qualified row and promotion targets and consumes only `hostNavigationEvents`; Back pops the stack.
+- **`conversation_thread/{serverId}/{conversationId}`** — renders [ThreadScreen](thread-screen.md#wiring) with a destination-scoped ViewModel and dependencies from the exact retained host. Back pops the stack; “Show the literal screen” passes the same target to `Routes.literal(target)`.
+- **`literal_screen/{serverId}/{conversationId}`** — renders [LiteralScreenSurface](literal-screen-surface.md#wiring). Each new back-stack entry owns a fresh `LiteralScreenViewModel`, isolating snapshots even when two hosts use the same conversation id. Request and Retry use that entry's host and conversation.
 - **`settings`** — renders `SettingsScreen` (#64; About-row wiring #90; Storage-row wiring #94; About-row copy + License-row treatment #163; About section → single navigable entry #271). Reached by the channel-list TopAppBar's gear `IconButton` (#21) via `ChannelListEvent.SettingsTapped → navController.navigate(Routes.SETTINGS)`. Destination block passes three navigation lambdas: `onBack = { navController.popBackStack() }`, `onOpenArchivedDiscussions = { navController.navigate(Routes.ARCHIVED_DISCUSSIONS) }` (#94), and `onOpenAbout = { navController.navigate(Routes.ABOUT) }` (#271). An earlier third lambda `onOpenLicense = { navController.navigate(Routes.LICENSE) }` from #91 was dropped in #163 along with the `LicenseScreen` parameter; #271's `onOpenAbout` is its structural successor — the whole About section is now a single navigable entry into [`AboutScreen`](about-screen.md). See [Settings screen](settings-screen.md).
 - **`archived_discussions`** — renders `ArchivedDiscussionsScreen` (#94) backed by `ArchivedDiscussionsViewModel`; a secondary screen listing archived discussions with a long-press → "Restore" affordance. Reached from the Settings Storage section's "Archived discussions" row. Destination block follows the `koinViewModel<…>()` + `collectAsStateWithLifecycle()` shape; the inline `when (event)` intercepts `ArchivedDiscussionsEvent.BackTapped → navController.popBackStack()` and forwards `is RestoreRequested` to `vm.onEvent(event)` (the VM owns the `unarchive` side-effect). No `navigationEvents` channel — restore stays on-screen and the row drops on the next `MutableStateFlow` re-emission. See [Archived Discussions screen](archived-discussions-screen.md).
 - **`about`** — renders [`AboutScreen`](about-screen.md) (#271); a **static** sub-screen (no ViewModel) listing the app version + build SHA, the open-source repo link, an inert privacy-policy row, and the MIT license line. Reached from the Settings About section's "About" row via `onOpenAbout`. Destination block is the minimal `composable(Routes.ABOUT) { AboutScreen(onBack = { navController.popBackStack() }) }` — no `koinViewModel<…>()`, no `collectAsStateWithLifecycle()`, no `onEvent` (the screen is stateless apart from `rememberScrollState()`). Both the TopAppBar back arrow and the system back gesture return to Settings via the default `popBackStack()`. Shows that a sub-screen with no real state drops the VM/state-collection machinery the `archived_discussions` block carries. See [About screen](about-screen.md).
 
 ## How it works
 
-The NavHost lives in a private `PyryNavHost` Composable inside `MainActivity.kt`. `setContent` gates `NavHost` composition on a one-shot read of `PairedServerStore.load()` (#13; #295 swapped it off the now-removed `AppPreferences.pairedServerExists` boolean), painting a neutral `Surface` while DataStore's first emit is in flight:
+`MainActivity.setContent` waits for `PairedServerStore.load()` using `produceState`,
+showing a neutral `Surface` until the initial pairing read completes. It then
+supplies the start destination to the internal `PyryNavHost`. The graph defaults to
+`rememberNavController()` and accepts a controller for production-route tests.
+Pairing later in the session navigates explicitly; it does not rewrite the graph's
+initial destination. Screens receive callbacks, never a `NavController`.
 
-```kotlin
-PyrycodeMobileTheme {
-    Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-        val pairedServerStore = koinInject<PairedServerStore>()
-        val paired: Boolean? by produceState<Boolean?>(
-            initialValue = null,
-            pairedServerStore,
-        ) {
-            value = pairedServerStore.load() != null
-        }
-        when (val v = paired) {
-            null -> Surface(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding),
-            ) {}
-            else -> PyryNavHost(
-                startDestination = if (v) Routes.CHANNEL_LIST else Routes.WELCOME,
-                modifier = Modifier.padding(innerPadding),
-            )
-        }
-    }
-}
-```
+### Host-qualified destinations
 
-`PyryNavHost(startDestination: String, modifier: Modifier = Modifier)` calls `rememberNavController()` and declares the graph against the forwarded start destination:
+The internal `Routes` object is shared with navigation tests. `Routes.thread(target)`
+and `Routes.literal(target)` each URI-encode `serverId` and `conversationId`
+independently. `Routes.hostArguments()` declares both as `NavType.StringType`, and
+`Routes.target(arguments)` reconstructs the exact `HostConversationTarget`. Reserved
+characters cannot become route separators. Domain ids and wire payloads remain
+host-local; do not encode the host into a repository conversation id.
 
-```kotlin
-NavHost(navController, startDestination = startDestination) {
-    composable(Routes.WELCOME) {
-        val context = LocalContext.current
-        WelcomeScreen(
-            onPaired = { navController.navigate(Routes.SCANNER) },
-            onSetup  = {
-                context.startActivity(
-                    Intent(Intent.ACTION_VIEW, Uri.parse(SETUP_URL)),
-                )
-            },
-        )
-    }
-    composable(Routes.SCANNER) {
-        val vm = koinViewModel<ScannerViewModel>()
-        val state by vm.state.collectAsStateWithLifecycle()
-        // Permission launcher + checkSelfPermission (#326), the consts/lambdas, and the
-        // PairedServerStore inject are elided here — see Scanner screen for the full route block.
-        LaunchedEffect(state) {                                          // #320: decode drives real pairing
-            val decoded = state as? ScannerUiState.Decoded ?: return@LaunchedEffect
-            when (val result = parsePairingPayload(decoded.payload)) {
-                is PairingParseResult.Success -> { /* save(result.server) → navigate(CHANNEL_LIST) */ }
-                is PairingParseResult.Failure -> vm.onEvent(ScannerEvent.PairingFailed(PARSE_FAILED_MSG))
-            }
-        }
-        ScannerScreen(
-            state = state,
-            onNavigateBack = { navController.popBackStack() },
-            onOpenSettings = { /* ACTION_APPLICATION_DETAILS_SETTINGS */ },
-            onPasteCode = stubPairAndNavigate,
-            cameraPreview = {
-                if (state is ScannerUiState.ReadyToScan) {
-                    CameraPreview(
-                        onQrDecoded = { vm.onEvent(ScannerEvent.QrDecoded(it)) },
-                        onCameraError = { vm.onEvent(ScannerEvent.CameraError(it)) },
-                    )
-                }
-            },
-        )
-    }
-    composable(Routes.CHANNEL_LIST) {
-        val vm = koinViewModel<ChannelListViewModel>()
-        val state by vm.state.collectAsStateWithLifecycle()
-        ChannelListScreen(
-            state = state,
-            onEvent = { event ->
-                when (event) {
-                    is ChannelListEvent.RowTapped ->
-                        navController.navigate("conversation_thread/${event.conversationId}")
-                    ChannelListEvent.SettingsTapped ->
-                        navController.navigate(Routes.SETTINGS)
-                    ChannelListEvent.RecentDiscussionsTapped ->
-                        navController.navigate(Routes.DISCUSSION_LIST)
-                    ChannelListEvent.CreateDiscussionTapped ->
-                        vm.onEvent(event)
-                }
-            },
-        )
-    }
-    composable(
-        route = Routes.CONVERSATION_THREAD,
-        arguments = listOf(navArgument("conversationId") { type = NavType.StringType }),
-    ) {
-        val vm = koinViewModel<ThreadViewModel>()
-        val state by vm.state.collectAsStateWithLifecycle()
-        ThreadScreen(
-            state = state,
-            onBack = { navController.popBackStack() },
-        )
-    }
-    composable(Routes.SETTINGS) {
-        SettingsPlaceholder(onBack = { navController.popBackStack() })
-    }
-}
-```
+Both list destinations collect only their ViewModel's `hostNavigationEvents` in
+`LaunchedEffect(vm)` and pass each target to `openThread`. The flat row callback
+invokes the host command rather than navigating separately. `openThread` suppresses
+only a target identical to the current thread's full pair. A/A/B in one burst
+therefore yields one A entry and a distinct B entry, even when conversation ids
+collide. Do not use `launchSingleTop` on this parameterized thread route: it can
+retain the previous entry's ViewModel across different host arguments.
 
-The `scanner` block became `ScannerViewModel`-driven in #326 (permission flow) and gained the live [Camera preview](camera-preview.md) in #334. It resolves `PairedServerStore` inside the `composable(...)` lambda for the persist side-effect — since #320 the `Decoded`-state `LaunchedEffect` runs `parsePairingPayload` and, on `Success`, calls the store's `suspend save(...)` (a `suspend` side-effect that has no place in the pure VM) before navigating; failures route through `ScannerEvent.PairingFailed → Error`. The `stubPairAndNavigate` lambda (#295) survives only for the out-of-scope `onPasteCode` fallback. Don't lift this per-destination Koin/scope pattern into a helper.
+Resolve `koinViewModel()` inside each guarded destination so its
+`NavBackStackEntry` owns the ViewModel and seeds its `SavedStateHandle` with both
+identifiers. Back reveals the prior entry; reopening after a pop creates a new
+one. Saved back-stack restoration preserves the same host/conversation pair.
+Thread-to-literal navigation copies the target from the thread entry, never from
+compatibility selection. Literal Retry re-fetches through that destination's
+repository; snapshot text is not written to saved state.
 
-Route strings are pinned in a colocated `private object Routes` (see `MainActivity.kt:180-189`). Call sites use `Routes.WELCOME` / `Routes.SCANNER` / `Routes.CHANNEL_LIST` / `Routes.CONVERSATION_THREAD` / `Routes.SETTINGS`, never inline strings — `SCREAMING_SNAKE_CASE` since #83 (Kotlin official style for top-level `const val`, enforced by ktlint's `property-naming` default). Concrete navigation targets for parameterized routes are built inline at the call site (e.g. `navController.navigate("conversation_thread/$id")` and, since #382, `navController.navigate("literal_screen/$conversationId")`); lift to a helper when a second caller appears. #382's [`LiteralScreenNavigationTest`](../codebase/382.md) hard-codes the `"literal_screen/{conversationId}"` template (a copy of `Routes.LITERAL_SCREEN`) per this same inline idiom — a code-review NIT noted that a future divergence in `Routes.LITERAL_SCREEN` wouldn't be caught; a shared `internal` route builder is the right consolidation if a future ticket touches route building, deferred for now.
+### Host availability
 
-Placeholder bodies follow a split rule: bare `Text(...)` stays inline inside the `composable { ... }` block; anything with a callback or more than one child (e.g. Settings, which needs an `onBack` button) factors out into a small `private @Composable` taking `() -> Unit` callbacks. Those placeholder Composables stay `NavController`-free — the registration site supplies `{ navController.popBackStack() }` or `{ navController.navigate(...) }`.
+`HostDestination` observes registry membership before resolving the ViewModel.
+A saved host whose retained bundle has not initialized yet waits without rendering
+another host's content. An unknown or removed host returns to `channel_list`,
+clearing the invalid entries above it; the rejection log contains only a static
+code. A disconnected or handshaking bundle remains a valid destination, with the
+existing unavailable-action behavior and no selection fallback.
+
+[ThreadDestinationFactory](dependency-injection.md#destination-ownership) binds
+reads and actions to the retained owner. Reconnect switches its concrete repository
+without changing route ownership; changing compatibility selection cannot redirect
+the open thread, permission prompt, picker or literal Retry. Demo routes carry the
+explicit `demo` id and use the existing fake singleton with inert live/modal/control
+dependencies, even when relay hosts are saved.
+
+### Temporary flat-list compatibility
+
+Until the host/workspace tree in #641, both list screens render their existing
+selected-host (or demo) `state`. At row activation, `selectedServerId()` captures
+the current relay owner or explicit demo id. Channel creation calls
+`createHostDiscussion(serverId)`; long-press opens `openHostWorkspacePicker(serverId)`.
+The host picker's captured id drives visibility in the flat `Loaded`/`Empty` states,
+and completion/dismissal use `pickHostWorkspace` / `dismissHostWorkspacePicker`.
+Asynchronous creation retains that host through the preference read and success
+navigation.
+
+Discussion promotion uses `requestHostPromotion(target)`, then
+`confirmHostPromotion` / `cancelHostPromotion`. The route projects the captured
+host prompt into the flat `Loaded.pendingPromotion` display model; selection changes
+do not change the confirmation target. Legacy bare-id navigation flows remain on
+the ViewModels for compatibility but are not collected by the production graph.
+
+`HostWorkspaceRepository` wraps both the thread destination and the flat channel
+screen with `LocalWorkspacePickerRepository`. It uses the thread's route host or
+the list picker's captured host, so recent folders, folder creation and the final
+workspace/create action agree on ownership. Binding only the ViewModel leaves the
+picker's independent repository lookup exposed to selection changes. Settings and
+archive destination migration remains #637; see [WorkspacePicker](workspace-picker.md).
 
 ## Adding a route
 
-1. Add a `const val MyRoute = "my_route"` (or `"my_route/{argName}"` for a parameterized route) to `Routes`. Keep the `{name}` placeholder inside the constant — the graph DSL consumes the literal pattern.
-2. Add a `composable(Routes.MyRoute) { MyScreen(...) }` block inside `PyryNavHost`. For parameterized routes, declare arguments explicitly: `arguments = listOf(navArgument("argName") { type = NavType.StringType })`. `StringType` is the default, but the explicit form documents the type at the call site and isolates the swap point.
-3. Extract path arguments via `backStackEntry.arguments?.getString("argName").orEmpty()` — the `?.` is for the type system; Compose Navigation guarantees presence before composition.
+1. Add a `const val MY_ROUTE = "my_route"` (or `"my_route/{argName}"` for a parameterized route) to `Routes`. Keep the `{name}` placeholder inside the constant — the graph DSL consumes the literal pattern.
+2. Add a `composable(Routes.MY_ROUTE) { MyScreen(...) }` block inside `PyryNavHost`. For parameterized routes, declare arguments explicitly: `arguments = listOf(navArgument("argName") { type = NavType.StringType })`. `StringType` is the default, but the explicit form documents the type at the call site and isolates the swap point.
+3. For host-owned conversation destinations, reuse `Routes.hostArguments()` and `Routes.target(...)`, guard host membership, and resolve the ViewModel inside the destination. The factory reads `serverId` from the entry's `SavedStateHandle`; the ViewModel keeps the host-local `conversationId`.
 4. Wire the screen's navigation callbacks via `navController.navigate(...)` in the lambda passed from `PyryNavHost` — keep the screen Composable itself stateless and `NavController`-free.
 
 Screens take navigation as `() -> Unit` callbacks, not a `NavController`. This is what lets routing and destination wiring land in parallel tickets (the #7 / #8 / #14 pattern).
@@ -141,7 +104,7 @@ Screens take navigation as `() -> Unit` callbacks, not a `NavController`. This i
 ## Configuration
 
 - **Dependency:** `androidx.navigation:navigation-compose`, pinned via `navigationCompose` in `gradle/libs.versions.toml`. Compose BOM does **not** cover this artifact group — it needs its own version pin.
-- **Back-stack policy:** default `navigate(route)` for most transitions. The `scanner` → `channel_list` transition is the lone exception: it uses `popUpTo(Routes.SCANNER) { inclusive = true }` + `launchSingleTop = true` to drop the scanner from the back stack on success (so back-press from `channel_list` doesn't return to the pairing scanner). Combined with #13's conditional start destination, the returning-paired-user path also sidesteps Welcome entirely — back-press from `channel_list` exits the app in both entry paths (post-Scanner *and* cold launch on a paired install).
+- **Back-stack policy:** ordinary `navigate(route)` creates destination entries. Thread navigation suppresses only an identical current host/conversation target. Scanner success pops the scanner inclusively; invalid-host rejection returns to the channel list and clears the invalid entries. Those list transitions use `launchSingleTop`; host-qualified thread navigation does not.
 - **Start-destination gating:** `NavHost` composition itself is gated on `PairedServerStore.load() != null` via `produceState` (#13; #295). The `startDestination` parameter is captured at first composition and is *not* reactive — later changes (the Scanner persisting a record mid-session) do not rewrite the back stack. Mid-session navigation continues through `navController.navigate(...)`, which is correct.
 - **Insets:** the outer `Scaffold` in `MainActivity` owns system-bar insets and passes them down via the NavHost's `Modifier.padding(innerPadding)`. Screens may apply their own `systemBarsPadding()` on top (harmless double-padding); don't refactor existing screens to drop it.
 
@@ -149,7 +112,22 @@ Screens take navigation as `() -> Unit` callbacks, not a `NavController`. This i
 
 - **No type-safe routes yet.** The first parameterized route (`conversation_thread/{conversationId}`, #15; VM-backed since #126) landed on string constants by design — partially migrating one route while siblings stay as `String` is worse than either end-state. A full migration of `Routes` to `@Serializable` data classes remains a separate, larger future ticket; do not bundle it with a feature ticket.
 - **No deep links, no animations.** `composable(Routes.X) { ... }` only — no `deepLinks = listOf(...)`, no custom `enterTransition` / `exitTransition`.
-- **No navigation instrumentation tests.** `TestNavHostController` setup was deferred per #8. The unused `androidx-compose-ui-test-junit4` catalog entry waits for the ticket that needs it.
+## Testing
+
+`LiteralScreenNavigationTest` mounts the production `PyryNavHost`, `Routes` and
+Koin bindings. It covers both host event streams, A/A/B duplicate suppression,
+reserved characters, distinct destination ViewModels, back/reopen, saved-state
+restoration, thread overflow to literal, Retry and invalid-host return. A copied
+minimal graph can pass while production route arguments or bindings are wrong.
+Its picker cases open the actual descendant component with two Noise peers,
+distinct recents and assertions that the other host receives no picker reads or
+writes across selection changes and reconnect.
+
+[Production DI tests](dependency-injection.md#testing) separately verify colliding
+ids, content and outbound actions. The existing `InteractiveStreamE2ETest` ping
+and Reset-session regressions remain in the [live gate](../../e2e-interactive-stream.md#pre-ship-gate).
+That gate does not prove two-host navigation/reconnect or phone-reply continuity;
+those rung-3 scenarios remain #673.
 
 ## Related
 

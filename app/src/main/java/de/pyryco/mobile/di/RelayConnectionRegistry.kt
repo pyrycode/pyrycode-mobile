@@ -168,6 +168,21 @@ class RelayConnectionRegistry(
         }
     }
 
+    /** Destination retries retain both exact identity and lifecycle ownership until retry is sent. */
+    @Synchronized
+    internal fun retryHost(
+        serverId: String,
+        expectedBundle: RelayConnectionBundle,
+    ) {
+        if (!foreground || disposed || entries[serverId]?.second !== expectedBundle) {
+            RelayLog.d { "event=host_retry_rejected code=unavailable" }
+            return
+        }
+        // Like compatibility retry, the supervisor's nonblocking call completes under this lock.
+        scope.launch(start = CoroutineStart.UNDISPATCHED) { expectedBundle.supervisor.retry() }
+        RelayLog.d { "event=host_retry_requested" }
+    }
+
     private fun active() = selection.value?.coordinator ?: error("no active connection")
 
     suspend fun answerModal(
