@@ -320,10 +320,21 @@ internal fun PyryNavHost(
                             // on; a later selection change cannot re-aim what it describes.
                             ChannelListEvent.SettingsTapped ->
                                 navController.navigate(Routes.settings(destinations.selectedServerId()))
-                            // One destination, two doors: Settings' archived-discussions row opens the same
-                            // route (#737). Rebinding it to a specific host is #715.
+                            // One destination, two doors (#737), and since #715 both must open on an
+                            // owner: this one captures the current host exactly as the gear above it
+                            // does, where Settings' own row instead inherits the owner its destination
+                            // already holds. `Routes.ARCHIVED_DISCUSSIONS` is the route *pattern* now,
+                            // never a navigable route — navigating to it binds the literal text
+                            // `{serverId}` as the owner, which `HostDestination` then rejects as an
+                            // unknown host and bounces straight back here.
+                            //
+                            // No selected host means no archive to open, so the tap does nothing rather
+                            // than reaching for a blank id: `archived_discussions/` matches no
+                            // destination and Navigation throws on it.
                             ChannelListEvent.ArchiveTapped ->
-                                navController.navigate(Routes.ARCHIVED_DISCUSSIONS)
+                                destinations.selectedServerId()?.let {
+                                    navController.navigate(Routes.archive(it))
+                                }
                             // Pairing's existing entry, reused rather than a second flow (#738): both of its
                             // completions already land back here — the camera path pops SCANNER inclusive
                             // onto this very entry, the paste-code path pops the graph.

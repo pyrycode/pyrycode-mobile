@@ -154,7 +154,40 @@ class ArchiveNavigationTest {
         compose.onNodeWithText(BRAVO_ARCHIVED).assertDoesNotExist()
     }
 
+    /**
+     * The channel list's own archive entry — the second door onto this destination (#737) — opens on
+     * the selected host. It needs its own case because the Settings door cannot stand in for it: the
+     * two capture their owner from different sources, and only this one reads selection. Nor can
+     * `ChannelListScreenTest` stand in, which asserts that the tap emits `ArchiveTapped` and never
+     * where that lands. Before the repair this navigated to the route *pattern*, so the literal text
+     * `{serverId}` bound as the owner and `HostDestination` bounced the tap back to the list it came
+     * from — an unconditional operator-facing affordance that went nowhere.
+     */
+    @Test fun theChannelListsArchiveEntryOpensTheSelectedHostsArchive() {
+        start()
+        select(ALPHA_ID)
+        openArchiveFromTheList()
+        assertOwner(ALPHA_ID)
+        assertShowsOnly(ALPHA_ARCHIVED, other = BRAVO_ARCHIVED)
+
+        // Where Settings' door hands on the owner its own destination already holds, this one reads
+        // selection afresh on every tap — so a later selection change opens the other host's archive.
+        compose.runOnIdle { nav.popBackStack() }
+        compose.waitForIdle()
+        select(BRAVO_ID)
+        openArchiveFromTheList()
+        assertOwner(BRAVO_ID)
+        assertShowsOnly(BRAVO_ARCHIVED, other = ALPHA_ARCHIVED)
+    }
+
     // --- helpers ---
+
+    /** The archive entry on the channel list's own bar, the door beside the settings gear. */
+    private fun openArchiveFromTheList() {
+        compose.onNodeWithContentDescription("Open archive").performClick()
+        compose.waitUntil(5_000) { nav.currentDestination?.route == Routes.ARCHIVED_DISCUSSIONS }
+        compose.waitForIdle()
+    }
 
     /** Through the real Settings row, so the capture under test is the production one. */
     private fun openArchive() {
