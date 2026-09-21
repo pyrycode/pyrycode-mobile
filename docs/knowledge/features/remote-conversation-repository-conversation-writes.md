@@ -100,6 +100,17 @@ private suspend fun sendArchiveToggle(conversationId: String, type: String) {
 - **Idempotent.** pyrycode#881 replies `conversation_updated` with the unchanged state on a
   re-archive/re-unarchive; `upsertConversation` replaces the entry with an equal value — a benign re-emit,
   no special-casing needed.
+- **Contrast #549's `is_archived` with #720's `workspace_label`.** #549 needed a defaulted field because
+  the server genuinely omits `is_archived` from some reply shapes (`conversation_created`/`promote`), so a
+  naive required field would have broken those callers. #720 (`workspaceLabel` retention, nullable, on the
+  same `ConversationResponseDto`) looked like it could have the identical gap — any of `rename`/`promote`/
+  `archive`/`unarchive`/`change_workspace` sharing this mapper and one of them omitting `workspace_label`
+  would silently clear a known label through this same complete-record `upsertConversation`. It does not:
+  the canonical `../pyrycode/docs/protocol-mobile.md` states the key is present on every frame of both the
+  `conversations` and `conversation_created`/`conversation_updated` kinds (nullable, never omitted), so no
+  production change was needed here — verify that guarantee against the protocol doc directly for any
+  future field added to this DTO, rather than assuming a defaulted field is always compensating for a real
+  server gap.
 - **No return value** — unlike `rename`/`promote` (which return the server-authoritative `Conversation`),
   the `ConversationRepository` contract's `archive`/`unarchive` return `Unit`, so the decoded conversation
   is folded but discarded.

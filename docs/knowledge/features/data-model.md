@@ -19,6 +19,7 @@ data class Conversation(
     val lastUsedAt: Instant,
     val isSleeping: Boolean = false,
     val archived: Boolean = false,
+    val workspaceLabel: String? = null,
 )
 ```
 
@@ -32,6 +33,8 @@ data class Conversation(
 `isSleeping` is `true` when the conversation's current Claude session is closed (i.e. the next user message will start a fresh session). Defaulted to `false` so the existing constructor sites needn't pass it. **Phase 1**: derived in `FakeConversationRepository.observeConversations` from `currentSession.endedAt != null` — see [`conversation-repository.md`](conversation-repository.md). **Phase 4**: parsed directly from the conversations endpoint response (the server reports the bool); the contract on this field is what survives the migration. Surfaced visually as a leading status dot on `ConversationRow` (#20) — see [`conversation-row.md`](conversation-row.md).
 
 `archived` is `true` once `ConversationRepository.archive(id)` has flipped the flag (#93). Authoritative bit, not derived: Phase 1 stores it on the data class; Phase 4 will parse it from the wire response. Defaulted to `false` so existing constructor sites don't change. Routes the conversation into the `ConversationFilter.Archived` slice and out of `Channels` / `Discussions`; the live tiers carry an explicit `!archived` clause so a hypothetical archived channel can't regress the channel list. The trivial inverse `unarchive(...)` is a follow-up ticket. See [`conversation-repository.md`](conversation-repository.md) for the filter matrix.
+
+`workspaceLabel` (#720) is opaque, daemon-authored display text, retained verbatim and independent of `cwd` — never a path, never derived from it. Trailing-defaulted to `null` so existing constructor sites and fixtures are unaffected. Wire mapping: [`ConversationSummaryDto`](mobile-protocol-v2-wire-layer.md#application-payloads-decoded-on-top-of-envelope) (`conversations` rows, including archived) and [`ConversationResponseDto`](mobile-protocol-v2-wire-layer.md#application-payloads-decoded-on-top-of-envelope) (`conversation_created` / `conversation_updated`) both carry `@SerialName("workspace_label")` and copy it straight through their mappers; an explicit wire `null` and an absent legacy key both map to `null`. **Do not confuse this property with the pre-existing private `Conversation.workspaceLabel()` extension function** in `ThreadViewModel.kt`, which derives a non-null cwd-basename fallback label (`"scratch"` for the sentinel cwd, else the last path segment) for the [`WorkspaceChip`](workspace-chip.md) — see [`thread-screen-how-it-works-state.md`](thread-screen-how-it-works-state.md#combineobserveconversations-observemessages-pendingworkspacepickerstatein-whilesubscribed--three-upstreams-since-137). The property and the extension differ only by a pair of parentheses and mean different things; #721/#628 display consumers must pick the one they actually want.
 
 Co-located in the same file: a top-level `const val DEFAULT_SCRATCH_CWD: String = "~/.pyrycode/scratch"` — the sentinel `cwd` for conversations with no bound workspace. Single source of truth for the value: imported by `FakeConversationRepository` seeds and `ConversationRow` (which suppresses its workspace label when `cwd == DEFAULT_SCRATCH_CWD`). Introduced in #19; renamed from `DefaultScratchCwd` in #83 to satisfy ktlint's `property-naming` default (Kotlin official style for top-level `const val`). Lives at `data/model/Conversation.kt` because both the UI and data layers already depend on this package, and a separate `WorkspacePaths.kt` for one constant would be premature.
 
@@ -98,6 +101,6 @@ CLAUDE.md's "Don't" section names Compose Multiplatform as a walk-back trigger. 
 
 - Ticket notes: `../codebase/2.md` (skeleton), `../codebase/191.md` (`Message.toolCall: ToolCall? = null` + new `ToolCall(toolName, input, output)` type), `../codebase/387.md` (`ToolCallStatus` + the `status` field — live tool-call correlation)
 - Feature: [`live-tool-call.md`](live-tool-call.md) (#387 — the correlation + status model)
-- Spec: `docs/specs/architecture/2-conversation-session-message-data-classes.md`, `docs/specs/architecture/191-tool-message-structured-payload.md`
+- Spec: `docs/specs/architecture/2-conversation-session-message-data-classes.md`, `docs/specs/architecture/191-tool-message-structured-payload.md`, `docs/specs/architecture/720-retain-workspace-labels.md` (`workspaceLabel` retention)
 - Decision: `../decisions/0001-kotlinx-datetime-for-data-layer.md`
 - Downstream: `conversation-repository.md` (#3 contract — also propagates `toolCall` through `SeedMessage`/`seedMsg(...)` since #191), conversation list + thread UI (the eventual `ToolCallRow` consumer in #131).
