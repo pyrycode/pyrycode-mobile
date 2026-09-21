@@ -146,6 +146,29 @@ All four state which Settings consumers stay app-wide or compatibility-bound pen
 - Whether Navigation Compose round-trips a percent-encoded reserved character through an optional **query** argument as cleanly as it does through the path segments `Routes.thread` uses. The device test's hostile id settles it; if it does not, the fallback is a path segment plus an explicit sentinel for the empty owner, recorded here as a `## Revisions` entry.
 - Whether `Resolving` is ever observable in practice on a warm store, or only theoretically. It stays regardless — the cost is one branch and the alternative is a wrong-copy flash.
 
+## Revisions
+
+**2026-09-21 — Open Questions resolved; no design change.**
+
+- Navigation Compose does round-trip a percent-encoded reserved character through the optional
+  query argument, and it does match the bare `"settings"` route against the
+  `"settings?serverId={serverId}"` pattern via the argument's empty default. Proven on the managed
+  API 33 device by `SettingsNavigationTest`, whose owner id is `A /?#%` and whose second case opens
+  Settings with no host saved. The path-segment-plus-sentinel fallback the plan held in reserve is
+  not needed and was not built.
+- `SettingsHostState.Resolving` never became observable in the device runs — the join resolved
+  inside the first frame both times. It stays, as the plan said it would: the cost is one branch,
+  and the alternative is a wrong-copy flash on a cold or slow store read.
+
+**2026-09-21 — measured size, against the plan's own estimate.** Actual total written work is
+~1025 lines, not the ~750 forecast in § Size check, and above the 800-line boundary. The three
+underestimates, in order of size: the device test's Koin + registry + `NavigationPeer` harness is
+~110 lines before its first assertion (copied from `LiteralScreenNavigationTest`, which the
+estimate treated as reuse rather than duplication); the view-model tests came in at 160 rather
+than 120; and this plan at 174 rather than 160. File count, exported types, call sites, acceptance
+criteria and reject branches all landed inside their limits as forecast. Recorded here because the
+boundary's calibration depends on real numbers, not on the forecast that cleared it.
+
 ## Size check
 
 Production `.kt` under `app/src/main/`: 5 (`MainActivity`, `SettingsViewModel`, `SettingsScreen`, `HostIdentityRow`, `AppModule`) — at the boundary. Total written work ≈ 750 lines. New exported types: 3 (`SettingsHost`, the `SettingsHostState` family, `HostIdentityRow`). Consumer call sites: 10 (`SettingsScreen` ×6, `SettingsViewModel` ×2, `Routes.SETTINGS` ×2) — at the boundary. Acceptance criteria: 4. Reject branches: 3. Within every line of the one-ticket boundary; no split.

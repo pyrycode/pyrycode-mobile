@@ -315,8 +315,11 @@ internal fun PyryNavHost(
                             // selected-host adapter would open the wrong one (#731).
                             is ChannelListEvent.TreeRowTapped -> vm.onHostRowTapped(event.target)
                             is ChannelListEvent.TreeFoldToggled -> vm.onFoldToggled(event.key)
+                            // The gear captures the current host once, here, the way a row tap
+                            // captures its own (#749). The destination owns that exact id from then
+                            // on; a later selection change cannot re-aim what it describes.
                             ChannelListEvent.SettingsTapped ->
-                                navController.navigate(Routes.SETTINGS)
+                                navController.navigate(Routes.settings(destinations.selectedServerId()))
                             // One destination, two doors: Settings' archived-discussions row opens the same
                             // route (#737). Rebinding it to a specific host is #715.
                             ChannelListEvent.ArchiveTapped ->
@@ -446,16 +449,15 @@ internal fun PyryNavHost(
                 )
             }
         }
-        composable(Routes.SETTINGS) {
+        // Deliberately not wrapped in HostDestination: that guard returns an unknown host to the
+        // channel list, and this destination has to stay open for one instead — Settings is where an
+        // unpaired or newly-unpaired phone goes to pair (#749).
+        composable(
+            route = Routes.SETTINGS,
+            arguments = Routes.settingsArguments(),
+        ) {
             val vm = koinViewModel<SettingsViewModel>()
-            val pairedServerStore = koinInject<PairedServerStore>()
-            var serverLabel by remember { mutableStateOf("…") }
-            LaunchedEffect(Unit) {
-                serverLabel =
-                    pairedServerStore.load()?.let { "${it.serverId.take(12)} · ${it.relayUrl}" }
-                        ?: "Not paired"
-            }
-            val connectionStatus by vm.connectionStatus.collectAsStateWithLifecycle()
+            val host by vm.host.collectAsStateWithLifecycle()
             val themeMode by vm.themeMode.collectAsStateWithLifecycle()
             val useWallpaperColors by vm.useWallpaperColors.collectAsStateWithLifecycle()
             val archivedDiscussionCount by vm.archivedDiscussionCount.collectAsStateWithLifecycle()
@@ -466,8 +468,7 @@ internal fun PyryNavHost(
             val defaultWorkspace by vm.defaultWorkspace.collectAsStateWithLifecycle()
             val workspacePickerVisible by vm.workspacePickerVisible.collectAsStateWithLifecycle()
             SettingsScreen(
-                connectionStatus = connectionStatus,
-                serverLabel = serverLabel,
+                host = host,
                 themeMode = themeMode,
                 useWallpaperColors = useWallpaperColors,
                 archivedDiscussionCount = archivedDiscussionCount,
@@ -486,6 +487,9 @@ internal fun PyryNavHost(
                 onDefaultWorkspaceTapped = vm::onDefaultWorkspaceTapped,
                 onSelectDefaultWorkspace = vm::onSelectDefaultWorkspace,
                 onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
+                // The same destination the channel list's own pairing entry opens (#738), so an
+                // unpaired phone has a working way out of this screen's no-host state.
+                onPairServer = { navController.navigate(Routes.SCANNER) },
                 onBack = { navController.popBackStack() },
                 onOpenArchivedDiscussions = { navController.navigate(Routes.ARCHIVED_DISCUSSIONS) },
                 onOpenAbout = { navController.navigate(Routes.ABOUT) },
@@ -534,13 +538,32 @@ internal object Routes {
     const val DISCUSSION_LIST = "discussions"
     const val CONVERSATION_THREAD = "conversation_thread/{serverId}/{conversationId}"
     const val LITERAL_SCREEN = "literal_screen/{serverId}/{conversationId}"
-    const val SETTINGS = "settings"
+
+    /**
+     * Owned by a server id alone, and — unlike the two routes above — by an **optional** one (#749):
+     * a path segment cannot carry the absent owner an unpaired phone opens Settings with, and this
+     * destination must stay open for that case rather than bounce to the list.
+     */
+    const val SETTINGS = "settings?serverId={serverId}"
     const val ARCHIVED_DISCUSSIONS = "archived_discussions"
     const val ABOUT = "about"
 
     fun thread(target: HostConversationTarget) = "conversation_thread/${Uri.encode(target.serverId)}/${Uri.encode(target.conversationId)}"
 
     fun literal(target: HostConversationTarget) = "literal_screen/${Uri.encode(target.serverId)}/${Uri.encode(target.conversationId)}"
+
+    /** No host to capture yields the bare route, so the argument falls to its empty default. */
+    fun settings(serverId: String?) = if (serverId.isNullOrEmpty()) "settings" else "settings?serverId=${Uri.encode(serverId)}"
+
+    fun settingsArguments() =
+        listOf(
+            navArgument("serverId") {
+                type = NavType.StringType
+                defaultValue = ""
+            },
+        )
+
+    fun settingsOwner(arguments: Bundle?) = arguments?.getString("serverId").orEmpty()
 
     fun hostArguments() = listOf("serverId", "conversationId").map { name -> navArgument(name) { type = NavType.StringType } }
 
