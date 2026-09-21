@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnySibling
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -23,6 +24,8 @@ import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.repository.ConnectionStateSource
+import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
+import de.pyryco.mobile.ui.conversations.list.TREE_CHAT_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.PING_PROMPT
 import de.pyryco.mobile.ui.conversations.thread.SESSION_BOUNDARY_EXPLANATION
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedPingReply
@@ -361,8 +364,8 @@ class InteractiveStreamE2ETest {
         // 6. AC-3: the thread now has messages, so the WorkspaceChip is gone (!hasMessages gate). Re-open
         //    the picker from the channel list — Back to the list, then long-press the FAB again — and assert
         //    the freshly-used folder appears in "Recent" (the recents flow re-fetches cold on every open,
-        //    #565). Waiting for the "Recent" header covers the daemon round-trip; the channel-list section
-        //    is "Recent discussions", so an exact "Recent" match is unambiguous.
+        //    #565). Waiting for the "Recent" header covers the daemon round-trip; an exact "Recent" match is
+        //    unambiguous — more so since #731, which took the list's own "Recent discussions" header away.
         composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isNotEmpty()
@@ -1035,18 +1038,17 @@ class InteractiveStreamE2ETest {
      * main list** ∧ **absence from the Discussions drilldown**. None of the three is a session id (the #545
      * lesson).
      *
-     * **Why the tier read is a drilldown, not a main-list matcher.** The obvious "renders on a channel row,
-     * not a recents row" has no tolerant encoding on the main list: `ConversationRow` and
-     * `DiscussionPreviewRow` both set a merged `contentDescription` from **byte-identical** format strings
-     * (`cd_conversation_row` == `cd_discussion_preview_row` == `"%1$s, %2$s"`), `RecentDiscussionsSection`'s
-     * `Column` carries **no** semantics modifier (so no ancestor/sibling scoping to bet on), and the
-     * `See all discussions (N)` counter would be a **delta count**, which the Constraints forbid. So the tier
-     * read goes where the tiers are unambiguous: the Discussions-only screen, fed by
-     * `observeConversations(ConversationFilter.Discussions)`
-     * ([de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel]). Presence on the main list ∧ absence
-     * there **is** "presented in the promoted (channel) tier rather than as a recent discussion", expressed
-     * entirely in presence/absence matchers. This is the #551 tier-membership idiom (its Archived-screen
-     * steps), reused.
+     * **Why the tier read is a tagged main-list matcher (#731).** The drilldown this scenario used to take is
+     * gone with the recent-discussions section: the assembled list shows both tiers at once, so there is no
+     * `See all discussions (N)` row left to tap. The tiers are still separable by no production string — both
+     * sections instance the **same** [de.pyryco.mobile.ui.conversations.components.TreeConversationRow], with
+     * the same glyph and type scale and no tier word anywhere on it — and a section's header and its rows are
+     * **siblings** inside one `LazyColumn`, so there is no ancestor scoping to bet on either. The assembling
+     * screen therefore tags each conversation row with the tier it drew it in ([TREE_CHANNEL_ROW_TEST_TAG] /
+     * [TREE_CHAT_ROW_TEST_TAG]). Present on a channel-tagged row ∧ absent from every chat-tagged row **is**
+     * "presented in the promoted (channel) tier rather than among the chats", expressed entirely in
+     * presence/absence matchers — and its positive half is stronger than the old absence-in-a-drilldown,
+     * because it names the tier the row is actually in. This is the #551 tier-membership idiom, reused.
      *
      * **The dialog-over-thread field disambiguation (identical to #537 — reused verbatim).**
      * [de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog] opens **over** the thread, whose
@@ -1067,14 +1069,11 @@ class InteractiveStreamE2ETest {
      * `Modifier.selectable(role = RadioButton)`, so the text tap resolves to it (the `RadioButton` itself is
      * `onClick = null` by design).
      *
-     * **Two literal collisions matched exactly, not by substring.** `save_as_channel_action` is
+     * **One literal collision matched exactly, not by substring.** `save_as_channel_action` is
      * `"Save as channel…"` (U+2026) while `save_as_channel_dialog_title` is `"Save as channel"` (no ellipsis),
-     * so a substring search conflates them — [SAVE_AS_CHANNEL_ITEM] is matched **exactly**. And
-     * `discussion_list_title` is `"Recent discussions"`, the **same literal** as
-     * `recent_discussions_section_header` already on the **main list**, so using the drilldown's *title* as
-     * step 8's arrival marker would pass **instantly, before navigating**, and the absence assertion would then
-     * run against the main list — a **false green**. The marker is the **FAB's disappearance** instead
-     * ([de.pyryco.mobile.ui.conversations.list.DiscussionListScreen] has a Back nav icon and no FAB).
+     * so a substring search conflates them — [SAVE_AS_CHANNEL_ITEM] is matched **exactly**. The second
+     * collision this scenario used to dodge went with the drilldown: step 8 no longer navigates, so it needs no
+     * arrival marker, and nothing can pass before the screen it asserts on is the screen already on display.
      *
      * **No top-bar false match.** `SaveAsChannelSubmit` clears `pendingSaveAsChannelDialog` **synchronously
      * before** the suspend, so the dialog (whose field held the unique name) leaves composition the instant
@@ -1168,22 +1167,19 @@ class InteractiveStreamE2ETest {
         }
         composeTestRule.onAllNodesWithText(uniqueName, substring = true).onFirst().assertIsDisplayed()
 
-        // 8. Discussions-tier absence (surface #3b — the tier read). Drill into the Discussions-only screen via
-        //    "See all discussions (N)", then assert the promoted conversation is NOT in the Discussions
-        //    projection. Present on the main list (step 7) ∧ absent here ⇒ presented in the promoted (channel)
-        //    tier, not as a recent discussion. The arrival marker is the FAB's DISAPPEARANCE, never the screen
-        //    title: discussion_list_title is byte-identical to the main list's recents section header, so a
-        //    title wait would pass instantly before navigating and the absence would then run against the main
-        //    list — a false green. Tolerant: presence/absence, generous timeout — never a delta count (so the
-        //    "See all discussions (N)" counter is a tap target here, never an assertion surface).
+        // 8. The tier read (surface #3b), now on the assembled list itself — no navigation, so no arrival
+        //    marker to get wrong. Wait for the promoted conversation on a CHANNEL-tagged row, then assert it is
+        //    on no CHAT-tagged row. Both tiers are drawn on this one screen, so present-as-a-channel ∧
+        //    absent-among-the-chats ⇒ presented in the promoted tier. Tolerant: presence/absence with a
+        //    generous timeout — never a delta count, a row ordering or a geometric read.
+        val channelTierRow = hasTestTag(TREE_CHANNEL_ROW_TEST_TAG) and hasText(uniqueName, substring = true)
         composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(SEE_ALL_DISCUSSIONS, substring = true).fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodes(channelTierRow).fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onAllNodesWithText(SEE_ALL_DISCUSSIONS, substring = true).onFirst().performClick()
-        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
-            composeTestRule.onAllNodes(hasContentDescription(CD_NEW_DISCUSSION)).fetchSemanticsNodes().isEmpty()
-        }
-        composeTestRule.onAllNodesWithText(uniqueName, substring = true).assertCountEquals(0)
+        composeTestRule.onAllNodes(channelTierRow).onFirst().assertIsDisplayed()
+        composeTestRule
+            .onAllNodes(hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(uniqueName, substring = true))
+            .assertCountEquals(0)
     }
 
     /** Block until the relay connection reports [ConnectionState.Connected], or fail after a timeout. */
@@ -1330,21 +1326,19 @@ class InteractiveStreamE2ETest {
         // but a different dialog, declared separately (the shared companion forbids reusing it as a name).
         // WORKSPACE_CHIP_PREFIX is the in-thread isPromoted tier signal: the WorkspaceChip's label is a
         // hardcoded literal ("Workspace: <label> (change)"), not a string resource, so this prefix is the
-        // matchable token — mounted before the promote, unmounted after. SEE_ALL_DISCUSSIONS is the drilldown
-        // tap target (matched as a substring — the production label ends in a "(%d)" count). Keep in sync with
-        // res/values/strings.xml: save_as_channel_action = "Save as channel…",
-        // save_as_channel_dialog_workspace_scratch = "Keep in scratch", save_as_channel_dialog_save = "Save",
-        // see_all_discussions_label = "See all discussions (%d)".
+        // matchable token — mounted before the promote, unmounted after. The tier read needs no constant of its own: it
+        // matches the row test tags the assembling screen sets (#731). Keep in sync with res/values/strings.xml:
+        // save_as_channel_action = "Save as channel…",
+        // save_as_channel_dialog_workspace_scratch = "Keep in scratch", save_as_channel_dialog_save = "Save".
         const val SAVE_AS_CHANNEL_ITEM = "Save as channel…"
         const val KEEP_IN_SCRATCH_OPTION = "Keep in scratch"
         const val SAVE_AS_CHANNEL_SAVE = "Save"
         const val WORKSPACE_CHIP_PREFIX = "Workspace:"
-        const val SEE_ALL_DISCUSSIONS = "See all discussions"
 
         // Runtime-unique promote target: "e2e581-" + System.currentTimeMillis(). Distinct prefix (the shared
         // companion forbids redeclaration; each scenario owns its own). Unique so a substring match cannot
         // pre-exist on screen — the absence guard (step 4), its inversions on the top bar (step 6) and the main
-        // list (step 7), and the Discussions-tier absence (step 8) are all genuine; also keeps repeated LIVE
+        // list (step 7), and the chat-tier absence (step 8) are all genuine; also keeps repeated LIVE
         // gate runs green (no collision with channels left by prior runs) and does not collide as a substring
         // with top-bar / list chrome the assertions also match.
         const val PROMOTE_NAME_PREFIX = "e2e581-"

@@ -26,6 +26,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -76,6 +77,33 @@ data class HostChannelListEntry(
 data class HostChannelListState(
     val hosts: List<HostChannelListEntry> = emptyList(),
     val workspacePickerServerId: String? = null,
+    /**
+     * The folded nodes — **collapsed**, never expanded, so the empty initial set is "everything open"
+     * and a host or workspace that arrives later needs no reconciliation to draw expanded.
+     */
+    val collapsed: Set<TreeFoldKey> = emptySet(),
+    /** The conversation most recently opened from this list, highlighted when the list comes back. */
+    val selected: HostConversationTarget? = null,
+)
+
+/** The tree's two tiers. The same host draws a row in each, and the two fold independently. */
+enum class ConversationTreeSection {
+    Channels,
+    Chats,
+}
+
+/**
+ * One foldable node: a host row when [cwd] is null, one of that host's workspace rows otherwise.
+ *
+ * The identity is the ([section], [serverId], [cwd]) triple — [HostWorkspaceGroup]'s own key plus the
+ * section, because the design draws each host in both sections and folding one must not fold the other.
+ * `cwd` is compared exactly, as the projection produced it. No display name is ever part of a key: a
+ * rename must fold and unfold nothing.
+ */
+data class TreeFoldKey(
+    val section: ConversationTreeSection,
+    val serverId: String,
+    val cwd: String? = null,
 )
 
 data class HostConversationTarget(
@@ -91,15 +119,38 @@ class ChannelListViewModel(
     private val pendingWorkspacePicker = MutableStateFlow(false)
     private val pendingHostWorkspacePicker = MutableStateFlow<String?>(null)
 
+    // Fold and selection are the screen's, but they live here so they survive recomposition, LazyColumn
+    // recycling, an incoming snapshot and the thread round trip (#731).
+    private val collapsedKeys = MutableStateFlow<Set<TreeFoldKey>>(emptySet())
+    private val lastOpenedTarget = MutableStateFlow<HostConversationTarget?>(null)
+
     @OptIn(ExperimentalCoroutinesApi::class)
     val hostState: StateFlow<HostChannelListState> =
-        hostSource.snapshots
-            .flatMapLatest { hosts ->
-                RelayLog.d { "event=host_channel_list_projected count=${hosts.size}" }
-                if (hosts.isEmpty()) flowOf(emptyList()) else combine(hosts.map(::observeHostEntry)) { it.toList() }
-            }.combine(pendingHostWorkspacePicker) { hosts, target ->
-                HostChannelListState(hosts, target)
-            }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), HostChannelListState())
+        combine(
+            hostSource.snapshots
+                .flatMapLatest { hosts ->
+                    RelayLog.d { "event=host_channel_list_projected count=${hosts.size}" }
+                    if (hosts.isEmpty()) flowOf(emptyList()) else combine(hosts.map(::observeHostEntry)) { it.toList() }
+                },
+            pendingHostWorkspacePicker,
+            collapsedKeys,
+            lastOpenedTarget,
+        ) { hosts, pickerTarget, collapsed, selected ->
+            HostChannelListState(hosts, pickerTarget, collapsed, selected)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), HostChannelListState())
+
+    /**
+     * Folds or unfolds one host or workspace row.
+     *
+     * The collapsed set is never pruned against an incoming snapshot: a host that momentarily disappears
+     * during a reconnect must come back folded exactly as the operator left it.
+     */
+    fun onFoldToggled(key: TreeFoldKey) {
+        // A read-modify-write, so an atomic update rather than a read-then-assign. The node ends up
+        // expanded exactly when it was collapsed before.
+        val expanded = key in collapsedKeys.getAndUpdate { if (key in it) it - key else it + key }
+        RelayLog.d { "event=tree_fold_toggled expanded=$expanded" }
+    }
 
     private fun observeHostEntry(host: HostConversationSnapshot): Flow<HostChannelListEntry> {
         val recent = host.chats.take(RECENT_DISCUSSIONS_LIMIT)
@@ -135,6 +186,8 @@ class ChannelListViewModel(
     val hostNavigationEvents: Flow<HostConversationTarget> = hostNavigationChannel.receiveAsFlow()
 
     fun onHostRowTapped(target: HostConversationTarget) {
+        // Recorded before the send so the row highlights on the tap, not a dispatch later.
+        lastOpenedTarget.value = target
         viewModelScope.launch { hostNavigationChannel.send(target) }
     }
 
@@ -179,6 +232,8 @@ class ChannelListViewModel(
                 RelayLog.d { "event=host_chat_create_failed" }
                 throw error
             }
+        // Created from this list, so opened from it: the new row takes the highlight (#731).
+        lastOpenedTarget.value = HostConversationTarget(serverId, conversation.id)
         hostNavigationChannel.send(HostConversationTarget(serverId, conversation.id))
         RelayLog.d { "event=host_chat_created" }
     }
@@ -268,9 +323,10 @@ class ChannelListViewModel(
             }
             ChannelListEvent.WorkspacePickerDismissed ->
                 pendingWorkspacePicker.value = false
-            is ChannelListEvent.RowTapped,
+            // Handled by the navigation host, or by onHostRowTapped / onFoldToggled directly.
+            is ChannelListEvent.TreeRowTapped,
+            is ChannelListEvent.TreeFoldToggled,
             ChannelListEvent.SettingsTapped,
-            ChannelListEvent.RecentDiscussionsTapped,
             -> Unit
         }
     }

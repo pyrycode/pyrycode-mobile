@@ -317,16 +317,15 @@ internal fun PyryNavHost(
             HostWorkspaceRepository(hostState.workspacePickerServerId, destinations) {
                 ChannelListScreen(
                     state = state,
+                    hostState = hostState,
                     onEvent = { event ->
                         when (event) {
-                            is ChannelListEvent.RowTapped ->
-                                destinations.selectedServerId()?.let {
-                                    vm.onHostRowTapped(HostConversationTarget(it, event.conversationId))
-                                }
+                            // The row carries its own host: the tree draws rows from every host, so the
+                            // selected-host adapter would open the wrong one (#731).
+                            is ChannelListEvent.TreeRowTapped -> vm.onHostRowTapped(event.target)
+                            is ChannelListEvent.TreeFoldToggled -> vm.onFoldToggled(event.key)
                             ChannelListEvent.SettingsTapped ->
                                 navController.navigate(Routes.SETTINGS)
-                            ChannelListEvent.RecentDiscussionsTapped ->
-                                navController.navigate(Routes.DISCUSSION_LIST)
                             ChannelListEvent.CreateDiscussionTapped -> destinations.selectedServerId()?.let(vm::createHostDiscussion)
                             ChannelListEvent.LongPressFab -> destinations.selectedServerId()?.let(vm::openHostWorkspacePicker)
                             is ChannelListEvent.WorkspacePicked -> vm.pickHostWorkspace(event.workspace)
