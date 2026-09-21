@@ -4,7 +4,9 @@
 is the reusable full-height editing shell in `de.pyryco.mobile.ui.components`.
 It supplies presentation and callbacks; callers own visibility, form values,
 validation, submission and operation cancellation. Its first production consumer is
-[`EditHostModal`](#callers) (#743). Existing dialogs such as
+[`EditHostModal`](#callers) (#743), first driven onto a screen by
+[`ChannelListScreen`](channel-list-screen.md#host-row-edit-control-744)'s host-row edit
+control (#744). Existing dialogs such as
 [CreateFolderDialog](create-folder-dialog.md) remain separate; consumer tickets own
 their migration and operation-specific acceptance.
 
@@ -88,9 +90,16 @@ record the activity-recreation failure and the required setup order.
 (#743) draws the shell's content with two inert identity rows, a name field
 pre-filled from the caller, and an outlined unpair action. It is stateless and
 caller-driven like the shell itself — no storage, connection or navigation — which
-is what lets both the list's host-row wiring (#744) and Settings' host entry (#713)
-compose the same component instead of a second removal flow. Patterns worth reusing
-for the next caller that pre-fills an editable field inside this shell:
+is what lets more than one screen compose the same component instead of a second
+removal flow. [`ChannelListScreen`](channel-list-screen.md#host-row-edit-control-744)
+(#744) is its first driving caller: the tree's host row opens it on that row's own
+host, [`ChannelListViewModel`](channel-list-viewmodel.md) reads the identity and relay
+address with `PairedServerCollectionStore.loadById` at open time and saves the entered
+name with `setDisplayName`, mapping a blank name to `null`. `Unpair host` stays wired
+to an empty lambda there — #745 gives it an event. Settings' host entry (#713) is
+planned as a second caller of the same component; not yet in this codebase as of
+\#744. Patterns worth reusing for the next caller that pre-fills an editable field
+inside this shell:
 
 - **Key a pre-filled edit buffer on the identity of the thing being edited, not on
   its current value.** `EditHostModal` keys its `remember`ed `TextFieldValue` on the

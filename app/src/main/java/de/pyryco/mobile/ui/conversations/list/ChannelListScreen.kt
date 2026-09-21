@@ -37,6 +37,7 @@ import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.di.HostConversationSnapshot
+import de.pyryco.mobile.ui.components.EditHostModal
 import de.pyryco.mobile.ui.conversations.components.TreeConversationRow
 import de.pyryco.mobile.ui.conversations.components.TreeHostRow
 import de.pyryco.mobile.ui.conversations.components.TreeSectionHeader
@@ -148,6 +149,24 @@ sealed interface ChannelListEvent {
         val serverId: String,
     ) : ChannelListEvent
 
+    /** A host row's edit control: open the Edit host modal on **that** row's host (#744). */
+    data class TreeHostEditTapped(
+        val serverId: String,
+    ) : ChannelListEvent
+
+    /**
+     * The open modal's OK, carrying the entered name already trimmed by the component.
+     *
+     * No `serverId`, deliberately: the target is the open editor's, held in the view model, and a second
+     * id on the event would be a second source of truth for which host is being renamed.
+     */
+    data class HostEditNameSubmitted(
+        val name: String,
+    ) : ChannelListEvent
+
+    /** The modal's Cancel, Close and Back, which the shell routes through one dismissal callback. */
+    data object HostEditDismissed : ChannelListEvent
+
     data class WorkspacePicked(
         val workspace: String,
     ) : ChannelListEvent
@@ -191,6 +210,27 @@ fun ChannelListScreen(
         onPicked = { path -> onEvent(ChannelListEvent.WorkspacePicked(path)) },
         onDismiss = { onEvent(ChannelListEvent.WorkspacePickerDismissed) },
     )
+    // Present exactly while the view model holds a target, read straight off that state: the component
+    // closes on none of its three callbacks, so removing it from composition is the caller's job (#743).
+    hostState.hostEditor?.let { editor ->
+        EditHostModal(
+            serverIdentity = editor.serverIdentity,
+            relayAddress = editor.relayAddress,
+            initialHostName = editor.initialName,
+            onDismissRequest = { onEvent(ChannelListEvent.HostEditDismissed) },
+            onSubmit = { name -> onEvent(ChannelListEvent.HostEditNameSubmitted(name)) },
+            // Inert in this slice, per #744's own terms: the host stays paired, its name unchanged and
+            // the modal open. #745 wires it. An event plus a no-op dispatch arm would add surface that
+            // establishes no capability, which is what an empty lambda already is.
+            onUnpairRequested = {},
+            loading = editor.saving,
+            // Resolved here rather than in the view model, which keeps that free of Context and makes it
+            // impossible for an identity or a relay address to reach the shell's live region.
+            error = if (editor.failed) stringResource(R.string.edit_host_save_failed) else null,
+        )
+    }
+    // `submissionEnabled` keeps its default: a blank name must be submittable, because clearing the name
+    // is how a host returns to its unnamed treatment.
 }
 
 /**
@@ -311,7 +351,8 @@ private fun LazyListScope.treeSection(
                 expanded = hostKey !in hostState.collapsed,
                 onToggleExpanded = { onEvent(ChannelListEvent.TreeFoldToggled(hostKey)) },
                 // The row's own host, as with a conversation row's target: the tree draws rows from every
-                // host, so a globally selected one would create the chat on the wrong machine.
+                // host, so a globally selected one would edit or create the chat on the wrong machine.
+                onEditTapped = { onEvent(ChannelListEvent.TreeHostEditTapped(host.serverId)) },
                 onAddTapped = { onEvent(ChannelListEvent.TreeHostAddTapped(host.serverId)) },
                 onAddLongPressed = { onEvent(ChannelListEvent.TreeHostAddLongPressed(host.serverId)) },
                 modifier = Modifier.padding(top = if (index == 0) TreeFirstHostGap else TreeHostGap),

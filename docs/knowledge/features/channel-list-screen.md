@@ -60,6 +60,13 @@ sealed interface ChannelListEvent {
     data class TreeHostAddTapped(val serverId: String) : ChannelListEvent
     /** The same control held: pick that host's workspace first — the path the retired button long-pressed. */
     data class TreeHostAddLongPressed(val serverId: String) : ChannelListEvent
+    /** A host row's edit control: open the Edit host modal for **that** row's host (#744). */
+    data class TreeHostEditTapped(val serverId: String) : ChannelListEvent
+    /** The open modal's OK, already trimmed. No `serverId` — the target is the open editor's, held in the
+     *  view model; a second id here would be a second source of truth for which host is being renamed. */
+    data class HostEditNameSubmitted(val name: String) : ChannelListEvent
+    /** The modal's Cancel, Close and Back, which the shell routes through one dismissal callback. */
+    data object HostEditDismissed : ChannelListEvent
     data class WorkspacePicked(val workspace: String) : ChannelListEvent
     data object WorkspacePickerDismissed : ChannelListEvent
 }
@@ -88,8 +95,9 @@ opt-in now, local to `ConversationTreeRows.kt`.
 nothing can emit is dead code. `CreateDiscussionTapped` and `LongPressFab` are gone too (#738), replaced by
 the host-qualified `TreeHostAddTapped` / `TreeHostAddLongPressed` pair, and `PairHostTapped` is new.
 `ChannelListEvent` still lives in `ChannelListScreen.kt`, not `ChannelListViewModel.kt`: the screen remains
-the producer for every variant except the four the VM's destination wiring consumes directly
-(`TreeHostAddTapped`, `TreeHostAddLongPressed`, `WorkspacePicked`, `WorkspacePickerDismissed`);
+the producer for every variant except the seven the VM's destination wiring consumes directly
+(`TreeHostAddTapped`, `TreeHostAddLongPressed`, `TreeHostEditTapped`, `HostEditNameSubmitted`,
+`HostEditDismissed` (#744), `WorkspacePicked`, `WorkspacePickerDismissed`);
 `TreeRowTapped` / `TreeFoldToggled` / `SettingsTapped` / `ArchiveTapped` / `PairHostTapped` route through the
 destination's `when (event)` instead (see [Wiring](#wiring)).
 
@@ -170,12 +178,13 @@ identical length.
 
 ## Add controls (#738)
 
-Both new controls live in `ConversationTreeRows.kt` and share one file-private `TreeAddControl`: a
-`Box.size(48.dp).clip(CircleShape).combinedClickable(...)` drawing a 16dp `Icons.Filled.Add` tinted
-`colorScheme.primary`, carrying the caller's content description and (for the host row) the caller's
-`testTag`. An optional `onLongClick` / `onLongClickLabel` pair makes the control drive both gestures when
-supplied — the same `combinedClickable`-on-the-control-itself construction `ChannelListFab` used, for the
-same reason: an M3 `IconButton` composes its own inner `clickable` that would shadow an outer
+Both new controls live in `ConversationTreeRows.kt` and share one file-private `TreeRowControl` (renamed
+from `TreeAddControl` in #744, when the host row's edit control became its second call site): a
+`Box.size(48.dp).clip(CircleShape).combinedClickable(...)` drawing a 16dp caller-supplied `icon` tinted
+`colorScheme.primary`, carrying the caller's content description and (for the host row's two controls) the
+caller's `testTag`. An optional `onLongClick` / `onLongClickLabel` pair makes the control drive both
+gestures when supplied — the same `combinedClickable`-on-the-control-itself construction `ChannelListFab`
+used, for the same reason: an M3 `IconButton` composes its own inner `clickable` that would shadow an outer
 `combinedClickable`'s long-press (see [`../codebase/25.md`](../codebase/25.md),
 [`../codebase/221.md`](../codebase/221.md)).
 
@@ -221,7 +230,7 @@ fold. `ChannelListScreenTest` asserts this directly rather than trusting the inh
 **The 48dp trade.** The design pins a 16dp plus with its centre 10dp from the row's content edge. Touch needs
 48dp, and centring a 16dp glyph in a 48dp target lands its centre about 22dp further inboard than the design
 draws it — the same trade #731 took growing the design's 28dp pointer rows to a size a thumb can hit. Taken
-deliberately, recorded in a KDoc comment on `TreeAddControl` in `ConversationTreeRows.kt`. The section
+deliberately, recorded in a KDoc comment on `TreeRowControl` in `ConversationTreeRows.kt`. The section
 header's own band grows from the design's bare 20dp text line to 48dp for the same reason — it carries a
 control now, not just a label.
 
@@ -229,6 +238,27 @@ control now, not just a label.
 \#664's content, deliberately a tier above the host row's plus. The add control's eventual modal content
 (what a section header's pairing flow shows once it lands, beyond reusing the existing scanner) is #664's;
 this slice supplies only the control and its target.
+
+## Host row edit control (#744)
+
+`TreeHostRow` gained a third parameter, `onEditTapped: () -> Unit`, and draws a second `TreeRowControl` —
+`Icons.Filled.Edit`, tinted `colorScheme.primary` like the plus — between `ConnectionLegPair` and the add
+control. The design's hover treatment swaps the leg dots for the pencil and the plus, in that order; the
+phone has no hover, so all three are drawn persistently in that same order: dots, pencil, plus. Tap emits
+`TreeHostEditTapped(serverId)` (the route calls `vm.openHostEditor(serverId)`) — the row's own host, the
+same discipline the fold, tap and add controls already use. There is no long-press path: the control has
+one action, so it passes neither `onLongClick` nor `onLongClickLabel` to `TreeRowControl`.
+
+Its content description is `R.string.cd_tree_host_edit` formatted with the row's already-`boundedRowText`-clamped
+display name, for the same reason the add control's two descriptions are: the control repeats down the
+screen and has to say which host it acts on. `treeHostEditTestTag(serverId)` mirrors `treeHostAddTestTag`
+— both now delegate to one private `boundedTagId` clamp (`take(256) + "~" + length`) so the two tags
+cannot drift apart — and is attached to the pencil's own `Modifier.testTag(...)`.
+
+Opening the modal, filling it from the host's stored pairing record, and saving the entered name are the
+view model's job — see [Wiring](#wiring) below and [ChannelListViewModel](channel-list-viewmodel.md). The
+modal itself, [`EditHostModal`](mobile-modal.md#callers), is unchanged by this ticket; its `Unpair host`
+action is wired to an empty lambda here — inert until #745 gives it an event.
 
 ## How it works
 
@@ -323,7 +353,11 @@ lookup, because the row already carries its own host. This is the wrong-host fix
 \#738 carried the same discipline into creation: `is ChannelListEvent.TreeHostAddTapped ->
 vm.createHostDiscussion(event.serverId)` and `is ChannelListEvent.TreeHostAddLongPressed ->
 vm.openHostWorkspacePicker(event.serverId)`, both against the control's own row, never
-`destinations.selectedServerId()`. `ChannelListEvent.SettingsTapped` still navigates to `Routes.SETTINGS`;
+`destinations.selectedServerId()`. #744 carries the same discipline into editing: `is
+ChannelListEvent.TreeHostEditTapped -> vm.openHostEditor(event.serverId)`,
+`is ChannelListEvent.HostEditNameSubmitted -> vm.submitHostName(event.name)` and
+`ChannelListEvent.HostEditDismissed -> vm.dismissHostEditor()`. `ChannelListEvent.SettingsTapped` still
+navigates to `Routes.SETTINGS`;
 `ChannelListEvent.ArchiveTapped` navigates to `Routes.ARCHIVED_DISCUSSIONS` (#737) — the same argument-free
 route Settings' `onOpenArchivedDiscussions` already opens, one destination reached by two doors rather than a
 second route. `ChannelListEvent.PairHostTapped` navigates to `Routes.SCANNER` (#738) — no pop, no flag: the
@@ -340,6 +374,19 @@ fold/selection state, and [flat-list compatibility](navigation.md#temporary-flat
 pre-#729 adapter's one remaining consumer (`DiscussionListScreen`, unreachable) now that #738 removed this
 screen's last use of it. The screen keeps its `(hostState, onEvent)` contract; ViewModels remain scoped to
 their `NavBackStackEntry`, and `collectAsStateWithLifecycle()` controls screen subscriptions.
+
+**The editor's target lives in the view model, not the screen (#744).** `ChannelListScreen` composes
+[`EditHostModal`](mobile-modal.md#callers) as a `Scaffold` sibling, the same placement `WorkspacePicker`
+already uses, drawn only while `hostState.hostEditor != null` and reading its `serverIdentity`,
+`relayAddress`, `initialName`, `saving` and `failed` straight off that state — no screen-local copy. A
+failed save's string is resolved here from `R.string.edit_host_save_failed` rather than in the view model,
+which keeps that free of `Context` and keeps an identity or a relay address from ever reaching the shell's
+live region. `submissionEnabled` keeps the shell's default `true`: a blank name must stay submittable,
+since clearing it is how a host returns to its unnamed treatment. `ChannelListViewModel` owns the read
+(`openHostEditor`, via `PairedServerCollectionStore.loadById`), the write (`submitHostName`, via
+`setDisplayName`) and the close (`dismissHostEditor`) — see
+[ChannelListViewModel](channel-list-viewmodel.md) for the editor state's shape and its concurrency guard
+against two rows' pencils racing on the same publish.
 
 ## Configuration
 
@@ -363,6 +410,11 @@ their `NavBackStackEntry`, and `collectAsStateWithLifecycle()` controls screen s
   the row's already-clamped host name. **Strings retired in #738:** `cd_new_discussion` and
   `cd_long_press_fab_pick_workspace` — the retired button's two labels; nothing else in `res/values/strings.xml`
   referenced them.
+- **Strings added in #744:** `R.string.cd_tree_host_edit` ("Edit host %1$s") — the edit control's content
+  description, formatted the same way the add control's two are. `R.string.edit_host_save_failed`
+  ("Couldn't save the host name. Try again.") lives beside `EditHostModal`'s own strings in
+  `res/values/strings.xml` and is deliberately generic — it names neither the server identity nor the relay
+  address, since the shell renders it verbatim into a live region.
 - **Drawables:** `R.drawable.ic_pyry_logo` (since #68) — no longer used on this screen since #737 retired the
   logo along with the old bar; its only remaining consumer is [`WelcomeScreen`](welcome-screen.md).
 
@@ -410,8 +462,8 @@ distinction from the tree's own blank at all — see the next section.
   `flowOn(Dispatchers.IO)` anywhere in the chain** — all unchanged from the flat-list era; see
   [ChannelListViewModel](channel-list-viewmodel.md) for the state-projection side of each.
 - **Press-elevation animation is lost** on the manual-`Surface` construction `ChannelListFab` pioneered and
-  `TreeAddControl` inherits (#221, #738) — unchanged; the `combinedClickable` default ripple covers the
-  feedback gap.
+  `TreeRowControl` inherits (#221, #738, #744) — unchanged; the `combinedClickable` default ripple covers
+  the feedback gap.
 - **Instrumented test coverage.** `ChannelListScreenTest` (`app/src/androidTest/.../list/ChannelListScreenTest.kt`)
   builds a hand-crafted `HostChannelListState` and asserts, among others: both sections render their host,
   workspace and conversation rows with nothing folded on first show; folding a host hides its workspaces and
@@ -439,6 +491,19 @@ distinction from the tree's own blank at all — see the next section.
   `when (state)` assertion with a direct read of `hostState.workspacePickerServerId`.
   Navigation itself is not re-proven here — the scripted device gate drives tap-to-thread end to end.
 
+  `ConversationTreeRowsTest` gained (#744): `hostRow_editControl_isNamedForItsHostAndReportsOnlyItsOwnTap`
+  — the pencil is named for its host, distinguishable from the add control beside it, and reports its own
+  tap without folding the row or reaching the add control; `hostRow_editControl_clampsAnOversizedIdIntoItsTestHandle`
+  — mirrors the add control's own clamp test; `hostRowEditControl_targetsItsOwnHost_andDoesNotFoldTheRowItSitsIn`
+  — a two-host tree's pencil still resolves to its own row even where a second section repeats the same tag.
+  `ChannelListScreenTest` gained `editHostModal_drawsTheOpenEditorsOwnValuesAndReportsOkAndDismissal` (the
+  identity and relay address as the design's two inert rows, the name as the editable value, OK reporting
+  the already-trimmed name), `editHostModal_whileSaving_cannotStartASecondSave`,
+  `editHostModal_afterAFailure_staysOpenAndActionableAndStatesItGenerically` (one generic string, naming
+  neither the identity nor the relay address) and `editHostModal_unpairActionIsInertInThisSlice` — split
+  from one planned saving-and-failure test into two because `createComposeRule` permits only one
+  `setContent` per test, so a single test could not render two different editor states.
+
 ## Related
 
 - Ticket notes: [`../codebase/46.md`](../codebase/46.md), [`../codebase/21.md`](../codebase/21.md),
@@ -461,21 +526,27 @@ distinction from the tree's own blank at all — see the next section.
   `docs/specs/architecture/730-mobile-tree-rows.md`,
   `docs/specs/architecture/731-assemble-conversation-tree.md`,
   `docs/specs/architecture/737-list-settings-archive-bar.md`,
-  `docs/specs/architecture/738-list-add-controls-retire-fab.md`
+  `docs/specs/architecture/738-list-add-controls-retire-fab.md`,
+  `docs/specs/architecture/744-host-row-edit-and-rename.md`
 - Upstream: [ChannelListViewModel](./channel-list-viewmodel.md) (`hostState` producer — fold/selection state,
-  `onHostRowTapped`, `onFoldToggled`, `createHostDiscussion`, `openHostWorkspacePicker`; the compatibility
-  `state` producer, `onEvent` reducer and `navigationEvents` this screen once also consumed retired with the
-  button in #738), [Tree rows](#tree-rows-730) (`TreeSectionHeader` / `TreeHostRow` / `TreeWorkspaceRow`
-  / `TreeConversationRow`, #730; `TreeAddControl` since #738), [`HostWorkspaceGroup`](channel-list-viewmodel-projection.md)
+  `onHostRowTapped`, `onFoldToggled`, `createHostDiscussion`, `openHostWorkspacePicker`, and since #744
+  `openHostEditor`, `submitHostName`, `dismissHostEditor`; the compatibility `state` producer, `onEvent`
+  reducer and `navigationEvents` this screen once also consumed retired with the button in #738), [Tree
+  rows](#tree-rows-730) (`TreeSectionHeader` / `TreeHostRow` / `TreeWorkspaceRow` / `TreeConversationRow`,
+  #730; `TreeRowControl` since #738, renamed from `TreeAddControl` in #744), [`EditHostModal`](mobile-modal.md#callers)
+  (#743's shell content, driven by this screen since #744), [`HostWorkspaceGroup`](channel-list-viewmodel-projection.md)
   (#729's workspace projection this screen iterates), [ConversationAvatar](./conversation-avatar.md),
   [WorkspacePicker](./workspace-picker.md), [Navigation](./navigation.md), [Dependency injection](./dependency-injection.md)
 - Downstream: #737 (done — draws the list's own settings + archive bar in the `topBar` slot this section
   describes; #740 files the still-open follow-up, a rung-3 scenario reaching Archived through the list's own
   archive entry rather than Settings'), #738 (done — the remaining half of #732's split; retired the FAB and
   the compatibility `ChannelListUiState` placeholders #731 deliberately kept, and gave the list its own
-  section-header and host-row add controls), #715 (rebinds the archive entry to a specific host instead of
-  the unscoped `Routes.ARCHIVED_DISCUSSIONS`), #668 (indicator-pair live accuracy, conversation-row
-  unread/activity state), #665 (conversation-row edit pencil), #642 (host-row edit control), #663 (the
-  workspace row's own add control — not #738's), #664 (the add controls' modal content, beyond #738's reuse
-  of the existing pairing scanner for the section header), #675 (disconnected-host repair control), #154 /
-  Phase 3 Settings / Phase 4 items predating #731 remain as recorded in [`../codebase/`](../codebase/) history.
+  section-header and host-row add controls), #744 (done, split from #642 — the host row's edit control and
+  the rename path this section describes; `Unpair host` stays inert), #745 (wires `Unpair host` on the same
+  modal), #676 (the live emulator scenario for #744's flow, blocked by it and still open), #715 (rebinds the
+  archive entry to a specific host instead of the unscoped `Routes.ARCHIVED_DISCUSSIONS`), #668
+  (indicator-pair live accuracy, conversation-row unread/activity state), #665 (conversation-row edit
+  pencil), #663 (the workspace row's own add control — not #738's), #664 (the add controls' modal content,
+  beyond #738's reuse of the existing pairing scanner for the section header), #675 (disconnected-host
+  repair control), #154 / Phase 3 Settings / Phase 4 items predating #731 remain as recorded in
+  [`../codebase/`](../codebase/) history.

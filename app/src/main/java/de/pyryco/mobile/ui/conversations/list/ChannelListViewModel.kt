@@ -2,6 +2,7 @@ package de.pyryco.mobile.ui.conversations.list
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.network.RelayLog
@@ -9,8 +10,10 @@ import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
+import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -42,6 +45,36 @@ data class HostChannelListEntry(
     val chatGroups: List<HostWorkspaceGroup> = emptyList(),
 )
 
+/**
+ * The Edit host modal's target and the caller-owned flags that component requires (#744).
+ *
+ * Holds **display text and the target id only** — never the [de.pyryco.mobile.data.crypto.PairedServer]
+ * it was read from. That record also carries the pairing token and the server static key; keeping it here
+ * would put both credentials in a `StateFlow` that outlives the modal, for no gain: the two fields the
+ * ticket allows are copied out at open time and the entry is dropped.
+ *
+ * [serverIdentity] and [relayAddress] are carried unclamped, deliberately. `parsePairingPayload` bounds
+ * neither field's length — it checks the relay's scheme and host and tolerates a path — so both are
+ * QR-authored and unbounded, and the clamp belongs where `EditHostModal` already applies it, at that
+ * component's own boundary before layout and semantics. It keys its name buffer on the raw identity so
+ * two hosts sharing a 128-character prefix cannot collapse onto one buffer; clamping here would defeat
+ * that. Nothing outside the modal reads either field.
+ *
+ * [failed] is a flag rather than a message so the string resolves at the screen, which keeps this view
+ * model free of `Context` and makes it impossible for an identity or a relay address to reach the shell's
+ * live region. The name draft is absent for the same division: `EditHostModal` owns its own buffer, so a
+ * failed save keeps what the operator typed with no view-model involvement — provided the same state
+ * instance stays published, which is why the failure path copies rather than reopens.
+ */
+data class HostEditorState(
+    val serverId: String,
+    val serverIdentity: String,
+    val relayAddress: String,
+    val initialName: String,
+    val saving: Boolean = false,
+    val failed: Boolean = false,
+)
+
 data class HostChannelListState(
     val hosts: List<HostChannelListEntry> = emptyList(),
     val workspacePickerServerId: String? = null,
@@ -52,6 +85,8 @@ data class HostChannelListState(
     val collapsed: Set<TreeFoldKey> = emptySet(),
     /** The conversation most recently opened from this list, highlighted when the list comes back. */
     val selected: HostConversationTarget? = null,
+    /** The host whose Edit host modal is open, or null when none is (#744). */
+    val hostEditor: HostEditorState? = null,
 )
 
 /** The tree's two tiers. The same host draws a row in each, and the two fold independently. */
@@ -86,17 +121,24 @@ data class HostConversationTarget(
  * `ChannelListNavigation` channel went with the floating action button that was their only consumer
  * (#738), and with them the selected-host adapter the button's two paths resolved through. The repository
  * left the constructor at the same time — it was read only by that projection.
+ *
+ * [pairedServers] is the Edit host modal's read and write (#744) and the only store this view model
+ * touches. It reads exactly two of a record's four fields, `serverId` and `relayUrl`, and never the
+ * pairing token or the server static key.
  */
 class ChannelListViewModel(
     private val appPreferences: AppPreferences,
     private val hostSource: HostConversationSource,
+    private val pairedServers: PairedServerCollectionStore,
 ) : ViewModel() {
     private val pendingHostWorkspacePicker = MutableStateFlow<String?>(null)
 
     // Fold and selection are the screen's, but they live here so they survive recomposition, LazyColumn
-    // recycling, an incoming snapshot and the thread round trip (#731).
+    // recycling, an incoming snapshot and the thread round trip (#731). The editor's target and its two
+    // flags join them for the same reason (#744).
     private val collapsedKeys = MutableStateFlow<Set<TreeFoldKey>>(emptySet())
     private val lastOpenedTarget = MutableStateFlow<HostConversationTarget?>(null)
+    private val hostEditor = MutableStateFlow<HostEditorState?>(null)
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val hostState: StateFlow<HostChannelListState> =
@@ -109,8 +151,9 @@ class ChannelListViewModel(
             pendingHostWorkspacePicker,
             collapsedKeys,
             lastOpenedTarget,
-        ) { hosts, pickerTarget, collapsed, selected ->
-            HostChannelListState(hosts, pickerTarget, collapsed, selected)
+            hostEditor,
+        ) { hosts, pickerTarget, collapsed, selected, editor ->
+            HostChannelListState(hosts, pickerTarget, collapsed, selected, editor)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), HostChannelListState())
 
     /**
@@ -155,6 +198,9 @@ class ChannelListViewModel(
         }
     }
 
+    // Read and written only from a tap dispatch on the main dispatcher, so it needs no synchronisation.
+    private var editorOpenJob: Job? = null
+
     // Carries the row's own host, which is why it outlived the bare-id channel it was separated from.
     private val hostNavigationChannel = Channel<HostConversationTarget>(Channel.BUFFERED)
     val hostNavigationEvents: Flow<HostConversationTarget> = hostNavigationChannel.receiveAsFlow()
@@ -186,6 +232,91 @@ class ChannelListViewModel(
     fun dismissHostWorkspacePicker() {
         pendingHostWorkspacePicker.value = null
         RelayLog.d { "event=host_workspace_picker_dismissed" }
+    }
+
+    /**
+     * Opens the Edit host modal on [serverId]'s own stored record (#744).
+     *
+     * Only the most recently tapped pencil may publish, which is what the cancellation buys: two rows'
+     * controls tapped while the first `loadById` is still decrypting race on the assignment otherwise,
+     * and the slower read wins — the modal would then show, and rename, a host the operator did not tap
+     * last. The row's own `serverId` on the event cannot close that; both events carry a correct id and
+     * the defect is in which reply lands. A cancelled launch cannot publish at all, rather than being
+     * asked to check whether it still should.
+     */
+    fun openHostEditor(serverId: String) {
+        editorOpenJob?.cancel()
+        editorOpenJob =
+            viewModelScope.launch {
+                val entry =
+                    try {
+                        pairedServers.loadById(serverId)
+                    } catch (error: Exception) {
+                        if (error is CancellationException) throw error
+                        // `list` re-raises an unclassified failure, and this launch is in viewModelScope:
+                        // an escaping throw would reach the default handler and kill the process.
+                        RelayLog.d { "event=host_editor_open_failed" }
+                        return@launch
+                    }
+                if (entry == null) {
+                    // No record to read: the design's two identity rows cannot be drawn from an absent one.
+                    RelayLog.d { "event=host_editor_open_rejected code=unknown_host" }
+                    return@launch
+                }
+                hostEditor.value =
+                    HostEditorState(
+                        serverId = serverId,
+                        serverIdentity = entry.record.serverId,
+                        relayAddress = entry.record.relayUrl,
+                        // Blank reads as unnamed, exactly as the row reads it: an empty field, never the
+                        // id and never the list's placeholder text.
+                        initialName = entry.displayName?.takeIf { it.isNotBlank() }.orEmpty(),
+                    )
+                RelayLog.d { "event=host_editor_opened" }
+            }
+    }
+
+    /**
+     * Saves the entered name as the open host's local display name, clearing it when blank.
+     *
+     * The trim is this method's own rather than trusted from the component, so its contract holds for any
+     * caller. The clamp is the same [MAX_WORKSPACE_LABEL_CHARS] every surface that renders a host name
+     * already applies, moved to the write: the name is operator-authored, but a single-line field still
+     * accepts an arbitrary paste, and this value is stored inside the encrypted pairing blob that
+     * `KeystorePairedServerStore.list` decrypts and parses on every revision bump and every registry
+     * reconcile — so an oversized one is a recurring cost on the same read path that loads credentials.
+     * Bytes past the bound were never renderable.
+     *
+     * Both terminal transitions are `compareAndSet` against the state published before the call, so a save
+     * that completes after a dismissal cannot resurrect a closed modal or overwrite a newer one.
+     */
+    fun submitHostName(name: String) {
+        val target = hostEditor.value ?: return
+        if (target.saving) return
+        val pending = target.copy(saving = true, failed = false)
+        hostEditor.value = pending
+        viewModelScope.launch {
+            RelayLog.d { "event=host_name_save_started" }
+            try {
+                pairedServers.setDisplayName(target.serverId, name.trim().take(MAX_WORKSPACE_LABEL_CHARS).ifBlank { null })
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                // Never log the name or the store's message; the UI gets one static string.
+                RelayLog.d { "event=host_name_save_failed" }
+                hostEditor.compareAndSet(pending, pending.copy(saving = false, failed = true))
+                return@launch
+            }
+            // An id no longer stored is a silent no-op in the store, and the host is already gone from the
+            // tree, so closing is the right outcome for it too.
+            hostEditor.compareAndSet(pending, null)
+            RelayLog.d { "event=host_name_saved" }
+        }
+    }
+
+    /** Cancel, Close and Back all land here, and none of the three writes anything. */
+    fun dismissHostEditor() {
+        hostEditor.value = null
+        RelayLog.d { "event=host_editor_dismissed" }
     }
 
     private suspend fun sendHostDiscussion(
