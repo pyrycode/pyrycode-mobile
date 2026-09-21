@@ -52,6 +52,7 @@ import de.pyryco.mobile.data.network.TurnEndPayloadDto
 import de.pyryco.mobile.data.network.TurnStatePayloadDto
 import de.pyryco.mobile.data.network.UnrecognizedMessagePayloadDto
 import de.pyryco.mobile.data.network.WorkspaceFolderCreatedPayloadDto
+import de.pyryco.mobile.data.network.WorkspaceUpdatedPayloadDto
 import de.pyryco.mobile.data.network.toBoundary
 import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.network.toConversations
@@ -152,7 +153,10 @@ class RemoteConversationRepository(
      * [promote]'s confirmed upsert (#348) — both mutations fold a [Conversation] in via
      * [upsertConversation], an atomic [MutableStateFlow.update] CAS upsert (dedup by id) run only after
      * the correlated reply (`conversation_created` / `conversation_updated`) lands, so the writers
-     * retry-merge rather than clobber. [promote] additionally **reads** [projection]`.value` (a
+     * retry-merge rather than clobber. Two further inbound writers land here since #721: an
+     * **unsolicited** `conversation_updated` folds through that same [upsertConversation], and a
+     * `workspace_updated` relabels every row sharing its path via [applyWorkspaceLabel]. [promote]
+     * additionally **reads** [projection]`.value` (a
      * lock-free snapshot) to resolve the conversation's existing cwd when its `workspace` argument is
      * null. `StateFlow` conflation means a value-equal result does not re-emit (e.g. a redundant reply
      * to a second collector's request, or the authoritative snapshot that later re-includes a
@@ -438,14 +442,66 @@ class RemoteConversationRepository(
                     }
                 appendMessages(rows)
             }
-            TYPE_ACK, TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_UPDATED, TYPE_CONVERSATION_DELETED,
+            TYPE_CONVERSATION_UPDATED -> {
+                // TWO kinds of producer, and the protocol requires a client to accept both (#721).
+                // A *correlated* reply (promote / rename / archive / unarchive / change_workspace /
+                // set_system_prompt) goes to its waiter verbatim, exactly as the shared arm below does
+                // — the awaiting mutation decodes and upserts its own typed return, so folding here too
+                // would be a redundant second write to the same row.
+                // An *unsolicited push* (`pyry channel new` on the host, or the one-shot auto-naming of
+                // a never-named conversation) carries no `in_reply_to` at all — and a duplicate reply
+                // arriving after its waiter deregistered matches no pending entry — so correlating on
+                // the type alone would drop it. Both fold by the payload's own `id`, which is what
+                // makes a rename made on another client reach this phone's live list (and, since #720,
+                // carries that row's `workspace_label` with it) instead of waiting for the next
+                // snapshot. Decode-or-drop precedes the fold, so a malformed push mutates nothing and
+                // the single inbound consumer survives; drop silently — the record carries the
+                // conversation's name and cwd, so nothing here logs the payload.
+                val waiter = envelope.inReplyTo?.let { id -> pendingRequests[id] }
+                if (waiter != null) {
+                    waiter.complete(envelope.payload)
+                } else {
+                    val conversation =
+                        try {
+                            MobileJson.decodeFromJsonElement<ConversationResponseDto>(envelope.payload).toConversation()
+                        } catch (e: IllegalArgumentException) {
+                            return
+                        }
+                    upsertConversation(conversation)
+                }
+            }
+            TYPE_WORKSPACE_UPDATED -> {
+                // A workspace-label notification (#721). Like `conversation_updated` it has two kinds of
+                // producer — the correlated reply to `rename_workspace` and the unsolicited push the
+                // daemon fans to every *other* interactive-capable conn — but unlike it the record is
+                // applied **unconditionally**, whether or not `in_reply_to` is set (AC #1): the payload
+                // is identical either way and nothing in this repository sends `rename_workspace` yet,
+                // so completing a waiter here would be plumbing for a request that has no sender (#663
+                // adds both together). Deliberately NOT capability-gated: the gate would break the
+                // correlated half and buys nothing, since a daemon ignoring the negotiated set could
+                // drive the same label change through an ungated `conversations` snapshot.
+                // Decode-or-drop is the single failure surface (a missing/ill-typed `path` →
+                // SerializationException ⊂ IllegalArgumentException), so a malformed frame leaves the
+                // projection intact and the lone inbound collector alive for the next valid one (AC #3).
+                // Drop silently: `path` is a filesystem location on the daemon's host and `label` is
+                // operator-authored text — neither reaches a log on any branch, matching the daemon,
+                // which records only a conn id and an event name for this verb.
+                val decoded =
+                    try {
+                        MobileJson.decodeFromJsonElement<WorkspaceUpdatedPayloadDto>(envelope.payload)
+                    } catch (e: IllegalArgumentException) {
+                        return
+                    }
+                applyWorkspaceLabel(decoded.path, decoded.label)
+            }
+            TYPE_ACK, TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_DELETED,
             TYPE_SCREEN_SNAPSHOT, TYPE_SESSION_SETTINGS_UPDATED, TYPE_WORKSPACE_FOLDER_CREATED,
             TYPE_RECENT_WORKSPACES_LIST,
             ->
                 // Success reply to a correlated request, handed verbatim to the waiter. An `ack`
                 // (#346) carries the empty `{}` the bare-ack waiter ignores; a `conversation_created`
-                // (#347) / `conversation_updated` (#348) carries the bare conversation object the
-                // mutation ([createDiscussion] / [promote]) decodes for its typed return; a
+                // (#347) carries the bare conversation object [createDiscussion] decodes for its typed
+                // return; a
                 // `screen_snapshot` (#375) carries the rendered-screen payload [requestScreenSnapshot]
                 // decodes for its `text`; a `session_settings_updated` (#543) carries the bare
                 // `{session_id}` ack the [setSessionSettings] waiter decodes for reply-shape validation;
@@ -459,10 +515,10 @@ class RemoteConversationRepository(
                 // `session_settings_updated` / `conversation_deleted` / `workspace_folder_created` /
                 // `recent_workspaces_list` are always correlated replies (the daemon never broadcasts
                 // them), so an unmatched one is
-                // harmless; `conversation_updated` is also the server's unsolicited broadcast on change
-                // (no `inReplyTo`), which must stay a harmless no-op (the authoritative `conversations`
-                // snapshot drives an unsolicited list refresh, not this delta); and `complete` is
-                // idempotent so a duplicate reply is harmless.
+                // harmless; and `complete` is idempotent so a duplicate reply is harmless.
+                // `conversation_created` stays here deliberately: unlike `conversation_updated` (which
+                // #721 moved to its own arm above) it is a correlated reply only — the create-on-host
+                // push is a `conversation_updated`, not a `conversation_created`.
                 envelope.inReplyTo?.let { id -> pendingRequests[id]?.complete(envelope.payload) }
             TYPE_ERROR ->
                 // Failure reply to a correlated request (#346): unblock the waiter exceptionally with
@@ -1232,6 +1288,42 @@ class RemoteConversationRepository(
             } else {
                 existing + conversation
             }
+        }
+    }
+
+    /**
+     * Apply a `workspace_updated` notification (#721) to the list [projection]: every conversation whose
+     * [Conversation.cwd] equals [path] takes [label] — a string replacing the stored display name, a
+     * `null` clearing it. A workspace is a **folder**, and N conversations may share one, so this is a
+     * fan-out over the whole projection rather than a keyed upsert; archived rows are included, because
+     * archiving a conversation does not un-name its folder.
+     *
+     * Direct sibling of [updateCurrentSessionId], and it inherits that shape's three properties:
+     * [path] is matched by **exact string equality** — no trim, no normalization, no filesystem access
+     * (the protocol compares the path as bytes, so two paths differing by a trailing separator are
+     * distinct workspaces and normalizing would merge workspaces the daemon keeps apart); the `else it`
+     * identity branch means a path matching no row is a genuine no-op, since `map` then returns an
+     * element-equal list and [StateFlow] conflation suppresses re-emission — **no phantom conversation**,
+     * as the frame carries a path and not a conversation; and a `null` (pre-first-snapshot) projection
+     * stays `null`, a push that arrives before the first snapshot having no rows to label.
+     *
+     * The atomic [MutableStateFlow.update] CAS is load-bearing rather than stylistic: [projection] is
+     * written from caller coroutines too (the correlated mutations, via [upsertConversation]), so a
+     * `.value = …` read-modify-write would open a real check-then-mutate window against a concurrent
+     * snapshot or upsert.
+     *
+     * [path] and [label] are never logged (Security review): the path is a filesystem location on the
+     * daemon's host and the label is operator-authored text, and the daemon keeps both out of its own
+     * records for this verb. [label] is stored **verbatim** — never trimmed or truncated, and a blank is
+     * not folded to `null`; the daemon's 128-byte bound is a size limit and not a safety property, and
+     * safe rendering of this opaque text belongs to the consuming slices (#722, #641).
+     */
+    private fun applyWorkspaceLabel(
+        path: String,
+        label: String?,
+    ) {
+        projection.update { current ->
+            current?.map { if (it.cwd == path) it.copy(workspaceLabel = label) else it }
         }
     }
 
@@ -2190,10 +2282,21 @@ class RemoteConversationRepository(
         const val TYPE_SESSION_SETTINGS_UPDATED = "session_settings_updated"
 
         /**
-         * Correlated success reply carrying the bare promoted conversation object (#348, #274) — also
-         * the server's unsolicited broadcast to all phones on a conversation change.
+         * Correlated success reply carrying the bare promoted conversation object (#348, #274) — **and**
+         * the server's unsolicited broadcast on a host-side create or auto-name, which carries no
+         * `in_reply_to` at all. Both kinds are handled, on correlation and by the payload's own `id`
+         * respectively (#721, daemon #2156/#2159/#2210).
          */
         const val TYPE_CONVERSATION_UPDATED = "conversation_updated"
+
+        /**
+         * Workspace-label notification (#721, daemon #2209): `{path, label}`, keyed by **workspace, not
+         * conversation**. Arrives both as the correlated reply to `rename_workspace` (whose request side
+         * is #663's) and as the unsolicited push the daemon fans to every *other* interactive-capable
+         * conn; both are applied. Live-only — it carries no `event_id`, so there is no replay and a
+         * client disconnected during a rename reads the label off its next [TYPE_CONVERSATIONS] snapshot.
+         */
+        const val TYPE_WORKSPACE_UPDATED = "workspace_updated"
 
         /** Request: one-shot text snapshot of the current claude screen (#375, #617 `RequestSnapshot`). */
         const val TYPE_REQUEST_SNAPSHOT = "request_snapshot"

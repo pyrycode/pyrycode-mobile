@@ -1268,17 +1268,21 @@ class RemoteConversationRepositoryTest {
             assertFalse(all.last().single { it.id == "disc" }.isPromoted)
         }
 
-    // Correlation hygiene: a conversation_updated matching no pending request (the unsolicited
-    // broadcast shape) is a no-op; the collector survives and a subsequent real promote round-trips.
+    // AC #2 (#721): a conversation_updated whose in_reply_to matches no pending request is the
+    // unsolicited-broadcast shape — it is FOLDED into the projection (it was a no-op before #721), and
+    // a subsequent real promote still correlates and round-trips on the same collector.
     @Test
-    fun promote_uncorrelatedUpdatedReply_isNoOpAndCollectorSurvives() =
+    fun promote_updatedReplyMatchingNoPendingRequest_foldsAndCollectorSurvives() =
         runTest {
             val pump = FakeSessionPump()
             val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
             runCurrent()
 
             pump.push(conversationUpdatedEnvelope(inReplyTo = 999L, id = "ghost", name = "g", cwd = "/p"))
             runCurrent()
+            // Folding into the pre-first-snapshot (null) projection yields a single-element list.
+            assertEquals(listOf("ghost"), all.last().map { it.id })
 
             val promote = startPromote(repo, "disc", "weekly-planning", "/work/wp")
             runCurrent()
@@ -5753,6 +5757,281 @@ class RemoteConversationRepositoryTest {
             )
         }
 
+    // ---- workspace_updated (#721): the host-owned label push reaches the live projection ---------
+
+    // AC #1: a workspace is a folder, so one `workspace_updated` relabels EVERY row whose cwd equals
+    // its path — and only those. Driven through real inbound dispatch, never a direct projection poke.
+    @Test
+    fun workspaceUpdated_unsolicitedPush_labelsEveryRowSharingThatCwd() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(WORKSPACE_FIXTURE))
+            runCurrent()
+
+            pump.push(workspaceUpdatedEnvelope(path = "/w/alpha", label = "Tax filing"))
+            runCurrent()
+
+            val rows = all.last().associateBy { it.id }
+            assertEquals("Tax filing", rows.getValue("a1").workspaceLabel)
+            assertEquals("Tax filing", rows.getValue("a2").workspaceLabel)
+            // A different path on the same host keeps its own label.
+            assertEquals("Beta label", rows.getValue("b1").workspaceLabel)
+        }
+
+    // AC #1: the SAME frame arrives as a correlated reply to rename_workspace. The protocol requires a
+    // client to accept both kinds, so the apply is unconditional on in_reply_to rather than gated by it.
+    @Test
+    fun workspaceUpdated_carryingInReplyTo_appliesTheSameWay() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(WORKSPACE_FIXTURE))
+            runCurrent()
+
+            pump.push(workspaceUpdatedEnvelope(path = "/w/alpha", label = "Tax filing", inReplyTo = 7L))
+            runCurrent()
+
+            assertEquals("Tax filing", all.last().single { it.id == "a1" }.workspaceLabel)
+        }
+
+    // AC #1: a null label CLEARS the stored one — the protocol's "clear" state, distinct from a blank.
+    @Test
+    fun workspaceUpdated_nullLabel_clearsTheStoredLabel() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(WORKSPACE_FIXTURE))
+            runCurrent()
+            assertEquals("Beta label", all.last().single { it.id == "b1" }.workspaceLabel)
+
+            pump.push(workspaceUpdatedEnvelope(path = "/w/beta", label = null))
+            runCurrent()
+
+            assertNull(all.last().single { it.id == "b1" }.workspaceLabel)
+        }
+
+    // AC #1: archiving a conversation does not un-name its folder, so archived rows are relabelled too.
+    @Test
+    fun workspaceUpdated_labelsArchivedRowsToo() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val archived = collectConversations(repo, ConversationFilter.Archived)
+            runCurrent()
+            pump.push(
+                conversationsEnvelope(
+                    """{"conversations":[{"id":"gone","name":"Archived","is_promoted":true,"cwd":"/w/alpha","is_archived":true,"last_message_ts":"2026-05-08T09:00:00Z","last_used_at":"2026-05-08T09:00:00Z","workspace_label":null}]}""",
+                ),
+            )
+            runCurrent()
+
+            pump.push(workspaceUpdatedEnvelope(path = "/w/alpha", label = "Tax filing"))
+            runCurrent()
+
+            assertEquals("Tax filing", archived.last().single { it.id == "gone" }.workspaceLabel)
+        }
+
+    // AC #1, #3: host isolation. Two repositories over two pumps seeded with BYTE-IDENTICAL ids and
+    // cwds — a push on one host must not reach the other's projection.
+    @Test
+    fun workspaceUpdated_onOneHost_leavesTheOtherHostUnchanged() =
+        runTest {
+            val hostA = FakeSessionPump()
+            val hostB = FakeSessionPump()
+            val repoA = RemoteConversationRepository(hostA, backgroundScope)
+            val repoB = RemoteConversationRepository(hostB, backgroundScope)
+            val a = collectConversations(repoA, ConversationFilter.All)
+            val b = collectConversations(repoB, ConversationFilter.All)
+            runCurrent()
+            hostA.push(conversationsEnvelope(WORKSPACE_FIXTURE))
+            hostB.push(conversationsEnvelope(WORKSPACE_FIXTURE))
+            runCurrent()
+
+            hostA.push(workspaceUpdatedEnvelope(path = "/w/alpha", label = "Tax filing"))
+            runCurrent()
+
+            assertEquals("Tax filing", a.last().single { it.id == "a1" }.workspaceLabel)
+            assertNull(b.last().single { it.id == "a1" }.workspaceLabel)
+        }
+
+    // AC #3: a malformed notification (no `path`) leaves current data intact and does not stop the
+    // single inbound collector — the next valid frame still applies.
+    @Test
+    fun workspaceUpdated_malformedPayload_leavesDataIntactAndCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(WORKSPACE_FIXTURE))
+            runCurrent()
+            val emissionsBefore = all.size
+
+            pump.push(workspaceUpdatedRawEnvelope("""{"label":"Tax filing"}"""))
+            runCurrent()
+            assertEquals(emissionsBefore, all.size) // dropped: nothing re-emitted
+            assertNull(all.last().single { it.id == "a1" }.workspaceLabel)
+
+            pump.push(workspaceUpdatedEnvelope(path = "/w/alpha", label = "Tax filing"))
+            runCurrent()
+            assertEquals("Tax filing", all.last().single { it.id == "a1" }.workspaceLabel)
+        }
+
+    // AC #4: the push is live-only with no replay, so a client disconnected during a rename or a clear
+    // reads the current label off its next snapshot — which stays authoritative in BOTH directions.
+    @Test
+    fun workspaceUpdated_thenSnapshot_theSnapshotLabelWins() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(WORKSPACE_FIXTURE))
+            runCurrent()
+
+            pump.push(workspaceUpdatedEnvelope(path = "/w/alpha", label = "Stale local"))
+            runCurrent()
+            // A reconnect snapshot whose row carries no label clears the locally-applied one.
+            pump.push(conversationsEnvelope(workspaceFixture(alphaLabel = null)))
+            runCurrent()
+            assertNull(all.last().single { it.id == "a1" }.workspaceLabel)
+
+            // And the mirror case: a stale local clear is restored by the snapshot's stored label.
+            pump.push(workspaceUpdatedEnvelope(path = "/w/alpha", label = null))
+            runCurrent()
+            pump.push(conversationsEnvelope(workspaceFixture(alphaLabel = "Tax filing")))
+            runCurrent()
+            assertEquals("Tax filing", all.last().single { it.id == "a1" }.workspaceLabel)
+        }
+
+    // ---- conversation_updated (#721): the unsolicited push folds into the projection -------------
+
+    // AC #2: an unsolicited conversation_updated (no in_reply_to at all) is folded by conversation id,
+    // carrying its record AND its label — in place, with no duplicate row.
+    @Test
+    fun conversationUpdated_unsolicitedPush_foldsRecordAndLabelInPlace() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(WORKSPACE_FIXTURE))
+            runCurrent()
+
+            pump.push(
+                conversationUpdatedEnvelope(
+                    id = "a1",
+                    name = "Named on the host",
+                    cwd = "/w/alpha",
+                    workspaceLabel = "Tax filing",
+                ),
+            )
+            runCurrent()
+
+            val rows = all.last()
+            assertEquals(3, rows.size) // folded in place — dedup by id, no second "a1"
+            val a1 = rows.single { it.id == "a1" }
+            assertEquals("Named on the host", a1.name)
+            assertEquals("Tax filing", a1.workspaceLabel)
+        }
+
+    // AC #2: a frame moving the conversation to a differently-labelled workspace lands the DESTINATION
+    // cwd and the destination label — the case a client cannot resolve for itself.
+    @Test
+    fun conversationUpdated_unsolicitedMove_destinationLabelWins() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(WORKSPACE_FIXTURE))
+            runCurrent()
+            pump.push(workspaceUpdatedEnvelope(path = "/w/alpha", label = "Alpha label"))
+            runCurrent()
+            assertEquals("Alpha label", all.last().single { it.id == "a1" }.workspaceLabel)
+
+            pump.push(
+                conversationUpdatedEnvelope(id = "a1", name = "Alpha one", cwd = "/w/beta", workspaceLabel = "Beta label"),
+            )
+            runCurrent()
+
+            val a1 = all.last().single { it.id == "a1" }
+            assertEquals("/w/beta", a1.cwd)
+            assertEquals("Beta label", a1.workspaceLabel)
+        }
+
+    // AC #2: the correlated half still completes its waiter, returns the label the reply carried, and
+    // leaves exactly one row for that id (the waiter's own upsert, not a second fold).
+    @Test
+    fun conversationUpdated_correlatedRenameReply_preservesLabelAndLeavesOneRow() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(WORKSPACE_FIXTURE))
+            runCurrent()
+
+            val rename = startRename(repo, "a1", "Renamed")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "rename_conversation" }.id
+            pump.push(
+                conversationUpdatedEnvelope(
+                    inReplyTo = sentId,
+                    id = "a1",
+                    name = "Renamed",
+                    cwd = "/w/alpha",
+                    workspaceLabel = "Tax filing",
+                ),
+            )
+            runCurrent()
+
+            assertEquals("Tax filing", rename().getOrThrow().workspaceLabel)
+            val rows = all.last()
+            assertEquals(1, rows.count { it.id == "a1" })
+            assertEquals("Tax filing", rows.single { it.id == "a1" }.workspaceLabel)
+        }
+
+    // AC #3: a malformed unsolicited conversation_updated (no `cwd`) mutates nothing — decode precedes
+    // the fold — and the single inbound collector survives for the next valid frame.
+    @Test
+    fun conversationUpdated_malformedUnsolicitedPush_leavesDataIntactAndCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val all = collectConversations(repo, ConversationFilter.All)
+            runCurrent()
+            pump.push(conversationsEnvelope(WORKSPACE_FIXTURE))
+            runCurrent()
+            val emissionsBefore = all.size
+
+            pump.push(
+                Envelope(
+                    id = 42L,
+                    type = "conversation_updated",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"id":"a1","name":"x","is_promoted":true,"last_used_at":"2026-05-08T12:00:00Z"}""",
+                        ),
+                ),
+            )
+            runCurrent()
+            assertEquals(emissionsBefore, all.size)
+            assertEquals("Alpha one", all.last().single { it.id == "a1" }.name)
+
+            pump.push(conversationUpdatedEnvelope(id = "a1", name = "Named on the host", cwd = "/w/alpha"))
+            runCurrent()
+            assertEquals("Named on the host", all.last().single { it.id == "a1" }.name)
+        }
+
     // ---- Helpers --------------------------------------------------------------------------------
 
     /**
@@ -6031,26 +6310,33 @@ class RemoteConversationRepositoryTest {
         )
     }
 
-    /** A correlated `conversation_updated` reply carrying a bare conversation object (#348). */
+    /**
+     * A `conversation_updated` envelope carrying a bare conversation object (#348). [inReplyTo] defaults
+     * to `null` — the unsolicited-push shape (#721), which folds into the projection by the payload's
+     * own `id` rather than completing a waiter.
+     */
     private fun conversationUpdatedEnvelope(
-        inReplyTo: Long,
         id: String,
         cwd: String,
+        inReplyTo: Long? = null,
         isPromoted: Boolean = true,
         isArchived: Boolean = false,
         name: String? = null,
+        workspaceLabel: String? = null,
         lastUsedAt: String = "2026-05-08T10:00:00Z",
         envId: Long = 99L,
     ): Envelope {
         val nameJson = if (name == null) "null" else "\"$name\""
+        val labelJson = if (workspaceLabel == null) "null" else "\"$workspaceLabel\""
         return Envelope(
             id = envId,
             type = "conversation_updated",
             ts = TS,
-            // is_archived is always present on the wire (pyrycode#881, no omitempty).
+            // is_archived and workspace_label are always present on the wire (pyrycode#881, #2210 —
+            // both nullable but never omitted).
             payload =
                 MobileJson.parseToJsonElement(
-                    """{"id":"$id","name":$nameJson,"is_promoted":$isPromoted,"is_archived":$isArchived,"cwd":"$cwd","last_used_at":"$lastUsedAt"}""",
+                    """{"id":"$id","name":$nameJson,"is_promoted":$isPromoted,"is_archived":$isArchived,"cwd":"$cwd","last_used_at":"$lastUsedAt","workspace_label":$labelJson}""",
                 ),
             inReplyTo = inReplyTo,
         )
@@ -6578,6 +6864,34 @@ class RemoteConversationRepositoryTest {
                 ),
         )
 
+    /**
+     * A `workspace_updated` envelope (#721) — the `{path, label}` push. [inReplyTo] defaults to `null`
+     * (the unsolicited shape); pass one to exercise the correlated-reply shape, which applies the same.
+     */
+    private fun workspaceUpdatedEnvelope(
+        path: String,
+        label: String?,
+        inReplyTo: Long? = null,
+        id: Long = 1L,
+    ): Envelope {
+        val labelJson = if (label == null) "null" else "\"$label\""
+        return workspaceUpdatedRawEnvelope("""{"path":"$path","label":$labelJson}""", inReplyTo, id)
+    }
+
+    /** Raw-payload variant so a test can supply a malformed `workspace_updated` body. */
+    private fun workspaceUpdatedRawEnvelope(
+        rawPayload: String,
+        inReplyTo: Long? = null,
+        id: Long = 1L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "workspace_updated",
+            ts = TS,
+            payload = MobileJson.parseToJsonElement(rawPayload),
+            inReplyTo = inReplyTo,
+        )
+
     private fun conversationsEnvelope(
         rawConversationsPayload: String,
         id: Long = 1L,
@@ -6617,6 +6931,23 @@ class RemoteConversationRepositoryTest {
 
     private companion object {
         const val TS = "2026-05-31T00:00:00Z"
+
+        /**
+         * #721 workspace fixture: `a1` and `a2` SHARE the `/w/alpha` workspace (both unlabelled), `b1`
+         * sits in an already-labelled `/w/beta`. Sorted desc by last_used_at ⇒ a1, a2, b1.
+         */
+        fun workspaceFixture(alphaLabel: String?): String {
+            val alphaJson = if (alphaLabel == null) "null" else "\"$alphaLabel\""
+            return """
+                {"conversations":[
+                  {"id":"a1","name":"Alpha one","is_promoted":true,"cwd":"/w/alpha","last_message_ts":"2026-05-08T12:00:00Z","last_used_at":"2026-05-08T12:00:00Z","workspace_label":$alphaJson},
+                  {"id":"a2","name":"Alpha two","is_promoted":true,"cwd":"/w/alpha","last_message_ts":"2026-05-08T11:00:00Z","last_used_at":"2026-05-08T11:00:00Z","workspace_label":$alphaJson},
+                  {"id":"b1","name":"Beta","is_promoted":true,"cwd":"/w/beta","last_message_ts":"2026-05-08T10:00:00Z","last_used_at":"2026-05-08T10:00:00Z","workspace_label":"Beta label"}
+                ]}
+                """.trimIndent()
+        }
+
+        val WORKSPACE_FIXTURE = workspaceFixture(alphaLabel = null)
 
         // chan: named, promoted, later ts. disc: unnamed, unpromoted scratch, earlier ts.
         val MIXED_FIXTURE =
