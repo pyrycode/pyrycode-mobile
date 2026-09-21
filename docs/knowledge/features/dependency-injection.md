@@ -297,6 +297,19 @@ and observes promotion through the existing fake singleton. Its optional second
 constructor parameter preserves repository-only fixtures, so those fixtures alone
 cannot prove that production DI supplies the host contract.
 
+These two tests and `RelayConnectionFactoryTest.selectorSharesHostSourceAndKeepsDemoLookupSeparateFromSavedRelayHosts`
+are the only `app/src/test` sites that resolve the Koin-built `HostConversationSource` — the source
+takes `hostConversationModule`'s `Dispatchers.Default` default, so its `stateIn(viewModelScope, …)`
+subscriber runs on a real worker thread outside the test scheduler. All three resolve it through the
+`KoinHostSources` test helper (`app/src/test/java/de/pyryco/mobile/di/KoinHostSources.kt`) rather
+than closing the container and trusting disposal: `closeAndAssertStopped()` closes the container and
+then asserts `repositoryFor(liveHostId) == null`, which is `@Synchronized` on the same monitor the
+publisher takes and only returns `null` once `dispose()` has completed, giving a real
+happens-before edge instead of a plain field read. Each class's `@After` also calls
+`assertAllClosed()` before `Dispatchers.resetMain()`, because an unguarded window between building
+the container and disposing it otherwise lets a background publish resume a torn-down Main on an
+unrelated test (#726) — see [the JVM unit-test pitfall](development-verification.md#test-scheduling-and-harnesses).
+
 `ConversationRepositoryBindingTest` verifies the generated flag and resolved
 singleton against Gradle's separate `expectedUseRelayRepository` test property.
 Deriving the expected choice from `BuildConfig` itself would let an incorrectly
