@@ -13,7 +13,11 @@ class SettingsViewModel(
     conversationRepository: ConversationRepository,
     private val ownerServerId: String,   // from Routes.settingsOwner(handle); blank = no host
     hosts: Flow<List<SettingsHost>>,     // every saved host's identity + live status
+    pairedServers: PairedServerCollectionStore,   // #751 — handed straight to hostEditorController
 ) : ViewModel() {
+    private val hostEditorController = HostEditorController(viewModelScope, pairedServers, appPreferences)  // #751
+    val hostEditor: StateFlow<HostEditorState?> = hostEditorController.state   // #751
+
     val connection: StateFlow<SettingsConnectionState> =           // #750, replacing #749's host
         hosts
             .flatMapLatest { saved ->
@@ -174,6 +178,18 @@ class SettingsViewModel(
     fun onWorkspacePickerDismissed() {
         pendingWorkspacePicker.value = null
         RelayLog.d { "event=settings_workspace_picker_dismissed" }
+    }
+
+    // #751 — opens on the captured owner, never a row id and never selection; the five sibling
+    // transitions (submitHostName, requestHostUnpair, declineHostUnpair, confirmHostUnpair,
+    // dismissHostEditor) are one-line delegations to hostEditorController, omitted here — see
+    // [Host editor](host-editor.md) for the machine itself.
+    fun openOwnerHostEditor() {
+        if (ownerServerId.isBlank()) {
+            RelayLog.d { "event=settings_host_editor_rejected code=no_owner" }
+            return
+        }
+        hostEditorController.open(ownerServerId)
     }
 
     private companion object {
