@@ -1,5 +1,6 @@
 package de.pyryco.mobile.ui.settings
 
+import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -57,29 +58,42 @@ class SettingsScreenTest {
         assertEquals(1, aboutCount)
     }
 
-    /** The owner's four facts, all of them present and none of them a click target (#749). */
+    /** Both hosts' four facts, with only the owner's row inert and only its row badged (#750). */
     @Test
-    fun connectionSection_rendersOwnersIdentityAndStatusInertly() {
-        setSettings(
-            host =
-                SettingsHostState.Owned(
-                    serverId = "pyrybox-2026-0f3a",
-                    displayName = "Pyrybox",
-                    relayUrl = "wss://relay.pyryco.de",
-                    status = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected),
-                ),
-        )
+    fun connectionSection_rendersEverySavedHostAndMarksTheOwner() {
+        setSettings(connection = SettingsConnectionState.Loaded(listOf(OWNER, OTHER), ownerMissing = false))
 
-        composeTestRule.onNode(hasText("Pyrybox")).performScrollTo().assertExists()
-        composeTestRule.onNode(hasText("pyrybox-2026-0f3a")).performScrollTo().assertExists()
-        composeTestRule.onNode(hasText("wss://relay.pyryco.de")).performScrollTo().assertExists()
-        composeTestRule.onNode(hasText("Pyrybox") and hasClickAction()).assertDoesNotExist()
+        listOf("Pyrybox", "pyrybox-2026-0f3a", "wss://relay.pyryco.de", "Mac mini", "mac-2026-8c41", "wss://relay.example")
+            .forEach { composeTestRule.onNode(hasText(it)).performScrollTo().assertExists() }
+        composeTestRule.onNode(hasText("This server")).performScrollTo().assertExists()
+        // The owner is here already, so its row navigates nowhere; every other row does.
+        composeTestRule.onNode(hasAnyDescendant(hasText("Pyrybox")) and hasClickAction()).assertDoesNotExist()
+        composeTestRule.onNode(hasAnyDescendant(hasText("Mac mini")) and hasClickAction()).assertExists()
     }
 
     @Test
-    fun connectionSection_saysNoHostIsPairedWhenTheDestinationOwnsNone() {
+    fun connectionSection_opensTheTappedHostByItsOwnServerId() {
+        val opened = mutableListOf<String>()
+        setSettings(
+            connection = SettingsConnectionState.Loaded(listOf(OWNER, OTHER), ownerMissing = false),
+            onOpenHost = { opened += it },
+        )
+
+        composeTestRule
+            .onNode(hasAnyDescendant(hasText("Mac mini")) and hasClickAction())
+            .performScrollTo()
+            .performClick()
+
+        assertEquals(listOf("mac-2026-8c41"), opened)
+    }
+
+    @Test
+    fun connectionSection_saysNoHostIsPairedWhenNoneIsSaved() {
         var pairCount = 0
-        setSettings(host = SettingsHostState.Unpaired, onPairServer = { pairCount++ })
+        setSettings(
+            connection = SettingsConnectionState.Loaded(emptyList(), ownerMissing = false),
+            onPairServer = { pairCount++ },
+        )
 
         composeTestRule.onNode(hasText("No host is paired")).performScrollTo().assertExists()
         composeTestRule
@@ -90,24 +104,28 @@ class SettingsScreenTest {
         assertEquals(1, pairCount)
     }
 
+    /** A vanished owner is said so, without any surviving host's row being badged as this one. */
     @Test
-    fun connectionSection_saysTheOwnerIsGoneRatherThanNamingAnotherHost() {
-        setSettings(host = SettingsHostState.Unknown)
+    fun connectionSection_saysTheOwnerIsGoneWithoutBadgingASurvivingHost() {
+        setSettings(connection = SettingsConnectionState.Loaded(listOf(OTHER), ownerMissing = true))
 
         composeTestRule.onNode(hasText("This host is no longer paired")).performScrollTo().assertExists()
+        composeTestRule.onNode(hasText("Mac mini")).performScrollTo().assertExists()
+        composeTestRule.onNode(hasText("This server")).assertDoesNotExist()
         composeTestRule.onNode(hasText("No host is paired")).assertDoesNotExist()
     }
 
     private fun setSettings(
-        host: SettingsHostState = SettingsHostState.Resolving,
+        connection: SettingsConnectionState = SettingsConnectionState.Resolving,
         archivedDiscussionCount: Int = 0,
+        onOpenHost: (String) -> Unit = {},
         onPairServer: () -> Unit = {},
         onOpenAbout: () -> Unit = {},
     ) {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
                 SettingsScreen(
-                    host = host,
+                    connection = connection,
                     themeMode = ThemeMode.SYSTEM,
                     useWallpaperColors = false,
                     archivedDiscussionCount = archivedDiscussionCount,
@@ -126,6 +144,7 @@ class SettingsScreenTest {
                     onDefaultWorkspaceTapped = {},
                     onSelectDefaultWorkspace = {},
                     onWorkspacePickerDismissed = {},
+                    onOpenHost = onOpenHost,
                     onPairServer = onPairServer,
                     onBack = {},
                     onOpenArchivedDiscussions = {},
@@ -133,5 +152,24 @@ class SettingsScreenTest {
                 )
             }
         }
+    }
+
+    private companion object {
+        val OWNER =
+            SettingsHostRow(
+                serverId = "pyrybox-2026-0f3a",
+                displayName = "Pyrybox",
+                relayUrl = "wss://relay.pyryco.de",
+                status = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected),
+                isOwner = true,
+            )
+        val OTHER =
+            SettingsHostRow(
+                serverId = "mac-2026-8c41",
+                displayName = "Mac mini",
+                relayUrl = "wss://relay.example",
+                status = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down),
+                isOwner = false,
+            )
     }
 }

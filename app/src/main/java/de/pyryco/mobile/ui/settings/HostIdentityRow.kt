@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.settings
 
 import android.content.res.Configuration
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ListItem
@@ -30,12 +31,15 @@ private val StatusLinePadding = Modifier.padding(start = 16.dp, top = 4.dp, bott
  * row treatment: the host's [name] as the headline over its [serverId] and [relayUrl], with
  * [ConnectionStatusLine] beneath.
  *
- * Inert by construction — no click target and no trailing affordance, because all four facts are
- * display text (#749). The design frame draws a chevron on its single Server row; opening a host
- * from here is a later slice, and a chevron would announce navigation this one does not ship.
+ * The four facts are always display text; [onClick] and [trailing] are what the caller adds around
+ * them. Both default to absent, which is the inert row #749 shipped when nothing on this screen
+ * navigated. Since #750 the caller passes an [onClick] for every host that is not the one whose
+ * Settings is open, and the design frame's chevron comes back as that row's [trailing]. The click
+ * target deliberately covers the status line as well as the identity, so the affordance is the
+ * whole of what it describes.
  *
- * Stateless and per-host rather than per-screen, so the slice that lists every other saved host
- * repeats this row instead of re-deriving it.
+ * Stateless and per-host rather than per-screen, which is what lets the Connection section repeat
+ * it once per saved host instead of re-deriving the treatment.
  *
  * Caller obligations, because this component cannot enforce them from inside:
  * - Pass **display text**. Never a pairing token, a device or server static key, or a raw
@@ -58,8 +62,10 @@ fun HostIdentityRow(
     relayUrl: String,
     status: ConnectionStatus,
     modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null,
 ) {
-    Column(modifier = modifier) {
+    Column(modifier = if (onClick != null) modifier.clickable(onClick = onClick) else modifier) {
         ListItem(
             headlineContent = { BoundedLine(name, MaterialTheme.typography.bodyLarge) },
             supportingContent = {
@@ -68,6 +74,7 @@ fun HostIdentityRow(
                     BoundedLine(relayUrl, MaterialTheme.typography.bodySmall)
                 }
             },
+            trailingContent = trailing,
             colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surface),
         )
         ConnectionStatusLine(status = status, modifier = StatusLinePadding)

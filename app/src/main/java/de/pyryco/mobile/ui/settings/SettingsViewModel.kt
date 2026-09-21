@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -39,27 +40,40 @@ data class SettingsHost(
     val status: StateFlow<ConnectionStatus>,
 )
 
-/** What a Settings destination's captured owner resolves to against the saved hosts. */
-sealed interface SettingsHostState {
-    /** A non-blank owner whose host list has not arrived yet: render nothing rather than a guess. */
-    data object Resolving : SettingsHostState
+/**
+ * One saved host as the Connection section draws it: resolved display text and its own status.
+ *
+ * Five scalars, for the reason [SettingsHost] gives about itself — neither this class nor the state
+ * that holds a list of them has a redacting `toString`, and a crash trace renders whatever they
+ * hold. Never give it a record-typed field.
+ */
+data class SettingsHostRow(
+    val serverId: String,
+    val displayName: String?,
+    val relayUrl: String,
+    val status: ConnectionStatus,
+    /** True for the host whose Settings this is: the one row that is inert, because it is here. */
+    val isOwner: Boolean,
+) {
+    /** Its local name, or its server id when unnamed — resolved here so one place owns it. */
+    val name: String get() = displayName?.takeIf { it.isNotBlank() } ?: serverId
+}
 
-    /** This destination owns no host, because none was paired when it was opened. */
-    data object Unpaired : SettingsHostState
+/** Every saved host, and what this destination's own captured owner resolved to among them. */
+sealed interface SettingsConnectionState {
+    /** The host list has not arrived yet: render nothing rather than flash the wrong copy. */
+    data object Resolving : SettingsConnectionState
 
-    /** The captured owner is not among the saved hosts. Never resolves to a different host. */
-    data object Unknown : SettingsHostState
-
-    /** The captured owner, with the four facts the Connection section displays inertly. */
-    data class Owned(
-        val serverId: String,
-        val displayName: String?,
-        val relayUrl: String,
-        val status: ConnectionStatus,
-    ) : SettingsHostState {
-        /** Its local name, or its server id when unnamed — resolved here so one place owns it. */
-        val name: String get() = displayName?.takeIf { it.isNotBlank() } ?: serverId
-    }
+    /**
+     * @param hosts every saved host in the order the store holds them, at most one of them owned.
+     * @param ownerMissing a **non-blank** captured owner that no saved host matches. False for a
+     *   destination that captured none: it owns nothing that could be missing, and must not claim
+     *   a host is no longer paired.
+     */
+    data class Loaded(
+        val hosts: List<SettingsHostRow>,
+        val ownerMissing: Boolean,
+    ) : SettingsConnectionState
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -72,44 +86,58 @@ class SettingsViewModel(
     hosts: Flow<List<SettingsHost>>,
 ) : ViewModel() {
     /**
-     * The captured owner, resolved by exact case-sensitive server id — the same equality
+     * Every saved host with its own live status, and the destination's owner marked among them
+     * (#750, widening #749's single-host resolution).
+     *
+     * The owner is matched by exact case-sensitive server id — the same equality
      * `PairedServerCollectionStore.loadById` and the registry's entry map use, so this cannot match
-     * a host either of those would miss.
+     * a host either of those would miss. The blank check is what keeps a destination that captured
+     * no host from matching a host whose id is somehow blank too; it no longer short-circuits the
+     * whole flow, because such a destination still lists every saved host.
      *
-     * A blank owner short-circuits to [SettingsHostState.Unpaired] without ever consulting [hosts]:
-     * it is correct on the first frame (the state AC3 names for an unpaired phone), and it makes a
-     * blank-vs-blank id match structurally impossible rather than merely unreachable.
+     * Order is the store's own, as `RelayConnectionRegistry.reconcile` builds it: sorting here would
+     * make the section reshuffle whenever a save moves a record last.
      *
-     * Unlike the `connectionStatus` flow this replaced (#398, forwarded verbatim because its
+     * Unlike the `connectionStatus` flow #749 replaced (#398, forwarded verbatim because its
      * upstream was already hot), this is a derived projection over a cold join and therefore does
      * take the `stateIn(WhileSubscribed)` lift its eight preference siblings use. [flatMapLatest]
-     * keeps at most one owner-status collector alive: a removal is itself a [hosts] emission, so the
-     * departing host's collector is cancelled by the same event that invalidates it.
+     * keeps at most one generation of status collectors alive: an unpair is itself a [hosts]
+     * emission, so the departing host's collector is cancelled by the same event that invalidates it.
      */
-    val host: StateFlow<SettingsHostState> =
-        if (ownerServerId.isBlank()) {
-            MutableStateFlow<SettingsHostState>(SettingsHostState.Unpaired)
-        } else {
-            hosts
-                .flatMapLatest { saved ->
-                    val owner = saved.firstOrNull { it.serverId == ownerServerId }
-                    owner
-                        ?.status
-                        ?.map {
-                            SettingsHostState.Owned(owner.serverId, owner.displayName, owner.relayUrl, it)
-                        }
-                        ?: flowOf(SettingsHostState.Unknown)
+    val connection: StateFlow<SettingsConnectionState> =
+        hosts
+            .flatMapLatest { saved ->
+                val ownerMissing = ownerServerId.isNotBlank() && saved.none { it.serverId == ownerServerId }
+                // `combine` over an empty array never emits, which would leave this at `Resolving`
+                // forever and silently cost an unpaired phone its no-host copy.
+                if (saved.isEmpty()) {
+                    flowOf(SettingsConnectionState.Loaded(emptyList(), ownerMissing))
+                } else {
+                    combine(saved.map { it.status }) { statuses ->
+                        SettingsConnectionState.Loaded(
+                            saved.mapIndexed { index, host ->
+                                SettingsHostRow(
+                                    serverId = host.serverId,
+                                    displayName = host.displayName,
+                                    relayUrl = host.relayUrl,
+                                    status = statuses[index],
+                                    isOwner = ownerServerId.isNotBlank() && host.serverId == ownerServerId,
+                                )
+                            },
+                            ownerMissing = ownerMissing,
+                        )
+                    }
                 }
-                // Supportive-metadata projections swallow upstream errors, as the archived count does:
-                // an unreadable host list must not tear the screen down, and "no host's identity" is
-                // the honest thing to show when we cannot prove which host this is.
-                .catch { emit(SettingsHostState.Unknown) }
-                .stateIn(
-                    scope = viewModelScope,
-                    started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
-                    initialValue = SettingsHostState.Resolving,
-                )
-        }
+            }
+            // Supportive-metadata projections swallow upstream errors, as the archived count does: an
+            // unreadable host list must not tear the screen down, and naming no host is the honest
+            // thing to show when we cannot read which hosts there are.
+            .catch { emit(SettingsConnectionState.Loaded(emptyList(), ownerMissing = false)) }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+                initialValue = SettingsConnectionState.Resolving,
+            )
 
     val themeMode: StateFlow<ThemeMode> =
         appPreferences.themeMode.stateIn(

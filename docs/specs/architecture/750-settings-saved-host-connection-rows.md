@@ -166,6 +166,44 @@ Pending for the documentation stage, per the ticket's own section. The builder w
 - Whether `reconcile`'s saved order is stable enough to be the row order in practice — `PairedServerCollectionStore.save` appends, so re-saving a record moves it last and the section would reshuffle on a compatibility-selection flip. If the device test shows that, the fix is an explicit sort by `serverId` in the projection, recorded as a `## Revisions` entry.
 - Whether `ConnectionStatusLine`'s `clearAndSetSemantics` legs can be scoped to one row in a device assertion, or whether the per-row status assertion has to be made by count across the screen. Settled during implementation; the answer goes in `## Revisions` only if it changes the design.
 
+## Revisions
+
+**2026-09-21 — copy precedence when the list is empty *and* the owner is gone.** The plan listed
+both branches but not which wins when both hold — unpairing the last host while its Settings is open
+satisfies each. Implemented as: an empty list draws `settings_host_none` and nothing else. It is
+both true and the one that names the way out, and the pairing row directly under it is the action it
+implies; `settings_host_unknown` draws only when hosts remain but the owner is not among them. The
+view model still reports `ownerMissing` truthfully in that state — it is a fact about the owner, not
+about which copy to render — so the precedence lives in `SettingsScreen`'s Connection section, in
+one `if`/`else if`, and the view-model test asserts the flag rather than the copy.
+
+**2026-09-21 — Open Questions resolved; no design change.**
+
+- Store order is stable enough to be the row order. `SettingsNavigationTest` flips compatibility
+  selection by re-saving a record — the operation that moves it last — and the section's rows do not
+  visibly reshuffle under it, because `RelayConnectionRegistry.reconcile` rebuilds `hosts` from
+  `store.list()` in saved order and the fake store preserves position on an update. The explicit
+  `serverId` sort the plan held in reserve was not built.
+- `ConnectionStatusLine`'s `clearAndSetSemantics` legs **cannot** be scoped to one row, and the
+  per-row status assertion is made by presence across the screen instead. See the next entry: this
+  is the same root cause as the matcher failure, and the reason it is worth recording is that the
+  failure reads as "the status is missing" when it is not.
+
+**2026-09-21 — a host row is not a semantics node, and two device assertions had to be rewritten
+because of it.** Recorded because the failure mode is misleading, not because the fix was hard.
+Nothing in `HostIdentityRow` adds semantics unless the caller passes an `onClick`, so the owner's
+row — the one deliberately inert row — contributes no node of its own. A
+`hasAnyDescendant(name) and hasAnyDescendant(badge)` matcher therefore matched four *ancestors*
+(root, container, scroll group) and failed on ambiguity rather than absence. `assertBadgedRowIs` now
+asserts the two properties `isOwner` actually drives — exactly one badge on screen, and the named
+row is the inert one while the other is clickable — which identifies the owner without depending on
+tree shape. Separately, `assertShowsAlphaConnected` asserted a *unique*
+`"Pyrycode: connected"` node; with every saved host now drawing its own status legs, two connected
+hosts make that ambiguous. Both are asserted by presence now. The tempting production "fix" —
+merging each row's semantics — was rejected: it is an accessibility change the AC does not ask for,
+and it would fold `ConnectionStatusLine`'s per-leg descriptions into the row and put #749's own
+assertions at risk.
+
 ## Size check
 
 Production `.kt` under `app/src/main/`: 4 (`SettingsViewModel`, `SettingsScreen`, `HostIdentityRow`, `MainActivity`) — `strings.xml` is not a `.kt`. Total written work ≈ 560 lines (plan ~200, production ~140, unit tests ~150, device tests ~70). New exported types: 2 (`SettingsHostRow`, the `SettingsConnectionState` family) — two are removed (`SettingsHostState`, its `Owned`). Consumer call sites: 6 (`SettingsScreen` ×6: `MainActivity`, 2 previews, 3 test blocks). Acceptance criteria: 4. Reject branches: 3 (`Resolving`, empty list, `ownerMissing`). Within every line of the one-ticket boundary.
