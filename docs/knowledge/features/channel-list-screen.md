@@ -1,43 +1,47 @@
 # ChannelListScreen
 
-Stateless `(state, hostState, onEvent)` composable that renders a Material 3 `Scaffold` with the list's own
+Stateless `(hostState, onEvent)` composable that renders a Material 3 `Scaffold` with the list's own
 top bar (a settings entry and an archive entry above a rule, #737 — see
-[The list's own top bar](#the-lists-own-top-bar-737) below) and a manually-composed FAB (#22 →
-\#221) above a single-`LazyColumn` conversation tree (#731): a Channels section and a Chats section, each
-holding host rows, their workspace rows and those workspaces' conversation rows, drawn from `hostState`
-(#729's `HostChannelListEntry.channelGroups` / `chatGroups`) using the row composables from
-`ui/conversations/components/ConversationTreeRows.kt` (#730, see [Tree rows](#tree-rows-730) below). The flat `ConversationRow` list and the
-inline "Recent discussions" section with its "See all" link into `Routes.DISCUSSION_LIST` are gone — #731
-replaced both. Row taps carry their own `serverId`, so a tree drawing rows from several hosts opens each on
-the host that owns it, never through a selected-host adapter. Fold and selection state (which nodes are
-collapsed, which row was last opened from this list) live in the ViewModel, so they survive recomposition,
-`LazyColumn` recycling, an incoming snapshot and the thread round trip.
+[The list's own top bar](#the-lists-own-top-bar-737) below) above a single-`LazyColumn` conversation tree
+(#731): a Channels section and a Chats section, each holding host rows, their workspace rows and those
+workspaces' conversation rows, drawn from `hostState` (#729's `HostChannelListEntry.channelGroups` /
+`chatGroups`) using the row composables from `ui/conversations/components/ConversationTreeRows.kt` (#730,
+see [Tree rows](#tree-rows-730) below). The flat `ConversationRow` list and the inline "Recent discussions"
+section with its "See all" link into `Routes.DISCUSSION_LIST` are gone — #731 replaced both. Row taps carry
+their own `serverId`, so a tree drawing rows from several hosts opens each on the host that owns it, never
+through a selected-host adapter. Fold and selection state (which nodes are collapsed, which row was last
+opened from this list) live in the ViewModel, so they survive recomposition, `LazyColumn` recycling, an
+incoming snapshot and the thread round trip.
+
+The floating action button that used to create a chat and open pairing is gone (#738): each section header
+now carries its own add control that opens pairing's existing scanner entry, and each host row carries one
+that starts a chat on **that row's** host — see [Add controls](#add-controls-738) below. With the button
+gone, the flat `ChannelListUiState` compatibility model (loading/error/empty placeholders,
+`workspacePickerVisible`) retired with it: `hostState.hosts.isEmpty()` is now the tree's only blank.
 
 Package: `de.pyryco.mobile.ui.conversations.list` (`app/src/main/java/de/pyryco/mobile/ui/conversations/list/`). File: `ChannelListScreen.kt`.
 
 ## What it does
 
 Wraps its body in a `Scaffold` whose `topBar` is the file-private `ChannelListTopBar` (rendered in **every**
-state — see [The list's own top bar](#the-lists-own-top-bar-737) below) and
-whose `floatingActionButton` slot hosts the file-private `ChannelListFab` (rendered only when
-`state is Loaded || state is Empty`, #22; a manually-composed `Surface` rather than the M3 widget, so an
-outer `combinedClickable` can own tap + long-press — see [Manual FAB](#channellistfab--manually-composed-surface-not-m3-floatingactionbutton-221)).
+state — see [The list's own top bar](#the-lists-own-top-bar-737) below). There is no `floatingActionButton`
+slot: #738 retired it, along with the flat `ChannelListUiState` it gated on.
 
-The body branches on `hostState.hosts`, not on `state`, now that `hostState` carries the tree's own rows:
+The body branches on `hostState.hosts` — the only model the screen is fed:
 
 - **`hostState.hosts.isEmpty()`** — no host has produced a snapshot yet, or there are none paired. Falls back
-  to the compatibility `state`'s placeholders: `Loading` → centred `"Loading…"`; `Error(message)` → centred
-  `"Couldn't load channels: $message"`; `Loaded`/`Empty` → the centred `R.string.channel_list_empty`
-  ("Tap + to start a conversation") copy. This is the only blank-tree case; a paired host with a snapshot but
-  no conversations still draws its own host row, which is content, not a blank screen.
+  to the centred `R.string.channel_list_empty` ("Tap + to start a conversation") copy. This is the only
+  blank-tree case; a paired host with a snapshot but no conversations still draws its own host row, which is
+  content, not a blank screen. The `Loading` / `Error(message)` compatibility placeholders #738 removed drew
+  from the retired flat state; a cold start or an upstream failure now renders this same empty copy rather
+  than a distinct message — see [Edge cases](#edge-cases--limitations).
 - **Otherwise** — a private `ConversationTree(hostState, onEvent, modifier)` composable renders the full
-  two-section tree. See [Conversation tree (#731)](#conversation-tree-731).
+  two-section tree, its section headers and host rows each carrying their own add control. See
+  [Conversation tree (#731)](#conversation-tree-731) and [Add controls (#738)](#add-controls-738).
 
-The `state` compatibility placeholders (loading/error/empty copy, `workspacePickerVisible`) and the FAB's
-visibility gate are otherwise untouched from their pre-#731 shape; #738 retires `state` and the button
-together, along with the now-unreachable `Routes.DISCUSSION_LIST` / `DiscussionListScreen`. The generic top
-app bar #732 was going to retire is already gone — #737 replaced it with the list's own bar, split off as the
-first of #732's two slices.
+`Routes.DISCUSSION_LIST` / `DiscussionListScreen` stay in the graph, unreachable — removing them was out of
+\#731's scope and remains out of \#738's. The generic top app bar #732 was going to retire is already gone —
+\#737 replaced it with the list's own bar, split off as the first of #732's two slices.
 
 ## Shape
 
@@ -49,69 +53,51 @@ sealed interface ChannelListEvent {
     data object SettingsTapped : ChannelListEvent
     /** The list's own archive entry — the same destination Settings' archived-discussions row opens (#737). */
     data object ArchiveTapped : ChannelListEvent
-    data object CreateDiscussionTapped : ChannelListEvent
-    data object LongPressFab : ChannelListEvent
+    /** A section header's add control: pair an additional host (#738). Carries no section — both
+     *  headers open the same pairing flow, so only the control's own name disambiguates. */
+    data object PairHostTapped : ChannelListEvent
+    /** A host row's add control: a chat on **that** row's host, in its default workspace (#738). */
+    data class TreeHostAddTapped(val serverId: String) : ChannelListEvent
+    /** The same control held: pick that host's workspace first — the path the retired button long-pressed. */
+    data class TreeHostAddLongPressed(val serverId: String) : ChannelListEvent
     data class WorkspacePicked(val workspace: String) : ChannelListEvent
     data object WorkspacePickerDismissed : ChannelListEvent
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChannelListScreen(
-    state: ChannelListUiState,
     hostState: HostChannelListState,
     onEvent: (ChannelListEvent) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    /* … Scaffold { ChannelListTopBar, ChannelListFab } wrapping either the placeholder branch or
-         ConversationTree(hostState, onEvent, bodyModifier); WorkspacePicker host as a
-         Scaffold sibling, unchanged since #221 … */
+    /* … Scaffold { ChannelListTopBar } — no floatingActionButton slot since #738 — wrapping either the
+         empty-tree placeholder or ConversationTree(hostState, onEvent, bodyModifier); WorkspacePicker host
+         as a Scaffold sibling, unchanged since #221, its visible read straight off
+         hostState.workspacePickerServerId … */
 }
 ```
 
 `ExperimentalMaterial3Api` dropped from the file's `@OptIn` in #737 along with the `TopAppBar` import — the
 list's own bar is a plain `Column`/`Row`/`IconButton`/`HorizontalDivider`, none of them experimental.
+`ExperimentalFoundationApi` dropped from this file's `@OptIn` in #738 with `ChannelListFab` — the file's own
+`combinedClickable` usage went with it; the tree rows' `TreeAddControl` (below) carries that experimental
+opt-in now, local to `ConversationTreeRows.kt`.
 
 `RowTapped` and `RecentDiscussionsTapped` are gone — the two composables that emitted them
 (`ConversationRow` at the top level, `SeeAllDiscussionsRow`) no longer exist in this file, and an event
-nothing can emit is dead code. `ChannelListEvent` still lives in `ChannelListScreen.kt`, not
-`ChannelListViewModel.kt`: the screen remains the producer for every variant except the three the VM
-consumes directly (`CreateDiscussionTapped`, `LongPressFab`, `WorkspacePicked`, `WorkspacePickerDismissed`);
-`TreeRowTapped` / `TreeFoldToggled` / `SettingsTapped` route through the destination's `when (event)` instead
-(see [Wiring](#wiring)).
+nothing can emit is dead code. `CreateDiscussionTapped` and `LongPressFab` are gone too (#738), replaced by
+the host-qualified `TreeHostAddTapped` / `TreeHostAddLongPressed` pair, and `PairHostTapped` is new.
+`ChannelListEvent` still lives in `ChannelListScreen.kt`, not `ChannelListViewModel.kt`: the screen remains
+the producer for every variant except the four the VM's destination wiring consumes directly
+(`TreeHostAddTapped`, `TreeHostAddLongPressed`, `WorkspacePicked`, `WorkspacePickerDismissed`);
+`TreeRowTapped` / `TreeFoldToggled` / `SettingsTapped` / `ArchiveTapped` / `PairHostTapped` route through the
+destination's `when (event)` instead (see [Wiring](#wiring)).
 
-```kotlin
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun ChannelListFab(
-    onTap: () -> Unit,
-    onLongPress: () -> Unit,
-    onTapLabel: String,
-    onLongPressLabel: String,
-) {
-    Surface(
-        modifier = Modifier
-            .size(56.dp)
-            .combinedClickable(
-                onClick = onTap,
-                onLongClick = onLongPress,
-                onClickLabel = onTapLabel,
-                onLongClickLabel = onLongPressLabel,
-                role = Role.Button,
-            )
-            .semantics { contentDescription = onTapLabel },
-        shape = FloatingActionButtonDefaults.shape,
-        color = MaterialTheme.colorScheme.primaryContainer,
-        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        tonalElevation = 6.dp,
-        shadowElevation = 6.dp,
-    ) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Icon(imageVector = Icons.Default.Add, contentDescription = null)
-        }
-    }
-}
-```
+The file-private `ChannelListFab` — the manually-composed `Surface` #22 → #221 built to own tap + long-press
+directly (bypassing the M3 `FloatingActionButton` widget's own inner `Surface(onClick = ...)`, which would
+otherwise shadow an outer `combinedClickable` — see [`../codebase/25.md`](../codebase/25.md) and
+[`../codebase/221.md`](../codebase/221.md)) — is gone (#738). The same construction lives on in
+`TreeAddControl`, the control both new add controls draw; see [Add controls (#738)](#add-controls-738).
 
 ## Conversation tree (#731)
 
@@ -160,15 +146,16 @@ codebase (`ScannerScreen`'s reticle and hint) and is invisible to TalkBack. `Int
 `interactiveTurn_saveAsChannel_promotesToChannelTier` reads them directly — see
 [`docs/e2e-interactive-stream.md`](../../e2e-interactive-stream.md).
 
-**Arrival marker.** The screen's own root — the `Scaffold`'s `modifier`, above the `when (hostState.hosts)`
-branch that picks between the loading text, the error text, the empty placeholder and the tree — carries
-`internal const val CHANNEL_LIST_TEST_TAG = "channel-list"` (#736), so all four draws carry it by
-construction. Same shape as the two tags above (app-authored literal, no daemon text, invisible to
-TalkBack), but it names the destination rather than any chrome drawn on it: unlike the button wait it
-replaced, it does not imply a loaded list, and it is built to survive #732/#738's chrome changes without a
-second migration. `InteractiveStreamE2ETest`'s shared `awaitChannelList()` helper reads it; `createChat()`
-and `openWorkspacePicker()` are the only two remaining sites that name the floating action button
-(`CD_NEW_DISCUSSION`) — see [`docs/e2e-interactive-stream.md`](../../e2e-interactive-stream.md).
+**Arrival marker.** The screen's own root — the `Scaffold`'s `modifier`, above the `if (hostState.hosts.isEmpty())`
+branch that picks between the empty placeholder and the tree — carries
+`internal const val CHANNEL_LIST_TEST_TAG = "channel-list"` (#736), so both draws carry it by
+construction (four before #738 retired the flat state's `Loading`/`Error` placeholders; two since). Same
+shape as the two tags above (app-authored literal, no daemon text, invisible to TalkBack), but it names the
+destination rather than any chrome drawn on it: unlike the button wait it replaced, it does not imply a
+loaded list, and it survived #732/#738's chrome changes without a second migration. `InteractiveStreamE2ETest`'s
+shared `awaitChannelList()` helper reads it; `createChat()` and `openWorkspacePicker()` now drive a paired
+host's own add control via `treeHostAddTestTag(serverId)` (below) rather than the retired button's fixed
+content description — see [`docs/e2e-interactive-stream.md`](../../e2e-interactive-stream.md).
 
 **Item keys.** A private `treeItemKey(vararg parts: String)` length-prefixes each part before joining them
 with `|`, so no daemon-authored `serverId`, `cwd` or conversation id can forge another row's key by embedding
@@ -181,15 +168,77 @@ daemon text amplifies instead of truncating (flagged in the ticket's security re
 well-formed input is unaffected: a collision needs two ids sharing both a 256-character prefix and an
 identical length.
 
+## Add controls (#738)
+
+Both new controls live in `ConversationTreeRows.kt` and share one file-private `TreeAddControl`: a
+`Box.size(48.dp).clip(CircleShape).combinedClickable(...)` drawing a 16dp `Icons.Filled.Add` tinted
+`colorScheme.primary`, carrying the caller's content description and (for the host row) the caller's
+`testTag`. An optional `onLongClick` / `onLongClickLabel` pair makes the control drive both gestures when
+supplied — the same `combinedClickable`-on-the-control-itself construction `ChannelListFab` used, for the
+same reason: an M3 `IconButton` composes its own inner `clickable` that would shadow an outer
+`combinedClickable`'s long-press (see [`../codebase/25.md`](../codebase/25.md),
+[`../codebase/221.md`](../codebase/221.md)).
+
+- **`TreeSectionHeader`** gained `onAddTapped: () -> Unit`. Its content description is
+  `R.string.cd_tree_section_pair_host` formatted with the section's own title — app-authored, never daemon
+  text, so it is not run through `boundedRowText`. Tapping it emits `ChannelListEvent.PairHostTapped`, which
+  the route maps to `navController.navigate(Routes.SCANNER)` — pairing's **existing** entry, reused rather
+  than a second flow. Both of that entry's completions already land back on `channel_list` (camera pops
+  `SCANNER` inclusive; paste-code pops the graph), so no pop or flag is needed here. See
+  [Navigation](navigation.md#manual-pairing-entry-and-return).
+- **`TreeHostRow`** gained `serverId: String`, `onAddTapped: () -> Unit` and `onAddLongPressed: () -> Unit`.
+  Tap emits `TreeHostAddTapped(serverId)` (the route calls `vm.createHostDiscussion(serverId)`); long-press
+  emits `TreeHostAddLongPressed(serverId)` (`vm.openHostWorkspacePicker(serverId)`) — the row's **own** host,
+  the same discipline `TreeRowTapped` already used for taps, never `ThreadDestinationFactory.selectedServerId()`.
+  Its two content descriptions (`cd_tree_host_new_chat` / `cd_tree_host_pick_workspace`) are formatted with
+  the row's already-`boundedRowText`-clamped display name — computed once and passed down, so no path formats
+  an unbounded daemon-authored name into a description.
+
+**Naming rule.** Both controls repeat down the screen — one section header per section, one host row per
+host — so each has to say which section or host it acts on, the way the fold controls already name their
+row (`cd_tree_row_expand` / `cd_tree_row_collapse`, formatted with the row's name). No production string
+distinguishes two section headers or two host rows from each other otherwise.
+
+**The device-suite handle.** `TreeHostRow` also builds `treeHostAddTestTag(serverId)` — a public top-level
+function in `ConversationTreeRows.kt` — and attaches it to its own control's `Modifier.testTag(...)`. The id
+comes from the saved `PairedServer` record the operator scanned, not a daemon frame, but a hostile QR could
+still make it enormous; `treeHostAddTestTag` clamps it the same way `treeItemKey` clamps its parts —
+truncated with the original length appended (`take(256) + "~" + length`) — so two ids sharing a 256-character
+prefix cannot collapse onto one tag. `InteractiveStreamE2ETest`'s `createChat()` / `openWorkspacePicker()`
+read it, built from the harness's own `ARG_SERVER_ID` instrumentation argument — see
+[`docs/e2e-interactive-stream.md`](../../e2e-interactive-stream.md#what-rung-3-is-made-of). Sibling handles
+in this codebase (`CHANNEL_LIST_TEST_TAG`, `TREE_CHANNEL_ROW_TEST_TAG` / `TREE_CHAT_ROW_TEST_TAG`) are
+`internal`; this one is `public` because it is a function computed from caller-supplied input rather than a
+fixed constant, and both its production caller (`TreeHostRow`, same module) and its test caller (`androidTest`,
+a friend source set) already resolve `internal` — the wider visibility is not load-bearing, just consistent
+with taking a parameter.
+
+**Nesting.** The host row's control sits inside `FoldableTreeRow`'s own `clickable`, which merges descendant
+semantics — but `combinedClickable` merges too, and merging stops at a merging descendant, so the control
+keeps its own node, its own name, its own tag and its own click action; a tap on it never reaches the row's
+fold. `ChannelListScreenTest` asserts this directly rather than trusting the inherited rule.
+
+**The 48dp trade.** The design pins a 16dp plus with its centre 10dp from the row's content edge. Touch needs
+48dp, and centring a 16dp glyph in a 48dp target lands its centre about 22dp further inboard than the design
+draws it — the same trade #731 took growing the design's 28dp pointer rows to a size a thumb can hit. Taken
+deliberately, recorded in a KDoc comment on `TreeAddControl` in `ConversationTreeRows.kt`. The section
+header's own band grows from the design's bare 20dp text line to 48dp for the same reason — it carries a
+control now, not just a label.
+
+**Not in this slice.** `TreeWorkspaceRow` draws no add control — adding a workspace is #663's control and
+\#664's content, deliberately a tier above the host row's plus. The add control's eventual modal content
+(what a section header's pairing flow shows once it lands, beyond reusing the existing scanner) is #664's;
+this slice supplies only the control and its target.
+
 ## How it works
 
-### Stateless `(state, hostState, onEvent)` contract
+### Stateless `(hostState, onEvent)` contract
 
 No `viewModel()`, no `koinViewModel()`, no `LocalContext.current`, no `NavController` parameter. `hostState`
-joined `state` and `onEvent` as a third parameter in #731 — `state` still carries the compatibility
-loading/empty/error placeholders and `workspacePickerVisible`; `hostState` carries the host-qualified rows,
-the collapsed nodes and the last-opened target. The canonical CLAUDE.md shape (hoist state to the ViewModel;
-UI receives state + `onEvent`) is unchanged, just with a second state parameter.
+joined `onEvent` as a second parameter in #731 and became the screen's **only** state parameter in #738,
+when the compatibility `state: ChannelListUiState` retired with the button it fed. `hostState` carries the
+host-qualified rows, the collapsed nodes, the last-opened target and the workspace picker's target. The
+canonical CLAUDE.md shape (hoist state to the ViewModel; UI receives state + `onEvent`) is unchanged.
 
 ### The list's own top bar (#737)
 
@@ -206,9 +255,10 @@ back to the tree's existing `SECTION_RULE_ALPHA` — the same treatment the tree
 gives the design's identically-styled rectangle.
 
 **It lives in the `Scaffold`'s `topBar` slot, not the tree's scroll container**, so it draws above the
-`hostState.hosts` branch and is carried by **all four** of the screen's draws — the loading and error texts,
-the empty placeholder and the assembled tree — without that branch being touched. This is what makes the
-"bar on every draw" requirement fall out of the structure rather than needing to be re-proven per state.
+`hostState.hosts` branch and is carried by **both** of the screen's draws — the empty placeholder and the
+assembled tree (four before #738 retired the flat state's loading and error texts) — without that branch
+being touched. This is what makes the "bar on every draw" requirement fall out of the structure rather than
+needing to be re-proven per state.
 
 **Geometry.** Figma's glyphs are 24dp with centres 32dp and 84dp from the screen edge, a rule 20dp below them
 and 28dp of air above the first section header. Touch needs 48dp (the same minimum `TreeRowMinHeight` holds
@@ -234,67 +284,62 @@ top padding equal to the measured `topBar` height and leaves the window inset to
 this replacement quietly removed it. Worth checking before the same `TopAppBar` → plain-`topBar` swap is made
 on a screen whose outer `Scaffold` isn't already padding for it.
 
-The FAB sits at default `FabPosition.End`; the conditional `if (state is Loaded || state is Empty)` lives
-inside the slot's composable lambda because `Scaffold.floatingActionButton` is a non-nullable
-`@Composable () -> Unit`.
-
-#### `ChannelListFab` — manually-composed `Surface`, not M3 `FloatingActionButton` (#221)
-
-\#22 originally used the M3 `FloatingActionButton` widget. #221 needed a long-press gesture; wrapping the M3
-FAB in an outer `Box.combinedClickable { FloatingActionButton(onClick = {}) { … } }` does **not** work — the
-M3 widget composes its own inner `Surface(onClick = ...)`, which installs a `Modifier.clickable` on a leaf
-node that consumes pointer events before they can propagate to the outer `combinedClickable`. Same failure
-shape as #25's `ConversationRow` `ListItem` shadowing (see [`../codebase/25.md`](../codebase/25.md) and
-[`../codebase/221.md`](../codebase/221.md)). The fix: a file-private `ChannelListFab` reproduces the M3
-standard FAB visual (56dp `Surface`, `FloatingActionButtonDefaults.shape`, `primaryContainer` /
-`onPrimaryContainer`, 6dp tonal + shadow elevation) with the `combinedClickable` directly on its modifier as
-the sole pointer-input subscriber; `role = Role.Button` plus `onClickLabel` / `onLongClickLabel` make TalkBack
-announce both gestures. The M3 widget's "lower elevation while held" press animation is lost and accepted as
-a tradeoff — the `combinedClickable` default ripple covers the user-facing feedback gap.
+The `floatingActionButton` slot and the file-private `ChannelListFab` it hosted are gone (#738) — see
+[Add controls (#738)](#add-controls-738) for what replaced both of its gestures, and for
+`TreeAddControl`, which inherits the manually-composed-`Surface`-not-`IconButton` construction
+`ChannelListFab` pioneered in #221 for the same reason.
 
 #### `WorkspacePicker` host as Scaffold sibling (#221)
 
 After the `Scaffold { ... }` block closes, the screen composes `WorkspacePicker(visible, onPicked, onDismiss)`
 as a sibling of the Scaffold, not inside its content lambda — matching #78's `SaveAsChannelDialog` placement,
-since the sheet manages its own `Popup`/`Window` above the entire activity. `visible` is derived from an
-exhaustive `when (state)` mapping `Loaded`/`Empty` to their `workspacePickerVisible: Boolean` and
-`Loading`/`Error` to `false`. `onPicked(path)` dispatches `WorkspacePicked(path)`; `onDismiss` dispatches
-`WorkspacePickerDismissed`. Unchanged by #731.
+since the sheet manages its own `Popup`/`Window` above the entire activity. `visible` reads
+`hostState.workspacePickerServerId != null` directly (#738) — before, this was a `when (state)` copy of the
+same fact into `Loaded`/`Empty.workspacePickerVisible`, `Loading`/`Error` mapped to `false`; the direct read
+is strictly more correct, since the old copy could hold a non-null picker target while the flat state was
+still `Loading` and draw nothing. `onPicked(path)` dispatches `WorkspacePicked(path)`; `onDismiss` dispatches
+`WorkspacePickerDismissed`.
 
 ## Tree rows (#730)
 
 `ui/conversations/components/ConversationTreeRows.kt` supplies the four stateless composables this screen
-assembles: `TreeSectionHeader`, `TreeHostRow`, `TreeWorkspaceRow` and `TreeConversationRow`. #731 is their
-first and, as of this writing, only consumer — this screen's `treeSection` (above) is the call site. The rows
-remain stateless and resolve nothing about which host or workspace they belong to; every parameter is display
-text, a flag or a callback the caller (this screen) already resolved. Row-level clamping, truncation,
-selection-fill and connection-indicator details are not repeated here — see
-`docs/specs/architecture/730-mobile-tree-rows.md`; this document covers only how the screen assembles and
-drives them.
+assembles: `TreeSectionHeader`, `TreeHostRow`, `TreeWorkspaceRow` and `TreeConversationRow`, plus the
+file-private `TreeAddControl` the first two now draw (#738, see [Add controls](#add-controls-738) above).
+\#731 is their first and, as of this writing, only consumer — this screen's `treeSection` (above) is the call
+site. The rows remain stateless and resolve nothing about which host or workspace they belong to; every
+parameter is display text, a flag or a callback the caller (this screen) already resolved — `TreeHostRow`'s
+new `serverId` parameter is the one exception, used only to name its own add control for the device suites,
+never to resolve anything the row draws. Row-level clamping, truncation, selection-fill and
+connection-indicator details are not repeated here — see `docs/specs/architecture/730-mobile-tree-rows.md`;
+this document covers only how the screen assembles and drives them.
 
 ## Wiring
 
-`PyryNavHost`'s `Routes.CHANNEL_LIST` composable resolves `ChannelListViewModel` and collects both `state` and
-`hostState`, passing both into `ChannelListScreen`. The event `when` maps the two tree events straight to the
-VM: `is ChannelListEvent.TreeRowTapped -> vm.onHostRowTapped(event.target)` and
+`PyryNavHost`'s `Routes.CHANNEL_LIST` composable resolves `ChannelListViewModel` and collects `hostState` —
+the screen's only state since #738 — passing it into `ChannelListScreen`. The event `when` maps the two tree
+events straight to the VM: `is ChannelListEvent.TreeRowTapped -> vm.onHostRowTapped(event.target)` and
 `is ChannelListEvent.TreeFoldToggled -> vm.onFoldToggled(event.key)` — no adapter, no `selectedServerId()`
-lookup, because the row already carries its own host. This is the wrong-host fix #731 landed with the render:
-before it, every row tap (including rows this tree would draw from a second host) resolved through
-`destinations.selectedServerId()`, one host for the whole screen. `ChannelListEvent.SettingsTapped` still
-navigates to `Routes.SETTINGS`; `ChannelListEvent.ArchiveTapped` navigates to `Routes.ARCHIVED_DISCUSSIONS`
-(#737) — the same argument-free route Settings' `onOpenArchivedDiscussions` already opens, one destination
-reached by two doors rather than a second route. The `RecentDiscussionsTapped` branch that navigated to
-`Routes.DISCUSSION_LIST` is gone with the event. The FAB paths (`CreateDiscussionTapped`, `LongPressFab`, `WorkspacePicked`,
-`WorkspacePickerDismissed`) are unchanged and still resolve through `destinations.selectedServerId()` /
-`pickHostWorkspace` / `dismissHostWorkspacePicker`, since the FAB has no per-row host to read from.
-`Routes.DISCUSSION_LIST` and `DiscussionListScreen` stay in the graph, unreachable — removing them is out of
-\#731's scope.
+lookup, because the row already carries its own host. This is the wrong-host fix #731 landed with the render;
+\#738 carried the same discipline into creation: `is ChannelListEvent.TreeHostAddTapped ->
+vm.createHostDiscussion(event.serverId)` and `is ChannelListEvent.TreeHostAddLongPressed ->
+vm.openHostWorkspacePicker(event.serverId)`, both against the control's own row, never
+`destinations.selectedServerId()`. `ChannelListEvent.SettingsTapped` still navigates to `Routes.SETTINGS`;
+`ChannelListEvent.ArchiveTapped` navigates to `Routes.ARCHIVED_DISCUSSIONS` (#737) — the same argument-free
+route Settings' `onOpenArchivedDiscussions` already opens, one destination reached by two doors rather than a
+second route. `ChannelListEvent.PairHostTapped` navigates to `Routes.SCANNER` (#738) — no pop, no flag: the
+scanner's own completions already return here (see [Add controls](#add-controls-738) above). The
+`RecentDiscussionsTapped` branch that navigated to `Routes.DISCUSSION_LIST` is gone with the event, and so
+are the FAB's own branches (`CreateDiscussionTapped`, `LongPressFab`) — #738 retired the button and the
+`destinations.selectedServerId()` capture those two branches made; `WorkspacePicked` /
+`WorkspacePickerDismissed` are unchanged and still resolve through `vm.pickHostWorkspace` /
+`vm.dismissHostWorkspacePicker`. `Routes.DISCUSSION_LIST` and `DiscussionListScreen` stay in the graph,
+unreachable — removing them remains out of scope.
 
 See [ViewModel wiring](channel-list-viewmodel.md#wiring) for the Koin binding, the `hostState` combine and the
-fold/selection state, and [flat-list compatibility](navigation.md#temporary-flat-list-compatibility) for what
-of the pre-#729 adapter remains (the FAB paths only, now). The screen keeps its `(state, hostState, onEvent)`
-contract; ViewModels remain scoped to their `NavBackStackEntry`, and `collectAsStateWithLifecycle()` controls
-screen subscriptions.
+fold/selection state, and [flat-list compatibility](navigation.md#temporary-flat-list-compatibility) for the
+pre-#729 adapter's one remaining consumer (`DiscussionListScreen`, unreachable) now that #738 removed this
+screen's last use of it. The screen keeps its `(hostState, onEvent)` contract; ViewModels remain scoped to
+their `NavBackStackEntry`, and `collectAsStateWithLifecycle()` controls screen subscriptions.
 
 ## Configuration
 
@@ -309,9 +354,15 @@ screen subscriptions.
   in #737:** `cd_pyrycode_logo` — its only consumer was the retired top app bar's logo.
 - **Strings retained:** `R.string.app_name` (still the manifest label; no longer rendered on this screen since
   #737), `cd_open_settings` (carried forward verbatim onto the new settings entry so
-  `InteractiveStreamE2ETest`'s `CD_OPEN_SETTINGS` mirror keeps matching), `cd_new_discussion`,
-  `cd_long_press_fab_pick_workspace`, `channel_list_empty`, `channels_section_header`, `untitled_discussion`
-  (reused by both the tree's conversation fallback and the pre-existing discussion-row fallback).
+  `InteractiveStreamE2ETest`'s `CD_OPEN_SETTINGS` mirror keeps matching), `channel_list_empty`,
+  `channels_section_header`, `untitled_discussion` (reused by both the tree's conversation fallback and the
+  pre-existing discussion-row fallback).
+- **Strings added in #738:** `R.string.cd_tree_section_pair_host` ("Pair another host, %1$s"),
+  `cd_tree_host_new_chat` ("New chat on %1$s") and `cd_tree_host_pick_workspace` ("Pick a workspace for the
+  new chat on %1$s") — the two add controls' content descriptions, each formatted with the section title or
+  the row's already-clamped host name. **Strings retired in #738:** `cd_new_discussion` and
+  `cd_long_press_fab_pick_workspace` — the retired button's two labels; nothing else in `res/values/strings.xml`
+  referenced them.
 - **Drawables:** `R.drawable.ic_pyry_logo` (since #68) — no longer used on this screen since #737 retired the
   logo along with the old bar; its only remaining consumer is [`WelcomeScreen`](welcome-screen.md).
 
@@ -327,19 +378,24 @@ Three `@Preview` composables (re-cut in #731 from the prior six flat/discussion 
   two sections, host containers, workspace rows, one collapsed host, one selected conversation row.
 - `ChannelListScreenTreeDarkPreview` — same data, dark theme (`uiMode = Configuration.UI_MODE_NIGHT_YES`).
 - `ChannelListScreenEmptyPreview` (`@Preview(name = "No hosts — Light", …)`) — `hostState = HostChannelListState()`
-  (no hosts), `state = ChannelListUiState.Empty(...)`. Renders the list's own bar above the centred empty-state
-  copy and the FAB — the one placeholder path #731 retains.
+  (no hosts). Renders the list's own bar above the centred empty-state copy — the tree's one blank state,
+  and (since #738) the screen's only remaining placeholder path.
 
 All three previews render the list's own bar since #737 and were compared against the Figma screenshot of
 node `133-259` before that PR.
 
-`Loading` and `Error` are still not previewed — transient placeholders, unchanged rationale from #45.
+The `Loading` / `Error` previews #45's rationale used to justify skipping stayed unpreviewed through their
+whole life and retired with the flat state itself (#738); the screen's transient states now have no visual
+distinction from the tree's own blank at all — see the next section.
 
 ## Edge cases / limitations
 
 - **The tree's only blank state is zero hosts.** A host with a snapshot but no channels or chats still draws
   its own `TreeHostRow` and no workspaces underneath — that is content, not an empty screen. Only
-  `hostState.hosts.isEmpty()` falls back to the compatibility placeholders.
+  `hostState.hosts.isEmpty()` falls back to the empty placeholder — the same copy for a cold start (no
+  snapshot yet) and an upstream failure, now that #738 retired the flat state's distinct `Loading` /
+  `Error(message)` texts. No acceptance criterion named this collapse; it falls directly out of AC-4's
+  instruction to retire the flat state along with its placeholders.
 - **Fold state is never pruned against an incoming snapshot.** A host or workspace that momentarily
   disappears during a reconnect comes back exactly as folded as the operator left it — see
   [ChannelListViewModel](channel-list-viewmodel.md) for the ViewModel-side rationale.
@@ -353,8 +409,9 @@ node `133-259` before that PR.
 - **No error/loading affordance on the create call itself**, **no retry affordance on `Error`**, **no
   `flowOn(Dispatchers.IO)` anywhere in the chain** — all unchanged from the flat-list era; see
   [ChannelListViewModel](channel-list-viewmodel.md) for the state-projection side of each.
-- **Press-elevation animation is lost** on the manual-`Surface` FAB (#221) — unchanged; the `combinedClickable`
-  default ripple covers the feedback gap.
+- **Press-elevation animation is lost** on the manual-`Surface` construction `ChannelListFab` pioneered and
+  `TreeAddControl` inherits (#221, #738) — unchanged; the `combinedClickable` default ripple covers the
+  feedback gap.
 - **Instrumented test coverage.** `ChannelListScreenTest` (`app/src/androidTest/.../list/ChannelListScreenTest.kt`)
   builds a hand-crafted `HostChannelListState` and asserts, among others: both sections render their host,
   workspace and conversation rows with nothing folded on first show; folding a host hides its workspaces and
@@ -363,16 +420,24 @@ node `133-259` before that PR.
   expressed as a failing assertion first); exactly the row matching `selected` asserts selected via
   `assertIsSelected` / `assertIsNotSelected` (a semantics read, not a colour read); each row carries its
   section's test tag; a tree far taller than the viewport reaches its last row via
-  `performScrollToNode(hasScrollAction())`; a nameless host and a nameless conversation render their fallback
-  labels; and the retained chrome tests (FAB tap, no-hosts placeholder) keep passing.
-  `listBar_drawsBothEntriesAndNoneOfTheRetiredChrome_onEveryDraw` (#737) walks one composition through all
-  four draws — loading, error, the empty placeholder and the tree — identifying each by its own distinguishing
-  copy before asserting both bar entries `assertIsDisplayed` and the app name / logo description
-  `assertDoesNotExist`; a bar placed inside the tree's scroll container would have passed on the loaded draw
-  alone and vanished on the three placeholders, which is the mistake this walk exists to catch.
-  `archiveEntry_emitsArchiveTapped` (#737) guards the new event, mirroring the unchanged
-  `settingsGear_emitsSettingsTapped` that guards `cd_open_settings` surviving. Navigation itself is not
-  re-proven here — the scripted device gate drives tap-to-thread end to end.
+  `performScrollToNode(hasScrollAction())`; and a nameless host and a nameless conversation render their
+  fallback labels.
+  `listBar_drawsBothEntriesAndNoneOfTheRetiredChrome_onEveryDraw` (#737, reshaped #738) walks one composition
+  through both draws — the empty placeholder and the tree (four before #738 retired the flat state's loading
+  and error draws) — identifying each by its own distinguishing copy before asserting both bar entries
+  `assertIsDisplayed` and the app name / logo description `assertDoesNotExist`; a bar placed inside the tree's
+  scroll container would have passed on the loaded draw alone and vanished on the placeholder, which is the
+  mistake this walk exists to catch. `archiveEntry_emitsArchiveTapped` (#737) guards the new event, mirroring
+  the unchanged `settingsGear_emitsSettingsTapped` that guards `cd_open_settings` surviving.
+  `sectionHeaders_eachCarryTheirOwnPairingControl` (#738) asserts both section headers carry a control,
+  each separately named, each emitting `PairHostTapped`; `hostRowAddControl_targetsItsOwnHost_onTapAndOnLongPress`
+  drives a two-host tree's **second** host and asserts the emitted `TreeHostAddTapped` /
+  `TreeHostAddLongPressed` carry that host's `serverId`, so a globally-selected wiring could not pass;
+  `hostRowAddControl_doesNotFoldTheRowItSitsIn` taps the control and asserts one `TreeHostAddTapped` with the
+  row's subtree still drawn, proving the nesting claim in [Add controls](#add-controls-738) rather than
+  trusting the inherited merge rule. `workspacePicker_drawsExactlyWhenItsTargetIsSet` (#738) replaces the old
+  `when (state)` assertion with a direct read of `hostState.workspacePickerServerId`.
+  Navigation itself is not re-proven here — the scripted device gate drives tap-to-thread end to end.
 
 ## Related
 
@@ -381,7 +446,8 @@ node `133-259` before that PR.
   [`../codebase/26.md`](../codebase/26.md), [`../codebase/68.md`](../codebase/68.md),
   [`../codebase/69.md`](../codebase/69.md) (inline recent-discussions section — retired by #731),
   [`../codebase/99.md`](../codebase/99.md), [`../codebase/162.md`](../codebase/162.md),
-  [`../codebase/221.md`](../codebase/221.md) (FAB long-press → `WorkspacePicker`)
+  [`../codebase/221.md`](../codebase/221.md) (FAB long-press → `WorkspacePicker` — the button itself
+  retired by #738, the picker wiring it originated carried forward)
 - Specs: `docs/specs/architecture/46-channellistscreen-lazycolumn-tap-nav.md`,
   `docs/specs/architecture/21-channel-list-top-app-bar.md`,
   `docs/specs/architecture/22-channel-list-fab-new-discussion.md`,
@@ -394,19 +460,22 @@ node `133-259` before that PR.
   `docs/specs/architecture/221-channel-list-fab-long-press-workspace-picker.md`,
   `docs/specs/architecture/730-mobile-tree-rows.md`,
   `docs/specs/architecture/731-assemble-conversation-tree.md`,
-  `docs/specs/architecture/737-list-settings-archive-bar.md`
+  `docs/specs/architecture/737-list-settings-archive-bar.md`,
+  `docs/specs/architecture/738-list-add-controls-retire-fab.md`
 - Upstream: [ChannelListViewModel](./channel-list-viewmodel.md) (`hostState` producer — fold/selection state,
-  `onHostRowTapped`, `onFoldToggled`, `sendHostDiscussion`; compatibility `state` producer + `onEvent` reducer
-  + `navigationEvents`), [Tree rows](#tree-rows-730) (`TreeSectionHeader` / `TreeHostRow` / `TreeWorkspaceRow`
-  / `TreeConversationRow`, #730), [`HostWorkspaceGroup`](channel-list-viewmodel-projection.md) (#729's
-  workspace projection this screen iterates), [ConversationAvatar](./conversation-avatar.md),
+  `onHostRowTapped`, `onFoldToggled`, `createHostDiscussion`, `openHostWorkspacePicker`; the compatibility
+  `state` producer, `onEvent` reducer and `navigationEvents` this screen once also consumed retired with the
+  button in #738), [Tree rows](#tree-rows-730) (`TreeSectionHeader` / `TreeHostRow` / `TreeWorkspaceRow`
+  / `TreeConversationRow`, #730; `TreeAddControl` since #738), [`HostWorkspaceGroup`](channel-list-viewmodel-projection.md)
+  (#729's workspace projection this screen iterates), [ConversationAvatar](./conversation-avatar.md),
   [WorkspacePicker](./workspace-picker.md), [Navigation](./navigation.md), [Dependency injection](./dependency-injection.md)
 - Downstream: #737 (done — draws the list's own settings + archive bar in the `topBar` slot this section
   describes; #740 files the still-open follow-up, a rung-3 scenario reaching Archived through the list's own
-  archive entry rather than Settings'), #738 (the remaining half of #732's split — retires the FAB and the
-  compatibility `ChannelListUiState` placeholders this slice deliberately kept; adds the section-header and
-  host-row add controls), #715 (rebinds the archive entry to a specific host instead of the unscoped
-  `Routes.ARCHIVED_DISCUSSIONS`), #668 (indicator-pair live accuracy, conversation-row unread/activity state),
-  #665 (conversation-row edit pencil), #642 (host-row edit control), #664 (add-workspace content behind #738's
-  control), #675 (disconnected-host repair control), #154 / Phase 3 Settings / Phase 4 items predating #731
-  remain as recorded in [`../codebase/`](../codebase/) history.
+  archive entry rather than Settings'), #738 (done — the remaining half of #732's split; retired the FAB and
+  the compatibility `ChannelListUiState` placeholders #731 deliberately kept, and gave the list its own
+  section-header and host-row add controls), #715 (rebinds the archive entry to a specific host instead of
+  the unscoped `Routes.ARCHIVED_DISCUSSIONS`), #668 (indicator-pair live accuracy, conversation-row
+  unread/activity state), #665 (conversation-row edit pencil), #642 (host-row edit control), #663 (the
+  workspace row's own add control — not #738's), #664 (the add controls' modal content, beyond #738's reuse
+  of the existing pairing scanner for the section header), #675 (disconnected-host repair control), #154 /
+  Phase 3 Settings / Phase 4 items predating #731 remain as recorded in [`../codebase/`](../codebase/) history.

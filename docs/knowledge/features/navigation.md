@@ -11,8 +11,8 @@ both the owning `serverId` and the host-local `conversationId`.
 - **`welcome`** (start destination when no paired-server record exists) — renders `WelcomeScreen` (#7).
 - **`scanner`** — renders [ScannerScreen](scanner-screen.md) with its destination-scoped ViewModel, camera permission launcher and live preview. A decoded QR is parsed into an immutable fingerprint/record confirmation state without writing. Confirm saves, starts the controller and navigates to `channel_list`, popping the scanner inclusively; this camera path does not await encrypted readiness. Decline/Back from confirmation re-arms scanning. Paste actions navigate to `pair_code`; ordinary Back pops to the caller.
 - **`pair_code`** — renders [PairCodeScreen](paste-code-dialog.md) with a destination-scoped `PairCodeViewModel`. Its optional-name form, fingerprint confirmation and saved-target connection wait stay within one route. Cancel returns to the caller; success clears the previous graph entries and opens `channel_list` only after both target connection legs are ready.
-- **`channel_list`** — renders [ChannelListScreen](channel-list-screen.md). The temporary flat list still reads selected-host state, while its route adapter captures a host for row/create/picker actions and consumes `hostNavigationEvents`.
-- **`discussions`** — renders [DiscussionListScreen](discussion-list-screen.md), reached from the channel list's recent-discussions link. Its adapter captures host-qualified row and promotion targets and consumes only `hostNavigationEvents`; Back pops the stack.
+- **`channel_list`** — renders [ChannelListScreen](channel-list-screen.md), fed entirely by host-qualified state since #738 retired the flat compatibility model and its `selectedServerId()` adapter for this screen. Its own section-header add control also opens `scanner` (`ChannelListEvent.PairHostTapped → navController.navigate(Routes.SCANNER)`, #738) — the first entry into pairing that does not require an unpaired phone, reusing the existing `scanner` destination above rather than adding a second flow; both of that destination's completions (camera confirm, and manual entry via `pair_code`) already land back here.
+- **`discussions`** — renders [DiscussionListScreen](discussion-list-screen.md). Unreachable since #731 retired the channel list's "see all" link that was its only entry point; the route, screen and its adapter (captures host-qualified row and promotion targets, consumes only `hostNavigationEvents`) stay in the graph regardless — removing them is out of scope for both #731 and #738.
 - **`conversation_thread/{serverId}/{conversationId}`** — renders [ThreadScreen](thread-screen.md#wiring) with a destination-scoped ViewModel and dependencies from the exact retained host. Back pops the stack; “Show the literal screen” passes the same target to `Routes.literal(target)`.
 - **`literal_screen/{serverId}/{conversationId}`** — renders [LiteralScreenSurface](literal-screen-surface.md#wiring). Each new back-stack entry owns a fresh `LiteralScreenViewModel`, isolating snapshots even when two hosts use the same conversation id. Request and Retry use that entry's host and conversation.
 - **`settings`** — renders `SettingsScreen` (#64; About-row wiring #90; Storage-row wiring #94; About-row copy + License-row treatment #163; About section → single navigable entry #271). Reached by the settings entry on the channel list's own bar (#21, redrawn as its own bar by #737) via `ChannelListEvent.SettingsTapped → navController.navigate(Routes.SETTINGS)`. Destination block passes three navigation lambdas: `onBack = { navController.popBackStack() }`, `onOpenArchivedDiscussions = { navController.navigate(Routes.ARCHIVED_DISCUSSIONS) }` (#94), and `onOpenAbout = { navController.navigate(Routes.ABOUT) }` (#271). An earlier third lambda `onOpenLicense = { navController.navigate(Routes.LICENSE) }` from #91 was dropped in #163 along with the `LicenseScreen` parameter; #271's `onOpenAbout` is its structural successor — the whole About section is now a single navigable entry into [`AboutScreen`](about-screen.md). See [Settings screen](settings-screen.md).
@@ -57,7 +57,9 @@ Every scanner paste action (viewport, denied and error) navigates to
 `koinViewModel<PairCodeViewModel>()` from `appModule`, using the observable
 collection store and registry. Its state holds both drafts in memory, without
 saving the pairing code in navigation arguments or saved instance state.
-List entry points remain the separate #641 work.
+The channel list's own section-header add control is a list entry point into this flow
+(`scanner`, then this route via Paste — #738); it is the first door into pairing reachable
+from an already-paired phone, where previously only the unpaired `welcome` screen had one.
 
 Pair validates the trimmed code and opens the existing fingerprint surface in
 the same destination. Confirm uses exactly the record displayed there. The host
@@ -136,16 +138,16 @@ default or scratch, independently of any paired host's migrated legacy default.
 
 [ChannelListScreen](channel-list-screen.md)'s assembled conversation tree (#729/#730/#731, split from
 \#641) resolves each row's host from the row itself — `TreeRowTapped(HostConversationTarget)` maps straight to
-`vm.onHostRowTapped(target)`, with no `selectedServerId()` lookup. The still-unreachable
-`DiscussionListScreen` (`Routes.DISCUSSION_LIST`, left in the graph but with no way to navigate to it since
-\#731 retired its "see all" entry point) and `ChannelListScreen`'s own FAB paths are the remaining consumers of
-the compatibility adapter below: at FAB activation, `selectedServerId()` captures the current relay owner or
-explicit demo id. Channel creation calls `createHostDiscussion(serverId)`; long-press opens
-`openHostWorkspacePicker(serverId)`. The host picker's captured id drives visibility in the flat
-`Loaded`/`Empty` states, and completion/dismissal use `pickHostWorkspace` / `dismissHostWorkspacePicker`.
-Asynchronous creation reads that host's default and retains its identity through
-the preference read, repository lookup and success navigation; see
-[host creation](channel-list-viewmodel-projection.md#one-shot-navigation-via-channelbuffered-22).
+`vm.onHostRowTapped(target)`, with no `selectedServerId()` lookup. `TreeHostAddTapped(serverId)` /
+`TreeHostAddLongPressed(serverId)` (#738) carry the same discipline into creation: they map straight to
+`vm.createHostDiscussion(serverId)` / `vm.openHostWorkspacePicker(serverId)` against the add control's own
+row, never `selectedServerId()`. `ChannelListScreen` and its `ChannelListViewModel` therefore have **no**
+remaining consumer of the compatibility adapter below — #738 retired the flat `ChannelListUiState`, its
+`onEvent` reducer and the `repository` constructor parameter that fed them, along with the last FAB path
+that read `selectedServerId()` for this screen. The still-unreachable `DiscussionListScreen`
+(`Routes.DISCUSSION_LIST`, left in the graph but with no way to navigate to it since #731 retired its "see
+all" entry point) is the adapter's sole remaining consumer: at row tap, `selectedServerId()` captures the
+current relay owner or explicit demo id and `RowTapped` / `SaveAsChannelRequested` resolve through it.
 
 Discussion promotion uses `requestHostPromotion(target)`, then
 `confirmHostPromotion` / `cancelHostPromotion`. The route projects the captured
@@ -153,12 +155,14 @@ host prompt into the flat `Loaded.pendingPromotion` display model; selection cha
 do not change the confirmation target. Legacy bare-id navigation flows remain on
 the ViewModels for compatibility but are not collected by the production graph.
 
-`HostWorkspaceRepository` wraps both the thread destination and the flat channel
-screen with `LocalWorkspacePickerRepository`. It uses the thread's route host or
-the list picker's captured host, so recent folders, folder creation and the final
-workspace/create action agree on ownership. Binding only the ViewModel leaves the
-picker's independent repository lookup exposed to selection changes. Settings and
-archive destination migration remains #637; see [WorkspacePicker](workspace-picker.md).
+`HostWorkspaceRepository` wraps both the thread destination and the channel list with
+`LocalWorkspacePickerRepository`. The list side passes `hostState.workspacePickerServerId`
+directly — the exact host the host row's long-press opened the picker for (#738; previously
+the same field, but populated via the FAB's `selectedServerId()` capture rather than the row's
+own id) — so recent folders, folder creation and the final workspace/create action agree on
+ownership. Binding only the ViewModel leaves the picker's independent repository lookup
+exposed to selection changes. Settings and archive destination migration remains #637; see
+[WorkspacePicker](workspace-picker.md).
 
 ## Adding a route
 

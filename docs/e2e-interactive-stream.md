@@ -23,7 +23,8 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    claude run a shell tool and asserts the tool step renders; a **thinking-spinner** scenario (#482,
    the flakiest — ships `@Ignore`-gated / manual): a pure-reasoning prompt makes real claude think a beat
    and asserts the spinner shows mid-turn; and a **create-workspace-folder** scenario (#566): long-press
-   the channel-list FAB → Workspace Picker → create a folder → land in a fresh discussion whose
+   the paired host's own add control on the channel list (#738 — the tree's host row, not the retired
+   floating button) → Workspace Picker → create a folder → land in a fresh discussion whose
    workspace is the created folder → send the ping prompt in it → re-open the picker and confirm the
    folder shows in "Recent" (exercises the #564 create wire and #565 recents wire end to end against
    real claude); a **new-session** scenario (#541): with a live, exercised session, open the thread
@@ -140,20 +141,24 @@ delimiter positioned between the two cross-session messages, driven through the 
 | Test-only credential injection seam | `app/src/androidTest/.../e2e/E2eInstrumentationRunner.kt` + `E2eTestApplication.kt` |
 | The instrumented test | `app/src/androidTest/.../e2e/InteractiveStreamE2ETest.kt` |
 | Host orchestration | `scripts/e2e-emulator.sh` |
-| Arrival marker + create-chat helpers (#736): `awaitChannelList()` / `createChat()` / `openWorkspacePicker()`, keyed on `CHANNEL_LIST_TEST_TAG` | `app/src/main/.../ui/conversations/list/ChannelListScreen.kt` (marker) + `app/src/androidTest/.../e2e/InteractiveStreamE2ETest.kt` (helpers) |
+| Arrival marker + create-chat helpers (#736, re-pointed at the host row's own control by #738): `awaitChannelList()` / `createChat()` / `openWorkspacePicker()`, keyed on `CHANNEL_LIST_TEST_TAG` and `treeHostAddTestTag(serverId)` | `app/src/main/.../ui/conversations/components/ConversationTreeRows.kt` (`treeHostAddTestTag`) + `app/src/main/.../ui/conversations/list/ChannelListScreen.kt` (marker) + `app/src/androidTest/.../e2e/InteractiveStreamE2ETest.kt` (helpers) |
 
-**Arrival and creation handles (#736).** Every scenario reaches the channel list through the shared
+**Arrival and creation handles (#736, #738).** Every scenario reaches the channel list through the shared
 `awaitChannelList()` helper, which waits on the list's own app-authored arrival marker
-(`CHANNEL_LIST_TEST_TAG`, set once on the screen's root so all four draws — loading, error, the empty
-placeholder and the tree — carry it) instead of waiting on the floating action button's content
-description. `createChat()` (tap) and `openWorkspacePicker()` (long-press) are the only two remaining
-places that name the button (`CD_NEW_DISCUSSION`); each now carries its own wait for the control before
-driving it, since the marker matches on all four draws and no longer implies the list has loaded the way
-the old button wait did. This moved 33 call sites (20 arrival waits, 11 taps, 2 long-presses, the two
-`@Ignore`d manual scenarios included) onto the three helpers while the button was still there, so the live
-gate proved the replacement handles before #738 removes the button and leaves only the two creation
-helpers to edit. See [Conversation tree](../knowledge/features/channel-list-screen.md#conversation-tree-731) for
-the marker's production-side KDoc and its relationship to the tier tags #731 minted the same way.
+(`CHANNEL_LIST_TEST_TAG`, set once on the screen's root so both draws — the blank placeholder and the
+assembled tree — carry it) instead of waiting on a visible element. `createChat()` (tap) and
+`openWorkspacePicker()` (long-press) drive a shared `awaitHostAddControl()` helper that waits on and returns
+the **paired host's own** add control — `treeHostAddTestTag(serverId)`, `serverId` read from the harness's
+own `ARG_SERVER_ID` instrumentation argument — since #738 moved chat creation off the floating button and
+onto each host row, and a per-host tag stays unambiguous once a second host is paired where the button's one
+fixed content description could not. This moved 33 call sites (20 arrival waits, 11 taps, 2 long-presses, the
+two `@Ignore`d manual scenarios included) onto the three helpers while the button was still there, so the
+live gate proved the replacement handles before #738 removed the button and left only the two creation
+helpers to re-point at the host row's control. See
+[Conversation tree](../knowledge/features/channel-list-screen.md#conversation-tree-731) for the marker's
+production-side KDoc and its relationship to the tier tags #731 minted the same way, and
+[Add controls](../knowledge/features/channel-list-screen.md#add-controls-738) for `treeHostAddTestTag`'s own
+clamping rule.
 
 Rung 3 covers eight scenarios on this one harness: the **ping** happy path (a constrained reply renders);
 a **tool-use** scenario (#481 — a constrained prompt makes real claude run a shell tool, asserting the
@@ -161,8 +166,8 @@ tool step renders, keyed tolerantly on the verbatim tool name `"Bash"` in the to
 **thinking-spinner** scenario (#482 — a pure-reasoning prompt makes real claude think a beat, asserting
 the spinner is displayed mid-turn, keyed tolerantly on the `cd_thread_thinking` content-description); a
 **create-workspace-folder** scenario (#566 —
-`interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace`: long-press the FAB → Workspace
-Picker → create a folder → land in a fresh discussion whose workspace is the created folder → send the
+`interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace`: long-press the paired host's own add
+control on the channel list (#738) → Workspace Picker → create a folder → land in a fresh discussion whose workspace is the created folder → send the
 ping prompt into it → re-open the picker from the channel list and assert the folder shows in "Recent",
 proving the #564 create wire and #565 recents wire end to end against real claude); a **new-session**
 scenario (#541 — `interactiveTurn_newSession_rendersSessionBoundaryDelimiter`: prove the session is live
