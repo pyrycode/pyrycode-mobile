@@ -11,7 +11,7 @@ data class ThreadUiState(
     val displayName: String,
     val isPromoted: Boolean = false,                  // new in #137
     val hasMessages: Boolean = false,                 // new in #137
-    val workspaceLabel: String = "scratch",           // new in #137
+    val workspaceLabel: String = "scratch",           // new in #137; label-first (workspaceDisplayName) since #722
     val workspacePickerVisible: Boolean = false,      // new in #137
     val showRenameDialog: Boolean = false,            // new in #141
     val saveAsChannelDialog: SaveAsChannelDialogState? = null,  // new in #142 — nullable sub-state carrier
@@ -116,7 +116,7 @@ class ThreadViewModel(
                 displayName = conv?.displayName() ?: conversationId,
                 isPromoted = conv?.isPromoted ?: false,
                 hasMessages = content.items.any { it is ThreadItem.MessageItem },  // sourced from content.items since #461
-                workspaceLabel = conv?.workspaceLabel() ?: "scratch",
+                workspaceLabel = workspaceDisplayName(cwd = conv?.cwd ?: "", label = conv?.workspaceLabel),  // #137 basename-only rule replaced by the shared label-first rule in #722
                 workspacePickerVisible = pickerVisible,
                 showRenameDialog = dialogs.renameVisible,         // new in #141, destructured from bundle in #142
                 saveAsChannelDialog = dialogs.saveAsChannel,      // new in #142
@@ -207,9 +207,9 @@ private fun Conversation.displayName(): String =
     name?.takeIf { it.isNotBlank() }
         ?: if (isPromoted) "Untitled channel" else "Untitled discussion"
 
-private fun Conversation.workspaceLabel(): String =        // new in #137
-    if (cwd.isEmpty() || cwd == DEFAULT_SCRATCH_CWD) "scratch"
-    else cwd.substringAfterLast('/').ifEmpty { cwd }
+// private fun Conversation.workspaceLabel(): String, new in #137, deleted in #722 — replaced by the
+// shared de.pyryco.mobile.ui.workspace.workspaceDisplayName(cwd, label) called above; see workspace-chip.md
+// § `workspaceLabel` derivation for the label-first rule and the MAX_WORKSPACE_LABEL_CHARS clamp.
 
 // ThreadScreen.kt
 @OptIn(ExperimentalMaterial3Api::class)
