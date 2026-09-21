@@ -73,7 +73,12 @@ fun SettingsScreen(
     onOpenHost: (String) -> Unit,
     onPairServer: () -> Unit,
     onBack: () -> Unit,
-    onOpenArchivedDiscussions: () -> Unit,
+    /**
+     * Opens this destination's own host's archive, or null when it owns none (#715). Null draws the
+     * row inert through [SettingsRow]'s own nullable-click affordance — an entry that cannot lead
+     * anywhere should not offer the tap, and a destination with no owner has no archive to open.
+     */
+    onOpenArchivedDiscussions: (() -> Unit)?,
     onOpenAbout: () -> Unit,
     modifier: Modifier = Modifier,
 ) {

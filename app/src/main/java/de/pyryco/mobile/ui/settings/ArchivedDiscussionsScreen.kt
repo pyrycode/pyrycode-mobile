@@ -11,6 +11,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.SnackbarHost
@@ -25,12 +26,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.ui.conversations.components.ArchiveRow
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.datetime.Instant
@@ -42,6 +45,7 @@ fun ArchivedDiscussionsScreen(
     onEvent: (ArchivedDiscussionsEvent) -> Unit,
     modifier: Modifier = Modifier,
     effects: Flow<ArchivedDiscussionsEffect> = emptyFlow(),
+    hostName: String = "",
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     val resources = LocalResources.current
@@ -63,7 +67,28 @@ fun ArchivedDiscussionsScreen(
         modifier = modifier,
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.archived_title)) },
+                title = {
+                    Column {
+                        Text(stringResource(R.string.archived_title))
+                        // Which host's archive this is (#715). Figma 18:2 draws the bar's title
+                        // alone; the owning host is the ticket's own adaptation, and it renders in
+                        // the subordinate treatment the Settings host rows use for the same job.
+                        //
+                        // Clamped here rather than where the label is resolved, so the bound holds
+                        // for every caller of this screen: the name comes from a scanned QR payload
+                        // or locally-entered host metadata, and `parsePairingPayload` bounds its
+                        // shape but not its length. Drawn as plain text, never as a format argument.
+                        if (hostName.isNotBlank()) {
+                            Text(
+                                text = hostName.take(MAX_WORKSPACE_LABEL_CHARS),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = { onEvent(ArchivedDiscussionsEvent.BackTapped) }) {
                         Icon(

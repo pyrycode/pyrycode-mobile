@@ -455,7 +455,13 @@ internal fun PyryNavHost(
         composable(
             route = Routes.SETTINGS,
             arguments = Routes.settingsArguments(),
-        ) {
+        ) { backStackEntry ->
+            // Archive inherits this destination's own captured owner (#715), read back from the
+            // route rather than from selection, so the archive opened is the one this screen's
+            // count describes. A destination owning no host passes null, which draws the row inert
+            // rather than offering a tap that could only be rejected — and keeps a blank id, which
+            // matches no destination, out of `Routes.archive`.
+            val settingsOwner = Routes.settingsOwner(backStackEntry.arguments)
             val vm = koinViewModel<SettingsViewModel>()
             val connection by vm.connection.collectAsStateWithLifecycle()
             val themeMode by vm.themeMode.collectAsStateWithLifecycle()
@@ -512,33 +518,52 @@ internal fun PyryNavHost(
                     // unpaired phone has a working way out of this screen's no-host state.
                     onPairServer = { navController.navigate(Routes.SCANNER) },
                     onBack = { navController.popBackStack() },
-                    onOpenArchivedDiscussions = { navController.navigate(Routes.ARCHIVED_DISCUSSIONS) },
+                    onOpenArchivedDiscussions =
+                        settingsOwner.takeIf { it.isNotEmpty() }?.let { owner ->
+                            { navController.navigate(Routes.archive(owner)) }
+                        },
                     onOpenAbout = { navController.navigate(Routes.ABOUT) },
                 )
             }
         }
-        composable(Routes.ARCHIVED_DISCUSSIONS) {
-            val vm = koinViewModel<ArchivedDiscussionsViewModel>()
-            val state by vm.state.collectAsStateWithLifecycle()
-            ArchivedDiscussionsScreen(
-                state = state,
-                onEvent = { event ->
-                    when (event) {
-                        ArchivedDiscussionsEvent.BackTapped ->
-                            navController.popBackStack()
-                        is ArchivedDiscussionsEvent.RestoreRequested ->
-                            vm.onEvent(event)
-                        is ArchivedDiscussionsEvent.TabSelected ->
-                            vm.onEvent(event)
-                    }
-                },
-                effects = vm.effects,
-            )
+        // Wrapped in HostDestination, unlike Settings and like thread/literal (#715): returning an
+        // unknown or newly-unpaired host to the channel list is exactly what keeps one host's
+        // Archive from falling back to another's, and the guard already exists. Its check resolves
+        // off the registry's saved-host map, so a merely disconnected owner keeps the screen.
+        composable(
+            route = Routes.ARCHIVED_DISCUSSIONS,
+            arguments = Routes.archiveArguments(),
+        ) { backStackEntry ->
+            HostDestination(Routes.archiveOwner(backStackEntry.arguments), destinations, navController) {
+                ArchiveDestination(navController)
+            }
         }
         composable(Routes.ABOUT) {
             AboutScreen(onBack = { navController.popBackStack() })
         }
     }
+}
+
+@Composable
+private fun ArchiveDestination(navController: NavHostController) {
+    val vm = koinViewModel<ArchivedDiscussionsViewModel>()
+    val state by vm.state.collectAsStateWithLifecycle()
+    val hostName by vm.host.collectAsStateWithLifecycle()
+    ArchivedDiscussionsScreen(
+        state = state,
+        onEvent = { event ->
+            when (event) {
+                ArchivedDiscussionsEvent.BackTapped ->
+                    navController.popBackStack()
+                is ArchivedDiscussionsEvent.RestoreRequested ->
+                    vm.onEvent(event)
+                is ArchivedDiscussionsEvent.TabSelected ->
+                    vm.onEvent(event)
+            }
+        },
+        effects = vm.effects,
+        hostName = hostName,
+    )
 }
 
 private const val SETUP_URL = "https://pyryco.de/setup"
@@ -567,7 +592,13 @@ internal object Routes {
      * destination must stay open for that case rather than bounce to the list.
      */
     const val SETTINGS = "settings?serverId={serverId}"
-    const val ARCHIVED_DISCUSSIONS = "archived_discussions"
+
+    /**
+     * Owned by a server id too (#715), but by a **required** path segment rather than the optional
+     * query argument above: Settings has to stay open for an unpaired phone, and Archive has no such
+     * case. A route that cannot express "no owner" is the cheapest way to keep one being invented.
+     */
+    const val ARCHIVED_DISCUSSIONS = "archived_discussions/{serverId}"
     const val ABOUT = "about"
 
     fun thread(target: HostConversationTarget) = "conversation_thread/${Uri.encode(target.serverId)}/${Uri.encode(target.conversationId)}"
@@ -586,6 +617,17 @@ internal object Routes {
         )
 
     fun settingsOwner(arguments: Bundle?) = arguments?.getString("serverId").orEmpty()
+
+    /**
+     * Per-component encoding, as [thread] and [literal] use: a reserved character in a server id has
+     * to stay inside its one segment rather than becoming route syntax that could match elsewhere.
+     * Callers must hold a non-blank id — a blank one yields a route no destination matches.
+     */
+    fun archive(serverId: String) = "archived_discussions/${Uri.encode(serverId)}"
+
+    fun archiveArguments() = listOf(navArgument("serverId") { type = NavType.StringType })
+
+    fun archiveOwner(arguments: Bundle?) = arguments?.getString("serverId").orEmpty()
 
     fun hostArguments() = listOf("serverId", "conversationId").map { name -> navArgument(name) { type = NavType.StringType } }
 

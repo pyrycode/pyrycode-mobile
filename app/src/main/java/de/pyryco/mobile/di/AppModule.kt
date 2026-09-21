@@ -117,8 +117,8 @@ val appModule =
         // The third dependency is the paired-server store the Edit host modal reads and writes (#744).
         viewModel { ChannelListViewModel(get(), get(), get()) }
         viewModel { DiscussionListViewModel(get(), get()) }
-        viewModel { get<ThreadDestinationFactory>().settings(get(), get(), get()) }
-        viewModel { ArchivedDiscussionsViewModel(get()) }
+        viewModel { get<ThreadDestinationFactory>().settings(get(), get()) }
+        viewModel { get<ThreadDestinationFactory>().archive(get()) }
         viewModel { get<ThreadDestinationFactory>().thread(get(), get()) }
         viewModel { get<ThreadDestinationFactory>().literal(get()) }
     }
@@ -239,18 +239,57 @@ internal class ThreadDestinationFactory(
      * [preferences] is the one process-wide store, but Settings no longer reads or writes it
      * app-wide throughout: since #714 the default workspace is read and written under the owner's
      * own key, so the view model needs the owner for more than the Connection section. The other
-     * eight preferences stay genuinely app-wide. [repository] stays compatibility-bound — the
-     * archived-discussion count is rebound with the Archive destination by #715 — while the picker's
-     * repository is bound by the route, not here.
+     * eight preferences stay genuinely app-wide.
+     *
+     * Since #715 the archived-discussion count reads the **owner's** repository rather than the
+     * compatibility one, so the number on the row matches the archive the row opens. Under a blank
+     * owner that facade is backed by a permanently-`null` repository, whose cold reads are
+     * `emptyList()` — a count of zero, which is the honest answer for a destination owning no host.
      */
     fun settings(
         handle: SavedStateHandle,
         preferences: AppPreferences,
-        repository: ConversationRepository,
     ): SettingsViewModel {
+        val serverId = handle.get<String>("serverId").orEmpty()
         RelayLog.d { "event=settings_destination_bound" }
-        return SettingsViewModel(preferences, repository, handle.get<String>("serverId").orEmpty(), hosts())
+        return SettingsViewModel(preferences, repository(serverId), serverId, hosts())
     }
+
+    /**
+     * The Archive destination, owned by the server id the Settings row captured into its route
+     * (#715).
+     *
+     * The owner's repository is resolved **once**, here, into a facade over that host's own
+     * `currentRepository` — deliberately not looked up per restore tap, which would leave a gap
+     * between deciding the host and writing to it. Because the facade is bound to one host's flow,
+     * a selection change, a reconnect or an unpair can move neither the rows nor a pending restore,
+     * and a host holding the same conversation id is unreachable from it by construction.
+     *
+     * Only the resolved label crosses into the view model, never a [SettingsHost] and never a
+     * stored record: those carry the pairing token and the server static key, and neither this
+     * screen nor its state has a redacting `toString`.
+     */
+    fun archive(handle: SavedStateHandle): ArchivedDiscussionsViewModel {
+        val serverId = handle.get<String>("serverId").orEmpty()
+        RelayLog.d { "event=archive_destination_bound" }
+        return ArchivedDiscussionsViewModel(repository(serverId), hostLabel(serverId))
+    }
+
+    /**
+     * One host's display name, or blank when no saved host matches — never another host's.
+     *
+     * Matched by the same exact, case-sensitive equality [hosts] and the registry's entry map use.
+     * The name-or-id fallback repeats `SettingsHostRow.name` rather than sharing it, the way
+     * `Conversation.displayName()` is deliberately repeated (#177): the rule is one line, and
+     * sharing it would mean exporting a resolution helper for a single caller.
+     */
+    private fun hostLabel(serverId: String): Flow<String> =
+        hosts().map { saved ->
+            saved
+                .firstOrNull { it.serverId == serverId }
+                ?.let { it.displayName?.takeIf(String::isNotBlank) ?: it.serverId }
+                .orEmpty()
+        }
 
     /**
      * Every saved host's identity and its own live status.
