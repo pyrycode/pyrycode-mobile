@@ -172,6 +172,54 @@ same magnitude, which makes it a property of this harness rather than an estimat
 device-harness fixture would remove it from three tickets at once. Production files (5), exported
 types (0), call sites (2), acceptance criteria (3) and reject branches (0) all landed as forecast.
 
+**2026-09-21 — the destination has two doors, and the plan only counted one.** Verifier MUST FIX on
+PR #757. § Design's Route section changed `Routes.ARCHIVED_DISCUSSIONS` from a navigable route into a
+route *pattern*, but the plan's reading list covered only the callers it expected to find — `Routes`,
+the destination block, `HostDestination` and the Settings row. The channel list's own archive entry,
+`PyryNavHost`'s `ChannelListEvent.ArchiveTapped` arm, still navigated to the constant. Navigation
+matched the pattern and bound the literal text `{serverId}` as the owner, `HostDestination` resolved
+neither `hasHost` nor `isSavedHost`, and the tap bounced back to the list it came from — an
+unconditional, operator-facing affordance drawn beside the settings gear on every draw of the list.
+
+The arm now captures the selected host the way the gear one line above it does:
+`destinations.selectedServerId()?.let { navController.navigate(Routes.archive(it)) }`. The two doors
+capture from deliberately different sources — this one reads selection at tap time, Settings' row
+inherits the owner its own destination already holds — and neither can pass a blank id, so § Security
+review's first SHOULD FIX still holds across both. With no host selected the tap does nothing rather
+than reaching for a route segment that matches no destination.
+
+Two lessons, both about what the plan's reading list is for. Changing the *shape* of a shared
+constant is a fan-out change even when its declaration is one line and the edit looks additive:
+`codegraph_callers` on `Routes.ARCHIVED_DISCUSSIONS` would have listed both arms, and § A1's edit
+fan-out check was skipped because two call sites is obviously under the boundary — the check was read
+as a sizing gate rather than as the enumeration it also is. And the second door was invisible to the
+whole suite: `ChannelListScreenTest.archiveEntry_emitsArchiveTapped` asserts only that the tap emits
+its event, never where it navigates, while every route-level test — `ArchiveNavigationTest` and the
+preserved `InteractiveStreamE2ETest.interactiveTurn_archiveRestore_roundTripsListMembership` alike —
+reaches Archive through the Settings door. A green suite proved the door the tests walk through, not
+the destination. `ArchiveNavigationTest.theChannelListsArchiveEntryOpensTheSelectedHostsArchive` now
+covers the other one, and asserts it follows selection on a second tap.
+
+**2026-09-21 — the owner leaves the app bar; the Open Question is closed by construction rather than
+by measurement.** Verifier SHOULD FIX on PR #757, and the plan's own second Open Question. The
+previous entry recorded the two-line `TopAppBar` title as unverified at large font scale, with
+"move the owner beside the tab row" held in reserve. Taking the fallback is the better answer than
+measuring the risk: M3's small `TopAppBar` is a fixed 64dp container, and at a 2.0 font scale the
+`titleLarge` line plus the `labelMedium` line exceed it — this was the first two-line bar title in
+the codebase, so nothing carried the risk. The owner now renders directly below the bar and above
+`SecondaryTabRow`, still outside the `when (state)` branch so the header reads the same in Loading,
+Error and Loaded. A `Text` in a `Column` grows with the font scale instead of being clipped by a
+fixed height, which retires the question rather than deferring it to an accessibility pass. Figma
+18:2's bar, which draws "Archived" alone, is now matched exactly; the AC's "keep the owning host
+identifiable in the Archive header" is met one line lower. The clamp, the `maxLines`/ellipsis and the
+render-boundary placement § Security review requires are all unchanged.
+
+**2026-09-21 — preview coverage for the owner line.** Verifier SHOULD FIX on PR #757: all three
+previews called the screen without `hostName`, so the one new visual element the PR adds rendered in
+none of them. The Discussions preview now passes an ordinary short name and the Channels preview a
+name long enough to drive the ellipsis, so both the common case and the overflow the clamp exists for
+are visible without a device.
+
 ## Size check
 
 Production `.kt` under `app/src/main/`: 5 (`MainActivity`, `AppModule`, `SettingsScreen`, `ArchivedDiscussionsViewModel`, `ArchivedDiscussionsScreen`) — at the boundary. Total written work ≈ 600 lines. New exported types: 0. Consumer call sites needing simultaneous update: 2 (`ArchivedDiscussionsScreen` in `MainActivity`, the `viewModel { }` binding) — both new parameters are defaulted or nullable, so no existing call site is forced. Acceptance criteria: 3. Reject branches: 0 new. Within every line of the one-ticket boundary; no split.
