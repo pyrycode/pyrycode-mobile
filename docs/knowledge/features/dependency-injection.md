@@ -36,7 +36,7 @@ val appModule = module {
     single { AppPreferences(get()) }              // #11
     single { FakeConversationRepository() }       // #45/#350 — concrete-only; interface bound below
     single { StableConversationRepository(get<RelayConnectionRegistry>().currentRepository) }
-    viewModel { ChannelListViewModel(get(), get()) }   // #45
+    viewModel { ChannelListViewModel(get(), get(), get()) }
 }
 
 // The #350 selector — the *only* module that binds the ConversationRepository interface.
@@ -154,10 +154,12 @@ states `Connected`. Lists and exact lookup use the existing
 relay hosts never enter these snapshots or lookups, even though their connection
 owners still exist.
 
-The source is available for host-aware consumers; Channel/Discussion list-model
-integration remains #705/#706, thread routing #636 and tree rendering #641. Existing
-consumers of `ConversationRepository` continue using the selected-host facade or
-the fake chosen by the build selector.
+`ChannelListViewModel` receives this shared source as its third constructor
+dependency and exposes [host-qualified state and actions](channel-list-viewmodel.md#state-projection).
+Its flat-screen state/events and bare-id navigation still use the selected-host
+facade or fake; host actions use exact lookup and a separate navigation stream.
+Discussion list-model integration remains #706, thread routing #636 and tree
+rendering #641.
 
 ## Adding a binding
 
@@ -166,7 +168,7 @@ the fake chosen by the build selector.
    - **Singleton** (e.g. a DataStore wrapper, repository): `single { AppPreferences(androidContext()) }`.
    - **Interface binding**: alias the existing owner, e.g. `single<RelayConnectionController> { get<RelayConnectionRegistry>() }`.
    - **Flag-gated fake↔real binding** (#350): register every candidate *concrete-only* in `appModule`, then bind the interface in a dedicated `fun fooModule(useX: Boolean = BuildConfig.USE_X) = module { single<Foo> { if (useX) get<Real>() else get<Fake>() } }` loaded alongside `appModule`. The selector **resolves** the candidates by type (`get<…>()`) — it never constructs them, so it carries none of their dependency weight, and it stays unit-testable via `koinApplication { … }` in isolation. See [`../codebase/350.md`](../codebase/350.md).
-   - **ViewModel**: `viewModel { ChannelListViewModel(get()) }` — DSL import `org.koin.core.module.dsl.viewModel` (the multiplatform-safe path; the older `org.koin.androidx.viewmodel.dsl.viewModel` is being phased out). Resolved in composables with `koinViewModel<ChannelListViewModel>()` from `koin-androidx-compose`.
+   - **ViewModel**: `viewModel { ChannelListViewModel(get(), get(), get()) }` — DSL import `org.koin.core.module.dsl.viewModel` (the multiplatform-safe path; the older `org.koin.androidx.viewmodel.dsl.viewModel` is being phased out). Resolved in composables with `koinViewModel<ChannelListViewModel>()` from `koin-androidx-compose`.
 3. No registration step elsewhere. The modules are wired into `startKoin` once; the new definition flows through automatically. (A binding selected by a build flag goes in its own module per the #350 pattern above, not inside `appModule`.)
 
 The transient pending-consumers comment from #32 has been fully consumed (#11 + #45 together) — there's no longer a placeholder block in `AppModule.kt`. New bindings append directly inside `module { ... }`, singletons before `viewModel { }` lines for readability.
@@ -181,6 +183,12 @@ preserved. Both selectors include `hostConversationModule` so relay instrumentat
 also resolves the shared relay source without replacing its tapped facade.
 
 ## Testing
+
+`HostChannelListViewModelTest.appModuleInjectsSharedDemoSourceAndCreatesThroughExistingFakeSingleton`
+resolves the actual `appModule` ViewModel definition with JVM preferences and the
+fake selector. It verifies that the source is shared, only `demo` resolves, and a
+host-targeted creation appears in the existing fake singleton's rows. A test that
+constructs the ViewModel directly would miss a missing third constructor binding.
 
 `ConversationRepositoryBindingTest` verifies the generated flag and resolved
 singleton against Gradle's separate `expectedUseRelayRepository` test property.
