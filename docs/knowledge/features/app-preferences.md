@@ -1,20 +1,60 @@
 # App preferences
 
-Typed wrapper around a single shared `DataStore<Preferences>` for app-level key-value state. The home for non-secret app settings that survive process death (appearance + per-conversation defaults today; more in Phase 3). Paired-server state moved out to the encrypted PairedServerStore in #295.
+Typed wrapper around a single shared `DataStore<Preferences>` for non-secret settings that survive process death. Workspace defaults are stored by host; appearance, model, effort, YOLO and notification preferences remain app-wide. Paired-server state lives in the encrypted [PairedServerStore](paired-server-store.md).
 
 ## What it does
 
-Exposes app-level preferences as typed `Flow<T>` reads + `suspend fun` writes. Seven preferences today, in three groups — the two foundational appearance keys, the four "Defaults for new conversations" keys added in #231, and the first Notifications key (`notificationsEnabled`, added in #268):
+Exposes preferences as typed `Flow<T>` reads + `suspend fun` writes, covering appearance, defaults for new conversations and notifications:
 
 - `themeMode: Flow<ThemeMode>` — `ThemeMode.SYSTEM` by default (#86); persisted as the enum's `name` under `stringPreferencesKey("theme_mode")`. Both "key absent" and "stored string not in `ThemeMode.entries`" fall through to `SYSTEM` via `ThemeMode.entries.firstOrNull { it.name == stored } ?: ThemeMode.SYSTEM` — no throw, no `runCatching`. Read at two surfaces: at `MainActivity.setContent`'s root, an `appPreferences.themeMode.collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)` resolves `darkTheme: Boolean` for `PyrycodeMobileTheme(...)` (preserving `isSystemInDarkTheme()` on `SYSTEM`); since #87 the Settings route reads it via `koinViewModel<SettingsViewModel>().themeMode.collectAsStateWithLifecycle()` (a `StateFlow` projection over the same upstream — see [Settings ViewModel](settings-viewmodel.md)). The matching `suspend fun setThemeMode(mode: ThemeMode)` is wired in #87 by `SettingsViewModel.onSelectTheme(...)`, called from the Settings → Theme picker dialog's confirm button; one write fans out to both collectors above.
 - `useWallpaperColors: Flow<Boolean>` — `false` by default (#88); `booleanPreferencesKey("use_wallpaper_colors")`. Read at two surfaces: at `MainActivity.setContent`'s root as a sibling to the `themeMode` collector, then forwarded into `PyrycodeMobileTheme(darkTheme = …, dynamicColor = useWallpaperColors)`; and since #89 inside `composable(Routes.SETTINGS)` via `koinViewModel<SettingsViewModel>().useWallpaperColors.collectAsStateWithLifecycle()` (a `StateFlow` projection over the same upstream — see [Settings ViewModel](settings-viewmodel.md)). The theme's pre-existing SDK gate (`dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S` at `Theme.kt:275`) handles the "Android < 12 OR preference false → brand palette" branch internally, so no composition-root version check is needed. Matching `suspend fun setUseWallpaperColors(enabled: Boolean)` is wired in #89 by `SettingsViewModel.onToggleUseWallpaperColors(...)`, called from the Settings → Appearance "Use Material You dynamic color" switch row's `onCheckedChange` (headline updated from the prior "Use wallpaper colors" in #163 to match Figma `17:2`); one write fans out to both collectors above.
 
-"Defaults for new conversations" keys (#231, schema-only — no UI/consumer wiring yet; read by the eventual new-conversation materialiser and by the StatusSheet override stubs #228/#229):
+"Defaults for new conversations" preferences:
 
 - `defaultModel: Flow<Model>` — `Model.OPUS_4_7` by default; `stringPreferencesKey("default_model")` holding `.name`. Tolerant-unknown fallback via `Model.entries.firstOrNull { it.name == stored } ?: Model.OPUS_4_7` — same shape as `themeMode`. Matching `suspend fun setDefaultModel(model: Model)` was wired by [#232](../codebase/232.md)'s Settings model-picker slice via `SettingsViewModel.onSelectDefaultModel(...)`. The first **read** consumer landed earlier in [#253](../codebase/253.md) — [`ThreadViewModel.selectedModelFlow`](thread-screen.md) pre-combines this flow with an in-memory `MutableStateFlow<Model?>` per-conversation override before folding into the main `combine` — so a Settings-side write from [#232](../codebase/232.md) now fans out to both the Settings row's own subtitle and the StatusSheet model section on every open conversation. `Model` (`{ OPUS_4_7, SONNET_4_6, HAIKU_4_5 }`) in `data/preferences/Model.kt` gained a top-level `fun Model.label(): String` extension in [#253](../codebase/253.md) — see [the (partially walked-back) `.label()` decision below](#design-decision-defer-label-extensions-on-data-layer-enums).
 - `defaultEffort: Flow<Effort>` — `Effort.HIGH` by default; `stringPreferencesKey("default_effort")` holding `.name`. Same tolerant-unknown fallback shape. Matching `suspend fun setDefaultEffort(effort: Effort)`. `Effort` (`{ LOW, MEDIUM, HIGH, XHIGH, MAX }`) lives in `data/preferences/Effort.kt`; the `fun Effort.label(): String` extension lives one package over at `ui/settings/EffortPickerDialog.kt:77` (originally `internal` per [#233](../codebase/233.md); widened to top-level public in [#229](../codebase/229.md) when the StatusSheet `FilterChip` row became the second consumer — see [the design decision below](#design-decision-defer-label-extensions-on-data-layer-enums) for the per-enum walk-back rule).
 - `defaultYolo: Flow<Boolean>` — `false` by default; `booleanPreferencesKey("default_yolo")`. Mirrors `useWallpaperColors`. Matching `suspend fun setDefaultYolo(enabled: Boolean)`.
-- `defaultWorkspace: Flow<String>` — `DEFAULT_SCRATCH_CWD` by default (imported from `de.pyryco.mobile.data.model`, **not** re-declared here); `stringPreferencesKey("default_workspace")`. Holds either the scratch-cwd sentinel or a bound-folder cwd as a plain `String` — reuses the same convention `Conversation.cwd` already encodes, deliberately not a `sealed Workspace { Scratch; Bound(cwd) }` (would be premature abstraction for one slice of work; downstream consumers all work in `String` terms). Matching `suspend fun setDefaultWorkspace(cwd: String)`. **First *read* consumer landed in #240** — [`ChannelListViewModel.CreateDiscussionTapped`](./channel-list-viewmodel.md) reads it via `appPreferences.defaultWorkspace.first()` inside the existing `viewModelScope.launch { … }` and passes it to `repository.createDiscussion(workspace = …)`. **First *write* consumer landed in [#235](../codebase/235.md)** — the Settings "Default workspace" row opens the reused [`WorkspacePicker`](./workspace-picker.md) host and persists the pick via `SettingsViewModel.onSelectDefaultWorkspace(path)` → `setDefaultWorkspace(path)`. With both ends wired the round-trip is closed end-to-end: a path picked in Settings now changes where the next FAB short-press discussion is created (distinguishing `defaultWorkspace` from `defaultYolo`, which stays write-live / read-dead after #234). The long-press FAB (`ChannelListEvent.WorkspacePicked`) intentionally bypasses the read — an explicit per-conversation pick always overrides the default.
+- `defaultWorkspace(serverId: String): Flow<String>` — a host's default workspace,
+  using the same plain `String` path or `DEFAULT_SCRATCH_CWD` sentinel as
+  `Conversation.cwd`. Import the sentinel from `data.model`; do not redefine it.
+  The matching suspend operations are `setDefaultWorkspace(serverId, cwd)` and
+  `removeDefaultWorkspace(serverId)`, both returning `Result<Unit>`.
+
+  **Identity and fallback.** Keys use `default_workspace_host:<serverId>` with the
+  exact saved server id: no trimming, case folding, host labels or relay URLs.
+  Missing or removed values always read as scratch, before and after migration;
+  host reads never fall back to the unqualified path. Updating or removing one
+  host's value leaves other hosts and app-wide preferences unchanged, including
+  after reopening the store.
+
+  **One-time migration.** The caller explicitly invokes the suspend
+  `migrateDefaultWorkspace(initialServerIds: Set<String>): Result<Unit>` with its
+  initial saved-host snapshot. The first successful call permanently records the
+  sole id as legacy owner, even if no legacy path exists. Zero or multiple ids
+  permanently record no owner. An existing legacy path is copied only to that
+  owner and only when its host key is absent; an existing value, including an
+  explicit scratch value, wins. Ownership, transfer, completion and removal of
+  the old `default_workspace` key commit in one DataStore edit. Repeated calls,
+  restart or later pairing cannot repeat the transfer or reassign ownership.
+
+  **Transitional legacy API.** The unqualified `defaultWorkspace: Flow<String>`
+  property and `setDefaultWorkspace(cwd: String)` keep using `default_workspace`
+  until migration succeeds. Afterwards they resolve the recorded owner's current
+  host key from the same read snapshot or write transaction. Host-keyed updates
+  and removal therefore appear through the legacy flow too; removal yields
+  scratch while retaining ownership, so a later legacy write still targets that
+  host. With no owner, legacy reads return scratch and writes are no-ops, while
+  explicit host reads and writes remain available.
+
+  **Consumer integration.** [ChannelListViewModel](channel-list-viewmodel.md)
+  still reads the unqualified property for default discussion creation, and
+  [SettingsViewModel](settings-viewmodel.md) still reads and writes the legacy
+  API through the [workspace picker](workspace-picker.md). Explicit workspace
+  picks bypass the default. No production caller invokes migration yet:
+  [#712](https://github.com/pyrycode/pyrycode-mobile/issues/712) owns startup and
+  creation integration; [#713](https://github.com/pyrycode/pyrycode-mobile/issues/713)
+  and [#714](https://github.com/pyrycode/pyrycode-mobile/issues/714) own Settings.
+  See the [storage contract plan](../../specs/architecture/711-host-default-workspaces.md).
 
 Notifications key ([#268](../codebase/268.md)):
 
@@ -34,7 +74,7 @@ Two Koin singletons:
 2. `AppPreferences`, which takes the `DataStore<Preferences>` in its constructor and exposes typed accessors.
 
 ```kotlin
-// de/pyryco/mobile/data/preferences/AppPreferences.kt
+// de/pyryco/mobile/data/preferences/AppPreferences.kt (app-wide accessor excerpt)
 class AppPreferences(private val dataStore: DataStore<Preferences>) {
 
     val themeMode: Flow<ThemeMode> =
@@ -88,13 +128,6 @@ class AppPreferences(private val dataStore: DataStore<Preferences>) {
         dataStore.edit { prefs -> prefs[NOTIFICATIONS_ENABLED] = enabled }
     }
 
-    val defaultWorkspace: Flow<String> =
-        dataStore.data.map { prefs -> prefs[DEFAULT_WORKSPACE] ?: DEFAULT_SCRATCH_CWD }
-
-    suspend fun setDefaultWorkspace(cwd: String) {
-        dataStore.edit { prefs -> prefs[DEFAULT_WORKSPACE] = cwd }
-    }
-
     val pushToken: Flow<String?> =                                  // #364 — note: NO `?: default`
         dataStore.data.map { prefs -> prefs[PUSH_TOKEN] }
 
@@ -109,7 +142,6 @@ class AppPreferences(private val dataStore: DataStore<Preferences>) {
         val DEFAULT_EFFORT = stringPreferencesKey("default_effort")
         val DEFAULT_YOLO = booleanPreferencesKey("default_yolo")
         val NOTIFICATIONS_ENABLED = booleanPreferencesKey("notifications_enabled")
-        val DEFAULT_WORKSPACE = stringPreferencesKey("default_workspace")
         val PUSH_TOKEN = stringPreferencesKey("push_token")
     }
 }
@@ -161,7 +193,7 @@ single<DataStore<Preferences>> {
 single { AppPreferences(get()) }
 ```
 
-Reads are reactive: collectors receive the current persisted value on subscription (DataStore's replay-1) and a new emission on every `edit { }`. Writes are `suspend` and durable when the call returns.
+Reads are reactive: collectors receive the current persisted value on subscription and subsequent DataStore updates. Writes are `suspend` and durable on success. Host workspace writes, removal and migration return IO failures as `Result.failure`; cancellation propagates. A failed migration commits neither ownership nor transfer and can be retried. Legacy setters retain their throwing error behavior. Workspace operation logs contain static event/outcome codes, never server ids, paths or exception messages.
 
 ## Adding a preference
 
@@ -186,7 +218,7 @@ Reads are reactive: collectors receive the current persisted value on subscripti
 
 Once `AppPreferences` accumulates ~5 keys, consider splitting by domain (`AppPreferences` + `ThemePreferences` + `NotificationPreferences`), each backed by its **own** `DataStore<Preferences>` file binding in `AppModule.kt`. Don't pre-abstract over preference classes — rule of three.
 
-**Current count: 9 keys (post-#364).** The threshold is crossed but the split stays deferred. The four #231 keys (`defaultModel`, `defaultEffort`, `defaultYolo`, `defaultWorkspace`) form one logical group ("defaults for new conversations") consumed together; splitting them across two preference classes would force re-stitching imports within the same feature. **The note used to say "re-evaluate when the first non-defaults Phase-3 key (notifications) lands" — that key landed at [#268](../codebase/268.md), and the split was *not* evaluated:** the ticket was scoped as XS plumbing mirroring `defaultYolo` and added `notificationsEnabled` inline. So the named seam (between `AppPreferences` = pairing/theme + defaults bundle, and a hypothetical `NotificationPreferences`) has now been reached and passed unevaluated — the same deferral pattern as the [`SettingsViewModel`](settings-viewmodel.md) sealed-state lift. The split is now a future dedicated-refactor decision, not something a feature slice will naturally trigger; revisit only if the Notifications group grows a second or third key that would benefit from its own DataStore file.
+The threshold is crossed but the split stays deferred. Workspace keys and migration metadata share the existing store so the ownership decision and path transfer remain atomic. The four #231 preferences (`defaultModel`, `defaultEffort`, `defaultYolo`, `defaultWorkspace`) form one logical group ("defaults for new conversations") consumed together; splitting them across two preference classes would force re-stitching imports within the same feature. **The note used to say "re-evaluate when the first non-defaults Phase-3 key (notifications) lands" — that key landed at [#268](../codebase/268.md), and the split was *not* evaluated:** the ticket was scoped as XS plumbing mirroring `defaultYolo` and added `notificationsEnabled` inline. So the named seam (between `AppPreferences` = pairing/theme + defaults bundle, and a hypothetical `NotificationPreferences`) has now been reached and passed unevaluated — the same deferral pattern as the [`SettingsViewModel`](settings-viewmodel.md) sealed-state lift. The split is now a future dedicated-refactor decision, not something a feature slice will naturally trigger; revisit only if the Notifications group grows a second or third key that would benefit from its own DataStore file.
 
 ## Configuration
 
@@ -236,6 +268,22 @@ Pass the enum's neutral default (the same value the cold flow would emit first o
 - **Writes serialise.** Concurrent `edit { }` calls from multiple coroutines are serialised by DataStore. The wrapper does not add its own mutex.
 - **Lifecycle.** DataStore's scope outlives any individual collector or `viewModelScope`. Process death is the only teardown.
 - **Default-on-miss.** `prefs[KEY] ?: <default>` handles cold start without a sentinel write — the first launch reads `false` without writing anything to disk.
+
+## Testing
+
+[HostWorkspacePreferencesTest](../../../app/src/test/java/de/pyryco/mobile/data/preferences/HostWorkspacePreferencesTest.kt)
+reopens real temporary DataStore files after cancelling and joining the previous
+store's job. Its migration matrix crosses absent/present legacy paths with
+absent/custom/scratch host values. Checking only copied paths misses the ownership
+contract: even with no old path, compatibility writes must still target the
+original sole host after reopening and another migration call. Removing the
+completion guard made that case redirect later writes to another host
+([#711 test evidence](https://github.com/pyrycode/pyrycode-mobile/pull/716)).
+
+Keep the absent-legacy case and assert a later legacy write reaches the original
+owner; a scratch read alone cannot distinguish permanent ownership from no owner.
+Likewise, preserve the explicit-scratch case: scratch is a stored choice and must
+prevent an old path from being copied over it.
 
 ## Edge cases / limitations
 

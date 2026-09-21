@@ -1,13 +1,16 @@
 package de.pyryco.mobile.data.preferences
 
 import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
+import de.pyryco.mobile.data.network.RelayLog
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import java.io.IOException
 
 class AppPreferences(
     private val dataStore: DataStore<Preferences>,
@@ -64,11 +67,66 @@ class AppPreferences(
     }
 
     val defaultWorkspace: Flow<String> =
-        dataStore.data.map { prefs -> prefs[DEFAULT_WORKSPACE] ?: DEFAULT_SCRATCH_CWD }
+        dataStore.data.map { prefs ->
+            legacyWorkspaceKey(prefs)?.let { prefs[it] } ?: DEFAULT_SCRATCH_CWD
+        }
 
     suspend fun setDefaultWorkspace(cwd: String) {
-        dataStore.edit { prefs -> prefs[DEFAULT_WORKSPACE] = cwd }
+        dataStore.edit { prefs ->
+            legacyWorkspaceKey(prefs)?.let { prefs[it] = cwd }
+        }
     }
+
+    /** [serverId] is the exact saved server identity, never its label or relay URL. */
+    fun defaultWorkspace(serverId: String): Flow<String> =
+        dataStore.data.map { prefs -> prefs[workspaceKey(serverId)] ?: DEFAULT_SCRATCH_CWD }
+
+    suspend fun setDefaultWorkspace(
+        serverId: String,
+        cwd: String,
+    ): Result<Unit> = editWorkspace("workspace_default_set") { prefs -> prefs[workspaceKey(serverId)] = cwd }
+
+    suspend fun removeDefaultWorkspace(serverId: String): Result<Unit> =
+        editWorkspace("workspace_default_removed") { prefs -> prefs.remove(workspaceKey(serverId)) }
+
+    /**
+     * Call with the initial saved-host snapshot. The first successful call permanently decides
+     * legacy ownership, including when the old path is absent or no single owner exists.
+     */
+    suspend fun migrateDefaultWorkspace(initialServerIds: Set<String>): Result<Unit> {
+        val owner = initialServerIds.singleOrNull()
+        return editWorkspace("workspace_migration_checked") { prefs ->
+            if (prefs[WORKSPACE_MIGRATED] == true) return@editWorkspace
+            if (owner != null) {
+                prefs[LEGACY_WORKSPACE_OWNER] = owner
+                val key = workspaceKey(owner)
+                val legacy = prefs[DEFAULT_WORKSPACE]
+                if (prefs[key] == null && legacy != null) prefs[key] = legacy
+            }
+            prefs[WORKSPACE_MIGRATED] = true
+            prefs.remove(DEFAULT_WORKSPACE)
+        }
+    }
+
+    private fun legacyWorkspaceKey(prefs: Preferences): Preferences.Key<String>? =
+        if (prefs[WORKSPACE_MIGRATED] == true) {
+            prefs[LEGACY_WORKSPACE_OWNER]?.let(::workspaceKey)
+        } else {
+            DEFAULT_WORKSPACE
+        }
+
+    private suspend fun editWorkspace(
+        event: String,
+        transform: (MutablePreferences) -> Unit,
+    ): Result<Unit> =
+        try {
+            dataStore.edit { transform(it) }
+            RelayLog.d { "event=$event outcome=success" }
+            Result.success(Unit)
+        } catch (error: IOException) {
+            RelayLog.w { "event=$event outcome=io_failure" }
+            Result.failure(error)
+        }
 
     val pushToken: Flow<String?> =
         dataStore.data.map { prefs -> prefs[PUSH_TOKEN] }
@@ -85,6 +143,10 @@ class AppPreferences(
         val DEFAULT_YOLO = booleanPreferencesKey("default_yolo")
         val NOTIFICATIONS_ENABLED = booleanPreferencesKey("notifications_enabled")
         val DEFAULT_WORKSPACE = stringPreferencesKey("default_workspace")
+        val WORKSPACE_MIGRATED = booleanPreferencesKey("default_workspace_migrated")
+        val LEGACY_WORKSPACE_OWNER = stringPreferencesKey("legacy_workspace_owner")
         val PUSH_TOKEN = stringPreferencesKey("push_token")
+
+        fun workspaceKey(serverId: String) = stringPreferencesKey("default_workspace_host:$serverId")
     }
 }
