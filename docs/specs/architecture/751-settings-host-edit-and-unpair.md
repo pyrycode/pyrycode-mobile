@@ -283,6 +283,31 @@ confirmation is matched on its own wording, and the relay address is *counted* a
 rather than asserted absent, which is what actually proves the modal adds no second rendering of it.
 Production code unchanged by this; the tests were wrong, not the screen.
 
+**2026-09-22 — rework: a second `androidTest` file carried the same stale assertion.** Open question 2
+above found the pre-#751 "the owner's row is inert" assertion and resolved it — but only in
+`SettingsScreenTest`. `SettingsNavigationTest.assertBadgedRowIs` held the same assertion and was not
+swept, so the verifier's device gate caught it: three tests red through that one helper, all on
+`assertDoesNotExist()` against the owner's now-clickable row. The production change is correct and is
+unchanged by this leg; the assertion was stale.
+
+Restated rather than deleted, as the sibling file's was. The helper now asserts the badge **on the
+owner's own row** — `hasAnyDescendant(hasText(OWNER_BADGE))` on the owner's node and its negation on
+the other's — which is the direct form of the property its name always claimed. That matcher was
+genuinely unavailable before: the helper's old KDoc recorded that a row without an `onClick` adds no
+semantics node, so a subtree matcher resolved to four common ancestors and failed on ambiguity. Both
+rows carrying a click action is what yields one node per row and makes the direct form addressable —
+so the reversal this ticket makes is also what pays for the stronger assertion. The two opposite
+badge assertions resolving to different nodes is itself the evidence that each addresses its own row
+rather than a shared ancestor.
+
+The gap the miss exposed is narrower than "sweep harder": the screen-level test proved
+`SettingsScreen` fires `onEditHost`, and `SettingsViewModelTest` proved the view model opens on the
+captured owner, but the join between them lives in `PyryNavHost` and nothing exercised it. Closed
+here by `tappingTheOwnersRowOpensTheEditorOnTheCapturedHostNotTheSelectedOne`, which taps the owner's
+row on the production graph with the *other* host selected and asserts the modal's name field carries
+the captured owner's name — the security review's "never on selection" claim, proven end to end
+rather than argued. `HostIdentityRow`, `SettingsScreen` and the view model are untouched by this leg.
+
 ## Documentation handoff
 
 Pending for the documentation stage, per the ticket's own handoff section — not written here:

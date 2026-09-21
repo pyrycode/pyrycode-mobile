@@ -1,8 +1,10 @@
 package de.pyryco.mobile.ui.settings
 
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
@@ -11,6 +13,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -39,6 +42,7 @@ import de.pyryco.mobile.di.RelayConnectionFactory
 import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.di.appModule
 import de.pyryco.mobile.di.conversationRepositoryModule
+import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.conversations.thread.NavigationPeer
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.Dispatchers
@@ -115,7 +119,7 @@ class SettingsNavigationTest {
 
     /**
      * Every saved host is drawn with its own identity and its own status, a rename and a status
-     * change both land without leaving the screen, and only the owner's row is inert (#750).
+     * change both land without leaving the screen, and the owner's row is the badged one (#750).
      */
     @Test fun settingsListsEverySavedHostAndFollowsTheirLiveIdentityAndStatus() {
         start(live = true)
@@ -126,7 +130,8 @@ class SettingsNavigationTest {
         assertShowsAlphaConnected()
         compose.onNodeWithText(BRAVO_ID).assertIsDisplayed()
         compose.onNodeWithText(BRAVO_RELAY).assertIsDisplayed()
-        // The owner is already here, so its row is the inert one; every other row goes somewhere.
+        // The owner is already here, so its row is the badged one; since #751 it opens the editor
+        // rather than navigating, and every other row still goes to that host's own Settings.
         assertBadgedRowIs(ALPHA_NAME, other = BRAVO_NAME)
 
         // A rename and a status change, both arriving while Settings stays open.
@@ -159,6 +164,34 @@ class SettingsNavigationTest {
         compose.runOnIdle { nav.popBackStack() }
         compose.waitForIdle()
         compose.runOnIdle { assertEquals(Routes.CHANNEL_LIST, nav.currentDestination?.route) }
+    }
+
+    /**
+     * The owner's row opens the editor on the host this destination captured, and goes nowhere (#751).
+     *
+     * The join between `SettingsScreen`'s `onEditHost` and the view model's `openOwnerHostEditor`
+     * lives in `PyryNavHost` and is invisible to both screen-level and view-model-level tests, which
+     * is why it is proven here on the production graph. Bravo is the selected host for the tap, so a
+     * destination that opened on selection rather than on its captured owner would put Bravo's name
+     * in the field — and the field is the only place the two hosts differ once the modal is up.
+     */
+    @Test fun tappingTheOwnersRowOpensTheEditorOnTheCapturedHostNotTheSelectedOne() {
+        start()
+        select(ALPHA_ID)
+        openSettings()
+        assertOwner(ALPHA_ID)
+        select(BRAVO_ID)
+
+        compose.onNode(hasAnyDescendant(hasText(ALPHA_NAME)) and hasClickAction()).performClick()
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText(EDIT_HOST_TITLE).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        compose.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).assertTextContains(ALPHA_NAME)
+        // Opening an editor is not navigating: this destination stays exactly where it was, which is
+        // also what AC4 relies on after the removal the editor can reach from here.
+        assertOwner(ALPHA_ID)
+        compose.runOnIdle { assertEquals(Routes.SETTINGS, nav.currentDestination?.route) }
     }
 
     /**
@@ -322,20 +355,34 @@ class SettingsNavigationTest {
     /**
      * Exactly one row claims to be this screen's own host, and it is [owner]'s.
      *
-     * Asserted through the two properties `isOwner` actually drives rather than through the row's
-     * subtree: a host row is not a semantics node of its own — nothing in `HostIdentityRow` adds
-     * semantics unless the caller passes an `onClick` — so a "has both the name and the badge as
-     * descendants" matcher matches every common *ancestor* instead, four of them, and fails on
-     * ambiguity. The badge count pins that only one row claims it, and the click affordances pin
-     * which row that is: the owner is the one row that navigates nowhere, because it is here.
+     * Asserted on the badge's own row since #751. The previous formulation identified the owner by
+     * the *absence* of a click action — "the one row that navigates nowhere, because it is here" —
+     * which this ticket deliberately reverses: the owner's row is now the one that opens the editor,
+     * so every row acts and that indirection no longer separates them.
+     *
+     * The direct matcher it is replaced by was unavailable before, for the reason the old comment
+     * recorded: a row without an `onClick` adds no semantics node of its own, so "has the name and
+     * the badge as descendants" matched every common *ancestor* instead, four of them, and failed on
+     * ambiguity. Both rows carrying a click action is what now yields one node per row, so a row's
+     * subtree can be addressed directly and the badge asserted where it actually hangs.
+     *
+     * Which callback each row fires is a separate property, pinned by the two tests that tap a row —
+     * [tappingAnotherHostsRowOpensItsSettingsAndDoesNotStackOnTheOne] and
+     * [tappingTheOwnersRowOpensTheEditorOnTheCapturedHostNotTheSelectedOne]. This helper's callers
+     * use it to follow *which host is the owner* across a selection flip, a restoration and a
+     * reopen, so who is badged is the whole of what it needs to say.
      */
     private fun assertBadgedRowIs(
         owner: String,
         other: String,
     ) {
         compose.onAllNodesWithText(OWNER_BADGE).assertCountEquals(1)
-        compose.onNode(hasAnyDescendant(hasText(owner)) and hasClickAction()).assertDoesNotExist()
-        compose.onNode(hasAnyDescendant(hasText(other)) and hasClickAction()).assertExists()
+        compose
+            .onNode(hasAnyDescendant(hasText(owner)) and hasClickAction())
+            .assert(hasAnyDescendant(hasText(OWNER_BADGE)))
+        compose
+            .onNode(hasAnyDescendant(hasText(other)) and hasClickAction())
+            .assert(hasAnyDescendant(hasText(OWNER_BADGE)).not())
     }
 
     private fun assertNoHostIdentityOnScreen() {
@@ -461,6 +508,7 @@ class SettingsNavigationTest {
         const val BRAVO_RELAY = "wss://bravo.example"
         const val RENAMED = "Bravo renamed"
         const val OWNER_BADGE = "This server"
+        const val EDIT_HOST_TITLE = "Edit host"
 
         /** Every verb the picker can put on the wire; a non-owner peer must see none of them. */
         val PICKER_VERBS = setOf("recent_workspaces", "create_workspace_folder")
