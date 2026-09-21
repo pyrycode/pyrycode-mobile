@@ -3,9 +3,13 @@ package de.pyryco.mobile.ui.conversations.list
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.di.HostConversationSnapshot
+import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,6 +17,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -43,10 +48,89 @@ sealed interface DiscussionListNavigation {
     ) : DiscussionListNavigation
 }
 
+data class HostDiscussionListState(
+    val hosts: List<HostConversationSnapshot> = emptyList(),
+    val pendingPromotion: PendingHostPromotion? = null,
+)
+
+data class PendingHostPromotion(
+    val target: HostConversationTarget,
+    val sourceName: String?,
+)
+
 class DiscussionListViewModel(
     private val repository: ConversationRepository,
+    private val hostSource: HostConversationSource? = null,
 ) : ViewModel() {
     private val pendingPromotion = MutableStateFlow<PendingPromotion?>(null)
+    private val pendingHostPromotion = MutableStateFlow<PendingHostPromotion?>(null)
+    private val hostSnapshots = hostSource?.snapshots ?: MutableStateFlow(emptyList())
+
+    val hostState: StateFlow<HostDiscussionListState> =
+        combine(hostSnapshots, pendingHostPromotion) { hosts, pending ->
+            val retained = pending?.takeIf { findHostChat(it.target, hosts) != null }
+            if (pending != null && retained == null) {
+                pendingHostPromotion.compareAndSet(pending, null)
+                RelayLog.d { "event=host_promotion_cleared code=missing_chat" }
+            }
+            HostDiscussionListState(hosts, retained)
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, HostDiscussionListState())
+
+    // The legacy collector accepts only bare ids, so host targets need their own stream.
+    private val hostNavigationChannel = Channel<HostConversationTarget>(Channel.BUFFERED)
+    val hostNavigationEvents: Flow<HostConversationTarget> = hostNavigationChannel.receiveAsFlow()
+
+    fun onHostRowTapped(target: HostConversationTarget) {
+        viewModelScope.launch { hostNavigationChannel.send(target) }
+    }
+
+    fun requestHostPromotion(target: HostConversationTarget) {
+        val chat = findHostChat(target)
+        if (chat == null) {
+            RelayLog.d { "event=host_promotion_rejected code=missing_chat" }
+            return
+        }
+        pendingHostPromotion.value = PendingHostPromotion(target, chat.name)
+        RelayLog.d { "event=host_promotion_requested" }
+    }
+
+    fun confirmHostPromotion() {
+        val pending = pendingHostPromotion.getAndUpdate { null } ?: return
+        launchGuardedRepoCall {
+            if (findHostChat(pending.target) == null) {
+                RelayLog.d { "event=host_promotion_rejected code=missing_chat" }
+                return@launchGuardedRepoCall
+            }
+            val live = hostSource?.repositoryFor(pending.target.serverId)
+            if (live == null) {
+                RelayLog.d { "event=host_promotion_rejected code=unavailable" }
+                return@launchGuardedRepoCall
+            }
+            RelayLog.d { "event=host_promotion_started" }
+            try {
+                live.promote(
+                    conversationId = pending.target.conversationId,
+                    name = derivedChannelName(pending.sourceName),
+                    workspace = null,
+                )
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                RelayLog.d { "event=host_promotion_failed" }
+                throw error
+            }
+            RelayLog.d { "event=host_promotion_completed" }
+        }
+    }
+
+    fun cancelHostPromotion() {
+        pendingHostPromotion.value = null
+        RelayLog.d { "event=host_promotion_cancelled" }
+    }
+
+    private fun findHostChat(
+        target: HostConversationTarget,
+        hosts: List<HostConversationSnapshot> = hostSnapshots.value,
+    ): Conversation? = hosts.firstOrNull { it.serverId == target.serverId }?.chats?.firstOrNull { it.id == target.conversationId }
 
     val state: StateFlow<DiscussionListUiState> =
         combine(

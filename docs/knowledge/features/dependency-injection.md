@@ -37,6 +37,7 @@ val appModule = module {
     single { FakeConversationRepository() }       // #45/#350 — concrete-only; interface bound below
     single { StableConversationRepository(get<RelayConnectionRegistry>().currentRepository) }
     viewModel { ChannelListViewModel(get(), get(), get()) }
+    viewModel { DiscussionListViewModel(get(), get()) }
 }
 
 // The #350 selector — the *only* module that binds the ConversationRepository interface.
@@ -156,10 +157,11 @@ owners still exist.
 
 `ChannelListViewModel` receives this shared source as its third constructor
 dependency and exposes [host-qualified state and actions](channel-list-viewmodel.md#state-projection).
-Its flat-screen state/events and bare-id navigation still use the selected-host
-facade or fake; host actions use exact lookup and a separate navigation stream.
-Discussion list-model integration remains #706, thread routing #636 and tree
-rendering #641.
+`DiscussionListViewModel` receives it as its second dependency for
+[host-qualified navigation and captured promotion](discussion-list-viewmodel.md#wiring).
+Both retain flat-screen state/events and bare-id navigation through the selected-host
+facade or fake; host actions use exact lookup and separate navigation streams.
+Thread routing remains #636 and tree rendering #641.
 
 ## Adding a binding
 
@@ -189,6 +191,12 @@ resolves the actual `appModule` ViewModel definition with JVM preferences and th
 fake selector. It verifies that the source is shared, only `demo` resolves, and a
 host-targeted creation appears in the existing fake singleton's rows. A test that
 constructs the ViewModel directly would miss a missing third constructor binding.
+
+`HostDiscussionListViewModelTest.appModuleInjectsSharedDemoSourceAndPromotesThroughExistingFakeSingleton`
+likewise resolves the actual discussion binding, verifies its shared demo source,
+and observes promotion through the existing fake singleton. Its optional second
+constructor parameter preserves repository-only fixtures, so those fixtures alone
+cannot prove that production DI supplies the host contract.
 
 `ConversationRepositoryBindingTest` verifies the generated flag and resolved
 singleton against Gradle's separate `expectedUseRelayRepository` test property.
