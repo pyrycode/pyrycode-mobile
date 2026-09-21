@@ -1,10 +1,15 @@
 package de.pyryco.mobile.ui.settings
 
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -71,7 +76,9 @@ class SettingsNavigationTest {
     /**
      * The captured owner outlives a compatibility-selection change, a saved-state restoration and a
      * Back; reopening captures afresh. Bravo's supervisor is closed first, so a screen that followed
-     * selection could not keep showing a connected relay after the flip.
+     * selection could not keep showing a connected relay after the flip — and since #750 both hosts
+     * are on screen throughout, so what identifies the owner is the badge on its row, not the
+     * absence of the other.
      */
     @Test fun settingsKeepsItsCapturedOwnerAcrossSelectionChangeAndRestoration() {
         val restoration = start(live = true)
@@ -79,37 +86,90 @@ class SettingsNavigationTest {
         openSettings()
         assertOwner(ALPHA_ID)
         assertShowsAlphaConnected()
+        assertBadgedRowIs(ALPHA_NAME, other = BRAVO_NAME)
 
         compose.runOnIdle { registry.connectionFor(BRAVO_ID)!!.supervisor.close() }
         compose.waitForIdle()
         select(BRAVO_ID)
         assertOwner(ALPHA_ID)
         assertShowsAlphaConnected()
+        assertBadgedRowIs(ALPHA_NAME, other = BRAVO_NAME)
 
         restoration.emulateSavedInstanceStateRestore()
         compose.waitForIdle()
         assertOwner(ALPHA_ID)
         assertShowsAlphaConnected()
+        assertBadgedRowIs(ALPHA_NAME, other = BRAVO_NAME)
 
         compose.runOnIdle { nav.popBackStack() }
         compose.waitForIdle()
         openSettings()
         assertOwner(BRAVO_ID)
-        compose.onNodeWithText(BRAVO_NAME).assertIsDisplayed()
-        compose.onNodeWithText(ALPHA_NAME).assertDoesNotExist()
+        assertBadgedRowIs(BRAVO_NAME, other = ALPHA_NAME)
     }
 
     /**
-     * Neither non-owned state borrows another host's identity, and neither closes the screen — the
+     * Every saved host is drawn with its own identity and its own status, a rename and a status
+     * change both land without leaving the screen, and only the owner's row is inert (#750).
+     */
+    @Test fun settingsListsEverySavedHostAndFollowsTheirLiveIdentityAndStatus() {
+        start(live = true)
+        // Only Alpha's supervisor stays up, so the two rows must hold visibly different statuses.
+        compose.runOnIdle { registry.connectionFor(BRAVO_ID)!!.supervisor.close() }
+        select(ALPHA_ID)
+        openSettings()
+        assertShowsAlphaConnected()
+        compose.onNodeWithText(BRAVO_ID).assertIsDisplayed()
+        compose.onNodeWithText(BRAVO_RELAY).assertIsDisplayed()
+        // The owner is already here, so its row is the inert one; every other row goes somewhere.
+        assertBadgedRowIs(ALPHA_NAME, other = BRAVO_NAME)
+
+        // A rename and a status change, both arriving while Settings stays open.
+        compose.runOnIdle { runBlocking { store.setDisplayName(BRAVO_ID, RENAMED) } }
+        compose.waitUntil(5_000) { compose.onAllNodesWithText(RENAMED).fetchSemanticsNodes().isNotEmpty() }
+        // Exact match, so the renamed "Bravo renamed" does not satisfy the old name.
+        compose.onNodeWithText(BRAVO_NAME).assertDoesNotExist()
+        compose.runOnIdle { registry.connectionFor(ALPHA_ID)!!.supervisor.close() }
+        compose.waitUntil(5_000) { connectedRelayLegs() == 0 }
+        assertOwner(ALPHA_ID)
+    }
+
+    /**
+     * Tapping another host's row opens that host's Settings by its exact id — Alpha's carries
+     * reserved characters, so the hop is proven encoded rather than assumed — and the hop replaces
+     * this entry rather than stacking on it, so Back reaches the list the gear was tapped from.
+     */
+    @Test fun tappingAnotherHostsRowOpensItsSettingsAndDoesNotStackOnTheOne() {
+        start()
+        select(BRAVO_ID)
+        openSettings()
+        assertOwner(BRAVO_ID)
+        assertBadgedRowIs(BRAVO_NAME, other = ALPHA_NAME)
+
+        compose.onNode(hasAnyDescendant(hasText(ALPHA_NAME)) and hasClickAction()).performClick()
+        compose.waitForIdle()
+        assertOwner(ALPHA_ID)
+        assertBadgedRowIs(ALPHA_NAME, other = BRAVO_NAME)
+
+        compose.runOnIdle { nav.popBackStack() }
+        compose.waitForIdle()
+        compose.runOnIdle { assertEquals(Routes.CHANNEL_LIST, nav.currentDestination?.route) }
+    }
+
+    /**
+     * Neither copy state borrows a host's identity as its own, and neither closes the screen — the
      * `HostDestination` guard the thread routes use would have returned both of these to the list.
      */
-    @Test fun unknownAndAbsentOwnersKeepSettingsOpenWithoutNamingAnotherHost() {
+    @Test fun unknownAndAbsentOwnersKeepSettingsOpenWithoutClaimingAHost() {
         start()
         compose.runOnIdle { nav.navigate(Routes.settings("ghost")) }
         awaitSettings()
         assertOwner("ghost")
         compose.onNodeWithText("This host is no longer paired").assertIsDisplayed()
-        assertNoHostIdentityOnScreen()
+        // Both saved hosts are still listed; what is absent is any claim that one of them is this one.
+        compose.onNodeWithText(ALPHA_NAME).assertIsDisplayed()
+        compose.onNodeWithText(BRAVO_NAME).assertIsDisplayed()
+        compose.onNodeWithText(OWNER_BADGE).assertDoesNotExist()
         // Still Settings, and the app-wide sections below it still draw.
         compose.runOnIdle { assertEquals(Routes.SETTINGS, nav.currentDestination?.route) }
         compose.onNodeWithText("Use Material You dynamic color").performScrollTo().assertIsDisplayed()
@@ -148,20 +208,46 @@ class SettingsNavigationTest {
         }
     }
 
-    /** Alpha's four facts, and none of Bravo's — including a status only Alpha's host can have. */
+    /**
+     * Alpha's identity, and a connected status leg on screen.
+     *
+     * Both legs are asserted by presence rather than uniqueness: `ConnectionStatusLine`'s legs are
+     * `clearAndSetSemantics`, so since #750 each drawn host contributes its own `"Relay: …"` and
+     * `"Pyrycode: …"` node, and a bare `onNodeWithContentDescription` fails on *ambiguity* — two
+     * matches — whenever both hosts happen to be connected. That reads as "the status is missing"
+     * and is not; what identifies Alpha here is its three text lines and its badge, asserted by the
+     * callers, not the count of connected dots.
+     */
     private fun assertShowsAlphaConnected() {
-        compose.waitUntil(5_000) {
-            compose
-                .onAllNodesWithContentDescription("Relay: connected")
-                .fetchSemanticsNodes()
-                .isNotEmpty()
-        }
+        compose.waitUntil(5_000) { connectedRelayLegs() > 0 }
         compose.onNodeWithText(ALPHA_NAME).assertIsDisplayed()
         compose.onNodeWithText(ALPHA_ID).assertIsDisplayed()
         compose.onNodeWithText(ALPHA_RELAY).assertIsDisplayed()
-        compose.onNodeWithContentDescription("Pyrycode: connected").assertIsDisplayed()
-        compose.onNodeWithText(BRAVO_NAME).assertDoesNotExist()
-        compose.onNodeWithText(BRAVO_RELAY).assertDoesNotExist()
+        assertEquals(
+            true,
+            compose.onAllNodesWithContentDescription("Pyrycode: connected").fetchSemanticsNodes().isNotEmpty(),
+        )
+    }
+
+    private fun connectedRelayLegs() = compose.onAllNodesWithContentDescription("Relay: connected").fetchSemanticsNodes().size
+
+    /**
+     * Exactly one row claims to be this screen's own host, and it is [owner]'s.
+     *
+     * Asserted through the two properties `isOwner` actually drives rather than through the row's
+     * subtree: a host row is not a semantics node of its own — nothing in `HostIdentityRow` adds
+     * semantics unless the caller passes an `onClick` — so a "has both the name and the badge as
+     * descendants" matcher matches every common *ancestor* instead, four of them, and fails on
+     * ambiguity. The badge count pins that only one row claims it, and the click affordances pin
+     * which row that is: the owner is the one row that navigates nowhere, because it is here.
+     */
+    private fun assertBadgedRowIs(
+        owner: String,
+        other: String,
+    ) {
+        compose.onAllNodesWithText(OWNER_BADGE).assertCountEquals(1)
+        compose.onNode(hasAnyDescendant(hasText(owner)) and hasClickAction()).assertDoesNotExist()
+        compose.onNode(hasAnyDescendant(hasText(other)) and hasClickAction()).assertExists()
     }
 
     private fun assertNoHostIdentityOnScreen() {
@@ -281,6 +367,8 @@ class SettingsNavigationTest {
         const val BRAVO_NAME = "Bravo"
         const val ALPHA_RELAY = "wss://alpha.example"
         const val BRAVO_RELAY = "wss://bravo.example"
+        const val RENAMED = "Bravo renamed"
+        const val OWNER_BADGE = "This server"
 
         fun relayFor(serverId: String) = if (serverId == BRAVO_ID) BRAVO_RELAY else ALPHA_RELAY
     }

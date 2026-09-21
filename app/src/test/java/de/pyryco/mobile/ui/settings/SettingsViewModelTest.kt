@@ -585,7 +585,7 @@ class SettingsViewModelTest {
         }
 
     @Test
-    fun host_resolvesOwnerAmongTwoSavedHosts() =
+    fun connection_listsEverySavedHostAndMarksTheOwner() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())
             val vm =
@@ -600,76 +600,116 @@ class SettingsViewModelTest {
                             ),
                         ),
                 )
-            val collector = launch { vm.host.collect { } }
+            val collector = launch { vm.connection.collect { } }
             advanceUntilIdle()
-            val owned = vm.host.value as SettingsHostState.Owned
-            assertEquals("B", owned.serverId)
-            assertEquals("Bravo", owned.name)
-            assertEquals("wss://b.example", owned.relayUrl)
-            assertEquals(OFFLINE, owned.status)
+            val loaded = vm.connection.value as SettingsConnectionState.Loaded
+            assertEquals(false, loaded.ownerMissing)
+            assertEquals(listOf("A", "B"), loaded.hosts.map { it.serverId })
+            val alpha = loaded.hosts[0]
+            assertEquals("Alpha", alpha.name)
+            assertEquals("wss://a.example", alpha.relayUrl)
+            assertEquals(CONNECTED, alpha.status)
+            assertEquals(false, alpha.isOwner)
+            val bravo = loaded.hosts[1]
+            assertEquals("Bravo", bravo.name)
+            assertEquals("wss://b.example", bravo.relayUrl)
+            assertEquals(OFFLINE, bravo.status)
+            assertEquals(true, bravo.isOwner)
+            collector.cancel()
+        }
+
+    /** Each row carries its own host's status, so one host's change cannot move another's row. */
+    @Test
+    fun connection_followsEachHostsOwnStatusIndependently() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val alphaStatus = MutableStateFlow(OFFLINE)
+            val vm =
+                makeVm(
+                    prefs,
+                    ownerServerId = "B",
+                    hosts =
+                        MutableStateFlow(
+                            listOf(
+                                host("A", "Alpha", status = alphaStatus),
+                                host("B", "Bravo", status = MutableStateFlow(OFFLINE)),
+                            ),
+                        ),
+                )
+            val collector = launch { vm.connection.collect { } }
+            advanceUntilIdle()
+            alphaStatus.value = CONNECTED
+            advanceUntilIdle()
+            val loaded = vm.connection.value as SettingsConnectionState.Loaded
+            assertEquals(CONNECTED, loaded.hosts.single { it.serverId == "A" }.status)
+            assertEquals(OFFLINE, loaded.hosts.single { it.serverId == "B" }.status)
             collector.cancel()
         }
 
     /**
      * The at-this-layer form of "a compatibility-selection change while Settings is open": selection
      * is not observable here at all, so what a change of it produces is a host-list re-emission. The
-     * resolved owner must not move with it, and must not pick up the other host's status.
+     * owned row must not move with it, and must not pick up the other host's status.
      */
     @Test
-    fun host_keepsOwnerAcrossHostListReemission() =
+    fun connection_keepsOwnerAcrossHostListReemission() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())
             val a = host("A", "Alpha", "wss://a.example", MutableStateFlow(CONNECTED))
             val b = host("B", "Bravo", "wss://b.example", MutableStateFlow(OFFLINE))
             val hosts = MutableStateFlow(listOf(a, b))
             val vm = makeVm(prefs, ownerServerId = "B", hosts = hosts)
-            val collector = launch { vm.host.collect { } }
+            val collector = launch { vm.connection.collect { } }
             advanceUntilIdle()
             hosts.value = listOf(b, a)
             advanceUntilIdle()
-            val owned = vm.host.value as SettingsHostState.Owned
+            val loaded = vm.connection.value as SettingsConnectionState.Loaded
+            assertEquals(listOf("B", "A"), loaded.hosts.map { it.serverId })
+            val owned = loaded.hosts.single { it.isOwner }
             assertEquals("B", owned.serverId)
             assertEquals(OFFLINE, owned.status)
             collector.cancel()
         }
 
     @Test
-    fun host_followsOwnerRenameAndStatusUpdates() =
+    fun connection_followsRenameAndStatusChangeWhileSubscribed() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())
             val status = MutableStateFlow(OFFLINE)
             val hosts = MutableStateFlow(listOf(host("B", "Bravo", "wss://b.example", status)))
             val vm = makeVm(prefs, ownerServerId = "B", hosts = hosts)
-            val collector = launch { vm.host.collect { } }
+            val collector = launch { vm.connection.collect { } }
             advanceUntilIdle()
             status.value = CONNECTED
             advanceUntilIdle()
-            assertEquals(CONNECTED, (vm.host.value as SettingsHostState.Owned).status)
+            assertEquals(CONNECTED, vm.rows().single().status)
             hosts.value = listOf(host("B", "Renamed", "wss://b.example", status))
             advanceUntilIdle()
-            val owned = vm.host.value as SettingsHostState.Owned
-            assertEquals("Renamed", owned.name)
-            assertEquals(CONNECTED, owned.status)
+            val renamed = vm.rows().single()
+            assertEquals("Renamed", renamed.name)
+            assertEquals(CONNECTED, renamed.status)
+            assertEquals(true, renamed.isOwner)
             collector.cancel()
         }
 
     @Test
-    fun host_namesUnnamedOwnerByItsServerId() =
+    fun connection_namesUnnamedHostByItsServerId() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())
             val hosts = MutableStateFlow(listOf(host("B", displayName = null)))
             val vm = makeVm(prefs, ownerServerId = "B", hosts = hosts)
-            val collector = launch { vm.host.collect { } }
+            val collector = launch { vm.connection.collect { } }
             advanceUntilIdle()
-            assertEquals("B", (vm.host.value as SettingsHostState.Owned).name)
+            assertEquals("B", vm.rows().single().name)
             hosts.value = listOf(host("B", displayName = "   "))
             advanceUntilIdle()
-            assertEquals("B", (vm.host.value as SettingsHostState.Owned).name)
+            assertEquals("B", vm.rows().single().name)
             collector.cancel()
         }
 
+    /** A vanished owner is reported as such, and does not take the other saved hosts with it. */
     @Test
-    fun host_reportsUnknownWhenOwnerIsNotSaved() =
+    fun connection_reportsOwnerMissingButStillListsSavedHosts() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())
             val vm =
@@ -678,53 +718,83 @@ class SettingsViewModelTest {
                     ownerServerId = "ghost",
                     hosts = MutableStateFlow(listOf(host("A", "Alpha"), host("B", "Bravo"))),
                 )
-            val collector = launch { vm.host.collect { } }
+            val collector = launch { vm.connection.collect { } }
             advanceUntilIdle()
-            assertEquals(SettingsHostState.Unknown, vm.host.value)
+            val loaded = vm.connection.value as SettingsConnectionState.Loaded
+            assertEquals(true, loaded.ownerMissing)
+            assertEquals(listOf("A", "B"), loaded.hosts.map { it.serverId })
+            assertEquals(emptyList<SettingsHostRow>(), loaded.hosts.filter { it.isOwner })
             collector.cancel()
         }
 
     @Test
-    fun host_reportsUnknownWhenTheOwnerIsRemovedWhileOpen() =
+    fun connection_reportsOwnerMissingWhenTheOwnerIsRemovedWhileOpen() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())
-            val hosts = MutableStateFlow(listOf(host("B", "Bravo")))
+            val hosts = MutableStateFlow(listOf(host("A", "Alpha"), host("B", "Bravo")))
             val vm = makeVm(prefs, ownerServerId = "B", hosts = hosts)
-            val collector = launch { vm.host.collect { } }
+            val collector = launch { vm.connection.collect { } }
             advanceUntilIdle()
-            assertEquals("B", (vm.host.value as SettingsHostState.Owned).serverId)
-            hosts.value = emptyList()
+            assertEquals("B", vm.rows().single { it.isOwner }.serverId)
+            hosts.value = listOf(host("A", "Alpha"))
             advanceUntilIdle()
-            assertEquals(SettingsHostState.Unknown, vm.host.value)
+            val loaded = vm.connection.value as SettingsConnectionState.Loaded
+            assertEquals(true, loaded.ownerMissing)
+            assertEquals(listOf("A"), loaded.hosts.map { it.serverId })
             collector.cancel()
         }
 
-    /** A destination opened with nothing to own stays that way, even once a host is paired. */
+    /**
+     * A destination that captured no host owns nothing that could be missing, so it lists every
+     * saved host with no row owned — and never claims one is no longer paired.
+     */
     @Test
-    fun host_reportsUnpairedWhenTheDestinationOwnsNoHost() =
+    fun connection_listsHostsWithoutOwningOneWhenTheDestinationOwnsNoHost() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())
             val hosts = MutableStateFlow(emptyList<SettingsHost>())
             val vm = makeVm(prefs, ownerServerId = "", hosts = hosts)
-            assertEquals(SettingsHostState.Unpaired, vm.host.value)
-            val collector = launch { vm.host.collect { } }
+            val collector = launch { vm.connection.collect { } }
             advanceUntilIdle()
             hosts.value = listOf(host("A", "Alpha"))
             advanceUntilIdle()
-            assertEquals(SettingsHostState.Unpaired, vm.host.value)
+            val loaded = vm.connection.value as SettingsConnectionState.Loaded
+            assertEquals(false, loaded.ownerMissing)
+            assertEquals(listOf("A"), loaded.hosts.map { it.serverId })
+            assertEquals(emptyList<SettingsHostRow>(), loaded.hosts.filter { it.isOwner })
             collector.cancel()
         }
 
+    /**
+     * `combine` over an empty array never emits, so without the empty short-circuit this state stays
+     * `Resolving` forever and an unpaired phone silently loses its no-host copy.
+     */
     @Test
-    fun host_resolvesBeforeTheFirstHostEmission() =
+    fun connection_reportsNoHostsForAnEmptyList() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            listOf("", "B").forEach { owner ->
+                val vm = makeVm(prefs, ownerServerId = owner, hosts = MutableStateFlow(emptyList()))
+                val collector = launch { vm.connection.collect { } }
+                advanceUntilIdle()
+                val loaded = vm.connection.value as SettingsConnectionState.Loaded
+                assertEquals(emptyList<SettingsHostRow>(), loaded.hosts)
+                collector.cancel()
+            }
+        }
+
+    @Test
+    fun connection_resolvesBeforeTheFirstHostEmission() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())
             val vm = makeVm(prefs, ownerServerId = "B", hosts = MutableSharedFlow(replay = 0))
-            val collector = launch { vm.host.collect { } }
+            val collector = launch { vm.connection.collect { } }
             advanceUntilIdle()
-            assertEquals(SettingsHostState.Resolving, vm.host.value)
+            assertEquals(SettingsConnectionState.Resolving, vm.connection.value)
             collector.cancel()
         }
+
+    private fun SettingsViewModel.rows(): List<SettingsHostRow> = (connection.value as SettingsConnectionState.Loaded).hosts
 
     private fun stubRepo(
         source: MutableSharedFlow<List<Conversation>> = MutableSharedFlow(replay = 0),

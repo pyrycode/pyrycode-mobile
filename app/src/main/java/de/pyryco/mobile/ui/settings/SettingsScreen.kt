@@ -28,6 +28,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -50,7 +51,7 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    host: SettingsHostState,
+    connection: SettingsConnectionState,
     themeMode: ThemeMode,
     useWallpaperColors: Boolean,
     archivedDiscussionCount: Int,
@@ -69,6 +70,7 @@ fun SettingsScreen(
     onDefaultWorkspaceTapped: () -> Unit,
     onSelectDefaultWorkspace: (String) -> Unit,
     onWorkspacePickerDismissed: () -> Unit,
+    onOpenHost: (String) -> Unit,
     onPairServer: () -> Unit,
     onBack: () -> Unit,
     onOpenArchivedDiscussions: () -> Unit,
@@ -144,23 +146,36 @@ fun SettingsScreen(
                     .padding(bottom = 32.dp),
         ) {
             SettingsSectionHeader("Connection")
-            // The destination's own host, never the current selection. Neither non-owned state
-            // borrows another host's identity or status, and neither hides the pairing row below:
-            // an unpaired phone reaches the scanner from exactly here (#749).
-            when (host) {
-                is SettingsHostState.Owned ->
-                    HostIdentityRow(
-                        name = host.name,
-                        serverId = host.serverId,
-                        relayUrl = host.relayUrl,
-                        status = host.status,
-                    )
-                SettingsHostState.Unknown ->
-                    SettingsRow(headline = stringResource(R.string.settings_host_unknown))
-                SettingsHostState.Unpaired ->
-                    SettingsRow(headline = stringResource(R.string.settings_host_none))
+            // One row per saved host, each carrying its own identity and its own status (#750). The
+            // destination's own host is marked rather than singled out by position, and it is the
+            // only row that does not navigate — it is already here. Neither copy state hides the
+            // pairing row below: an unpaired phone reaches the scanner from exactly here (#749).
+            when (connection) {
                 // Nothing, deliberately: a placeholder here would flash wrong copy for one frame.
-                SettingsHostState.Resolving -> Unit
+                SettingsConnectionState.Resolving -> Unit
+                is SettingsConnectionState.Loaded -> {
+                    connection.hosts.forEach { row ->
+                        // Slots are matched by call order in a plain Column, so without this a
+                        // reorder hands one host's composition to another (#750).
+                        key(row.serverId) {
+                            HostIdentityRow(
+                                name = row.name,
+                                serverId = row.serverId,
+                                relayUrl = row.relayUrl,
+                                status = row.status,
+                                onClick = if (row.isOwner) null else ({ onOpenHost(row.serverId) }),
+                                trailing = if (row.isOwner) ({ HostOwnerBadge() }) else ({ ChevronIcon() }),
+                            )
+                        }
+                    }
+                    if (connection.hosts.isEmpty()) {
+                        // Subsumes the vanished-owner copy: with nothing paired at all, "none is
+                        // paired" is both true and the one that names the way out.
+                        SettingsRow(headline = stringResource(R.string.settings_host_none))
+                    } else if (connection.ownerMissing) {
+                        SettingsRow(headline = stringResource(R.string.settings_host_unknown))
+                    }
+                }
             }
             SettingsRow(
                 headline = "Pair another server",
@@ -302,6 +317,19 @@ internal fun SettingsRow(
     )
 }
 
+/**
+ * Which of the listed hosts this screen belongs to (#750). Static copy with no format argument, so
+ * no host identity can ride into it and be announced; the row's own lines already carry those.
+ */
+@Composable
+private fun HostOwnerBadge() {
+    Text(
+        text = stringResource(R.string.settings_host_current),
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.primary,
+    )
+}
+
 @Composable
 private fun ChevronIcon() {
     Icon(
@@ -334,6 +362,33 @@ internal fun ThemeMode.label(): String =
         ThemeMode.DARK -> "Dark"
     }
 
+/**
+ * Two saved hosts with different names and different statuses, the first of them this screen's own
+ * — the shape AC1 names, and the one worth eyeballing against the design frame.
+ */
+private val PREVIEW_CONNECTION =
+    SettingsConnectionState.Loaded(
+        hosts =
+            listOf(
+                SettingsHostRow(
+                    serverId = "pyrybox-2026-0f3a",
+                    displayName = "Pyrybox",
+                    relayUrl = "wss://relay.pyryco.de",
+                    status = ConnectionStatus(RelayLinkStatus.DaemonAbsent, PyrycodeLinkStatus.Down),
+                    isOwner = true,
+                ),
+                // Unnamed, so the preview also shows the name line falling back to the server id.
+                SettingsHostRow(
+                    serverId = "juhana-mac-2026-8c41",
+                    displayName = null,
+                    relayUrl = "wss://relay.pyryco.de",
+                    status = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected),
+                    isOwner = false,
+                ),
+            ),
+        ownerMissing = false,
+    )
+
 private fun workspaceLabel(cwd: String): String =
     if (cwd.isEmpty() || cwd == DEFAULT_SCRATCH_CWD) {
         "scratch"
@@ -346,13 +401,7 @@ private fun workspaceLabel(cwd: String): String =
 private fun SettingsScreenLightPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
         SettingsScreen(
-            host =
-                SettingsHostState.Owned(
-                    serverId = "pyrybox-2026-0f3a",
-                    displayName = "Pyrybox",
-                    relayUrl = "wss://relay.pyryco.de",
-                    status = ConnectionStatus(RelayLinkStatus.DaemonAbsent, PyrycodeLinkStatus.Down),
-                ),
+            connection = PREVIEW_CONNECTION,
             themeMode = ThemeMode.SYSTEM,
             useWallpaperColors = false,
             archivedDiscussionCount = 11,
@@ -371,6 +420,7 @@ private fun SettingsScreenLightPreview() {
             onDefaultWorkspaceTapped = {},
             onSelectDefaultWorkspace = {},
             onWorkspacePickerDismissed = {},
+            onOpenHost = {},
             onPairServer = {},
             onBack = {},
             onOpenArchivedDiscussions = {},
@@ -384,13 +434,7 @@ private fun SettingsScreenLightPreview() {
 private fun SettingsScreenDarkPreview() {
     PyrycodeMobileTheme(darkTheme = true) {
         SettingsScreen(
-            host =
-                SettingsHostState.Owned(
-                    serverId = "pyrybox-2026-0f3a",
-                    displayName = "Pyrybox",
-                    relayUrl = "wss://relay.pyryco.de",
-                    status = ConnectionStatus(RelayLinkStatus.DaemonAbsent, PyrycodeLinkStatus.Down),
-                ),
+            connection = PREVIEW_CONNECTION,
             themeMode = ThemeMode.SYSTEM,
             useWallpaperColors = false,
             archivedDiscussionCount = 11,
@@ -409,6 +453,7 @@ private fun SettingsScreenDarkPreview() {
             onDefaultWorkspaceTapped = {},
             onSelectDefaultWorkspace = {},
             onWorkspacePickerDismissed = {},
+            onOpenHost = {},
             onPairServer = {},
             onBack = {},
             onOpenArchivedDiscussions = {},

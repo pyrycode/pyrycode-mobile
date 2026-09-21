@@ -457,7 +457,7 @@ internal fun PyryNavHost(
             arguments = Routes.settingsArguments(),
         ) {
             val vm = koinViewModel<SettingsViewModel>()
-            val host by vm.host.collectAsStateWithLifecycle()
+            val connection by vm.connection.collectAsStateWithLifecycle()
             val themeMode by vm.themeMode.collectAsStateWithLifecycle()
             val useWallpaperColors by vm.useWallpaperColors.collectAsStateWithLifecycle()
             val archivedDiscussionCount by vm.archivedDiscussionCount.collectAsStateWithLifecycle()
@@ -468,7 +468,7 @@ internal fun PyryNavHost(
             val defaultWorkspace by vm.defaultWorkspace.collectAsStateWithLifecycle()
             val workspacePickerVisible by vm.workspacePickerVisible.collectAsStateWithLifecycle()
             SettingsScreen(
-                host = host,
+                connection = connection,
                 themeMode = themeMode,
                 useWallpaperColors = useWallpaperColors,
                 archivedDiscussionCount = archivedDiscussionCount,
@@ -487,6 +487,21 @@ internal fun PyryNavHost(
                 onDefaultWorkspaceTapped = vm::onDefaultWorkspaceTapped,
                 onSelectDefaultWorkspace = vm::onSelectDefaultWorkspace,
                 onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
+                // Host-to-host is lateral movement between two instances of one destination, not
+                // descent, so the hop replaces this entry instead of stacking on it (#750): Back
+                // from any host's Settings returns to the list it was opened from, and hopping
+                // between two hosts cannot grow the stack a tap at a time. Returning to the host
+                // left behind costs one tap on a row that is still on screen.
+                //
+                // Not launchSingleTop: that reuses this NavBackStackEntry, so the ViewModel — and
+                // the owner it captured at creation — would survive while the arguments changed
+                // underneath it. popUpTo-inclusive destroys the entry, which is what makes the new
+                // capture real.
+                onOpenHost = { serverId ->
+                    navController.navigate(Routes.settings(serverId)) {
+                        popUpTo(Routes.SETTINGS) { inclusive = true }
+                    }
+                },
                 // The same destination the channel list's own pairing entry opens (#738), so an
                 // unpaired phone has a working way out of this screen's no-host state.
                 onPairServer = { navController.navigate(Routes.SCANNER) },

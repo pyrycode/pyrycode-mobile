@@ -48,6 +48,7 @@
     -->
     <string name="settings_host_none">No host is paired</string>
     <string name="settings_host_unknown">This host is no longer paired</string>
+    <string name="settings_host_current">This server</string>
     <string name="archived_title">Archived</string>
     <string name="archived_tab_channels">Channels (%1$d)</string>
     <string name="archived_tab_discussions">Discussions (%1$d)</string>
