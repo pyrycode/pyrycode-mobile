@@ -3,9 +3,10 @@
 Exposes ordered host-qualified channel/chat state and explicit host actions through
 `HostConversationSource`, plus the fold and selection state
 [ChannelListScreen](channel-list-screen.md)'s assembled conversation tree needs (#731).
-Every action the screen can trigger — row taps, folds, and (since #738) both add
-controls — is host-qualified and resolved from this view model's own methods;
-`ChannelListScreen` carries no other state model. The flat compatibility
+Every action the screen can trigger — row taps, folds, (since #738) both add
+controls and (since #744) the host row's edit control — is host-qualified and
+resolved from this view model's own methods; `ChannelListScreen` carries no
+other state model. The flat compatibility
 `ChannelListUiState` projection, its `ChannelListNavigation` one-shot channel and its
 `onEvent` reducer retired with the floating action button that was their only
 consumer (#738) — see [Configuration](#configuration) for what that removed from
@@ -49,6 +50,7 @@ data class HostChannelListState(
     val workspacePickerServerId: String? = null,
     val collapsed: Set<TreeFoldKey> = emptySet(),                    // #731 — collapsed, not expanded
     val selected: HostConversationTarget? = null,                    // #731 — last opened from this list
+    val hostEditor: HostEditorState? = null,                         // #744 — open Edit host modal's target
 )
 
 enum class ConversationTreeSection { Channels, Chats }               // #731
@@ -62,9 +64,20 @@ data class TreeFoldKey(                                              // #731
 
 data class HostConversationTarget(val serverId: String, val conversationId: String)
 
+/** The Edit host modal's target and the caller-owned flags [EditHostModal](mobile-modal.md) requires (#744). */
+data class HostEditorState(
+    val serverId: String,
+    val serverIdentity: String,
+    val relayAddress: String,
+    val initialName: String,
+    val saving: Boolean = false,
+    val failed: Boolean = false,
+)
+
 class ChannelListViewModel(
     private val appPreferences: AppPreferences,
     private val hostSource: HostConversationSource,
+    private val pairedServers: PairedServerCollectionStore,          // #744
 ) : ViewModel() {
     // State projection and action behavior are described below.
 }
@@ -73,7 +86,21 @@ class ChannelListViewModel(
 `ChannelListViewModel`'s constructor dropped `repository: ConversationRepository` in #738 — it was read only
 by the retired compatibility `state` projection and the `onEvent` reducer it fed; `hostSource` already
 supplies every host-qualified read and write this VM performs. The one call site,
-[`AppModule`](dependency-injection.md), lost the matching `get()` argument.
+[`AppModule`](dependency-injection.md), lost the matching `get()` argument, then gained a third — the
+`PairedServerCollectionStore` `AppModule` already binds through `ObservablePairedServerStore` — when #744
+added `pairedServers` for the Edit host modal's read and write.
+
+`HostEditorState` holds **display text and the target id only** — `serverIdentity` and `relayAddress` are
+copied out of the loaded `PairedServer` record at open time and the record itself is dropped, so its
+`token` and `serverStaticPublicKey` never enter a `StateFlow` that outlives the modal. Both are carried
+**unclamped** on purpose: `parsePairingPayload` bounds neither field's length, and the clamp belongs where
+[`EditHostModal`](mobile-modal.md#callers) already applies it — that component keys its name buffer on the
+raw identity so two hosts sharing a long prefix cannot collapse onto one buffer, and clamping upstream
+would defeat that. `failed` is a flag rather than a message, resolved to a string at the screen, which
+keeps this view model free of `Context` and keeps an identity or a relay address from ever reaching the
+shell's live region. There is no name-draft field: `EditHostModal` owns its own buffer, so a failed save
+keeps what the operator typed with no view-model involvement, provided the same `HostEditorState` instance
+stays published — which is why a failed save copies the existing state rather than reopening.
 
 `HostChannelListEntry`, `HostChannelListState`, `ConversationTreeSection`, `TreeFoldKey` and
 `HostConversationTarget` are top-level (siblings of the VM), not nested inside it — call sites import them
@@ -89,15 +116,17 @@ one-shot navigation for the host-qualified creation and picker methods.
 
 ## Wiring
 
-Koin supplies two required constructor dependencies from
+Koin supplies three required constructor dependencies from
 [`appModule`](dependency-injection.md):
 
 ```kotlin
-viewModel { ChannelListViewModel(get(), get()) }
+viewModel { ChannelListViewModel(get(), get(), get()) }
 ```
 
-They are `AppPreferences` and the shared `HostConversationSource` (#738 dropped the
-third, `ConversationRepository` — see [Shape](#shape) above). `HostConversationSource`'s
+They are `AppPreferences`, the shared `HostConversationSource` and (since #744) the
+`PairedServerCollectionStore` `appModule` already binds through
+`ObservablePairedServerStore` (#738 dropped a prior third, `ConversationRepository`
+— see [Shape](#shape) above). `HostConversationSource`'s
 included `hostConversationModule` selects the matching host source. Demo mode exposes
 only `HostConversationSource.DEMO_SERVER_ID`
 (`demo`, display name `Demo`)
@@ -112,7 +141,29 @@ fold toggles map straight to `vm.onHostRowTapped(event.target)` / `vm.onFoldTogg
 since the row already carries its own host; since #738 the two add controls follow the same
 rule — `ChannelListEvent.TreeHostAddTapped(serverId)` / `TreeHostAddLongPressed(serverId)` map
 to `vm.createHostDiscussion(serverId)` / `vm.openHostWorkspacePicker(serverId)`, the control's
-own row, never `destinations.selectedServerId()`. Picker visibility comes straight from
+own row, never `destinations.selectedServerId()`. Since #744 the edit control follows the same
+rule a third time: `TreeHostEditTapped(serverId) -> vm.openHostEditor(serverId)`,
+`HostEditNameSubmitted(name) -> vm.submitHostName(name)` and `HostEditDismissed -> vm.dismissHostEditor()`.
+
+**The editor's three methods (#744).** `openHostEditor(serverId)` reads `pairedServers.loadById(serverId)`
+and publishes a `HostEditorState` built from exactly two of the record's fields plus the stored
+`displayName` (blank when absent — the row's own unnamed-host mapping, never the id). It holds its launch
+in a single `editorOpenJob` field, cancelling the previous one first: two rows' pencils tapped while the
+first read is still decrypting would otherwise race on the publish, and the slower read winning would show
+— and rename — a host the operator did not tap last. That race is not closed by the row's own `serverId`
+on the event, because both events already carry a correct id; the defect is in which reply lands, and a
+cancelled launch cannot publish at all. An unknown id or a re-raised read failure publishes nothing and
+logs a content-free static event. `submitHostName(name)` no-ops without an open editor or while one is
+already saving, trims and clamps the name to `MAX_WORKSPACE_LABEL_CHARS` itself (not trusted from the
+component, so the method's contract holds for any caller), maps a blank result to `null`, and calls
+`setDisplayName`. Success closes the editor; a thrown `PairedServerStoreException` republishes
+`saving = false, failed = true`, leaving the previous name in place. `dismissHostEditor()` publishes `null`
+and writes nothing. All three terminal transitions use `MutableStateFlow.compareAndSet` against the exact
+state published before the call, so a save that completes after a dismissal cannot resurrect a closed
+modal or overwrite a newer one. Every log line is a static event name plus code — never the entered name,
+the identity or the relay address.
+
+Picker visibility comes straight from
 `hostState.workspacePickerServerId`; pick/dismiss call the host methods, and the route provides
 that captured owner's reconnecting repository to the nested `WorkspacePicker`. Only
 `hostNavigationEvents` opens threads, preserving the host through asynchronous creation. See
@@ -163,6 +214,21 @@ display name. `onHostRowTapped` records the target as `selected`; a later snapsh
 emission does not clear it, and a second tap replaces it — pinning "last opened from
 this list", not "currently open."
 
+**Editor coverage (#744, same `fixture()`).** `Fixture` gains an in-memory `PairedServerCollectionStore`
+fake bound in the override module — the Koin-built view model would otherwise resolve the Keystore-backed
+store on the JVM. `editorOpensOnTheRowsOwnStoredRecordAndSurvivesAnIncomingSnapshot` covers a named, an
+unnamed and a blank-named host each opening with the right identity, relay address and name (blank for the
+latter two), and a later snapshot leaving the published editor untouched.
+`editorOpenIgnoresAnUnknownIdAndAnOpenSupersededByALaterTap` covers an unknown id publishing no editor and
+proves the `editorOpenJob` cancellation: a second open while the first host's read is still in flight
+publishes the **second** host's editor and never the first's, gated by holding the fake store's read open.
+`submitSavesTheTrimmedClampedNameOrClearsItAndClosesTheEditor` covers OK writing the trimmed name and
+closing, a blank or whitespace-only name writing `null`, and a name past `MAX_WORKSPACE_LABEL_CHARS`
+written clamped. `failedSaveKeepsTheEditorOpenAndActionableWhileADismissedOneStaysClosed` covers a throwing
+`setDisplayName` leaving the editor open with `saving = false, failed = true` and the stored name
+unchanged, and a dismissal during an in-flight save not being undone by its later completion.
+`dismissClosesTheEditorWithoutWriting` covers the last case.
+
 Unavailable-target coverage denies lookup even with cached rows and connected
 indicators. Failure tests inspect the action job's cancellation state as well as
 missing navigation: absence of navigation alone cannot prove cancellation was
@@ -209,7 +275,7 @@ class's own convention, not inherited from the retired sibling.
 
 - Host contract: [#705 design](../../specs/architecture/705-host-channel-list.md), [host source identity](dependency-injection.md#host-identity-and-snapshots) and [exact-host repository access](dependency-injection.md#exact-host-repository-access).
 - Ticket notes: [`../codebase/45.md`](../codebase/45.md), [`../codebase/22.md`](../codebase/22.md) (FAB → `onEvent` reducer + one-shot nav channel), [`../codebase/26.md`](../codebase/26.md) (`combine` of Channels + Discussions flows, widened `Loaded` / `Empty` to carry `recentDiscussionsCount`, `RecentDiscussionsTapped` event, `stubRepo` helper reshape), [`../codebase/69.md`](../codebase/69.md) (widened `Loaded` / `Empty` with `recentDiscussions: List<Conversation>`; collapsed the `.map { it.size }` projection into a single `combine` emission; two new tests pin `.take(3)` slicing and upstream-ordering contract), [`../codebase/161.md`](../codebase/161.md) (third combined input `lastMessagesFlow` derived via `flatMapLatest(distinctUntilChanged(recentIdsFlow))` + per-row `observeLastMessage` `combine`; `recentDiscussionLastMessages: Map<String, Message> = emptyMap()` default-arg affordance lets every existing construction site stay untouched), [`../codebase/221.md`](../codebase/221.md) (fourth combined input `pendingWorkspacePicker: MutableStateFlow<Boolean>` projects onto `workspacePickerVisible: Boolean = false` on `Loaded`/`Empty`; three new `onEvent` arms for `LongPressFab` / `WorkspacePicked(workspace)` / `WorkspacePickerDismissed`; `WorkspacePicked` clears the flag *synchronously before* the suspend launches — same shape as #78's `confirmPromotion`), [`../codebase/239.md`](../codebase/239.md) (pure test-infra refactor: lifts the `SettingsViewModelTest` `TemporaryFolder` + class-level `dispatcher` + `TestScope.newDataStore()` rig into `ChannelListViewModelTest` and introduces a `TestScope.makeVm(repository, prefs = AppPreferences(newDataStore()))` helper that routes all 18 VM construction sites; production code unchanged — the `prefs` default is the seam the next ticket changes one line of when it wires `AppPreferences.defaultWorkspace` into the FAB short-press), [`../codebase/240.md`](../codebase/240.md) (spends the #239 seam: VM gains `AppPreferences` as a second constructor parameter, `CreateDiscussionTapped` reads `appPreferences.defaultWorkspace.first()` inside the existing `viewModelScope.launch { … }` and passes it to `repository.createDiscussion(workspace = …)`; `WorkspacePicked` long-press path unchanged — explicit user pick still overrides the default; two new tests pin both behaviours; first consumer of [`AppPreferences.defaultWorkspace`](./app-preferences.md) since the #231 schema landed)
-- Specs: `docs/specs/architecture/45-channel-list-viewmodel-uistate-data-path.md`, `docs/specs/architecture/22-channel-list-fab-new-discussion.md`, `docs/specs/architecture/26-recent-discussions-pill.md`, `docs/specs/architecture/69-channel-list-recent-discussions-section.md`, `docs/specs/architecture/161-recent-discussion-last-message-uistate.md`, `docs/specs/architecture/221-channel-list-fab-long-press-workspace-picker.md`, `docs/specs/architecture/729-group-conversations-by-host-and-workspace.md` (`HostWorkspaceGroup.kt`'s `HostConversationRow` / `HostWorkspaceGroup` / `groupConversationsByWorkspace`, consumed by [ChannelListScreen](channel-list-screen.md)'s tree since #731), `docs/specs/architecture/731-assemble-conversation-tree.md`, `docs/specs/architecture/738-list-add-controls-retire-fab.md` (retires the flat compatibility contract this document describes above)
-- Upstream: [Conversation repository](./conversation-repository.md) (data-layer seam — since #240 `createDiscussion(workspace = <appPreferences.defaultWorkspace.first()>)` is the call the `CreateDiscussionTapped` arm makes — never the no-arg form anymore; `createDiscussion(workspace = event.workspace)` is the #221 call from the `WorkspacePicked` arm; `observeConversations(Discussions)` is the second subscription added in #26 and the same emission #69 re-uses for both `recent` and `count`; `observeLastMessage(id)` from #161 is the per-row subscription the `flatMapLatest` derivation rides), [`AppPreferences`](./app-preferences.md) (since #240; the `defaultWorkspace: Flow<String>` schema landed in #231 and the FAB short-press is its first consumer — the read is `.first()`-shaped, one-shot per event), [data model](./data-model.md) (`Conversation` payload, `Message` payload for `recentDiscussionLastMessages`), [dependency injection](./dependency-injection.md) (Koin wiring)
-- Sibling combine-arm pattern: [DiscussionListViewModel](./discussion-list-viewmodel.md) `pendingPromotion` (#78) — the first instance of `combine(upstream, MutableStateFlow<…>)` visibility arm; the retired flat `pendingWorkspacePicker` (#221) was the second, retired with it in #738; `hostState`'s own combine over `pendingHostWorkspacePicker: MutableStateFlow<String?>` (#221, unaffected by #738) is the arm that survives. The `SaveAsChannelDialog` visibility arm (#142) is a sibling instance in the codebase.
-- Downstream: [ChannelListScreen](channel-list-screen.md) (#46 — first UI consumer; introduced `ChannelListEvent` and `collectAsStateWithLifecycle()`; #22 added the FAB; #26 added the pill; #69 replaced the pill with the inline section — itself replaced by #731's assembled tree, which consumes `hostState.collapsed` / `hostState.selected` and dispatches `onHostRowTapped` / `onFoldToggled` directly, dropping the `selectedServerId()` adapter for row taps; #161 added the compatibility `recentDiscussionLastMessages` field, consumed by sibling #162; #221 added the FAB long-press → picker path; #738 retired the FAB, the flat `ChannelListUiState`/`ChannelListNavigation`/`onEvent`/`navigationEvents` contract #46/#22/#26/#69/#161/#221 built, and the `repository` constructor parameter that fed it, replacing the FAB's two paths with the section-header and host-row add controls both routed through this VM's existing host-qualified methods), [WorkspacePicker](./workspace-picker.md) (the host `hostState.workspacePickerServerId` drives, unaffected by #738), follow-up Retry ticket (an explicit retry affordance — no longer has an `Error` state to retry from since #738; would need its own design), Phase 4 (`ConversationRepositoryImpl` replaces `FakeConversationRepository` behind the same `bind ConversationRepository::class`; #490 already added the **crash-guard** around the host-qualified `createDiscussion` launches via [`launchGuardedRepoCall`](guarded-repo-launch.md), so what Phase 4 still owes is the **user-facing error surface**, not the try/catch), [Guarded repo launch](guarded-repo-launch.md) (the #490 one-shot-call guard the two create-discussion launches route through).
+- Specs: `docs/specs/architecture/45-channel-list-viewmodel-uistate-data-path.md`, `docs/specs/architecture/22-channel-list-fab-new-discussion.md`, `docs/specs/architecture/26-recent-discussions-pill.md`, `docs/specs/architecture/69-channel-list-recent-discussions-section.md`, `docs/specs/architecture/161-recent-discussion-last-message-uistate.md`, `docs/specs/architecture/221-channel-list-fab-long-press-workspace-picker.md`, `docs/specs/architecture/729-group-conversations-by-host-and-workspace.md` (`HostWorkspaceGroup.kt`'s `HostConversationRow` / `HostWorkspaceGroup` / `groupConversationsByWorkspace`, consumed by [ChannelListScreen](channel-list-screen.md)'s tree since #731), `docs/specs/architecture/731-assemble-conversation-tree.md`, `docs/specs/architecture/738-list-add-controls-retire-fab.md` (retires the flat compatibility contract this document describes above), `docs/specs/architecture/744-host-row-edit-and-rename.md` (the editor's target, its three methods and the `editorOpenJob` concurrency guard)
+- Upstream: [Conversation repository](./conversation-repository.md) (data-layer seam — since #240 `createDiscussion(workspace = <appPreferences.defaultWorkspace.first()>)` is the call the `CreateDiscussionTapped` arm makes — never the no-arg form anymore; `createDiscussion(workspace = event.workspace)` is the #221 call from the `WorkspacePicked` arm; `observeConversations(Discussions)` is the second subscription added in #26 and the same emission #69 re-uses for both `recent` and `count`; `observeLastMessage(id)` from #161 is the per-row subscription the `flatMapLatest` derivation rides), [`AppPreferences`](./app-preferences.md) (since #240; the `defaultWorkspace: Flow<String>` schema landed in #231 and the FAB short-press is its first consumer — the read is `.first()`-shaped, one-shot per event), [Paired server store](./paired-server-store.md) (since #744 — `PairedServerCollectionStore.loadById` / `setDisplayName`, read and written only by the editor's three methods), [data model](./data-model.md) (`Conversation` payload, `Message` payload for `recentDiscussionLastMessages`), [dependency injection](./dependency-injection.md) (Koin wiring)
+- Sibling combine-arm pattern: [DiscussionListViewModel](./discussion-list-viewmodel.md) `pendingPromotion` (#78) — the first instance of `combine(upstream, MutableStateFlow<…>)` visibility arm; the retired flat `pendingWorkspacePicker` (#221) was the second, retired with it in #738; `hostState`'s own combine over `pendingHostWorkspacePicker: MutableStateFlow<String?>` (#221, unaffected by #738) is the arm that survives, joined by `hostEditor: MutableStateFlow<HostEditorState?>` (#744). The `SaveAsChannelDialog` visibility arm (#142) is a sibling instance in the codebase.
+- Downstream: [ChannelListScreen](channel-list-screen.md) (#46 — first UI consumer; introduced `ChannelListEvent` and `collectAsStateWithLifecycle()`; #22 added the FAB; #26 added the pill; #69 replaced the pill with the inline section — itself replaced by #731's assembled tree, which consumes `hostState.collapsed` / `hostState.selected` and dispatches `onHostRowTapped` / `onFoldToggled` directly, dropping the `selectedServerId()` adapter for row taps; #161 added the compatibility `recentDiscussionLastMessages` field, consumed by sibling #162; #221 added the FAB long-press → picker path; #738 retired the FAB, the flat `ChannelListUiState`/`ChannelListNavigation`/`onEvent`/`navigationEvents` contract #46/#22/#26/#69/#161/#221 built, and the `repository` constructor parameter that fed it, replacing the FAB's two paths with the section-header and host-row add controls both routed through this VM's existing host-qualified methods; #744 drives [`EditHostModal`](mobile-modal.md#callers) off `hostState.hostEditor`), [WorkspacePicker](./workspace-picker.md) (the host `hostState.workspacePickerServerId` drives, unaffected by #738), follow-up Retry ticket (an explicit retry affordance — no longer has an `Error` state to retry from since #738; would need its own design), Phase 4 (`ConversationRepositoryImpl` replaces `FakeConversationRepository` behind the same `bind ConversationRepository::class`; #490 already added the **crash-guard** around the host-qualified `createDiscussion` launches via [`launchGuardedRepoCall`](guarded-repo-launch.md), so what Phase 4 still owes is the **user-facing error surface**, not the try/catch), [Guarded repo launch](guarded-repo-launch.md) (the #490 one-shot-call guard the two create-discussion launches route through), #745 (wires `EditHostModal`'s `Unpair host` action, inert in #744), #676 (the live emulator scenario for #744's open/save/failure flow, blocked by it).
