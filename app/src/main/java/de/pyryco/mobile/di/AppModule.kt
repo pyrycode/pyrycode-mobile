@@ -236,8 +236,12 @@ internal class ThreadDestinationFactory(
      * no host — and unlike them it is never resolved to a bundle here: this screen reads identity
      * and status only, so an owner that is saved but not yet connected is still its owner.
      *
-     * [preferences] and [repository] stay compatibility-bound: app-wide settings are not host-scoped,
-     * and the archived-discussion count is rebound with the Archive destination by #715.
+     * [preferences] is the one process-wide store, but Settings no longer reads or writes it
+     * app-wide throughout: since #714 the default workspace is read and written under the owner's
+     * own key, so the view model needs the owner for more than the Connection section. The other
+     * eight preferences stay genuinely app-wide. [repository] stays compatibility-bound — the
+     * archived-discussion count is rebound with the Archive destination by #715 — while the picker's
+     * repository is bound by the route, not here.
      */
     fun settings(
         handle: SavedStateHandle,

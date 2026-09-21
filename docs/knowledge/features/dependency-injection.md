@@ -172,10 +172,16 @@ destination method, in the same shape but with two deliberate differences from `
 the owner it reads from the `SavedStateHandle` is **optional** (`handle.get<String>("serverId").orEmpty()`
 — a blank owner is a valid destination state, not an error), and it never resolves that id to a
 connection bundle — `SettingsViewModel` reads a saved host's identity and status only, so a
-saved-but-disconnected owner is still its owner. `preferences` and `repository` are the same
-compatibility-bound `AppPreferences` / `ConversationRepository` singletons every other
-`SettingsViewModel` dependency already used; `#749` does not touch them, per its explicit deferral
-of `archivedDiscussionCount` and the default-workspace picker to #715/#714.
+saved-but-disconnected owner is still its owner. `preferences` and `repository` are the same `AppPreferences` / `ConversationRepository` singletons
+every other `SettingsViewModel` dependency already used; `#749` did not touch them, per its explicit
+deferral of `archivedDiscussionCount` and the default-workspace picker to #715/#714. `#714` closed
+the workspace half of that deferral: `preferences` is still the one process-wide `AppPreferences`
+singleton, but `SettingsViewModel` now reads and writes `defaultWorkspace` through it under the
+destination's own `ownerServerId` key rather than app-wide, and the workspace picker's own
+repository is bound by the route (`HostWorkspaceRepository`, keyed by
+`SettingsViewModel.workspacePickerServerId`), not by this `repository` argument — see
+[SettingsViewModel § Configuration/usage](settings-viewmodel.md#configuration--usage). `repository`
+itself stays compatibility-bound for `archivedDiscussionCount`, deferred to #715.
 
 `settings` also builds the private `hosts(): Flow<List<SettingsHost>>` that becomes
 `SettingsViewModel`'s fourth constructor argument — every saved host's identity plus its own live

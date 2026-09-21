@@ -10,6 +10,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.model.Session
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.Model
@@ -46,13 +47,23 @@ class SettingsViewModelTest {
 
     private val dispatcher = UnconfinedTestDispatcher()
 
+    // The real sink is `android.util.Log.println`, which throws on plain JVM; capturing it also lets
+    // the workspace tests assert what the picker's branches actually log.
+    private val oldSink = RelayLog.sink
+    private val oldEnabled = RelayLog.enabled
+    private val logs = mutableListOf<String>()
+
     @Before
     fun setUpMainDispatcher() {
         Dispatchers.setMain(dispatcher)
+        RelayLog.enabled = true
+        RelayLog.sink = { _, _, message -> logs += message }
     }
 
     @After
     fun tearDownMainDispatcher() {
+        RelayLog.sink = oldSink
+        RelayLog.enabled = oldEnabled
         Dispatchers.resetMain()
     }
 
@@ -496,79 +507,100 @@ class SettingsViewModelTest {
     fun defaultWorkspace_initialState_emitsScratchSentinel_whenNoStoredValue() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())
-            val vm = makeVm(prefs)
+            val vm = makeVm(prefs, ownerServerId = OWNER)
             val collector = launch { vm.defaultWorkspace.collect { } }
             advanceUntilIdle()
             assertEquals(DEFAULT_SCRATCH_CWD, vm.defaultWorkspace.value)
             collector.cancel()
         }
 
+    /**
+     * Each destination reads its own host's stored value out of one shared store, and the ids are
+     * matched exactly: `Host` and `host` are two hosts, as the preference layer's key rule requires.
+     */
     @Test
-    fun defaultWorkspace_initialState_mirrorsPersistedValue() =
+    fun defaultWorkspace_initialState_mirrorsItsOwnHostsPersistedValue() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())
-            prefs.setDefaultWorkspace("~/Workspace/Projects/foo")
+            prefs.setDefaultWorkspace(OWNER, FOO).getOrThrow()
+            prefs.setDefaultWorkspace(OTHER, BAR).getOrThrow()
             advanceUntilIdle()
-            val vm = makeVm(prefs)
-            val collector = launch { vm.defaultWorkspace.collect { } }
+            val vm = makeVm(prefs, ownerServerId = OWNER)
+            val other = makeVm(prefs, ownerServerId = OTHER)
+            val collectors = listOf(vm, other).map { launch { it.defaultWorkspace.collect { } } }
             advanceUntilIdle()
-            assertEquals("~/Workspace/Projects/foo", vm.defaultWorkspace.value)
-            collector.cancel()
+            assertEquals(FOO, vm.defaultWorkspace.value)
+            assertEquals(BAR, other.defaultWorkspace.value)
+            collectors.forEach { it.cancel() }
         }
 
+    /**
+     * The AC2 core: two destinations over one store each write under their own host key, neither
+     * moves the other's value, and the app-wide unqualified default is left where it was.
+     */
     @Test
-    fun onSelectDefaultWorkspace_persistsPath_andHidesPicker() =
+    fun onSelectDefaultWorkspace_persistsUnderItsOwnHostKey_andClosesPicker() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())
-            val vm = makeVm(prefs)
+            val vm = makeVm(prefs, ownerServerId = OWNER)
+            val other = makeVm(prefs, ownerServerId = OTHER)
             vm.onDefaultWorkspaceTapped()
-            vm.onSelectDefaultWorkspace("~/Workspace/Projects/foo")
+            vm.onSelectDefaultWorkspace(FOO)
+            other.onDefaultWorkspaceTapped()
+            other.onSelectDefaultWorkspace(BAR)
             advanceUntilIdle()
-            assertEquals("~/Workspace/Projects/foo", prefs.defaultWorkspace.first())
-            assertEquals(false, vm.workspacePickerVisible.value)
+            assertEquals(FOO, prefs.defaultWorkspace(OWNER).first())
+            assertEquals(BAR, prefs.defaultWorkspace(OTHER).first())
+            assertEquals(DEFAULT_SCRATCH_CWD, prefs.defaultWorkspace.first())
+            assertEquals(null, vm.workspacePickerServerId.value)
+            assertEquals(null, other.workspacePickerServerId.value)
         }
 
     @Test
     fun defaultWorkspace_flowReEmits_afterOnSelectDefaultWorkspace() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())
-            val vm = makeVm(prefs)
+            val vm = makeVm(prefs, ownerServerId = OWNER)
             val collector = launch { vm.defaultWorkspace.collect { } }
             advanceUntilIdle()
-            vm.onSelectDefaultWorkspace("~/Workspace/Projects/foo")
+            vm.onDefaultWorkspaceTapped()
+            vm.onSelectDefaultWorkspace(FOO)
             advanceUntilIdle()
-            assertEquals("~/Workspace/Projects/foo", vm.defaultWorkspace.value)
-            vm.onSelectDefaultWorkspace("~/Workspace/Projects/bar")
+            assertEquals(FOO, vm.defaultWorkspace.value)
+            vm.onDefaultWorkspaceTapped()
+            vm.onSelectDefaultWorkspace(BAR)
             advanceUntilIdle()
-            assertEquals("~/Workspace/Projects/bar", vm.defaultWorkspace.value)
+            assertEquals(BAR, vm.defaultWorkspace.value)
             collector.cancel()
         }
 
+    /** The target the route binds the picker's repository to is this destination's own owner. */
     @Test
-    fun onDefaultWorkspaceTapped_setsPickerVisible() =
+    fun onDefaultWorkspaceTapped_exposesItsOwnerAsThePickerTarget() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())
-            val vm = makeVm(prefs)
-            assertEquals(false, vm.workspacePickerVisible.value)
+            val vm = makeVm(prefs, ownerServerId = OWNER)
+            assertEquals(null, vm.workspacePickerServerId.value)
             vm.onDefaultWorkspaceTapped()
-            assertEquals(true, vm.workspacePickerVisible.value)
+            assertEquals(OWNER, vm.workspacePickerServerId.value)
         }
 
     @Test
-    fun onWorkspacePickerDismissed_hidesPicker_andLeavesPersistedDefaultUnchanged() =
+    fun onWorkspacePickerDismissed_clearsTheTarget_andLeavesPersistedDefaultUnchanged() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())
-            val vm = makeVm(prefs)
+            val vm = makeVm(prefs, ownerServerId = OWNER)
             val collector = launch { vm.defaultWorkspace.collect { } }
             advanceUntilIdle()
-            vm.onSelectDefaultWorkspace("~/Workspace/Projects/foo")
+            vm.onDefaultWorkspaceTapped()
+            vm.onSelectDefaultWorkspace(FOO)
             advanceUntilIdle()
             vm.onDefaultWorkspaceTapped()
-            assertEquals(true, vm.workspacePickerVisible.value)
+            assertEquals(OWNER, vm.workspacePickerServerId.value)
             vm.onWorkspacePickerDismissed()
             advanceUntilIdle()
-            assertEquals(false, vm.workspacePickerVisible.value)
-            assertEquals("~/Workspace/Projects/foo", prefs.defaultWorkspace.first())
+            assertEquals(null, vm.workspacePickerServerId.value)
+            assertEquals(FOO, prefs.defaultWorkspace(OWNER).first())
             collector.cancel()
         }
 
@@ -576,12 +608,84 @@ class SettingsViewModelTest {
     fun onWorkspacePickerDismissed_fromDefaultState_neverPersistsNonSentinel() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())
-            val vm = makeVm(prefs)
+            val vm = makeVm(prefs, ownerServerId = OWNER)
             vm.onDefaultWorkspaceTapped()
             vm.onWorkspacePickerDismissed()
             advanceUntilIdle()
-            assertEquals(false, vm.workspacePickerVisible.value)
+            assertEquals(null, vm.workspacePickerServerId.value)
+            assertEquals(DEFAULT_SCRATCH_CWD, prefs.defaultWorkspace(OWNER).first())
+        }
+
+    /**
+     * A pick that arrives with no picker open — a cancelled sheet whose callback still fires, or a
+     * second pick behind the first — writes nothing. The handler reads the target off the pending
+     * value rather than off the captured owner precisely so this case has somewhere to fail.
+     */
+    @Test
+    fun onSelectDefaultWorkspace_withNoPickerOpen_writesNothing() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs, ownerServerId = OWNER)
+            vm.onDefaultWorkspaceTapped()
+            vm.onWorkspacePickerDismissed()
+            vm.onSelectDefaultWorkspace(FOO)
+            advanceUntilIdle()
+            assertEquals(DEFAULT_SCRATCH_CWD, prefs.defaultWorkspace(OWNER).first())
+            vm.onDefaultWorkspaceTapped()
+            vm.onSelectDefaultWorkspace(FOO)
+            vm.onSelectDefaultWorkspace(BAR)
+            advanceUntilIdle()
+            assertEquals(FOO, prefs.defaultWorkspace(OWNER).first())
+        }
+
+    /**
+     * A destination that captured no host has no host to pick folders on: the picker never opens, so
+     * the route never has a repository to bind and the sheet can never fall back to the
+     * compatibility one. Nothing is written under the blank key or the app-wide one.
+     */
+    @Test
+    fun blankOwner_neverOpensThePicker_andWritesNothing() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs)
+            val collector = launch { vm.defaultWorkspace.collect { } }
+            advanceUntilIdle()
+            assertEquals(DEFAULT_SCRATCH_CWD, vm.defaultWorkspace.value)
+            vm.onDefaultWorkspaceTapped()
+            assertEquals(null, vm.workspacePickerServerId.value)
+            vm.onSelectDefaultWorkspace(FOO)
+            advanceUntilIdle()
+            assertEquals(DEFAULT_SCRATCH_CWD, vm.defaultWorkspace.value)
+            assertEquals(DEFAULT_SCRATCH_CWD, prefs.defaultWorkspace("").first())
             assertEquals(DEFAULT_SCRATCH_CWD, prefs.defaultWorkspace.first())
+            collector.cancel()
+        }
+
+    /**
+     * Both picker branches log an event and a static code only — never the server id, the picked
+     * path or any other value — so nothing here could reach a debug build's logcat.
+     */
+    @Test
+    fun workspacePickerLogs_carryNoServerIdAndNoPath() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            makeVm(prefs).onDefaultWorkspaceTapped()
+            val vm = makeVm(prefs, ownerServerId = OWNER)
+            vm.onDefaultWorkspaceTapped()
+            vm.onSelectDefaultWorkspace(FOO)
+            vm.onSelectDefaultWorkspace(BAR)
+            vm.onWorkspacePickerDismissed()
+            advanceUntilIdle()
+            val picker = logs.filter { it.contains("workspace_picker") || it.contains("workspace_default") }
+            assertEquals(
+                listOf(
+                    "event=settings_workspace_picker_rejected code=no_owner",
+                    "event=settings_workspace_picker_opened",
+                    "event=settings_workspace_default_rejected code=no_open_picker",
+                    "event=settings_workspace_picker_dismissed",
+                ),
+                picker.filterNot { it.startsWith("event=workspace_default_set") },
+            )
         }
 
     @Test
@@ -870,5 +974,12 @@ class SettingsViewModelTest {
     private companion object {
         val CONNECTED = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
         val OFFLINE = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
+
+        // Two ids that differ only in case, so the workspace tests pin the preference layer's exact
+        // case-sensitive keying rather than merely two different strings.
+        const val OWNER = "Host"
+        const val OTHER = "host"
+        const val FOO = "~/Workspace/Projects/foo"
+        const val BAR = "~/Workspace/Projects/bar"
     }
 }

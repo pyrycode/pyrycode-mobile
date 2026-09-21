@@ -51,11 +51,17 @@ Exposes preferences as typed `Flow<T>` reads + `suspend fun` writes, covering ap
   exposing pairing or creation. Production
   [ChannelListViewModel](channel-list-viewmodel.md) creation reads
   `defaultWorkspace(serverId).first()` for its captured host, including `demo`;
-  explicit workspace picks bypass the default. The compatibility reducer and
-  [SettingsViewModel](settings-viewmodel.md) still use the legacy API. Settings
-  edits its default through the [workspace picker](workspace-picker.md);
-  [#713](https://github.com/pyrycode/pyrycode-mobile/issues/713) and
-  [#714](https://github.com/pyrycode/pyrycode-mobile/issues/714) own its migration.
+  explicit workspace picks bypass the default. [SettingsViewModel](settings-viewmodel.md)
+  read and wrote the unqualified legacy pair until
+  [#714](https://github.com/pyrycode/pyrycode-mobile/issues/714) closed the
+  #713/#749 split: its `defaultWorkspace` projection and `onSelectDefaultWorkspace`
+  handler now read and write `defaultWorkspace(ownerServerId)` /
+  `setDefaultWorkspace(ownerServerId, path)` for the Settings destination's
+  captured owner, editing through the same [workspace picker](workspace-picker.md)
+  host as before; a destination that captured no host reads the scratch sentinel
+  and writes nothing. No production caller reads or writes the unqualified pair
+  today — it remains only as the transitional migration contract described above,
+  exercised directly by `HostWorkspacePreferencesTest`.
   See the [storage contract plan](../../specs/architecture/711-host-default-workspaces.md).
 
 Notifications key ([#268](../codebase/268.md)):

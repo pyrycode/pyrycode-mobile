@@ -466,49 +466,56 @@ internal fun PyryNavHost(
             val defaultYolo by vm.defaultYolo.collectAsStateWithLifecycle()
             val pushNotifications by vm.pushNotifications.collectAsStateWithLifecycle()
             val defaultWorkspace by vm.defaultWorkspace.collectAsStateWithLifecycle()
-            val workspacePickerVisible by vm.workspacePickerVisible.collectAsStateWithLifecycle()
-            SettingsScreen(
-                connection = connection,
-                themeMode = themeMode,
-                useWallpaperColors = useWallpaperColors,
-                archivedDiscussionCount = archivedDiscussionCount,
-                defaultModel = defaultModel,
-                defaultEffort = defaultEffort,
-                defaultYolo = defaultYolo,
-                pushNotifications = pushNotifications,
-                defaultWorkspace = defaultWorkspace,
-                workspacePickerVisible = workspacePickerVisible,
-                onSelectTheme = vm::onSelectTheme,
-                onToggleUseWallpaperColors = vm::onToggleUseWallpaperColors,
-                onSelectDefaultModel = vm::onSelectDefaultModel,
-                onSelectDefaultEffort = vm::onSelectDefaultEffort,
-                onToggleDefaultYolo = vm::onToggleDefaultYolo,
-                onTogglePushNotifications = vm::onTogglePushNotifications,
-                onDefaultWorkspaceTapped = vm::onDefaultWorkspaceTapped,
-                onSelectDefaultWorkspace = vm::onSelectDefaultWorkspace,
-                onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
-                // Host-to-host is lateral movement between two instances of one destination, not
-                // descent, so the hop replaces this entry instead of stacking on it (#750): Back
-                // from any host's Settings returns to the list it was opened from, and hopping
-                // between two hosts cannot grow the stack a tap at a time. Returning to the host
-                // left behind costs one tap on a row that is still on screen.
-                //
-                // Not launchSingleTop: that reuses this NavBackStackEntry, so the ViewModel — and
-                // the owner it captured at creation — would survive while the arguments changed
-                // underneath it. popUpTo-inclusive destroys the entry, which is what makes the new
-                // capture real.
-                onOpenHost = { serverId ->
-                    navController.navigate(Routes.settings(serverId)) {
-                        popUpTo(Routes.SETTINGS) { inclusive = true }
-                    }
-                },
-                // The same destination the channel list's own pairing entry opens (#738), so an
-                // unpaired phone has a working way out of this screen's no-host state.
-                onPairServer = { navController.navigate(Routes.SCANNER) },
-                onBack = { navController.popBackStack() },
-                onOpenArchivedDiscussions = { navController.navigate(Routes.ARCHIVED_DISCUSSIONS) },
-                onOpenAbout = { navController.navigate(Routes.ABOUT) },
-            )
+            // One value drives both the picker's repository and whether it is on screen at all
+            // (#714), the way the flat list already drives its own picker: the sheet cannot be
+            // visible without a host bound, so it can never fall back to the compatibility
+            // repository and show — or create a folder on — whichever host was selected last.
+            val workspacePickerOwner by vm.workspacePickerServerId.collectAsStateWithLifecycle()
+            HostWorkspaceRepository(workspacePickerOwner, destinations) {
+                SettingsScreen(
+                    connection = connection,
+                    themeMode = themeMode,
+                    useWallpaperColors = useWallpaperColors,
+                    archivedDiscussionCount = archivedDiscussionCount,
+                    defaultModel = defaultModel,
+                    defaultEffort = defaultEffort,
+                    defaultYolo = defaultYolo,
+                    pushNotifications = pushNotifications,
+                    defaultWorkspace = defaultWorkspace,
+                    // Read off the picker's own target, as the flat channel screen reads off its.
+                    workspacePickerVisible = workspacePickerOwner != null,
+                    onSelectTheme = vm::onSelectTheme,
+                    onToggleUseWallpaperColors = vm::onToggleUseWallpaperColors,
+                    onSelectDefaultModel = vm::onSelectDefaultModel,
+                    onSelectDefaultEffort = vm::onSelectDefaultEffort,
+                    onToggleDefaultYolo = vm::onToggleDefaultYolo,
+                    onTogglePushNotifications = vm::onTogglePushNotifications,
+                    onDefaultWorkspaceTapped = vm::onDefaultWorkspaceTapped,
+                    onSelectDefaultWorkspace = vm::onSelectDefaultWorkspace,
+                    onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
+                    // Host-to-host is lateral movement between two instances of one destination, not
+                    // descent, so the hop replaces this entry instead of stacking on it (#750): Back
+                    // from any host's Settings returns to the list it was opened from, and hopping
+                    // between two hosts cannot grow the stack a tap at a time. Returning to the host
+                    // left behind costs one tap on a row that is still on screen.
+                    //
+                    // Not launchSingleTop: that reuses this NavBackStackEntry, so the ViewModel — and
+                    // the owner it captured at creation — would survive while the arguments changed
+                    // underneath it. popUpTo-inclusive destroys the entry, which is what makes the new
+                    // capture real.
+                    onOpenHost = { serverId ->
+                        navController.navigate(Routes.settings(serverId)) {
+                            popUpTo(Routes.SETTINGS) { inclusive = true }
+                        }
+                    },
+                    // The same destination the channel list's own pairing entry opens (#738), so an
+                    // unpaired phone has a working way out of this screen's no-host state.
+                    onPairServer = { navController.navigate(Routes.SCANNER) },
+                    onBack = { navController.popBackStack() },
+                    onOpenArchivedDiscussions = { navController.navigate(Routes.ARCHIVED_DISCUSSIONS) },
+                    onOpenAbout = { navController.navigate(Routes.ABOUT) },
+                )
+            }
         }
         composable(Routes.ARCHIVED_DISCUSSIONS) {
             val vm = koinViewModel<ArchivedDiscussionsViewModel>()

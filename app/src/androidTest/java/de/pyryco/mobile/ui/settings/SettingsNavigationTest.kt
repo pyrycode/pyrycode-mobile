@@ -14,6 +14,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
@@ -28,6 +29,7 @@ import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.crypto.PairedServerEntry
 import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.RelayTransportFactory
 import de.pyryco.mobile.data.network.base64StdEncode
@@ -40,7 +42,8 @@ import de.pyryco.mobile.di.conversationRepositoryModule
 import de.pyryco.mobile.ui.conversations.thread.NavigationPeer
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -65,8 +68,10 @@ class SettingsNavigationTest {
     private lateinit var registry: RelayConnectionRegistry
     private lateinit var store: ObservablePairedServerStore
     private lateinit var nav: NavHostController
+    private lateinit var preferences: AppPreferences
 
     private val peers = mutableMapOf<String, NavigationPeer>()
+    private val stored = MutableStateFlow(emptyPreferences() as Preferences)
 
     @After fun close() {
         if (::app.isInitialized) app.close()
@@ -191,6 +196,89 @@ class SettingsNavigationTest {
         // `SettingsScreenTest` already pins that the click reaches the callback.
         compose.onNodeWithText("Pair another server").assertIsDisplayed().assertHasClickAction()
     }
+
+    /**
+     * The Default workspace picker reads, creates and stores for the host whose Settings this is,
+     * and a compatibility-selection change while the sheet is open cannot retarget it (#714).
+     *
+     * Mounted on the production graph on purpose: binding only the view model leaves the sheet
+     * resolving `LocalWorkspacePickerRepository` through the compatibility binding, which the seam
+     * tests in `WorkspacePickerTest` cannot see because they pass their repository in directly.
+     * Bravo is the selected host for the whole second half, so a picker that followed selection
+     * would show Bravo's recent folder and send Bravo's peer a create request.
+     */
+    @Test fun settingsWorkspacePickerReadsCreatesAndStoresOnlyForItsOwnHost() {
+        start(live = true)
+        select(ALPHA_ID)
+        openSettings()
+        assertOwner(ALPHA_ID)
+        openWorkspacePicker()
+        assertOwnerPicker()
+
+        select(BRAVO_ID)
+        assertOwnerPicker()
+        createFolder()
+
+        // The created path is what the owner's peer returned, stored under the owner's own key.
+        compose.waitUntil(5_000) { workspace(ALPHA_ID) == "/$ALPHA_ID/created" }
+        compose.runOnIdle {
+            assertEquals(DEFAULT_SCRATCH_CWD, workspace(BRAVO_ID))
+            assertNoOtherPickerCalls()
+            assertEquals(1, peers.getValue(ALPHA_ID).outbound.count { it.type == "create_workspace_folder" })
+        }
+        // …and the row under the owner's Settings is the one that now shows it.
+        compose.onNodeWithText("created").performScrollTo().assertIsDisplayed()
+    }
+
+    /**
+     * A destination that captured no host cannot open the picker at all. Were it to open, the sheet
+     * would find no provider and fall back to the compatibility repository — whichever host was
+     * selected last — which is the substitution the ticket forbids.
+     */
+    @Test fun settingsWithNoOwnerCannotOpenTheWorkspacePicker() {
+        start(live = true)
+        compose.runOnIdle { nav.navigate(Routes.settings(null)) }
+        awaitSettings()
+        assertOwner("")
+        openWorkspacePicker()
+        compose.onNodeWithText("/$ALPHA_ID/recent").assertDoesNotExist()
+        compose.onNodeWithText("/$BRAVO_ID/recent").assertDoesNotExist()
+        compose.runOnIdle {
+            assertEquals(DEFAULT_SCRATCH_CWD, workspace(ALPHA_ID))
+            listOf(ALPHA_ID, BRAVO_ID).forEach { id ->
+                assertEquals(
+                    false,
+                    peers.getValue(id).outbound.any { it.type in PICKER_VERBS },
+                )
+            }
+        }
+    }
+
+    private fun openWorkspacePicker() {
+        compose.onNodeWithText("Default workspace").performScrollTo().performClick()
+        compose.waitForIdle()
+    }
+
+    /** Alpha's recent folder is on screen, Bravo's is not, and only Alpha's peer was ever asked. */
+    private fun assertOwnerPicker() {
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("/$ALPHA_ID/recent").fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("/$BRAVO_ID/recent").assertDoesNotExist()
+        compose.runOnIdle { assertNoOtherPickerCalls() }
+    }
+
+    private fun createFolder() {
+        compose.onNodeWithText("Create new folder under pyry-workspace…").performClick()
+        compose.onNodeWithText("What should this workspace be called?").performTextInput("owned-folder")
+        compose.onNodeWithText("Create", ignoreCase = false).performClick()
+    }
+
+    private fun assertNoOtherPickerCalls() {
+        assertEquals(false, peers.getValue(BRAVO_ID).outbound.any { it.type in PICKER_VERBS })
+    }
+
+    private fun workspace(serverId: String) = runBlocking { preferences.defaultWorkspace(serverId).first() }
 
     private fun openSettings() {
         compose.onNodeWithContentDescription("Open settings").performClick()
@@ -326,12 +414,16 @@ class SettingsNavigationTest {
                 Dispatchers.Main.immediate,
             )
         if (live) registry.connect()
-        val preferences =
+        // Writable, unlike the read-only stand-in the #749 tests started from: #714's picker stores
+        // its pick, and a store that drops writes would let a test pass while the value went nowhere.
+        // In-memory rather than file-backed — nothing here needs to survive the process.
+        preferences =
             AppPreferences(
                 object : DataStore<Preferences> {
-                    override val data = flowOf(emptyPreferences())
+                    override val data = stored
 
-                    override suspend fun updateData(transform: suspend (Preferences) -> Preferences) = transform(emptyPreferences())
+                    override suspend fun updateData(transform: suspend (Preferences) -> Preferences) =
+                        transform(stored.value).also { stored.value = it }
                 },
             )
         app =
@@ -369,6 +461,9 @@ class SettingsNavigationTest {
         const val BRAVO_RELAY = "wss://bravo.example"
         const val RENAMED = "Bravo renamed"
         const val OWNER_BADGE = "This server"
+
+        /** Every verb the picker can put on the wire; a non-owner peer must see none of them. */
+        val PICKER_VERBS = setOf("recent_workspaces", "create_workspace_folder")
 
         fun relayFor(serverId: String) = if (serverId == BRAVO_ID) BRAVO_RELAY else ALPHA_RELAY
     }

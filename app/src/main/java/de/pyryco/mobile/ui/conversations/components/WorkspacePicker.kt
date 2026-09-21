@@ -27,7 +27,14 @@ import org.koin.compose.koinInject
 private const val CREATE_FOLDER_ERROR_MESSAGE =
     "Something went wrong. Check your connection and try again."
 
-/** Routes bind the captured picker owner; settings retains its compatibility binding until #637. */
+/**
+ * The host whose folders this picker reads and creates in, bound by whichever route opened it.
+ *
+ * Every production host binds it since #714 took Settings off the compatibility binding: thread and
+ * literal routes bind their route host, the flat channel screen and Settings bind their picker's own
+ * captured target. The `null` default below is therefore reached only from previews and from
+ * component tests that compose the picker with no provider.
+ */
 internal val LocalWorkspacePickerRepository = staticCompositionLocalOf<ConversationRepository?> { null }
 
 @OptIn(ExperimentalMaterial3Api::class)

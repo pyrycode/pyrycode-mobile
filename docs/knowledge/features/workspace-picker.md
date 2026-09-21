@@ -18,7 +18,7 @@ fun WorkspacePicker(
 
 - **`public` (no `internal`).** Unlike the two children, the host is the package's public contract — consumer screens in sibling packages (`ui/conversations/list/`, `ui/conversations/thread/`) call it directly. Kotlin's default top-level visibility is `public`; do not add `internal`.
 - **`visible: Boolean` is a hoisted prop.** Each consumer owns its own visibility flag (typically a `combine` arm on the screen's `UiState`, mirroring [`DiscussionListViewModel`](./discussion-list-viewmodel.md)'s `pendingPromotion` pattern). When `visible == false` the host renders nothing (early return before any `koinInject` / `remember` / `LaunchedEffect`).
-- **`onPicked: (String) -> Unit`.** Single callback for both "user tapped a recent row" and "user created a new folder and we got back a path." The consumer cannot distinguish — by design: every consumer takes the same next action regardless of which path produced the result (Channel List FAB long-press — shipped #221 — calls `createDiscussion(workspace = path)`; the Settings "Default workspace" row — shipped [#235](../codebase/235.md) — calls `setDefaultWorkspace(path)`; [`ThreadScreen`](./thread-screen.md) empty-state chip from #137 and thread overflow "Change workspace…" from #208 likewise).
+- **`onPicked: (String) -> Unit`.** Single callback for both "user tapped a recent row" and "user created a new folder and we got back a path." The consumer cannot distinguish — by design: every consumer takes the same next action regardless of which path produced the result (Channel List FAB long-press — shipped #221 — calls `createDiscussion(workspace = path)`; the Settings "Default workspace" row — shipped [#235](../codebase/235.md), host-scoped by [#714](https://github.com/pyrycode/pyrycode-mobile/issues/714) — calls `setDefaultWorkspace(ownerServerId, path)`; [`ThreadScreen`](./thread-screen.md) empty-state chip from #137 and thread overflow "Change workspace…" from #208 likewise).
 - **`onDismiss: () -> Unit`.** Fires only when the user dismisses the **sheet** (close icon, scrim tap, drag-down, back-press while the dialog is not open). Cancelling the create-folder dialog does NOT fire `onDismiss` — the sheet stays visible, the dialog just closes.
 - **`modifier: Modifier = Modifier`.** Forwarded to the underlying `WorkspacePickerSheet`; lets consumers attach semantics or test tags. Has no effect when invisible.
 
@@ -88,20 +88,27 @@ Direct seam tests verify behavior but cannot prove production repository ownersh
 
 ### Repository ownership
 
-`MainActivity` wraps host-owned thread destinations and the flat channel screen in
-`HostWorkspaceRepository`, which provides `LocalWorkspacePickerRepository`.
-Thread pickers use the route host; channel-list pickers use the captured
-`hostState.workspacePickerServerId`, independent of subsequent compatibility
-selection changes. The factory returns a reconnecting facade for that owner, or
-the existing fake singleton in demo mode. See
+`MainActivity` wraps host-owned thread destinations, the flat channel screen and
+(since [#714](https://github.com/pyrycode/pyrycode-mobile/issues/714)) the Settings
+destination in `HostWorkspaceRepository`, which provides
+`LocalWorkspacePickerRepository`. Thread pickers use the route host; channel-list
+and Settings pickers each use their own picker's captured owner —
+`hostState.workspacePickerServerId` for the flat list,
+`SettingsViewModel.workspacePickerServerId` for Settings — independent of
+subsequent compatibility selection changes. The factory returns a reconnecting
+facade for that owner, or the existing fake singleton in demo mode. See
 [DI ownership](dependency-injection.md#destination-ownership).
 
 Recents and `createWorkspaceFolder` must use the same owner as the caller's final
 workspace change or discussion creation. Binding only the ViewModel leaves this
 component's independent Koin lookup free to read/create folders on another host.
 During disconnect, recents empty and creation keeps the existing generic error
-UI; reconnect resumes the same host. The nullable local's Koin fallback preserves
-Settings and standalone/demo callers; Settings migration remains #637.
+UI; reconnect resumes the same host. **Every production picker host binds its
+owner as of #714** — Settings was the last one still falling through to the
+compatibility binding. The nullable local's `?: koinInject<ConversationRepository>()`
+fallback stays only for previews and for component tests (`WorkspacePickerTest`)
+that compose the picker with no provider; it is no longer reachable from any
+production screen.
 
 ### Single-invocation guarantee for `createWorkspaceFolder`
 
@@ -172,12 +179,19 @@ The host is typically mounted as a sibling of the screen's `Scaffold` (not insid
 `WorkspacePickerTest` uses the explicit-repository internal seam for component
 behavior with a real fake repository or a throwing delegate. Production ownership
 is covered separately by `LiteralScreenNavigationTest`'s
-`threadWorkspacePickerKeepsOwnerAcrossSelectionChanges` and
-`flatListWorkspacePickerKeepsCapturedOwnerAcrossSelectionChanges`. Those tests open
+`threadWorkspacePickerKeepsOwnerAcrossSelectionChanges`,
+`flatListWorkspacePickerKeepsCapturedOwnerAcrossSelectionChanges`, and (since
+[#714](https://github.com/pyrycode/pyrycode-mobile/issues/714))
+`SettingsNavigationTest`'s
+`settingsWorkspacePickerReadsCreatesAndStoresOnlyForItsOwnHost`. Those tests open
 the real picker through the production graph, use distinct A/B recents, and assert
-that B receives no picker reads/writes after selection changes. The thread case
-also covers disconnected creation failure and reconnect. A direct seam test alone
-would pass with the wrong public injection.
+that B receives no picker reads/writes after selection changes — the Settings case
+flips compatibility selection to B *while its sheet is open* and asserts B's peer
+saw none of the picker verbs at all. The thread case also covers disconnected
+creation failure and reconnect. A direct seam test alone would pass with the
+wrong public injection — `SettingsNavigationTest` also carries a negative control
+that substitutes an unbound `HostWorkspaceRepository(null, …)` to confirm the
+Settings device test fails against that pre-#714 state.
 
 - **`dialog_submit_calls_createWorkspaceFolder_exactly_once_and_forwards_returned_path_to_onPicked`** — tap "Create new folder under pyry-workspace…", type `"my-workspace"`, tap Create. Asserts `picked == listOf("pyry-workspace/my-workspace")` (exactly one invocation, exact path) **and** `repo.recentWorkspaces().first().first() == "pyry-workspace/my-workspace"` (the bump landed at position 0; re-asserts the repo contract from the host's vantage and validates end-to-end wiring).
 - **`cancelling_create_dialog_keeps_sheet_visible_and_does_not_invoke_host_onDismiss`** — tap "Create new folder under pyry-workspace…", then tap Cancel. Asserts `dismissed == 0`, the sheet's `"Choose workspace"` title still displays, and the dialog's `"Create workspace"` title `assertDoesNotExist()`. This is the load-bearing test for the "two flag-flips that share the surface verb 'dismiss' route differently" contract.
@@ -209,7 +223,7 @@ Tests intentionally NOT included:
 - Sibling stateful host (different shape — not a composable host, but the same hoisted-`visible: Boolean` UiState convention): [`DiscussionListViewModel`](./discussion-list-viewmodel.md)'s `pendingPromotion`, [`SaveAsChannelDialog`](./channel-list-screen.md) visibility from #142.
 - Consumers:
   - **Channel List FAB long-press (#221 — shipped)** — [`ChannelListScreen`](./channel-list-screen.md) + [`ChannelListViewModel`](./channel-list-viewmodel.md). Long-press emits `LongPressFab`, sets `workspacePickerVisible = true`; `onPicked(path)` runs `repository.createDiscussion(workspace = path)` then navigates to the new thread.
-  - **Settings "Default workspace" row ([#235](../codebase/235.md) — shipped)** — [`SettingsScreen`](./settings-screen.md) + [`SettingsViewModel`](./settings-viewmodel.md). The **first consumer outside the `ui/conversations` package**, and the first to hoist the `visible` flag to a `ViewModel` `StateFlow<Boolean>` (`workspacePickerVisible`, backed by a `MutableStateFlow(false)` + `asStateFlow()`) rather than deriving it from a screen `UiState`. Tapping the row calls `onDefaultWorkspaceTapped()` → flag `true`; `onPicked(path)` → `onSelectDefaultWorkspace(path)` flips the flag false and fire-and-forget persists via `appPreferences.setDefaultWorkspace(path)`; `onDismiss` → `onWorkspacePickerDismissed()` flips the flag false without persisting (AC4). Same open/pick/dismiss triple shape as `ThreadViewModel`'s picker host. The row's supporting text reflects the persisted default via a local `workspaceLabel(cwd)` helper (sentinel → "scratch", real path → trailing folder name).
+  - **Settings "Default workspace" row ([#235](../codebase/235.md) — shipped, host-scoped by [#714](https://github.com/pyrycode/pyrycode-mobile/issues/714))** — [`SettingsScreen`](./settings-screen.md) + [`SettingsViewModel`](./settings-viewmodel.md). The **first consumer outside the `ui/conversations` package**, and (until #714) the first to hoist the `visible` flag to a `ViewModel` `StateFlow<Boolean>` (`workspacePickerVisible`) rather than deriving it from a screen `UiState`. #714 replaced that flag with `workspacePickerServerId: StateFlow<String?>` — the host the open picker reads and writes for, or `null` while closed — following the flat channel screen's `hostState.workspacePickerServerId` shape and letting the Settings route key `HostWorkspaceRepository` off the same nullable it derives the sheet's visibility from, so an open sheet can no longer be bound to the compatibility repository. Tapping the row calls `onDefaultWorkspaceTapped()`, which sets the pending owner to the destination's captured `ownerServerId` (a blank owner opens nothing); `onPicked(path)` → `onSelectDefaultWorkspace(path)` reads and clears the pending owner, then fire-and-forget persists via `appPreferences.setDefaultWorkspace(ownerServerId, path)`; `onDismiss` → `onWorkspacePickerDismissed()` clears the pending owner without persisting (AC4). Same open/pick/dismiss triple shape as `ThreadViewModel`'s picker host. The row's supporting text reflects the persisted default via a local `workspaceLabel(cwd)` helper (sentinel → "scratch", real path → trailing folder name).
   - **Empty-thread workspace chip ([#137](https://github.com/pyrycode/pyrycode-mobile/issues/137))** — the chip's tap opens this host.
   - **Thread overflow "Change workspace…" ([#208](https://github.com/pyrycode/pyrycode-mobile/issues/208))** — the menu item's tap opens this host.
 - Downstream / open:

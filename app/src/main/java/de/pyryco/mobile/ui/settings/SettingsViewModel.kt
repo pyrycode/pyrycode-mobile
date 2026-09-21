@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.Model
@@ -81,7 +82,7 @@ class SettingsViewModel(
     private val appPreferences: AppPreferences,
     conversationRepository: ConversationRepository,
     /** The server id the gear captured into this destination's route. Blank means it owns none. */
-    ownerServerId: String,
+    private val ownerServerId: String,
     /** Every saved host's identity and status; the owner is resolved out of it, never selected. */
     hosts: Flow<List<SettingsHost>>,
 ) : ViewModel() {
@@ -181,15 +182,35 @@ class SettingsViewModel(
             initialValue = true,
         )
 
+    /**
+     * This destination's own host's default workspace (#714), not the app-wide one its eight
+     * siblings above and below read.
+     *
+     * Keyed by the owner captured into the route, so two hosts' Settings hold two values and a later
+     * compatibility-selection change moves neither. A destination that captured no host reads the
+     * scratch sentinel and can write nothing: the unqualified [AppPreferences.defaultWorkspace] alias
+     * is #711's transitional migration surface, not a per-host fallback, and resolving through it
+     * here is exactly what let one host's Settings show and overwrite another's value.
+     */
     val defaultWorkspace: StateFlow<String> =
-        appPreferences.defaultWorkspace.stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
-            initialValue = DEFAULT_SCRATCH_CWD,
-        )
+        (if (ownerServerId.isBlank()) flowOf(DEFAULT_SCRATCH_CWD) else appPreferences.defaultWorkspace(ownerServerId))
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+                initialValue = DEFAULT_SCRATCH_CWD,
+            )
 
-    private val pendingWorkspacePicker = MutableStateFlow(false)
-    val workspacePickerVisible: StateFlow<Boolean> = pendingWorkspacePicker.asStateFlow()
+    /**
+     * The host the open picker reads folders from and writes its pick to, or null while none is open.
+     *
+     * One nullable rather than a `Boolean` beside a separate owner, following the flat list's
+     * `HostChannelListState.workspacePickerServerId` (#636/#738): the Settings route both keys
+     * `LocalWorkspacePickerRepository` off this value and derives the sheet's `visible` from it, so
+     * an open sheet whose repository is the compatibility one — the bug this closes — is not
+     * representable rather than merely forbidden.
+     */
+    private val pendingWorkspacePicker = MutableStateFlow<String?>(null)
+    val workspacePickerServerId: StateFlow<String?> = pendingWorkspacePicker.asStateFlow()
 
     val archivedDiscussionCount: StateFlow<Int> =
         conversationRepository
@@ -227,16 +248,34 @@ class SettingsViewModel(
     }
 
     fun onDefaultWorkspaceTapped() {
-        pendingWorkspacePicker.value = true
+        if (ownerServerId.isBlank()) {
+            // Nothing to list folders from and nothing to write them to, so the sheet stays shut.
+            RelayLog.d { "event=settings_workspace_picker_rejected code=no_owner" }
+            return
+        }
+        pendingWorkspacePicker.value = ownerServerId
+        RelayLog.d { "event=settings_workspace_picker_opened" }
     }
 
     fun onSelectDefaultWorkspace(path: String) {
-        pendingWorkspacePicker.value = false
-        viewModelScope.launch { appPreferences.setDefaultWorkspace(path) }
+        // The target is read off the pending value, not off the captured owner, so a pick arriving
+        // behind a dismissal or behind another pick writes nothing. Read and cleared before the
+        // launch, so no suspension point sits between deciding the host and writing to it.
+        val serverId = pendingWorkspacePicker.value
+        if (serverId == null) {
+            RelayLog.d { "event=settings_workspace_default_rejected code=no_open_picker" }
+            return
+        }
+        pendingWorkspacePicker.value = null
+        // Fire-and-forget like its seven preference siblings. A failed write is already logged
+        // content-free by `AppPreferences.editWorkspace`, and the row re-reads from the same flow, so
+        // it keeps showing the stored value rather than a pick that never landed.
+        viewModelScope.launch { appPreferences.setDefaultWorkspace(serverId, path) }
     }
 
     fun onWorkspacePickerDismissed() {
-        pendingWorkspacePicker.value = false
+        pendingWorkspacePicker.value = null
+        RelayLog.d { "event=settings_workspace_picker_dismissed" }
     }
 
     private companion object {
