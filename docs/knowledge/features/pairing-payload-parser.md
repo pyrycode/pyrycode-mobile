@@ -51,9 +51,10 @@ wrong.
 | 2 | `String(bytes, Charsets.UTF_8)` (substitutes, never throws) | — |
 | 3 | `MobileJson.decodeFromString<QrPayload>(json)` (catch `SerializationException`) | `malformed-json` |
 | 4 | `server`/`relay`/`token` each `isNotBlank()` | `missing-field` |
-| 5 | relay validation (see below) | `invalid-relay` |
-| 6 | `decodeServerStaticPubkey(qr)` (catch `IllegalArgumentException`) | `invalid-server-key` |
-| 7 | `Success(PairedServer(...))` | — |
+| 5 | `server`/`relay`/`token` each within `MAX_PAIRING_FIELD_BYTES` (512) UTF-8 bytes (#752) | `field-too-long` |
+| 6 | relay validation (see below) | `invalid-relay` |
+| 7 | `decodeServerStaticPubkey(qr)` (catch `IllegalArgumentException`) | `invalid-server-key` |
+| 8 | `Success(PairedServer(...))` | — |
 
 Step 3's single catch covers **three** acceptance criteria at once: non-JSON, **trailing bytes after
 the top-level object** (kotlinx requires EOF after the value — unlike Go's `json.Unmarshal`, so no

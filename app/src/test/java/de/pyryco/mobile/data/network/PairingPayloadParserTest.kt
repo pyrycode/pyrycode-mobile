@@ -18,6 +18,21 @@ import java.util.Base64
 class PairingPayloadParserTest {
     private val validPubkey = base64StdEncode(ByteArray(32))
 
+    private companion object {
+        /**
+         * Mirrors the parser's own bound and category (#752), which stay private there. The
+         * literals are the point for the category: `reason` is what reaches a caller's log line, so
+         * pinning the string catches a rename a constant reference would silently follow.
+         */
+        const val MAX_FIELD_BYTES = 512
+        const val FIELD_TOO_LONG = "field-too-long"
+    }
+
+    private fun failureReason(result: PairingParseResult): String {
+        assertTrue(result is PairingParseResult.Failure)
+        return (result as PairingParseResult.Failure).reason
+    }
+
     private fun json(
         server: String = "srv-1",
         relay: String = "wss://relay.example.com",
@@ -112,6 +127,67 @@ class PairingPayloadParserTest {
         assertTrue(parsePairingPayload(wrap(json(server = ""))) is PairingParseResult.Failure)
         assertTrue(parsePairingPayload(wrap(json(relay = ""))) is PairingParseResult.Failure)
         assertTrue(parsePairingPayload(wrap(json(token = ""))) is PairingParseResult.Failure)
+    }
+
+    // ---- Field length bound, counted in UTF-8 bytes (#752) ---------------------
+
+    @Test
+    fun rejects_serverOverBound() {
+        val result = parsePairingPayload(wrap(json(server = "a".repeat(MAX_FIELD_BYTES + 1))))
+
+        assertEquals(FIELD_TOO_LONG, failureReason(result))
+    }
+
+    @Test
+    fun rejects_relayOverBound() {
+        // A structurally valid ws origin — scheme and host both pass `isValidRelayOrigin` — so the
+        // only thing that can reject it is the bound, and the category pins which check fired.
+        val relay = "wss://" + "a".repeat(MAX_FIELD_BYTES + 1 - "wss://".length)
+
+        assertEquals(FIELD_TOO_LONG, failureReason(parsePairingPayload(wrap(json(relay = relay)))))
+    }
+
+    @Test
+    fun rejects_tokenOverBound() {
+        val result = parsePairingPayload(wrap(json(token = "t".repeat(MAX_FIELD_BYTES + 1))))
+
+        assertEquals(FIELD_TOO_LONG, failureReason(result))
+    }
+
+    @Test
+    fun rejects_multiByteFieldUnderCharCountButOverByteCount() {
+        // 200 chars, 600 UTF-8 bytes: under the bound as characters, over it as bytes. This is the
+        // case a `String.length` check would wave through, so it is what pins the unit.
+        val server = "€".repeat(200)
+        assertTrue(server.length <= MAX_FIELD_BYTES)
+        assertTrue(server.toByteArray(Charsets.UTF_8).size > MAX_FIELD_BYTES)
+
+        assertEquals(FIELD_TOO_LONG, failureReason(parsePairingPayload(wrap(json(server = server)))))
+    }
+
+    @Test
+    fun acceptsFieldExactlyAtBound() {
+        val server = "a".repeat(MAX_FIELD_BYTES)
+        val result = parsePairingPayload(wrap(json(server = server)))
+
+        assertTrue(result is PairingParseResult.Success)
+        val paired = (result as PairingParseResult.Success).server
+        assertEquals(server, paired.serverId)
+        assertEquals("tok-123", paired.token)
+        assertEquals("wss://relay.example.com", paired.relayUrl)
+        assertEquals(validPubkey, paired.serverStaticPublicKey)
+    }
+
+    @Test
+    fun acceptsMultiByteFieldExactlyAtBoundInBytes() {
+        // 170 × 3 + 2 = 512 bytes across 172 chars — the byte-accurate other side of the boundary.
+        val token = "€".repeat(170) + "ab"
+        assertEquals(MAX_FIELD_BYTES, token.toByteArray(Charsets.UTF_8).size)
+
+        val result = parsePairingPayload(wrap(json(token = token)))
+
+        assertTrue(result is PairingParseResult.Success)
+        assertEquals(token, (result as PairingParseResult.Success).server.token)
     }
 
     // ---- Relay validation ------------------------------------------------------
