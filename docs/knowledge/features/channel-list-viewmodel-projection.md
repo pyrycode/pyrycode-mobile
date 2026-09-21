@@ -57,6 +57,31 @@ rows; the ViewModel adds no list cache. See [snapshot lifetime](dependency-injec
 `hostState` uses `stateIn(viewModelScope, WhileSubscribed(5_000), HostChannelListState())`.
 The nullable `workspacePickerServerId` is combined from VM-owned picker state.
 
+### Fold and selection (#731)
+
+`hostState`'s combine grew from two sources to four: the snapshot-derived host list, the
+pending-picker `serverId`, and two more private `MutableStateFlow`s the assembled tree needs —
+`collapsedKeys: MutableStateFlow<Set<TreeFoldKey>>` and
+`lastOpenedTarget: MutableStateFlow<HostConversationTarget?>`. Both are hot flows with an
+initial value (`emptySet()` / `null`), so neither holds up the first `combine` emission the way
+a cold repository-backed flow could.
+
+`collapsedKeys` holds **collapsed** keys, not expanded ones — the empty initial set means
+"every host and every workspace expanded," so a host or workspace that arrives in a later
+snapshot needs no reconciliation to draw expanded. `onFoldToggled(key)` is a read-modify-write
+(`collapsedKeys.getAndUpdate { if (key in it) it - key else it + key }`, not a read-then-assign)
+and logs a content-free `RelayLog.d` line carrying only the event name and the resulting
+expanded flag — never `serverId`, `cwd` or a display name. The set is **never pruned** against
+an incoming snapshot: pruning would silently unfold a host that momentarily disappears during a
+reconnect, which would contradict "fold state survives … an incoming list update."
+
+`lastOpenedTarget` is set synchronously — in `onHostRowTapped(target)` before the channel send,
+and in `sendHostDiscussion` before its own send — so the tapped or freshly created row is already
+the highlighted one by the time navigation completes. It records *last opened from this list*,
+not *currently open*: the list and the thread are separate destinations, so nothing is "open"
+while the list is on screen. A later snapshot emission never clears it; only another
+`onHostRowTapped` / `sendHostDiscussion` call replaces it (last-writer-wins is intentional here).
+
 The compatibility `state` continues to project only the injected selected-host
 repository or fake:
 
@@ -167,4 +192,9 @@ Four compatibility `ChannelListEvent` arms are dispatched today; host-aware call
 - **`is WorkspacePicked -> { pendingWorkspacePicker.value = false; launchGuardedRepoCall { … } }`** (#221, **guarded in #490**). Same shape as `CreateDiscussionTapped` (same [`launchGuardedRepoCall`](guarded-repo-launch.md) guard) but with `repository.createDiscussion(workspace = event.workspace)` instead of the no-arg default, and with the **synchronous flag-clear before the suspend**. Clearing first starts the sheet's exit immediately instead of waiting for `createDiscussion`. This compatibility arm does not check a pending target; duplicate-completion suppression belongs to `pickHostWorkspace`, whose captured host is cleared before launching.
 - **`WorkspacePickerDismissed -> pendingWorkspacePicker.value = false`** (#221). One line; the host's `onDismiss` callback fires when the user dismisses the sheet (close icon, scrim tap, drag-down, back-press), the screen forwards to this arm, the flag flips, the projection emits, the host re-composes with `visible = false`, the `ModalBottomSheet` runs its exit animation as it leaves composition.
 
-The `is RowTapped, SettingsTapped, RecentDiscussionsTapped -> Unit` arm exists for compiler exhaustiveness; `MainActivity` never forwards those into `onEvent`, but if the dispatch convention shifts later the VM tolerates them defensively (no-op). `RecentDiscussionsTapped` joined the arm in #26 — same rationale (pure navigation, no VM-side side effect).
+The `is TreeRowTapped, is TreeFoldToggled, SettingsTapped -> Unit` arm exists for compiler
+exhaustiveness; `MainActivity` maps `TreeRowTapped` / `TreeFoldToggled` to `onHostRowTapped` /
+`onFoldToggled` directly and `SettingsTapped` to a route navigation, never forwarding any of the
+three into `onEvent` — but if the dispatch convention shifts later the VM tolerates them
+defensively (no-op). Pre-#731 this arm named `RowTapped` / `RecentDiscussionsTapped`, both retired
+with the flat list and the recent-discussions section.

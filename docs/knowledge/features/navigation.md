@@ -134,12 +134,15 @@ default or scratch, independently of any paired host's migrated legacy default.
 
 ### Temporary flat-list compatibility
 
-Until the host/workspace tree in #641, both list screens render their existing
-selected-host (or demo) `state`. At row activation, `selectedServerId()` captures
-the current relay owner or explicit demo id. Channel creation calls
-`createHostDiscussion(serverId)`; long-press opens `openHostWorkspacePicker(serverId)`.
-The host picker's captured id drives visibility in the flat `Loaded`/`Empty` states,
-and completion/dismissal use `pickHostWorkspace` / `dismissHostWorkspacePicker`.
+[ChannelListScreen](channel-list-screen.md)'s assembled conversation tree (#729/#730/#731, split from
+\#641) resolves each row's host from the row itself — `TreeRowTapped(HostConversationTarget)` maps straight to
+`vm.onHostRowTapped(target)`, with no `selectedServerId()` lookup. The still-unreachable
+`DiscussionListScreen` (`Routes.DISCUSSION_LIST`, left in the graph but with no way to navigate to it since
+\#731 retired its "see all" entry point) and `ChannelListScreen`'s own FAB paths are the remaining consumers of
+the compatibility adapter below: at FAB activation, `selectedServerId()` captures the current relay owner or
+explicit demo id. Channel creation calls `createHostDiscussion(serverId)`; long-press opens
+`openHostWorkspacePicker(serverId)`. The host picker's captured id drives visibility in the flat
+`Loaded`/`Empty` states, and completion/dismissal use `pickHostWorkspace` / `dismissHostWorkspacePicker`.
 Asynchronous creation reads that host's default and retains its identity through
 the preference read, repository lookup and success navigation; see
 [host creation](channel-list-viewmodel-projection.md#one-shot-navigation-via-channelbuffered-22).
