@@ -85,6 +85,15 @@ private const val FIELD_FILL_ALPHA = 0.12f
  * under the keyboard on the 320 × 640 dp viewport. A consumer that wants it must put its focus
  * effect inside this component's content, in the dialog's own subcomposition — see
  * `CreateFolderDialog`'s comment for why a parent-driven request returns cleanly but never lands.
+ *
+ * While [confirmingUnpair] the frame's four content children are replaced **in place** by the
+ * confirmation prompt (#745), and the shell's own footer carries the decision: its OK becomes
+ * [onUnpairConfirmed] and every dismissal route it funnels — Cancel, the close glyph, system Back —
+ * becomes [onUnpairDeclined]. The alternative, a second [MobileModal]-style `Dialog`, would stack two
+ * windows over one decision and give the phone two back targets for it. Declining therefore returns to
+ * the editor rather than closing it, which is also why [onDismissRequest] is not reachable from the
+ * confirmation at all: no route out of a destructive step should be ambiguous about whether it removed
+ * anything.
  */
 @Composable
 internal fun EditHostModal(
@@ -94,10 +103,13 @@ internal fun EditHostModal(
     onDismissRequest: () -> Unit,
     onSubmit: (String) -> Unit,
     onUnpairRequested: () -> Unit,
+    onUnpairConfirmed: () -> Unit,
+    onUnpairDeclined: () -> Unit,
     modifier: Modifier = Modifier,
     submissionEnabled: Boolean = true,
     loading: Boolean = false,
     error: String? = null,
+    confirmingUnpair: Boolean = false,
 ) {
     // Clamped once at the boundary, before any of the three reaches text layout or a merged
     // semantics node, and reused everywhere below.
@@ -114,28 +126,61 @@ internal fun EditHostModal(
     val submit = { onSubmit(fieldValue.text.trim()) }
 
     MobileModal(
-        title = stringResource(R.string.edit_host_title),
-        onDismissRequest = onDismissRequest,
-        onSubmit = submit,
+        title = stringResource(if (confirmingUnpair) R.string.edit_host_unpair_confirm_title else R.string.edit_host_title),
+        onDismissRequest = if (confirmingUnpair) onUnpairDeclined else onDismissRequest,
+        onSubmit = if (confirmingUnpair) onUnpairConfirmed else submit,
         modifier = modifier,
         submissionEnabled = submissionEnabled,
         loading = loading,
         error = error,
     ) {
-        IdentityRow(label = stringResource(R.string.edit_host_server_identity_label), value = boundedIdentity)
-        IdentityRow(label = stringResource(R.string.edit_host_relay_address_label), value = boundedRelay)
-        HostNameField(
-            value = fieldValue,
-            onValueChange = { fieldValue = it },
-            onDone = { if (submissionEnabled && !loading) submit() },
-        )
-        UnpairAction(
-            onClick = {
-                logEditHostEvent("unpair_requested")
-                onUnpairRequested()
-            },
-        )
+        if (confirmingUnpair) {
+            // The name buffer above is keyed on the identity, not on this flag, so declining comes back
+            // to the field with exactly what the operator had typed.
+            UnpairConfirmation(hostName = boundedName)
+        } else {
+            IdentityRow(label = stringResource(R.string.edit_host_server_identity_label), value = boundedIdentity)
+            IdentityRow(label = stringResource(R.string.edit_host_relay_address_label), value = boundedRelay)
+            HostNameField(
+                value = fieldValue,
+                onValueChange = { fieldValue = it },
+                onDone = { if (submissionEnabled && !loading) submit() },
+            )
+            UnpairAction(
+                onClick = {
+                    logEditHostEvent("unpair_requested")
+                    onUnpairRequested()
+                },
+            )
+        }
     }
+}
+
+/**
+ * The confirmation the frame does not draw (#745): one prompt naming the host, decided by the shell's
+ * own footer.
+ *
+ * [hostName] is the **clamped** name, and the blank fallback is the app-wide `unnamed_host` the host row
+ * itself falls back to, so the confirmation names the host the way its row does. Formatting the raw
+ * parameter instead would put an unbounded legacy name — one written before the rename path clamped, or
+ * by the pair-with-code form — into both text layout and a merged semantics node, which `maxLines` bounds
+ * for painting but not for measurement. The name is passed as a format *argument*, so a `%s` inside it is
+ * rendered literally and cannot reinterpret the format.
+ *
+ * Neither the server identity nor the relay address appears here: the operator is deciding about a
+ * machine they named, and the shell announces this content aloud.
+ */
+@Composable
+private fun UnpairConfirmation(hostName: String) {
+    Text(
+        text =
+            stringResource(
+                R.string.edit_host_unpair_confirm_body,
+                hostName.ifBlank { stringResource(R.string.unnamed_host) },
+            ),
+        modifier = Modifier.fillMaxWidth(),
+        style = MaterialTheme.typography.bodyMedium,
+    )
 }
 
 /**
@@ -257,10 +302,8 @@ private fun logEditHostEvent(event: String) {
     if (BuildConfig.DEBUG) Log.d("EditHostModal", "event=$event")
 }
 
-@Preview(name = "Edit host — Light", widthDp = 412, heightDp = 892, showBackground = true)
-@Preview(name = "Edit host — Dark", widthDp = 412, heightDp = 892, showBackground = true, uiMode = Configuration.UI_MODE_NIGHT_YES)
 @Composable
-private fun EditHostModalPreview() {
+private fun PreviewModal(confirmingUnpair: Boolean) {
     PyrycodeMobileTheme {
         EditHostModal(
             serverIdentity = "345345-345345345-gw3vw-w4wv34-vw34t",
@@ -269,6 +312,29 @@ private fun EditHostModalPreview() {
             onDismissRequest = {},
             onSubmit = {},
             onUnpairRequested = {},
+            onUnpairConfirmed = {},
+            onUnpairDeclined = {},
+            confirmingUnpair = confirmingUnpair,
         )
     }
+}
+
+@Preview(name = "Edit host — Light", widthDp = 412, heightDp = 892, showBackground = true)
+@Preview(name = "Edit host — Dark", widthDp = 412, heightDp = 892, showBackground = true, uiMode = Configuration.UI_MODE_NIGHT_YES)
+@Composable
+private fun EditHostModalPreview() {
+    PreviewModal(confirmingUnpair = false)
+}
+
+@Preview(name = "Unpair confirmation — Light", widthDp = 412, heightDp = 892, showBackground = true)
+@Preview(
+    name = "Unpair confirmation — Dark",
+    widthDp = 412,
+    heightDp = 892,
+    showBackground = true,
+    uiMode = Configuration.UI_MODE_NIGHT_YES,
+)
+@Composable
+private fun EditHostModalUnpairConfirmationPreview() {
+    PreviewModal(confirmingUnpair = true)
 }

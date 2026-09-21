@@ -200,7 +200,25 @@ preserving an existing name. The writes are separate: a name-write or connection
 failure retains successfully saved credentials. The screen reports that state and
 retries the same id behind fingerprint confirmation. Its readiness wait observes
 the complete saved record rather than `load()` or compatibility status. Renaming
-and removal management UI remains [#642](https://github.com/pyrycode/pyrycode-mobile/issues/642).
+landed in [#744](https://github.com/pyrycode/pyrycode-mobile/issues/744)
+(`ChannelListViewModel.submitHostName`, via `setDisplayName`) and removal in
+[#745](https://github.com/pyrycode/pyrycode-mobile/issues/745)
+(`ChannelListViewModel.confirmHostUnpair`), both through the Edit host modal
+opened from a host row — see [ChannelListViewModel](channel-list-viewmodel.md#wiring).
+
+**`remove`'s first production caller (#745).** `confirmHostUnpair` calls `remove(target.serverId)` on the
+exact id the modal was opened for, through the shared `pairedServers: PairedServerCollectionStore` this VM
+already holds for `loadById`/`setDisplayName` — the same DI-resolved `ObservablePairedServerStore` this
+section already requires app mutations to go through, so the revision bump that
+[`RelayConnectionRegistry`](lifecycle-connection-driver.md#wiring--eager-koin-singleton-no-pyryapp-change)
+reconciles by closing exactly the removed id's connection bundle follows automatically; the caller makes
+no connection call of its own. The caller clears the host's own [cached default
+workspace](app-preferences.md) (`AppPreferences.removeDefaultWorkspace`) only *after* `remove` reports
+success, and never surfaces that second write's own failure — the pairing is already gone by then, so
+reporting a failure there would claim the host is still paired when it is not. `remove` being a no-op on an
+unknown id (see [The contract](#the-contract)) protects only the *other* hosts from a removal racing a
+snapshot; the caller still has to keep the exact id the modal was opened for rather than re-resolving it at
+confirmation time, since the no-op guarantee says nothing about which host a wrong id would hit.
 
 ## Testing
 
@@ -252,6 +270,9 @@ against the same DataStore before checking both records after reopening.
 
 - [Collection design (#632)](../../specs/architecture/632-retain-host-pairings.md)
 - [Original store history (#294)](../codebase/294.md)
+- [Edit host modal rename (#744)](../../specs/architecture/744-host-row-edit-and-rename.md) and
+  [unpair (#745)](../../specs/architecture/745-unpair-host-from-edit-modal.md) — the first production
+  callers of `setDisplayName` and `remove`; see [ChannelListViewModel](channel-list-viewmodel.md#wiring)
 - [ADR 0006 — Keystore wrap-at-rest](../decisions/0006-keystore-wrap-at-rest-device-static-key.md)
 - [Device static keystore](device-static-keystore.md): separate key custody and
   throw-on-decrypt-failure contract

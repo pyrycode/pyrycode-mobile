@@ -95,11 +95,23 @@ removal flow. [`ChannelListScreen`](channel-list-screen.md#host-row-edit-control
 (#744) is its first driving caller: the tree's host row opens it on that row's own
 host, [`ChannelListViewModel`](channel-list-viewmodel.md) reads the identity and relay
 address with `PairedServerCollectionStore.loadById` at open time and saves the entered
-name with `setDisplayName`, mapping a blank name to `null`. `Unpair host` stays wired
-to an empty lambda there — #745 gives it an event. Settings' host entry (#713) is
-planned as a second caller of the same component; not yet in this codebase as of
-\#744. Patterns worth reusing for the next caller that pre-fills an editable field
-inside this shell:
+name with `setDisplayName`, mapping a blank name to `null`. `Unpair host` was wired to
+an empty lambda there until #745, which gives it a `confirmingUnpair` flag plus
+`onUnpairConfirmed` / `onUnpairDeclined` callbacks: while confirming, the shell's four
+content children are replaced **in place** by a prompt naming the host (never its
+identity or relay address), and the shell's own `title`, `onSubmit` and
+`onDismissRequest` are swapped so its existing Cancel/OK footer carries the decision
+instead of a second `Dialog` stacking over the first — `MobileModal` is itself one, so
+a stacked confirmation would give the phone two back targets for one decision. The
+prompt names the host from this component's own already-clamped `boundedName`, the
+same fallback the host row uses, so a caller cannot bypass the clamp by formatting an
+unbounded name into the confirmation. Declining returns to the editor rather than
+closing it — `onDismissRequest` is unreachable while confirming, so no route out of a
+destructive step (Cancel, the close glyph, system Back) is ambiguous about whether it
+removed anything. See [ChannelListViewModel](channel-list-viewmodel.md#wiring) for the
+removal itself. Settings' host entry (#713) is planned as a second caller of the same
+component; not yet in this codebase as of #745. Patterns worth reusing for the next
+caller that pre-fills an editable field inside this shell:
 
 - **Key a pre-filled edit buffer on the identity of the thing being edited, not on
   its current value.** `EditHostModal` keys its `remember`ed `TextFieldValue` on the
@@ -124,3 +136,13 @@ inside this shell:
   bound `boundedRowText` uses on the host row this modal opens from, applied before
   layout and before any merged-semantics description is built — including the
   pre-filled seed value, not only the two fields the acceptance criteria named.
+- **A confirmation step inside this shell is a content swap, not a second `Dialog`
+  (#745).** `MobileModal` is itself a `Dialog`; stacking a second one over it gives the
+  phone two back targets and two dismiss-outside behaviours for what is really one
+  decision. The caller instead branches its own content and passes a different
+  `title` / `onSubmit` / `onDismissRequest` triple for the confirming state, so the
+  shell's single footer and single dismissal funnel keep deciding for both steps. The
+  cost: the shell's footer labels are fixed ("Cancel" / "OK"), so a destructive
+  confirmation is confirmed by a button reading "OK" — restyling per caller would
+  touch a component with other callers, so the prompt copy has to carry that weight
+  instead of the button.

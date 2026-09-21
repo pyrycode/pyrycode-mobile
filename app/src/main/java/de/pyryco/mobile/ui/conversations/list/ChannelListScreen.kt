@@ -167,6 +167,26 @@ sealed interface ChannelListEvent {
     /** The modal's Cancel, Close and Back, which the shell routes through one dismissal callback. */
     data object HostEditDismissed : ChannelListEvent
 
+    /**
+     * The open modal's `Unpair host` action (#745), which asks for a confirmation rather than removing.
+     *
+     * None of these three carries a `serverId`, for the reason [HostEditNameSubmitted] carries none: the
+     * target is the open editor's, held in the view model, and it is the *exact* id the modal was opened
+     * for. Re-resolving it here would be a second source of truth for which host is being removed.
+     */
+    data object HostUnpairRequested : ChannelListEvent
+
+    /** The confirmation accepted, through the shell's own OK. */
+    data object HostUnpairConfirmed : ChannelListEvent
+
+    /**
+     * The confirmation backed out of, through any of the shell's dismissal routes while it is up.
+     *
+     * Distinct from [HostEditDismissed] because the outcomes differ: a dismissal closes the modal, a
+     * decline returns to the editor with the typed name still in its field.
+     */
+    data object HostUnpairDeclined : ChannelListEvent
+
     data class WorkspacePicked(
         val workspace: String,
     ) : ChannelListEvent
@@ -219,14 +239,20 @@ fun ChannelListScreen(
             initialHostName = editor.initialName,
             onDismissRequest = { onEvent(ChannelListEvent.HostEditDismissed) },
             onSubmit = { name -> onEvent(ChannelListEvent.HostEditNameSubmitted(name)) },
-            // Inert in this slice, per #744's own terms: the host stays paired, its name unchanged and
-            // the modal open. #745 wires it. An event plus a no-op dispatch arm would add surface that
-            // establishes no capability, which is what an empty lambda already is.
-            onUnpairRequested = {},
+            onUnpairRequested = { onEvent(ChannelListEvent.HostUnpairRequested) },
+            onUnpairConfirmed = { onEvent(ChannelListEvent.HostUnpairConfirmed) },
+            onUnpairDeclined = { onEvent(ChannelListEvent.HostUnpairDeclined) },
             loading = editor.saving,
             // Resolved here rather than in the view model, which keeps that free of Context and makes it
-            // impossible for an identity or a relay address to reach the shell's live region.
-            error = if (editor.failed) stringResource(R.string.edit_host_save_failed) else null,
+            // impossible for an identity or a relay address to reach the shell's live region. Which
+            // failure is read from its own flag rather than inferred from the step the modal is on.
+            error =
+                when {
+                    editor.unpairFailed -> stringResource(R.string.edit_host_unpair_failed)
+                    editor.failed -> stringResource(R.string.edit_host_save_failed)
+                    else -> null
+                },
+            confirmingUnpair = editor.confirmingUnpair,
         )
     }
     // `submissionEnabled` keeps its default: a blank name must be submittable, because clearing the name

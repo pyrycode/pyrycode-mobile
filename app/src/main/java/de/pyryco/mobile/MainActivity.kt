@@ -335,6 +335,9 @@ internal fun PyryNavHost(
                             is ChannelListEvent.TreeHostEditTapped -> vm.openHostEditor(event.serverId)
                             is ChannelListEvent.HostEditNameSubmitted -> vm.submitHostName(event.name)
                             ChannelListEvent.HostEditDismissed -> vm.dismissHostEditor()
+                            ChannelListEvent.HostUnpairRequested -> vm.requestHostUnpair()
+                            ChannelListEvent.HostUnpairConfirmed -> vm.confirmHostUnpair()
+                            ChannelListEvent.HostUnpairDeclined -> vm.declineHostUnpair()
                             is ChannelListEvent.WorkspacePicked -> vm.pickHostWorkspace(event.workspace)
                             ChannelListEvent.WorkspacePickerDismissed -> vm.dismissHostWorkspacePicker()
                         }

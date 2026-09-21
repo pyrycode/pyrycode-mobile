@@ -136,4 +136,14 @@
       live region, so it must name neither the server identity nor the relay address.
     -->
     <string name="edit_host_save_failed">Couldn\'t save the host name. Try again.</string>
+    <!--
+      The unpair confirmation (#745). The title is deliberately distinct from edit_host_unpair above, so
+      the button and the step it opens can never satisfy one another's matcher. The body names the host
+      the way its row does — its name, or unnamed_host — and says that re-pairing needs the QR again,
+      because the removal revokes nothing on the daemon and cannot be undone from the phone.
+    -->
+    <string name="edit_host_unpair_confirm_title">Unpair host?</string>
+    <string name="edit_host_unpair_confirm_body">%1$s will be removed from this phone: its pairing, its connection and its saved workspace. Pairing it again needs its QR code.</string>
+    <!-- Generic for the same reason edit_host_save_failed is, and it names the failed operation. -->
+    <string name="edit_host_unpair_failed">Couldn\'t unpair the host. Try again.</string>
 </resources>

@@ -60,11 +60,22 @@ data class HostChannelListEntry(
  * two hosts sharing a 128-character prefix cannot collapse onto one buffer; clamping here would defeat
  * that. Nothing outside the modal reads either field.
  *
- * [failed] is a flag rather than a message so the string resolves at the screen, which keeps this view
- * model free of `Context` and makes it impossible for an identity or a relay address to reach the shell's
- * live region. The name draft is absent for the same division: `EditHostModal` owns its own buffer, so a
- * failed save keeps what the operator typed with no view-model involvement — provided the same state
- * instance stays published, which is why the failure path copies rather than reopens.
+ * [failed] and [unpairFailed] are flags rather than messages so the string resolves at the screen, which
+ * keeps this view model free of `Context` and makes it impossible for an identity or a relay address to
+ * reach the shell's live region. The name draft is absent for the same division: `EditHostModal` owns its
+ * own buffer, so a failed save keeps what the operator typed with no view-model involvement — provided the
+ * same state instance stays published, which is why the failure path copies rather than reopens.
+ *
+ * [confirmingUnpair] is a flag on the open editor rather than a second pending-target flow (#745): the
+ * target is already here. [serverId] is the exact id the modal was opened for, and `remove` being id-exact
+ * and a no-op on an unknown id protects the other hosts only if the id handed to it is the right one — a
+ * second id would be a second source of truth for which host is being removed.
+ *
+ * [unpairFailed] is separate from [failed] rather than shared so the screen picks its string from an
+ * explicit flag instead of inferring the failing operation from [confirmingUnpair].
+ *
+ * [saving] means "a write is in flight; block the rest", and covers the removal as well as the rename —
+ * a fifth flag would say the same thing.
  */
 data class HostEditorState(
     val serverId: String,
@@ -73,6 +84,8 @@ data class HostEditorState(
     val initialName: String,
     val saving: Boolean = false,
     val failed: Boolean = false,
+    val confirmingUnpair: Boolean = false,
+    val unpairFailed: Boolean = false,
 )
 
 data class HostChannelListState(
@@ -313,7 +326,76 @@ class ChannelListViewModel(
         }
     }
 
-    /** Cancel, Close and Back all land here, and none of the three writes anything. */
+    /**
+     * Arms the unpair confirmation on the open editor (#745).
+     *
+     * Guarded on [HostEditorState.saving] like every other transition here: the shell disables its OK
+     * while loading but leaves the content live, so the `Unpair host` action can still be tapped during a
+     * rename. Publishing a confirmation step under that rename's pending state would make its
+     * `compareAndSet` fail and strand the modal on a step the store never took.
+     */
+    fun requestHostUnpair() {
+        val target = hostEditor.value ?: return
+        if (target.saving) return
+        hostEditor.value = target.copy(confirmingUnpair = true, failed = false, unpairFailed = false)
+        RelayLog.d { "event=host_unpair_requested" }
+    }
+
+    /** Backs out of the confirmation without writing, leaving the editor open — never closing it. */
+    fun declineHostUnpair() {
+        val target = hostEditor.value ?: return
+        // Same guard, same reason: a Cancel tap mid-removal must not defeat that removal's own close.
+        if (target.saving) return
+        hostEditor.value = target.copy(confirmingUnpair = false, unpairFailed = false)
+        RelayLog.d { "event=host_unpair_declined" }
+    }
+
+    /**
+     * Removes the confirmed host's pairing, then its cached default workspace, then closes the editor.
+     *
+     * The order is the requirement: a failed store write has to leave the pairing intact, so the
+     * host-owned workspace preference is not cleared until the removal has reported success, and a cleared
+     * cache is never evidence the host is gone. The connection close needs no call of its own — this is
+     * the shared observable store, whose revision bump `RelayConnectionRegistry` reconciles by closing
+     * exactly the removed id's bundle.
+     *
+     * A failed workspace clear is deliberately not surfaced: the pairing is already gone and the
+     * connection already closing, so reporting a failure would claim the host is still paired when it is
+     * not. It leaves one inert preference keyed by an id nothing is paired to any more.
+     *
+     * Both terminal transitions are `compareAndSet` against the state published before the call, so a
+     * removal completing after a dismissal cannot resurrect a closed modal or overwrite a newer one.
+     */
+    fun confirmHostUnpair() {
+        val target = hostEditor.value ?: return
+        if (target.saving || !target.confirmingUnpair) return
+        val pending = target.copy(saving = true, failed = false, unpairFailed = false)
+        hostEditor.value = pending
+        viewModelScope.launch {
+            RelayLog.d { "event=host_unpair_started" }
+            try {
+                pairedServers.remove(target.serverId)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                // Never log the id or the store's message; the UI gets one static string.
+                RelayLog.d { "event=host_unpair_failed" }
+                hostEditor.compareAndSet(pending, pending.copy(saving = false, unpairFailed = true))
+                return@launch
+            }
+            // Only now: the pairing is gone, so clearing this host's own cached workspace cannot strand
+            // a host that is still paired without one.
+            appPreferences.removeDefaultWorkspace(target.serverId)
+            hostEditor.compareAndSet(pending, null)
+            RelayLog.d { "event=host_unpaired" }
+        }
+    }
+
+    /**
+     * Cancel, Close and Back all land here, and none of the three writes anything.
+     *
+     * Unguarded, unlike the three above: it publishes `null`, which is the state a completing write lands
+     * on anyway, so there is no pending transition for it to strand.
+     */
     fun dismissHostEditor() {
         hostEditor.value = null
         RelayLog.d { "event=host_editor_dismissed" }
