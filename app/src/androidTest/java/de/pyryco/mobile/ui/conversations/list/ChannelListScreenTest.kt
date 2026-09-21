@@ -287,6 +287,61 @@ class ChannelListScreenTest {
         assertEquals(listOf(ChannelListEvent.SettingsTapped), events)
     }
 
+    /**
+     * The arrival marker (#736) is set once, on the screen's root, so every draw carries it. This walks the
+     * same composition through all four — loading, error, the empty placeholder and the tree — asserting on
+     * each that exactly one node carries it, and that the draw really is the one intended: a marker that
+     * matched while the screen kept rendering the same thing would prove nothing.
+     */
+    @Test
+    fun arrivalMarker_isCarriedByEveryDrawOfTheList_exactlyOnce() {
+        var state: ChannelListUiState by mutableStateOf(ChannelListUiState.Loading)
+        var hostState: HostChannelListState by mutableStateOf(HostChannelListState())
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ChannelListScreen(state = state, hostState = hostState, onEvent = {})
+            }
+        }
+
+        // 1. Loading.
+        composeTestRule.onNode(hasText("Loading…")).assertExists()
+        assertMarkedOnce()
+
+        // 2. Error — matched on the carried message, so this is the error draw and not the loading one.
+        composeTestRule.runOnIdle { state = ChannelListUiState.Error("relay is down") }
+        composeTestRule.onNode(hasText("relay is down", substring = true)).assertExists()
+        assertMarkedOnce()
+
+        // 3. The empty placeholder: a loaded state with no host at all.
+        composeTestRule.runOnIdle {
+            state = ChannelListUiState.Empty(recentDiscussions = emptyList(), recentDiscussionsCount = 0)
+        }
+        composeTestRule.onNode(hasText(string(R.string.channel_list_empty))).assertExists()
+        assertMarkedOnce()
+
+        // 4. The tree — a host arrives, so the placeholder gives way to real rows.
+        composeTestRule.runOnIdle {
+            state = loaded()
+            hostState =
+                HostChannelListState(
+                    listOf(
+                        entry(
+                            serverId = "pyrybox",
+                            displayName = "Pyrybox",
+                            channels = listOf(conversation("c1", "alpha channel", "/w/one", true)),
+                        ),
+                    ),
+                )
+        }
+        composeTestRule.onNode(hasText(string(R.string.channel_list_empty))).assertDoesNotExist()
+        composeTestRule.onNode(hasText("alpha channel")).assertIsDisplayed()
+        assertMarkedOnce()
+    }
+
+    private fun assertMarkedOnce() {
+        composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).assertCountEquals(1)
+    }
+
     @Test
     fun emptyState_rendersPlaceholder_whenThereAreNoHosts() {
         composeTestRule.setContent {
