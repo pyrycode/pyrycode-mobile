@@ -115,6 +115,20 @@ class ChannelListScreenTest {
                                         if (event.key in collapsed) collapsed - event.key else collapsed + event.key,
                                 )
                         }
+                        // Mirrors the view model's two confirmation transitions (#745), so one composition
+                        // can walk request → confirmation → decline the way the screen really does;
+                        // `createComposeRule` permits only one `setContent` per test.
+                        hostState.hostEditor?.let { editor ->
+                            when (event) {
+                                ChannelListEvent.HostUnpairRequested ->
+                                    hostState = hostState.copy(hostEditor = editor.copy(confirmingUnpair = true))
+
+                                ChannelListEvent.HostUnpairDeclined ->
+                                    hostState = hostState.copy(hostEditor = editor.copy(confirmingUnpair = false))
+
+                                else -> Unit
+                            }
+                        }
                     },
                 )
             }
@@ -431,13 +445,18 @@ class ChannelListScreenTest {
     private fun openEditor(
         saving: Boolean = false,
         failed: Boolean = false,
+        confirmingUnpair: Boolean = false,
+        unpairFailed: Boolean = false,
+        initialName: String = "Pyrybox",
     ) = HostEditorState(
         serverId = "pyrybox",
         serverIdentity = "server-777",
         relayAddress = "wss://relay.example:8443",
-        initialName = "Pyrybox",
+        initialName = initialName,
         saving = saving,
         failed = failed,
+        confirmingUnpair = confirmingUnpair,
+        unpairFailed = unpairFailed,
     )
 
     @Test
@@ -486,14 +505,56 @@ class ChannelListScreenTest {
     }
 
     @Test
-    fun editHostModal_unpairActionIsInertInThisSlice() {
+    fun editHostModal_unpairAction_asksForConfirmationNamingTheHost_andDecliningReturnsToTheEditor() {
         setTree(entry(serverId = "pyrybox", displayName = "Pyrybox"), hostEditor = openEditor())
 
         composeTestRule.onNode(hasText(string(R.string.edit_host_unpair))).performClick()
 
-        // #745 wires it: for now the host stays paired, its name unchanged and the modal open.
-        assertEquals(emptyList<ChannelListEvent>(), events)
+        // Asking, not removing: the action opens a step the operator still has to accept.
+        assertEquals(listOf(ChannelListEvent.HostUnpairRequested), events)
+        // The host is named the way its row names it, and the editor's own field is gone rather than
+        // covered by a second window stacked over this one.
+        composeTestRule
+            .onNode(hasText(string(R.string.edit_host_unpair_confirm_body, "Pyrybox")))
+            .assertIsDisplayed()
+        composeTestRule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).assertDoesNotExist()
+
+        composeTestRule.onNode(hasText("Cancel")).performClick()
+
+        // A decline, not a dismissal — the modal is still open and back on its editor step.
+        assertEquals(listOf(ChannelListEvent.HostUnpairRequested, ChannelListEvent.HostUnpairDeclined), events)
         composeTestRule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).assertIsDisplayed()
+    }
+
+    @Test
+    fun editHostModal_unpairConfirmation_namesAnUnnamedHostByItsRowsOwnFallback() {
+        setTree(
+            entry(serverId = "pyrybox", displayName = null),
+            hostEditor = openEditor(confirmingUnpair = true, initialName = ""),
+        )
+
+        // The same fallback the row draws, so the prompt can never name a host something the list does not.
+        composeTestRule
+            .onNode(hasText(string(R.string.edit_host_unpair_confirm_body, string(R.string.unnamed_host))))
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun editHostModal_afterAFailedUnpair_namesTheUnpairRatherThanTheSaveAndStaysActionable() {
+        setTree(
+            entry(serverId = "pyrybox", displayName = "Pyrybox"),
+            hostEditor = openEditor(confirmingUnpair = true, unpairFailed = true),
+        )
+
+        // Each failure reads from its own flag, so the slot never reports the wrong operation — and the
+        // string names neither the server identity nor the relay address.
+        composeTestRule.onNode(hasText(string(R.string.edit_host_unpair_failed))).assertIsDisplayed()
+        composeTestRule.onNode(hasText(string(R.string.edit_host_save_failed))).assertDoesNotExist()
+
+        composeTestRule.onNode(hasText("OK")).performClick()
+
+        // Still actionable: OK retries the removal rather than saving a name.
+        assertEquals(listOf(ChannelListEvent.HostUnpairConfirmed), events)
     }
 
     @Test

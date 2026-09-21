@@ -41,6 +41,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
@@ -890,6 +891,131 @@ class HostChannelListViewModelTest {
         }
 
     @Test
+    fun unpairIsGatedOnAConfirmationAndDecliningRemovesNothing() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.prefs.setDefaultWorkspace("Host", "/w/host")
+            f.prefs.setDefaultWorkspace("host", "/w/other")
+
+            // No open editor: a stray request must arm nothing, because there is no target to arm it on.
+            f.vm.requestHostUnpair()
+            runCurrent()
+            assertNull(f.vm.hostState.value.hostEditor)
+
+            f.vm.openHostEditor("Host")
+            runCurrent()
+            f.vm.requestHostUnpair()
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.hostEditor).confirmingUnpair)
+            // Arming the confirmation writes nothing at all.
+            assertTrue(f.store.removals.isEmpty())
+
+            f.vm.declineHostUnpair()
+            runCurrent()
+            val editor = requireNotNull(f.vm.hostState.value.hostEditor)
+            // Declining returns to the editor rather than closing it, and the target is still the same host.
+            assertFalse(editor.confirmingUnpair)
+            assertEquals("Host", editor.serverId)
+            assertTrue(f.store.removals.isEmpty())
+            assertEquals("Pyrybox", requireNotNull(f.store.loadById("Host")).displayName)
+            assertEquals("/w/host", f.prefs.defaultWorkspace("Host").first())
+            assertEquals("/w/other", f.prefs.defaultWorkspace("host").first())
+        }
+
+    @Test
+    fun confirmingRemovesThePairingThenItsWorkspaceAndClosesTheEditor() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.prefs.setDefaultWorkspace("Host", "/w/host")
+            f.prefs.setDefaultWorkspace("host", "/w/other")
+            f.vm.openHostEditor("Host")
+            runCurrent()
+            f.vm.requestHostUnpair()
+            runCurrent()
+
+            // Gated mid-removal: the host-owned workspace is still there, because clearing it before the
+            // pairing removal reports success would leave a cleared cache behind a failed write.
+            val gate = CompletableDeferred<Unit>()
+            f.store.removeGate = gate
+            f.vm.confirmHostUnpair()
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.hostEditor).saving)
+            assertEquals("/w/host", f.prefs.defaultWorkspace("Host").first())
+
+            gate.complete(Unit)
+            runCurrent()
+            assertEquals(listOf("Host"), f.store.removals)
+            assertNull(f.store.loadById("Host"))
+            assertEquals(DEFAULT_SCRATCH_CWD, f.prefs.defaultWorkspace("Host").first())
+            assertNull(f.vm.hostState.value.hostEditor)
+
+            // Every other host keeps its pairing, its name and its own cached workspace.
+            assertEquals(listOf("host"), f.store.list().map { it.record.serverId })
+            assertEquals("/w/other", f.prefs.defaultWorkspace("host").first())
+        }
+
+    @Test
+    fun aFailedUnpairStaysOnTheConfirmationAndChangesNothing() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.prefs.setDefaultWorkspace("Host", "/w/host")
+            f.vm.openHostEditor("Host")
+            runCurrent()
+            f.vm.requestHostUnpair()
+            runCurrent()
+
+            f.store.failRemove = true
+            f.vm.confirmHostUnpair()
+            runCurrent()
+            val failed = requireNotNull(f.vm.hostState.value.hostEditor)
+            assertTrue(failed.unpairFailed)
+            assertFalse(failed.saving)
+            // Still on the confirmation, so the shell's OK retries the removal rather than saving a name,
+            // and the rename's own flag is untouched so the screen resolves the unpair string.
+            assertTrue(failed.confirmingUnpair)
+            assertFalse(failed.failed)
+            assertEquals("Pyrybox", requireNotNull(f.store.loadById("Host")).displayName)
+            assertEquals("/w/host", f.prefs.defaultWorkspace("Host").first())
+            assertTrue(logs.any { it.contains("host_unpair_failed") })
+            assertTrue(logs.none { it.contains("Host") || it.contains("Pyrybox") })
+
+            // A decline and a second request arriving mid-write are both ignored, so the write's own
+            // terminal transition still lands instead of stranding the modal on a step the store never took.
+            f.store.failRemove = false
+            val gate = CompletableDeferred<Unit>()
+            f.store.removeGate = gate
+            f.vm.confirmHostUnpair()
+            runCurrent()
+            f.vm.declineHostUnpair()
+            f.vm.requestHostUnpair()
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.hostEditor).confirmingUnpair)
+            gate.complete(Unit)
+            runCurrent()
+            assertNull(f.vm.hostState.value.hostEditor)
+            assertEquals(listOf("Host"), f.store.removals)
+
+            // A failure landing after a dismissal must not resurrect the modal either.
+            f.vm.openHostEditor("host")
+            runCurrent()
+            f.vm.requestHostUnpair()
+            runCurrent()
+            f.store.failRemove = true
+            val late = CompletableDeferred<Unit>()
+            f.store.removeGate = late
+            f.vm.confirmHostUnpair()
+            runCurrent()
+            f.vm.dismissHostEditor()
+            runCurrent()
+            late.complete(Unit)
+            runCurrent()
+            assertNull(f.vm.hostState.value.hostEditor)
+        }
+
+    @Test
     fun dismissClosesTheEditorWithoutWriting() =
         runTest(dispatcher) {
             val f = fixture()
@@ -909,14 +1035,24 @@ class HostChannelListViewModelTest {
             assertEquals("Pyrybox", requireNotNull(f.store.loadById("Host")).displayName)
         }
 
-    private fun preferences(values: Flow<Preferences>) =
-        AppPreferences(
+    /**
+     * Reads the supplied snapshot until something writes, then the written value.
+     *
+     * The unpair path clears the removed host's cached workspace through `DataStore.edit`, which the
+     * previous read-only stub could not serve. Every other test here supplies a static flow and writes
+     * nothing, so they read exactly what they did before.
+     */
+    private fun preferences(values: Flow<Preferences>): AppPreferences {
+        val written = MutableStateFlow<Preferences?>(null)
+        return AppPreferences(
             object : DataStore<Preferences> {
-                override val data = values
+                override val data = combine(values, written) { seeded, edited -> edited ?: seeded }
 
-                override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences = error("unused")
+                override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences =
+                    transform(data.first()).also { written.value = it }
             },
         )
+    }
 
     private fun fixture(preferences: Flow<Preferences> = flowOf(emptyPreferences())) = Fixture(preferences).also { fixtures += it }
 
@@ -941,12 +1077,16 @@ class HostChannelListViewModelTest {
                 put("Host", "wss://first.example:8443", "Pyrybox")
                 put("host", "wss://second.example", null)
             }
+
+        // Hoisted out of the module so a test can seed and read back the host-owned workspace the
+        // unpair path clears.
+        val prefs = preferences(preferences)
         val app =
             KoinApplication.init().modules(
                 appModule,
                 module {
                     single<ConversationRepository> { StableConversationRepository(selected) }
-                    single { preferences(preferences) }
+                    single { prefs }
                     single { source }
                     single<PairedServerCollectionStore> { store }
                 },
@@ -969,9 +1109,12 @@ class HostChannelListViewModelTest {
     private class Store : PairedServerCollectionStore {
         private var entries = emptyList<PairedServerEntry>()
         val renames = mutableListOf<Pair<String, String?>>()
+        val removals = mutableListOf<String>()
         var failWrite = false
+        var failRemove = false
         var readGate: CompletableDeferred<Unit>? = null
         var writeGate: CompletableDeferred<Unit>? = null
+        var removeGate: CompletableDeferred<Unit>? = null
 
         fun put(
             serverId: String,
@@ -993,7 +1136,13 @@ class HostChannelListViewModelTest {
 
         override suspend fun save(record: PairedServer) = error("unused")
 
-        override suspend fun remove(serverId: String) = error("unused")
+        override suspend fun remove(serverId: String) {
+            removeGate?.await()
+            if (failRemove) throw PairedServerStoreException("test failure")
+            removals += serverId
+            // Id-exact, as the real store is: a removal can never take a second entry with it.
+            entries = entries.filterNot { it.record.serverId == serverId }
+        }
 
         override suspend fun setDisplayName(
             serverId: String,

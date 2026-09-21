@@ -47,9 +47,12 @@ class EditHostModalTest {
 
     private var dismissals = 0
     private var unpairs = 0
+    private var unpairConfirms = 0
+    private var unpairDeclines = 0
     private val submitted = mutableListOf<String>()
     private val loading = mutableStateOf(false)
     private val error = mutableStateOf<String?>(null)
+    private val confirming = mutableStateOf(false)
 
     // The frame's own sample values, so a reader can line the suite up against the design.
     private val identity = "345345-345345345-gw3vw-w4wv34-vw34t"
@@ -100,9 +103,12 @@ class EditHostModalTest {
             onDismissRequest = { dismissals++ },
             onSubmit = { submitted += it },
             onUnpairRequested = { unpairs++ },
+            onUnpairConfirmed = { unpairConfirms++ },
+            onUnpairDeclined = { unpairDeclines++ },
             modifier = modifier,
             loading = loading.value,
             error = error.value,
+            confirmingUnpair = confirming.value,
         )
     }
 
@@ -182,6 +188,54 @@ class EditHostModalTest {
             assertEquals(listOf("Pyrybox two"), submitted)
             assertEquals(1, unpairs)
         }
+    }
+
+    /**
+     * The confirmation #745 adds is an in-place content swap, not a second window, and the shell's own
+     * footer carries the decision. A stacked `Dialog` would have given one destructive decision two back
+     * targets; this asserts the swap instead — the editor's children are *gone*, not covered — and that
+     * no route out of the step can be mistaken for the one that removes the host.
+     */
+    @Test
+    fun unpairConfirmationReplacesTheContentInPlaceAndEveryDismissalRouteDeclines() {
+        show()
+        rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).performTextClearance()
+        rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).performTextInput("Draft name")
+
+        // The action reports the intent and changes nothing: the step is the caller's, like visibility.
+        rule.onNodeWithText(string(R.string.edit_host_unpair)).performScrollTo().performClick()
+        rule.runOnIdle { assertEquals(1, unpairs) }
+        rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).assertIsDisplayed()
+
+        rule.runOnIdle { confirming.value = true }
+        rule.onNodeWithText(string(R.string.edit_host_unpair_confirm_title)).assertIsDisplayed()
+        rule.onNodeWithText(hostName, substring = true).assertIsDisplayed()
+        rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).assertDoesNotExist()
+        rule.onNodeWithText(identity).assertDoesNotExist()
+        rule.onNodeWithText(string(R.string.edit_host_unpair)).assertDoesNotExist()
+
+        // Cancel, the close glyph and system Back all decline; none of the three dismisses the modal,
+        // and none of them removes anything.
+        rule.onNodeWithText("Cancel").performClick()
+        rule.onNodeWithContentDescription("Close").performClick()
+        Espresso.pressBack()
+        rule.runOnIdle {
+            assertEquals(3, unpairDeclines)
+            assertEquals(0, dismissals)
+            assertEquals(0, unpairConfirms)
+        }
+
+        // Only the shell's OK confirms, and it submits no name while the confirmation is up.
+        rule.onNodeWithText("OK").performClick()
+        rule.runOnIdle {
+            assertEquals(1, unpairConfirms)
+            assertTrue(submitted.isEmpty())
+        }
+
+        // Declining returns to the editor with the draft intact: the name buffer is keyed on the
+        // identity, not on the step.
+        rule.runOnIdle { confirming.value = false }
+        rule.onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG).assertTextContains("Draft name")
     }
 
     @Test
