@@ -247,3 +247,17 @@ raw-parameter `remember` key under Design are its output, not the first draft's.
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-21
+
+## Revisions
+
+**2026-09-21 — field text colour, and the measured fill.** The Design source table named the
+text-area *fill* but not the text inside it. The frame draws the entered name in
+`schemes/on-background`; the implementation uses `onPrimaryContainer`, because the field sits
+inside the shell's `primaryContainer` surface and `onBackground` is the app background's pairing,
+which carries no contrast guarantee here. Same reason the table's first row gives, applied to the
+foreground.
+
+`FIELD_FILL_ALPHA` settled at 0.12. Composited against the real theme values, the well separates
+from the shell's surface by 17–23 per channel in both schemes (light `#CFE4FF` → `#B8D2EE`, dark
+`#134A74` → `#2A5C85`), against 9–14 for the reference's own dark-only well. Slightly stronger
+than the reference by design: the reference never had to survive a light scheme.
