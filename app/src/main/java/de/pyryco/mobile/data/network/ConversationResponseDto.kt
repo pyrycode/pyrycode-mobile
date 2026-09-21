@@ -52,6 +52,7 @@ data class ConversationResponseDto(
     @SerialName("last_used_at")
     @Serializable(with = InstantIso8601Serializer::class)
     val lastUsedAt: Instant,
+    @SerialName("workspace_label") val workspaceLabel: String? = null,
 )
 
 /**
@@ -65,6 +66,7 @@ fun ConversationResponseDto.toConversation(): Conversation =
         id = id,
         name = name,
         cwd = cwd,
+        workspaceLabel = workspaceLabel,
         isPromoted = isPromoted,
         lastUsedAt = lastUsedAt,
         // `archived` is a decoded field (#549): the archive/unarchive/rename reply carries `is_archived`

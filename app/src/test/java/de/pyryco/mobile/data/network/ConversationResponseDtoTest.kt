@@ -3,7 +3,10 @@ package de.pyryco.mobile.data.network
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import kotlinx.datetime.Instant
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -43,6 +46,20 @@ class ConversationResponseDtoTest {
         """
         {"id":"c-archived","is_promoted":true,"is_archived":true,"name":"weekly-planning","cwd":"/Users/j/Projects/Planner","last_used_at":"2026-05-08T10:34:30Z"}
         """.trimIndent()
+
+    @Test
+    fun workspaceLabel_createdAndUpdated_preserveStringsNullAndLegacyWithoutChangingOtherFields() {
+        for (fixture in listOf(createdFixture, updatedFixture)) {
+            val legacyPayload = MobileJson.parseToJsonElement(fixture).jsonObject
+            val legacy = MobileJson.decodeFromJsonElement<ConversationResponseDto>(legacyPayload).toConversation()
+            assertNull(legacy.workspaceLabel)
+            for (label in listOf("  Työ 🛠 <b>workspace</b>  ", "", null)) {
+                val payload = JsonObject(legacyPayload + ("workspace_label" to JsonPrimitive(label)))
+                val mapped = MobileJson.decodeFromJsonElement<ConversationResponseDto>(payload).toConversation()
+                assertEquals(legacy.copy(workspaceLabel = label), mapped)
+            }
+        }
+    }
 
     @Test
     fun conversationCreated_mapsUnnamedScratchBranch() {

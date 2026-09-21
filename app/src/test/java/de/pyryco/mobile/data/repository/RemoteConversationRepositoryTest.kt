@@ -31,6 +31,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonObject
@@ -876,13 +877,16 @@ class RemoteConversationRepositoryTest {
                 conversationCreatedEnvelope(
                     inReplyTo = sentId,
                     id = "c-new",
-                    cwd = DEFAULT_SCRATCH_CWD,
+                    cwd = "/work/named",
                     lastUsedAt = "2026-05-08T11:00:00Z",
-                ),
+                ).withWorkspaceLabel("  Named workspace  "),
             )
             runCurrent()
 
-            create().getOrThrow()
+            val created = create().getOrThrow()
+            assertEquals("/work/named", created.cwd)
+            assertEquals("  Named workspace  ", created.workspaceLabel)
+            assertEquals(created, all.last().single { it.id == "c-new" })
             // c-new (11:00) sorts ahead of chan (10:00) and disc (09:00).
             assertEquals(listOf("c-new", "chan", "disc"), all.last().map { it.id })
         }
@@ -1510,18 +1514,36 @@ class RemoteConversationRepositoryTest {
             pump.push(conversationsEnvelope(MIXED_FIXTURE))
             runCurrent()
             assertEquals(listOf("chan", "disc"), all.last().map { it.id })
+            val original = all.last().single { it.id == "chan" }
+            val unrelated = all.last().single { it.id == "disc" }
 
             val change = startChangeWorkspace(repo, "chan", "/home/me/requested")
             runCurrent()
             val sentId = pump.sent.single { it.type == "change_workspace" }.id
             // The daemon confines to $HOME and stores the resolved realpath, which it echoes back.
-            pump.push(conversationUpdatedEnvelope(inReplyTo = sentId, id = "chan", name = "Channel", cwd = "/home/me/resolved"))
+            pump.push(
+                conversationUpdatedEnvelope(inReplyTo = sentId, id = "chan", name = "Channel", cwd = "/home/me/resolved")
+                    .withWorkspaceLabel("Destination workspace"),
+            )
             runCurrent()
             change().getOrThrow()
 
             // Folded in place: still two entries; chan now shows the server's resolved cwd.
             assertEquals(listOf("chan", "disc"), all.last().map { it.id })
-            assertEquals("/home/me/resolved", all.last().single { it.id == "chan" }.cwd)
+            val destination = original.copy(cwd = "/home/me/resolved", workspaceLabel = "Destination workspace")
+            assertEquals(destination, all.last().single { it.id == "chan" })
+
+            val clear = startChangeWorkspace(repo, "chan", "/home/me/unnamed")
+            runCurrent()
+            val clearId = pump.sent.last { it.type == "change_workspace" }.id
+            pump.push(
+                conversationUpdatedEnvelope(inReplyTo = clearId, id = "chan", name = "Channel", cwd = "/home/me/unnamed")
+                    .withWorkspaceLabel(null),
+            )
+            runCurrent()
+            clear().getOrThrow()
+            assertEquals(destination.copy(cwd = "/home/me/unnamed", workspaceLabel = null), all.last().single { it.id == "chan" })
+            assertEquals(unrelated, all.last().single { it.id == "disc" })
         }
 
     // § Design ④: the interface forces a Session return, but change_workspace performs no session
@@ -5982,6 +6004,9 @@ class RemoteConversationRepositoryTest {
         backgroundScope.launch { outcome = runCatching { repo.dropQueuedMessage(conversationId, queuedMessageId) } }
         return { requireNotNull(outcome) { "dropQueuedMessage has not completed" } }
     }
+
+    private fun Envelope.withWorkspaceLabel(label: String?): Envelope =
+        copy(payload = JsonObject(payload.jsonObject + ("workspace_label" to JsonPrimitive(label))))
 
     /** A correlated `conversation_created` reply carrying a bare conversation object (#347). */
     private fun conversationCreatedEnvelope(
