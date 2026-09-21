@@ -29,7 +29,7 @@ class ScannerScreenTest {
     val composeTestRule = createComposeRule()
 
     @Test
-    fun topAppBar_rendersPairWithPyrycodeTitle() {
+    fun topAppBar_rendersPairingTitle() {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
                 ScannerScreen(
@@ -42,7 +42,7 @@ class ScannerScreenTest {
         }
 
         composeTestRule
-            .onNode(hasText("Pair with pyrycode"))
+            .onNode(hasText("Pairing"))
             .assertExists()
     }
 
@@ -96,7 +96,7 @@ class ScannerScreenTest {
         }
 
         composeTestRule
-            .onNode(hasText("Pair with pyrycode"))
+            .onNode(hasText("Pairing"))
             .assertExists()
     }
 
@@ -134,7 +134,7 @@ class ScannerScreenTest {
         // Scope guard: the Decoded state renders the existing locked viewport — no new visible
         // surface, the payload is never displayed.
         composeTestRule
-            .onNode(hasText("Pair with pyrycode"))
+            .onNode(hasText("Pairing"))
             .assertExists()
         composeTestRule
             .onNode(hasText("pyry pair", substring = true))
@@ -162,7 +162,7 @@ class ScannerScreenTest {
             .onNodeWithTag("camera")
             .assertExists()
         composeTestRule
-            .onNode(hasText("Pair with pyrycode"))
+            .onNode(hasText("Pairing"))
             .assertExists()
         composeTestRule
             .onNode(hasText("pyry pair", substring = true))
