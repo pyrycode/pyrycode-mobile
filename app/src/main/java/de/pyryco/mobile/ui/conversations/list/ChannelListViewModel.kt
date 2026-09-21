@@ -127,7 +127,7 @@ class ChannelListViewModel(
 
     fun createHostDiscussion(serverId: String) {
         launchGuardedRepoCall {
-            val workspace = appPreferences.defaultWorkspace.first()
+            val workspace = appPreferences.defaultWorkspace(serverId).first()
             sendHostDiscussion(serverId, workspace)
         }
     }
