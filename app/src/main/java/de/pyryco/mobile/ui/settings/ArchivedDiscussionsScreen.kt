@@ -95,8 +95,12 @@ fun ArchivedDiscussionsScreen(
             //
             // Clamped here rather than where the label is resolved, so the bound holds for every
             // caller of this screen: the name comes from a scanned QR payload or locally-entered
-            // host metadata, and `parsePairingPayload` bounds its shape but not its length. Drawn
-            // as plain text, never as a format argument.
+            // host metadata. Since #752 `parsePairingPayload` bounds each scanned field at 512 UTF-8
+            // bytes and rejects an over-long payload rather than truncating it, but that ceiling
+            // defends the route argument and the saved-state `Bundle`, not this line of text — it is
+            // four times what fits here, it is counted in bytes rather than characters, and it does
+            // not reach a host paired before #752 or a locally-entered name. This clamp stands on
+            // top of it. Drawn as plain text, never as a format argument.
             if (hostName.isNotBlank()) {
                 Text(
                     text = hostName.take(MAX_WORKSPACE_LABEL_CHARS),

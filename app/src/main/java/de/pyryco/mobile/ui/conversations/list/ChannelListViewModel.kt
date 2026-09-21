@@ -53,12 +53,17 @@ data class HostChannelListEntry(
  * would put both credentials in a `StateFlow` that outlives the modal, for no gain: the two fields the
  * ticket allows are copied out at open time and the entry is dropped.
  *
- * [serverIdentity] and [relayAddress] are carried unclamped, deliberately. `parsePairingPayload` bounds
- * neither field's length — it checks the relay's scheme and host and tolerates a path — so both are
- * QR-authored and unbounded, and the clamp belongs where `EditHostModal` already applies it, at that
- * component's own boundary before layout and semantics. It keys its name buffer on the raw identity so
- * two hosts sharing a 128-character prefix cannot collapse onto one buffer; clamping here would defeat
- * that. Nothing outside the modal reads either field.
+ * [serverIdentity] and [relayAddress] are carried unclamped, deliberately. Since #752
+ * `parsePairingPayload` bounds each of them at 512 UTF-8 bytes and rejects an over-long payload
+ * outright, so neither is unbounded any more — but that is a length ceiling, not a display bound, and
+ * 512 bytes is still four times what this surface can draw. The clamp therefore stays where
+ * `EditHostModal` already applies it, at that component's own boundary before layout and semantics,
+ * and it keeps its own unit: the parser counts bytes because it is defending the route argument and
+ * the saved-state `Bundle`, while the modal counts characters because it is defending a line of text.
+ * A record paired before #752 is also read back unbounded, which the render-side clamp covers and the
+ * parser cannot. The modal keys its name buffer on the raw identity so two hosts sharing a
+ * 128-character prefix cannot collapse onto one buffer; clamping here would defeat that. Nothing
+ * outside the modal reads either field.
  *
  * [failed] and [unpairFailed] are flags rather than messages so the string resolves at the screen, which
  * keeps this view model free of `Context` and makes it impossible for an identity or a relay address to
