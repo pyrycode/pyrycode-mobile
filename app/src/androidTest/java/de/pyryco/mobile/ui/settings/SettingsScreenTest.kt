@@ -26,36 +26,7 @@ class SettingsScreenTest {
 
     @Test
     fun wallpaperColorsRow_rendersMaterialYouLabel() {
-        composeTestRule.setContent {
-            PyrycodeMobileTheme {
-                SettingsScreen(
-                    connectionStatus =
-                        ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down),
-                    serverLabel = "abc123 · wss://relay…",
-                    themeMode = ThemeMode.SYSTEM,
-                    useWallpaperColors = false,
-                    archivedDiscussionCount = 0,
-                    defaultModel = Model.OPUS_4_7,
-                    defaultEffort = Effort.HIGH,
-                    defaultYolo = false,
-                    pushNotifications = true,
-                    defaultWorkspace = DEFAULT_SCRATCH_CWD,
-                    workspacePickerVisible = false,
-                    onSelectTheme = {},
-                    onToggleUseWallpaperColors = {},
-                    onSelectDefaultModel = {},
-                    onSelectDefaultEffort = {},
-                    onToggleDefaultYolo = {},
-                    onTogglePushNotifications = {},
-                    onDefaultWorkspaceTapped = {},
-                    onSelectDefaultWorkspace = {},
-                    onWorkspacePickerDismissed = {},
-                    onBack = {},
-                    onOpenArchivedDiscussions = {},
-                    onOpenAbout = {},
-                )
-            }
-        }
+        setSettings()
 
         composeTestRule
             .onNode(hasText("Use Material You dynamic color"))
@@ -65,36 +36,7 @@ class SettingsScreenTest {
 
     @Test
     fun archivedDiscussionsRow_rendersSupportingTextWithCount() {
-        composeTestRule.setContent {
-            PyrycodeMobileTheme {
-                SettingsScreen(
-                    connectionStatus =
-                        ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down),
-                    serverLabel = "abc123 · wss://relay…",
-                    themeMode = ThemeMode.SYSTEM,
-                    useWallpaperColors = false,
-                    archivedDiscussionCount = 11,
-                    defaultModel = Model.OPUS_4_7,
-                    defaultEffort = Effort.HIGH,
-                    defaultYolo = false,
-                    pushNotifications = true,
-                    defaultWorkspace = DEFAULT_SCRATCH_CWD,
-                    workspacePickerVisible = false,
-                    onSelectTheme = {},
-                    onToggleUseWallpaperColors = {},
-                    onSelectDefaultModel = {},
-                    onSelectDefaultEffort = {},
-                    onToggleDefaultYolo = {},
-                    onTogglePushNotifications = {},
-                    onDefaultWorkspaceTapped = {},
-                    onSelectDefaultWorkspace = {},
-                    onWorkspacePickerDismissed = {},
-                    onBack = {},
-                    onOpenArchivedDiscussions = {},
-                    onOpenAbout = {},
-                )
-            }
-        }
+        setSettings(archivedDiscussionCount = 11)
 
         composeTestRule
             .onNode(hasText("11 archived", substring = true))
@@ -105,15 +47,70 @@ class SettingsScreenTest {
     @Test
     fun aboutRow_navigatesOnClick() {
         var aboutCount = 0
+        setSettings(onOpenAbout = { aboutCount++ })
+
+        composeTestRule
+            .onNode(hasText("About") and hasClickAction())
+            .performScrollTo()
+            .performClick()
+
+        assertEquals(1, aboutCount)
+    }
+
+    /** The owner's four facts, all of them present and none of them a click target (#749). */
+    @Test
+    fun connectionSection_rendersOwnersIdentityAndStatusInertly() {
+        setSettings(
+            host =
+                SettingsHostState.Owned(
+                    serverId = "pyrybox-2026-0f3a",
+                    displayName = "Pyrybox",
+                    relayUrl = "wss://relay.pyryco.de",
+                    status = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected),
+                ),
+        )
+
+        composeTestRule.onNode(hasText("Pyrybox")).performScrollTo().assertExists()
+        composeTestRule.onNode(hasText("pyrybox-2026-0f3a")).performScrollTo().assertExists()
+        composeTestRule.onNode(hasText("wss://relay.pyryco.de")).performScrollTo().assertExists()
+        composeTestRule.onNode(hasText("Pyrybox") and hasClickAction()).assertDoesNotExist()
+    }
+
+    @Test
+    fun connectionSection_saysNoHostIsPairedWhenTheDestinationOwnsNone() {
+        var pairCount = 0
+        setSettings(host = SettingsHostState.Unpaired, onPairServer = { pairCount++ })
+
+        composeTestRule.onNode(hasText("No host is paired")).performScrollTo().assertExists()
+        composeTestRule
+            .onNode(hasText("Pair another server") and hasClickAction())
+            .performScrollTo()
+            .performClick()
+
+        assertEquals(1, pairCount)
+    }
+
+    @Test
+    fun connectionSection_saysTheOwnerIsGoneRatherThanNamingAnotherHost() {
+        setSettings(host = SettingsHostState.Unknown)
+
+        composeTestRule.onNode(hasText("This host is no longer paired")).performScrollTo().assertExists()
+        composeTestRule.onNode(hasText("No host is paired")).assertDoesNotExist()
+    }
+
+    private fun setSettings(
+        host: SettingsHostState = SettingsHostState.Resolving,
+        archivedDiscussionCount: Int = 0,
+        onPairServer: () -> Unit = {},
+        onOpenAbout: () -> Unit = {},
+    ) {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
                 SettingsScreen(
-                    connectionStatus =
-                        ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down),
-                    serverLabel = "abc123 · wss://relay…",
+                    host = host,
                     themeMode = ThemeMode.SYSTEM,
                     useWallpaperColors = false,
-                    archivedDiscussionCount = 0,
+                    archivedDiscussionCount = archivedDiscussionCount,
                     defaultModel = Model.OPUS_4_7,
                     defaultEffort = Effort.HIGH,
                     defaultYolo = false,
@@ -129,18 +126,12 @@ class SettingsScreenTest {
                     onDefaultWorkspaceTapped = {},
                     onSelectDefaultWorkspace = {},
                     onWorkspacePickerDismissed = {},
+                    onPairServer = onPairServer,
                     onBack = {},
                     onOpenArchivedDiscussions = {},
-                    onOpenAbout = { aboutCount++ },
+                    onOpenAbout = onOpenAbout,
                 )
             }
         }
-
-        composeTestRule
-            .onNode(hasText("About") and hasClickAction())
-            .performScrollTo()
-            .performClick()
-
-        assertEquals(1, aboutCount)
     }
 }

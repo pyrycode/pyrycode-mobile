@@ -41,6 +41,13 @@
     <string name="settings_model_dialog_title">Default model</string>
     <string name="settings_use_wallpaper_colors">Use Material You dynamic color</string>
     <string name="settings_use_wallpaper_colors_unsupported">Requires Android 12 or newer</string>
+    <!--
+      The Connection section's two non-owned states (#749). Both are deliberately argument-free:
+      the shell announces a settings row verbatim, so a host name or relay address embedded in one
+      would be read aloud, and neither state has a host whose identity we are entitled to show.
+    -->
+    <string name="settings_host_none">No host is paired</string>
+    <string name="settings_host_unknown">This host is no longer paired</string>
     <string name="archived_title">Archived</string>
     <string name="archived_tab_channels">Channels (%1$d)</string>
     <string name="archived_tab_discussions">Discussions (%1$d)</string>

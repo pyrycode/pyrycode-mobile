@@ -14,7 +14,10 @@ import de.pyryco.mobile.data.crypto.KeystorePairedServerStore
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.ModalUiState
+import de.pyryco.mobile.data.model.PyrycodeLinkStatus
+import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.NoiseSessionFactory
 import de.pyryco.mobile.data.network.OkHttpRelayTransport
@@ -37,11 +40,14 @@ import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.onboarding.PairCodeViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerViewModel
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
+import de.pyryco.mobile.ui.settings.SettingsHost
 import de.pyryco.mobile.ui.settings.SettingsViewModel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import okhttp3.WebSocket
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.Module
@@ -111,9 +117,7 @@ val appModule =
         // The third dependency is the paired-server store the Edit host modal reads and writes (#744).
         viewModel { ChannelListViewModel(get(), get(), get()) }
         viewModel { DiscussionListViewModel(get(), get()) }
-        viewModel {
-            SettingsViewModel(get(), get(), get<RelayConnectionRegistry>().connectionStatus)
-        }
+        viewModel { get<ThreadDestinationFactory>().settings(get(), get(), get()) }
         viewModel { ArchivedDiscussionsViewModel(get()) }
         viewModel { get<ThreadDestinationFactory>().thread(get(), get()) }
         viewModel { get<ThreadDestinationFactory>().literal(get()) }
@@ -224,5 +228,59 @@ internal class ThreadDestinationFactory(
     fun literal(handle: SavedStateHandle): LiteralScreenViewModel {
         RelayLog.d { "event=literal_destination_bound" }
         return LiteralScreenViewModel(handle, repository(handle.get<String>("serverId").orEmpty()))
+    }
+
+    /**
+     * The Settings destination, owned by the server id the gear captured into its route (#749).
+     * Unlike [thread] and [literal] the owner is optional — a blank one means the destination owns
+     * no host — and unlike them it is never resolved to a bundle here: this screen reads identity
+     * and status only, so an owner that is saved but not yet connected is still its owner.
+     *
+     * [preferences] and [repository] stay compatibility-bound: app-wide settings are not host-scoped,
+     * and the archived-discussion count is rebound with the Archive destination by #715.
+     */
+    fun settings(
+        handle: SavedStateHandle,
+        preferences: AppPreferences,
+        repository: ConversationRepository,
+    ): SettingsViewModel {
+        RelayLog.d { "event=settings_destination_bound" }
+        return SettingsViewModel(preferences, repository, handle.get<String>("serverId").orEmpty(), hosts())
+    }
+
+    /**
+     * Every saved host's identity and its own live status.
+     *
+     * Two sources, because neither alone is enough: the registry's `hostConnections` carries the
+     * per-host status flow and re-emits on every store revision (so a rename, a pairing and an
+     * unpair all land), while the relay URL lives only in the stored record. One [store] read per
+     * emission joins them — not one `loadById` per host, which would decrypt N times for the same
+     * blob.
+     *
+     * The three display fields are copied out explicitly and the [PairedServerEntry] is dropped
+     * here: it carries the pairing token and the server static key, and [SettingsHost] has no
+     * redacting `toString` to stop a crash trace from rendering them.
+     *
+     * Cold by construction, so two Settings entries on the back stack do not share one projection;
+     * the status flows inside it are the coordinators' existing hot ones, and collecting one never
+     * dials a host.
+     */
+    private fun hosts(): Flow<List<SettingsHost>> =
+        if (!useRelay) {
+            flowOf(listOf(SettingsHost(HostConversationSource.DEMO_SERVER_ID, "Demo", DEMO_RELAY_URL, MutableStateFlow(DEMO_STATUS))))
+        } else {
+            registry.hostConnections.map { connections ->
+                val saved = store.list().associateBy { it.record.serverId }
+                connections.mapNotNull { connection ->
+                    saved[connection.serverId]?.let { entry ->
+                        SettingsHost(connection.serverId, entry.displayName, entry.record.relayUrl, connection.status)
+                    }
+                }
+            }
+        }
+
+    private companion object {
+        const val DEMO_RELAY_URL = "wss://demo.invalid"
+        val DEMO_STATUS = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
     }
 }

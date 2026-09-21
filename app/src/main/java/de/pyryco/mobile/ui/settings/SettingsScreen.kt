@@ -44,15 +44,13 @@ import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.data.preferences.label
-import de.pyryco.mobile.ui.conversations.components.ConnectionStatusLine
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
-    connectionStatus: ConnectionStatus,
-    serverLabel: String,
+    host: SettingsHostState,
     themeMode: ThemeMode,
     useWallpaperColors: Boolean,
     archivedDiscussionCount: Int,
@@ -71,6 +69,7 @@ fun SettingsScreen(
     onDefaultWorkspaceTapped: () -> Unit,
     onSelectDefaultWorkspace: (String) -> Unit,
     onWorkspacePickerDismissed: () -> Unit,
+    onPairServer: () -> Unit,
     onBack: () -> Unit,
     onOpenArchivedDiscussions: () -> Unit,
     onOpenAbout: () -> Unit,
@@ -145,20 +144,28 @@ fun SettingsScreen(
                     .padding(bottom = 32.dp),
         ) {
             SettingsSectionHeader("Connection")
-            SettingsRow(
-                headline = "Server",
-                supporting = serverLabel,
-                trailing = { ChevronIcon() },
-                onClick = {},
-            )
-            ConnectionStatusLine(
-                status = connectionStatus,
-                modifier = Modifier.padding(start = 16.dp, top = 4.dp, bottom = 8.dp),
-            )
+            // The destination's own host, never the current selection. Neither non-owned state
+            // borrows another host's identity or status, and neither hides the pairing row below:
+            // an unpaired phone reaches the scanner from exactly here (#749).
+            when (host) {
+                is SettingsHostState.Owned ->
+                    HostIdentityRow(
+                        name = host.name,
+                        serverId = host.serverId,
+                        relayUrl = host.relayUrl,
+                        status = host.status,
+                    )
+                SettingsHostState.Unknown ->
+                    SettingsRow(headline = stringResource(R.string.settings_host_unknown))
+                SettingsHostState.Unpaired ->
+                    SettingsRow(headline = stringResource(R.string.settings_host_none))
+                // Nothing, deliberately: a placeholder here would flash wrong copy for one frame.
+                SettingsHostState.Resolving -> Unit
+            }
             SettingsRow(
                 headline = "Pair another server",
                 trailing = { ChevronIcon() },
-                onClick = {},
+                onClick = onPairServer,
             )
 
             SettingsSectionHeader("Appearance")
@@ -339,9 +346,13 @@ private fun workspaceLabel(cwd: String): String =
 private fun SettingsScreenLightPreview() {
     PyrycodeMobileTheme(darkTheme = false) {
         SettingsScreen(
-            connectionStatus =
-                ConnectionStatus(RelayLinkStatus.DaemonAbsent, PyrycodeLinkStatus.Down),
-            serverLabel = "abc123 · wss://relay…",
+            host =
+                SettingsHostState.Owned(
+                    serverId = "pyrybox-2026-0f3a",
+                    displayName = "Pyrybox",
+                    relayUrl = "wss://relay.pyryco.de",
+                    status = ConnectionStatus(RelayLinkStatus.DaemonAbsent, PyrycodeLinkStatus.Down),
+                ),
             themeMode = ThemeMode.SYSTEM,
             useWallpaperColors = false,
             archivedDiscussionCount = 11,
@@ -360,6 +371,7 @@ private fun SettingsScreenLightPreview() {
             onDefaultWorkspaceTapped = {},
             onSelectDefaultWorkspace = {},
             onWorkspacePickerDismissed = {},
+            onPairServer = {},
             onBack = {},
             onOpenArchivedDiscussions = {},
             onOpenAbout = {},
@@ -372,9 +384,13 @@ private fun SettingsScreenLightPreview() {
 private fun SettingsScreenDarkPreview() {
     PyrycodeMobileTheme(darkTheme = true) {
         SettingsScreen(
-            connectionStatus =
-                ConnectionStatus(RelayLinkStatus.DaemonAbsent, PyrycodeLinkStatus.Down),
-            serverLabel = "abc123 · wss://relay…",
+            host =
+                SettingsHostState.Owned(
+                    serverId = "pyrybox-2026-0f3a",
+                    displayName = "Pyrybox",
+                    relayUrl = "wss://relay.pyryco.de",
+                    status = ConnectionStatus(RelayLinkStatus.DaemonAbsent, PyrycodeLinkStatus.Down),
+                ),
             themeMode = ThemeMode.SYSTEM,
             useWallpaperColors = false,
             archivedDiscussionCount = 11,
@@ -393,6 +409,7 @@ private fun SettingsScreenDarkPreview() {
             onDefaultWorkspaceTapped = {},
             onSelectDefaultWorkspace = {},
             onWorkspacePickerDismissed = {},
+            onPairServer = {},
             onBack = {},
             onOpenArchivedDiscussions = {},
             onOpenAbout = {},

@@ -65,9 +65,16 @@ class SettingsViewModelTest {
     private fun makeVm(
         prefs: AppPreferences,
         repo: ConversationRepository = stubRepo(),
-        connectionStatus: StateFlow<ConnectionStatus> =
-            MutableStateFlow(ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)),
-    ): SettingsViewModel = SettingsViewModel(prefs, repo, connectionStatus)
+        ownerServerId: String = "",
+        hosts: Flow<List<SettingsHost>> = MutableStateFlow(emptyList()),
+    ): SettingsViewModel = SettingsViewModel(prefs, repo, ownerServerId, hosts)
+
+    private fun host(
+        serverId: String,
+        displayName: String? = null,
+        relayUrl: String = "wss://relay.example/$serverId",
+        status: StateFlow<ConnectionStatus> = MutableStateFlow(OFFLINE),
+    ) = SettingsHost(serverId, displayName, relayUrl, status)
 
     @Test
     fun initialState_emitsSystem_whenNoStoredValue() =
@@ -578,28 +585,144 @@ class SettingsViewModelTest {
         }
 
     @Test
-    fun connectionStatus_reExposesInjectedCoordinatorValue() =
+    fun host_resolvesOwnerAmongTwoSavedHosts() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())
-            val status = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
-            val vm = makeVm(prefs, connectionStatus = MutableStateFlow(status))
-            assertEquals(status, vm.connectionStatus.value)
+            val vm =
+                makeVm(
+                    prefs,
+                    ownerServerId = "B",
+                    hosts =
+                        MutableStateFlow(
+                            listOf(
+                                host("A", "Alpha", "wss://a.example", MutableStateFlow(CONNECTED)),
+                                host("B", "Bravo", "wss://b.example", MutableStateFlow(OFFLINE)),
+                            ),
+                        ),
+                )
+            val collector = launch { vm.host.collect { } }
+            advanceUntilIdle()
+            val owned = vm.host.value as SettingsHostState.Owned
+            assertEquals("B", owned.serverId)
+            assertEquals("Bravo", owned.name)
+            assertEquals("wss://b.example", owned.relayUrl)
+            assertEquals(OFFLINE, owned.status)
+            collector.cancel()
+        }
+
+    /**
+     * The at-this-layer form of "a compatibility-selection change while Settings is open": selection
+     * is not observable here at all, so what a change of it produces is a host-list re-emission. The
+     * resolved owner must not move with it, and must not pick up the other host's status.
+     */
+    @Test
+    fun host_keepsOwnerAcrossHostListReemission() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val a = host("A", "Alpha", "wss://a.example", MutableStateFlow(CONNECTED))
+            val b = host("B", "Bravo", "wss://b.example", MutableStateFlow(OFFLINE))
+            val hosts = MutableStateFlow(listOf(a, b))
+            val vm = makeVm(prefs, ownerServerId = "B", hosts = hosts)
+            val collector = launch { vm.host.collect { } }
+            advanceUntilIdle()
+            hosts.value = listOf(b, a)
+            advanceUntilIdle()
+            val owned = vm.host.value as SettingsHostState.Owned
+            assertEquals("B", owned.serverId)
+            assertEquals(OFFLINE, owned.status)
+            collector.cancel()
         }
 
     @Test
-    fun connectionStatus_reflectsUpstreamReemission() =
+    fun host_followsOwnerRenameAndStatusUpdates() =
         runTest(dispatcher) {
             val prefs = AppPreferences(newDataStore())
-            val upstream =
-                MutableStateFlow(
-                    ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected),
-                )
-            val vm = makeVm(prefs, connectionStatus = upstream)
-            val collector = launch { vm.connectionStatus.collect { } }
-            val updated = ConnectionStatus(RelayLinkStatus.DaemonAbsent, PyrycodeLinkStatus.Down)
-            upstream.value = updated
+            val status = MutableStateFlow(OFFLINE)
+            val hosts = MutableStateFlow(listOf(host("B", "Bravo", "wss://b.example", status)))
+            val vm = makeVm(prefs, ownerServerId = "B", hosts = hosts)
+            val collector = launch { vm.host.collect { } }
             advanceUntilIdle()
-            assertEquals(updated, vm.connectionStatus.value)
+            status.value = CONNECTED
+            advanceUntilIdle()
+            assertEquals(CONNECTED, (vm.host.value as SettingsHostState.Owned).status)
+            hosts.value = listOf(host("B", "Renamed", "wss://b.example", status))
+            advanceUntilIdle()
+            val owned = vm.host.value as SettingsHostState.Owned
+            assertEquals("Renamed", owned.name)
+            assertEquals(CONNECTED, owned.status)
+            collector.cancel()
+        }
+
+    @Test
+    fun host_namesUnnamedOwnerByItsServerId() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val hosts = MutableStateFlow(listOf(host("B", displayName = null)))
+            val vm = makeVm(prefs, ownerServerId = "B", hosts = hosts)
+            val collector = launch { vm.host.collect { } }
+            advanceUntilIdle()
+            assertEquals("B", (vm.host.value as SettingsHostState.Owned).name)
+            hosts.value = listOf(host("B", displayName = "   "))
+            advanceUntilIdle()
+            assertEquals("B", (vm.host.value as SettingsHostState.Owned).name)
+            collector.cancel()
+        }
+
+    @Test
+    fun host_reportsUnknownWhenOwnerIsNotSaved() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm =
+                makeVm(
+                    prefs,
+                    ownerServerId = "ghost",
+                    hosts = MutableStateFlow(listOf(host("A", "Alpha"), host("B", "Bravo"))),
+                )
+            val collector = launch { vm.host.collect { } }
+            advanceUntilIdle()
+            assertEquals(SettingsHostState.Unknown, vm.host.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun host_reportsUnknownWhenTheOwnerIsRemovedWhileOpen() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val hosts = MutableStateFlow(listOf(host("B", "Bravo")))
+            val vm = makeVm(prefs, ownerServerId = "B", hosts = hosts)
+            val collector = launch { vm.host.collect { } }
+            advanceUntilIdle()
+            assertEquals("B", (vm.host.value as SettingsHostState.Owned).serverId)
+            hosts.value = emptyList()
+            advanceUntilIdle()
+            assertEquals(SettingsHostState.Unknown, vm.host.value)
+            collector.cancel()
+        }
+
+    /** A destination opened with nothing to own stays that way, even once a host is paired. */
+    @Test
+    fun host_reportsUnpairedWhenTheDestinationOwnsNoHost() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val hosts = MutableStateFlow(emptyList<SettingsHost>())
+            val vm = makeVm(prefs, ownerServerId = "", hosts = hosts)
+            assertEquals(SettingsHostState.Unpaired, vm.host.value)
+            val collector = launch { vm.host.collect { } }
+            advanceUntilIdle()
+            hosts.value = listOf(host("A", "Alpha"))
+            advanceUntilIdle()
+            assertEquals(SettingsHostState.Unpaired, vm.host.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun host_resolvesBeforeTheFirstHostEmission() =
+        runTest(dispatcher) {
+            val prefs = AppPreferences(newDataStore())
+            val vm = makeVm(prefs, ownerServerId = "B", hosts = MutableSharedFlow(replay = 0))
+            val collector = launch { vm.host.collect { } }
+            advanceUntilIdle()
+            assertEquals(SettingsHostState.Resolving, vm.host.value)
             collector.cancel()
         }
 
@@ -673,4 +796,9 @@ class SettingsViewModelTest {
             lastUsedAt = Instant.parse("2026-04-15T12:00:00Z"),
             archived = true,
         )
+
+    private companion object {
+        val CONNECTED = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
+        val OFFLINE = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
+    }
 }

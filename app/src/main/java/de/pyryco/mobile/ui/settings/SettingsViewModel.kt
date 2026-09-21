@@ -10,25 +10,107 @@ import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+/**
+ * One saved host's identity plus its own live two-part status, as this destination needs them.
+ *
+ * Four scalars and a status flow — deliberately **not** a `PairedServerEntry` or a `PairedServer`.
+ * Those records carry the pairing token and the server static key, and unlike `PairedServer` this
+ * class has no redacting `toString` to stop a crash trace from rendering whatever it holds. The
+ * projection that builds one copies the three display fields explicitly for that reason; never add
+ * a record-typed field here.
+ */
+data class SettingsHost(
+    val serverId: String,
+    val displayName: String?,
+    val relayUrl: String,
+    val status: StateFlow<ConnectionStatus>,
+)
+
+/** What a Settings destination's captured owner resolves to against the saved hosts. */
+sealed interface SettingsHostState {
+    /** A non-blank owner whose host list has not arrived yet: render nothing rather than a guess. */
+    data object Resolving : SettingsHostState
+
+    /** This destination owns no host, because none was paired when it was opened. */
+    data object Unpaired : SettingsHostState
+
+    /** The captured owner is not among the saved hosts. Never resolves to a different host. */
+    data object Unknown : SettingsHostState
+
+    /** The captured owner, with the four facts the Connection section displays inertly. */
+    data class Owned(
+        val serverId: String,
+        val displayName: String?,
+        val relayUrl: String,
+        val status: ConnectionStatus,
+    ) : SettingsHostState {
+        /** Its local name, or its server id when unnamed — resolved here so one place owns it. */
+        val name: String get() = displayName?.takeIf { it.isNotBlank() } ?: serverId
+    }
+}
+
+@OptIn(ExperimentalCoroutinesApi::class)
 class SettingsViewModel(
     private val appPreferences: AppPreferences,
     conversationRepository: ConversationRepository,
-    /**
-     * The coordinator's already-hot two-part connection status (#392), forwarded verbatim — no
-     * `stateIn` re-wrap: unlike the sibling flows here (cold DataStore upstreams), this is already a
-     * process-scoped `StateFlow` shared `Eagerly`, so `.value` is always correct (#398).
-     */
-    val connectionStatus: StateFlow<ConnectionStatus>,
+    /** The server id the gear captured into this destination's route. Blank means it owns none. */
+    ownerServerId: String,
+    /** Every saved host's identity and status; the owner is resolved out of it, never selected. */
+    hosts: Flow<List<SettingsHost>>,
 ) : ViewModel() {
+    /**
+     * The captured owner, resolved by exact case-sensitive server id — the same equality
+     * `PairedServerCollectionStore.loadById` and the registry's entry map use, so this cannot match
+     * a host either of those would miss.
+     *
+     * A blank owner short-circuits to [SettingsHostState.Unpaired] without ever consulting [hosts]:
+     * it is correct on the first frame (the state AC3 names for an unpaired phone), and it makes a
+     * blank-vs-blank id match structurally impossible rather than merely unreachable.
+     *
+     * Unlike the `connectionStatus` flow this replaced (#398, forwarded verbatim because its
+     * upstream was already hot), this is a derived projection over a cold join and therefore does
+     * take the `stateIn(WhileSubscribed)` lift its eight preference siblings use. [flatMapLatest]
+     * keeps at most one owner-status collector alive: a removal is itself a [hosts] emission, so the
+     * departing host's collector is cancelled by the same event that invalidates it.
+     */
+    val host: StateFlow<SettingsHostState> =
+        if (ownerServerId.isBlank()) {
+            MutableStateFlow<SettingsHostState>(SettingsHostState.Unpaired)
+        } else {
+            hosts
+                .flatMapLatest { saved ->
+                    val owner = saved.firstOrNull { it.serverId == ownerServerId }
+                    owner
+                        ?.status
+                        ?.map {
+                            SettingsHostState.Owned(owner.serverId, owner.displayName, owner.relayUrl, it)
+                        }
+                        ?: flowOf(SettingsHostState.Unknown)
+                }
+                // Supportive-metadata projections swallow upstream errors, as the archived count does:
+                // an unreadable host list must not tear the screen down, and "no host's identity" is
+                // the honest thing to show when we cannot prove which host this is.
+                .catch { emit(SettingsHostState.Unknown) }
+                .stateIn(
+                    scope = viewModelScope,
+                    started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+                    initialValue = SettingsHostState.Resolving,
+                )
+        }
+
     val themeMode: StateFlow<ThemeMode> =
         appPreferences.themeMode.stateIn(
             scope = viewModelScope,
