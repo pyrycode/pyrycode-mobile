@@ -97,8 +97,13 @@ even though #720 had already landed `Conversation.workspaceLabel` and `workspace
   placeholders (true on the correlated arm since #348); the unsolicited fold now reaches the same mapper.
   It stays unreachable in practice because both `conversation_updated` push producers (host-side `pyry
   channel new`, and one-shot auto-naming) target conversations with no live session id yet — a future
-  producer that fires mid-session would make `ThreadUiState.currentSessionId` go blank and is the follow-up
-  to watch for, not a defect to guard against speculatively today.
+  producer that fires mid-session would make `Conversation.currentSessionId` go blank and is the follow-up
+  to watch for, not a defect to guard against speculatively today. `ThreadUiState.currentSessionId` — the
+  thread's own copy of this field, which this clobber used to threaten — was deleted outright by
+  [#807](../codebase/807.md): the run-configuration write no longer routes through `Conversation
+  .currentSessionId` at all, only through `SessionSettings.sessionId` from `observeSessionSettings`, so this
+  clobber can no longer reach that surface. Other consumers of the domain `Conversation.currentSessionId`
+  field (e.g. `FakeConversationRepository`'s session lookups) are unaffected either way.
 
 ## `observeConversations(filter)` — the live method
 
