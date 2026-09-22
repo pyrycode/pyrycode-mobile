@@ -231,6 +231,22 @@ under `docs/knowledge/`. Pending for the documentation stage.
    root-directory choice no test would exercise. The `noBackupFilesDir` requirement is carried in the
    implementation's KDoc so the wiring ticket cannot miss it.
 
+## Revisions
+
+### 2026-09-22 — `removeConversation` against an unreadable document
+
+The plan fixed removal semantics for a healthy host and for unknown ids but left the unreadable case
+unstated, and the implementation had to answer it. One rule now covers all three: the removal
+rewrites the host's document from what is currently *readable*, minus the target. A host that was
+never written is skipped, so a removal never conjures a directory for an unknown id. A host whose
+document is unreadable reads as empty, so the rewrite replaces those bytes with a valid empty
+document — the removal takes effect on content that could not have been isolated, which is what
+#798's permanent deletion needs, and the alternative (fail, leaving the bytes on disk) would not
+give. Nothing readable is lost, because an unreadable document already yields nothing to any reader.
+
+This is the one place a mutation touches bytes a read declined to repair. The § Error handling rule
+that reads never repair is unchanged: it is the removal, asked for explicitly, that rewrites.
+
 ## Security review
 
 **Verdict:** PASS
