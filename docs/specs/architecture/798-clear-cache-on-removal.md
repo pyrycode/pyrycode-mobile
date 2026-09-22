@@ -188,3 +188,13 @@ Pending for the documentation stage: fold the unpair/delete cache removal into t
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-23
+
+## Revisions
+
+**2026-09-23 — `forgetRemovedHost` takes `Lazy<ConversationCache>`.** Resolving the cache eagerly in
+the store binding made `HostChannelListViewModelTest.appModuleInjectsSharedDemoSourceAndCreatesThroughExistingFakeSingleton`
+fail with `MissingAndroidContextException`: that JVM test resolves `appModule`'s paired-server store
+without a Context, and the cache's root is `noBackupFilesDir`. The hook now resolves the cache on first
+removal (`lazy { get() }` in `appModule`, `lazyOf(cache)` in the test fixture). Behaviour is unchanged;
+the alternative, overriding the cache binding in every JVM test that loads `appModule`, would have fanned
+out across test files for no production benefit.
