@@ -72,6 +72,7 @@ import de.pyryco.mobile.data.preferences.label
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.QueuedMessage
+import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.components.ApiRetryIndicator
 import de.pyryco.mobile.ui.conversations.components.ChannelInfoSheet
@@ -143,6 +144,7 @@ fun ThreadScreen(
     isStalled: Boolean = false,
     apiRetry: ApiRetryStatus = ApiRetryStatus.NotRetrying, // #594: claude's API-retry status, replaces the spinner
     isCompacting: Boolean = false, // #597: claude is auto-compacting its context, replaces the spinner
+    thinkingProgress: ThinkingProgress? = null, // #803: claude's live token reading, decorates the thinking arm
     isBusy: Boolean = false, // #459: a turn is in flight (thinking OR responding) → show the interrupt affordance
     onInterrupt: () -> Unit = {}, // #459: wired by MainActivity → vm::onInterrupt (the #458 send path)
     onTitleClick: () -> Unit = {},
@@ -255,6 +257,7 @@ fun ThreadScreen(
                     apiRetry = apiRetry,
                     isCompacting = isCompacting,
                     isThinking = isThinking,
+                    thinkingProgress = thinkingProgress,
                 )
                 ThreadInputBar(
                     text = draft,
@@ -554,18 +557,25 @@ fun ThreadScreen(
  * The design's trailing contextual-action slot stays empty until #675 fills it, so nothing inert is
  * emitted beside the signal. When no signal is live every arm returns without emitting, so the band
  * contributes no node and the composer column's gap above the input field collapses with it.
+ *
+ * [thinkingProgress] (#803) adds **no arm**: it decorates the thinking arm's label and rides the `else`
+ * branch, so retry and compaction pre-empt a live reading for free and the mutual exclusion above is
+ * unchanged. Visibility stays governed by [isThinking] alone — `turn_state` owns the thinking phase
+ * (#406), and letting a reading raise the arm on its own would be a fourth arm wearing the third one's
+ * name.
  */
 @Composable
 private fun ThreadStatusArea(
     apiRetry: ApiRetryStatus,
     isCompacting: Boolean,
     isThinking: Boolean,
+    thinkingProgress: ThinkingProgress?,
 ) {
     val slot = Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter)
     when {
         apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = slot)
         isCompacting -> CompactingIndicator(isCompacting = true, modifier = slot)
-        else -> ThinkingIndicator(isThinking = isThinking, modifier = slot)
+        else -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress)
     }
 }
 

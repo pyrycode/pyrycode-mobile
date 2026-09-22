@@ -27,6 +27,7 @@ import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.HistoryEntry
 import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.QueuedMessage
+import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.ThrowingConversationRepository
 import kotlinx.coroutines.CancellationException
@@ -1358,6 +1359,62 @@ class ThreadViewModelTest {
             val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
             val vm = makeVm(handle, repo)
             val collector = launch { vm.isCompacting.collect {} }
+            advanceUntilIdle()
+
+            assertTrue(repo.observedIds.isNotEmpty())
+            assertTrue(repo.observedIds.all { it == ACTIVE_CONV })
+            collector.cancel()
+        }
+
+    // ---- #803: thinkingProgress projection over repository.observeThinkingProgress ---------------
+
+    @Test
+    fun thinkingProgress_initialValue_isNullWithPlainFake() =
+        runTest {
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            // A plain fake inherits observeThinkingProgress's flowOf(null) default — no reading, so the
+            // thinking arm renders exactly as it does today (AC #1, second half).
+            val vm = makeVm(handle, FakeConversationRepository())
+            assertNull(vm.thinkingProgress.value)
+        }
+
+    @Test
+    fun thinkingProgress_carriesAFallingReadingAndHoldsARepeatedOne() =
+        runTest {
+            val repo = ThinkingProgressControllableRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.thinkingProgress.collect {} }
+            advanceUntilIdle()
+
+            // Each push is drained on its own: a StateFlow projection conflates two pushes made within
+            // one turn, so a sequence asserted without this interleave proves something weaker than it
+            // reads (the measured trap in docs/knowledge/features/thinking-progress-state.md).
+            repo.reading.value = ThinkingProgress(estimatedTokens = 184, estimatedTokensDelta = 64)
+            advanceUntilIdle()
+            assertEquals(184L, vm.thinkingProgress.value?.estimatedTokens)
+
+            // The reading restarts near zero at every inference-request boundary — repeatedly inside one
+            // turn — so a fall is a real reading and must never be clamped by a running maximum (AC #2).
+            repo.reading.value = ThinkingProgress(estimatedTokens = 4, estimatedTokensDelta = 4)
+            advanceUntilIdle()
+            assertEquals(4L, vm.thinkingProgress.value?.estimatedTokens)
+
+            // An identical repeat is dropped upstream by distinctUntilChanged, so the value simply holds
+            // — which is what makes the rendered label hold without flicker (AC #2).
+            repo.reading.value = ThinkingProgress(estimatedTokens = 4, estimatedTokensDelta = 4)
+            advanceUntilIdle()
+            assertEquals(4L, vm.thinkingProgress.value?.estimatedTokens)
+            collector.cancel()
+        }
+
+    @Test
+    fun thinkingProgress_observesOnlyOwnConversationId() =
+        runTest {
+            val repo = ThinkingProgressControllableRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.thinkingProgress.collect {} }
             advanceUntilIdle()
 
             assertTrue(repo.observedIds.isNotEmpty())
@@ -3776,6 +3833,22 @@ class ThreadViewModelTest {
         override fun observeCompacting(conversationId: String): Flow<Boolean> {
             observedIds += conversationId
             return compacting
+        }
+    }
+
+    /**
+     * [CompactingControllableRepo]'s shape for the #801 thinking-progress reading (#803). `null` is the
+     * resting value — "no reading", never "claude is not thinking" — so the double starts there.
+     */
+    private class ThinkingProgressControllableRepo(
+        private val delegate: FakeConversationRepository = FakeConversationRepository(),
+    ) : ConversationRepository by delegate {
+        val reading = MutableStateFlow<ThinkingProgress?>(null)
+        val observedIds = mutableListOf<String>()
+
+        override fun observeThinkingProgress(conversationId: String): Flow<ThinkingProgress?> {
+            observedIds += conversationId
+            return reading
         }
     }
 
