@@ -381,6 +381,65 @@ class StableConversationRepositoryTest {
             assertEquals(listOf(false, true, false), compacting)
         }
 
+    // ---- #590: observeSessionSettings delegates, and a host switch resets the reading ------------
+
+    @Test
+    fun observeSessionSettings_whileAbsent_emitsNull() =
+        runTest {
+            val current = MutableStateFlow<ConversationRepository?>(null)
+            val facade = StableConversationRepository(current)
+
+            val readings = mutableListOf<SessionSettings?>()
+            backgroundScope.launch { facade.observeSessionSettings("c1").collect { readings += it } }
+            runCurrent()
+
+            assertEquals(listOf<SessionSettings?>(null), readings)
+        }
+
+    // AC #1: a reading cannot survive a host switch — the new connection's repository answers, and the
+    // previous host's values are dropped rather than left standing.
+    @Test
+    fun observeSessionSettings_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            val readings = mutableListOf<SessionSettings?>()
+            backgroundScope.launch { facade.observeSessionSettings("c1").collect { readings += it } }
+            runCurrent()
+
+            repoA.pushSessionSettings(READING)
+            runCurrent()
+            assertEquals(READING, readings.last())
+
+            current.value = repoB
+            runCurrent()
+            assertEquals(listOf(null, READING, null), readings)
+        }
+
+    @Test
+    fun refreshSessionSettings_delegatesToLiveRepo() =
+        runTest {
+            val repo = RecordingConversationRepository()
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(repo))
+
+            facade.refreshSessionSettings("c1")
+
+            assertEquals(listOf("c1"), repo.refreshSessionSettingsCalls)
+        }
+
+    // The one facade method that must not throw with no connection live: an invalidation has nothing
+    // for the caller to recover, and the next connection re-reads on subscription anyway.
+    @Test
+    fun refreshSessionSettings_whileAbsent_isSilentNoOp() =
+        runTest {
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(null))
+
+            facade.refreshSessionSettings("c1")
+        }
+
     // ---- #507: mutationsSupported capability — delegates to the live value, fail-safe-deny false --
 
     @Test
@@ -475,6 +534,20 @@ class StableConversationRepositoryTest {
 
         override fun observeCompacting(conversationId: String): Flow<Boolean> = compacting
 
+        private val sessionSettings = MutableStateFlow<SessionSettings?>(null)
+
+        val refreshSessionSettingsCalls = mutableListOf<String>()
+
+        fun pushSessionSettings(value: SessionSettings?) {
+            sessionSettings.value = value
+        }
+
+        override fun observeSessionSettings(conversationId: String): Flow<SessionSettings?> = sessionSettings
+
+        override fun refreshSessionSettings(conversationId: String) {
+            refreshSessionSettingsCalls += conversationId
+        }
+
         override suspend fun createDiscussion(workspace: String?): Conversation {
             createDiscussionCalls += workspace
             return createDiscussionResult
@@ -536,6 +609,19 @@ class StableConversationRepositoryTest {
     }
 
     private companion object {
+        /** One settings reading (#590) — the values are arbitrary; only their survival is asserted. */
+        val READING =
+            SessionSettings(
+                sessionId = "sess-a",
+                model = "opus",
+                effort = "high",
+                effectiveEffort = EffectiveEffort.Applied("medium"),
+                permissionMode = "default",
+                yolo = false,
+                usedTokens = 12480L,
+                windowTokens = 200000L,
+            )
+
         fun conversation(id: String): Conversation =
             Conversation(
                 id = id,

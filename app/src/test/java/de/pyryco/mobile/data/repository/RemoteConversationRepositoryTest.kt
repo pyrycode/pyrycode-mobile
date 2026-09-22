@@ -1920,6 +1920,254 @@ class RemoteConversationRepositoryTest {
             assertEquals(emptyList<String>(), recents().getOrThrow())
         }
 
+    // ---- observeSessionSettings (#590): request_session_settings → session_settings, a cold read that
+    // ---- re-issues on four triggers. Payload SHAPES are proven at the decode boundary
+    // ---- (SessionSettingsPayloadsTest); this block owns the wire round trip, the triggers and the
+    // ---- isolation properties -------------------------------------------------------------------
+
+    // AC #1/#4: subscribing issues exactly ONE frame, it is a request_session_settings naming the
+    // conversation, and nothing else rides along — in particular no set_session_settings.
+    @Test
+    fun observeSessionSettings_onSubscription_sendsOnlyTheRequestNamingTheConversation() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+
+            collectSessionSettings(repo, "c1")
+            runCurrent()
+
+            val sent = pump.sent.single()
+            assertEquals("request_session_settings", sent.type)
+            assertEquals(MobileJson.parseToJsonElement("""{"conversation_id":"c1"}"""), sent.payload)
+        }
+
+    // AC #1: the correlated reply reaches the collector as a decoded reading, preceded by the null that
+    // resets a fresh subscription to "unavailable". This also proves the demux registration — without
+    // the session_settings arm in onInbound the read never completes and only the null would land.
+    @Test
+    fun observeSessionSettings_correlatedReply_emitsDecodedReadingAfterInitialNull() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+
+            val emissions = collectSessionSettings(repo, "c1")
+            runCurrent()
+            pump.push(sessionSettingsEnvelope(inReplyTo = pump.sent.single().id))
+            runCurrent()
+
+            assertEquals(2, emissions.size)
+            assertNull(emissions.first())
+            val reading = requireNotNull(emissions.last())
+            assertEquals("sess-a", reading.sessionId)
+            assertEquals("high", reading.effort)
+            assertEquals(EffectiveEffort.Applied("medium"), reading.effectiveEffort)
+            assertEquals("default", reading.permissionMode)
+        }
+
+    // AC #4, trigger ③: this conversation's session transition issues a FRESH read, and the newer
+    // reply replaces the older reading.
+    @Test
+    fun observeSessionSettings_sessionTransition_issuesFreshReadAndReplacesReading() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+
+            val emissions = collectSessionSettings(repo, "c1")
+            runCurrent()
+            pump.push(sessionSettingsEnvelope(inReplyTo = pump.sent.single().id))
+            runCurrent()
+
+            pump.push(sessionTransitionEnvelope("c1", previousSessionId = "sess-a", newSessionId = "sess-b", reason = "clear"))
+            runCurrent()
+            val second = pump.sent.filter { it.type == "request_session_settings" }
+            assertEquals(2, second.size)
+            pump.push(sessionSettingsEnvelope(inReplyTo = second.last().id, raw = REPLACEMENT_SETTINGS))
+            runCurrent()
+
+            assertEquals("sess-b", requireNotNull(emissions.last()).sessionId)
+            assertEquals(EffectiveEffort.NotReported, requireNotNull(emissions.last()).effectiveEffort)
+        }
+
+    // AC #1/#4: a transition for ANOTHER conversation leaves this reading alone and sends no second
+    // frame — the per-conversation revision slice, not a global tick.
+    @Test
+    fun observeSessionSettings_transitionForAnotherConversation_doesNotReRead() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+
+            val emissions = collectSessionSettings(repo, "c1")
+            runCurrent()
+            pump.push(sessionSettingsEnvelope(inReplyTo = pump.sent.single().id))
+            runCurrent()
+
+            pump.push(sessionTransitionEnvelope("c2", previousSessionId = "x", newSessionId = "y", reason = "clear"))
+            runCurrent()
+
+            assertEquals(1, pump.sent.count { it.type == "request_session_settings" })
+            assertEquals(2, emissions.size)
+        }
+
+    // AC #4, trigger ④: the caller's own invalidation — what a settled settings write uses — issues a
+    // fresh read on the flow the caller already collects.
+    @Test
+    fun refreshSessionSettings_issuesFreshRead() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+
+            val emissions = collectSessionSettings(repo, "c1")
+            runCurrent()
+            pump.push(sessionSettingsEnvelope(inReplyTo = pump.sent.single().id))
+            runCurrent()
+
+            repo.refreshSessionSettings("c1")
+            runCurrent()
+            val asks = pump.sent.filter { it.type == "request_session_settings" }
+            assertEquals(2, asks.size)
+            pump.push(sessionSettingsEnvelope(inReplyTo = asks.last().id, raw = REPLACEMENT_SETTINGS))
+            runCurrent()
+
+            assertEquals("sess-b", requireNotNull(emissions.last()).sessionId)
+        }
+
+    // AC #1: a reply to a SUPERSEDED request — one whose session has since been replaced — cannot
+    // overwrite the current reading. The in-flight read is cancelled by the newer trigger and its
+    // pending entry deregistered, so the late reply correlates with nothing.
+    @Test
+    fun observeSessionSettings_replyToSupersededRequest_cannotOverwriteCurrentReading() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+
+            val emissions = collectSessionSettings(repo, "c1")
+            runCurrent()
+            val staleAsk = pump.sent.single { it.type == "request_session_settings" }
+
+            // The session is replaced before the first reply ever lands.
+            pump.push(sessionTransitionEnvelope("c1", previousSessionId = "sess-a", newSessionId = "sess-b", reason = "clear"))
+            runCurrent()
+            val freshAsk = pump.sent.last { it.type == "request_session_settings" }
+            pump.push(sessionSettingsEnvelope(inReplyTo = freshAsk.id, raw = REPLACEMENT_SETTINGS))
+            runCurrent()
+
+            // ...and only now does the retired context's reply turn up.
+            pump.push(sessionSettingsEnvelope(inReplyTo = staleAsk.id, raw = POPULATED_SETTINGS))
+            runCurrent()
+
+            assertEquals("sess-b", requireNotNull(emissions.last()).sessionId)
+        }
+
+    // AC #1: a duplicate reply cannot overwrite the reading either — the deferred is removed on
+    // completion, so the second copy completes nothing and emits nothing.
+    @Test
+    fun observeSessionSettings_duplicateReply_changesNothing() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+
+            val emissions = collectSessionSettings(repo, "c1")
+            runCurrent()
+            val ask = pump.sent.single { it.type == "request_session_settings" }
+            pump.push(sessionSettingsEnvelope(inReplyTo = ask.id, raw = POPULATED_SETTINGS))
+            runCurrent()
+            val afterFirst = emissions.size
+
+            pump.push(sessionSettingsEnvelope(inReplyTo = ask.id, raw = REPLACEMENT_SETTINGS))
+            runCurrent()
+
+            assertEquals(afterFirst, emissions.size)
+            assertEquals("sess-a", requireNotNull(emissions.last()).sessionId)
+        }
+
+    // AC #4: two conversations' readings are independent — each is routed by the id its own read asked
+    // with, and the replies carry no conversation identity that could cross-route them.
+    @Test
+    fun observeSessionSettings_twoConversations_readIndependently() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+
+            val first = collectSessionSettings(repo, "c1")
+            val second = collectSessionSettings(repo, "c2")
+            runCurrent()
+            val asks = pump.sent.filter { it.type == "request_session_settings" }
+            assertEquals(2, asks.size)
+
+            pump.push(sessionSettingsEnvelope(inReplyTo = asks.first().id, raw = POPULATED_SETTINGS))
+            runCurrent()
+
+            assertEquals("sess-a", requireNotNull(first.last()).sessionId)
+            assertNull(second.last())
+        }
+
+    // AC #4: without the negotiated `interactive` capability the daemon leaves this verb fully inert, so
+    // the client fails closed — no frame at all, and the reading stays unavailable rather than hanging.
+    @Test
+    fun observeSessionSettings_withoutInteractive_sendsNothingAndStaysUnavailable() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val emissions = collectSessionSettings(repo, "c1")
+            runCurrent()
+
+            assertTrue(pump.sent.none { it.type == "request_session_settings" })
+            assertEquals(listOf(null, null), emissions)
+        }
+
+    // AC #4: a failed read leaves the reading UNAVAILABLE — never device defaults, never another
+    // conversation's values — and the flow survives to read again on the next trigger.
+    @Test
+    fun observeSessionSettings_errorReply_leavesReadingUnavailableAndFlowAlive() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+
+            val emissions = collectSessionSettings(repo, "c1")
+            runCurrent()
+            pump.push(errorEnvelope(pump.sent.single().id, code = "server.binary_offline", retryable = true))
+            runCurrent()
+            assertNull(emissions.last())
+
+            repo.refreshSessionSettings("c1")
+            runCurrent()
+            val retry = pump.sent.last { it.type == "request_session_settings" }
+            pump.push(sessionSettingsEnvelope(inReplyTo = retry.id, raw = POPULATED_SETTINGS))
+            runCurrent()
+
+            assertEquals("sess-a", requireNotNull(emissions.last()).sessionId)
+        }
+
+    // AC #2/#4: a malformed reply fails the frame and leaves the reading unavailable — the decode
+    // exception is confined to this one read and reaches no collector as a crash.
+    @Test
+    fun observeSessionSettings_malformedReply_leavesReadingUnavailable() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+
+            val emissions = collectSessionSettings(repo, "c1")
+            runCurrent()
+            pump.push(sessionSettingsEnvelope(inReplyTo = pump.sent.single().id, raw = """{"session_id":"sess-a"}"""))
+            runCurrent()
+
+            assertNull(emissions.last())
+        }
+
+    // AC #4: a not-Open pump fails the read closed rather than throwing into the collector.
+    @Test
+    fun observeSessionSettings_notConnected_leavesReadingUnavailable() =
+        runTest {
+            val pump = FakeSessionPump().apply { sendResult = false }
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+
+            val emissions = collectSessionSettings(repo, "c1")
+            runCurrent()
+
+            assertEquals(listOf(null, null), emissions)
+        }
+
     // ---- requestHistory (#623): request_history → history_page, a correlated one-shot read with no
     // ---- projection fold. Page SHAPES are proven at the decode boundary (HistoryPayloadsTest); this
     // ---- block owns the wire round-trip and the failure routing ----------------------------------
@@ -6965,6 +7213,34 @@ class RemoteConversationRepositoryTest {
         id: Long = 99L,
     ): Envelope = Envelope(id = id, type = "ack", ts = TS, payload = JsonObject(emptyMap()), inReplyTo = inReplyTo)
 
+    /**
+     * Collect [RemoteConversationRepository.observeSessionSettings] on [backgroundScope] into a live
+     * list (#590). The flow is cold and per-collector, so subscribing is what issues the first read;
+     * read the list after [runCurrent] has drained the cascade.
+     */
+    private fun TestScope.collectSessionSettings(
+        repo: RemoteConversationRepository,
+        conversationId: String,
+    ): MutableList<SessionSettings?> {
+        val emissions = mutableListOf<SessionSettings?>()
+        backgroundScope.launch { repo.observeSessionSettings(conversationId).collect { emissions += it } }
+        return emissions
+    }
+
+    /** A correlated `session_settings` reply carrying [raw] verbatim, so a test can push a malformed one. */
+    private fun sessionSettingsEnvelope(
+        inReplyTo: Long,
+        raw: String = POPULATED_SETTINGS,
+        id: Long = 97L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "session_settings",
+            ts = TS,
+            payload = MobileJson.parseToJsonElement(raw),
+            inReplyTo = inReplyTo,
+        )
+
     private fun errorEnvelope(
         inReplyTo: Long,
         code: String,
@@ -7522,6 +7798,16 @@ class RemoteConversationRepositoryTest {
 
         /** The terminal shape of a history walk: no entries, empty cursor, `at_start` true. */
         const val EMPTY_TERMINAL_PAGE = """{"entries":[],"cursor":"","at_start":true}"""
+
+        /** A populated `session_settings` reply (#590) — the protocol document's own example. */
+        const val POPULATED_SETTINGS =
+            """{"session_id":"sess-a","model":"opus","effort":"high","effective_effort":"medium",""" +
+                """"yolo":false,"permission_mode":"default","used_tokens":12480,"window_tokens":200000}"""
+
+        /** A second populated reply, distinguishable from [POPULATED_SETTINGS] by every field that matters. */
+        const val REPLACEMENT_SETTINGS =
+            """{"session_id":"sess-b","model":"sonnet","effort":"low","effective_effort":null,""" +
+                """"yolo":true,"permission_mode":"bypassPermissions","used_tokens":7,"window_tokens":200000}"""
 
         /**
          * #721 workspace fixture: `a1` and `a2` SHARE the `/w/alpha` workspace (both unlabelled), `b1`

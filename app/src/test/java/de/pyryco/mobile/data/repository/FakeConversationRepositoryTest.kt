@@ -1073,6 +1073,51 @@ class FakeConversationRepositoryTest {
             lastUsedAt = lastUsedAt,
         )
 
+    // ---- #590: settings readings are seeded, never manufactured ---------------------------------
+
+    // AC #3/#4: an unseeded conversation reads UNAVAILABLE. The Fake invents no posture and no effort,
+    // because a default here would be exactly the lie the read exists to prevent.
+    @Test
+    fun observeSessionSettings_unseeded_isUnavailable() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+
+            assertNull(repo.observeSessionSettings(SEED_ID).first())
+        }
+
+    @Test
+    fun observeSessionSettings_seeded_emitsTheReadingForThatConversationOnly() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val reading =
+                SessionSettings(
+                    sessionId = "sess-a",
+                    model = "opus",
+                    effort = "high",
+                    effectiveEffort = EffectiveEffort.NotReported,
+                    permissionMode = "",
+                    yolo = false,
+                    usedTokens = 0L,
+                    windowTokens = 0L,
+                )
+
+            repo.setSessionSettingsReading(SEED_ID, reading)
+
+            assertEquals(reading, repo.observeSessionSettings(SEED_ID).first())
+            assertNull(repo.observeSessionSettings("another-conversation").first())
+        }
+
+    // The seam #649's ViewModel test asserts a settled write against.
+    @Test
+    fun refreshSessionSettings_recordsTheAsk() {
+        val repo = FakeConversationRepository()
+
+        repo.refreshSessionSettings(SEED_ID)
+        repo.refreshSessionSettings(SEED_ID)
+
+        assertEquals(listOf(SEED_ID, SEED_ID), repo.sessionSettingsRefreshes)
+    }
+
     private companion object {
         /** The seeded channel whose messages the history-walk tests replace wholesale. */
         const val SEED_ID = "seed-channel-personal"

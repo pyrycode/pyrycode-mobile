@@ -9,6 +9,7 @@ import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.network.SetSessionSettingsPayloadDto
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.datetime.Clock
@@ -265,6 +266,42 @@ class FakeConversationRepository(
         yolo: Boolean?,
     ) {
         recordedSessionSettings += SetSessionSettingsPayloadDto(sessionId, model, effort, yolo)
+    }
+
+    /**
+     * Settings readings by conversation (#590) — seeded **empty on purpose**. An unseeded conversation
+     * reads `null`, the same "unavailable" a live repository reports before its first reply, so a
+     * consumer's unavailable path is the Fake's default rather than a case a test has to arrange. The
+     * Fake manufactures no posture and no effort of its own: AC #3's whole point is that a default here
+     * would be a lie about what the daemon confirmed.
+     */
+    private val sessionSettings = MutableStateFlow<Map<String, SessionSettings>>(emptyMap())
+
+    /** Seed or clear one conversation's reading — the test/preview seam for a populated footer. */
+    fun setSessionSettingsReading(
+        conversationId: String,
+        reading: SessionSettings?,
+    ) {
+        sessionSettings.update { if (reading == null) it - conversationId else it + (conversationId to reading) }
+    }
+
+    /**
+     * The conversations a fresh reading was asked for, in call order — the seam a ViewModel test uses to
+     * assert that a settled settings write asked for one, mirroring [setSessionSettingsCalls].
+     */
+    val sessionSettingsRefreshes: List<String> get() = recordedSettingsRefreshes
+
+    private val recordedSettingsRefreshes = mutableListOf<String>()
+
+    override fun observeSessionSettings(conversationId: String): Flow<SessionSettings?> =
+        sessionSettings.map { it[conversationId] }.distinctUntilChanged()
+
+    /**
+     * Records the ask and re-emits nothing: the Fake has no wire to re-read, so a seeded reading is
+     * already current. Non-throwing, like every implementation of this method.
+     */
+    override fun refreshSessionSettings(conversationId: String) {
+        recordedSettingsRefreshes += conversationId
     }
 
     override suspend fun startNewSession(
