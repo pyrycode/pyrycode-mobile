@@ -36,6 +36,7 @@ import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.conversations.components.LocalWorkspacePickerRepository
 import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostEditTestTag
+import de.pyryco.mobile.ui.conversations.components.treeHostReconnectTestTag
 import de.pyryco.mobile.ui.host.HostEditorState
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
@@ -74,13 +75,14 @@ class ChannelListScreenTest {
         displayName: String?,
         channels: List<Conversation> = emptyList(),
         chats: List<Conversation> = emptyList(),
+        relay: RelayLinkStatus = RelayLinkStatus.Connected,
     ): HostChannelListEntry =
         HostChannelListEntry(
             host =
                 HostConversationSnapshot(
                     serverId = serverId,
                     displayName = displayName,
-                    connectionStatus = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected),
+                    connectionStatus = ConnectionStatus(relay, PyrycodeLinkStatus.Connected),
                     channels = channels,
                     chats = chats,
                 ),
@@ -440,6 +442,33 @@ class ChannelListScreenTest {
         // click action rather than the row swallowing the tap.
         composeTestRule.onNode(hasText("alpha channel")).assertExists()
         assertEquals(listOf(ChannelListEvent.TreeHostEditTapped("macbook")), events)
+    }
+
+    @Test
+    fun hostRowReconnectControl_targetsItsOwnHost_andLeavesEveryHostsRowsDrawn() {
+        setTree(
+            entry(
+                serverId = "pyrybox",
+                displayName = "Pyrybox",
+                channels = listOf(conversation("c1", "alpha channel", "/w/one", true)),
+                relay = RelayLinkStatus.Offline,
+            ),
+            entry(
+                serverId = "macbook",
+                displayName = "Macbook",
+                channels = listOf(conversation("c2", "beta channel", "/w/two", true)),
+                relay = RelayLinkStatus.DaemonAbsent,
+            ),
+        )
+
+        composeTestRule
+            .onAllNodes(hasTestTag(treeHostReconnectTestTag("macbook")))
+            .onFirst()
+            .performClick()
+
+        composeTestRule.onNode(hasText("alpha channel")).assertExists()
+        composeTestRule.onNode(hasText("beta channel")).assertExists()
+        assertEquals(listOf(ChannelListEvent.TreeHostReconnectTapped("macbook")), events)
     }
 
     /** One open editor on `pyrybox`, whose flags each test sets to the state it is asserting. */

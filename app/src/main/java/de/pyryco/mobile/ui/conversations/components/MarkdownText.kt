@@ -1,5 +1,6 @@
 package de.pyryco.mobile.ui.conversations.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -21,10 +22,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,6 +36,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.UriHandler
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -47,6 +51,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
@@ -69,15 +74,32 @@ private val ParagraphSpacing = 8.dp
 private val ListItemIndent = 8.dp
 private val BlockquoteBarWidth = 4.dp
 private val BlockquoteContentIndent = 12.dp
-private val CodeBlockCornerRadius = 8.dp
-private val CodeBlockHorizontalPadding = 12.dp
-private val CodeBlockVerticalPadding = 8.dp
-private val CodeBlockLabelVerticalPadding = 4.dp
-private val CodeBlockPadding =
-    PaddingValues(
-        horizontal = CodeBlockHorizontalPadding,
-        vertical = CodeBlockVerticalPadding,
-    )
+
+// The code area's treatment from Figma `134:4809` (`Code` › `Header` / `Content`), read off the node
+// rather than carried over from #130's tile: its width is a 741dp desktop measure and does not
+// transfer, but these do.
+private val CodeBlockCornerRadius = 6.dp
+private val CodeBlockBorderWidth = 1.dp
+private val CodeBlockDividerWidth = 1.dp
+private val CodeBlockHorizontalPadding = 16.dp
+private val CodeBlockHeaderVerticalPadding = 8.dp
+private val CodeBlockBodyVerticalPadding = 12.dp
+
+// Gap between the code viewport and the copy rail; the control's own 6dp touch padding sits on top.
+private val CodeBlockCopyRailGap = 8.dp
+
+// The control's 6dp touch padding, subtracted so the glyph itself lands on the body's 16dp / 12dp insets.
+private val CodeBlockCopyEndPadding = 10.dp
+private val CodeBlockCopyBottomPadding = 6.dp
+
+// Same value and reasoning as `MessageMetaRow`'s META_CONTENT_ALPHA (#644): the design names
+// `Schemes/Inverse Primary`, which reads as de-emphasis only against the dark reference frame and is
+// near-invisible on the light scheme's `background` fill. An alpha off the block's own content colour
+// reads in both schemes.
+private const val CODE_COPY_ALPHA = 0.80f
+
+/** Tags the language header so tests can assert its absence on a block with no info string. */
+internal const val CODE_BLOCK_HEADER_TAG = "code-block-header"
 private val TableBorderWidth = 1.dp
 private val TableCellHorizontalPadding = 12.dp
 private val TableCellVerticalPadding = 4.dp
@@ -161,10 +183,7 @@ private fun MarkdownBlock(
         GFMElementTypes.TABLE ->
             TableBlock(node, source, uriHandler)
         MarkdownElementTypes.CODE_FENCE -> {
-            val code =
-                node.children
-                    .filter { it.type == MarkdownTokenTypes.CODE_FENCE_CONTENT }
-                    .joinToString("\n") { it.getTextInNode(source).toString() }
+            val code = fencedCodeText(node, source)
             val language =
                 node.children
                     .firstOrNull { it.type == MarkdownTokenTypes.FENCE_LANG }
@@ -172,15 +191,10 @@ private fun MarkdownBlock(
                     ?.toString()
                     ?.trim()
                     ?.takeIf { it.isNotEmpty() }
-            CodeBlock(code, language)
+            CodeBlock(code, language, copyable = true)
         }
-        MarkdownElementTypes.CODE_BLOCK -> {
-            val code =
-                node.children
-                    .filter { it.type == MarkdownTokenTypes.CODE_LINE }
-                    .joinToString("\n") { it.getTextInNode(source).toString() }
-            CodeBlock(code, language = null)
-        }
+        MarkdownElementTypes.CODE_BLOCK ->
+            CodeBlock(indentedCodeText(node, source), language = null, copyable = true)
         else -> {
             val text = node.getTextInNode(source).toString().trim()
             if (text.isNotEmpty()) {
@@ -536,10 +550,28 @@ private fun Modifier.tableOuterEdges(
         )
     }
 
+/**
+ * The design's code area (#657; Figma `134:4809`, desktop's `.code-block`): a bordered box with an
+ * optional language header above a divider, and the code below it.
+ *
+ * THE DIVIDER HANGS ON THE HEADER, not on the body, so a block with no info string has neither an
+ * empty bar nor a stranded rule — it is simply the body. Desktop settled the same way.
+ *
+ * ONLY THE CODE VIEWPORT SCROLLS. The header sits above the scroll chain and the copy control beside
+ * it in the body's `Row`, as a rail rather than an overlay: it cannot move while the code scrolls,
+ * and no scroll offset can put code underneath it. The row's height is at least the control's, which
+ * is what gives an empty fence room for the glyph.
+ *
+ * [copyable] is opt-in because `ToolCallRow` shares this chrome for code-ish tool output and
+ * deliberately carries no copy control; whether that output becomes copyable is #658's call. The
+ * control copies [content] — the string this block was built from — never text read back out of the
+ * rendered tree.
+ */
 @Composable
 internal fun CodeBlock(
     content: String,
     language: String?,
+    copyable: Boolean = false,
 ) {
     val syntaxLanguage = remember(language) { resolveSyntaxLanguage(language) }
     val structure =
@@ -547,37 +579,67 @@ internal fun CodeBlock(
             if (syntaxLanguage == null) null else tokeniseCode(content, syntaxLanguage)
         }
     val annotated = buildHighlightedCode(content, structure)
+    val dividerColor = MaterialTheme.colorScheme.onPrimaryContainer
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(CodeBlockCornerRadius),
-        color = MaterialTheme.colorScheme.surfaceContainer,
+        color = MaterialTheme.colorScheme.background,
+        border = BorderStroke(CodeBlockBorderWidth, MaterialTheme.colorScheme.primaryContainer),
     ) {
-        Box {
-            Text(
-                text = annotated,
-                modifier =
-                    Modifier
-                        .horizontalScroll(rememberScrollState())
-                        .padding(CodeBlockPadding),
-                style =
-                    MaterialTheme.typography.bodyMedium.copy(
-                        fontFamily = FontFamily.Monospace,
-                    ),
-                softWrap = false,
-            )
+        Column {
             if (!language.isNullOrBlank()) {
                 Text(
                     text = language,
                     modifier =
                         Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(
+                            .fillMaxWidth()
+                            .testTag(CODE_BLOCK_HEADER_TAG)
+                            .drawBehind {
+                                val stroke = CodeBlockDividerWidth.toPx()
+                                val y = size.height - stroke / 2
+                                drawLine(dividerColor, Offset(0f, y), Offset(size.width, y), stroke)
+                            }.padding(
                                 horizontal = CodeBlockHorizontalPadding,
-                                vertical = CodeBlockLabelVerticalPadding,
+                                vertical = CodeBlockHeaderVerticalPadding,
                             ),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
+            }
+            Row(verticalAlignment = Alignment.Bottom) {
+                Box(modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
+                    Text(
+                        text = annotated,
+                        modifier =
+                            Modifier.padding(
+                                start = CodeBlockHorizontalPadding,
+                                end = if (copyable) CodeBlockCopyRailGap else CodeBlockHorizontalPadding,
+                                top = CodeBlockBodyVerticalPadding,
+                                bottom = CodeBlockBodyVerticalPadding,
+                            ),
+                        style =
+                            MaterialTheme.typography.bodyMedium.copy(
+                                fontFamily = FontFamily.Monospace,
+                            ),
+                        softWrap = false,
+                    )
+                }
+                if (copyable) {
+                    CompositionLocalProvider(
+                        LocalContentColor provides LocalContentColor.current.copy(alpha = CODE_COPY_ALPHA),
+                    ) {
+                        CopyTextControl(
+                            text = content,
+                            contentDescription = stringResource(R.string.cd_thread_copy_code),
+                            modifier =
+                                Modifier.padding(
+                                    end = CodeBlockCopyEndPadding,
+                                    bottom = CodeBlockCopyBottomPadding,
+                                ),
+                        )
+                    }
+                }
             }
         }
     }
@@ -652,6 +714,72 @@ private fun resolveSyntaxLanguage(fenceLang: String?): SyntaxLanguage? {
         "bash", "sh", "shell", "zsh" -> SyntaxLanguage.SHELL
         else -> null
     }
+}
+
+/**
+ * A fenced block's code exactly as authored (#657) — the one string both rendered and copied.
+ *
+ * WALKED LINE BY LINE, not joined from the content tokens, and that is the whole point: a blank line
+ * inside a fence is two adjacent `EOL`s with no `CODE_FENCE_CONTENT` between them, so a join over
+ * the content tokens alone collapsed every run of blank lines. Each `EOL` closes a line here, so an
+ * empty line is still a line.
+ *
+ * `WHITE_SPACE` children are a container's prefix — a list item's indent, a quote's `> ` — and are
+ * not code; the code's own indentation is inside the content token and survives. The walk starts
+ * after the opening line's `EOL`, so the info string never enters, and stops at the closing fence.
+ * A fence the streaming reveal has not closed yet ends on its last partial line, which is kept.
+ */
+internal fun fencedCodeText(
+    fence: ASTNode,
+    source: String,
+): String {
+    val body = fence.children.dropWhile { it.type != MarkdownTokenTypes.EOL }.drop(1)
+    return codeLines(body, source, MarkdownTokenTypes.CODE_FENCE_CONTENT).joinToString("\n")
+}
+
+/**
+ * An indented block's code exactly as authored (#657). The four-space marker is syntax rather than
+ * code — CommonMark strips it, and desktop renders without it — so it comes off each line (a single
+ * leading tab counts as the marker); any indentation beyond it is the code's own and stays.
+ */
+internal fun indentedCodeText(
+    block: ASTNode,
+    source: String,
+): String =
+    codeLines(block.children, source, MarkdownTokenTypes.CODE_LINE)
+        .joinToString("\n") { line ->
+            if (line.startsWith('\t')) line.drop(1) else line.drop(line.takeWhile { it == ' ' }.length.coerceAtMost(4))
+        }
+
+/**
+ * The lines [tokens] spell out: each [contentType] token appends to the current line and each `EOL`
+ * ends it. A trailing line with no `EOL` after it is kept only if it holds content, so a block that
+ * ends on a line break does not grow a phantom empty line.
+ */
+private fun codeLines(
+    tokens: List<ASTNode>,
+    source: String,
+    contentType: org.intellij.markdown.IElementType,
+): List<String> {
+    val lines = mutableListOf<String>()
+    val line = StringBuilder()
+    var open = false
+    for (token in tokens) {
+        when (token.type) {
+            contentType -> {
+                line.append(token.getTextInNode(source))
+                open = true
+            }
+            MarkdownTokenTypes.EOL -> {
+                lines += line.toString()
+                line.clear()
+                open = false
+            }
+            MarkdownTokenTypes.CODE_FENCE_END -> break
+        }
+    }
+    if (open) lines += line.toString()
+    return lines
 }
 
 /**

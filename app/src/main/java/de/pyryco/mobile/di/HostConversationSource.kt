@@ -47,12 +47,16 @@ internal data class HostConversationConnection(
  * is seeded from it, so previously loaded rows survive both. The seed never touches
  * [HostConversationSnapshot.connectionStatus]: a restored list must not read as a connected one. The
  * demo path passes no cache and is unaffected.
+ *
+ * [retry] redials exactly one host by its `serverId` (#840); the relay path routes it to the registry's
+ * own per-host retry, which keeps its foreground and identity refusals.
  */
 class HostConversationSource internal constructor(
     private val connections: StateFlow<List<HostConversationConnection>>,
     private val lookup: (String) -> ConversationRepository?,
     dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val cache: ConversationCache? = null,
+    private val retry: (String) -> Unit = {},
 ) {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val held = mutableMapOf<String, Held>()
@@ -67,6 +71,18 @@ class HostConversationSource internal constructor(
     /** Current availability only; an operation may still lose its connection after this lookup. */
     @Synchronized
     fun repositoryFor(serverId: String): ConversationRepository? = if (disposed) null else lookup(serverId)
+
+    /**
+     * Retries one host's connection, and only that host's. Snapshots are untouched, so the host's rows,
+     * cached or live, stay drawn while it redials.
+     *
+     * [retry] runs outside this monitor: on the relay path it takes the registry's lock, and holding both
+     * would add a lock order this class has never had.
+     */
+    fun retryHost(serverId: String) {
+        if (synchronized(this) { disposed }) return
+        retry(serverId)
+    }
 
     @Synchronized
     private fun reconcile(current: List<HostConversationConnection>) {
@@ -185,9 +201,15 @@ class HostConversationSource internal constructor(
             registry: RelayConnectionRegistry,
             dispatcher: CoroutineDispatcher = Dispatchers.Default,
             cache: ConversationCache? = null,
-        ) = HostConversationSource(registry.hostConnections, { serverId ->
-            registry.connectionFor(serverId)?.coordinator?.liveRepository()
-        }, dispatcher, cache)
+        ) = HostConversationSource(
+            registry.hostConnections,
+            { serverId -> registry.connectionFor(serverId)?.coordinator?.liveRepository() },
+            dispatcher,
+            cache,
+            // The thread banner's pairing: a bundle replaced between the two calls fails retryHost's
+            // identity check and is refused rather than redialled.
+            retry = { serverId -> registry.connectionFor(serverId)?.let { registry.retryHost(serverId, it) } },
+        )
 
         fun demo(
             repository: ConversationRepository,

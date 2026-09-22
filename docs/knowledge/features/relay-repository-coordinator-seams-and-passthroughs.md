@@ -178,6 +178,56 @@ val currentModal: StateFlow<ModalUiState> =
   `ThreadViewModel`. Every retained coordinator keeps folding its own modals even
   while another host is selected; overlapping modal ids never share an accumulator.
 
+## Question-batch projection (#822)
+
+The held [`QuestionBatch`](remote-conversation-repository-live-stream-and-modals.md#questionbatches--the-v2-clarification-batch-decodefold-seam-822)
+list lives on the **concrete** `RemoteConversationRepository.questionBatches` — a `StateFlow`, not an
+event stream, connection-scoped and **not** on the interface — the same reachability posture as
+`modalEvents`. The coordinator switches to it off the same single `activeConnection` source, byte-for-byte
+the `liveSessionEvents`/`modalEvents` `flatMapLatest` shape, but **stateIn's the switched flow directly**
+instead of folding a `scan` on top — there is nothing to accumulate, because the fold already happened at
+the repository seam:
+
+```kotlin
+@OptIn(ExperimentalCoroutinesApi::class)
+val questionBatches: StateFlow<List<QuestionBatch>> =
+    activeConnection
+        .flatMapLatest { conn -> conn?.repo?.questionBatches ?: flowOf(emptyList()) }
+        .stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+fun observeQuestionBatch(conversationId: String): Flow<QuestionBatch?> =
+    questionBatches.map { it.batchFor(conversationId) }.distinctUntilChanged()
+```
+
+- **Started `Eagerly` for the same reason as `currentModal`** (#492): a `question_shown` that arrives
+  before any thread screen subscribes must not be lost. Unlike `currentModal`'s `scan`, there is no
+  seed-re-emission hazard here to make `Eagerly` load-bearing in that specific way — `stateIn` on a
+  switched `StateFlow` just republishes the source's current value on each subscription — but `Eagerly`
+  is still required so the projection itself exists (and starts collecting the active connection's
+  batches) before any consumer subscribes.
+- **Resets on reconnect — the deliberate inverse of `currentModal`'s retain (#492).** `flatMapLatest`
+  switches to the new connection's `questionBatches`, and that `StateFlow` starts at `emptyList()` because
+  each connection builds a **fresh** `RemoteConversationRepository` (§ How it works, above). So a batch
+  held from the old connection is gone before any frame from the new connection folds — no manual clear
+  needed, it falls out of "fresh repository per connection" structurally. This is correct here for the
+  opposite reason `currentModal` retains: the protocol's § Reconnect / Backfill semantics **resets**
+  question state on reconnect by contract and rebuilds it from the daemon's connect-time reconcile, so a
+  batch resolved while the phone was disconnected is simply absent from that reconcile and must not come
+  back. `currentModal` retains because modal resolution has no equivalent reconcile-on-reconnect signal —
+  see [Current-modal state § Connection teardown = RETAIN, not reset](current-modal-state.md#lifecycle-errors-edge-cases).
+  **Do not copy the retain rule here** if this seam is ever refactored to look more like `currentModal`'s;
+  the two are opposite by design, not by oversight.
+- **`observeQuestionBatch` is the per-conversation read, and the only one #661's panel should use.**
+  `questionBatches` is the whole host's set across every conversation; reading it directly and rendering
+  the first match, or filtering client-side without going through `batchFor`, risks showing one
+  conversation's clarification question inside another conversation's thread. `batchFor` (`data/model/QuestionBatch.kt`)
+  picks the first held batch for the given id — claude blocks on one `AskUserQuestion` at a time, so two
+  outstanding batches for the same conversation is out of contract, and any deterministic tie-break is
+  fine for that case.
+- **The outbound half is a separate passthrough**, added by [#825](https://github.com/pyrycode/pyrycode-mobile/issues/825)
+  below (§ [Outbound question-answer / refuse passthrough](#outbound-question-answer--refuse-passthrough-825)) —
+  this seam itself stays read-only, the mirror of `modalEvents` before `answerModal`/`cancelModal` existed.
+
 ## Outbound modal-send passthrough (#451)
 
 The **outbound mirror** of the inbound `modalEvents` seam: where `modalEvents` surfaces decoded modals *up*
@@ -240,6 +290,35 @@ suspend fun interrupt(conversationId: String) {
   conversation. The consumer is [`ThreadViewModel.onInterrupt` / `sendInterrupt`](interrupt-send-path.md);
   unlike `sendCancel` its failure catches are **empty** (no error channel or log).
   `CancellationException` is rethrown before the failure catches.
+
+## Outbound question-answer / refuse passthrough (#825)
+
+The outbound mirror of the [question-batch projection](#question-batch-projection-822) above: forwards
+the operator's decision down to the connection-scoped concrete
+[`RemoteConversationRepository.answerQuestionBatch` / `refuseQuestionBatch`](remote-conversation-repository-control-sends.md#answerquestionbatch--refusequestionbatch--the-v2-question_answer--question_refused-sends-825).
+Same shape as the `answerModal`/`interrupt` passthroughs: both read the concrete repo off the single
+`activeConnection` source.
+
+```kotlin
+suspend fun answerQuestionBatch(questionBatchId: String, answers: List<QuestionAnswer>) {
+    val repo = activeConnection.value?.repo ?: throw IllegalStateException("no active connection")
+    repo.answerQuestionBatch(questionBatchId, answers)
+}
+// refuseQuestionBatch(questionBatchId) is the same null-guard, minus answers.
+```
+
+- **Null-guard only** — between connections the guard throws; a connection whose pump is pre-`Open`
+  surfaces through the concrete repository's own `check(pump.send(...))` as `IllegalStateException`. No
+  redundant `Open` gate, matching `answerModal` / `interrupt`.
+- **Validation happens on the other side of the guard**, in the concrete repository, against the same
+  held state `questionBatches` projects — not against this coordinator's `stateIn` copy, which trails by
+  a dispatch. A batch folded a moment ago is answerable through this passthrough with no lag window.
+- **Host isolation is structural.** Each host has its own coordinator, `activeConnection` and repository,
+  so a send for host A's batch can only reach A's pump even when host B holds a batch sharing the same
+  id.
+- Bound at the `AppModule` `ThreadViewModel` factory beside `answerModal`/`interrupt` for
+  [#661](https://github.com/pyrycode/pyrycode-mobile/issues/661)'s panel. Never logs; never grants a
+  permission.
 
 ## Reconnect-spanning replay cursor (#412)
 

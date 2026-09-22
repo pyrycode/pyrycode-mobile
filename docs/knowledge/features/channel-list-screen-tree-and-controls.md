@@ -158,3 +158,36 @@ modal swaps its own content in place for a prompt naming the host, and the shell
 carries the decision. See [ChannelListViewModel](channel-list-viewmodel.md#wiring) for the removal's three
 methods, the ordering that keeps a failed store write from clearing the host's cached workspace, and the
 `saving` guard that stops a decline or a second request from racing an in-flight write.
+
+## Host row reconnect control (#840)
+
+`RelayLinkStatus.isDisconnected()` (`ConversationTreeRows.kt`, `internal`) classifies a host row's relay
+leg: an exhaustive `when` with no `else`, so a case added to `RelayLinkStatus` later has to be classified
+here rather than silently falling through. `Reconnecting`, `Offline` and `DaemonAbsent` are disconnected;
+`Idle` (a deliberate background close, not an error), `Connecting` and `Connected` are not.
+
+`TreeHostRow` reads `connectionStatus.relay.isDisconnected()` and, when true, draws the design's
+disconnected treatment. `FoldableTreeRow` gained an optional `accent: Color? = null` (default `null` keeps
+today's `onSurfaceVariant`/`onSurface` tints); the host row passes `colorScheme.error` for both the glyph
+and the name when disconnected. A fourth `TreeRowControl` — `Icons.Filled.Power`, tinted `colorScheme.primary`
+like the other three — is drawn inboard of `ConnectionLegPair`, tagged `treeHostReconnectTestTag(serverId)`
+(shares `boundedTagId`'s clamp with the add and edit tags). Tap emits `TreeHostReconnectTapped(serverId)`
+(the route calls `vm.reconnectHost(serverId)`) — the row's own host, the same discipline the fold, tap,
+add and edit controls all use. There is no long-press path, same as the edit control.
+
+Its content description is `R.string.cd_tree_host_reconnect` ("Reconnect %1$s") formatted with the row's
+already-`boundedRowText`-clamped display name, for the same reason the other three controls' descriptions
+are. The row's fold chevron is unchanged and still present on a disconnected row — the whole row remains
+the fold control, and removing that affordance for one state was explicitly left out of scope.
+
+**Figma token deviation.** The frame binds the disconnected name to `Schemes/error-container`, which
+renders `#ffdad6` on the light scheme's near-white surface — legible against a dark background, illegible
+against light. The row uses `colorScheme.error` instead for both glyph and name, which reads as
+error-toned in both schemes; this satisfies the ticket's ask for the theme's existing error colors without
+adding a token. Check a Figma frame's bound color against both app themes before matching it literally —
+a token that reads correctly in the design tool's own (usually dark) preview can be the wrong choice for
+the light scheme.
+
+See [Dependency injection § Exact-host Retry and lifecycle](dependency-injection.md#exact-host-retry-and-lifecycle)
+for the `HostConversationSource.retryHost` seam this control drives, and
+[ChannelListViewModel](channel-list-viewmodel.md#wiring) for `reconnectHost`'s routing.
