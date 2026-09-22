@@ -11,6 +11,9 @@ import de.pyryco.mobile.data.repository.UnrecognizedSite
 import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * Mobile Protocol v2 structured live-session stream payloads (#385): the `internal` decode DTOs for
@@ -45,6 +48,16 @@ internal data class AssistantDeltaPayloadDto(
     val text: String,
 )
 
+/**
+ * `tool_use`. [parentToolUseId] and [input] (#810) are the two **lenient-defaulted** fields in this
+ * file, a deliberate departure from the strict-required posture above: the daemon always emits both
+ * keys, so an absent one means an older binary, which meant "main thread" and "no fields" — decoding
+ * it to `""` / `{}` is what that binary said, whereas failing would drop the whole row.
+ *
+ * [input] is a raw [JsonElement] rather than a typed map because the AC requires an absent, `null`,
+ * empty or non-object input to yield no fields instead of a decode failure; [toInputFields] narrows
+ * it. A wire `null` for [parentToolUseId] still fails the decode — the contract never sends one.
+ */
 @Serializable
 internal data class ToolUsePayloadDto(
     @SerialName("conversation_id") val conversationId: String,
@@ -52,8 +65,11 @@ internal data class ToolUsePayloadDto(
     @SerialName("tool_use_id") val toolUseId: String,
     val name: String,
     @SerialName("input_summary") val inputSummary: String,
+    @SerialName("parent_tool_use_id") val parentToolUseId: String = "",
+    val input: JsonElement? = null,
 )
 
+/** `tool_result`. [parentToolUseId] is lenient-defaulted for the reason [ToolUsePayloadDto] states (#810). */
 @Serializable
 internal data class ToolResultPayloadDto(
     @SerialName("conversation_id") val conversationId: String,
@@ -61,6 +77,7 @@ internal data class ToolResultPayloadDto(
     @SerialName("tool_use_id") val toolUseId: String,
     @SerialName("is_error") val isError: Boolean,
     @SerialName("result_summary") val resultSummary: String,
+    @SerialName("parent_tool_use_id") val parentToolUseId: String = "",
 )
 
 @Serializable
@@ -305,11 +322,26 @@ private fun String.toPhase(): LiveSessionEvent.TurnState.Phase? =
 internal fun AssistantDeltaPayloadDto.toEvent(): LiveSessionEvent = LiveSessionEvent.AssistantDelta(conversationId, turnId, seq, text)
 
 /** Total field copy: every [ToolUsePayloadDto] decodes to a [LiveSessionEvent.ToolUse]. */
-internal fun ToolUsePayloadDto.toEvent(): LiveSessionEvent = LiveSessionEvent.ToolUse(conversationId, turnId, toolUseId, name, inputSummary)
+internal fun ToolUsePayloadDto.toEvent(): LiveSessionEvent =
+    LiveSessionEvent.ToolUse(conversationId, turnId, toolUseId, name, inputSummary, parentToolUseId, input.toInputFields())
 
 /** Total field copy: every [ToolResultPayloadDto] decodes to a [LiveSessionEvent.ToolResult]. */
 internal fun ToolResultPayloadDto.toEvent(): LiveSessionEvent =
-    LiveSessionEvent.ToolResult(conversationId, turnId, toolUseId, isError, resultSummary)
+    LiveSessionEvent.ToolResult(conversationId, turnId, toolUseId, isError, resultSummary, parentToolUseId)
+
+/**
+ * `tool_use.input` narrowed to its string fields (#810): anything but a JSON object yields no fields,
+ * and within an object each JSON-string value is kept **verbatim** in wire order. A non-string value is
+ * off-contract (the daemon stringifies every value) and is skipped rather than rewritten.
+ */
+private fun JsonElement?.toInputFields(): Map<String, String> {
+    if (this !is JsonObject) return emptyMap()
+    return buildMap {
+        for ((key, value) in this@toInputFields) {
+            if (value is JsonPrimitive && value.isString) put(key, value.content)
+        }
+    }
+}
 
 /** Total field copy: [stopReason] passes through verbatim (consumers map the wire value). */
 internal fun TurnEndPayloadDto.toEvent(): LiveSessionEvent = LiveSessionEvent.TurnEnd(conversationId, turnId, stopReason)
