@@ -82,13 +82,29 @@ enum class WireRole {
 fun MessagePayloadDto.toMessage(
     envelope: Envelope,
     sessionId: String,
+): Message = toMessage(timestamp = Instant.parse(envelope.ts), sessionId = sessionId)
+
+/**
+ * The **payload-level** entry point to the same mapping (#645), for a caller that holds a payload and a
+ * timestamp but no [Envelope] — a [de.pyryco.mobile.data.repository.HistoryEntry] carries only `type` /
+ * `payload` / `ts`, so a stored `message` frame has no envelope to map against.
+ *
+ * This is the primary of the pair and the envelope form above delegates to it, so the two lanes cannot
+ * drift: there is one mapping, reached two ways. The **only** difference is where the instant comes from
+ * — parsed from `envelope.ts` live, read off the stored entry on replay — which is also why the parse
+ * (and its [IllegalArgumentException] on a malformed value) stays in the envelope form: a `HistoryEntry`
+ * has already had its `ts` parsed at the `toHistoryPage` decode boundary, so this form cannot fail.
+ */
+fun MessagePayloadDto.toMessage(
+    timestamp: Instant,
+    sessionId: String,
 ): Message =
     Message(
         id = messageId,
         sessionId = sessionId,
         role = role.toDomain(),
         content = text,
-        timestamp = Instant.parse(envelope.ts),
+        timestamp = timestamp,
         isStreaming = false,
         // Role.Tool / ToolCall are unreachable from a `message` payload today (no `tool` wire
         // role), so the domain "non-null toolCall iff role == Tool" invariant holds vacuously.

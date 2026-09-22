@@ -295,3 +295,99 @@ repository.
 Noise channel, and **nothing in the new arm or the drop branch logs the payload** — `conversation_id` /
 session ids / `workspace_cwd` are sensitive (a logged or mis-routed boundary is a cross-conversation
 leak). See [Session-transition fold § Trust boundary](session-transition-fold.md#trust-boundary--no-payload-logging).
+
+## History pages fold into the same thread (#645)
+
+[#623](../codebase/623.md) landed `requestHistory` returning a decoded `HistoryPage` of `HistoryEntry`
+values (newest-first; each carrying a durable per-conversation log `id`, the stored frame's wire `type`,
+its still-undecoded `payload`, and a `ts`) and deliberately stopped there. [#645](../codebase/645.md) is
+the fold its KDoc promised: `requestHistory` now also calls a private `mergeHistoryPage(conversationId,
+page)`, which reduces the page and merges it ahead of `threadByConversation[conversationId]` inside one
+`MutableStateFlow.update {}` — a read, a merge and an assign that must stay one check-then-act, since
+computing the merge outside the lambda would silently lose a concurrent live append on a CAS retry. The
+page is still returned to the caller unchanged; nothing in the app calls `requestHistory` yet
+([#646](../codebase/646.md) owns the demand side, [#647](../codebase/647.md) the offline cache).
+
+**One fold surface, not two.** The reduction reuses the live lane's own folds rather than mapping the
+page separately. `RemoteConversationRepositoryKt`'s `appendMessages` / `applyToolUse` / `applyToolResult`
+/ `applyAssistantDelta` / `finalizeAssistantTurn` were lifted into pure `List<ThreadItem>` extensions in a
+new file, `data/repository/HistoryPageReducer.kt`, and the five repository methods are now thin
+`MutableStateFlow.update {}` wrappers over them — the #336 move, repeated, with the existing 273-test
+`RemoteConversationRepositoryTest` suite as the output-preserving guard (unchanged and green is the
+evidence the lift didn't alter live behaviour). `reduceHistoryPage(entries, interactive)` reverses the
+wire's newest-first page to oldest-first and folds each entry through those extensions from an empty
+list, dispatching on `HistoryEntry.type` against the repository's own wire-type constants (its companion
+object widened from `private` to `internal` for this — the constants are protocol vocabulary, not state,
+so widening grants no new mutation). `message` / `send_message` fold ungated; the four turn-scoped types,
+`session_transition` and `unrecognized_message` fold only when `interactive` was negotiated — mirroring
+the live `onInbound` gate arm-for-arm, because the daemon's `request_history` handler itself carries no
+such gate. Any other `type` — including one a future daemon invents — is the silent `else`; a payload
+that fails its per-entry decode drops that entry only, inside the same `catch (IllegalArgumentException)`
+idiom every `onInbound` arm uses, so one bad entry never fails the page. Nothing on this path logs `type`
+or `payload` on any branch, matching the live lane.
+
+**The one behavioural difference from the live lane is the row clock, and it has to be hoisted, not
+copied.** Three of the five lifted folds (`withToolUse`, `withAssistantDelta`, and their live callers)
+stamped `Clock.System.now()` inline before the lift; sharing them with a replay path meant turning that
+into a parameter. The live wrapper still passes `Clock.System.now()`; the reduction passes the entry's
+stored `ts`. Skipping this would stamp a replayed tool call with the moment it was replayed rather than
+the moment it happened — and nothing would fail to prove it, since thread order is arrival order and
+never a timestamp sort (see `withToolUse`'s KDoc in the reducer file).
+
+**A `HistoryEntry` reaches no `Envelope`, so `MessagePayloadDto.toMessage` gained a payload-level twin.**
+Five of the six per-type decode arms (`ToolUsePayloadDto.toEvent`, `ToolResultPayloadDto.toEvent`,
+`AssistantDeltaPayloadDto.toEvent`, `TurnEndPayloadDto.toEvent`, `UnrecognizedMessagePayloadDto.toRow`)
+were already payload-level — no `Envelope` required — so only the `message` mapper needed a second entry
+point. `MessagePayload.kt` now has `fun MessagePayloadDto.toMessage(timestamp: Instant, sessionId:
+String): Message` as the primary mapping; the existing `toMessage(envelope, sessionId)` delegates to it
+via `Instant.parse(envelope.ts)`. One mapping, two callers — the envelope form's contract (and its parse
+failure mode) is unchanged. A stored `send_message` entry has no mapper of its own: its `DTO` maps
+directly to a `Role.User` `Message` inline in the reducer, since `role` is not a wire field on that
+payload (the sender is the operator by construction).
+
+**Three join keys, and the merge's key is deliberately the renderer's key, not structural equality.**
+The wire SSOT (pyrycode `docs/protocol-mobile.md` § *Conversation history (v2)*, sub-section *Joining a
+page to the live stream*) names three keys: `HistoryEntry.id` for page-against-page (unused directly by
+the merge — see below), the pair `(type, ts)` for page-against-live (not implemented by this ticket; the
+merge instead re-derives presence per row kind), and `message_id` for a stored `send_message` against its
+local echo. `mergeHistoryRows` never joins a `HistoryEntry.id` to a live `Envelope.eventId` — they are
+different sequences that both look like small integers, and neither appears in the merge at all. What the
+merge actually checks, per `ThreadItem` kind, is **the same key `ThreadScreen`'s `LazyColumn` uses to key
+that row** — not `==`. This mattered in practice: the obvious dedup for a `SessionBoundary` is structural
+equality (every field is payload-derived, so a page twin equals its live twin), and it passes every
+overlap test — but `ThreadScreen` keys a boundary row on `(previousSessionId, newSessionId)` alone and
+reads neither `reason` nor `occurredAt`, so a page carrying two boundaries sharing that pair and differing
+only in `occurredAt` would pass an equality check and still hand the `LazyColumn` two rows with one key,
+which throws. The general lesson: when a list row has a client-visible identity, dedup upstream on *that*
+identity, or the two can silently disagree. A `MessageItem` joins on `message_id` alone, id-only and
+role-agnostic — one key serves a stored `message`/`send_message` entry, a `tool_use_id`, and a `turn_id`,
+and it is also `appendMessages`' existing live-lane dedup rule. An `UnrecognizedMessage` joins on its id,
+which the reducer derives as `"history-${entry.id}"` from the durable per-conversation log id — stable
+across re-reduction, and disjoint from the live lane's per-process-counter `"unrecognized-<n>"` namespace
+(see [Unrecognized message row](unrecognized-message-row.md)) so the two cannot collide by coincidence.
+The merge is a **prepend, never a re-sort** (`fresh + this`, never a timestamp sort — the thread is
+arrival-order by deliberate choice, see `applyToolUse`'s KDoc above) and a duplicate is **skipped, not
+updated in place**: a page is always older than the live lane, so the only possible overlap is the narrow
+ask-versus-answer race the protocol names, and in that window the live lane still owns the newer state.
+
+**A page cannot promote a `Running` tool row to `Done`/`Failed` — only the live lane can, for now.** A
+page carrying a `tool_result` for a tool row the thread already holds as `Running` (the ask-versus-answer
+race) leaves that row `Running`: the reduction folds against an empty accumulator and only the merge runs
+against the existing thread, and the merge skips rather than updates. That is correct for the one window
+it can occur in, but it is easy to assume the merge completes a row it should only be skipping. If a
+walking caller (#646) ever needs a page to complete a still-`Running` row, that is new merge behaviour, not
+something this reducer already does.
+
+**Cross-conversation write is structurally impossible, not checked.** `reduceHistoryPage` returns a bare
+`List<ThreadItem>` carrying no conversation identity, and `mergeHistoryPage` routes into
+`threadByConversation[conversationId]` — the conversation the client asked about — without ever reading an
+entry payload's own `conversation_id`. The same structural argument closes AC #4 (a stored `turn_state` /
+`stall` / `queue_state` / `api_retry` / `compacting` / modal frame cannot reopen a prompt or restart an
+indicator): the reduction's return type is `List<ThreadItem>` and it holds no reference to
+`stalledConversations`, the live-event stream, or the modal state, so those state frames simply have no
+arm and land in the silent `else`.
+
+**Out-of-scope, filed:** the live lane's own `appendSessionBoundary` still has no dedup at all (see
+[Session-transition fold](session-transition-fold.md)) — the merge above closes this only for the history
+path. Fixing the live side means editing `appendSessionBoundary` or the renderer's key, tracked as
+[#775](../codebase/775.md).
