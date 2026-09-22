@@ -80,3 +80,27 @@ No unit test: there is no logic outside composition. Not an operator-facing flow
 ## Documentation handoff
 
 Pending for the documentation stage: `docs/knowledge/features/mobile-modal.md` § Callers should name `EditChatModal` as a third caller of the shell (no ticket AC requires it; the ticket body names this section as the pattern source).
+
+## Security review
+
+**Verdict:** PASS (one SHOULD FIX, handled in this rework).
+
+**Findings:**
+
+- [Trust boundaries] SHOULD FIX, fixed. The only untrusted input is the daemon-written `initialName`. It crosses into the UI in one place: the seed of the `remember(conversationId)` buffer inside `EditChatModal`. That seed clamps with `take(MAX_WORKSPACE_LABEL_CHARS)`. A clamp that lands inside a surrogate pair leaves a lone high surrogate. OK sends the field back unedited, so the rename would carry a malformed tail. The seed now drops a trailing high surrogate after the clamp, and `theClampNeverSplitsASurrogatePair` proves it. The name renders only as the `TextField` value. It never reaches a `contentDescription`, a URL, a filename, a cache key, markup or a log. A clamped name shows in the field as it will be sent, so OK sends only what the operator sees.
+- [Trust boundaries] OUT OF SCOPE. `EditHostModal`'s `boundedText` and `workspaceDisplayName` share the same surrogate-splitting `take`. They are outside this ticket's diff and are filed as #851.
+- [Tokens, secrets] No findings. The modal touches no token, key or credential. A chat name is operator content, not a secret.
+- [File / storage] No findings. The modal stores nothing. The buffer lives in composition and dies with the dialog, so nothing reaches disk or backup.
+- [Android attack surface] No findings. The modal adds no activity, intent filter, pending intent, push path, provider or WebView.
+- [Cryptographic primitives] No findings. The modal uses no randomness or cryptography.
+- [Network & I/O] No findings. The modal opens no connection. The trimmed name it reports goes to `rename_conversation` through #827's caller. The daemon rejects a blank name as `protocol.malformed`, and OK is disabled on `isNotBlank()` to match. Where Kotlin's and the daemon's whitespace sets differ, the worst case is a rejected write that the caller surfaces as a generic error. The daemon sets no length limit on typed input. That input is the operator's own, and the transport's frame cap bounds the send. Every display site clamps the name again.
+- [Error messages, logs] No findings. `logEditChatEvent` logs only the static event name `archive_requested`, behind `BuildConfig.DEBUG`. It logs no name and no conversation id. The caller supplies `error`, and the shell announces it through its live region. Callers (#827, #828) must map failures to generic string resources and must never include the daemon's message or the chat name. The KDoc on `EditChatModal` states this.
+- [Concurrency] No findings. The modal launches no coroutine and holds no shared state. The one guard, `submissionEnabled && !loading`, is evaluated inside the click and IME handlers. A double tap during a write is therefore blocked once the caller raises `loading`. Callers own the in-flight de-duplication before that point.
+- [Threat model] Hostile daemon frame: bounded by the clamp and text-only render above. Accessibility-service or keyboard eavesdropping on a chat name is out of scope, because the name is not a secret. Relay threats do not apply, because the modal opens no connection.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-09-23
+
+## Revisions
+
+- 2026-09-23 (verifier rework, PR #835): the plan lacked the `## Security review` required by the `security-sensitive` label. Added it above. Its one SHOULD FIX changes the seed contract. The pre-filled name is clamped to `MAX_WORKSPACE_LABEL_CHARS`, then a trailing high surrogate is dropped, so the clamp never splits a pair. The Testing strategy gains `theClampNeverSplitsASurrogatePair`. It asserts that the field shows the name without the split pair and that OK reports that exact name.

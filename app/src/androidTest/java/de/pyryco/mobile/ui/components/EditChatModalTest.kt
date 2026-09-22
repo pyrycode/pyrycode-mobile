@@ -181,4 +181,16 @@ class EditChatModalTest {
         field().assertTextEquals(raw.take(MAX_WORKSPACE_LABEL_CHARS))
         rule.onAllNodes(hasText(raw), useUnmergedTree = true).assertCountEquals(0)
     }
+
+    /** A clamp through an emoji would leave a lone surrogate that OK then sends as a mangled name. */
+    @Test
+    fun theClampNeverSplitsASurrogatePair() {
+        val kept = "n".repeat(MAX_WORKSPACE_LABEL_CHARS - 1)
+        initialName.value = kept + "😀" + "tail"
+        show()
+
+        field().assertTextEquals(kept)
+        ok().performClick()
+        rule.runOnIdle { assertEquals(listOf(kept), submitted) }
+    }
 }

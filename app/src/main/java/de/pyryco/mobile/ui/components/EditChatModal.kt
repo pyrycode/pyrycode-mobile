@@ -80,8 +80,10 @@ internal fun EditChatModal(
     error: String? = null,
 ) {
     var fieldValue by remember(conversationId) {
-        // The daemon wrote this name and sets no length limit, so it is clamped before layout.
-        val boundedName = initialName.take(MAX_WORKSPACE_LABEL_CHARS)
+        // The daemon wrote this name and sets no length limit, so it is clamped before layout. OK sends
+        // the field back unedited, so the clamp must not end on half a surrogate pair.
+        val boundedName =
+            initialName.take(MAX_WORKSPACE_LABEL_CHARS).let { if (it.lastOrNull()?.isHighSurrogate() == true) it.dropLast(1) else it }
         mutableStateOf(TextFieldValue(text = boundedName, selection = TextRange(boundedName.length)))
     }
     val submissionEnabled = hostAvailable && fieldValue.text.isNotBlank()
