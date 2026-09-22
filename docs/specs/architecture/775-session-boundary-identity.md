@@ -73,3 +73,7 @@ None named by the ticket. Pending for the documentation stage: fold the boundary
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-23
+
+## Revisions
+
+- **2026-09-23, during build.** `HistoryPageReducerTest.reduce_boundariesSharingASessionPair_yieldOneRow` also pinned #645's pair-only rule, within a single page (`withHistoryEntry` routes through `holdsBoundary` too). Flipped to `reduce_boundariesSharingASessionPairButNotAnInstant_yieldTwoRows`, with a sibling `reduce_boundariesSharingPairAndInstant_yieldOneRow` keeping the within-page dedup proven. No design change.

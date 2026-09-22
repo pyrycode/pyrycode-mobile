@@ -284,7 +284,8 @@ class HistoryPageReducerTest {
     }
 
     @Test
-    fun reduce_boundariesSharingASessionPair_yieldOneRow() {
+    fun reduce_boundariesSharingASessionPairButNotAnInstant_yieldTwoRows() {
+        // #775: one session evicted twice is two real delimiters with one pair.
         val rows =
             reduceHistoryPage(
                 listOf(
@@ -294,6 +295,20 @@ class HistoryPageReducerTest {
                         sessionTransitionPayload("s-old", "s-new", "clear", occurredAt = "2026-09-05T11:00:00Z"),
                     ),
                     entry(1, "session_transition", sessionTransitionPayload("s-old", "s-new", "clear", occurredAt = OCCURRED_AT)),
+                ),
+                interactive = true,
+            )
+
+        assertEquals(2, rows.size)
+    }
+
+    @Test
+    fun reduce_boundariesSharingPairAndInstant_yieldOneRow() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(2, "session_transition", sessionTransitionPayload("s-old", "s-new", "clear")),
+                    entry(1, "session_transition", sessionTransitionPayload("s-old", "s-new", "clear")),
                 ),
                 interactive = true,
             )
@@ -370,9 +385,10 @@ class HistoryPageReducerTest {
     }
 
     @Test
-    fun merge_boundaryDifferingOnlyInOccurredAt_addsNoSecondRow() {
-        // Stricter than structural equality on purpose: ThreadScreen keys a boundary on the session
-        // pair alone, so admitting this row would give the LazyColumn two rows with one key (#775).
+    fun merge_boundaryDifferingOnlyInOccurredAt_isAdmitted() {
+        // #775: a session evicted, woken and evicted again emits the same pair twice with different
+        // instants. Both are real delimiters, and ThreadScreen keys a boundary on the pair AND occurredAt,
+        // so admitting the older one gives the LazyColumn two distinct keys.
         val live = reduceHistoryPage(listOf(entry(1, "session_transition", sessionTransitionPayload("s-old", "s-new", "clear"))), true)
         val later =
             reduceHistoryPage(
@@ -386,7 +402,20 @@ class HistoryPageReducerTest {
                 true,
             )
 
-        assertEquals(1, live.mergeHistoryRows(later).size)
+        val merged = live.mergeHistoryRows(later)
+
+        assertEquals(2, merged.size)
+        assertEquals(later + live, merged)
+    }
+
+    @Test
+    fun merge_boundaryMatchingOnPairAndInstantButNotReason_addsNoSecondRow() {
+        // The identity is the triple; a reason mismatch does not make a second row, because the key would
+        // not tell the two apart.
+        val live = reduceHistoryPage(listOf(entry(1, "session_transition", sessionTransitionPayload("s-old", "s-new", "clear"))), true)
+        val page = reduceHistoryPage(listOf(entry(1, "session_transition", sessionTransitionPayload("s-old", "s-new", "idle_evict"))), true)
+
+        assertEquals(live, live.mergeHistoryRows(page))
     }
 
     @Test
