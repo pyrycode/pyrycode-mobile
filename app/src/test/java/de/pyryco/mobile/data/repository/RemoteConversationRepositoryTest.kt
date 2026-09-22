@@ -5062,6 +5062,235 @@ class RemoteConversationRepositoryTest {
             assertEquals(listOf(false, true), compacting)
         }
 
+    // ---- #791: decode `model_list` into an observable per-conversation model menu ----------------
+    // Payload SHAPES are proven at the decode boundary (ModelListPayloadsTest); this block owns the
+    // inbound arm — the `interactive` gate, the routing, the snapshot replace and the drop posture.
+
+    // AC #3: a conversation the connection has heard no menu for reads as UNAVAILABLE (`null`), and
+    // AC #1: the first frame surfaces that conversation's rows with every string verbatim.
+    @Test
+    fun modelMenu_unavailableUntilAFrameArrives_thenSurfacesRowsVerbatim() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val menus = collectModelMenu(repo, "c1")
+            runCurrent()
+            assertEquals(listOf<ModelMenu?>(null), menus)
+
+            pump.push(modelListEnvelope("c1", listOf(ROW_SONNET, ROW_DEFAULT), droppedModels = 4))
+            runCurrent()
+
+            assertEquals(
+                ModelMenu(
+                    rows =
+                        listOf(
+                            ModelMenuRow("claude-sonnet-5", "sonnet", "Sonnet 5", listOf("low", "high"), true, null),
+                            ModelMenuRow("claude-sonnet-5", "default", "Default", emptyList(), false, listOf("display_name")),
+                        ),
+                    droppedModels = 4,
+                ),
+                menus.last(),
+            )
+        }
+
+    // AC #3: unavailable is a normal resting state that stays put — one conversation's menu is NEVER
+    // another's. `c2` keeps reading `null` while `c1` holds rows.
+    @Test
+    fun modelMenu_unheardConversation_staysUnavailableWhileAnotherHoldsRows() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val first = collectModelMenu(repo, "c1")
+            val second = collectModelMenu(repo, "c2")
+            runCurrent()
+
+            pump.push(modelListEnvelope("c1", listOf(ROW_SONNET)))
+            runCurrent()
+
+            assertEquals(listOf("sonnet"), first.last()?.rows?.map { it.value })
+            assertEquals(listOf<ModelMenu?>(null), second)
+        }
+
+    // AC #4: a later frame REPLACES that conversation's rows wholesale — no merge, no append. A
+    // shorter replacement is the shape that catches a merge: an append would leave the old row behind.
+    @Test
+    fun modelMenu_laterFrame_replacesWholesaleRatherThanMerging() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val menus = collectModelMenu(repo, "c1")
+            runCurrent()
+
+            pump.push(modelListEnvelope("c1", listOf(ROW_SONNET, ROW_OPUS, ROW_DEFAULT), droppedModels = 9, id = 1L))
+            runCurrent()
+            assertEquals(listOf("sonnet", "opus[1m]", "default"), menus.last()?.rows?.map { it.value })
+
+            pump.push(modelListEnvelope("c1", listOf(ROW_OPUS), droppedModels = 0, id = 2L))
+            runCurrent()
+
+            assertEquals(listOf("opus[1m]"), menus.last()?.rows?.map { it.value })
+            assertEquals("the frame-level count is replaced too", 0, menus.last()?.droppedModels)
+        }
+
+    // AC #4: routing is the frame's OWN conversation_id and nothing else. Every envelope in the
+    // reconcile burst carries the same non-load-bearing envelope id, so two frames sharing `id` and
+    // naming different conversations must land independently — position is not a correlation key.
+    @Test
+    fun modelMenu_burstSharingOneEnvelopeId_routesByConversationIdAlone() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val first = collectModelMenu(repo, "c1")
+            val second = collectModelMenu(repo, "c2")
+            runCurrent()
+
+            pump.push(modelListEnvelope("c1", listOf(ROW_SONNET), id = 7L))
+            pump.push(modelListEnvelope("c2", listOf(ROW_OPUS), id = 7L))
+            runCurrent()
+
+            assertEquals(listOf("sonnet"), first.last()?.rows?.map { it.value })
+            assertEquals(listOf("opus[1m]"), second.last()?.rows?.map { it.value })
+        }
+
+    // AC #1/#3: an empty `models` array is a PRESENT menu that published nothing — structurally
+    // distinct from unavailable, which is the pun this reading exists to avoid.
+    @Test
+    fun modelMenu_emptyModelsArray_isPresentAndDistinctFromUnavailable() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val menus = collectModelMenu(repo, "c1")
+            runCurrent()
+
+            pump.push(modelListEnvelope("c1", emptyList(), droppedModels = 12))
+            runCurrent()
+
+            assertEquals(ModelMenu(rows = emptyList(), droppedModels = 12), menus.last())
+            assertEquals(listOf(null, ModelMenu(emptyList(), 12)), menus)
+        }
+
+    // AC #2/#5: the per-row effort levels and both incompleteness readings reach a consumer intact —
+    // `droppedModels` is not recomputed from the retained row count, and each row keeps its own cuts.
+    @Test
+    fun modelMenu_effortLevelsAndIncompletenessReachTheConsumer() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val menus = collectModelMenu(repo, "c1")
+            runCurrent()
+
+            pump.push(modelListEnvelope("c1", listOf(ROW_SONNET, ROW_DEFAULT), droppedModels = 37))
+            runCurrent()
+            val menu = menus.last()
+
+            assertEquals("not derived from the 2 retained rows", 37, menu?.droppedModels)
+            assertEquals(listOf(listOf("low", "high"), emptyList<String>()), menu?.rows?.map { it.effortLevels })
+            assertEquals(listOf(null, listOf("display_name")), menu?.rows?.map { it.truncatedFields })
+        }
+
+    // Fail-closed: without `interactive` negotiated, a well-formed `model_list` never surfaces — the
+    // client mirror of the server-side fan-out gate, matching the `queue_state` / `stall` siblings.
+    @Test
+    fun modelMenu_capabilityGateClosed_blocksDecode() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { emptySet() })
+            val menus = collectModelMenu(repo, "c1")
+            runCurrent()
+
+            pump.push(modelListEnvelope("c1", listOf(ROW_SONNET)))
+            runCurrent()
+            assertEquals(listOf<ModelMenu?>(null), menus)
+        }
+
+    // Fail-closed: a negotiated set with another token but NOT `interactive` still blocks.
+    @Test
+    fun modelMenu_capabilityGateOtherTokenOnly_blocksDecode() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("something_else") })
+            val menus = collectModelMenu(repo, "c1")
+            runCurrent()
+
+            pump.push(modelListEnvelope("c1", listOf(ROW_SONNET)))
+            runCurrent()
+            assertEquals(listOf<ModelMenu?>(null), menus)
+        }
+
+    // Decode-or-drop: a malformed frame is dropped whole, the previously retained menu STANDS (nothing
+    // was written), and the single inbound collector survives to apply a later valid frame.
+    @Test
+    fun modelMenu_malformed_droppedPriorMenuStandsCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val menus = collectModelMenu(repo, "c1")
+            runCurrent()
+
+            pump.push(modelListEnvelope("c1", listOf(ROW_SONNET), id = 1L))
+            runCurrent()
+            assertEquals(listOf("sonnet"), menus.last()?.rows?.map { it.value })
+
+            // Missing conversation_id.
+            pump.push(modelListProbe(2L, """{"models":[],"dropped_models":0}"""))
+            // `models` explicitly null — out of contract, never a stand-in for an empty menu.
+            pump.push(modelListProbe(3L, """{"conversation_id":"c1","models":null,"dropped_models":0}"""))
+            // A row missing a required string drops the WHOLE frame, not just that row.
+            pump.push(
+                modelListProbe(
+                    4L,
+                    """{"conversation_id":"c1","models":[{"resolved_model":"r","value":"v",
+                       "effort_levels":[],"supports_auto_mode":false}],"dropped_models":0}""",
+                ),
+            )
+            runCurrent()
+            assertEquals("the prior menu stands — nothing was written", listOf("sonnet"), menus.last()?.rows?.map { it.value })
+
+            pump.push(modelListEnvelope("c1", listOf(ROW_OPUS), id = 5L))
+            runCurrent()
+            assertEquals(listOf("opus[1m]"), menus.last()?.rows?.map { it.value })
+        }
+
+    // A `model_list` folds NO thread row and clears NO stall — it is a menu, not turn forward progress.
+    @Test
+    fun modelMenu_foldsNoThreadRowAndClearsNoStall() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = mutableListOf<List<ThreadItem>>()
+            backgroundScope.launch { repo.observeMessages("c1").collect { thread += it } }
+            val stalls = collectStall(repo, "c1")
+            runCurrent()
+
+            pump.push(stallEnvelope("c1"))
+            runCurrent()
+            assertEquals(listOf(false, true), stalls)
+
+            pump.push(modelListEnvelope("c1", listOf(ROW_SONNET), id = 2L))
+            runCurrent()
+
+            assertEquals("a menu is not forward progress — the stall stands", listOf(false, true), stalls)
+            assertEquals("no thread row folded", listOf(emptyList<ThreadItem>()), thread)
+        }
+
+    // A value-identical re-snapshot does not re-emit, so a consumer's state does not churn on every
+    // reconnect burst; a menu for ANOTHER conversation never re-emits this flow at all.
+    @Test
+    fun modelMenu_identicalReSnapshotAndForeignFrames_doNotReEmit() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val menus = collectModelMenu(repo, "c1")
+            runCurrent()
+
+            pump.push(modelListEnvelope("c1", listOf(ROW_SONNET), id = 1L))
+            pump.push(modelListEnvelope("c1", listOf(ROW_SONNET), id = 2L))
+            pump.push(modelListEnvelope("c2", listOf(ROW_OPUS), id = 3L))
+            runCurrent()
+
+            assertEquals(2, menus.size)
+        }
+
     // ---- #387: correlate tool_use/tool_result into live tool-call thread items with status ------
 
     // AC #1: a tool_use produces a running tool row carrying the tool name + input, empty output.
@@ -7492,6 +7721,67 @@ class RemoteConversationRepositoryTest {
         payload: String,
     ): Envelope = Envelope(id = id, type = "compacting", ts = TS, payload = MobileJson.parseToJsonElement(payload))
 
+    private fun TestScope.collectModelMenu(
+        repo: RemoteConversationRepository,
+        conversationId: String,
+    ): MutableList<ModelMenu?> {
+        val emissions = mutableListOf<ModelMenu?>()
+        backgroundScope.launch { repo.observeModelMenu(conversationId).collect { emissions += it } }
+        return emissions
+    }
+
+    /**
+     * One `models` array element (#791). [truncatedFields] emits the key only when non-null, so the
+     * default fixture exercises the omitted shape the wire uses when nothing was cut; [effortLevels]
+     * defaults to a populated list so a fixture says nothing about the empty case unless it means to.
+     */
+    private data class ModelRowFixture(
+        val resolvedModel: String,
+        val value: String,
+        val displayName: String,
+        val effortLevels: List<String> = listOf("low", "high"),
+        val supportsAutoMode: Boolean = true,
+        val truncatedFields: List<String>? = null,
+    )
+
+    /**
+     * A `model_list` snapshot envelope `{conversation_id, models:[…], dropped_models}` (#791).
+     * `dropped_models` is a JSON **number** carried verbatim, never derived from [rows]. [id] is the
+     * ENVELOPE id, which the reconcile burst repeats across every frame — fixtures that share one are
+     * proving that routing ignores it.
+     */
+    private fun modelListEnvelope(
+        conversationId: String,
+        rows: List<ModelRowFixture>,
+        droppedModels: Int = 0,
+        id: Long = 1L,
+    ): Envelope {
+        val models =
+            rows.joinToString(",") { row ->
+                val levels = row.effortLevels.joinToString(",") { """"$it"""" }
+                val truncated = row.truncatedFields?.joinToString(",") { """"$it"""" }
+                val truncatedKey = if (truncated == null) "" else ""","truncated_fields":[$truncated]"""
+                """{"resolved_model":"${row.resolvedModel}","value":"${row.value}",""" +
+                    """"display_name":"${row.displayName}","effort_levels":[$levels],""" +
+                    """"supports_auto_mode":${row.supportsAutoMode}$truncatedKey}"""
+            }
+        return Envelope(
+            id = id,
+            type = "model_list",
+            ts = TS,
+            payload =
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"$conversationId","models":[$models],"dropped_models":$droppedModels}""",
+                ),
+        )
+    }
+
+    /** A raw `model_list` envelope carrying [payload] verbatim — for the malformed-payload probes. */
+    private fun modelListProbe(
+        id: Long,
+        payload: String,
+    ): Envelope = Envelope(id = id, type = "model_list", ts = TS, payload = MobileJson.parseToJsonElement(payload))
+
     /**
      * A `session_transition` envelope `{conversation_id, previous_session_id, new_session_id, reason,
      * occurred_at, workspace_cwd}` (#336). [workspaceCwd] emits `"workspace_cwd":null` when null (the
@@ -7792,6 +8082,26 @@ class RemoteConversationRepositoryTest {
 
     private companion object {
         const val TS = "2026-05-31T00:00:00Z"
+
+        /** A plain row: auto mode accepted, two effort levels, nothing cut (#791). */
+        val ROW_SONNET = ModelRowFixture("claude-sonnet-5", "sonnet", "Sonnet 5")
+
+        /** A bracketed variant — `value` is an alias, never a parseable version (#791). */
+        val ROW_OPUS = ModelRowFixture("claude-opus-5", "opus[1m]", "Opus 5", listOf("high"), supportsAutoMode = false)
+
+        /**
+         * The `default` alias: exposes NO effort control (`[]`, a positive statement rather than a cue
+         * to substitute the five `Effort` entries), refuses auto mode, and reports its own cut.
+         */
+        val ROW_DEFAULT =
+            ModelRowFixture(
+                "claude-sonnet-5",
+                "default",
+                "Default",
+                effortLevels = emptyList(),
+                supportsAutoMode = false,
+                truncatedFields = listOf("display_name"),
+            )
 
         /** An opaque daemon-minted history cursor (#623) — echoed back verbatim, never parsed. */
         const val CURSOR = "MS4zZjhiMWMwNC05ZDI3LTRlNWEtYjZjMS0yZTlmNzBkOGE0MTMuNy40MDk2"

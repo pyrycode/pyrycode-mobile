@@ -92,6 +92,17 @@ class StableConversationRepository(
         switchToLive<SessionSettings?>(null) { it.observeSessionSettings(conversationId) }
 
     /**
+     * The model menu for [conversationId] (#791), switched over the live connection like every other
+     * cold read — and here the switch is the **host-isolation mechanism**: the published vocabulary
+     * varies by machine and account, so [flatMapLatest] dropping the previous connection's projection is
+     * what stops one host's models being offered for another's conversation. `null` while none is live
+     * is the same "unavailable" value an unheard conversation produces, so a consumer has one absent
+     * case, not two.
+     */
+    override fun observeModelMenu(conversationId: String): Flow<ModelMenu?> =
+        switchToLive<ModelMenu?>(null) { it.observeModelMenu(conversationId) }
+
+    /**
      * Invalidate [conversationId]'s settings reading on the live repository (#590). Deliberately routed
      * through [currentRepository]`.value` rather than [live]: an invalidation with no connection is a
      * no-op, not an [IllegalStateException] — the caller has nothing to recover, and the next connection

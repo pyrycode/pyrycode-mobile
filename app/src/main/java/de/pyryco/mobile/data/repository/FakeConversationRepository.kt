@@ -296,6 +296,23 @@ class FakeConversationRepository(
     override fun observeSessionSettings(conversationId: String): Flow<SessionSettings?> =
         sessionSettings.map { it[conversationId] }.distinctUntilChanged()
 
+    private val modelMenus = MutableStateFlow<Map<String, ModelMenu>>(emptyMap())
+
+    /**
+     * Seed or clear one conversation's model menu (#791) — the test/preview seam for a populated model
+     * and effort control. The Fake has no wire, so a menu exists here only because a caller put it
+     * there: an unseeded conversation reads unavailable and the Fake substitutes no `Model` entries and
+     * no `Effort` levels, which is the lie this reading exists to prevent.
+     */
+    fun setModelMenu(
+        conversationId: String,
+        menu: ModelMenu?,
+    ) {
+        modelMenus.update { if (menu == null) it - conversationId else it + (conversationId to menu) }
+    }
+
+    override fun observeModelMenu(conversationId: String): Flow<ModelMenu?> = modelMenus.map { it[conversationId] }.distinctUntilChanged()
+
     /**
      * Records the ask and re-emits nothing: the Fake has no wire to re-read, so a seeded reading is
      * already current. Non-throwing, like every implementation of this method.

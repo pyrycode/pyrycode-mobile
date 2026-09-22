@@ -310,3 +310,26 @@ stated rather than engineered around. Nearest analogues at the same shape and KD
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-22
+
+## Revisions
+
+### 2026-09-22 — the decode boundary is narrower than § Error handling claimed
+
+**What changed.** § Error handling listed "a non-integer `dropped_models`" among the malformations that
+drop the frame. Implementation found that narrower than reality: `MobileJson` leaves `isLenient` off, so
+an **unquoted** number where a string field is declared does fail (`conversation_id: 17`, a numeric
+`resolved_model`), but a **quoted** number where the `Int` count is declared is **coerced** rather than
+rejected — `dropped_models: "40"` decodes as `40`, because the tree decoder reads a primitive's content
+and parses it.
+
+**What drove it.** Not a review finding — the first GREEN run, where an assertion written from the plan's
+claim failed against the codec's actual behaviour.
+
+**The new contract.** No production code changes: this is a property of the shared `MobileJson` used by
+every sibling payload, not a `model_list` decision, and narrowing it here would mean hand-written type
+checks on one payload while its neighbours keep the old posture — outside this ticket, and a change to
+a shared codec rather than to this frame. The behaviour is now *pinned* instead of assumed, by
+`quotedNumberForDroppedModels_coercesRatherThanFailing`, sitting beside a `wrongTypedFields_failTheFrame`
+that was corrected to assert only the rejections that actually happen. The coercion touches the count
+alone; every claude-authored string still fails the frame when wrong-typed, which is the case that
+matters for the security posture and is asserted directly.
