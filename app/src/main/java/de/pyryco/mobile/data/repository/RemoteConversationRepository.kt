@@ -218,6 +218,29 @@ class RemoteConversationRepository(
     private val queuedByConversation = MutableStateFlow<Map<String, List<QueuedMessage>>>(emptyMap())
 
     /**
+     * `conversationId -> the message ids this device minted and echoed into the thread` (#781) — the
+     * ledger that makes a queued item's [QueuedMessage.messageId] safe to act on. Written by
+     * [sendMessage] after its ack (beside the confirmed insert) and consumed by [dropQueuedMessage]
+     * after its ack; both writes are atomic [MutableStateFlow.update]s, the two-writer posture
+     * [appendMessages] already relies on. Observed by nothing, so it publishes no flow.
+     *
+     * **This exists because the thread projection is not a valid correlation store.** `queue_state`
+     * fans out to every interactive connection, so items routinely carry ids another paired device
+     * minted; the thread meanwhile also holds rows folded from history pages (#623/#778), which can
+     * carry those same foreign ids. `message_id` is client-chosen with uniqueness enforced **nowhere**,
+     * so matching a queued item against the projection alone would let a colliding id delete a row this
+     * phone never sent — which `docs/protocol-mobile.md` § Queue (v2) forbids in as many words ("a
+     * client merges an item only against echoes it minted itself"). Membership here *is* that rule.
+     *
+     * An id is **removed when consumed**, which is also what makes the legal duplicate-`message_id`
+     * case behave: dropping a second item carrying an already-spent id finds nothing and removes
+     * nothing, instead of taking an unrelated row with it. Connection-scoped and in-memory like every
+     * sibling projection (#351) — it holds one minted id per successful send, minus every consumed
+     * drop, and dies with the connection.
+     */
+    private val mintedMessageIds = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
+
+    /**
      * `conversationId -> current API-retry status` (#593) — whether claude is stuck retrying an API
      * error, and at which attempt. Written **only** from the single [init] inbound collector: each
      * `api_retry` envelope **replaces** that conversation's entry (a rising edge with the current
@@ -1656,6 +1679,9 @@ class RemoteConversationRepository(
             )
         recordLastMessage(conversationId, message)
         appendMessages(listOf(conversationId to message))
+        // Record the echo as ours (#781) — only an id in this ledger may later be correlated with a
+        // queued item and removed. Recorded after the ack, so a failed send leaves no phantom claim.
+        mintedMessageIds.update { it + (conversationId to (it[conversationId].orEmpty() + messageId)) }
         return message
     }
 
@@ -1701,14 +1727,36 @@ class RemoteConversationRepository(
      * the daemon validates the `(conversation_id, queued_msg_id)` pair against its own per-conversation
      * queue and stale-id rejects a mismatch — this method neither re-derives nor trusts it.
      *
-     * A pure request/reply with **no** projection side effect — success is simply "returned without
-     * throwing", and the backlog updates only by a subsequent `queue_state` on [observeQueue], so there
-     * is nothing to mutate here and nothing to roll back on failure. Never logs the payload.
+     * The backlog entry still leaves only on the next `queue_state` (#467's non-optimistic ruling, which
+     * the daemon owns), but a confirmed drop **also removes this device's own undelivered echo** for the
+     * message (#781) — the thread row [sendMessage] posted after its ack, which the daemon never authored
+     * and which otherwise stays behind reading as a message claude received. The correlation key is the
+     * item's `message_id` (pyrycode#2092), resolved from this connection's own snapshot rather than
+     * carried down from the UI: `queued_msg_id` already addresses the row, so no caller above needs to
+     * learn a second id. Never logs the payload or either id.
+     *
+     * Three properties of the sequence are load-bearing:
+     *  - **Resolved before the send.** A successful drop provokes a fresh `queue_state` that removes the
+     *    item, so reading the snapshot afterwards races the inbound collector and usually finds nothing.
+     *    Reading it early is safe because `queued_msg_id` is a per-conversation counter that is never
+     *    recycled — item *N* in a stale snapshot is still the same item *N*.
+     *  - **Removed only on the ack.** A throw skips the removal entirely, so a failed drop leaves the
+     *    entry and the echo in place: the daemon never heard it, the message will still run, and the
+     *    echo is still true. Showing a message the operator typed is optimism; hiding one the daemon
+     *    still holds would be a claim about the daemon.
+     *  - **Removed only against [mintedMessageIds].** An item carrying `""`, one whose id this device
+     *    never minted (another paired device's real queued message), or a `queuedMessageId` absent from
+     *    the snapshot all correlate with nothing: the send still goes and no thread row is touched.
+     *    Text is never compared.
+     *
+     * Deliberately **not** driven by a backlog diff: a backlog also shrinks when the daemon *drains* it,
+     * so a diff-driven removal would delete the echo of every message that ran normally — a worse lie
+     * than the one being fixed.
      *
      * Throws [IllegalArgumentException] for an unknown conversation (server `conversation.not_found`),
      * [RelayErrorException] for any other server `error` (a stale / already-drained id surfaces
      * generically here), and [IllegalStateException] when the session is not connected
-     * ([SessionPump.send] returns `false`) — none mutates any state (there is none).
+     * ([SessionPump.send] returns `false`) — none of them mutates any state.
      */
     override suspend fun dropQueuedMessage(
         conversationId: String,
@@ -1724,9 +1772,42 @@ class RemoteConversationRepository(
                         DequeueMessagePayloadDto(conversationId = conversationId, queuedMsgId = queuedMessageId),
                     ),
             )
-        // Throws on a server `error` / not-Open session; the empty `{}` ack carries nothing to map and
-        // no projection is mutated, so the returned reply is ignored.
+        // Resolved before the send: a successful drop replaces the snapshot this reads from. "" when the
+        // id matches no current item — a correlation this connection cannot make, not an error.
+        val echoId =
+            queuedByConversation.value[conversationId]
+                .orEmpty()
+                .firstOrNull { it.id == queuedMessageId }
+                ?.messageId
+                .orEmpty()
+        // Throws on a server `error` / not-Open session; the empty `{}` ack carries nothing to map, so
+        // the returned reply is ignored — but reaching the next line IS the drop's confirmation.
         sendAndAwaitReply(request)
+        removeOwnEcho(conversationId, echoId)
+    }
+
+    /**
+     * Remove the one thread row **this device** minted under [messageId] from [conversationId]'s thread
+     * (#781), and spend the id so it can never match twice. A no-op unless [messageId] is non-empty and
+     * held in [mintedMessageIds] — the multi-device rule made mechanical: a queued item's id is
+     * client-chosen and unique nowhere, so only an id this connection minted may remove a row.
+     *
+     * The removal is a `filterNot` over the existing list inside one atomic [MutableStateFlow.update],
+     * so every other row keeps its position and a concurrent append retry-merges rather than being lost
+     * (the [appendMessages] posture). Matches on [ThreadItem.MessageItem] and the message's own id
+     * only — never on `text`, which is neither unique nor a key.
+     */
+    private fun removeOwnEcho(
+        conversationId: String,
+        messageId: String,
+    ) {
+        if (messageId.isEmpty()) return
+        if (messageId !in mintedMessageIds.value[conversationId].orEmpty()) return
+        mintedMessageIds.update { it + (conversationId to (it[conversationId].orEmpty() - messageId)) }
+        threadByConversation.update { current ->
+            val rows = current[conversationId] ?: return@update current
+            current + (conversationId to rows.filterNot { it is ThreadItem.MessageItem && it.message.id == messageId })
+        }
     }
 
     /**
