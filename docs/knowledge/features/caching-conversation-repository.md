@@ -28,13 +28,17 @@ class CachingConversationRepository(
     private val serverId: String,
 ) : ConversationRepository by delegate {
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>>
+    override suspend fun delete(conversationId: String)
 }
 ```
 
-Kotlin class delegation (`by delegate`) means every member except `observeMessages` is plain
-pass-through — stall, queue, API retry, compaction, thinking, usage limit, modals and every
-one-shot keep their live-only behaviour unchanged. Nothing restored can reopen a permission
-prompt or restart an indicator, because nothing outside `observeMessages` is touched at all.
+Kotlin class delegation (`by delegate`) means every member except `observeMessages` and `delete`
+(#798) is plain pass-through — stall, queue, API retry, compaction, thinking, usage limit, modals,
+archive, unarchive and every other one-shot keep their live-only behaviour unchanged. Nothing
+restored can reopen a permission prompt or restart an indicator, because nothing outside those two
+overrides is touched at all. Archive and unarchive deliberately stay delegation: they are not
+removals, so neither can reach a cache-clearing path (see [Conversation cache § Removal on
+unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost) for the wording this mirrors).
 
 ## How the restore merges with live rows
 
@@ -148,6 +152,41 @@ set). Cancelling the collector (the ViewModel's `viewModelScope`, in practice) c
 in-flight write; the atomic move in `FileConversationCache` means a cancelled write leaves the
 previous document intact, never a torn one.
 
+## `delete` — removing the cache alongside the daemon (#798)
+
+```kotlin
+override suspend fun delete(conversationId: String) {
+    delegate.delete(conversationId)
+    deleted += conversationId
+    withContext(NonCancellable) { cache.removeConversation(serverId, conversationId) }
+        .onFailure { RelayLog.d { "event=conversation_cache_remove_failed" } }
+}
+```
+
+`delegate.delete(conversationId)` runs first and unguarded: a refused delete (the daemon's
+`conversation.not_found` aside — see [remote repository §
+delete](remote-conversation-repository-conversation-writes.md#deleteconversationid--the-eighth-mutation-first-remove-shaped-one-532))
+propagates before the cache is touched, so the cached content for a conversation that still exists on
+the daemon is never removed. Only once that call returns does the wrapper mark the id deleted and
+remove the cached copy — `cache.removeConversation(serverId, conversationId)` — inside
+`withContext(NonCancellable)`, for the same reason `forgetRemovedHost` uses it: the daemon-side
+deletion already happened, so a screen cleared mid-cleanup must not strand the content. A failed cache
+removal logs one static `event=conversation_cache_remove_failed` line and is not surfaced — `delete`
+still reports success, since the conversation genuinely is gone.
+
+The host is this wrapper's own `serverId`, captured by `ThreadDestinationFactory.repository` from the
+destination that issued the call — never a global selection (see § Wiring below). A blank `serverId`
+gets no `CachingConversationRepository` at all, so nothing can be removed under the empty id.
+
+**No write after delete.** The thread that issued the delete keeps collecting `observeMessages` on
+this same wrapper instance until its screen's `PopBack`, and a late live emission in that window (or a
+retry of an earlier failed write) would otherwise call `writeThread` and put the deleted conversation's
+rows straight back. A thread-safe `deleted: MutableSet<String>` (`ConcurrentHashMap.newKeySet()`) holds
+every id this instance deleted; `observeMessages`'s write guard becomes `cacheable != lastWritten &&
+conversationId !in deleted`. The set lives and dies with this wrapper instance — a fresh destination
+for the same conversation (a re-open after `PopBack`) gets a fresh, empty set, so the guard cannot hide
+a conversation that was later re-created under the same id.
+
 ## Wiring — under `decorateRepository`, not in it
 
 `ThreadDestinationFactory.repository(serverId, bundle)` (`di/AppModule.kt`) wraps the
@@ -198,6 +237,17 @@ JVM unit tests against a fake `ConversationCache` and a `MutableStateFlow`-backe
 - non-thread flows are pure delegation (e.g. `observeStall` / `observeQueue` untouched by the
   cache).
 
+Six further cases (#798), added on a real `FileConversationCache` (`TemporaryFolder`) so "the rest is
+readable" is proved against the real hashed-directory layout rather than a fake: a permanent delete
+removes exactly that conversation's cached metadata and thread and leaves a same-id conversation under
+a different host untouched; a delete the daemon refuses (a throwing `delegate.delete`) leaves the
+cache intact and propagates; archiving then unarchiving through the wrapper leaves cached metadata and
+thread readable (`archive`/`unarchive` are plain delegation, so this is really a regression guard on
+class delegation staying intact); a thread collected through the wrapper does not write a late row
+back after its conversation is deleted (the `deleted` set); and a cache whose `removeConversation`
+fails still lets `delete` return, logs the one static event, and leaks no server or conversation id
+into a captured log line.
+
 No Compose UI test: restored rows draw through the same composables a live row does, below the
 existing [`ConnectionBanner`](connection-banner.md) in its offline state. Live continuity across
 a real reconnect is
@@ -217,6 +267,10 @@ PR #837's re-review.
   `mergeHistoryRows`, the one dedup this restore reuses from the other side
 - [Dependency injection](dependency-injection.md) — `ThreadDestinationFactory.repository` wiring,
   `decorateRepository`, and the `useRelay` cache gate
+- [Paired server store § Wiring & usage](paired-server-store.md#wiring--usage) and [Conversation
+  cache § Removal on unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost) — the
+  sibling removal path, `forgetRemovedHost`, that this wrapper's `delete` does not go through
 - Split from [#647](https://github.com/pyrycode/pyrycode-mobile/issues/647); ticket
-  [#797](../../specs/architecture/797-thread-row-cache.md) (this doc); downstream: #798 (wires
-  `removeConversation` / `removeHost` to unpair and permanent deletion — not yet wired)
+  [#797](../../specs/architecture/797-thread-row-cache.md) (this doc);
+  [#798](../../specs/architecture/798-clear-cache-on-removal.md) (done — wires `delete` above to
+  `removeConversation`)

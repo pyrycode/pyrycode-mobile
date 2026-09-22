@@ -17,7 +17,10 @@ see [dependency injection § Restore from the on-disk cache](dependency-injectio
 for how the source writes and seeds from it. [#797](../../specs/architecture/797-thread-row-cache.md)
 adds the thread-row family and the thread restore — see
 [Caching conversation repository](caching-conversation-repository.md) for the wrapper that reads and
-writes it. #798 wires the removal operations to unpair and to permanent deletion.
+writes it. [#798](../../specs/architecture/798-clear-cache-on-removal.md) wires `removeHost` and
+`removeConversation` to unpair and to permanent deletion — see
+[§ Removal on unpair](#removal-on-unpair--forgetremovedhost) below and
+[Caching conversation repository § delete](caching-conversation-repository.md#delete--removing-the-cache-alongside-the-daemon-798).
 
 ## The contract
 
@@ -221,6 +224,42 @@ directory already covers `threads/`, since the thread family is filed under it (
 follow, so a permanently deleted conversation never leaves content behind under a family that
 forgot to extend the two removal operations.
 
+## Removal on unpair — `forgetRemovedHost`
+
+[#798](../../specs/architecture/798-clear-cache-on-removal.md) wires `removeHost` to the one place a
+pairing is actually removed: `internal fun forgetRemovedHost(drafts: ComposerDraftStore, cache:
+Lazy<ConversationCache>): suspend (String) -> Unit` in `di/ObservablePairedServerStore.kt` is the
+production `onHostRemoved` hook `ObservablePairedServerStore.remove` runs once `delegate.remove` and
+the revision bump have both succeeded — see [paired server store § Wiring &
+usage](paired-server-store.md#wiring--usage) for the hook's own contract. It clears the host's
+composer drafts first (`ComposerDraftStore.clearHost`, see [Thread screen § Composer draft
+ownership](thread-screen.md#composer-draft-ownership)), then calls `cache.value.removeHost(serverId)`
+inside `withContext(NonCancellable)` so a view model cleared mid-cleanup cannot strand the forgotten
+host's content on disk, and logs a static `event=host_cache_remove_failed` line on failure without
+surfacing it — the pairing is already gone by then, so reporting a failure would claim the host is
+still paired when it is not. Never logs the id.
+
+`cache` is `Lazy<ConversationCache>`, not `ConversationCache`, so resolving the paired-server store
+binding never constructs the cache: the cache's root is `Context.noBackupFilesDir` (see § Root and
+storage scope above), and the JVM tests that resolve `appModule`'s paired-server store without a
+`Context` would otherwise fail with `MissingAndroidContextException` the moment that binding runs. The
+Koin binding is `single { ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), lazy { get() })) }`.
+
+Named rather than written inline in `appModule`, for the same reason the #790 draft eviction was: a
+JVM test that restates the hook as its own lambda stays green if production forgets a step, while one
+that binds `forgetRemovedHost` itself cannot. `HostChannelListViewModelTest`'s fixture binds
+`forgetRemovedHost(drafts, lazyOf(cache))` over a real `FileConversationCache` on a `TemporaryFolder`
+for exactly this reason.
+
+Permanent deletion does not go through this hook — see [Caching conversation repository §
+delete](caching-conversation-repository.md#delete--removing-the-cache-alongside-the-daemon-798) for
+`removeConversation`'s call site, which is a `CachingConversationRepository` override, not a paired-
+server-store hook.
+
+Archive and unarchive call neither removal. Both stay plain `by delegate` forwarding on
+`CachingConversationRepository`, so an archived conversation's cached content is unreachable through
+either code path this section or the linked one describes.
+
 ## Concurrency
 
 One `kotlinx.coroutines.sync.Mutex` per `FileConversationCache` instance, held across each
@@ -316,5 +355,8 @@ wrapper's.
   [#796](https://github.com/pyrycode/pyrycode-mobile/issues/796) (done — host list restore, see
   [dependency injection § Restore from the on-disk cache](dependency-injection.md#restore-from-the-on-disk-cache-796)),
   [#797](../../specs/architecture/797-thread-row-cache.md) (done — thread-row family + thread
-  restore), #798 (removal wiring — not yet wired to unpair or permanent deletion; this ticket only
-  made the cache operations cover the family)
+  restore), [#798](../../specs/architecture/798-clear-cache-on-removal.md) (done — `removeHost` wired
+  to unpair via [`forgetRemovedHost`](#removal-on-unpair--forgetremovedhost), `removeConversation`
+  wired to permanent deletion via
+  [`CachingConversationRepository.delete`](caching-conversation-repository.md#delete--removing-the-cache-alongside-the-daemon-798);
+  archive and unarchive call neither)
