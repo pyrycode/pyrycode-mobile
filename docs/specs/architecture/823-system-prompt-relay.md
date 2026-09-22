@@ -114,3 +114,7 @@ Pending for the documentation stage: fold the new `requestSystemPrompt` / `setSy
 
 **Reviewer:** builder (self-review per `builder/security-review.md`). This review was run after the first plan commit (5447517) because the label check came late. It was still completed and committed before any implementation code, and no design change resulted.
 **Date:** 2026-09-22
+
+## Revisions
+
+- **2026-09-22, fake write (implementation).** The plan and the security review say the fake does its unknown-conversation check and its write in one `MutableStateFlow.update`. They cannot: the conversation records and the stored prompts are two separate flows. `FakeConversationRepository.setSystemPrompt` now checks `state` and then updates `systemPrompts`. A concurrent delete between those two steps would leave an orphaned prompt entry. That is harmless in demo mode, because an orphan is read only for an id that no longer exists, and it can never reach the wire. The remote has no such window, since it holds no copy. The Open question about an explicit JSON `null` in the reply was resolved as planned (fail), and `SystemPromptPayloadsTest` covers it.

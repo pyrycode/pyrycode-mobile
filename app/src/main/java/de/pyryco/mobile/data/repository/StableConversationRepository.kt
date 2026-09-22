@@ -198,6 +198,18 @@ class StableConversationRepository(
         limit: Int,
     ): HistoryPage = live.requestHistory(conversationId, cursor, limit)
 
+    /**
+     * One-shot delegation of the system-prompt read and write (#823) to the live repository — the one
+     * for this host's connection, so the id and value pass through verbatim with no routing here. With
+     * no connection live both throw [IllegalStateException] before any frame is built.
+     */
+    override suspend fun requestSystemPrompt(conversationId: String): SystemPromptReading = live.requestSystemPrompt(conversationId)
+
+    override suspend fun setSystemPrompt(
+        conversationId: String,
+        systemPrompt: String?,
+    ): Unit = live.setSystemPrompt(conversationId, systemPrompt)
+
     private companion object {
         const val NOT_CONNECTED = "No live relay connection"
     }

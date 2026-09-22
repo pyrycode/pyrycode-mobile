@@ -559,6 +559,38 @@ class FakeConversationRepositoryTest {
             assertEquals("renamed", found.name)
         }
 
+    // #823: demo mode holds the three stored states per conversation and reports no running session.
+    @Test
+    fun systemPrompt_roundTripsTheThreeStoredStates() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val other = repo.createDiscussion()
+
+            assertEquals(SystemPromptReading(null, SessionPromptStatus.NoSession), repo.requestSystemPrompt(SEED_ID))
+            repo.setSystemPrompt(SEED_ID, "")
+            assertEquals(SystemPromptReading("", SessionPromptStatus.NoSession), repo.requestSystemPrompt(SEED_ID))
+            repo.setSystemPrompt(SEED_ID, " text\n")
+            assertEquals(" text\n", repo.requestSystemPrompt(SEED_ID).systemPrompt)
+            assertNull(repo.requestSystemPrompt(other.id).systemPrompt)
+            repo.setSystemPrompt(SEED_ID, null)
+            assertNull(repo.requestSystemPrompt(SEED_ID).systemPrompt)
+        }
+
+    // Unknown ids read like a hosted conversation holding nothing (the daemon's posture), but a write to
+    // one is refused, as is a value over the byte limit — and neither refusal stores anything.
+    @Test
+    fun systemPrompt_refusesUnknownConversationAndOverLimitValue() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+
+            assertEquals(SystemPromptReading(null, SessionPromptStatus.NoSession), repo.requestSystemPrompt("nope"))
+            assertTrue(runCatching { repo.setSystemPrompt("nope", "x") }.exceptionOrNull() is IllegalArgumentException)
+            assertTrue(runCatching { repo.setSystemPrompt(SEED_ID, "€".repeat(2731)) }.exceptionOrNull() is IllegalArgumentException)
+            assertNull(repo.requestSystemPrompt(SEED_ID).systemPrompt)
+            repo.setSystemPrompt(SEED_ID, "€".repeat(2730) + "ab")
+            assertEquals(8192, SystemPromptLimit.utf8Bytes(repo.requestSystemPrompt(SEED_ID).systemPrompt.orEmpty()))
+        }
+
     @Test
     fun startNewSession_returnsFreshSession_withDifferentId() =
         runBlocking {
