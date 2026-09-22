@@ -14,8 +14,10 @@ is the one app-private implementation, added in
 layer alone; [#796](https://github.com/pyrycode/pyrycode-mobile/issues/796) made
 `HostConversationSource` its first production consumer and added the cache's one Koin binding —
 see [dependency injection § Restore from the on-disk cache](dependency-injection.md#restore-from-the-on-disk-cache-796)
-for how the source writes and seeds from it. #797 adds the thread-row family, #798 wires the
-removal operations to unpair and to permanent deletion.
+for how the source writes and seeds from it. [#797](../../specs/architecture/797-thread-row-cache.md)
+adds the thread-row family and the thread restore — see
+[Caching conversation repository](caching-conversation-repository.md) for the wrapper that reads and
+writes it. #798 wires the removal operations to unpair and to permanent deletion.
 
 ## The contract
 
@@ -23,12 +25,46 @@ removal operations to unpair and to permanent deletion.
 interface ConversationCache {
     suspend fun readConversations(serverId: String): List<Conversation>
     suspend fun writeConversations(serverId: String, conversations: List<Conversation>): Result<Unit>
+    suspend fun readThread(serverId: String, conversationId: String): List<ThreadItem> = emptyList()
+    suspend fun writeThread(serverId: String, conversationId: String, rows: List<ThreadItem>): Result<Unit> =
+        Result.success(Unit)
     suspend fun removeHost(serverId: String): Result<Unit>
     suspend fun removeConversation(serverId: String, conversationId: String): Result<Unit>
 }
 
+const val MAX_CACHED_THREAD_ROWS = 200
+
+fun cacheableThreadRows(rows: List<ThreadItem>): List<ThreadItem>
+fun settledThreadRows(rows: List<ThreadItem>): List<ThreadItem>
+
 class ConversationCacheException(message: String) : Exception(message)
 ```
+
+**The thread-row family (#797).** `readThread`/`writeThread` follow the same graceful-read,
+reporting-mutation shape as the conversation family, over `List<ThreadItem>` (`data/repository/`,
+not the cache package) instead of `List<Conversation>`. Both carry a **default body on the
+interface** — `emptyList()` / `Result.success(Unit)`, the precedent
+`ConversationRepository.refreshSessionSettings` already sets — so a double that does not exercise
+threads (`InertConversationCache`, and the fakes in `HostConversationSourceTest` and
+`RelayConnectionFactoryTest`) needed no edit for this ticket. `writeThread` is a **whole-thread
+replace**, like `writeConversations` is a whole-host replace, and it always stores
+`cacheableThreadRows(rows)` — never the caller's raw list — so no caller can persist an
+unrecognized, streaming or in-flight-tool row by constructing a `ThreadItem` list itself.
+
+Two top-level functions in `ConversationCache.kt` define what a thread may hold, used by both the
+cache (enforced on write) and [`CachingConversationRepository`](caching-conversation-repository.md)
+(compared against on every emission), so the two can never disagree about what "settled" means:
+
+- **`settledThreadRows(rows)`** drops only the in-flight rows — a `Message` with `isStreaming` or
+  whose `toolCall?.status == ToolCallStatus.Running` — leaving `UnrecognizedMessage` rows and the
+  row count untouched. This is what a thread may keep **drawing** once its connection is gone, not
+  what the cache may **hold**: it is also the caching repository's merge-base rebase on a
+  disconnect (see that doc), where the bound would otherwise shrink a long thread on screen the
+  moment it goes offline.
+- **`cacheableThreadRows(rows)`** is `settledThreadRows(rows)` with `UnrecognizedMessage` rows
+  additionally dropped (unbounded, model-adjacent JSON; its KDoc forbids persisting it) and the
+  result bounded to the newest `MAX_CACHED_THREAD_ROWS` (200) via `takeLast` — the thread is in
+  arrival order, so "newest" is the tail. This is what may reach disk.
 
 **Identity is exact, case-sensitive string equality** on `serverId` and on `Conversation.id` —
 the same rule [`PairedServerCollectionStore`](paired-server-store.md#the-contract) states for
@@ -53,15 +89,18 @@ even there the only platform type is `java.io.File` — see § Root and storage 
 
 ```
 <root>/<sha256hex(serverId)>/conversations.json
+<root>/<sha256hex(serverId)>/threads/<sha256hex(conversationId)>.json   (#797)
 ```
 
 A server id is daemon-supplied and opaque, so it is never pasted into a path: the host
 directory name is the lowercase hex SHA-256 of the id's UTF-8 bytes. That means no `/`, no
 `..`, no NUL and no reserved name can ever reach a path component, and no server id enters the
 filesystem namespace at all — proven by a test that writes a `../../etc/passwd`-shaped server
-id and asserts every stored file stays under the canonical root. Conversation ids never touch a
-path in this slice; they live inside the document. The hash is namespace derivation, not a
-security boundary — the property relied on is collision resistance, not secrecy.
+id and asserts every stored file stays under the canonical root. A **conversation id is hashed
+the same way** and filed under its host's directory rather than in a flat namespace, so
+`removeHost`'s existing recursive delete of the host directory covers `threads/` for free with
+no separate removal step. The hash is namespace derivation, not a security boundary — the
+property relied on is collision resistance, not secrecy.
 
 The stored document is a versioned envelope (`version: Int`, `conversations: List<...>`),
 mirroring `StoredPairings`. The cache-local record type — not `@Serializable` annotations on
@@ -69,6 +108,18 @@ mirroring `StoredPairings`. The cache-local record type — not `@Serializable` 
 [data model § What's deliberately absent](data-model.md#whats-deliberately-absent). `lastUsedAt`
 is stored as `Instant.toString()` / parsed back with `Instant.parse(...)`, not epoch millis, so
 the round-trip is exact to the nanosecond rather than truncated to millisecond precision.
+
+The thread document is the same shape, file-private to `FileConversationCache.kt`:
+`CachedThread(version: Int, rows: List<CachedThreadRow>)`, `CachedThreadRow(message:
+CachedMessage? = null, boundary: CachedBoundary? = null)` — exactly one of the two is set, mapping
+`ThreadItem.MessageItem` / `ThreadItem.SessionBoundary` (never `UnrecognizedMessage`, which
+`cacheableThreadRows` drops before a `CachedThreadRow` is ever built).
+`CachedMessage(id, sessionId, role, content, timestamp, tool: CachedToolCall? = null)` carries no
+`isStreaming` field — a restored row is always settled, so the field would have nothing to encode.
+`CachedToolCall(toolName, input, output, status)` and `CachedBoundary(previousSessionId,
+newSessionId, reason, occurredAt, workspaceCwd: String? = null)` round out the two row kinds.
+Enums serialize by name; `Instant` fields (`timestamp`, `occurredAt`) follow `lastUsedAt`'s
+ISO-text convention, not epoch millis.
 
 ## Root and storage scope — `noBackupFilesDir`, never `filesDir`
 
@@ -121,6 +172,15 @@ Failure classification: `SecurityException` → `denied`; `IOException` → `io`
 `IllegalArgumentException` (kotlinx-serialization failures and `Instant.parse` failures are
 both this) → `invalid_data`. Anything else, cancellation included, propagates unchanged.
 
+**`readThread` (#797) rejects the same tampered-or-buggy shapes a duplicate `Conversation.id`
+rejects, for the same reason: a document that would hand the thread's `LazyColumn` two rows under
+one key reads empty instead of drawing them.** Beyond the version check every family shares, a
+thread document is rejected (→ `invalid_data` → empty) when: a row carries both or neither of
+`message`/`boundary`; any two messages share an id; any two boundaries share their
+`(previousSessionId, newSessionId)` pair; or any tool carries `ToolCallStatus.Running` — a
+restored row is defined to always be settled, so a running status on disk is itself a corrupt
+document, not a row to filter.
+
 Removing an unknown host or an unknown conversation is a **successful no-op**, matching
 `PairedServerCollectionStore.remove` — #798 does not need to check existence first.
 
@@ -153,6 +213,14 @@ host's document from what is currently **readable**, minus the target conversati
 This is the one place a mutation touches bytes that a read declined to repair — reads still
 never repair anything; it is the removal, asked for explicitly, that rewrites.
 
+`removeConversation` and `removeHost` (#797) also remove the thread family: a target
+conversation's thread document is deleted alongside its metadata rewrite (absent → no-op;
+present-but-undeletable → `IOException` → `io`), and `removeHost`'s recursive delete of the host
+directory already covers `threads/`, since the thread family is filed under it (see § Layout).
+`ConversationCache.removeConversation`'s KDoc records this as the rule any family added later must
+follow, so a permanently deleted conversation never leaves content behind under a family that
+forgot to extend the two removal operations.
+
 ## Concurrency
 
 One `kotlinx.coroutines.sync.Mutex` per `FileConversationCache` instance, held across each
@@ -164,11 +232,13 @@ its own mutations. No coroutine is launched and no scope is owned; every operati
 caller's coroutine on the injected dispatcher (default `Dispatchers.IO`), so cancellation stays
 the caller's.
 
-Writes land through a temp file (`conversations.json.tmp`) plus `Files.move(..., ATOMIC_MOVE)`
-onto `conversations.json`, so process death mid-write leaves either the previous document or
-the new one, never a torn one. If the write itself throws before the move, the temp file can be
-left behind in the host directory; it is bounded to one stale sibling per host, invisible to
-every reader, and cleared by the next successful write or by `removeHost`.
+Writes land through a temp file (`conversations.json.tmp`, `<hash>.json.tmp` for a thread) plus
+`Files.move(..., ATOMIC_MOVE)` onto the target document, so process death mid-write leaves either
+the previous document or the new one, never a torn one. Both families share one small write
+helper for this temp-file-plus-move step, and both run under the same per-instance `Mutex` (see
+below). If the write itself throws before the move, the temp file can be left behind in the host
+directory; it is bounded to one stale sibling per host per family, invisible to every reader, and
+cleared by the next successful write of that document or by `removeHost`.
 
 ## What's deliberately not here
 
@@ -179,9 +249,10 @@ every reader, and cleared by the next successful write or by `removeHost`.
   also ask the Keystore to unwrap it. What encryption would additionally buy is protection
   against offline disk imaging of a locked device, which is a device-wide FBE property, not
   this file's — out of scope unless the threat model changes.
-- **No thread-row restore yet.** #796 wired the host-list cache and its one Koin binding into
-  `HostConversationSource`; the thread-row family and thread restore are #797, and removal on
-  unpair / permanent deletion is #798.
+- **No byte cap on a thread document, only a row-count cap.** `cacheableThreadRows` bounds a
+  thread to its newest 200 rows, not to a byte size, so a hostile or unusual daemon that sends
+  very large message contents is bounded only by what the live projection already holds in memory
+  for that thread. Accepted in #797's security review as a residual, deferred until observed.
 
 ## Testing
 
@@ -205,13 +276,28 @@ lesson. `RelayLog.sink`/`enabled` are captured and restored around each test, th
 `SettingsViewModelTest` uses, which is what makes the "no identifier reaches a log" assertion
 real rather than a convention.
 
-No Compose UI test and no emulator scenario in this slice — #796's restored rows draw through
-the same `TreeHostRow` / `TreeConversationRow` composables a live row does, so the screen needs
-no cache-specific coverage; see [dependency injection § Testing](dependency-injection.md#testing)
-for `HostConversationSourceTest`'s restore/live-race cases and for why every other instrumented
-container built from `appModule` overrides this binding with a shared `InertConversationCache`
-fake rather than supplying a real `Context`. #797 carries the rung-3 coverage for the thread-row
-family this cache makes visible there.
+[`FileConversationCacheThreadTest.kt`](../../../app/src/test/java/de/pyryco/mobile/data/cache/FileConversationCacheThreadTest.kt)
+(#797) is a sibling file rather than an extension of the test above, with the same second-instance
+and log-capture discipline. 12 cases cover: a field-for-field round trip (message, a tool call in
+both a settled and a failed status, a boundary with and without `workspaceCwd`); that unrecognized,
+streaming and running-tool rows are dropped on write; the newest-200 bound; per-conversation and
+per-host isolation; whole-thread replace on a second write; every graceful-empty-read shape
+including a duplicate message id, a duplicate boundary pair and a running-status document (left on
+disk, unrepaired); `removeConversation` removing one thread and leaving siblings; removal still
+working against host metadata that was never written; `removeHost` removing every thread under it
+and no other host's; no conversation id in a path or a log line, success or failure; and a coded,
+causeless exception on a forced write failure.
+
+No Compose UI test and no emulator scenario for either family — #796's restored conversation rows
+and #797's restored thread rows both draw through the same composables a live row does, so the
+screen needs no cache-specific coverage. See [dependency injection §
+Testing](dependency-injection.md#testing) for `HostConversationSourceTest`'s restore/live-race
+cases and for why every other instrumented container built from `appModule` overrides this binding
+with a shared `InertConversationCache` fake rather than supplying a real `Context`. See [Caching
+conversation repository § Testing](caching-conversation-repository.md#testing) for the restore
+merge's own unit coverage. Live continuity across a real reconnect is
+[#673](https://github.com/pyrycode/pyrycode-mobile/issues/673)'s, not this cache's or the
+wrapper's.
 
 ## Related
 
@@ -224,7 +310,11 @@ family this cache makes visible there.
   reporting mutations, a versioned envelope, a causeless exception, and the backup-exclusion
   reasoning this cache's storage-scope decision extends
 - [Relay log](relay-log.md) — the only logging facility this layer uses
+- [Caching conversation repository](caching-conversation-repository.md) — the wrapper that reads
+  and writes the thread-row family this doc's § The contract and § Layout describe (#797)
 - Split from [#647](https://github.com/pyrycode/pyrycode-mobile/issues/647); downstream:
   [#796](https://github.com/pyrycode/pyrycode-mobile/issues/796) (done — host list restore, see
   [dependency injection § Restore from the on-disk cache](dependency-injection.md#restore-from-the-on-disk-cache-796)),
-  #797 (thread-row family + thread restore), #798 (removal wiring)
+  [#797](../../specs/architecture/797-thread-row-cache.md) (done — thread-row family + thread
+  restore), #798 (removal wiring — not yet wired to unpair or permanent deletion; this ticket only
+  made the cache operations cover the family)
