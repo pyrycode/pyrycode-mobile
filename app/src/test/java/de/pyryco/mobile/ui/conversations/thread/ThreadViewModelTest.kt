@@ -23,6 +23,8 @@ import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.data.repository.HistoryEntry
+import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.ThrowingConversationRepository
@@ -50,6 +52,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
 import kotlinx.datetime.Instant
+import kotlinx.serialization.json.buildJsonObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -2823,6 +2826,194 @@ class ThreadViewModelTest {
         }
 
     // --- helpers ---
+
+    // --- #777: the history walk's demand side ------------------------------------------------------
+
+    @Test
+    fun history_openingAThread_asksForTheNewestPage() =
+        runTest {
+            val repo = HistoryRepo { page(cursor = "c1") }
+            makeVm(historyHandle(), repo)
+            advanceUntilIdle()
+            // Empty cursor = "start at the newest", the normal opening value of a walk.
+            assertEquals(listOf(""), repo.asks)
+        }
+
+    @Test
+    fun history_reachingTheOldestRow_asksWithThePreviousPagesCursor() =
+        runTest {
+            val repo = HistoryRepo { asked -> page(cursor = if (asked.isEmpty()) "c1" else "c2") }
+            val vm = makeVm(historyHandle(), repo)
+            advanceUntilIdle()
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+            // Echoed unexamined — the VM never parses or rebuilds what the daemon handed back.
+            assertEquals(listOf("", "c1"), repo.asks)
+        }
+
+    @Test
+    fun history_anAskArrivingDuringARequest_isDroppedNotQueued() =
+        runTest {
+            val gate = CompletableDeferred<HistoryPage>()
+            val repo = HistoryRepo { gate.await() }
+            val vm = makeVm(historyHandle(), repo)
+            advanceUntilIdle()
+            repeat(3) { vm.onDemandOlderHistory() }
+            advanceUntilIdle()
+            assertEquals(listOf(""), repo.asks)
+            // Dropped, not queued: releasing the in-flight page issues no backlog of asks.
+            gate.complete(page(cursor = "c1"))
+            advanceUntilIdle()
+            assertEquals(listOf(""), repo.asks)
+        }
+
+    @Test
+    fun history_aPageReportingAtStart_endsTheWalk() =
+        runTest {
+            val repo = HistoryRepo { HistoryPage(entries = emptyList(), cursor = "", atStart = true) }
+            val vm = makeVm(historyHandle(), repo)
+            advanceUntilIdle()
+            repeat(5) { vm.onDemandOlderHistory() }
+            advanceUntilIdle()
+            assertEquals(listOf(""), repo.asks)
+        }
+
+    @Test
+    fun history_aFailedPage_clearsLoadingKeepsRowsAndStopsAsking() =
+        runTest {
+            val repo = HistoryRepo { throw RelayErrorException("history.unavailable", true, "boom") }
+            val vm = makeVm(historyHandle(), repo)
+            val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            repo.messages.value = listOf(messageItem("m1"))
+            advanceUntilIdle()
+            // The indicator always clears, so this slice never ships a visibly stuck state...
+            assertFalse(vm.state.value.historyLoading)
+            // ...every loaded row survives...
+            assertEquals(
+                listOf("m1"),
+                vm.state.value.items
+                    .map { (it as ThreadItem.MessageItem).message.id },
+            )
+            // ...and the walk then stops asking, with no retry affordance (that is #778).
+            repeat(5) { vm.onDemandOlderHistory() }
+            advanceUntilIdle()
+            assertEquals(listOf(""), repo.asks)
+            collector.cancel()
+        }
+
+    @Test
+    fun history_aNonAdvancingDaemon_cannotDriveAnUnboundedRequestLoop() =
+        runTest {
+            // atStart = false, no entries, and the same cursor every time — the shape that would spin.
+            val repo = HistoryRepo { asked -> HistoryPage(entries = emptyList(), cursor = asked, atStart = false) }
+            val vm = makeVm(historyHandle(), repo)
+            advanceUntilIdle()
+            repeat(50) { vm.onDemandOlderHistory() }
+            advanceUntilIdle()
+            assertEquals(1, repo.asks.size)
+        }
+
+    @Test
+    fun history_anAlternatingCursorDaemon_isBoundedByTheClientSidePageCap() =
+        runTest {
+            // Alternating cursors defeat the non-advancing guard, so only the cap stops this one.
+            val repo = HistoryRepo { asked -> page(cursor = if (asked == "a") "b" else "a") }
+            val vm = makeVm(historyHandle(), repo)
+            advanceUntilIdle()
+            repeat(MAX_HISTORY_PAGES * 3) { vm.onDemandOlderHistory() }
+            advanceUntilIdle()
+            assertEquals(MAX_HISTORY_PAGES, repo.asks.size)
+        }
+
+    @Test
+    fun history_loadingIsVisibleWhileAPageIsInFlight() =
+        runTest {
+            val gate = CompletableDeferred<HistoryPage>()
+            val repo = HistoryRepo { gate.await() }
+            val vm = makeVm(historyHandle(), repo)
+            val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            advanceUntilIdle()
+            assertTrue(vm.state.value.historyLoading)
+            gate.complete(page(cursor = "c1"))
+            advanceUntilIdle()
+            assertFalse(vm.state.value.historyLoading)
+            collector.cancel()
+        }
+
+    @Test
+    fun history_aMessageLandingWhileTheFirstPageIsInFlight_rendersExactlyOnce() =
+        runTest {
+            // Nothing needs a second fold: the repository already merged the page into the thread the VM
+            // reads through observeMessages. A page's entries must never become rows here as well.
+            val gate = CompletableDeferred<HistoryPage>()
+            val repo = HistoryRepo { gate.await() }
+            val vm = makeVm(historyHandle(), repo)
+            val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            advanceUntilIdle()
+            repo.messages.value = listOf(messageItem("m1"))
+            advanceUntilIdle()
+            assertEquals(
+                listOf("m1"),
+                vm.state.value.items
+                    .map { (it as ThreadItem.MessageItem).message.id },
+            )
+            gate.complete(
+                HistoryPage(
+                    entries = listOf(HistoryEntry(1L, "message", buildJsonObject {}, Instant.parse("2026-09-22T00:00:00Z"))),
+                    cursor = "c1",
+                    atStart = false,
+                ),
+            )
+            advanceUntilIdle()
+            assertEquals(
+                listOf("m1"),
+                vm.state.value.items
+                    .map { (it as ThreadItem.MessageItem).message.id },
+            )
+            collector.cancel()
+        }
+
+    private fun historyHandle() = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+
+    private fun page(cursor: String) = HistoryPage(entries = emptyList(), cursor = cursor, atStart = false)
+
+    private fun messageItem(id: String) =
+        ThreadItem.MessageItem(
+            Message(
+                id = id,
+                sessionId = "s1",
+                role = Role.Assistant,
+                content = "hi",
+                timestamp = Instant.parse("2026-09-22T00:00:00Z"),
+                isStreaming = false,
+            ),
+        )
+
+    /**
+     * Delegates the whole [ConversationRepository] surface to a seeded [FakeConversationRepository] and
+     * overrides [requestHistory] with a caller-supplied [answer] over the asked cursor, recording every
+     * cursor the walk asks with (#777). [observeMessages] is controllable too, because the fake's own
+     * thread cannot be driven on demand — and because a page's entries must be shown *not* to become
+     * rows, which needs the two sides separable.
+     */
+    private class HistoryRepo(
+        private val delegate: FakeConversationRepository = FakeConversationRepository(),
+        private val answer: suspend (String) -> HistoryPage,
+    ) : ConversationRepository by delegate {
+        val asks = mutableListOf<String>()
+        val messages = MutableStateFlow<List<ThreadItem>>(emptyList())
+
+        override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = messages
+
+        override suspend fun requestHistory(
+            conversationId: String,
+            cursor: String,
+            limit: Int,
+        ): HistoryPage {
+            asks += cursor
+            return answer(cursor)
+        }
+    }
 
     private fun TestScope.makeVm(
         handle: SavedStateHandle,

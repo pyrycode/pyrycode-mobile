@@ -212,6 +212,32 @@ which waits on this work through #624 → #647 — so this ticket carries no `ne
    Resolve by checking whether a redundant first page is fully absorbed by `mergeHistoryRows` — if it is,
    no suppression is warranted and the simpler unconditional ask stands.
 
+## Revisions
+
+### 2026-09-22 — Open questions resolved during implementation
+
+Both resolved without changing the committed design; recorded here so the resolution is auditable rather
+than merely absent.
+
+1. **`MAX_HISTORY_PAGES = 100` stands.** The wire contract bounds a single page (the daemon chooses the
+   size, clamps a large ask, and narrows a page to fit its frame cap) but names **no** bound on the
+   number of pages in a log, so there is no smaller natural ceiling to adopt. 100 stays, documented as a
+   chosen client-side bound rather than a derived one.
+2. **The opening ask stays unconditional.** `mergeHistoryRows` skips any row the thread already holds,
+   keyed on the renderer's own row key, so a first page overlapping the replay ring is fully absorbed —
+   suppressing the ask would add a condition that buys nothing and could skip a genuinely needed page
+   after a daemon restart empties the ring. The other half of the property, that this ViewModel adds no
+   second fold of its own, is pinned by `history_aMessageLandingWhileTheFirstPageIsInFlight_rendersExactlyOnce`.
+
+### 2026-09-22 — The oldest-end regression test was rewritten after a mutation check
+
+The first version of `toggling_the_loading_flag_with_the_rows_unchanged_issues_no_further_demand` used
+three short rows and **passed against the buggy `layoutInfo.totalItemsCount` predicate** — when every row
+fits the viewport, the mounted indicator is visible too, so the last visible index tracks the total either
+way. The test now seeds 30 rows and scrolls to the oldest end first, which is the only configuration where
+the indicator mounts *above* the viewport and the buggy predicate flips. Verified by mutation: the
+`totalItemsCount` variant fails it (2 demands, expected 1) and the shipped variant passes.
+
 ## Documentation handoff
 
 Pending for the documentation stage; not written by this ticket.

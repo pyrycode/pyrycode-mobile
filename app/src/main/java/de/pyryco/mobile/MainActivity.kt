@@ -446,6 +446,7 @@ internal fun PyryNavHost(
                     onWorkspaceChipTapped = vm::onWorkspaceChipTapped,
                     onWorkspacePicked = vm::onWorkspacePicked,
                     onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
+                    onDemandOlderHistory = vm::onDemandOlderHistory,
                 )
             }
         }

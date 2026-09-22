@@ -36,6 +36,7 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Instant
 
@@ -106,6 +107,10 @@ data class ThreadUiState(
     val selectedEffort: Effort = Effort.HIGH,
     val yoloEnabled: Boolean = false,
     val mutationsSupported: Boolean = true,
+    // #777: a history page is in flight — drives the oldest-end loading affordance. The walk's stop
+    // reason deliberately does NOT reach the screen: the screen asks, the VM decides whether the ask is
+    // honoured, and a second copy of that decision in Compose would be a second place to get it wrong.
+    val historyLoading: Boolean = false,
 )
 
 data class SaveAsChannelDialogState(
@@ -194,6 +199,19 @@ class ThreadViewModel(
         }
 
     /**
+     * This conversation's backward history walk (#777) — cursor, in-flight, page count and stop reason in
+     * one value. Written from exactly two places, both CAS-shaped: [claimHistoryAsk]'s
+     * [MutableStateFlow.compareAndSet] loop and [requestOlderHistory]'s settle/fail
+     * [MutableStateFlow.update]. A plain read-then-assign would open a real window, because the settle
+     * runs in a launched coroutine while the claim runs on the caller's.
+     *
+     * Not persisted — no [SavedStateHandle], no DataStore. The repository's projections are
+     * connection-scoped, so a cursor that outlived its connection would be a stale-cursor bug, and
+     * restarting the walk on reconnect is #778's job rather than this value's.
+     */
+    private val historyDemand = MutableStateFlow(ThreadHistoryDemand())
+
+    /**
      * The thread rows (#337): the #313 finished-message projection from [ConversationRepository.observeMessages]
      * folded together with the live `assistant_delta` stream so an in-flight turn renders as a single
      * growing `isStreaming` assistant message that settles into the finished message when the turn ends.
@@ -222,8 +240,8 @@ class ThreadViewModel(
      * `distinctUntilChanged`, so this never stalls and adds no operator.
      */
     private val threadContent: Flow<ThreadContent> =
-        combine(threadItems, repository.observeQueue(conversationId)) { items, queued ->
-            ThreadContent(items, queued)
+        combine(threadItems, repository.observeQueue(conversationId), historyDemand) { items, queued, demand ->
+            ThreadContent(items, queued, demand.inFlight)
         }
 
     val state: StateFlow<ThreadUiState> =
@@ -256,6 +274,7 @@ class ThreadViewModel(
                 selectedEffort = runConfig.effort,
                 yoloEnabled = runConfig.yoloEnabled,
                 mutationsSupported = mutationsSupported,
+                historyLoading = content.historyLoading,
             )
         }.stateIn(
             scope = viewModelScope,
@@ -510,6 +529,68 @@ class ThreadViewModel(
             is LiveSessionEvent.ToolResult,
             is LiveSessionEvent.ReplayGap,
             -> null
+        }
+    }
+
+    init {
+        // AC #1: opening a thread asks for the newest page. A phone that only ever rendered the live
+        // stream showed nothing that predated its connection.
+        requestOlderHistory()
+    }
+
+    /**
+     * The reader has reached the oldest loaded row (#777) — ask for the next page back. Safe to call as
+     * often as the list's scroll predicate fires: [ThreadHistoryDemand.canAsk] drops an ask that arrives
+     * while a request is outstanding or after the walk has stopped, and drops it rather than queuing it.
+     */
+    fun onDemandOlderHistory() {
+        requestOlderHistory()
+    }
+
+    /**
+     * Issue one backward step of the walk, if the demand allows one.
+     *
+     * The returned [de.pyryco.mobile.data.repository.HistoryPage] is read for its `cursor` and `atStart`
+     * and **nothing else**: `RemoteConversationRepository.requestHistory` has already merged the page's
+     * entries into the thread this VM reads through `observeMessages`, so folding them here as well
+     * would render every loaded row twice. Nothing needs a second fold.
+     */
+    private fun requestOlderHistory() {
+        val claimed = claimHistoryAsk() ?: return
+        viewModelScope.launch {
+            try {
+                val page = repository.requestHistory(conversationId, claimed.cursor)
+                historyDemand.update { it.settled(pageCursor = page.cursor, atStart = page.atStart) }
+            } catch (e: CancellationException) {
+                throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
+            } catch (e: RelayErrorException) {
+                // Inert: a server error frame. Never log e.message (server-supplied).
+                historyDemand.update { it.failed() }
+            } catch (e: IllegalStateException) {
+                // Inert: a not-connected session, #488's teardown sweep, or the not-wired interface default.
+                historyDemand.update { it.failed() }
+            } catch (e: IllegalArgumentException) {
+                // Inert: an unknown conversation id, or a malformed page — kotlinx.serialization's
+                // SerializationException is an IllegalArgumentException, so the decode failure lands here.
+                historyDemand.update { it.failed() }
+            }
+        }
+    }
+
+    /**
+     * Claim the walk's single outstanding-request slot, returning the claimed demand (whose `cursor` is
+     * the one to ask with) or `null` when the ask must be dropped.
+     *
+     * A [MutableStateFlow.compareAndSet] loop rather than a read-then-assign: the settle runs in a
+     * launched coroutine, so a check-then-act would admit two concurrent asks through the window between
+     * reading [ThreadHistoryDemand.canAsk] and writing the in-flight flag.
+     */
+    private fun claimHistoryAsk(): ThreadHistoryDemand? {
+        while (true) {
+            val current = historyDemand.value
+            if (!current.canAsk) return null
+            val claimed = current.asking()
+            if (historyDemand.compareAndSet(current, claimed)) return claimed
         }
     }
 
@@ -907,10 +988,15 @@ class ThreadViewModel(
         val yoloEnabled: Boolean,
     )
 
-    /** The thread's content surface (#461): the rendered rows folded with the queued-message backlog. */
+    /**
+     * The thread's content surface (#461): the rendered rows folded with the queued-message backlog and,
+     * since #777, the history walk's in-flight flag. The flag rides this arm rather than taking a sixth
+     * one of its own because Kotlin's typed `combine` stops at five and [state] already uses all five.
+     */
     private data class ThreadContent(
         val items: List<ThreadItem>,
         val queued: List<QueuedMessage>,
+        val historyLoading: Boolean,
     )
 
     private data class TransientDialogs(
