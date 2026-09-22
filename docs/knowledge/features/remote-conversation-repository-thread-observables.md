@@ -226,6 +226,85 @@ daemon-supplied text or number of any kind can structurally reach the UI through
 narrowest boundary of the four sibling arms — and **nothing in the new arm or the decode logs the
 payload**. See [Compacting state § Security](compacting-state.md#security).
 
+## `observeThinkingProgress(conversationId)` — the thread-observable thinking-progress reading (#801)
+
+How far a conversation's current reasoning has got — claude's own running token estimate, and its
+**only** mid-turn proof of life on the stream-json surface.
+[#801](../../specs/architecture/801-thinking-progress-decode.md) decodes the
+capability-gated v2 `thinking_progress` control envelope into a per-conversation `ThinkingProgress?`
+the thread layer observes (the visible render is a sibling slice of the same split, not yet filed). The
+not-monotonic / no-falling-edge model lives in [Thinking-progress state](thinking-progress-state.md);
+this section records only how it attaches to the repository — it rides the **same single inbound
+collector** as everything else, with **no new class beyond the domain type and DTO, no new file, no
+second subscription**.
+
+- **An eighth connection-scoped projection.** `private val thinkingProgressByConversation =
+  MutableStateFlow<Map<String, ThinkingProgress>>(emptyMap())` — a structural sibling of
+  `apiRetryByConversation`/`modelMenusByConversation`, not `stalledConversations`/`compactingConversations`:
+  `thinking_progress` carries a reading, which a bare `Set` cannot represent. Written from **three**
+  places on the one `init` inbound collector, so none race: the `thinking_progress` arm replaces an
+  entry, and the `turn_end`/`session_transition` arms each remove one. Empty per connection (#351) → a
+  reading never survives a reconnect.
+- **One demux hook — a full replace, inside the existing `interactive` gate, with no monotonicity
+  guard possible by construction.** A **new** `TYPE_THINKING_PROGRESS` arm: `decodeThinkingProgress(envelope)?.let
+  { (conversationId, reading) -> thinkingProgressByConversation.update { it + (conversationId to
+  reading) } }`. The prior value is never read, so there is nowhere for a running maximum, a difference
+  between readings, or a truthiness gate to live — which matters here more than on any sibling, because
+  the reading restarts near zero at every inference-request boundary, several times inside one turn.
+  Like the `api_retry`/`compacting` siblings and unlike the live-session arm, this folds no thread row
+  and touches `stalledConversations` in **neither** direction (AC #4): not raising one is the wire
+  contract's explicit rule (the rate bound means a quiet window is not a stall), and not clearing one is
+  the `compacting` rule for the same reason it exists there.
+- **Two clearing hooks, because the wire carries no falling edge of its own.** Unlike every prior arm in
+  this family, `thinking_progress` cannot clear itself — so the clears live on **other** frames'
+  handling:
+  - **Turn end** — folded into the live-session arm's `is LiveSessionEvent.TurnEnd` branch, **not**
+    beside the pre-`when` stall clear: `thinkingProgressByConversation.update { it - event.conversationId
+    }`. This placement is load-bearing, not stylistic — hoisted beside the stall clear it would run on
+    **every** live event (`assistant_delta`, `tool_use`) rather than only at turn end, silently making
+    the reading near-useless while a naive turn-end test still passes. See [Thinking-progress state §
+    no falling edge](thinking-progress-state.md#the-reading-has-no-falling-edge--its-clears-live-on-other-arms)
+    for the negative-control test this placement needs.
+  - **Session transition** — a fourth write inside the existing `TYPE_SESSION_TRANSITION` arm, alongside
+    the thread-boundary fold and the settings-revision bump: `thinkingProgressByConversation.update { it
+    - conversationId }`. Both clears route by their own frame's decoded conversation id, so neither can
+    clear another conversation's reading; removing an absent key is a no-op.
+- **The method is a pure cold projection** (1:1 with `observeApiRetry`/`observeModelMenu`), issuing no
+  request:
+
+  ```kotlin
+  override fun observeThinkingProgress(conversationId: String): Flow<ThinkingProgress?> =
+      thinkingProgressByConversation.map { it[conversationId] }.distinctUntilChanged()
+  ```
+
+  An absent key is `null` — "no reading," never "not thinking," since absence proves nothing on this
+  wire. `distinctUntilChanged()` suppresses only value-*identical* re-emissions: a `thinking_progress`
+  for **another** conversation does not re-emit this flow, while a **falling** reading or a repeated `0`
+  is a different `ThinkingProgress` value and does reach the collector — precisely what a membership
+  `Set` could not express. A `StateFlow` always has a current value, so every collector (including a
+  `flatMapLatest` re-subscription through the facade) gets the current reading on subscription.
+- **`decodeThinkingProgress(envelope): Pair<String, ThinkingProgress>?`** mirrors `decodeApiRetry`: one
+  `try { dto.conversationId to ThinkingProgress(dto.estimatedTokens, dto.estimatedTokensDelta) } catch
+  (IllegalArgumentException) { null }` (`SerializationException ⊂` it). Both readings are plain `Long`s
+  carried verbatim (including a negative one — not this boundary's to reject), so — unlike
+  `decodeApiRetry`'s total `toStatus()` mapper — there is no unrecognized *value* to map and structural
+  malformation is the only null path. `ThinkingProgressPayloadDto` (all three fields strict-required,
+  `Long` not `Int` — the wire's 64-bit `int` width, the trap `QueuedMessage.id`'s KDoc records for
+  `queued_msg_id`) lives in `data/network/InteractivePayloads.kt`, with no `toX()` mapper: nothing is
+  narrowed or validated, so a mapper would be a ceremonial field copy.
+- **On the interface with a default — like `observeApiRetry`/`observeCompacting`/`observeModelMenu`,
+  unlike `liveSessionEvents`.** The thread needs the current-value reading through the
+  [`StableConversationRepository`](stable-conversation-repository.md) facade, so `observeThinkingProgress`
+  is a **defaulted** `ConversationRepository` method (`flowOf(null)`), with the facade and this repo
+  overriding it. The default absorbs the Fake/test-double cascade (no ≥5 split); no consumer cascade.
+  See [[post-352-connection-scoped-repo-behind-facade]].
+
+`security-sensitive`, but the repository stays plain orchestration: decode runs behind the
+already-authenticated Noise channel, `ThinkingProgress` carries two `Long`s and no `String` (no
+daemon-supplied text can structurally reach the UI through this arm — the narrowest payload in the
+family), and **nothing in the new arm or the decode logs the payload**, including the conversation id.
+See [Thinking-progress state § Security](thinking-progress-state.md#security).
+
 ## Live tool-call rows — `applyToolUse` / `applyToolResult` (#387)
 
 Correlate the v2 `tool_use` (start) / `tool_result` (completion)
