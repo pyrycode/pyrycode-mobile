@@ -64,6 +64,15 @@ class ConnectionStatusLineTest {
         )
     }
 
+    /** #841: a refused credential reads as down, with its own label so the cause is legible. */
+    @Test
+    fun relayPairingRejected_mapsToDown() {
+        assertEquals(
+            ConnectionLegVisual(ConnectionLegCategory.Down, "Pairing rejected", "Relay: pairing rejected"),
+            RelayLinkStatus.PairingRejected.toLegVisual(),
+        )
+    }
+
     // --- Pyrycode leg (PyrycodeLinkStatus) ---
 
     @Test
