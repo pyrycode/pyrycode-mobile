@@ -82,6 +82,7 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -148,6 +149,20 @@ class RemoteConversationRepository(
      * coordinator-wired instance outlives the connection.
      */
     private val replayCursor: ReplayCursor = ReplayCursor(),
+    /**
+     * The wall clock the usage-limit expiry reads (#802) — a **supplier**, not a value, for
+     * [negotiatedCapabilities]' reason: the expiry is evaluated every time a collector reads
+     * [observeUsageLimit], long after construction, so a captured instant would freeze it.
+     *
+     * [kotlinx.datetime.Instant] rather than a bare seconds `Long` is the type-level defence against
+     * the unit hazard this comparison carries: a caller supplying milliseconds would hand over a value
+     * a thousand times larger than any real `resets_at`, expiring every reading the instant it landed,
+     * with no type error and a symptom ("nothing ever shows") identical to the daemon having sent
+     * nothing. `Instant.epochSeconds` is the only route to a number here, so the unit cannot be got
+     * wrong. **Defaulted** so every existing construction (tests, the coordinator, the scripted
+     * harness) compiles unchanged; only a test supplies its own.
+     */
+    private val now: () -> Instant = Clock.System::now,
 ) : ConversationRepository {
     /**
      * The demuxed list projection: `null` until the first `conversations` snapshot loads, then the
@@ -195,14 +210,15 @@ class RemoteConversationRepository(
 
     /**
      * The per-conversation status readings, one small projection per wire event: stall (#395), queue
-     * (#460), API retry (#593), compaction (#596) and thinking progress (#801). Each owns its state, its
-     * decoder and its read. [onInbound] hands each its own envelope type behind the `interactive` gate,
-     * and the clears one event causes in another stay in the arm that causes them.
+     * (#460), API retry (#593), compaction (#596), usage limit (#802) and thinking progress (#801). Each
+     * owns its state, its decoder and its read. [onInbound] hands each its own envelope type behind the
+     * `interactive` gate, and the clears one event causes in another stay in the arm that causes them.
      */
     private val stallProjection = StallProjection()
     private val queueProjection = QueueProjection()
     private val apiRetryProjection = ApiRetryProjection()
     private val compactingProjection = CompactingProjection()
+    private val usageLimitProjection = UsageLimitProjection(now)
     private val thinkingProgressProjection = ThinkingProgressProjection()
 
     /**
@@ -702,6 +718,12 @@ class RemoteConversationRepository(
                 // Context-compaction status (#596): see [CompactingProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     compactingProjection.apply(envelope)
+                }
+            }
+            TYPE_RATE_LIMITED -> {
+                // What claude said about its usage-limit window (#802): see [UsageLimitProjection.apply].
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    usageLimitProjection.apply(envelope)
                 }
             }
             TYPE_THINKING_PROGRESS -> {
@@ -1623,6 +1645,8 @@ class RemoteConversationRepository(
     override fun observeApiRetry(conversationId: String): Flow<ApiRetryStatus> = apiRetryProjection.observe(conversationId)
 
     override fun observeCompacting(conversationId: String): Flow<Boolean> = compactingProjection.observe(conversationId)
+
+    override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> = usageLimitProjection.observe(conversationId)
 
     override fun observeThinkingProgress(conversationId: String): Flow<ThinkingProgress?> =
         thinkingProgressProjection.observe(conversationId)
@@ -2689,6 +2713,21 @@ class RemoteConversationRepository(
          * wire, so the state is cleared explicitly rather than inferred from forward progress.
          */
         const val TYPE_COMPACTING = "compacting"
+
+        /**
+         * Capability-gated status event: what claude said about its usage-limit window
+         * `{conversation_id, status, limit_type, resets_at, utilization, truncated_fields}` (#802,
+         * pyrycode#1405/#1410). **A frame is not proof the turn was blocked** — the one measured
+         * non-benign status was seen on an account whose turns all ran normally — so this reports what
+         * claude said, not that the user is rate limited. `status` carries the clearing edge when it
+         * holds the benign value, and that clear names a *different* `limit_type` than the warning it
+         * clears, so it pairs by `conversation_id` and never by limit. Unlike [TYPE_COMPACTING]'s
+         * clearing edge this one is **session-scoped**, so a warning raised before a `/clear` or a
+         * session eviction is never followed by one — hence the read-time expiry on
+         * [observeUsageLimit]. Conversation-scoped: no `turn_id`, and receiving one neither opens nor
+         * closes a turn.
+         */
+        const val TYPE_RATE_LIMITED = "rate_limited"
 
         /**
          * Capability-gated status event: how far a conversation's current reasoning has got

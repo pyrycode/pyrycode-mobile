@@ -66,13 +66,15 @@ outside `ConversationRepository` and screen state.
 
 ## Status projections: one file per status event
 
-Since 2026-09-22 the five status events the thread observes each live in their own small internal class
+Since 2026-09-22 the status events the thread observes each live in their own small internal class
 beside the repository: `StallProjection` (#395), `QueueProjection` (#460), `ApiRetryProjection` (#593),
-`CompactingProjection` (#596) and `ThinkingProgressProjection` (#801). Each holds the state, the decoder
-and the cold read that used to sit in `RemoteConversationRepository`, under the same names, so the
-per-event sections in the
+`CompactingProjection` (#596), `ThinkingProgressProjection` (#801) and `UsageLimitProjection` (#802).
+Each holds the state, the decoder and the cold read that used to sit in `RemoteConversationRepository`,
+under the same names, so the per-event sections in the
 [thread-observables document](remote-conversation-repository-thread-observables.md) still describe
-them. Only the owning class changed, and behaviour did not.
+them. Only the owning class changed, and behaviour did not. `UsageLimitProjection` is the newest member
+and the only one whose clearing edge is self-contained: a benign `status` frame clears its own entry
+inside `apply`, so it needs no hook on another event's arm the way the stall/thinking-progress clears do.
 
 The repository keeps three things. Its `onInbound` arm checks the negotiated `interactive` capability
 and calls the projection's `apply(envelope)`. Its `observe…` override returns the projection's
