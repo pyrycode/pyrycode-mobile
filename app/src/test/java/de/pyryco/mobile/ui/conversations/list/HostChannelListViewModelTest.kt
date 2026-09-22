@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.preferencesOf
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.viewModelScope
+import de.pyryco.mobile.data.cache.FileConversationCache
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.crypto.PairedServerEntry
@@ -24,12 +25,14 @@ import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.StableConversationRepository
+import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.di.HostConversationConnection
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.KoinHostSources
 import de.pyryco.mobile.di.ObservablePairedServerStore
 import de.pyryco.mobile.di.appModule
 import de.pyryco.mobile.di.conversationRepositoryModule
+import de.pyryco.mobile.di.forgetRemovedHost
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 import kotlinx.coroutines.CancellationException
@@ -64,12 +67,17 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.koin.core.KoinApplication
 import org.koin.dsl.module
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class HostChannelListViewModelTest {
+    @get:Rule
+    val tmp = TemporaryFolder()
+
     private val dispatcher = UnconfinedTestDispatcher()
     private val fixtures = mutableListOf<Fixture>()
     private val hostSources = KoinHostSources()
@@ -1016,6 +1024,49 @@ class HostChannelListViewModelTest {
         }
 
     @Test
+    fun confirmingUnpairRemovesThatHostsCachedContentAndOnlyAfterTheRemovalSucceeded() =
+        runTest(dispatcher) {
+            // #798 AC #1 and #4, driven from the gesture through the production removal hook.
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            val thread = listOf<ThreadItem>(ThreadItem.MessageItem(message("cached reply")))
+            // "Host" and "host" differ only in case and hold a conversation of the same id.
+            for (id in listOf("Host", "host")) {
+                f.cache.writeConversations(id, listOf(row("c1", promoted = true, label = "cached name")))
+                f.cache.writeThread(id, "c1", thread)
+            }
+
+            f.vm.openHostEditor("Host")
+            runCurrent()
+            f.vm.requestHostUnpair()
+            runCurrent()
+
+            // A failed removal leaves the host paired, so its content stays readable.
+            f.store.failRemove = true
+            f.vm.confirmHostUnpair()
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.hostEditor).unpairFailed)
+            assertEquals(listOf("c1"), f.cache.readConversations("Host").map { it.id })
+            assertEquals(thread, f.cache.readThread("Host", "c1"))
+
+            f.store.failRemove = false
+            f.vm.confirmHostUnpair()
+            runCurrent()
+
+            assertNull(f.store.loadById("Host"))
+            assertNull(f.vm.hostState.value.hostEditor)
+            assertEquals(emptyList<Conversation>(), f.cache.readConversations("Host"))
+            assertEquals(emptyList<ThreadItem>(), f.cache.readThread("Host", "c1"))
+            // Every other paired host keeps its content.
+            assertEquals(listOf("c1"), f.cache.readConversations("host").map { it.id })
+            assertEquals(thread, f.cache.readThread("host", "c1"))
+            assertTrue(
+                "no server id, conversation id or cached text may reach a log line: $logs",
+                logs.none { "Host" in it || "c1" in it || "cached" in it },
+            )
+        }
+
+    @Test
     fun aFailedUnpairStaysOnTheConfirmationAndChangesNothing() =
         runTest(dispatcher) {
             val f = fixture()
@@ -1143,6 +1194,10 @@ class HostChannelListViewModelTest {
 
         // #790: hoisted for the same reason, so a test can seed drafts and read back which survived.
         val drafts = ComposerDraftStore()
+
+        // #798: the real file cache, so a test can seed conversation content and read back which host's
+        // content survived an unpair. Bound through the production hook below, not a restatement of it.
+        val cache = FileConversationCache(tmp.newFolder(), dispatcher)
         val app =
             KoinApplication.init().modules(
                 appModule,
@@ -1154,7 +1209,7 @@ class HostChannelListViewModelTest {
                     // this fixture previously bypassed — the removal-driven draft eviction lives on it.
                     // Transparent to every other case here: delegation forwards the reads, and the
                     // revision it bumps has no observer in this file.
-                    single<PairedServerCollectionStore> { ObservablePairedServerStore(store, drafts::clearHost) }
+                    single<PairedServerCollectionStore> { ObservablePairedServerStore(store, forgetRemovedHost(drafts, lazyOf(cache))) }
                 },
             )
         val vm = app.koin.get<ChannelListViewModel>()

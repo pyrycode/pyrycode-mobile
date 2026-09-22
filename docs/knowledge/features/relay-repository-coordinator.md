@@ -74,6 +74,8 @@ class RelayRepositoryCoordinator(
     suspend fun answerModal(modalId: String, optionId: String)  // (#451) outbound modal_answer passthrough — the inbound-modal mirror, but a call not a flow
     suspend fun cancelModal(modalId: String)                    // (#451) outbound modal_cancel passthrough
     suspend fun interrupt(conversationId: String)                // explicit conversation target; fire-and-forget
+    suspend fun answerQuestionBatch(questionBatchId: String, answers: List<QuestionAnswer>)  // (#825) outbound question_answer passthrough; validated + fire-and-forget
+    suspend fun refuseQuestionBatch(questionBatchId: String)      // (#825) outbound question_refused passthrough
     fun requestDebugBundle(): DebugBundleTransfer               // one attempt on this host's current Open connection
     fun start()   // idempotent — launches the single connections collector on the coordinator scope
     fun close()   // tears down the active connection (wiping pump keys) + cancels the coordinator scope
@@ -334,6 +336,14 @@ connection dropping the old batches before a re-sent one is held once under its 
 coordinators (hosts A and B) with equal conversation and batch ids showing only the host that actually
 received the frame. All four reuse the existing `FakeManagedPump` harness — no new fake.
 
+[#825](https://github.com/pyrycode/pyrycode-mobile/issues/825) added three coordinator cases to the same
+file: with equal batch ids held on hosts A and B, answering and refusing on A puts frames on A's pump
+only; a batch held on a prior connection fails `IllegalStateException` after a reconnect with nothing
+sent; and calling either method with no active connection throws the same exception. All three reuse
+`FakeManagedPump` — no new fake. The reconnect case does not itself distinguish the fresh repository's
+empty hold from the no-active-connection guard (a non-blocking verifier NIT); the reset-on-reconnect path
+it relies on is separately covered by the #822 reconnect test above.
+
 [#493](../codebase/493.md) added three reconnect-gating tests that **collect every `currentRepository`
 emission** across a **direct A→B** reconnect (no interposed `null`): with connection A `Open` and B's fresh
 pump left at `Handshaking`, B's repo must never appear (`reconnect_directAtoB_neverExposesRepoWhileNewPumpHandshaking`
@@ -369,7 +379,12 @@ The existing key-wipe / single-use-pump / no-carryover tests pass **unmodified**
   [clarification-batch projection](relay-repository-coordinator-seams-and-passthroughs.md#question-batch-projection-822):
   switches the concrete repository's [`questionBatches`](remote-conversation-repository-live-stream-and-modals.md#questionbatches--the-v2-clarification-batch-decodefold-seam-822)
   the same way as `modalEvents`, but — unlike `currentModal` (#492) — resets to empty on every reconnect
-  instead of retaining across one, because the daemon's connect-time reconcile rebuilds it.
+  instead of retaining across one, because the daemon's connect-time reconcile rebuilds it ·
+  [#825](https://github.com/pyrycode/pyrycode-mobile/issues/825) — the **outbound**
+  [`answerQuestionBatch` / `refuseQuestionBatch`](relay-repository-coordinator-seams-and-passthroughs.md#outbound-question-answer--refuse-passthrough-825)
+  passthrough (the `answerModal`/`interrupt` mirror): validates against the connection's held batches
+  before sending, gets no ack, and clears nothing — only `question_dismissed` or a reconnect retires a
+  batch.
 - Two-part status: [Connection status](connection-status.md) (`ConnectionStatus` + `PyrycodeLinkStatus`,
   [#392](../codebase/392.md)) — derived/published here; relay leg from
   [`relayStatus`](relay-link-status.md) ([#391](../codebase/391.md)); consumed by the Settings status
