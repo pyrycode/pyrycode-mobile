@@ -1,5 +1,7 @@
 package de.pyryco.mobile.ui.settings
 
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.hasAnyDescendant
@@ -8,6 +10,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
@@ -18,7 +21,9 @@ import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.ui.host.HostEditorState
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -360,6 +365,61 @@ class SettingsScreenTest {
 
         composeTestRule.onNode(hasText("Couldn't write the archive there.", substring = true)).assertExists()
         composeTestRule.onAllNodes(hasText("Saved to", substring = true)).assertCountEquals(0)
+    }
+
+    @Test
+    fun logDataModal_statesWhatTheArchiveCoversWithoutClippingIt() {
+        // The host name at the clamp's own bound, which is this modal's worst case: the scope sentence
+        // is 99 characters before it is interpolated at all, so a single-line treatment ellipsises it
+        // long before `not one conversation` — the half AC1 and the plan's security review both exist
+        // to guarantee, and the one the operator needs before choosing a destination.
+        setSettings(
+            logData =
+                DebugBundleDownloadState(
+                    hostName = "Pyrybox ".repeat(16).take(MAX_WORKSPACE_LABEL_CHARS),
+                    receiving = true,
+                ),
+        )
+
+        composeTestRule.onNode(hasText("not one conversation.", substring = true)).assertTextIsNotClipped()
+    }
+
+    @Test
+    fun logDataModal_namesTheSaveDestinationWithoutClippingIt() {
+        // AC3 requires the success line to name where the archive went, and the name comes from a
+        // third-party document provider that is free to return a long one.
+        setSettings(
+            logData =
+                DebugBundleDownloadState(
+                    hostName = "Pyrybox",
+                    savedTo = "Downloads/pyrycode/diagnostics/2026-09-22/pyrycode-debug-bundle.tar.gz",
+                ),
+        )
+
+        composeTestRule.onNode(hasText("Saved to", substring = true)).assertTextIsNotClipped()
+    }
+
+    /**
+     * Asserts the node's text is laid out in full rather than painted to a clip.
+     *
+     * Every `hasText` assertion above matches the **semantics** string, which `maxLines` does not bound:
+     * a sentence ellipsised after one line still carries its whole text into semantics, so those
+     * assertions pass identically whether the operator can read it or not. Reading the node's own
+     * [TextLayoutResult] is what closes that gap — [TextLayoutResult.hasVisualOverflow] is true exactly
+     * when the layout did not fit the space it was given.
+     */
+    private fun SemanticsNodeInteraction.assertTextIsNotClipped() {
+        val layouts = mutableListOf<TextLayoutResult>()
+        val readLayout =
+            requireNotNull(fetchSemanticsNode().config[SemanticsActions.GetTextLayoutResult].action) {
+                "node exposes no text layout to read"
+            }
+        readLayout(layouts)
+        val layout = layouts.firstOrNull() ?: throw AssertionError("node produced no text layout")
+        assertFalse(
+            "text is clipped after ${layout.lineCount} line(s): \"${layout.layoutInput.text}\"",
+            layout.hasVisualOverflow,
+        )
     }
 
     private fun setSettings(

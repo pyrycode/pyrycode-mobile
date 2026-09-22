@@ -357,3 +357,40 @@ No documentation-only acceptance criteria are carried forward from older tickets
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-22
+
+## Revisions
+
+### 2026-09-22 — modal copy wraps instead of clipping to one line
+
+**Driven by:** code review's MUST FIX on `DebugBundleDownload.kt` → `BoundedModalLine`.
+
+§ Design's clamp paragraph ends by requiring that both display strings "render through a
+`maxLines = 1` `Text` so an embedded newline cannot restructure the modal's content column", and
+§ Security review repeats `maxLines = 1` as the render-side half of its MUST FIX. That treatment was
+applied to *every* modal line rather than to the two interpolated values, and it is wrong for the
+lines it landed on. `log_data_scope` is 99 characters before a host name is interpolated, against a
+content column of roughly 355dp, so the sentence ellipsised well before `not one conversation` —
+defeating AC1's requirement that the modal say the archive covers the whole daemon, and § Security
+review's own SHOULD FIX that the copy carry both halves so the destination choice is informed. The
+same cause clipped `log_data_saved`'s destination name, which AC3 requires the success line to name.
+
+**New contract.** `ModalLine` (renamed from `BoundedModalLine`, which no longer describes it) renders
+`fillMaxWidth` prose with no `maxLines` and no overflow treatment; `MobileModal`'s content column
+already carries `verticalScroll`, so wrapping costs height only. The bound on externally authored text
+is unchanged and is the part that always mattered: `hostName` is clamped in `open()` and `savedTo` in
+`onDestination`, both to `MAX_WORKSPACE_LABEL_CHARS`. `maxLines` was never that bound — Compose
+measures the whole string regardless — so dropping it removes no protection. The in-tree split stands
+as the rule: `maxLines = 1` for a bare externally authored value in a fixed-height row
+(`EditHostModal`'s `IdentityRow`, which is what the Figma node draws), none for a sentence
+(`UnpairConfirmation`).
+
+**New proof.** `hasText` matches the semantics string, which `maxLines` does not bound, so the
+existing Compose assertions passed green on a line the operator could not read. Two tests now read the
+node's own `TextLayoutResult` and assert `hasVisualOverflow` is false — one over the scope sentence
+with a host name at the clamp's bound (the worst case), one over the saved line with a long
+provider-authored document name. Both fail against the previous render.
+
+**Also in this revision:** `DebugBundleModal` gains the five `@Preview` pairs § Design did not call
+for (receiving, ready, saving, saved, and a cancelled-picker retry at the name clamp), and
+`DEBUG_BUNDLE_FILE_NAME` / `DEBUG_BUNDLE_MEDIA_TYPE` become `internal`, matching every other
+declaration in the file that its consumers allow.

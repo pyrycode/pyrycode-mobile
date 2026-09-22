@@ -1,24 +1,28 @@
 package de.pyryco.mobile.ui.settings
 
 import android.content.ContentResolver
+import android.content.res.Configuration
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.text.format.Formatter
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.DebugBundleArchive
 import de.pyryco.mobile.data.repository.DebugBundleStatus
 import de.pyryco.mobile.data.repository.DebugBundleTransfer
 import de.pyryco.mobile.ui.components.MobileModal
+import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -33,10 +37,10 @@ import kotlinx.coroutines.withContext
 import java.io.OutputStream
 
 /** The document name every save suggests. Fixed: no daemon field may influence what is written. */
-const val DEBUG_BUNDLE_FILE_NAME = "pyrycode-debug-bundle.tar.gz"
+internal const val DEBUG_BUNDLE_FILE_NAME = "pyrycode-debug-bundle.tar.gz"
 
 /** The daemon assembles a gzip-wrapped tar; this is its media type, also fixed. */
-const val DEBUG_BUNDLE_MEDIA_TYPE = "application/gzip"
+internal const val DEBUG_BUNDLE_MEDIA_TYPE = "application/gzip"
 
 /**
  * The document a completed archive is written into, as the picker handed it back (#683).
@@ -353,7 +357,7 @@ internal fun DebugBundleModal(
 private fun ColumnScope.DebugBundleModalContent(state: DebugBundleDownloadState) {
     // Names the host and says what the archive covers: the whole daemon, and its paths and logs —
     // the operator is about to choose where that goes, so both halves belong here.
-    BoundedModalLine(stringResource(R.string.log_data_scope, state.hostName))
+    ModalLine(stringResource(R.string.log_data_scope, state.hostName))
     val progress =
         when {
             state.saving -> stringResource(R.string.log_data_saving)
@@ -366,24 +370,113 @@ private fun ColumnScope.DebugBundleModalContent(state: DebugBundleDownloadState)
                 )
             else -> null
         }
-    if (progress != null) BoundedModalLine(progress)
+    if (progress != null) ModalLine(progress)
 }
 
 /**
- * One line of modal copy, held to a single line.
+ * One line of modal copy, wrapped rather than clipped.
  *
- * Both values interpolated into this content are externally authored — a host name from a scanned
- * payload, a document name from a third-party provider — and both are already clamped in
- * [DebugBundleDownloadState]; `maxLines` is the render-side half, so an embedded newline cannot
- * restructure the content column either.
+ * Every line drawn here is a sentence the operator has to finish reading. The scope string is 99
+ * characters before a host name is interpolated into it, against a content column of roughly 355dp, so
+ * `maxLines = 1` ellipsised it long before `not one conversation` — the modal then stated neither whose
+ * daemon the archive covered nor what it contained, which is the one thing AC1 and the plan's security
+ * review both put there, and the saved line lost its destination name the same way. The shell's content
+ * column already scrolls, so wrapping costs height and nothing else.
+ *
+ * The bound on an externally authored value is the `take(MAX_WORKSPACE_LABEL_CHARS)` clamp applied where
+ * it enters [DebugBundleDownloadState], never anything here: `maxLines` bounds painting while Compose
+ * measures the whole string regardless, so it was never the protection it resembled. `maxLines = 1` is
+ * the right treatment for a bare value in a fixed-height row — `EditHostModal`'s `IdentityRow`, which is
+ * what the Figma node draws — and the wrong one for prose, which is how that frame's own
+ * `UnpairConfirmation` already renders a sentence naming a host.
  */
 @Composable
-private fun BoundedModalLine(text: String) {
+private fun ModalLine(text: String) {
     Text(
         text = text,
+        modifier = Modifier.fillMaxWidth(),
         style = MaterialTheme.typography.bodyMedium,
         color = MaterialTheme.colorScheme.onPrimaryContainer,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+@Composable
+private fun PreviewLogDataModal(state: DebugBundleDownloadState) {
+    PyrycodeMobileTheme {
+        DebugBundleModal(state = state, onRequest = {}, onSave = {}, onDismissRequest = {})
+    }
+}
+
+@Preview(name = "Log data receiving — Light", widthDp = 412, heightDp = 892, showBackground = true)
+@Preview(
+    name = "Log data receiving — Dark",
+    widthDp = 412,
+    heightDp = 892,
+    showBackground = true,
+    uiMode = Configuration.UI_MODE_NIGHT_YES,
+)
+@Composable
+private fun DebugBundleModalReceivingPreview() {
+    PreviewLogDataModal(DebugBundleDownloadState(hostName = "Pyrybox", receiving = true, acceptedChunks = 12))
+}
+
+@Preview(name = "Log data ready — Light", widthDp = 412, heightDp = 892, showBackground = true)
+@Preview(
+    name = "Log data ready — Dark",
+    widthDp = 412,
+    heightDp = 892,
+    showBackground = true,
+    uiMode = Configuration.UI_MODE_NIGHT_YES,
+)
+@Composable
+private fun DebugBundleModalReadyPreview() {
+    PreviewLogDataModal(DebugBundleDownloadState(hostName = "Pyrybox", readyBytes = 4_326_912))
+}
+
+@Preview(name = "Log data saving — Light", widthDp = 412, heightDp = 892, showBackground = true)
+@Preview(
+    name = "Log data saving — Dark",
+    widthDp = 412,
+    heightDp = 892,
+    showBackground = true,
+    uiMode = Configuration.UI_MODE_NIGHT_YES,
+)
+@Composable
+private fun DebugBundleModalSavingPreview() {
+    PreviewLogDataModal(DebugBundleDownloadState(hostName = "Pyrybox", saving = true, readyBytes = 4_326_912))
+}
+
+@Preview(name = "Log data saved — Light", widthDp = 412, heightDp = 892, showBackground = true)
+@Preview(
+    name = "Log data saved — Dark",
+    widthDp = 412,
+    heightDp = 892,
+    showBackground = true,
+    uiMode = Configuration.UI_MODE_NIGHT_YES,
+)
+@Composable
+private fun DebugBundleModalSavedPreview() {
+    PreviewLogDataModal(DebugBundleDownloadState(hostName = "Pyrybox", savedTo = DEBUG_BUNDLE_FILE_NAME))
+}
+
+@Preview(name = "Log data retry at the name clamp — Light", widthDp = 412, heightDp = 892, showBackground = true)
+@Preview(
+    name = "Log data retry at the name clamp — Dark",
+    widthDp = 412,
+    heightDp = 892,
+    showBackground = true,
+    uiMode = Configuration.UI_MODE_NIGHT_YES,
+)
+@Composable
+private fun DebugBundleModalCancelledPickerPreview() {
+    // The densest content this modal draws — scope, ready and a failure sentence at once — over a host
+    // name at the bound `open()` clamps to. This is the render the single-line treatment reduced to a
+    // name and an ellipsis, so it is the one worth looking at before trusting the copy.
+    PreviewLogDataModal(
+        DebugBundleDownloadState(
+            hostName = "Pyrybox ".repeat(16).take(MAX_WORKSPACE_LABEL_CHARS),
+            readyBytes = 4_326_912,
+            failure = DebugBundleFailure.PICKER_CANCELLED,
+        ),
     )
 }
