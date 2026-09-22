@@ -45,6 +45,36 @@ internal data class ModelListPayloadDto(
 )
 
 /**
+ * Mobile Protocol v2 `request_model_list` request payload (#792): the phone→binary ask for one
+ * conversation's model menu, the third and last way a client gets one and the only one it can trigger
+ * itself. **Encode-only** — the daemon answers with a correlated [ModelListPayloadDto], *this same
+ * frame unchanged*, so there is no reply type to model here. Always encode through [MobileJson].
+ *
+ * Wire SSOT: `../pyrycode/docs/protocol-mobile.md` § *Asking for a model list on demand*. **One key,
+ * always present** (no `omitempty`), so nothing here is elided by [MobileJson]'s `explicitNulls =
+ * false`. Correlation rides [Envelope.inReplyTo], so there is **no request-id key** — the
+ * [RequestSessionSettingsPayloadDto] / `RequestHistoryPayloadDto` decision.
+ *
+ * It exists for the window the frame's two unsolicited paths leave open: the live lane emits once per
+ * claude child spawn to whoever is connected at that instant and the reconcile runs at handshake, so a
+ * conversation **created after the phone connected crosses neither edge**. A conversation with no
+ * session is answered too, from the daemon-wide vocabulary — that is the case this verb exists for, so
+ * "no session yet" is not a reason to withhold the ask.
+ *
+ * **SECURITY.** [conversationId] is a **lookup key the daemon validates against its own registry** —
+ * naming a conversation is not authorization. It travels as a payload *value* only: never a path
+ * component, a filename, a cache lookup or a log field. The empty string names nothing and is refused
+ * daemon-side, so the sender declines to put one on the wire rather than sending a frame it knows will
+ * be refused. A conn that did not negotiate `interactive` is answered with **nothing at all** — no
+ * menu, no error, not even a signal that the conversation exists — which is why the sender gates on
+ * that capability before building this payload and never waits on a reply that cannot come.
+ */
+@Serializable
+internal data class RequestModelListPayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+)
+
+/**
  * One element of [ModelListPayloadDto.models] (#791) — a single published model row.
  *
  * [resolvedModel], [value] and [displayName] are **required non-null strings**, and [effortLevels] is a

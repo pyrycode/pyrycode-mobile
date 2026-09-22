@@ -5291,6 +5291,306 @@ class RemoteConversationRepositoryTest {
             assertEquals(2, menus.size)
         }
 
+    // ---- #792: ask for a model menu the connect burst did not cover -----------------------------
+
+    // AC #1: a conversation with no retained menu is asked for one, and the payload is the single key.
+    @Test
+    fun modelMenuAsk_noRetainedMenu_sendsExactlyOneRequestNamingIt() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            collectModelMenu(repo, "c1")
+            runCurrent()
+
+            val asks = pump.modelListAsks()
+            assertEquals(1, asks.size)
+            assertEquals(
+                MobileJson.parseToJsonElement("""{"conversation_id":"c1"}"""),
+                asks.single().payload,
+            )
+        }
+
+    // AC #1 "once": the one-shot is per conversation per connection, not per collector.
+    @Test
+    fun modelMenuAsk_repeatedSubscriptions_askOnlyOnce() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            collectModelMenu(repo, "c1")
+            collectModelMenu(repo, "c1")
+            runCurrent()
+            collectModelMenu(repo, "c1")
+            runCurrent()
+
+            assertEquals(1, pump.modelListAsks().size)
+        }
+
+    // AC #1: a conversation that already holds a menu is not asked again.
+    @Test
+    fun modelMenuAsk_conversationAlreadyHoldingAMenu_isNeverAsked() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            pump.push(modelListEnvelope("c1", listOf(ROW_SONNET)))
+            runCurrent()
+
+            val menus = collectModelMenu(repo, "c1")
+            runCurrent()
+
+            assertEquals(emptyList<Envelope>(), pump.modelListAsks())
+            assertEquals(
+                ModelMenu(listOf(ModelMenuRow("claude-sonnet-5", "sonnet", "Sonnet 5", listOf("low", "high"), true, null)), 0),
+                menus.last(),
+            )
+        }
+
+    // AC #1: the reply is applied through the same retention path a broadcast frame takes, and the
+    // answered conversation is not asked a second time.
+    @Test
+    fun modelMenuAsk_correlatedReply_appliesThroughTheSameRetentionPathAndEndsTheAsking() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val menus = collectModelMenu(repo, "c1")
+            runCurrent()
+
+            val askId = pump.modelListAsks().single().id
+            pump.push(modelListEnvelope("c1", listOf(ROW_OPUS), droppedModels = 3, id = 41L, inReplyTo = askId))
+            runCurrent()
+            collectModelMenu(repo, "c1")
+            runCurrent()
+
+            assertEquals(
+                ModelMenu(listOf(ModelMenuRow("claude-opus-5", "opus[1m]", "Opus 5", listOf("high"), false, null)), 3),
+                menus.last(),
+            )
+            assertEquals(1, pump.modelListAsks().size)
+        }
+
+    // SECURITY (plan § Security review, trust boundaries): the correlation is consumed and discarded,
+    // never used to route the retention. A reply naming another conversation lands under the payload's
+    // id — the asked conversation stays unavailable rather than inheriting rows it was never sent.
+    @Test
+    fun modelMenuAsk_correlatedReplyNamingAnotherConversation_retainsUnderThePayloadIdOnly() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val asked = collectModelMenu(repo, "c1")
+            runCurrent()
+
+            val askId = pump.modelListAsks().single().id
+            pump.push(modelListEnvelope("c2", listOf(ROW_SONNET), id = 41L, inReplyTo = askId))
+            runCurrent()
+            val named = collectModelMenu(repo, "c2")
+            runCurrent()
+
+            assertEquals(listOf<ModelMenu?>(null), asked)
+            assertEquals(
+                ModelMenu(listOf(ModelMenuRow("claude-sonnet-5", "sonnet", "Sonnet 5", listOf("low", "high"), true, null)), 0),
+                named.last(),
+            )
+        }
+
+    // AC #4: nothing is sent on a connection that has not negotiated `interactive`.
+    @Test
+    fun modelMenuAsk_withoutInteractiveCapability_sendsNothing() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("push") })
+            val menus = collectModelMenu(repo, "c1")
+            runCurrent()
+
+            assertEquals(emptyList<Envelope>(), pump.modelListAsks())
+            assertEquals(listOf<ModelMenu?>(null), menus)
+        }
+
+    // The empty string names nothing and is refused daemon-side, so it is not sent at all.
+    @Test
+    fun modelMenuAsk_emptyConversationId_sendsNothing() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val menus = collectModelMenu(repo, "")
+            runCurrent()
+
+            assertEquals(emptyList<Envelope>(), pump.modelListAsks())
+            assertEquals(listOf<ModelMenu?>(null), menus)
+        }
+
+    // A send the transport refused is not an ask: the one-shot is rolled back so a later subscription
+    // may still ask, the reading keeps emitting, and nothing is thrown into the collector.
+    @Test
+    fun modelMenuAsk_sendRefusedByTransport_rollsBackTheOneShotAndKeepsTheReadingAlive() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val first = collectModelMenu(repo, "c1")
+            runCurrent()
+
+            pump.sendResult = true
+            collectModelMenu(repo, "c1")
+            runCurrent()
+
+            assertEquals(listOf<ModelMenu?>(null), first)
+            assertEquals(2, pump.modelListAsks().size)
+        }
+
+    // A transport that throws is absorbed exactly like one that reports a failed send: nothing reaches
+    // the subscribing collector, the reading keeps emitting, and the one-shot is rolled back.
+    @Test
+    fun modelMenuAsk_transportThrowsOnSend_isAbsorbedAndRollsBackTheOneShot() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.throwOnSend = true
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val first = collectModelMenu(repo, "c1")
+            runCurrent()
+
+            pump.throwOnSend = false
+            val second = collectModelMenu(repo, "c1")
+            runCurrent()
+
+            assertEquals(listOf<ModelMenu?>(null), first)
+            assertEquals(listOf<ModelMenu?>(null), second)
+            assertEquals(2, pump.modelListAsks().size)
+        }
+
+    // AC #2: `conversation.not_found` is terminal for that id — the reading stays unavailable and a
+    // later subscription does not ask again.
+    @Test
+    fun modelMenuAsk_conversationNotFound_isTerminalAndLeavesTheReadingUnavailable() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val menus = collectModelMenu(repo, "c1")
+            runCurrent()
+
+            pump.push(errorEnvelope(pump.modelListAsks().single().id, "conversation.not_found"))
+            runCurrent()
+            collectModelMenu(repo, "c1")
+            runCurrent()
+
+            assertEquals(listOf<ModelMenu?>(null), menus)
+            assertEquals(1, pump.modelListAsks().size)
+        }
+
+    // AC #2 + AC #3: `model_list.unavailable` means the same ask may succeed later — so the one-shot is
+    // released — WITHOUT anything re-sending. The live collector sees no second ask; only a NEW
+    // subscription asks again.
+    @Test
+    fun modelMenuAsk_modelListUnavailable_releasesTheOneShotWithoutResending() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val menus = collectModelMenu(repo, "c1")
+            runCurrent()
+
+            pump.push(errorEnvelope(pump.modelListAsks().single().id, "model_list.unavailable", retryable = true))
+            runCurrent()
+
+            assertEquals(1, pump.modelListAsks().size)
+
+            collectModelMenu(repo, "c1")
+            runCurrent()
+
+            assertEquals(2, pump.modelListAsks().size)
+            assertEquals(listOf<ModelMenu?>(null), menus)
+        }
+
+    // AC #3: an unrecognised code and an undecodable error payload both fail closed — terminal, no
+    // re-ask, no empty menu.
+    @Test
+    fun modelMenuAsk_unrecognisedCodeAndUndecodableError_areBothTerminal() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val unknown = collectModelMenu(repo, "c1")
+            val malformed = collectModelMenu(repo, "c2")
+            runCurrent()
+
+            val asks =
+                pump.modelListAsks().associateBy {
+                    it.payload.jsonObject
+                        .getValue("conversation_id")
+                        .jsonPrimitive.content
+                }
+            pump.push(errorEnvelope(asks.getValue("c1").id, "model_list.exploded", retryable = true))
+            pump.push(
+                Envelope(
+                    id = 98L,
+                    type = "error",
+                    ts = TS,
+                    payload = MobileJson.parseToJsonElement("""{"nope":1}"""),
+                    inReplyTo = asks.getValue("c2").id,
+                ),
+            )
+            runCurrent()
+            collectModelMenu(repo, "c1")
+            collectModelMenu(repo, "c2")
+            runCurrent()
+
+            assertEquals(2, pump.modelListAsks().size)
+            assertEquals(listOf<ModelMenu?>(null), unknown)
+            assertEquals(listOf<ModelMenu?>(null), malformed)
+        }
+
+    // A malformed correlated reply is still an answer: the correlation is consumed, the one-shot is not
+    // released, and the previously retained menu (here, none) stands.
+    @Test
+    fun modelMenuAsk_malformedCorrelatedReply_consumesTheCorrelationAndDoesNotReAsk() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val menus = collectModelMenu(repo, "c1")
+            runCurrent()
+
+            val askId = pump.modelListAsks().single().id
+            pump.push(
+                Envelope(
+                    id = 41L,
+                    type = "model_list",
+                    ts = TS,
+                    payload = MobileJson.parseToJsonElement("""{"models":[]}"""),
+                    inReplyTo = askId,
+                ),
+            )
+            runCurrent()
+            collectModelMenu(repo, "c1")
+            runCurrent()
+
+            assertEquals(listOf<ModelMenu?>(null), menus)
+            assertEquals(1, pump.modelListAsks().size)
+        }
+
+    // The ask's correlation ledger and `pendingRequests` are disjoint: a refusal addressed to the ask
+    // leaves a waiting correlated request untouched, and that request still fails on its own error.
+    @Test
+    fun modelMenuAsk_refusal_doesNotDisturbAWaitingCorrelatedRequest() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            collectModelMenu(repo, "c1")
+            runCurrent()
+            var failure: Throwable? = null
+            backgroundScope.launch {
+                failure = runCatching { repo.requestScreenSnapshot("c1") }.exceptionOrNull()
+            }
+            runCurrent()
+
+            val askId = pump.modelListAsks().single().id
+            val snapshotId = pump.sent.single { it.type == "request_snapshot" }.id
+            pump.push(errorEnvelope(askId, "model_list.unavailable", retryable = true))
+            runCurrent()
+
+            assertNull(failure)
+
+            pump.push(errorEnvelope(snapshotId, "snapshot.unavailable", retryable = true))
+            runCurrent()
+
+            assertEquals("snapshot.unavailable", (failure as RelayErrorException).code)
+        }
+
     // ---- #387: correlate tool_use/tool_result into live tool-call thread items with status ------
 
     // AC #1: a tool_use produces a running tool row carrying the tool name + input, empty output.
@@ -7755,6 +8055,9 @@ class RemoteConversationRepositoryTest {
         rows: List<ModelRowFixture>,
         droppedModels: Int = 0,
         id: Long = 1L,
+        /** Set to make the frame the correlated answer to a `request_model_list` (#792); the two
+         *  delivery paths are otherwise byte-identical, so the default is the unsolicited shape. */
+        inReplyTo: Long? = null,
     ): Envelope {
         val models =
             rows.joinToString(",") { row ->
@@ -7773,8 +8076,12 @@ class RemoteConversationRepositoryTest {
                 MobileJson.parseToJsonElement(
                     """{"conversation_id":"$conversationId","models":[$models],"dropped_models":$droppedModels}""",
                 ),
+            inReplyTo = inReplyTo,
         )
     }
+
+    /** Every `request_model_list` this connection sent, in order (#792). */
+    private fun FakeSessionPump.modelListAsks(): List<Envelope> = sent.filter { it.type == "request_model_list" }
 
     /** A raw `model_list` envelope carrying [payload] verbatim — for the malformed-payload probes. */
     private fun modelListProbe(
@@ -8065,8 +8372,12 @@ class RemoteConversationRepositoryTest {
         /** Togglable to simulate a not-`Open` session (`send` returns `false`, no frame sent). */
         var sendResult = true
 
+        /** Togglable to simulate a transport that throws rather than reporting a failed send (#792). */
+        var throwOnSend = false
+
         override fun send(envelope: Envelope): Boolean {
             sent += envelope
+            if (throwOnSend) throw IllegalStateException("transport down")
             return sendResult
         }
 

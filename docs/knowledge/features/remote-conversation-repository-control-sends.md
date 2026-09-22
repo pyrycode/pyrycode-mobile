@@ -228,3 +228,14 @@ sent by this control operation.
   tests cover the later boundary. A single-conversation test alone cannot expose
   dependence on prior activity. Cross-device live proof is tracked by
   [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679).
+
+## The on-demand ask — `request_model_list` (#792)
+
+Not documented in this file: the ask lives beside the retention it feeds, not beside this file's bare
+fire-and-forget sends. See [Live stream, modal seams and the replay cursor § The on-demand ask —
+`request_model_list`](remote-conversation-repository-live-stream-and-modals.md#the-on-demand-ask--request_model_list-792)
+for the trigger, the one-shot ledger, the split success/refusal reply paths and the no-retry rule. It
+differs from `interrupt` / `startNewSession` above in one load-bearing way: those two have no reply to
+await, while this verb's success (a `model_list` frame #791's own arm applies) and refusal (a correlated
+`error`) arrive on different arms, so neither the bare-send shape nor `sendAndAwaitReply` fits — the
+repository doc argues why in place.
