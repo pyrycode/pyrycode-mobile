@@ -2090,6 +2090,139 @@ class RemoteConversationRepositoryTest {
             assertTrue(good().getOrThrow().atStart)
         }
 
+    // ---- #645: requestHistory folds its page into the thread. The reduction and the merge are proven
+    // ---- exhaustively and without a relay in HistoryPageReducerTest; this block owns the WIRING —
+    // ---- that the fold happens at all, where it lands, and what it leaves alone -------------------
+
+    // AC #1: a page's rows reach observeMessages, oldest-first and ahead of what is already there,
+    // and the page is still returned to the caller for its cursor / at_start.
+    @Test
+    fun requestHistory_foldsThePageAheadOfTheLiveThreadAndStillReturnsIt() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = collectMessages(repo, "c1")
+            runCurrent()
+            pump.push(messageEnvelope("c1", "live-1", "user", "live", TS))
+            runCurrent()
+
+            val page = startRequestHistory(repo, "c1")
+            runCurrent()
+            val sentId = pump.sent.last { it.type == "request_history" }.id
+            pump.push(
+                historyPageEnvelope(
+                    inReplyTo = sentId,
+                    raw =
+                        """
+                        {"entries":[
+                          {"id":2,"type":"message","payload":{"conversation_id":"c1","message_id":"h2","role":"assistant","text":"b"},"ts":"2026-09-05T10:02:00Z"},
+                          {"id":1,"type":"message","payload":{"conversation_id":"c1","message_id":"h1","role":"user","text":"a"},"ts":"2026-09-05T10:01:00Z"}
+                        ],"cursor":"$CURSOR","at_start":false}
+                        """.trimIndent(),
+                ),
+            )
+            runCurrent()
+
+            assertEquals(listOf("h1", "h2", "live-1"), messageIds(thread.last()))
+            assertEquals(CURSOR, page().getOrThrow().cursor)
+        }
+
+    // Routing: the fold lands under the conversation the client ASKED about, never under an entry
+    // payload's own conversation_id — a hostile page cannot write into a neighbouring thread.
+    @Test
+    fun requestHistory_foldsUnderTheAskedConversation_notThePayloadsOwn() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val asked = collectMessages(repo, "c1")
+            val other = collectMessages(repo, "elsewhere")
+            runCurrent()
+
+            startRequestHistory(repo, "c1")
+            runCurrent()
+            val sentId = pump.sent.last { it.type == "request_history" }.id
+            pump.push(
+                historyPageEnvelope(
+                    inReplyTo = sentId,
+                    raw =
+                        """
+                        {"entries":[
+                          {"id":1,"type":"message","payload":{"conversation_id":"elsewhere","message_id":"h1","role":"user","text":"a"},"ts":"$TS"}
+                        ],"cursor":"","at_start":true}
+                        """.trimIndent(),
+                ),
+            )
+            runCurrent()
+
+            assertEquals(listOf("h1"), messageIds(asked.last()))
+            assertEquals(emptyList<ThreadItem>(), other.last())
+        }
+
+    // AC #4: a page of stored STATE frames folds no row and — the point of the criterion — reaches no
+    // live-state holder. A stored `stall` does not re-stall, a stored `api_retry` does not re-open the
+    // retry indicator, a stored `compacting` does not restart it, and none of them reach the live-event
+    // stream the thinking indicator and the modal overlay read.
+    @Test
+    fun requestHistory_pageOfStateFrames_leavesEveryLiveStateHolderUntouched() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = collectMessages(repo, "c1")
+            val stall = collectStall(repo, "c1")
+            val queue = collectQueue(repo, "c1")
+            val events = collectLiveEvents(repo)
+            val modals = collectModalEvents(repo)
+            runCurrent()
+
+            startRequestHistory(repo, "c1")
+            runCurrent()
+            val sentId = pump.sent.last { it.type == "request_history" }.id
+            pump.push(
+                historyPageEnvelope(
+                    inReplyTo = sentId,
+                    raw =
+                        """
+                        {"entries":[
+                          {"id":5,"type":"modal_shown","payload":{"modal_id":"md","class":"permission","title":"t","prompt":"p","options":[],"default_option_id":""},"ts":"$TS"},
+                          {"id":4,"type":"compacting","payload":{"conversation_id":"c1","active":true},"ts":"$TS"},
+                          {"id":3,"type":"api_retry","payload":{"conversation_id":"c1","active":true,"attempt":{"current":1,"total":3}},"ts":"$TS"},
+                          {"id":2,"type":"queue_state","payload":{"conversation_id":"c1","queued":[{"queued_msg_id":1,"text":"q","ts":"$TS"}]},"ts":"$TS"},
+                          {"id":1,"type":"turn_state","payload":{"conversation_id":"c1","state":"thinking"},"ts":"$TS"}
+                        ],"cursor":"","at_start":true}
+                        """.trimIndent(),
+                ),
+            )
+            runCurrent()
+
+            assertEquals(emptyList<ThreadItem>(), thread.last())
+            assertEquals(listOf(false), stall)
+            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
+            assertEquals(emptyList<LiveSessionEvent>(), events)
+            assertEquals(emptyList<ModalEvent>(), modals)
+        }
+
+    // A failed ask mutates nothing: the fold is unreachable on every failure path, so a rejected walk
+    // step leaves the thread exactly as the live lane left it.
+    @Test
+    fun requestHistory_rejectedAsk_foldsNothing() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = collectMessages(repo, "c1")
+            runCurrent()
+            pump.push(messageEnvelope("c1", "live-1", "user", "live", TS))
+            runCurrent()
+
+            val outcome = startRequestHistory(repo, "c1")
+            runCurrent()
+            val sentId = pump.sent.last { it.type == "request_history" }.id
+            pump.push(errorEnvelope(inReplyTo = sentId, code = "history.unavailable", message = "busy", retryable = true, id = 93L))
+            runCurrent()
+
+            assertTrue(outcome().exceptionOrNull() is RelayErrorException)
+            assertEquals(listOf("live-1"), messageIds(thread.last()))
+        }
+
     // ---- archive / unarchive (#549): archive_conversation / unarchive_conversation request →
     // ---- conversation_updated/error correlation, folding the is_archived flag ---------------------
 

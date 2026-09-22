@@ -333,4 +333,31 @@ criterion. Lessons go in the PR body for the documentation phase to fold into
 
 ## Revisions
 
-_(none yet)_
+### 2026-09-22 — implementation
+
+The design landed as planned; three things are worth recording because they are not visible in the diff.
+
+- **`RemoteConversationRepository`'s companion object widened from `private` to `internal`.** Not in the
+  plan. The eight wire-type constants the reduction dispatches on live in that companion, and the
+  alternative was re-spelling eight protocol strings in a second file. The constants are protocol
+  vocabulary, not state, so widening them grants no new mutation. Recorded here rather than left as an
+  unexplained diff hunk.
+- **The four turn-scoped arms share one `decodeLiveEvent` + `when` over the sealed `LiveSessionEvent`,**
+  rather than four per-type arms each casting its mapper's declared supertype. Same behaviour, no
+  unchecked casts, and it mirrors the repository's own `decodeLiveSessionEvent` shape.
+- **Open question 1 is resolved as planned — skip, do not update.** One consequence is worth stating
+  because a reader will ask: a page holding a `tool_result` for a tool row the *thread* already holds as
+  `Running` leaves that row `Running`, because the reduction folds against an empty accumulator and only
+  then merges. That is correct for the one window it can occur in — the ask-versus-answer race, where the
+  live lane still owns and will deliver that result — and updating in place would break AC #1's
+  order guarantee. Open question 2 is unchanged and still belongs to #646.
+
+**Sizing, measured rather than estimated.** § Sizing forecast ~880 lines of total written work against a
+ceiling of 800. The actual is **~1347** — 1026 added lines of code and tests plus a 321-line plan. The
+underestimate is entirely KDoc and test density: the reducer came in at 403 lines against a forecast of
+~240 and its test at 410 against ~280, both matching this repository's house style of carrying the
+rationale in KDoc rather than in a commit message. The split analysis in § Sizing is unchanged by the
+larger number — every candidate slice still produces a one-consumer child, so the floor rule still
+governs. What the miss does say is that a forecast drawn from a file-count sketch systematically
+undercounts in a codebase with this documentation density; a future estimate for work in this area should
+scale from #623's measured 914 lines rather than from a per-file guess.

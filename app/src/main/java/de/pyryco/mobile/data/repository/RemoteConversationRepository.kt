@@ -7,7 +7,6 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
-import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.ApiRetryPayloadDto
 import de.pyryco.mobile.data.network.ArchiveConversationPayloadDto
@@ -1024,38 +1023,19 @@ class RemoteConversationRepository(
     }
 
     /**
-     * Index of the [ThreadItem.MessageItem] in this thread whose [Message.id] is [id] and [Message.role]
-     * is [role], or -1 if none — the row guard shared by the four id+role folds (tool / assistant). The
-     * `is ThreadItem.MessageItem` type-guard namespaces message rows from [ThreadItem.SessionBoundary]
-     * rows, so a fold never mistakes a boundary for a message (and the `as` after a hit is always safe).
-     */
-    private fun List<ThreadItem>.indexOfMessage(
-        id: String,
-        role: Role,
-    ): Int = indexOfFirst { it is ThreadItem.MessageItem && it.message.id == id && it.message.role == role }
-
-    /**
      * Append [rows] (`conversationId -> Message`) into [threadByConversation] as [ThreadItem.MessageItem]
-     * rows in one atomic [MutableStateFlow.update], preserving order and deduping by `message_id`: a
-     * first-seen id is appended at the end, a repeat id replaces the existing message row **in place**
-     * (position fixed at first occurrence, last write wins). The `is ThreadItem.MessageItem` guard skips
-     * any interleaved [ThreadItem.SessionBoundary] so a message_id never matches a boundary row. Batching
-     * a whole chunk into one update avoids emitting an intermediate list per row. No-op on an empty batch
-     * so a malformed/empty chunk never re-emits.
+     * rows in one atomic [MutableStateFlow.update], preserving order and deduping by `message_id` — the
+     * per-row fold is [withMessage], which #645 lifted out of this class so the history reduction runs
+     * the **same** fold rather than a second copy of it (see `HistoryPageReducer`). Batching a whole
+     * chunk into one update avoids emitting an intermediate list per row. No-op on an empty batch so a
+     * malformed/empty chunk never re-emits.
      */
     private fun appendMessages(rows: List<Pair<String, Message>>) {
         if (rows.isEmpty()) return
         threadByConversation.update { current ->
             val updated = current.toMutableMap()
             for ((conversationId, message) in rows) {
-                val existing = updated[conversationId].orEmpty()
-                val index = existing.indexOfFirst { it is ThreadItem.MessageItem && it.message.id == message.id }
-                updated[conversationId] =
-                    if (index >= 0) {
-                        existing.toMutableList().apply { this[index] = ThreadItem.MessageItem(message) }
-                    } else {
-                        existing + ThreadItem.MessageItem(message)
-                    }
+                updated[conversationId] = updated[conversationId].orEmpty().withMessage(message)
             }
             updated
         }
@@ -1141,31 +1121,15 @@ class RemoteConversationRepository(
      * fallback; [Message.timestamp] = [Clock.System.now], the established locally-assembled-row clock —
      * thread order is arrival order, never a timestamp sort) mirror [sendMessage]'s posture. The tool
      * name/input/output are carried **verbatim** — never trimmed, parsed, or logged (Security review).
+     *
+     * The row logic itself moved to [withToolUse] in #645, as did the three sibling folds below, so the
+     * history reduction runs these exact folds instead of a second copy — see `HistoryPageReducer`. Each
+     * method here is now just the projection write: read this conversation's slice, fold, put it back.
+     * The clock is the one thing the two lanes differ on, which is why it is a parameter there.
      */
     private fun applyToolUse(event: LiveSessionEvent.ToolUse) {
         threadByConversation.update { current ->
-            val existing = current[event.conversationId].orEmpty()
-            if (existing.indexOfMessage(event.toolUseId, Role.Tool) >= 0) {
-                current
-            } else {
-                val row =
-                    Message(
-                        id = event.toolUseId,
-                        sessionId = "",
-                        role = Role.Tool,
-                        content = event.name,
-                        timestamp = Clock.System.now(),
-                        isStreaming = false,
-                        toolCall =
-                            ToolCall(
-                                toolName = event.name,
-                                input = event.inputSummary,
-                                output = "",
-                                status = ToolCallStatus.Running,
-                            ),
-                    )
-                current + (event.conversationId to (existing + ThreadItem.MessageItem(row)))
-            }
+            current + (event.conversationId to current[event.conversationId].orEmpty().withToolUse(event, Clock.System.now()))
         }
     }
 
@@ -1181,22 +1145,7 @@ class RemoteConversationRepository(
      */
     private fun applyToolResult(event: LiveSessionEvent.ToolResult) {
         threadByConversation.update { current ->
-            val existing = current[event.conversationId].orEmpty()
-            val index = existing.indexOfMessage(event.toolUseId, Role.Tool)
-            if (index < 0) {
-                current
-            } else {
-                val row = (existing[index] as ThreadItem.MessageItem).message
-                val updated =
-                    row.copy(
-                        toolCall =
-                            row.toolCall?.copy(
-                                output = event.resultSummary,
-                                status = if (event.isError) ToolCallStatus.Failed else ToolCallStatus.Done,
-                            ),
-                    )
-                current + (event.conversationId to existing.toMutableList().apply { this[index] = ThreadItem.MessageItem(updated) })
-            }
+            current + (event.conversationId to current[event.conversationId].orEmpty().withToolResult(event))
         }
     }
 
@@ -1224,24 +1173,7 @@ class RemoteConversationRepository(
      */
     private fun applyAssistantDelta(event: LiveSessionEvent.AssistantDelta) {
         threadByConversation.update { current ->
-            val existing = current[event.conversationId].orEmpty()
-            val index = existing.indexOfMessage(event.turnId, Role.Assistant)
-            if (index >= 0) {
-                val row = (existing[index] as ThreadItem.MessageItem).message
-                val updated = row.copy(content = row.content + event.text)
-                current + (event.conversationId to existing.toMutableList().apply { this[index] = ThreadItem.MessageItem(updated) })
-            } else {
-                val row =
-                    Message(
-                        id = event.turnId,
-                        sessionId = "",
-                        role = Role.Assistant,
-                        content = event.text,
-                        timestamp = Clock.System.now(),
-                        isStreaming = true,
-                    )
-                current + (event.conversationId to (existing + ThreadItem.MessageItem(row)))
-            }
+            current + (event.conversationId to current[event.conversationId].orEmpty().withAssistantDelta(event, Clock.System.now()))
         }
     }
 
@@ -1257,22 +1189,7 @@ class RemoteConversationRepository(
      */
     private fun finalizeAssistantTurn(event: LiveSessionEvent.TurnEnd) {
         threadByConversation.update { current ->
-            val existing = current[event.conversationId].orEmpty()
-            val index = existing.indexOfMessage(event.turnId, Role.Assistant)
-            if (index < 0) {
-                current
-            } else {
-                val row = (existing[index] as ThreadItem.MessageItem).message
-                if (!row.isStreaming) {
-                    current
-                } else {
-                    current +
-                        (
-                            event.conversationId to
-                                existing.toMutableList().apply { this[index] = ThreadItem.MessageItem(row.copy(isStreaming = false)) }
-                        )
-                }
-            }
+            current + (event.conversationId to current[event.conversationId].orEmpty().withFinalizedTurn(event))
         }
     }
 
@@ -1420,9 +1337,10 @@ class RemoteConversationRepository(
 
     /**
      * One backward step of [conversationId]'s history walk over v2 `request_history` (#623, server
-     * pyrycode#2113/#2116). The [rename] shape — encode → [sendAndAwaitReply] → typed-decode — **minus
-     * the state fold**: a page is returned to the caller and folded into the timeline by #645, so this
-     * repository touches no projection and nothing here is cached.
+     * pyrycode#2113/#2116). The [rename] shape — encode → [sendAndAwaitReply] → typed-decode — and,
+     * since #645, **one** state fold: the decoded page goes through [mergeHistoryPage] into
+     * [conversationId]'s thread before it is returned. Still nothing is cached, and the page itself is
+     * returned unchanged for the walking caller's `cursor` / `atStart`.
      *
      * [cursor] and [limit] are forwarded **verbatim** (as [rename] forwards the dialog's name). The
      * cursor is opaque — never parsed, rebuilt or validated here — and the daemon re-validates both:
@@ -1463,7 +1381,43 @@ class RemoteConversationRepository(
         // Throws on a server `error` / not-Open session before the decode below. The reply is the
         // {entries,cursor,at_start} page; a malformed one throws here and mutates nothing.
         val reply = sendAndAwaitReply(request)
-        return MobileJson.decodeFromJsonElement<HistoryPagePayloadDto>(reply).toHistoryPage()
+        val page = MobileJson.decodeFromJsonElement<HistoryPagePayloadDto>(reply).toHistoryPage()
+        mergeHistoryPage(conversationId, page)
+        return page
+    }
+
+    /**
+     * Fold one decoded [page] into [conversationId]'s thread (#645) — the write #623's [requestHistory]
+     * KDoc promised this ticket would add, and the **only** projection this verb touches. The page is
+     * still returned to the caller unchanged: a walking caller needs `cursor` / `atStart` to decide
+     * whether to ask again, and #646 owns that decision.
+     *
+     * The reduction and the merge both run **inside** the [MutableStateFlow.update] lambda, and that is
+     * load-bearing rather than stylistic: reading the current thread, merging and assigning are one
+     * check-then-act, so hoisting them out would silently lose a concurrent live append every time the
+     * CAS retried. The cost of re-running a pure reduction on a retry is the right trade.
+     *
+     * Routes **strictly into [conversationId]'s slice** — the conversation the client asked about — and
+     * never reads an entry payload's own `conversation_id`, so a page structurally cannot write into
+     * another conversation's thread. [reduceHistoryPage] returns rows carrying no conversation identity
+     * at all, which is what makes that a property of the types rather than of a check.
+     *
+     * Gated on the negotiated `interactive` capability exactly as the live arms are, arm for arm: the six
+     * structured types reduce only when it was negotiated, `message` / `send_message` always do. The
+     * daemon's `request_history` handler has no such gate, so this is the client's fail-closed half.
+     *
+     * Emits no log on any branch, like the rest of this class.
+     */
+    private fun mergeHistoryPage(
+        conversationId: String,
+        page: HistoryPage,
+    ) {
+        if (page.entries.isEmpty()) return
+        val interactive = CAPABILITY_INTERACTIVE in negotiatedCapabilities()
+        threadByConversation.update { current ->
+            val existing = current[conversationId].orEmpty()
+            current + (conversationId to existing.mergeHistoryRows(reduceHistoryPage(page.entries, interactive)))
+        }
     }
 
     /**
@@ -2247,7 +2201,13 @@ class RemoteConversationRepository(
         return MobileJson.decodeFromJsonElement<WorkspaceFolderCreatedPayloadDto>(reply).path
     }
 
-    private companion object {
+    /**
+     * Widened from `private` to `internal` by #645 so [reduceHistoryPage] can dispatch a stored
+     * [HistoryEntry.type] against the **same** wire-string declarations this class demuxes live frames
+     * on, rather than re-spelling eight protocol strings in a second place. The constants are protocol
+     * vocabulary, not state — nothing here becomes writable by widening it.
+     */
+    internal companion object {
         /** Request: list the conversations (payload `{}` per protocol). */
         const val TYPE_LIST_CONVERSATIONS = "list_conversations"
 
