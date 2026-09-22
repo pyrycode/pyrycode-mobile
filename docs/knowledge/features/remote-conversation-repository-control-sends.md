@@ -229,6 +229,70 @@ sent by this control operation.
   dependence on prior activity. Cross-device live proof is tracked by
   [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679).
 
+<a id="answerquestionbatch--refusequestionbatch--the-v2-question_answer--question_refused-sends-825"></a>
+
+## `answerQuestionBatch(questionBatchId, answers)` / `refuseQuestionBatch(questionBatchId)` — the v2 `question_answer` / `question_refused` sends (#825)
+
+The outbound half of the [`questionBatches`](remote-conversation-repository-live-stream-and-modals.md#questionbatches--the-v2-clarification-batch-decodefold-seam-822)
+seam: resolves a held `QuestionBatch` (`data/model/QuestionBatch.kt`) with an operator's answer or a
+refusal. Per `protocol-mobile.md` § Question (v2), the daemon acks **neither** frame — an unknown or
+already-resolved batch, a malformed answer, and a device without the remote-permission grant are all
+dropped silently, and the inbound `question_dismissed` is the only resolution signal. So both methods
+check everything checkable **before** sending and never treat a sent frame as a resolution.
+
+```kotlin
+suspend fun answerQuestionBatch(questionBatchId: String, answers: List<QuestionAnswer>) {
+    val batch = heldQuestionBatch(questionBatchId)
+    require(answers.map { it.questionIndex }.sorted() == batch.questions.indices.toList()) {
+        "$TYPE_QUESTION_ANSWER must answer every question exactly once"
+    }
+    val payload = QuestionAnswerPayloadDto(
+        questionBatchId = questionBatchId,
+        answerToken = questionToken("answer", questionBatchId),
+        answers = answers.sortedBy { it.questionIndex }.map { QuestionAnswerEntryDto(it.questionIndex, it.values) },
+    )
+    sendQuestionFrame(TYPE_QUESTION_ANSWER, MobileJson.encodeToJsonElement(payload))
+}
+// refuseQuestionBatch(questionBatchId) is heldQuestionBatch(questionBatchId) + one question_refused frame, no answers.
+```
+
+- **Validates against this connection's own held state, not the coordinator's projection.** A private
+  `heldQuestionBatch` reads `mutableQuestionBatches.value` directly — the same state `questionBatches`
+  projects, but read before the coordinator's `stateIn` republishes it, which trails by a dispatch.
+  Validating against that trailing copy would briefly reject a batch that had just arrived and accept
+  one that had just been dismissed. Absent → `IllegalStateException` covers every batch this connection
+  cannot resolve: never shown, already dismissed, or dropped by the reconnect that rebuilt this
+  repository (the [question-batch projection](relay-repository-coordinator-seams-and-passthroughs.md#question-batch-projection-822)
+  resets to empty on every reconnect).
+- **`answers` must cover every held question exactly once.** One `require` compares the sorted index set
+  with `batch.questions.indices` — catching an empty list, a short or long list, a duplicate index, and
+  an out-of-range index in one check, all as `IllegalArgumentException` before any frame is built.
+  `QuestionAnswer.values` are the operator's strings, sent **verbatim** — never checked against the
+  offered labels, and a multi-select answer's several values keep their order. Entries go out sorted into
+  batch order regardless of the order the caller supplied them.
+- **Fire-and-forget, like `interrupt`:** `sendQuestionFrame` is `check(pump.send(...))`, never
+  `sendAndAwaitReply` — a reply would never come. A refused send throws `IllegalStateException` naming
+  only the frame type, and reaches the caller.
+- **No send clears the batch.** Neither method writes `mutableQuestionBatches`, on success or on any
+  failure above — the batch stays held until an inbound `question_dismissed` retires it or a reconnect
+  drops it. A `question_dismissed` landing between the held-state read and `pump.send` means the frame
+  goes out for a batch the daemon has already resolved; the daemon drops it, the same outcome as the
+  dismiss crossing the frame on the wire, and nothing local is corrupted since nothing was written.
+- **`questionToken(verb, questionBatchId) = "$verb:$questionBatchId"`** mints the `answer_token`: stable
+  across a retried send, different between an answer and a refusal of the same batch, and different
+  across batches — entirely from data already in hand, so no `SecureRandom` is needed (the protocol
+  states the token's secrecy does not matter; only stability and uniqueness do, and the daemon's real
+  dedup is its one-shot consume of the batch id). It carries no answer value and no claude-authored text.
+- **`security-sensitive` → static messages, no log.** Every `require`/`check` message here is a fixed
+  string naming only the frame-type constant — never the batch id, an answer value, or a claude-authored
+  `question`/`header`/`label`/`description`. Neither method reads those claude-authored fields at all;
+  validation only ever touches `questions.size`.
+- **Not reused:** `answerModal`'s option-id answer-token path and the modal DTOs. A question answer never
+  grants a permission — the send touches no modal state.
+- Reached through the [coordinator passthrough](relay-repository-coordinator-seams-and-passthroughs.md#outbound-question-answer--refuse-passthrough-825)
+  for [#661](https://github.com/pyrycode/pyrycode-mobile/issues/661)'s panel, the same
+  concrete-repo-then-coordinator path as `answerModal`/`cancelModal`.
+
 ## The on-demand ask — `request_model_list` (#792)
 
 Not documented in this file: the ask lives beside the retention it feeds, not beside this file's bare
