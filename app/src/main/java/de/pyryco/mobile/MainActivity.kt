@@ -350,6 +350,8 @@ internal fun PyryNavHost(
                             // Same rule again for editing (#744): the control's own host. The view model
                             // reads that host's stored record and owns the modal's target and flags.
                             is ChannelListEvent.TreeHostEditTapped -> vm.openHostEditor(event.serverId)
+                            // And for reconnecting (#840): the control's own host, retried alone.
+                            is ChannelListEvent.TreeHostReconnectTapped -> vm.reconnectHost(event.serverId)
                             is ChannelListEvent.HostEditNameSubmitted -> vm.submitHostName(event.name)
                             ChannelListEvent.HostEditDismissed -> vm.dismissHostEditor()
                             ChannelListEvent.HostUnpairRequested -> vm.requestHostUnpair()
