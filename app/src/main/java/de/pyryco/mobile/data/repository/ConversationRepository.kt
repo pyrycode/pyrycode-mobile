@@ -7,6 +7,7 @@ import de.pyryco.mobile.data.model.Session
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.datetime.Instant
+import kotlinx.serialization.json.JsonElement
 
 /**
  * Phase 1 data-layer contract. The fake (Phase 1) and Ktor-backed remote
@@ -253,6 +254,42 @@ interface ConversationRepository {
         conversationId: String,
         queuedMessageId: Long,
     ): Unit = error("dropQueuedMessage is not implemented for this ConversationRepository")
+
+    /**
+     * Fetches one page of [conversationId]'s stored history — the scroll-back read (#623). A client
+     * that opens an existing conversation sees only what arrived after it connected; this walks
+     * **backwards** through the daemon's on-disk log, newest-first, one page per call.
+     *
+     * **Not a reconnect backfill.** The daemon's replay ring is an in-memory catch-up across a dropped
+     * connection and is empty after a daemon restart; this log is on disk and survives one. A client
+     * uses both, and never joins their ids — see [HistoryEntry.id].
+     *
+     * @param cursor The [HistoryPage.cursor] the previous page handed back, echoed **verbatim** —
+     *   opaque, never parsed or rebuilt. Empty (the default) means "start at the newest", which is the
+     *   normal opening value of a walk and not a missing one.
+     * @param limit How many entries the caller wants. `0` (the default) asks the daemon to choose and
+     *   **never** means zero entries; a large ask is clamped rather than refused; and a page may come
+     *   back shorter than asked so the daemon's own frame fits its size cap. Read
+     *   [HistoryPage.entries]`.size`, never assume the ask was honoured — and never read a short page
+     *   as the start of the log ([HistoryPage.atStart] is the only signal for that). A negative value
+     *   is rejected by the daemon.
+     *
+     * Throws [IllegalArgumentException] for an unknown [conversationId] (the remote surfaces the
+     * server's `conversation.not_found` as that type, the fake throws it directly), and
+     * [de.pyryco.mobile.data.network.RelayErrorException] for any server error — the `history.*` codes
+     * are distinguishable by its `code`, and `history.unavailable` is the only **retryable** member.
+     * Throws [IllegalStateException] when the session is not connected, and the decode exception for a
+     * malformed page. Every failure is scoped to **this ask alone**: no projection is touched and no
+     * other conversation's state changes.
+     *
+     * Default throws — implementations without a history log (inline test doubles) inherit it, the
+     * same cascade-avoidance as [delete] / [requestScreenSnapshot] / [dropQueuedMessage].
+     */
+    suspend fun requestHistory(
+        conversationId: String,
+        cursor: String = "",
+        limit: Int = 0,
+    ): HistoryPage = error("requestHistory is not implemented for this ConversationRepository")
 }
 
 enum class ConversationFilter { All, Channels, Discussions, Archived }
@@ -340,6 +377,61 @@ enum class UnrecognizedSite { LineType, AssistantBlock, UserBlock, Undecodable }
 data class QueuedMessage(
     val id: Long,
     val text: String,
+    val timestamp: Instant,
+)
+
+/**
+ * One backward step of a history walk (#623) — the return of [ConversationRepository.requestHistory].
+ * The element type is co-located with the contract it serves, like [ThreadItem] / [QueuedMessage].
+ *
+ * @param entries This page's entries in the wire's **newest-first** order, preserved verbatim; the
+ *   client never re-sorts. An empty list is a normal page, not an error and not a termination signal.
+ * @param cursor The position to ask with next, opaque — store it and hand it back unexamined. Empty
+ *   whenever [atStart] is true, so the two are never both meaningful. Not a secret and not a
+ *   capability: it is unsigned by design and carries only the conversation id the caller already
+ *   knows. Authorization is pairing, enforced at the Noise handshake.
+ * @param atStart The start of the log was reached while filling this page — **the only termination
+ *   signal there is**. A walk stops on this and never on an empty [entries] list: a page that fills
+ *   exactly at the log's first entry reports `false` with a usable [cursor], and the call after it
+ *   returns no entries with `true`. A **short** page says nothing about the end of the log either —
+ *   the daemon narrows a page to fit its frame size cap without touching this flag.
+ */
+data class HistoryPage(
+    val entries: List<HistoryEntry>,
+    val cursor: String,
+    val atStart: Boolean,
+)
+
+/**
+ * One stored frame in a conversation's history log (#623) — a wire type, its payload, a timestamp and
+ * a durable id, which is what makes a loaded page renderable by re-reducing it **oldest-first**
+ * through the same timeline reducer the live stream already runs.
+ *
+ * **[type] and [payload] are replayed content and are exactly as untrusted as the live lane's** —
+ * operator-authored for a stored `send_message`, `claude`-authored for a stored assistant frame — so
+ * a consumer applies the same sanitisation it applies live: render as inert text, never as markup, a
+ * URL, a filename, a cache key or a log line. This is the [ThreadItem.UnrecognizedMessage] posture,
+ * and it holds for **every** entry, not only the unrecognized ones. Nothing in the data layer logs
+ * either field.
+ *
+ * @param id The **durable, per-conversation** log id: monotonic within one conversation and stable
+ *   across daemon restarts. **Never join it to a replay `event_id`** ([de.pyryco.mobile.data.network.Envelope.eventId]),
+ *   which is the in-memory ring's per-process id. They are different sequences that both look like
+ *   small integers, and some live frames carry no `event_id` at all.
+ * @param type The wire type the stored frame carried. **Nothing re-validates it**, so a consumer must
+ *   tolerate a type it does not recognise rather than treating one as a protocol violation — the same
+ *   forward-compatibility rule the wire applies to unknown fields.
+ * @param payload The stored frame's body, verbatim and still undecoded — a [JsonElement] rather than
+ *   a `String` so a consumer feeds it straight back into the same `MobileJson.decodeFromJsonElement`
+ *   arms the live lane uses, with no second parse and no second failure surface.
+ * @param timestamp When the entry was appended. Together with [type] it is the join key against the
+ *   live lane: an entry in a page and its twin on the live stream carry the same pair, which is how a
+ *   client meets the two with no gap and no duplicate.
+ */
+data class HistoryEntry(
+    val id: Long,
+    val type: String,
+    val payload: JsonElement,
     val timestamp: Instant,
 )
 

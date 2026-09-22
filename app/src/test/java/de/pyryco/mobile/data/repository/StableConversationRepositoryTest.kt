@@ -175,6 +175,7 @@ class StableConversationRepositoryTest {
             assertTrue(runCatching { facade.promote("c1", "Name", null) }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.requestScreenSnapshot("c1") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.dropQueuedMessage("c1", 42L) }.exceptionOrNull() is IllegalStateException)
+            assertTrue(runCatching { facade.requestHistory("c1") }.exceptionOrNull() is IllegalStateException)
         }
 
     // ---- AC #4: one-shots delegate verbatim to the live repo (args + return value) ---------------
@@ -195,14 +196,19 @@ class StableConversationRepositoryTest {
             val sendResult = facade.sendMessage("c1", "hi")
             val snapshotResult = facade.requestScreenSnapshot("c9")
             facade.dropQueuedMessage("c7", 99L)
+            // #623: the cursor and limit must arrive at the live repo untouched — an opaque cursor the
+            // facade re-encoded or a limit it "normalized" would break the walk one layer down.
+            val historyResult = facade.requestHistory("c8", cursor = "OPAQUE==", limit = 25)
 
             assertEquals(listOf<String?>("/ws"), repoA.createDiscussionCalls)
             assertEquals(listOf("c1" to "hi"), repoA.sendMessageCalls)
             assertEquals(listOf("c9"), repoA.requestScreenSnapshotCalls)
             assertEquals(listOf("c7" to 99L), repoA.dropQueuedMessageCalls)
+            assertEquals(listOf(Triple("c8", "OPAQUE==", 25)), repoA.requestHistoryCalls)
             assertSame(created, createResult)
             assertSame(sent, sendResult)
             assertEquals("screen!", snapshotResult)
+            assertSame(repoA.requestHistoryResult, historyResult)
         }
 
     // ---- AC #4: a throwing stub on the live repo passes through unchanged -------------------------
@@ -428,10 +434,12 @@ class StableConversationRepositoryTest {
         val sendMessageCalls = mutableListOf<Pair<String, String>>()
         val requestScreenSnapshotCalls = mutableListOf<String>()
         val dropQueuedMessageCalls = mutableListOf<Pair<String, Long>>()
+        val requestHistoryCalls = mutableListOf<Triple<String, String, Int>>()
 
         var createDiscussionResult: Conversation = conversation("created")
         var sendMessageResult: Message = message("sent")
         var requestScreenSnapshotResult: String = "snapshot-text"
+        var requestHistoryResult: HistoryPage = HistoryPage(entries = emptyList(), cursor = "", atStart = true)
 
         fun pushConversations(value: List<Conversation>) {
             conversations.value = value
@@ -484,6 +492,15 @@ class StableConversationRepositoryTest {
         ): Message {
             sendMessageCalls += (conversationId to text)
             return sendMessageResult
+        }
+
+        override suspend fun requestHistory(
+            conversationId: String,
+            cursor: String,
+            limit: Int,
+        ): HistoryPage {
+            requestHistoryCalls += Triple(conversationId, cursor, limit)
+            return requestHistoryResult
         }
 
         override suspend fun requestScreenSnapshot(conversationId: String): String {

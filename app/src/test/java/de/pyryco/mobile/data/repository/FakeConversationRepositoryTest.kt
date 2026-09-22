@@ -8,6 +8,8 @@ import de.pyryco.mobile.data.network.SetSessionSettingsPayloadDto
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.Instant
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -930,6 +932,133 @@ class FakeConversationRepositoryTest {
             )
         }
 
+    // ---- requestHistory (#623): an honest backward walk over the fake's own seeded messages -------
+
+    // AC #1/#2: the first ask (empty cursor) returns the NEWEST entries first, with durable ids that
+    // are the entries' positions in the log — the fake pages over real data rather than throwing.
+    @Test
+    fun requestHistory_firstPage_returnsNewestFirstWithDurableIds() =
+        runBlocking {
+            val repo = seededHistoryRepo(count = 30)
+
+            val page = repo.requestHistory(SEED_ID, limit = 3)
+
+            assertEquals(listOf(30L, 29L, 28L), page.entries.map { it.id })
+            assertEquals(listOf("m30", "m29", "m28"), page.entries.map { entryMessageId(it) })
+            assertFalse(page.atStart)
+        }
+
+    // AC #3: the full walk visits every entry exactly once, in descending id order, and terminates on
+    // `atStart` — never on an empty page. 30 entries over a page size of 7 means the last page is
+    // short (2 entries) and carries the terminal flag with it.
+    @Test
+    fun requestHistory_walk_visitsEveryEntryOnceAndTerminatesOnAtStart() =
+        runBlocking {
+            val repo = seededHistoryRepo(count = 30)
+            val visited = mutableListOf<Long>()
+            var cursor = ""
+            var pages = 0
+
+            while (true) {
+                val page = repo.requestHistory(SEED_ID, cursor = cursor, limit = 7)
+                visited += page.entries.map { it.id }
+                pages++
+                if (page.atStart) {
+                    assertEquals("a terminal page carries no cursor", "", page.cursor)
+                    break
+                }
+                cursor = page.cursor
+                assertTrue("a non-terminal page must hand back a usable cursor", cursor.isNotEmpty())
+            }
+
+            assertEquals((30L downTo 1L).toList(), visited)
+            assertEquals(5, pages)
+        }
+
+    // AC #3, the boundary a client that stopped on an empty page would get wrong: a page that fills
+    // EXACTLY at the log's first entry reports `atStart` false with a usable cursor, and only the call
+    // after it returns no entries with `atStart` true. A short page is never the end-of-log signal.
+    @Test
+    fun requestHistory_exactFillAtFirstEntry_defersAtStartToTheNextCall() =
+        runBlocking {
+            val repo = seededHistoryRepo(count = 10)
+
+            val filled = repo.requestHistory(SEED_ID, limit = 10)
+            assertEquals(10, filled.entries.size)
+            assertFalse("an exact fill has not yet learned the log ended", filled.atStart)
+            assertTrue(filled.cursor.isNotEmpty())
+
+            val terminal = repo.requestHistory(SEED_ID, cursor = filled.cursor, limit = 10)
+            assertEquals(emptyList<HistoryEntry>(), terminal.entries)
+            assertTrue(terminal.atStart)
+            assertEquals("", terminal.cursor)
+        }
+
+    // A non-positive limit asks the fake to choose, exactly as `0` asks the daemon to choose — it
+    // never means "zero entries".
+    @Test
+    fun requestHistory_nonPositiveLimit_usesTheFakesOwnPageSize() =
+        runBlocking {
+            val repo = seededHistoryRepo(count = 40)
+
+            assertEquals(FakeConversationRepository.FAKE_HISTORY_PAGE_SIZE, repo.requestHistory(SEED_ID).entries.size)
+            assertEquals(
+                FakeConversationRepository.FAKE_HISTORY_PAGE_SIZE,
+                repo.requestHistory(SEED_ID, limit = -1).entries.size,
+            )
+        }
+
+    // A conversation with no messages is the third page shape: no entries, empty cursor, at_start.
+    @Test
+    fun requestHistory_emptyLog_isTheTerminalShape() =
+        runBlocking {
+            val repo = seededHistoryRepo(count = 0)
+
+            val page = repo.requestHistory(SEED_ID)
+
+            assertEquals(emptyList<HistoryEntry>(), page.entries)
+            assertEquals("", page.cursor)
+            assertTrue(page.atStart)
+        }
+
+    // An unknown conversation throws IllegalArgumentException — the same type the remote surfaces for
+    // the daemon's `conversation.not_found`, so a consumer handles one type either way.
+    @Test
+    fun requestHistory_unknownConversation_throws() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+
+            assertTrue(
+                runCatching { repo.requestHistory("does-not-exist") }.exceptionOrNull() is IllegalArgumentException,
+            )
+        }
+
+    /** A repo whose [SEED_ID] conversation holds exactly [count] messages, one minute apart. */
+    private fun seededHistoryRepo(count: Int): FakeConversationRepository =
+        FakeConversationRepository(
+            initialMessages =
+                mapOf(
+                    SEED_ID to
+                        (1..count).map { n ->
+                            Message(
+                                id = "m$n",
+                                sessionId = "s1",
+                                role = if (n % 2 == 0) Role.Assistant else Role.User,
+                                content = "line $n",
+                                timestamp = Instant.parse("2026-05-10T10:00:00Z") + n.minutes,
+                                isStreaming = false,
+                            )
+                        },
+                ),
+        )
+
+    /** The `message_id` inside a fake history entry's `message`-shaped payload. */
+    private fun entryMessageId(entry: HistoryEntry): String =
+        entry.payload.jsonObject
+            .getValue("message_id")
+            .jsonPrimitive
+            .content
+
     private fun conv(
         promoted: Boolean,
         lastUsedAt: Instant,
@@ -943,4 +1072,9 @@ class FakeConversationRepositoryTest {
             isPromoted = promoted,
             lastUsedAt = lastUsedAt,
         )
+
+    private companion object {
+        /** The seeded channel whose messages the history-walk tests replace wholesale. */
+        const val SEED_ID = "seed-channel-personal"
+    }
 }

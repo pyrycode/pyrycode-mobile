@@ -1920,6 +1920,176 @@ class RemoteConversationRepositoryTest {
             assertEquals(emptyList<String>(), recents().getOrThrow())
         }
 
+    // ---- requestHistory (#623): request_history → history_page, a correlated one-shot read with no
+    // ---- projection fold. Page SHAPES are proven at the decode boundary (HistoryPayloadsTest); this
+    // ---- block owns the wire round-trip and the failure routing ----------------------------------
+
+    // AC #1: the sent envelope matches the request_history wire contract — the conversation, the
+    // cursor handed back verbatim and the limit, all three keys present under their snake_case names.
+    @Test
+    fun requestHistory_sendsConversationCursorAndLimit() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            startRequestHistory(repo, "c1", cursor = CURSOR, limit = 50)
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "request_history" }
+            assertEquals(
+                MobileJson.parseToJsonElement("""{"conversation_id":"c1","cursor":"$CURSOR","limit":50}"""),
+                sent.payload,
+            )
+
+            // Unblock the launched caller so backgroundScope completes cleanly.
+            pump.push(historyPageEnvelope(inReplyTo = sent.id, raw = EMPTY_TERMINAL_PAGE))
+            runCurrent()
+        }
+
+    // AC #1/#2: the correlated reply resolves to a decoded page. This also proves the demux
+    // registration — without the history_page arm in onInbound the deferred never completes and this
+    // assertion hangs rather than failing (the delete/create-family hazard).
+    @Test
+    fun requestHistory_correlatedReply_resolvesToDecodedPage() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val page = startRequestHistory(repo, "c1")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "request_history" }.id
+            pump.push(
+                historyPageEnvelope(
+                    inReplyTo = sentId,
+                    raw =
+                        """
+                        {"entries":[
+                          {"id":412,"type":"assistant_delta","payload":{"text":"b"},"ts":"2026-09-05T10:58:12Z"},
+                          {"id":411,"type":"send_message","payload":{"text":"a"},"ts":"2026-09-05T10:57:03Z"}
+                        ],"cursor":"$CURSOR","at_start":false}
+                        """.trimIndent(),
+                ),
+            )
+            runCurrent()
+
+            val decoded = page().getOrThrow()
+            assertEquals(listOf(412L, 411L), decoded.entries.map { it.id })
+            assertEquals(CURSOR, decoded.cursor)
+            assertFalse(decoded.atStart)
+        }
+
+    // AC #4: `history.unavailable` — the one RETRYABLE member of the group — reaches the caller with
+    // its code and retryable flag intact. mapError needed no new mapping for it; this pins that the
+    // generic arm actually carries the distinction a walking caller needs.
+    @Test
+    fun requestHistory_unavailableReject_surfacesRetryableRelayError() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val page = startRequestHistory(repo, "c1")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "request_history" }.id
+            pump.push(errorEnvelope(sentId, code = "history.unavailable", retryable = true))
+            runCurrent()
+
+            val error = page().exceptionOrNull()
+            assertTrue(error is RelayErrorException)
+            assertEquals("history.unavailable", (error as RelayErrorException).code)
+            assertTrue(error.retryable)
+        }
+
+    // AC #4: the three permanent history.* codes reach the caller as non-retryable RelayErrorExceptions
+    // carrying their own code — a caller can tell "stop asking" from "ask again".
+    @Test
+    fun requestHistory_permanentRejects_surfaceNonRetryableRelayErrors() =
+        runTest {
+            for (code in listOf("history.invalid_cursor", "history.invalid_page_size", "history.invalid_request")) {
+                val pump = FakeSessionPump()
+                val repo = RemoteConversationRepository(pump, backgroundScope)
+
+                val page = startRequestHistory(repo, "c1")
+                runCurrent()
+                val sentId = pump.sent.single { it.type == "request_history" }.id
+                pump.push(errorEnvelope(sentId, code = code, retryable = false))
+                runCurrent()
+
+                val error = page().exceptionOrNull()
+                assertTrue("$code should be a RelayErrorException", error is RelayErrorException)
+                assertEquals(code, (error as RelayErrorException).code)
+                assertFalse(error.retryable)
+            }
+        }
+
+    // AC #4: `conversation.not_found` — the daemon's answer for an unknown conversation id, and the
+    // one code that behaves differently — surfaces as the IllegalArgumentException the repository
+    // contract pins, not as a generic RelayErrorException.
+    @Test
+    fun requestHistory_unknownConversation_surfacesIllegalArgument() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val page = startRequestHistory(repo, "nope")
+            runCurrent()
+            val sentId = pump.sent.single { it.type == "request_history" }.id
+            pump.push(errorEnvelope(sentId, code = "conversation.not_found"))
+            runCurrent()
+
+            assertTrue(page().exceptionOrNull() is IllegalArgumentException)
+        }
+
+    // AC #4: a not-Open session fails fast with IllegalStateException — the send `check` throws before
+    // anything is awaited, so the caller never hangs waiting for a reply that cannot come.
+    @Test
+    fun requestHistory_whenNotConnected_failsWithoutAwaiting() =
+        runTest {
+            val pump = FakeSessionPump()
+            pump.sendResult = false
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val page = startRequestHistory(repo, "c1")
+            runCurrent()
+
+            assertTrue(page().exceptionOrNull() is IllegalStateException)
+        }
+
+    // AC #4, the load-bearing one: a malformed page fails ONLY the ask that drew it. The shared inbound
+    // collector survives (a second request on the same repository still completes), and another
+    // conversation's thread projection is untouched by the bad frame.
+    @Test
+    fun requestHistory_malformedPage_failsOnlyThatAskAndCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+            val otherThread = mutableListOf<List<ThreadItem>>()
+            backgroundScope.launch { repo.observeMessages("other").collect { otherThread += it } }
+            runCurrent()
+
+            val bad = startRequestHistory(repo, "c1")
+            runCurrent()
+            val badId = pump.sent.single { it.type == "request_history" }.id
+            // `at_start` missing entirely — the absence that must never read as "keep walking".
+            pump.push(historyPageEnvelope(inReplyTo = badId, raw = """{"entries":[],"cursor":""}""", id = 90L))
+            runCurrent()
+
+            assertTrue(bad().exceptionOrNull() is IllegalArgumentException)
+
+            // The collector is still alive: an unrelated conversation's live message still folds...
+            pump.push(messageEnvelope("other", "m1", "user", "still here", TS, id = 91L))
+            runCurrent()
+            assertEquals(listOf("still here"), otherThread.last().map { (it as ThreadItem.MessageItem).message.content })
+
+            // ...and a second history ask on the same repository still completes.
+            val good = startRequestHistory(repo, "c1")
+            runCurrent()
+            val goodId = pump.sent.last { it.type == "request_history" }.id
+            pump.push(historyPageEnvelope(inReplyTo = goodId, raw = EMPTY_TERMINAL_PAGE, id = 92L))
+            runCurrent()
+
+            assertTrue(good().getOrThrow().atStart)
+        }
+
     // ---- archive / unarchive (#549): archive_conversation / unarchive_conversation request →
     // ---- conversation_updated/error correlation, folding the is_archived flag ---------------------
 
@@ -6173,6 +6343,22 @@ class RemoteConversationRepositoryTest {
     }
 
     /**
+     * Launch [RemoteConversationRepository.requestHistory] on [backgroundScope] (it suspends awaiting
+     * the history_page/error reply) and return a getter for its eventual [Result]. As [startArchive]:
+     * read the result only after the correlated reply has been pushed and [runCurrent] has drained.
+     */
+    private fun TestScope.startRequestHistory(
+        repo: RemoteConversationRepository,
+        conversationId: String,
+        cursor: String = "",
+        limit: Int = 0,
+    ): () -> Result<HistoryPage> {
+        var outcome: Result<HistoryPage>? = null
+        backgroundScope.launch { outcome = runCatching { repo.requestHistory(conversationId, cursor, limit) } }
+        return { requireNotNull(outcome) { "requestHistory has not completed" } }
+    }
+
+    /**
      * Launch [RemoteConversationRepository.archive] on [backgroundScope] (it suspends awaiting the
      * conversation_updated/error reply) and return a getter for its eventual [Result]. Read the result
      * only after the correlated reply has been pushed and [runCurrent] has drained the cascade (the
@@ -6892,6 +7078,20 @@ class RemoteConversationRepositoryTest {
             inReplyTo = inReplyTo,
         )
 
+    /** A correlated `history_page` reply carrying [raw] verbatim, so a test can push a malformed one. */
+    private fun historyPageEnvelope(
+        inReplyTo: Long,
+        raw: String,
+        id: Long = 98L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "history_page",
+            ts = TS,
+            payload = MobileJson.parseToJsonElement(raw),
+            inReplyTo = inReplyTo,
+        )
+
     private fun conversationsEnvelope(
         rawConversationsPayload: String,
         id: Long = 1L,
@@ -6931,6 +7131,12 @@ class RemoteConversationRepositoryTest {
 
     private companion object {
         const val TS = "2026-05-31T00:00:00Z"
+
+        /** An opaque daemon-minted history cursor (#623) — echoed back verbatim, never parsed. */
+        const val CURSOR = "MS4zZjhiMWMwNC05ZDI3LTRlNWEtYjZjMS0yZTlmNzBkOGE0MTMuNy40MDk2"
+
+        /** The terminal shape of a history walk: no entries, empty cursor, `at_start` true. */
+        const val EMPTY_TERMINAL_PAGE = """{"entries":[],"cursor":"","at_start":true}"""
 
         /**
          * #721 workspace fixture: `a1` and `a2` SHARE the `/w/alpha` workspace (both unlabelled), `b1`
