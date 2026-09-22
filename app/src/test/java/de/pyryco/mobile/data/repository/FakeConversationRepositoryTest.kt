@@ -1118,6 +1118,52 @@ class FakeConversationRepositoryTest {
         assertEquals(listOf(SEED_ID, SEED_ID), repo.sessionSettingsRefreshes)
     }
 
+    // ---- #791: model menus are seeded, never manufactured ---------------------------------------
+
+    // AC #3: an unseeded conversation reads UNAVAILABLE. The Fake substitutes no `Model` entries and
+    // no `Effort` levels — the device enum is exactly what this reading exists to replace.
+    @Test
+    fun observeModelMenu_unseeded_isUnavailable() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+
+            assertNull(repo.observeModelMenu(SEED_ID).first())
+        }
+
+    // The seam #649's UI work drives: a seeded menu reads back verbatim for that conversation alone.
+    @Test
+    fun observeModelMenu_seeded_emitsTheMenuForThatConversationOnly() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val menu =
+                ModelMenu(
+                    rows =
+                        listOf(
+                            ModelMenuRow("claude-sonnet-5", "sonnet", "Sonnet 5", listOf("low", "high"), true, null),
+                            ModelMenuRow("claude-sonnet-5", "default", "Default", emptyList(), false, listOf("value")),
+                        ),
+                    droppedModels = 37,
+                )
+
+            repo.setModelMenu(SEED_ID, menu)
+
+            assertEquals(menu, repo.observeModelMenu(SEED_ID).first())
+            assertNull(repo.observeModelMenu("another-conversation").first())
+        }
+
+    // Clearing returns the conversation to unavailable, so a preview can exercise the resting state.
+    @Test
+    fun setModelMenu_null_clearsBackToUnavailable() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            repo.setModelMenu(SEED_ID, ModelMenu(rows = emptyList(), droppedModels = 0))
+            assertEquals(ModelMenu(emptyList(), 0), repo.observeModelMenu(SEED_ID).first())
+
+            repo.setModelMenu(SEED_ID, null)
+
+            assertNull(repo.observeModelMenu(SEED_ID).first())
+        }
+
     private companion object {
         /** The seeded channel whose messages the history-walk tests replace wholesale. */
         const val SEED_ID = "seed-channel-personal"

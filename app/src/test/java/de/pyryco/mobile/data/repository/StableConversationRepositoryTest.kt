@@ -419,6 +419,45 @@ class StableConversationRepositoryTest {
             assertEquals(listOf(null, READING, null), readings)
         }
 
+    // ---- #791: observeModelMenu delegates, and a host switch drops the previous host's menu -------
+
+    // A facade with no live repository reads UNAVAILABLE, never the device enum.
+    @Test
+    fun observeModelMenu_whileAbsent_emitsNull() =
+        runTest {
+            val current = MutableStateFlow<ConversationRepository?>(null)
+            val facade = StableConversationRepository(current)
+
+            val menus = mutableListOf<ModelMenu?>()
+            backgroundScope.launch { facade.observeModelMenu("c1").collect { menus += it } }
+            runCurrent()
+
+            assertEquals(listOf<ModelMenu?>(null), menus)
+        }
+
+    // The menu is per HOST: each connection has its own repository, so a host switch drops the old
+    // host's vocabulary back to unavailable rather than leaving another machine's rows standing.
+    @Test
+    fun observeModelMenu_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            val menus = mutableListOf<ModelMenu?>()
+            backgroundScope.launch { facade.observeModelMenu("c1").collect { menus += it } }
+            runCurrent()
+
+            repoA.pushModelMenu(MENU)
+            runCurrent()
+            assertEquals(MENU, menus.last())
+
+            current.value = repoB
+            runCurrent()
+            assertEquals(listOf(null, MENU, null), menus)
+        }
+
     @Test
     fun refreshSessionSettings_delegatesToLiveRepo() =
         runTest {
@@ -544,6 +583,14 @@ class StableConversationRepositoryTest {
 
         override fun observeSessionSettings(conversationId: String): Flow<SessionSettings?> = sessionSettings
 
+        private val modelMenu = MutableStateFlow<ModelMenu?>(null)
+
+        fun pushModelMenu(value: ModelMenu?) {
+            modelMenu.value = value
+        }
+
+        override fun observeModelMenu(conversationId: String): Flow<ModelMenu?> = modelMenu
+
         override fun refreshSessionSettings(conversationId: String) {
             refreshSessionSettingsCalls += conversationId
         }
@@ -620,6 +667,13 @@ class StableConversationRepositoryTest {
                 yolo = false,
                 usedTokens = 12480L,
                 windowTokens = 200000L,
+            )
+
+        /** One retained menu (#791) — the values are arbitrary; only their survival is asserted. */
+        val MENU =
+            ModelMenu(
+                rows = listOf(ModelMenuRow("claude-sonnet-5", "sonnet", "Sonnet 5", listOf("low", "high"), true, null)),
+                droppedModels = 4,
             )
 
         fun conversation(id: String): Conversation =

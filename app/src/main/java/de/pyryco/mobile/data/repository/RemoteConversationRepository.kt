@@ -32,6 +32,7 @@ import de.pyryco.mobile.data.network.ModalAnswerPayloadDto
 import de.pyryco.mobile.data.network.ModalCancelPayloadDto
 import de.pyryco.mobile.data.network.ModalDismissedPayloadDto
 import de.pyryco.mobile.data.network.ModalShownPayloadDto
+import de.pyryco.mobile.data.network.ModelListPayloadDto
 import de.pyryco.mobile.data.network.PromoteConversationPayloadDto
 import de.pyryco.mobile.data.network.QueueStatePayloadDto
 import de.pyryco.mobile.data.network.RecentWorkspacesListPayloadDto
@@ -60,6 +61,7 @@ import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.network.toConversations
 import de.pyryco.mobile.data.network.toEvent
 import de.pyryco.mobile.data.network.toHistoryPage
+import de.pyryco.mobile.data.network.toMenu
 import de.pyryco.mobile.data.network.toMessage
 import de.pyryco.mobile.data.network.toQueue
 import de.pyryco.mobile.data.network.toRow
@@ -221,6 +223,25 @@ class RemoteConversationRepository(
      * is a transient "right now" condition, not durable state.
      */
     private val queuedByConversation = MutableStateFlow<Map<String, List<QueuedMessage>>>(emptyMap())
+
+    /**
+     * `conversationId -> the model menu this connection heard for it` (#791) — the identifiers, labels,
+     * per-row effort levels and auto-mode support the daemon published. Written **only** from the single
+     * [init] inbound collector: each `model_list` frame is a full snapshot that **replaces** that
+     * conversation's entry, leaving every other conversation untouched. Single writer on the one
+     * collector coroutine, so snapshots never race; the atomic [MutableStateFlow.update] matches the
+     * sibling projections' memory-visibility posture. [observeModelMenu] fans out from it.
+     *
+     * **Nothing ever removes a key, and no connection edge clears the map.** Absence of a frame is the
+     * wire's only "no list" signal, so a blanket clear would manufacture an unavailable reading the
+     * daemon never stated. Connection-scoped in-memory state — a fresh repository per connection (#351)
+     * starts empty, which is the only reset this state has, and is also where "per host" comes from: the
+     * published vocabulary varies by machine and account rather than by conversation.
+     *
+     * Unlike [queuedByConversation] this is **not** a transient "right now" condition — a published
+     * vocabulary is a standing fact about the host for as long as the connection lives.
+     */
+    private val modelMenusByConversation = MutableStateFlow<Map<String, ModelMenu>>(emptyMap())
 
     /**
      * `conversationId -> the message ids this device minted and echoed into the thread` (#781) — the
@@ -644,6 +665,33 @@ class RemoteConversationRepository(
                     }
                 }
             }
+            TYPE_MODEL_LIST -> {
+                // The per-conversation model menu (#791). Same `interactive` gate as the live-session /
+                // `stall` / `queue_state` siblings: a non-interactive phone never decodes a spurious
+                // `model_list` from a buggy/hostile daemon that ignored the server-side fan-out gate
+                // (fail-closed, defence in depth). Each frame is snapshot-shaped full state, so it FULLY
+                // REPLACES this conversation's entry and leaves every other conversation untouched — no
+                // merge, no append, and re-applying the reconnect burst is safe by construction.
+                //
+                // Routing is the payload's own conversation_id and NOTHING else. Never the envelope id,
+                // which every frame in the reconcile burst repeats, and never burst position: the daemon
+                // walks its registry in an order that is not a contract. An id no collector observes
+                // simply sits unread in the map.
+                //
+                // Nothing is cleared here or on a connection edge — absence of a frame is the wire's only
+                // "no list" signal, so a clear would manufacture an unavailable reading the daemon never
+                // stated. A malformed payload decodes to null and is dropped so the single inbound
+                // consumer survives, leaving the previously retained menu standing. Like the `queue_state`
+                // sibling and unlike the live-session arm, this folds no thread row and does NOT clear a
+                // stall — a menu is not turn forward progress. Drop silently: every row string is
+                // claude-authored text that crossed the subprocess trust boundary, and a logged
+                // conversation_id is a cross-conversation correlation leak.
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    decodeModelList(envelope)?.let { (conversationId, menu) ->
+                        modelMenusByConversation.update { it + (conversationId to menu) }
+                    }
+                }
+            }
             TYPE_API_RETRY -> {
                 // API-retry status (#593). Same `interactive` gate as the live-session / `stall` /
                 // `queue_state` siblings: a non-interactive phone never decodes a spurious `api_retry`
@@ -858,6 +906,33 @@ class RemoteConversationRepository(
         try {
             val dto = MobileJson.decodeFromJsonElement<QueueStatePayloadDto>(envelope.payload)
             dto.conversationId to dto.toQueue()
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+
+    /**
+     * Decode one v2 `model_list` envelope (#791) to its routing conversation id and retained
+     * [ModelMenu], or **null** when it cannot be read. Decodes the untrusted [Envelope.payload] through
+     * the single configured [MobileJson] and maps via `toMenu()`. The whole body is one `try`/`catch
+     * (IllegalArgumentException)` ([kotlinx.serialization.SerializationException] ⊂
+     * [IllegalArgumentException]), so a malformed payload — a missing/wrong-typed `conversation_id` or
+     * `dropped_models`, a `models` or `effort_levels` that is explicitly `null` (both are always arrays
+     * on the wire), or a row missing one of its required strings — yields `null`, dropping the one
+     * envelope while the lone inbound collector survives. There is no partial menu: a bad row fails the
+     * whole frame, and the caller's previously retained menu stands because nothing was written.
+     *
+     * Because `toMenu()` is **total**, structural malformation is the only null path — there is no
+     * unrecognized *value* to reject, unlike [decodeLiveSessionEvent]. Returning a [Pair] of the routing
+     * id and the already-mapped domain value keeps the untrusted wire DTO from escaping this boundary,
+     * matching every sibling decoder. Mirrors [decodeStall] / [decodeQueueState]'s drop idiom —
+     * **nothing here logs the payload**, which is mandatory rather than stylistic: the rows are
+     * claude-authored text the daemon does not sanitize, and the caught throwable (kotlinx-serialization
+     * can quote the offending input in its message) is discarded rather than surfaced.
+     */
+    private fun decodeModelList(envelope: Envelope): Pair<String, ModelMenu>? =
+        try {
+            val dto = MobileJson.decodeFromJsonElement<ModelListPayloadDto>(envelope.payload)
+            dto.conversationId to dto.toMenu()
         } catch (e: IllegalArgumentException) {
             null
         }
@@ -1689,6 +1764,24 @@ class RemoteConversationRepository(
      */
     override fun observeCompacting(conversationId: String): Flow<Boolean> =
         compactingConversations.map { conversationId in it }.distinctUntilChanged()
+
+    /**
+     * The model menu this connection heard for [conversationId] (#791), a pure cold projection of the
+     * shared [modelMenusByConversation] `StateFlow`. Issues no request — rides the unasked `model_list`
+     * frames (the on-demand ask is #792). An absent key is `null`, which is **unavailable**: a normal,
+     * permanent resting state, never an error, never the `Model` / `Effort` device enums and — because
+     * the lookup is by the caller's own id — never another conversation's rows.
+     *
+     * [distinctUntilChanged] suppresses only value-*identical* re-emissions, so a `model_list` for
+     * **another** conversation does not re-emit this flow, and the reconnect burst's re-send of an
+     * unchanged menu costs a consumer nothing. A genuinely different menu is a different [ModelMenu]
+     * value and does reach the collector — the [observeApiRetry] property, which a membership `Set`
+     * could not provide. A `StateFlow` always has a current value, so every collector (including a
+     * `flatMapLatest` re-subscription through the facade) receives the current reading (`null` until a
+     * frame lands) on subscription; the one inbound consumer fans out to unlimited collectors.
+     */
+    override fun observeModelMenu(conversationId: String): Flow<ModelMenu?> =
+        modelMenusByConversation.map { it[conversationId] }.distinctUntilChanged()
 
     /**
      * Create an unpromoted discussion over v2 `create_conversation` (#347). Encodes the request
@@ -2578,6 +2671,16 @@ class RemoteConversationRepository(
          * current backlog (`msgqueue.Snapshot`) in FIFO order, each snapshot replacing the prior one.
          */
         const val TYPE_QUEUE_STATE = "queue_state"
+
+        /**
+         * Capability-gated snapshot event: a conversation's published model menu
+         * `{conversation_id, models:[{resolved_model, value, display_name, effort_levels,
+         * supports_auto_mode, truncated_fields}], dropped_models}` (#791) — the vocabulary claude
+         * reported for its `initialize` ask, each frame replacing the prior menu for that conversation.
+         * Arrives both on the live interactive lane (with an `event_id`) and as a per-conversation burst
+         * on every (re)connect (with none); the payload is identical on both paths.
+         */
+        const val TYPE_MODEL_LIST = "model_list"
 
         /**
          * Capability-gated status event: claude is retrying an API error

@@ -158,3 +158,65 @@ reply, `conversationId`, and decoded `text` are never logged), not this zero-log
 - **`RequestSessionSettingsPayloadDto` is encode-only**, the same one-required-key discipline as
   `CreateConversationPayloadDto` — model only what is sent. Correlation rides `Envelope.inReplyTo` as
   usual, so there is no request-id field on the payload itself.
+
+### The model-list retention (#791)
+
+New `ModelListPayloads.kt` decodes the `model_list` frame — the per-conversation menu of models claude
+will accept, drawn from its `initialize` control reply — through `ModelListPayloadDto` /
+`ModelListRowDto`, both `internal` (the `InteractivePayloads` posture: only the domain
+[`ModelMenu`](conversation-repository.md) crosses the package boundary). `internal fun
+ModelListPayloadDto.toMenu(): ModelMenu` is total and non-throwing, the `toSessionSettings` discipline of
+one `MobileJson.decodeFromJsonElement` as the single validate boundary followed by a pure field copy —
+but taking `QueueStatePayloadDto.toQueue`'s *shape* rather than `toSessionSettings`'s, because this frame
+carries its own routing `conversation_id` and the caller (`RemoteConversationRepository.decodeModelList`)
+pairs it with the mapped value rather than returning the bare domain value. Wire SSOT:
+`../pyrycode/docs/protocol-mobile.md` § `model_list`.
+
+**Three optionality shapes, and each is a distinct decision:**
+
+- `models` and each row's `effort_levels` are **required, non-nullable arrays** — the wire always sends
+  both, so an empty `[]` decodes into a present-but-empty value with no null branch, and an explicit wire
+  `null` is out of contract and fails the whole frame rather than masquerading as empty. Same never-`null`
+  array contract, applied at two nesting levels.
+- `supports_auto_mode` **defaults to `false` when absent, and the default is a read, not an invented
+  value**: the wire's own contract states that an absent key means `false`. Contrast `session_settings`'s
+  `permission_mode` (above), which has **no** default, because defaulting it would invent a confirmation
+  posture the daemon never stated — the same "default only when the absence itself has a stated meaning"
+  rule, cutting both ways.
+- `truncated_fields` is the frame's one **nullable** array — `null` means nothing was cut, and omitted
+  vs. explicit-`null` collapse to the same Kotlin `null` under `MobileJson`'s `explicitNulls = false`.
+  That collapse is correct here (both wire spellings mean the same thing), the posture
+  [`WorkspaceUpdatedPayloadDto`](#workspace-label-pushes-721-a-new-dto-and-conversation_updateds-second-producer)
+  deliberately wants and `effective_effort` (above) had to *avoid*, because *its* three states mean three
+  different things. An out-of-contract `[]` decodes to an empty list rather than being punned to `null` —
+  what arrived is what is retained.
+
+`dropped_models` is carried **verbatim** into `ModelMenu.droppedModels`, never recomputed from
+`rows.size` — the producer's entry cap is daemon-side and not a wire constant, so `models.size +
+droppedModels` is the menu's true size and nothing here may derive one from the other.
+
+**Untrusted-string obligation.** `resolvedModel`, `value`, `displayName` and every element of
+`effortLevels` are claude-authored text that crossed the subprocess trust boundary; the daemon bounds
+them but does not sanitize them — no control character or terminal escape is stripped anywhere on this
+path. Nothing on this path trims, folds, normalises, re-encodes or validates one, and nothing keys off
+them: the retention is keyed by `conversation_id` alone (see
+[the repository doc](remote-conversation-repository-live-stream-and-modals.md#the-model-list-inbound-arm--the-connection-scoped-retention-791)),
+never by anything derived from row text. `value` in particular is **never parseable** — it is an alias
+(`sonnet`), a bracketed variant (`opus[1m]`) or `default`, so no family may be derived by splitting it and
+it must never be presented as a version. The obligation is stated as a KDoc on the **domain** type
+`ModelMenuRow` in `ConversationRepository.kt` (a plan security-review finding), not only on the wire DTO —
+the render consumer (#649) will open the domain type and never the DTO. The render-side
+sanitization/length-bound obligation itself belongs to #649; this slice renders nothing and holds the
+strings inert.
+
+**A `MobileJson` lesson, not a `model_list`-specific one.** `isLenient` is off, so an *unquoted* number
+where a `String` is declared fails the frame (`conversation_id: 17`, a numeric `resolved_model`) — but a
+*quoted* number where the `Int` count (`dropped_models`) is declared **coerces** rather than rejects:
+`"dropped_models":"40"` decodes as `40`, because the tree decoder reads a primitive's content and parses
+it regardless of the JSON token's quoting. This is a property of the shared `MobileJson` codec that every
+sibling payload decodes through, not a `model_list` decision, so it is not worked around on this one frame
+— it is pinned by `ModelListPayloadsTest.quotedNumberForDroppedModels_coercesRatherThanFailing`. The
+coercion touches only count-typed fields; every claude-authored **string** field still fails the frame
+when wrong-typed, which is the case the security posture actually rests on. Worth checking before writing
+a "rejects a wrong-typed numeric field" test against this codec on any future payload — the rejection is
+real for a `String` target, not for an `Int` one.

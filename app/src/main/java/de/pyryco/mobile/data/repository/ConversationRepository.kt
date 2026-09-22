@@ -329,6 +329,36 @@ interface ConversationRepository {
     fun observeSessionSettings(conversationId: String): Flow<SessionSettings?> = flowOf(null)
 
     /**
+     * Emits the model menu the daemon published for [conversationId] (#791) — the identifiers, labels,
+     * per-row effort levels and auto-mode support this server actually offers, so the operator is never
+     * choosing from a list the daemon will refuse. Cold flow; re-emits on every change.
+     *
+     * **`null` is "unavailable", and unavailable is a normal, permanent resting state.** It covers no
+     * live connection, a connection without the `interactive` capability, a conversation this
+     * connection heard no frame for, and the window before the first frame lands. It is **not** an
+     * error and **not** a spinner: absence of a frame is the wire's only "no list" signal, so a
+     * consumer renders *unknown* and waits for nothing in particular. It is never the `Model` / `Effort`
+     * device enums and never another conversation's rows.
+     *
+     * **Issues no request — this rides the frames the daemon sends unasked**, once per claude child
+     * spawn on the live lane and as a per-conversation burst on every (re)connect. Asking for a menu
+     * the burst did not cover is #792.
+     *
+     * **Each frame replaces that conversation's menu wholesale**, routed by the frame's own
+     * conversation id; it is snapshot-shaped full state rather than a delta, so re-applying it on every
+     * connect is safe by construction and nothing merges or appends.
+     *
+     * **The menu is per host.** Each connection has its own repository, so a host switch drops the
+     * previous machine's vocabulary back to unavailable rather than leaving it standing — the
+     * published vocabulary varies by machine and account, not by conversation.
+     *
+     * Default emits `null` forever — implementations without a model-menu wire (the inline test
+     * doubles) inherit it, the same cascade-avoidance as [observeSessionSettings] / [delete] /
+     * [requestHistory].
+     */
+    fun observeModelMenu(conversationId: String): Flow<ModelMenu?> = flowOf(null)
+
+    /**
      * Ask for a fresh [observeSessionSettings] reading of [conversationId] (#590) — the caller-driven
      * fourth trigger, for the moment a settings write has settled and the retained reading is known to
      * be stale. The new value arrives on the flow the caller already collects; there is no second read
@@ -546,6 +576,79 @@ data class SessionSettings(
     val yolo: Boolean,
     val usedTokens: Long,
     val windowTokens: Long,
+)
+
+/**
+ * The models a server published for one conversation (#791) — the return of
+ * [ConversationRepository.observeModelMenu]. The element type is co-located with the contract it
+ * serves, like [SessionSettings] / [ThreadItem] / [QueuedMessage].
+ *
+ * **A type rather than a bare `List<ModelMenuRow>`, for two reasons.** [droppedModels] is frame-level
+ * state that must survive beside the rows, and a *present but empty* menu and an *absent* one are
+ * different readings — a list alone could express the first as `emptyList()` and the second only as
+ * `null`, which is exactly the pun [ConversationRepository.observeModelMenu] exists to avoid.
+ *
+ * `data` is load-bearing rather than cosmetic: structural equality is what makes a consumer's
+ * `distinctUntilChanged` behave, the [ApiRetryStatus] rule. A value-identical re-snapshot on every
+ * reconnect therefore costs a consumer nothing.
+ *
+ * @param rows The published models in **claude's own order**, which is the display order. Empty is a
+ *   positive statement that claude offered nothing, not an absence — an absent menu is `null` at the
+ *   flow instead.
+ * @param droppedModels How many entries the producer cut that [rows] does **not** carry; `0` when
+ *   nothing was dropped. Read as reported and **never recomputed** from `rows.size`, which is what lets
+ *   a consumer say "10 of 47" rather than presenting a shortened menu as complete. The producer's entry
+ *   cap is daemon-side and not a wire constant, so never hardcode one or derive a cap from `rows.size`;
+ *   a non-zero count beside an empty [rows] is legal.
+ */
+data class ModelMenu(
+    val rows: List<ModelMenuRow>,
+    val droppedModels: Int,
+)
+
+/**
+ * One published model in a [ModelMenu] (#791).
+ *
+ * Named *row* rather than *option* deliberately: [de.pyryco.mobile.data.model.ModalOption] already
+ * exists one letter away, and a `ModelOption` beside it would be a homograph trap at every call site.
+ *
+ * **Every field is retained exactly as the daemon reported it** — no trim, no case fold, no alias
+ * rewrite, no normalisation, and never mapped through `Model` or `Effort`, whose entries are this
+ * device's guesses rather than this server's answer.
+ *
+ * **SECURITY — these strings crossed the subprocess trust boundary.** [resolvedModel], [value],
+ * [displayName] and every element of [effortLevels] are **claude-authored** text. The daemon bounds
+ * them but **does not sanitize them**: no control character and no terminal escape sequence is stripped
+ * anywhere on this path, so they arrive untrusted and the render boundary that owes the sanitization is
+ * the client's. They are safe to render as **inert text** and must never be fed to a WebView, an HTML
+ * sink, an attribute, a URL, a filename, a cache key or a log line. Nothing keys off them either — a
+ * retained menu is keyed by conversation id and by nothing derived from row text.
+ *
+ * @param resolvedModel The concrete identifier [value] resolves to **right now**, published before the
+ *   first turn so a consumer can show what a family currently means instead of inferring it from an
+ *   announcement afterwards.
+ * @param value The argument that selects this model, sendable back on
+ *   [ConversationRepository.setSessionSettings] (still re-validated there rather than trusted).
+ *   **Never parse it**: it is an alias (`sonnet`), a bracketed variant (`opus[1m]`) or `default`, so no
+ *   family may be derived by splitting it and it must never be presented as a version.
+ * @param displayName Claude's own human label for the row, and the intended join key against a
+ *   `model_announced` event.
+ * @param effortLevels The reasoning-effort levels **this row** supports, in wire order. Empty is a
+ *   positive statement that this model exposes no effort control — never a cue to substitute the
+ *   `Effort` entries.
+ * @param supportsAutoMode Whether claude accepts `auto` permission mode for this model; claude refuses
+ *   per model, so a consumer greys the option out when `false`.
+ * @param truncatedFields The names of **this row's** cut fields, in producer order, or `null` when
+ *   nothing was cut. Each row reports its own; there is no hoisted or flattened list, and this is never
+ *   recomputed from what survived.
+ */
+data class ModelMenuRow(
+    val resolvedModel: String,
+    val value: String,
+    val displayName: String,
+    val effortLevels: List<String>,
+    val supportsAutoMode: Boolean,
+    val truncatedFields: List<String>?,
 )
 
 /**
