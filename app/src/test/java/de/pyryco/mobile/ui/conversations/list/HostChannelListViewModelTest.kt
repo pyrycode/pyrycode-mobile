@@ -27,8 +27,10 @@ import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.di.HostConversationConnection
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.KoinHostSources
+import de.pyryco.mobile.di.ObservablePairedServerStore
 import de.pyryco.mobile.di.appModule
 import de.pyryco.mobile.di.conversationRepositoryModule
+import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -957,6 +959,63 @@ class HostChannelListViewModelTest {
         }
 
     @Test
+    fun confirmingUnpairDropsThatHostsDraftsAndLeavesEveryOtherHostsAlone() =
+        runTest(dispatcher) {
+            // #790 AC #1, driven from the gesture: openHostEditor → requestHostUnpair →
+            // confirmHostUnpair, through the real ObservablePairedServerStore the fixture now binds.
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+
+            // "Host" and "host" differ only in case, and both hold a draft under the SAME conversation
+            // id — the cross-host half of the AC. Conversation ids are host-local, so these are two
+            // unrelated chats that an id-only key would have collapsed.
+            f.drafts.setDraft("Host", "c1", "unsent to Host")
+            f.drafts.setDraft("Host", "c2", "a second thought")
+            f.drafts.setDraft("host", "c1", "unsent to host")
+
+            f.vm.openHostEditor("Host")
+            runCurrent()
+            f.vm.requestHostUnpair()
+            runCurrent()
+
+            // A failed removal drops nothing: the pairing is still there, so neither is the text.
+            f.store.failRemove = true
+            f.vm.confirmHostUnpair()
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.hostEditor).unpairFailed)
+            assertEquals("unsent to Host", f.drafts.draftFor("Host", "c1"))
+            assertEquals("a second thought", f.drafts.draftFor("Host", "c2"))
+            assertEquals("unsent to host", f.drafts.draftFor("host", "c1"))
+
+            // Gated mid-removal: the text is still there until the removal reports success, for the
+            // reason the host-owned workspace is — a cleared draft is never evidence the host is gone.
+            f.store.failRemove = false
+            val gate = CompletableDeferred<Unit>()
+            f.store.removeGate = gate
+            f.vm.confirmHostUnpair()
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.hostEditor).saving)
+            assertEquals("unsent to Host", f.drafts.draftFor("Host", "c1"))
+
+            gate.complete(Unit)
+            runCurrent()
+
+            // Every draft this host held is gone, bucket included — not blanked, absent.
+            assertNull(f.store.loadById("Host"))
+            assertEquals("", f.drafts.draftFor("Host", "c1"))
+            assertEquals("", f.drafts.draftFor("Host", "c2"))
+            // And the other host keeps its own draft for the same conversation id.
+            assertEquals("unsent to host", f.drafts.draftFor("host", "c1"))
+            assertEquals(mapOf("host" to mapOf("c1" to "unsent to host")), f.drafts.drafts.value)
+
+            // A draft is private message content: none of it may reach a log line.
+            assertTrue(
+                "draft text must never be logged: $logs",
+                logs.none { "unsent to" in it || "a second thought" in it },
+            )
+        }
+
+    @Test
     fun aFailedUnpairStaysOnTheConfirmationAndChangesNothing() =
         runTest(dispatcher) {
             val f = fixture()
@@ -1081,6 +1140,9 @@ class HostChannelListViewModelTest {
         // Hoisted out of the module so a test can seed and read back the host-owned workspace the
         // unpair path clears.
         val prefs = preferences(preferences)
+
+        // #790: hoisted for the same reason, so a test can seed drafts and read back which survived.
+        val drafts = ComposerDraftStore()
         val app =
             KoinApplication.init().modules(
                 appModule,
@@ -1088,7 +1150,11 @@ class HostChannelListViewModelTest {
                     single<ConversationRepository> { StableConversationRepository(selected) }
                     single { prefs }
                     single { source }
-                    single<PairedServerCollectionStore> { store }
+                    // Wrapped in the real observable decorator (#790), which production always has and
+                    // this fixture previously bypassed — the removal-driven draft eviction lives on it.
+                    // Transparent to every other case here: delegation forwards the reads, and the
+                    // revision it bumps has no observer in this file.
+                    single<PairedServerCollectionStore> { ObservablePairedServerStore(store, drafts::clearHost) }
                 },
             )
         val vm = app.koin.get<ChannelListViewModel>()

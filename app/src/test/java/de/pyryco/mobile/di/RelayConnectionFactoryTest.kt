@@ -1315,7 +1315,7 @@ class RelayConnectionFactoryTest {
         val a = Host("A")
         val b = Host("B")
         val rawStore = LatestStore()
-        val store = ObservablePairedServerStore(rawStore)
+        val store = ObservablePairedServerStore(rawStore) { }
         var beforeDial: (PairedServer) -> Unit = {}
         var unavailable: String? = null
         var handshaking: String? = null

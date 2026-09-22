@@ -221,6 +221,20 @@ store-level assertions of the same two facts would be the same fabric twice.
    file? Expected not — delegation is transparent and `save` still reaches the fake's `error("unused")`.
    Resolve by running the class.
 
+## Revisions
+
+**2026-09-22 — both Open Questions resolved, no design change.**
+
+1. `FakeConversationRepository.delete("seed-channel-personal")` succeeds, so AC #2's positive half stays
+   on `DRAFT_CONV` and did not need moving to `ACTIVE_CONV`. Proven by
+   `deleteConfirm_whenAccepted_dropsOnlyThisChatsDraft` passing: the eviction is inside the guarded
+   block after the delete, so the assertion can only hold if the delete returned without throwing.
+2. Wrapping `HostChannelListViewModelTest`'s fake in the real `ObservablePairedServerStore` disturbed
+   no other test in that class — the whole class passes, as does `RelayConnectionFactoryTest`.
+
+The design as committed is what shipped; nothing in **Design**, **State + concurrency model**,
+**Error handling** or **Security review** moved.
+
 ## Documentation handoff
 
 Pending for the documentation stage; not written here.

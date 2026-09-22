@@ -252,7 +252,7 @@ class LiteralScreenNavigationTest {
                     displayName: String?,
                 ) = Unit
             }
-        store = ObservablePairedServerStore(raw)
+        store = ObservablePairedServerStore(raw) { }
         val keys =
             object : DeviceStaticKeyStore {
                 override suspend fun loadOrCreate(serverId: String) =
