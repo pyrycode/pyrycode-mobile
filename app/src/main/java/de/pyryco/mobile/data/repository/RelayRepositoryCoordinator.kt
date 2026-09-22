@@ -5,7 +5,9 @@ import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
+import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.RelayLinkStatus
+import de.pyryco.mobile.data.model.batchFor
 import de.pyryco.mobile.data.model.reduce
 import de.pyryco.mobile.data.network.PumpState
 import de.pyryco.mobile.data.network.RelayTransport
@@ -22,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
@@ -213,6 +216,29 @@ class RelayRepositoryCoordinator(
         modalEvents
             .scan<ModalEvent, ModalUiState>(ModalUiState.Hidden) { state, event -> state.reduce(event) }
             .stateIn(scope, SharingStarted.Eagerly, ModalUiState.Hidden)
+
+    /**
+     * Every clarification batch outstanding on this host (#822), across all its conversations. A per-
+     * conversation surface reads through [observeQuestionBatch] instead, so one conversation's question is
+     * never shown in another's thread.
+     *
+     * Switched to the active connection's [RemoteConversationRepository.questionBatches] and started
+     * [SharingStarted.Eagerly] for [currentModal]'s reason (#492): a batch that arrives before any thread
+     * screen subscribes is held. Unlike [currentModal] it is **not** retained across a reconnect:
+     * [teardownActive] nulls [activeConnection] (empty) and the next connection's repository starts empty,
+     * so the old connection's batches are gone before the new one's first frame folds, and the daemon's
+     * connect-time reconcile rebuilds only the batches still outstanding. No log: the batch strings are
+     * claude-authored.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val questionBatches: StateFlow<List<QuestionBatch>> =
+        activeConnection
+            .flatMapLatest { conn -> conn?.repo?.questionBatches ?: flowOf(emptyList()) }
+            .stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+    /** The batch outstanding for [conversationId] on this host, or null (#822); see [batchFor]. */
+    fun observeQuestionBatch(conversationId: String): Flow<QuestionBatch?> =
+        questionBatches.map { it.batchFor(conversationId) }.distinctUntilChanged()
 
     /** The combined two-part status (#392) #390 consumes off this concrete singleton: the supervisor's
      *  relay leg zipped with the derived pyrycode leg. `Eagerly` so `.value` is correct at any glance;

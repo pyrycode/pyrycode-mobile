@@ -5,9 +5,12 @@ import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.ModalEvent
+import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.model.withDismissed
+import de.pyryco.mobile.data.model.withShown
 import de.pyryco.mobile.data.network.ArchiveConversationPayloadDto
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.BackfillSincePayloadDto
@@ -32,6 +35,8 @@ import de.pyryco.mobile.data.network.ModalDismissedPayloadDto
 import de.pyryco.mobile.data.network.ModalShownPayloadDto
 import de.pyryco.mobile.data.network.ModelListPayloadDto
 import de.pyryco.mobile.data.network.PromoteConversationPayloadDto
+import de.pyryco.mobile.data.network.QuestionDismissedPayloadDto
+import de.pyryco.mobile.data.network.QuestionShownPayloadDto
 import de.pyryco.mobile.data.network.RecentWorkspacesListPayloadDto
 import de.pyryco.mobile.data.network.RegisterPushTokenPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
@@ -53,6 +58,7 @@ import de.pyryco.mobile.data.network.TurnStatePayloadDto
 import de.pyryco.mobile.data.network.UnrecognizedMessagePayloadDto
 import de.pyryco.mobile.data.network.WorkspaceFolderCreatedPayloadDto
 import de.pyryco.mobile.data.network.WorkspaceUpdatedPayloadDto
+import de.pyryco.mobile.data.network.toBatch
 import de.pyryco.mobile.data.network.toBoundary
 import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.network.toConversations
@@ -70,7 +76,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
@@ -440,6 +448,17 @@ class RemoteConversationRepository(
             onBufferOverflow = BufferOverflow.DROP_OLDEST,
         )
     val modalEvents: SharedFlow<ModalEvent> = mutableModalEvents.asSharedFlow()
+
+    /**
+     * The clarification batches outstanding on **this connection** (#822), folded from `question_shown` /
+     * `question_dismissed` by the single inbound collector. Held state rather than a `replay = 0` event
+     * stream: the daemon's connect-time reconcile re-sends every outstanding batch in one burst, and an
+     * event stream folded downstream could lose part of it to a late subscriber. A new connection builds a
+     * new repository, so this starts empty and the reconcile rebuilds it — the protocol's reset-on-reconnect
+     * rule, the opposite of `currentModal`'s retain. On the concrete repository only, like [modalEvents].
+     */
+    private val mutableQuestionBatches = MutableStateFlow<List<QuestionBatch>>(emptyList())
+    val questionBatches: StateFlow<List<QuestionBatch>> = mutableQuestionBatches.asStateFlow()
 
     init {
         // The single consumer of the hot, single-consumer inbound stream. Cancelled by its owner
@@ -811,6 +830,14 @@ class RemoteConversationRepository(
                     decodeModalEvent(envelope)?.let { mutableModalEvents.tryEmit(it) }
                 }
             }
+            TYPE_QUESTION_SHOWN, TYPE_QUESTION_DISMISSED -> {
+                // A v2 clarification batch (#822). Same `interactive` gate as the modal arm above; not a
+                // modal, so it never reaches modalEvents. Held per connection, not a thread row, and it
+                // clears no stall. Drop silently: the claude-authored strings and the nonce are never logged.
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    foldQuestionFrame(envelope)
+                }
+            }
             TYPE_RESYNC -> {
                 // Replay resync (#417): the daemon's signal that the advertised `last_event_id` aged out
                 // of its bounded ring (pyrycode#646/#647), so gap-free in-ring replay is impossible. Same
@@ -982,6 +1009,30 @@ class RemoteConversationRepository(
         } catch (e: IllegalArgumentException) {
             null
         }
+
+    /**
+     * Fold one question envelope (#822) into [questionBatches] via [withShown] / [withDismissed]. The decode
+     * is strict ([QuestionShownPayloadDto], [QuestionDismissedPayloadDto]); any failure is an
+     * [IllegalArgumentException] ([kotlinx.serialization.SerializationException] ⊂ it) and changes nothing,
+     * so the lone inbound collector survives. The exception is discarded unlogged: kotlinx messages can
+     * quote the JSON input.
+     */
+    private fun foldQuestionFrame(envelope: Envelope) {
+        try {
+            when (envelope.type) {
+                TYPE_QUESTION_SHOWN -> {
+                    val batch = MobileJson.decodeFromJsonElement<QuestionShownPayloadDto>(envelope.payload).toBatch()
+                    mutableQuestionBatches.update { it.withShown(batch) }
+                }
+                TYPE_QUESTION_DISMISSED -> {
+                    val dismissed = MobileJson.decodeFromJsonElement<QuestionDismissedPayloadDto>(envelope.payload)
+                    mutableQuestionBatches.update { it.withDismissed(dismissed.questionBatchId) }
+                }
+            }
+        } catch (e: IllegalArgumentException) {
+            return
+        }
+    }
 
     /**
      * Read the inline `conversation_id` of a `resync` marker (#417) as a JSON string, or **null** when
@@ -2783,6 +2834,15 @@ class RemoteConversationRepository(
          * `modal_cancel` constants belong to the answer-send slice (#438).
          */
         const val TYPE_MODAL_DISMISSED = "modal_dismissed"
+
+        /**
+         * Capability-gated clarification batch `{conversation_id, question_batch_id, questions}` (#822,
+         * pyrycode § Question (v2)) — claude's whole `AskUserQuestion` call in one frame.
+         */
+        const val TYPE_QUESTION_SHOWN = "question_shown"
+
+        /** Capability-gated retirement of a question batch `{question_batch_id, outcome, source}` (#822). */
+        const val TYPE_QUESTION_DISMISSED = "question_dismissed"
 
         /**
          * Capability-gated outbound modal control: the phone's answer
