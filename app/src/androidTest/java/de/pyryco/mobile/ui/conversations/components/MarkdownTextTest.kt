@@ -3,19 +3,32 @@ package de.pyryco.mobile.ui.conversations.components
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.ClipboardManager
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotDisplayed
+import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -54,6 +67,11 @@ class MarkdownTextTest {
     /** Colours the assertions compare against, captured from the same theme the content renders in. */
     private var onSurfaceVariant: Color = Color.Unspecified
 
+    /** Stands in for the system clipboard, which an instrumented app cannot reliably read back. */
+    private val clipboard = RecordingClipboard()
+
+    private val copyCode: String get() = context.getString(R.string.cd_thread_copy_code)
+
     private fun render(
         markdown: String,
         maxWidth: androidx.compose.ui.unit.Dp? = null,
@@ -61,13 +79,15 @@ class MarkdownTextTest {
         composeTestRule.setContent {
             PyrycodeMobileTheme(darkTheme = false) {
                 onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
-                Box(
-                    modifier =
-                        Modifier
-                            .testTag(CONTAINER_TAG)
-                            .let { if (maxWidth == null) it else it.widthIn(max = maxWidth) },
-                ) {
-                    MarkdownText(markdown)
+                CompositionLocalProvider(LocalClipboardManager provides clipboard) {
+                    Box(
+                        modifier =
+                            Modifier
+                                .testTag(CONTAINER_TAG)
+                                .let { if (maxWidth == null) it else it.widthIn(max = maxWidth) },
+                    ) {
+                        MarkdownText(markdown)
+                    }
                 }
             }
         }
@@ -338,6 +358,100 @@ class MarkdownTextTest {
         render("##\n\nAfter the empty heading\n")
 
         composeTestRule.onNodeWithText("After the empty heading").assertIsDisplayed()
+    }
+
+    // ------------------------------------------------------------------ #657 — code blocks
+
+    @Test
+    fun a_fence_with_an_info_string_renders_a_language_header_and_a_copy_control() {
+        render("```kotlin\nval x = 1\n```\n")
+
+        composeTestRule.onNodeWithTag(CODE_BLOCK_HEADER_TAG).assertIsDisplayed().assertTextEquals("kotlin")
+        composeTestRule.onNodeWithContentDescription(copyCode).assertIsDisplayed().assertHasClickAction()
+    }
+
+    /**
+     * Both header-absent forms — a bare fence and an indented block — render no header bar at all,
+     * so there is neither an empty strip nor a divider left without a header to hang from. They keep
+     * their copy control.
+     */
+    @Test
+    fun a_block_without_an_info_string_renders_no_header() {
+        render("```\nbare fence\n```\n\n    indented block\n")
+
+        composeTestRule.onNodeWithText("bare fence").assertIsDisplayed()
+        // Exact text: the four-space indent marker is syntax and is not part of the block.
+        composeTestRule.onNodeWithText("indented block").assertIsDisplayed()
+        composeTestRule.onAllNodesWithTag(CODE_BLOCK_HEADER_TAG).assertCountEquals(0)
+        composeTestRule.onAllNodesWithContentDescription(copyCode).assertCountEquals(2)
+    }
+
+    /**
+     * Exactness through the real parser, and per-block scoping: neither the prose around the blocks
+     * nor the other block reaches the clipboard, and the interior blank lines survive.
+     */
+    @Test
+    fun each_copy_control_copies_only_its_own_block_source_exactly() {
+        render(
+            "Intro prose.\n\n" +
+                "```kotlin\nfun a() {\n    val x = 1\n\n\n    return x\n}\n```\n\n" +
+                "Between.\n\n" +
+                "```\nsecond\n  block\n```\n",
+        )
+
+        val controls = composeTestRule.onAllNodesWithContentDescription(copyCode)
+        controls.assertCountEquals(2)
+        controls[0].performClick()
+        assertEquals("fun a() {\n    val x = 1\n\n\n    return x\n}", clipboard.copied)
+        controls[1].performClick()
+        assertEquals("second\n  block", clipboard.copied)
+    }
+
+    /**
+     * The scroll clause, proven by scrolling: only the code viewport moves, the block stays within
+     * its container, and the header label and the copy control keep their bounds. The control sits
+     * beside the viewport rather than over it, which is what keeps it off the code at every offset.
+     */
+    @Test
+    fun a_long_line_scrolls_inside_the_block_while_label_and_copy_stay_put() {
+        val longLine = "val numbers = listOf(" + (1..40).joinToString() + ")"
+        render("```kotlin\n$longLine\n```\n", maxWidth = CONTAINER_MAX_WIDTH)
+
+        val label = composeTestRule.onNodeWithTag(CODE_BLOCK_HEADER_TAG)
+        val copy = composeTestRule.onNodeWithContentDescription(copyCode)
+        val viewport = composeTestRule.onNode(hasScrollAction())
+        val code = composeTestRule.onNodeWithText(longLine)
+        val labelBefore = label.getBoundsInRoot()
+        val copyBefore = copy.getBoundsInRoot()
+        val codeBefore = code.getUnclippedBoundsInRoot()
+
+        assertTrue(
+            "the copy control overlaps the code viewport",
+            viewport.getBoundsInRoot().right <= copyBefore.left + ROUNDING_TOLERANCE,
+        )
+
+        viewport.performTouchInput { swipeLeft() }
+        composeTestRule.waitForIdle()
+
+        assertTrue("the code did not scroll", code.getUnclippedBoundsInRoot().left < codeBefore.left)
+        assertEquals(labelBefore, label.getBoundsInRoot())
+        assertEquals(copyBefore, copy.getBoundsInRoot())
+        val containerWidth =
+            composeTestRule.onNodeWithTag(CONTAINER_TAG).getUnclippedBoundsInRoot().width
+        assertTrue(
+            "the code block widened its container to $containerWidth",
+            containerWidth <= CONTAINER_MAX_WIDTH + ROUNDING_TOLERANCE,
+        )
+    }
+
+    private class RecordingClipboard : ClipboardManager {
+        var copied: String? = null
+
+        override fun getText(): AnnotatedString? = copied?.let { AnnotatedString(it) }
+
+        override fun setText(annotatedString: AnnotatedString) {
+            copied = annotatedString.text
+        }
     }
 
     private companion object {

@@ -10,8 +10,10 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.test.espresso.Espresso
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
@@ -235,6 +237,22 @@ class ThreadScreenModalTest {
         composeTestRule.onNodeWithText(string(R.string.modal_cancel)).performClick()
 
         assertEquals(1, cancelled)
+    }
+
+    @Test
+    fun back_press_neither_answers_nor_cancels_and_no_close_glyph_is_offered() {
+        val tapped = mutableListOf<String>()
+        var cancelled = 0
+        setContent(openModal(), onModalOption = { tapped += it }, onModalCancel = { cancelled++ })
+
+        composeTestRule.onNodeWithContentDescription("Close").assertDoesNotExist()
+        Espresso.pressBack()
+
+        composeTestRule.runOnIdle {
+            assertTrue("back must not answer the prompt", tapped.isEmpty())
+            assertEquals("back must not cancel the prompt", 0, cancelled)
+        }
+        composeTestRule.onNodeWithText(openModal().prompt).assertIsDisplayed()
     }
 
     // AC#4 "single tap does not confirm, second tap confirms" observed at the screen layer. The VM's

@@ -293,4 +293,69 @@ class MarkdownTextParsingTest {
         val heading = parse("##").firstOfType(MarkdownElementTypes.ATX_2)!!
         assertEquals(listOf(MarkdownTokenTypes.ATX_HEADER), heading.childTypes())
     }
+
+    // ---------------------------------------------------------------- code block source (#657)
+
+    private fun fenced(source: String): String = fencedCodeText(parse(source).firstOfType(MarkdownElementTypes.CODE_FENCE)!!, source)
+
+    private fun indented(source: String): String = indentedCodeText(parse(source).firstOfType(MarkdownElementTypes.CODE_BLOCK)!!, source)
+
+    /**
+     * The defect the copy criterion rests on: a blank line inside a fence is two adjacent `EOL`
+     * tokens with no content token between them, so joining the content tokens alone collapsed
+     * every run of blank lines — on screen and on the clipboard alike.
+     */
+    @Test
+    fun `a fence keeps its interior blank lines and its indentation`() {
+        assertEquals(
+            "fun a() {\n    val x = 1\n\n\n    return x\n}",
+            fenced("```kotlin\nfun a() {\n    val x = 1\n\n\n    return x\n}\n```\n"),
+        )
+    }
+
+    @Test
+    fun `a fence keeps a trailing blank line before its closing fence`() {
+        assertEquals("a\n", fenced("```\na\n\n```\n"))
+    }
+
+    @Test
+    fun `a fence's info string is not part of its code`() {
+        assertEquals("x = 1", fenced("```python title=\"a.py\"\nx = 1\n```"))
+    }
+
+    @Test
+    fun `an empty fence has empty code`() {
+        assertEquals("", fenced("```\n```"))
+    }
+
+    /** The streaming reveal hands the renderer a fence with no closing line yet. */
+    @Test
+    fun `an unterminated fence yields what has arrived so far`() {
+        assertEquals("line one\nline t", fenced("```js\nline one\nline t"))
+    }
+
+    /** The list item's own indent is a separate WHITE_SPACE child; the code's indent is not. */
+    @Test
+    fun `a fence inside a list item drops the item indent and keeps its own`() {
+        assertEquals("a\n\n  b", fenced("- item\n\n  ```py\n  a\n\n    b\n  ```\n"))
+    }
+
+    @Test
+    fun `a fence inside a blockquote drops the quote markers`() {
+        assertEquals("q1\n\nq2", fenced("> ```\n> q1\n>\n> q2\n> ```\n"))
+    }
+
+    /** The four-space marker is syntax, not code; any indent beyond it is the code's own. */
+    @Test
+    fun `an indented block drops its marker and keeps deeper indentation and blank lines`() {
+        assertEquals(
+            "indented a\n    deeper\n\nafter blank",
+            indented("text\n\n    indented a\n        deeper\n\n    after blank\n\nmore"),
+        )
+    }
+
+    @Test
+    fun `an indented block accepts a tab as its marker`() {
+        assertEquals("tabbed\n\tnested", indented("\ttabbed\n\t\tnested\n"))
+    }
 }

@@ -22,6 +22,8 @@ data class ToolCall(
     val input: String,
     val output: String,
     val status: ToolCallStatus = ToolCallStatus.Done,   // #387
+    val inputFields: Map<String, String> = emptyMap(),  // #810
+    val parentToolUseId: String = "",                   // #810
 )
 ```
 
@@ -37,14 +39,48 @@ new exported type in the slice. See [Data model](data-model.md).
 
 | Event | Fold | Effect |
 |---|---|---|
-| **`tool_use`** (start) | `applyToolUse` | append a `Running` `Role.Tool` row, `id = toolUseId`, `toolCall = ToolCall(name, inputSummary, output="", Running)` — **if absent** |
-| **`tool_result`** (`isError == false`) | `applyToolResult` | update the matching row in place: `output = resultSummary`, `status = Done` |
-| **`tool_result`** (`isError == true`) | `applyToolResult` | update the matching row in place: `output = resultSummary`, `status = Failed` |
+| **`tool_use`** (start) | `applyToolUse` | append a `Running` `Role.Tool` row, `id = toolUseId`, `toolCall = ToolCall(name, inputSummary, output="", Running, inputFields, parentToolUseId)` — **if absent** |
+| **`tool_result`** (`isError == false`) | `applyToolResult` | update the matching row in place: `output = resultSummary`, `status = Done`, `parentToolUseId` per the [#810 precedence rule](#tool_use-input-fields-and-parent_tool_use_id-810) |
+| **`tool_result`** (`isError == true`) | `applyToolResult` | update the matching row in place: `output = resultSummary`, `status = Failed`, `parentToolUseId` per the [#810 precedence rule](#tool_use-input-fields-and-parent_tool_use_id-810) |
 
 `failed ⟺ ToolResult.isError == true`; `done` otherwise. Correlation is by **`toolUseId`, not by
 position** — and the match is namespaced `id == toolUseId && role == Role.Tool` so a server-supplied
 `toolUseId` can never collide with a real `message_id` and clobber a message. The `toolUseId` is the
 row's `Message.id`.
+
+## `tool_use.input` fields and `parent_tool_use_id` (#810)
+
+[#810](https://github.com/pyrycode/pyrycode-mobile/issues/810) carries two more wire fields into the
+retained row, through the same DTO/mapper/fold seam described above — no new decode point and no
+change to the correlation or tolerance rules above:
+
+- **`inputFields`** — `tool_use.input`'s own top-level fields, so a future renderer can show what a
+  call acts on (e.g. an `Edit`'s `file_path`) instead of hunting for it inside `input`, the one-line
+  précis. Decoded from a raw `JsonElement` rather than a typed map: an absent, `null`, empty or
+  non-object `input` all yield `emptyMap()` rather than a decode failure, and within an object only
+  JSON-**string** values are kept (a non-string value is off-contract — the daemon stringifies every
+  field — and is skipped, not rewritten). `tool_result` carries no input, so `withToolResult` never
+  touches `inputFields`.
+- **`parentToolUseId`** — the `Agent`/`Task` call that spawned the subagent making this call; `""`
+  means the main thread. Present on both `tool_use` and `tool_result`. **Precedence when the two
+  frames disagree:** `withToolResult` replaces the row's `parentToolUseId` when the result's is
+  non-empty, and keeps the use's when the result's is empty — it never un-nests a row because the key
+  was merely absent. A conforming daemon sends the same value on both frames, so this only matters
+  across a mid-stream daemon upgrade/downgrade where one frame lacks the key.
+
+Both fields are **lenient-defaulted** at the DTO (`= ""` / `= null`), a deliberate departure from the
+strict-required posture the sibling DTO fields use (see [Live-session events](live-session-events.md)).
+The daemon always emits both keys, so an absent one means an older binary — which meant "main thread"
+and "no fields" — so decoding to `""` / `{}` reproduces what that binary said, instead of dropping the
+whole `tool_use`/`tool_result` frame. A wire `null` for `parent_tool_use_id` itself still fails the
+strict decode; the contract never sends one.
+
+The parent **join** — matching `parentToolUseId` against another row's `toolUseId` within the same
+conversation's thread, and falling back to a top-level row when nothing matches — is out of scope here
+and belongs to the [#658](https://github.com/pyrycode/pyrycode-mobile/issues/658) renderer, alongside
+the rest of rendering (see the file header). Both values are inert display/grouping data the daemon
+neither resolved nor validated: an input value may be a literal shell command line or a relative,
+traversing path, and the parent id may name a call this client never saw.
 
 ## Tolerating a misbehaving stream (AC #3)
 
@@ -111,7 +147,10 @@ folds a tool row.
 `security-sensitive`; architect self-review **PASS**, code review **PASS** (zero findings). This slice
 adds **no new parse point** — it consumes the already-typed [`LiveSessionEvent`](live-session-events.md)
 decoded by #385 and copies `name`/`inputSummary`/`resultSummary` **verbatim** into
-`toolCall.toolName`/`input`/`output` with **no trim, parse, or sanitize**. Output-encoding — treating
+`toolCall.toolName`/`input`/`output` with **no trim, parse, or sanitize**. [#810](https://github.com/pyrycode/pyrycode-mobile/issues/810)
+adds `inputFields`/`parentToolUseId` on the same posture — copied verbatim, never trimmed, parsed,
+re-ordered or treated as a path/command/URL to act on (self-reviewed **PASS**; see that ticket's plan
+for the full boundary analysis). Output-encoding — treating
 those server-authored strings as inert, non-active content at render — was the **#388** UI consumer's
 job, named here as the hand-off (exactly as #385/#395 named it); [#388](../codebase/388.md) landed it by
 rendering the strings through inert Compose `Text`/`CodeBlock` (never parsed or treated as markup), so it
@@ -138,5 +177,9 @@ of rendered tool input/output) belong to the [#388](../codebase/388.md) renderer
   renderer that reads `toolCall`; [#388](../codebase/388.md) extends it to render `status`.
 - Consumer (was blockedBy this, now **shipped**): [#388](../codebase/388.md) — the tool-row status
   affordance (running spinner / done icon / failed glyph; Figma 16-28 design-owed for running/failed).
+- [#810](https://github.com/pyrycode/pyrycode-mobile/issues/810) — adds `ToolCall.inputFields` /
+  `parentToolUseId` (see [§ `tool_use.input` fields and `parent_tool_use_id`](#tool_use-input-fields-and-parent_tool_use_id-810)
+  above). Rendering and the parent join are deferred to
+  [#658](https://github.com/pyrycode/pyrycode-mobile/issues/658).
 - Server SSOT: pyrycode#607 (wire types + capabilities), #616 (capability-gated fan-out), ADR 025
   § Phase 2 structured streaming, EPIC pyrycode#596.

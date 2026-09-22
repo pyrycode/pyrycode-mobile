@@ -82,6 +82,17 @@ class StableConversationRepository(
     override fun observeCompacting(conversationId: String): Flow<Boolean> = switchToLive(false) { it.observeCompacting(conversationId) }
 
     /**
+     * The usage-limit reading for [conversationId] (#802), switched over the live connection like every
+     * other cold read — and here the switch is the **account-isolation mechanism**, not just plumbing:
+     * a usage-limit window belongs to an account rather than to a conversation, so [flatMapLatest]
+     * dropping the previous connection's projection is what stops one account's quota posture being
+     * attributed to the next. `null` while none is live is the same "nothing to read" value an unheard
+     * conversation produces, so a consumer has one absent case, not two.
+     */
+    override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> =
+        switchToLive<UsageLimitReading?>(null) { it.observeUsageLimit(conversationId) }
+
+    /**
      * The thinking-progress reading for [conversationId] (#801), switched over the live connection like
      * every other cold read — and here the switch is the **whole clearing mechanism for a reconnect**,
      * not just plumbing. The reading has no falling edge on the wire, so a retained one would report the

@@ -1,8 +1,14 @@
 package de.pyryco.mobile.data.cache
 
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.model.ToolCall
+import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.repository.BoundaryReason
+import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -37,12 +43,14 @@ import java.security.MessageDigest
  *
  * ### Layout
  *
- * `<root>/<sha256hex(serverId)>/conversations.json`. A server id is daemon-supplied and opaque, so it
- * is never pasted into a path: the directory name is the hex SHA-256 of its UTF-8 bytes, which means
- * no `/`, no `..`, no NUL and no reserved name can reach a path component, and no server id enters
- * the filesystem namespace at all. Conversation ids never touch a path; they live inside the
- * document. The hash is namespace derivation, not a security boundary — what it relies on is
- * collision resistance, so two hosts can never share a directory.
+ * `<root>/<sha256hex(serverId)>/conversations.json`, and one thread document per conversation at
+ * `<root>/<sha256hex(serverId)>/threads/<sha256hex(conversationId)>.json` (#797). A server id and a
+ * conversation id are both daemon-supplied and opaque, so neither is pasted into a path: each path
+ * component is the hex SHA-256 of the id's UTF-8 bytes, which means no `/`, no `..`, no NUL and no
+ * reserved name can reach a path component, and no id enters the filesystem namespace at all. A
+ * thread lives under its host's directory, so [removeHost]'s recursive delete covers it. The hash is
+ * namespace derivation, not a security boundary — what it relies on is collision resistance, so two
+ * hosts (or two conversations) can never share a path.
  *
  * ### Concurrency
  *
@@ -69,6 +77,32 @@ class FileConversationCache(
         conversations: List<Conversation>,
     ): Result<Unit> = mutate("write") { store(serverId, conversations) }
 
+    override suspend fun readThread(
+        serverId: String,
+        conversationId: String,
+    ): List<ThreadItem> =
+        withContext(ioDispatcher) {
+            mutex.withLock {
+                try {
+                    decodeThread(threadDocumentFor(serverId, conversationId))
+                } catch (error: Exception) {
+                    val code = failureCode(error) ?: throw error
+                    RelayLog.d { "conversation_cache operation=read_thread status=failed code=$code" }
+                    emptyList()
+                }
+            }
+        }
+
+    override suspend fun writeThread(
+        serverId: String,
+        conversationId: String,
+        rows: List<ThreadItem>,
+    ): Result<Unit> =
+        mutate("write_thread") {
+            val record = CachedThread(VERSION, cacheableThreadRows(rows).map { it.toRecord() })
+            writeAtomically(threadDocumentFor(serverId, conversationId), MobileJson.encodeToString(record))
+        }
+
     override suspend fun removeHost(serverId: String): Result<Unit> =
         mutate("remove_host") {
             val directory = hostDirectory(serverId)
@@ -93,6 +127,10 @@ class FileConversationCache(
         mutate("remove_conversation") {
             if (documentFor(serverId).isFile) {
                 store(serverId, readOrEmpty(serverId, "remove_conversation").filterNot { it.id == conversationId })
+            }
+            val thread = threadDocumentFor(serverId, conversationId)
+            if (!thread.delete() && thread.exists()) {
+                throw IOException("conversation cache thread not removed")
             }
         }
 
@@ -124,14 +162,42 @@ class FileConversationCache(
     private fun store(
         serverId: String,
         conversations: List<Conversation>,
+    ) = writeAtomically(
+        documentFor(serverId),
+        MobileJson.encodeToString(CachedConversations(VERSION, conversations.map { it.toRecord() })),
+    )
+
+    /**
+     * Decodes a thread document, rejecting what would mislead or crash the thread: a row that is neither
+     * a message nor a boundary, a running tool (a permanent spinner), and a repeated message id or
+     * boundary pair (two `LazyColumn` rows with one key). A writer never produces any of these.
+     */
+    private fun decodeThread(document: File): List<ThreadItem> {
+        if (!document.isFile) return emptyList()
+        val stored = MobileJson.decodeFromString<CachedThread>(document.readText())
+        require(stored.version == VERSION) { "unsupported conversation cache version" }
+        val rows = stored.rows.map { it.toDomain() }
+        val messages = rows.filterIsInstance<ThreadItem.MessageItem>().map { it.message }
+        require(messages.none { it.toolCall?.status == ToolCallStatus.Running }) { "running tool in thread cache" }
+        require(messages.distinctBy { it.id }.size == messages.size) { "duplicate thread cache message identity" }
+        val boundaries = rows.filterIsInstance<ThreadItem.SessionBoundary>()
+        require(boundaries.distinctBy { it.previousSessionId to it.newSessionId }.size == boundaries.size) {
+            "duplicate thread cache boundary identity"
+        }
+        return rows
+    }
+
+    /** Temp file plus atomic move: process death mid-write leaves the previous document or the new one. */
+    private fun writeAtomically(
+        document: File,
+        text: String,
     ) {
-        val directory = hostDirectory(serverId)
+        val directory = document.parentFile ?: throw IOException("conversation cache directory unavailable")
         if (!directory.isDirectory && !directory.mkdirs()) {
             throw IOException("conversation cache directory unavailable")
         }
-        val document = File(directory, DOCUMENT_NAME)
-        val temporary = File(directory, "$DOCUMENT_NAME.tmp")
-        temporary.writeText(MobileJson.encodeToString(CachedConversations(VERSION, conversations.map { it.toRecord() })))
+        val temporary = File(directory, "${document.name}.tmp")
+        temporary.writeText(text)
         Files.move(temporary.toPath(), document.toPath(), StandardCopyOption.ATOMIC_MOVE)
     }
 
@@ -169,6 +235,11 @@ class FileConversationCache(
 
     private fun hostDirectory(serverId: String) = File(root, sha256Hex(serverId))
 
+    private fun threadDocumentFor(
+        serverId: String,
+        conversationId: String,
+    ) = File(File(hostDirectory(serverId), THREADS_DIRECTORY), "${sha256Hex(conversationId)}.json")
+
     private fun sha256Hex(value: String): String =
         MessageDigest
             .getInstance("SHA-256")
@@ -177,6 +248,7 @@ class FileConversationCache(
 
     private companion object {
         const val DOCUMENT_NAME = "conversations.json"
+        const val THREADS_DIRECTORY = "threads"
         const val VERSION = 1
     }
 }
@@ -240,3 +312,90 @@ private fun CachedConversation.toDomain() =
         archived = archived,
         workspaceLabel = workspaceLabel,
     )
+
+/** Versioned envelope for one conversation's settled thread rows (#797), newest last. */
+@Serializable
+private data class CachedThread(
+    val version: Int,
+    val rows: List<CachedThreadRow>,
+)
+
+/** Exactly one of [message] or [boundary]; a row with neither or both is unreadable. */
+@Serializable
+private data class CachedThreadRow(
+    val message: CachedMessage? = null,
+    val boundary: CachedBoundary? = null,
+)
+
+/** A settled [Message]: there is no `isStreaming`, because an in-flight row is never written. */
+@Serializable
+private data class CachedMessage(
+    val id: String,
+    val sessionId: String,
+    val role: Role,
+    val content: String,
+    val timestamp: String,
+    val tool: CachedToolCall? = null,
+)
+
+@Serializable
+private data class CachedToolCall(
+    val toolName: String,
+    val input: String,
+    val output: String,
+    val status: ToolCallStatus,
+)
+
+@Serializable
+private data class CachedBoundary(
+    val previousSessionId: String,
+    val newSessionId: String,
+    val reason: BoundaryReason,
+    val occurredAt: String,
+    val workspaceCwd: String? = null,
+)
+
+// Only settled messages and boundaries reach here: `cacheableThreadRows` has already dropped the rest.
+private fun ThreadItem.toRecord(): CachedThreadRow =
+    when (this) {
+        is ThreadItem.MessageItem ->
+            CachedThreadRow(
+                message =
+                    CachedMessage(
+                        id = message.id,
+                        sessionId = message.sessionId,
+                        role = message.role,
+                        content = message.content,
+                        timestamp = message.timestamp.toString(),
+                        tool = message.toolCall?.let { CachedToolCall(it.toolName, it.input, it.output, it.status) },
+                    ),
+            )
+        is ThreadItem.SessionBoundary ->
+            CachedThreadRow(
+                boundary = CachedBoundary(previousSessionId, newSessionId, reason, occurredAt.toString(), workspaceCwd),
+            )
+        is ThreadItem.UnrecognizedMessage -> throw IllegalStateException("unrecognized rows are never cached")
+    }
+
+private fun CachedThreadRow.toDomain(): ThreadItem {
+    val message = message
+    val boundary = boundary
+    require((message == null) != (boundary == null)) { "thread cache row must be one kind" }
+    return if (message != null) {
+        ThreadItem.MessageItem(
+            Message(
+                id = message.id,
+                sessionId = message.sessionId,
+                role = message.role,
+                content = message.content,
+                timestamp = Instant.parse(message.timestamp),
+                isStreaming = false,
+                toolCall = message.tool?.let { ToolCall(it.toolName, it.input, it.output, it.status) },
+            ),
+        )
+    } else {
+        checkNotNull(boundary).let {
+            ThreadItem.SessionBoundary(it.previousSessionId, it.newSessionId, it.reason, Instant.parse(it.occurredAt), it.workspaceCwd)
+        }
+    }
+}
