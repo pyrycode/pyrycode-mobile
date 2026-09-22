@@ -16,6 +16,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.data.model.Message
@@ -41,6 +42,11 @@ internal val BubbleContentSpacing = 12.dp // `Message` gap-[12px] — body to me
 internal val MessageContentGutter = 20.dp
 internal val MessageRoleInset = 100.dp
 
+// The bubble's own container, tagged because its *width* is the property under test and nothing else
+// observes it: a body `Text` hugs its own content whether or not the container around it does, so the
+// Surface is the only node that moves when the hug regresses.
+internal const val MESSAGE_BUBBLE_TEST_TAG = "message-bubble"
+
 private const val STREAMING_CARET_GLYPH = "▎"
 private const val STREAMING_REVEAL_CHARS_PER_SECOND = 50
 private const val STREAMING_REVEAL_STEP_CHARS = 1
@@ -55,7 +61,17 @@ fun MessageBubble(
     when (message.role) {
         Role.User -> UserMessageBubble(message, modifier)
         Role.Assistant -> AssistantMessage(message, modifier)
-        Role.Tool -> message.toolCall?.let { ToolCallRow(toolCall = it, modifier = modifier) }
+        // The gutter is applied here rather than inside ToolCallRow: moving it into the components left
+        // the tool row as the one list kind still bleeding to the screen edge, which reads as a ragged
+        // left edge next to the bubbles. The row's own layout belongs to #658, and this arm reaches it
+        // without touching that file.
+        Role.Tool ->
+            message.toolCall?.let {
+                ToolCallRow(
+                    toolCall = it,
+                    modifier = modifier.padding(horizontal = MessageContentGutter),
+                )
+            }
     }
 }
 
@@ -110,15 +126,22 @@ private fun AssistantMessage(
         modifier = modifier,
     ) {
         if (message.isStreaming) {
+            // The one arm that keeps filling, deliberately. `caretVisible` toggles the rendered string
+            // by one glyph twice a second, so a shrink-wrapping streaming bubble would oscillate in
+            // width at 2Hz for the whole turn — worst on exactly the short replies the hug exists for.
+            // Filling holds the width steady while deltas land, and the bubble settles onto its content
+            // at `turn_end`: one snap rather than continuous jitter.
             StreamingAssistantBody(
                 content = message.content,
                 modifier = Modifier.fillMaxWidth(),
             )
         } else {
-            MarkdownText(
-                markdown = message.content,
-                modifier = Modifier.fillMaxWidth(),
-            )
+            // No `fillMaxWidth()`. It sets minWidth = maxWidth, which pinned every finalized assistant
+            // bubble to the full lane and made 272dp a fixed width rather than the maximum the design
+            // specifies — the frame's short assistant instance (`I533:1956;132:4539`) is 205dp. Without
+            // it `MarkdownText`'s `Column` wraps its widest child, while `CodeBlock` carries its own
+            // `fillMaxWidth()`, so a fenced block still spans the bubble and only prose hugs.
+            MarkdownText(markdown = message.content)
         }
     }
 }
@@ -157,6 +180,7 @@ private fun MessageContainer(
         horizontalArrangement = Arrangement.spacedBy(0.dp, alignment),
     ) {
         Surface(
+            modifier = Modifier.testTag(MESSAGE_BUBBLE_TEST_TAG),
             shape = BubbleShape,
             color = bubbleColor,
             contentColor = bubbleContentColor,
@@ -267,6 +291,10 @@ private fun MessageBubblePreviewSequence() {
                         "being null user_ids in the legacy table — let me walk through each.",
             ),
         )
+        // Short enough that the meta row, not the body, sets the bubble's width. Every other message in
+        // this sequence wraps and so reaches the lane maximum, which is what made the hug invisible
+        // under review: 272dp is the maximum, and a brief reply must sit well inside it.
+        MessageBubble(previewMessage(role = Role.Assistant, content = "On it."))
     }
 }
 

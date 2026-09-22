@@ -11,6 +11,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -41,7 +42,11 @@ private val CopyTouchPadding = 6.dp
 // reads correctly in both bubble variants and both colour schemes. The design names
 // `Schemes/inverse-primary` (#32628D), which is the light-scheme primary tone and only reads as
 // de-emphasis against the dark reference frame.
-private const val META_CONTENT_ALPHA = 0.70f
+//
+// 0.80 rather than 0.70: at 0.70 this 12sp `bodySmall` label lands around 4.4:1 against either bubble
+// fill in dark, which is on the WCAG AA line rather than clear of it. 0.80 keeps margin and still reads
+// as de-emphasised beside the body.
+private const val META_CONTENT_ALPHA = 0.80f
 
 /**
  * Upper bound on what one tap can put on the clipboard.
@@ -134,18 +139,22 @@ internal fun MessageMetaRow(
     // One de-emphasised colour for both children: the label takes it directly, the control inherits it
     // through the ambient so it stays reusable at full strength on a surface that wants full strength.
     val metaColor = LocalContentColor.current.copy(alpha = META_CONTENT_ALPHA)
+    // Two `DateTimeFormatter`s are built per call, so hold the result across recompositions. Keyed on
+    // the zone and locale as well as the instant: both are read here rather than passed in, and keying
+    // on them keeps the cache honest instead of relying on a configuration change to rebuild the tree.
+    val timeZone = TimeZone.currentSystemDefault()
+    val locale = Locale.getDefault()
+    val formattedTimestamp =
+        remember(timestamp, timeZone, locale) {
+            formatShortDateTime(instant = timestamp, timeZone = timeZone, locale = locale)
+        }
     Row(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(MetaRowSpacing),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            text =
-                formatShortDateTime(
-                    instant = timestamp,
-                    timeZone = TimeZone.currentSystemDefault(),
-                    locale = Locale.getDefault(),
-                ),
+            text = formattedTimestamp,
             style = MaterialTheme.typography.bodySmall,
             color = metaColor,
         )

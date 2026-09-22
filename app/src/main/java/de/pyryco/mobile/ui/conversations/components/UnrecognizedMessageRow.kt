@@ -107,7 +107,14 @@ private fun UnrecognizedMessageRowContent(
         modifier =
             modifier
                 .fillMaxWidth()
-                .padding(bottom = UnrecognizedRowVerticalSpacing),
+                .padding(
+                    // The thread's shared content gutter (#644). Carried here because this row is the
+                    // only list kind with no other owner, and without it the row bleeds to the screen
+                    // edge while every bubble beside it sits inset.
+                    start = MessageContentGutter,
+                    end = MessageContentGutter,
+                    bottom = UnrecognizedRowVerticalSpacing,
+                ),
     ) {
         Surface(
             modifier =
@@ -273,9 +280,11 @@ private val PreviewUndecodable =
         occurredAt = PreviewInstant,
     )
 
+// No horizontal padding of its own: the row carries the thread's 20dp gutter now, so the preview shows
+// the real geometry rather than stacking a second inset on top of it.
 @Composable
 private fun UnrecognizedMessageRowPreviewMatrix() {
-    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+    Column {
         UnrecognizedMessageRowContent(
             item = PreviewAssistantBlock,
             expanded = false,

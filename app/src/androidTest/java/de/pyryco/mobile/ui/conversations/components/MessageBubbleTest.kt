@@ -14,12 +14,15 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.width
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
@@ -158,6 +161,47 @@ class MessageBubbleTest {
         )
     }
 
+    // AC #1 — 272dp is a *maximum*, not a fixed width: a short assistant body hugs its content, which is
+    // what the Figma's short assistant instance (`I533:1956;132:4539`, 205dp) shows. Regression guard for
+    // `fillMaxWidth()` on the finalized body: that sets minWidth = maxWidth, so every assistant bubble
+    // measured at the full lane and the hug was invisible. Read off the bubble Surface, because a body
+    // `Text` hugs its own content whether or not the container does — the container is the only node the
+    // regression moves.
+    @Test
+    fun shortAssistantBody_hugsItsContent_whileALongOneStillGrowsToTheLane() {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme(darkTheme = true) {
+                Surface {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        MessageBubble(message(Role.Assistant, SHORT_BODY))
+                        MessageBubble(message(Role.Assistant, LONG_BODY))
+                    }
+                }
+            }
+        }
+
+        val root = composeTestRule.onRoot().getUnclippedBoundsInRoot()
+        // What an assistant bubble may occupy: the full width less both gutters and the trailing inset.
+        val lane = root.width - MessageContentGutter * 2 - MessageRoleInset
+        val bubbles = composeTestRule.onAllNodesWithTag(MESSAGE_BUBBLE_TEST_TAG, useUnmergedTree = true)
+        val short = bubbles[0].getUnclippedBoundsInRoot().width
+        val long = bubbles[1].getUnclippedBoundsInRoot().width
+
+        // The margin matters: a lane-pinned bubble measures a fraction *under* the computed lane
+        // (271.24 against 271.43 on this device) because the enclosing padding rounds through px, so a
+        // bare `short < lane` passes even when the hug is broken. A real hug here is ~150dp — the meta
+        // row plus the bubble's own padding — so 40dp is far outside the rounding and far inside the hug.
+        assertTrue(
+            "a short assistant bubble must hug its content, not fill the lane (width=$short, lane=$lane)",
+            short < lane - HUG_MARGIN,
+        )
+        // Paired so the first assertion cannot be satisfied by a blanket shrink: width tracks content.
+        assertTrue(
+            "a long assistant bubble must still grow toward the lane (long=$long, short=$short)",
+            long > short,
+        )
+    }
+
     // AC #3 — the control copies exactly its own message's text, and copying one message leaves every
     // other message's text off the clipboard.
     @Test
@@ -243,10 +287,21 @@ class MessageBubbleTest {
     private companion object {
         const val TIMEOUT_MS = 5_000L
 
+        // See shortAssistantBody_hugsItsContent_whileALongOneStillGrowsToTheLane.
+        val HUG_MARGIN = 40.dp
+
         // Plain alphanumeric bodies: MarkdownText renders them 1:1, they do not collide with each
         // other, and neither is a substring of the other.
         const val ASSISTANT_BODY = "alpha assistant line"
         const val USER_BODY = "omega user line"
+
+        // Short enough that the meta row, not the body, sets the bubble's width — the clearest hug case.
+        const val SHORT_BODY = "ok"
+
+        // Long enough to wrap at any phone width, so it grows to the lane the short one must not fill.
+        const val LONG_BODY =
+            "a considerably longer assistant reply that wraps across several lines at any " +
+                "phone width and therefore grows out to the maximum the role inset allows"
 
         // Short so the 50-chars-per-second reveal finishes well inside the timeout.
         const val STREAMING_BODY = "kappa stream"
