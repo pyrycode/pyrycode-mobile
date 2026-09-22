@@ -381,6 +381,47 @@ class StableConversationRepositoryTest {
             assertEquals(listOf(false, true, false), compacting)
         }
 
+    // ---- #802: observeUsageLimit delegates and tracks connection churn ---------------------------
+
+    @Test
+    fun observeUsageLimit_whileAbsent_emitsNull() =
+        runTest {
+            val current = MutableStateFlow<ConversationRepository?>(null)
+            val facade = StableConversationRepository(current)
+
+            val readings = mutableListOf<UsageLimitReading?>()
+            backgroundScope.launch { facade.observeUsageLimit("c1").collect { readings += it } }
+            runCurrent()
+
+            assertEquals(listOf<UsageLimitReading?>(null), readings)
+        }
+
+    // The switch is the ACCOUNT-isolation mechanism here, not just plumbing: a usage-limit window
+    // belongs to an account, so one connection's quota posture must never be attributed to the next.
+    @Test
+    fun observeUsageLimit_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            val readings = mutableListOf<UsageLimitReading?>()
+            backgroundScope.launch { facade.observeUsageLimit("c1").collect { readings += it } }
+            runCurrent()
+            assertEquals(listOf<UsageLimitReading?>(null), readings)
+
+            val reading = UsageLimitReading("allowed_warning", "seven_day", 1_780_189_200L, 0.94, null)
+            repoA.pushUsageLimit(reading)
+            runCurrent()
+            assertEquals(listOf(null, reading), readings)
+
+            // Switching to a fresh connection drops the prior connection's reading.
+            current.value = repoB
+            runCurrent()
+            assertEquals(listOf(null, reading, null), readings)
+        }
+
     // ---- #590: observeSessionSettings delegates, and a host switch resets the reading ------------
 
     @Test
@@ -527,6 +568,7 @@ class StableConversationRepositoryTest {
         private val queued = MutableStateFlow<List<QueuedMessage>>(emptyList())
         private val apiRetry = MutableStateFlow<ApiRetryStatus>(ApiRetryStatus.NotRetrying)
         private val compacting = MutableStateFlow(false)
+        private val usageLimit = MutableStateFlow<UsageLimitReading?>(null)
 
         val createDiscussionCalls = mutableListOf<String?>()
         val sendMessageCalls = mutableListOf<Pair<String, String>>()
@@ -559,6 +601,10 @@ class StableConversationRepositoryTest {
             compacting.value = value
         }
 
+        fun pushUsageLimit(value: UsageLimitReading?) {
+            usageLimit.value = value
+        }
+
         override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> = conversations.filterNotNull()
 
         override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = flowOf(emptyList())
@@ -572,6 +618,8 @@ class StableConversationRepositoryTest {
         override fun observeApiRetry(conversationId: String): Flow<ApiRetryStatus> = apiRetry
 
         override fun observeCompacting(conversationId: String): Flow<Boolean> = compacting
+
+        override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> = usageLimit
 
         private val sessionSettings = MutableStateFlow<SessionSettings?>(null)
 

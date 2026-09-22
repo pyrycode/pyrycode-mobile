@@ -85,6 +85,30 @@ interface ConversationRepository {
     fun observeCompacting(conversationId: String): Flow<Boolean> = flowOf(false)
 
     /**
+     * Emits the usage-limit reading claude last reported for [conversationId], or **`null` when there
+     * is none to read** (#802). `null` until the wire says otherwise; a [UsageLimitReading] once a
+     * non-benign frame lands; back to `null` on the benign clearing edge or once the reading's
+     * [UsageLimitReading.resetsAt] has passed. Cold flow; re-emits on every change. The thread layer
+     * observes this to say why a waiting turn is waiting (the render sibling of this split).
+     *
+     * **`null` covers three upstream facts a consumer does not have to tell apart** — nothing has
+     * arrived for this conversation, a benign frame cleared it, or the reported window has passed. A
+     * *present but degenerate* reading (`status = ""`) is a real reading the daemon emitted and is
+     * **not** collapsed to `null`, so the nullable return draws the only distinction a consumer needs.
+     *
+     * **The expiry is already applied here and must not be re-derived.** [UsageLimitReading.resetsAt]
+     * is readable on the value, so a consumer could compare it again and get the rule wrong (`0` is
+     * "claude reported no reset", not the epoch); this seam is the single place that rule lives. See
+     * the [RemoteConversationRepository] override for the comparison and for why no timer fires at the
+     * deadline.
+     *
+     * Default `flowOf(null)` — implementations without an interactive wire (the fake, inline test
+     * doubles) inherit "nothing reported" and need no override, the same cascade-avoidance as
+     * [observeStall] / [observeQueue] / [observeApiRetry] / [observeCompacting].
+     */
+    fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> = flowOf(null)
+
+    /**
      * Whether this repository can actually perform the conversation-mutation actions
      * ([archive] / [unarchive] / [rename] / [startNewSession] / [changeWorkspace] / [delete]).
      * A UI gating consumer reads this to stop offering actions the backend cannot service.
@@ -709,3 +733,68 @@ sealed interface ApiRetryStatus {
         val total: Int,
     ) : ApiRetryStatus
 }
+
+/**
+ * The usage-limit reading claude last reported for one conversation (#802, pyrycode#1405/#1410) — the
+ * element type of [ConversationRepository.observeUsageLimit], co-located with the contract it serves
+ * (like [ApiRetryStatus] / [ThreadItem] / [QueuedMessage]).
+ *
+ * Wire SSOT: pyrycode `docs/protocol-mobile.md` § `rate_limited`, which is where the field semantics
+ * live; they are cited here, not restated. **A frame is not proof that anything was blocked** — the one
+ * measured non-benign status was seen on an account whose turns all ran normally — so this type is
+ * named for the *reading* rather than for the frame, deliberately, and a consumer's copy must not
+ * claim the user is rate limited. Desktop made the same naming call for the same reason
+ * (`usageLimitStore`, not `rateLimitStore`).
+ *
+ * A **`data class` rather than a sealed family**, unlike [ApiRetryStatus]: that one is sealed because
+ * its wire shape collapses into three meanings a consumer's `when` must cover exhaustively, whereas
+ * this payload has one meaning with five fields. `data` is load-bearing rather than cosmetic for
+ * [ModelMenu]'s reason — structural equality is what makes the repository projection's
+ * `distinctUntilChanged` behave, so a value-identical re-report costs a consumer nothing.
+ *
+ * **The routing `conversation_id` is deliberately not a field.** It stays a map key in the repository
+ * projection and never reaches this value — the rule [ApiRetryStatus] states, and here it is the
+ * stronger one: a render consumer holds and draws from this object, so a daemon-asserted id inside it
+ * would be one copy-paste away from a sink.
+ *
+ * **SECURITY.** [status] and [limitType] are claude-authored strings that crossed the subprocess trust
+ * boundary; the daemon bounds them at construction and does **not** sanitize them, so they stay
+ * untrusted, model-influenced text here. They are held **verbatim** — never normalised, lowercased,
+ * trimmed, allow-listed or shape-checked — and are usable only as lookup keys for **client-owned
+ * copy**: never rendered verbatim, never an authorization signal, never a filename, a cache key or a
+ * lookup path. Nothing on this path is ever logged. **No behaviour may branch on any field of this
+ * type**: the frame is a report, never a control input.
+ *
+ * @param status Claude's own status for the usage-limit window, verbatim. An **open string with a
+ *   mostly unmeasured value set**. Exactly one comparison against it is legitimate — the benign value,
+ *   which distinguishes a clearing edge from a warning, and which the decode boundary has already made
+ *   before a reading reaches here. Every other value is an **opaque label** to render, never a case to
+ *   branch on; treating it as a closed set is a bug waiting for claude's next release.
+ * @param limitType Which limit the report concerns, verbatim. Also an open string — two observed values
+ *   do not earn an enum. **Never pair a clear to it**: the clearing frame names a *different*
+ *   `limit_type` than the warning it clears, so a consumer matching on it never matches. The clear is
+ *   paired to the conversation, which the repository does by construction.
+ * @param resetsAt When claude says the limit lifts, in **unix seconds** — claude's number, not the
+ *   device's clock, unvalidated in both directions. **`0` means claude reported none, emphatically not
+ *   the epoch.** Negative and absurd values are representable and none is rejected. It is **never a
+ *   scheduling input**: a delay computed from it can be negative or past a timer's clamp, and both fire
+ *   immediately rather than never. [ConversationRepository.observeUsageLimit] has already applied the
+ *   expiry; a consumer formats this defensively and does not re-derive the rule.
+ * @param utilization How much of the window claude says is **spent** — claude's own number, and **not a
+ *   bounded fraction**: not clamped, rounded, rescaled or range-checked anywhere on the path, so a
+ *   consumer must not assume `0..1` and must range-check before scaling a gauge by it. **`null` and
+ *   `0.0` are different facts**, and absence is the *common* case: reading a missing reading as zero
+ *   renders a fresh window as an exhausted one. Degrade instead — say a limit was reported without
+ *   claiming how much of it is spent.
+ * @param truncatedFields The fields the daemon cut to fit its cap, named by their wire keys (`status`,
+ *   `limit_type`); **`null` when nothing was cut**, which is distinct from an empty list. Load-bearing
+ *   rather than decoration: a consumer that ignores it presents claude's cut text as complete.
+ *   `utilization` is never a member — a number cannot be cut.
+ */
+data class UsageLimitReading(
+    val status: String,
+    val limitType: String,
+    val resetsAt: Long,
+    val utilization: Double?,
+    val truncatedFields: List<String>?,
+)

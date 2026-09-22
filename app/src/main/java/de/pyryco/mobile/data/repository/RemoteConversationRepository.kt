@@ -35,6 +35,7 @@ import de.pyryco.mobile.data.network.ModalShownPayloadDto
 import de.pyryco.mobile.data.network.ModelListPayloadDto
 import de.pyryco.mobile.data.network.PromoteConversationPayloadDto
 import de.pyryco.mobile.data.network.QueueStatePayloadDto
+import de.pyryco.mobile.data.network.RateLimitedPayloadDto
 import de.pyryco.mobile.data.network.RecentWorkspacesListPayloadDto
 import de.pyryco.mobile.data.network.RegisterPushTokenPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
@@ -65,6 +66,7 @@ import de.pyryco.mobile.data.network.toHistoryPage
 import de.pyryco.mobile.data.network.toMenu
 import de.pyryco.mobile.data.network.toMessage
 import de.pyryco.mobile.data.network.toQueue
+import de.pyryco.mobile.data.network.toReading
 import de.pyryco.mobile.data.network.toRow
 import de.pyryco.mobile.data.network.toSessionSettings
 import de.pyryco.mobile.data.network.toStatus
@@ -88,6 +90,7 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -154,6 +157,20 @@ class RemoteConversationRepository(
      * coordinator-wired instance outlives the connection.
      */
     private val replayCursor: ReplayCursor = ReplayCursor(),
+    /**
+     * The wall clock the usage-limit expiry reads (#802) — a **supplier**, not a value, for
+     * [negotiatedCapabilities]' reason: the expiry is evaluated every time a collector reads
+     * [observeUsageLimit], long after construction, so a captured instant would freeze it.
+     *
+     * [kotlinx.datetime.Instant] rather than a bare seconds `Long` is the type-level defence against
+     * the unit hazard this comparison carries: a caller supplying milliseconds would hand over a value
+     * a thousand times larger than any real `resets_at`, expiring every reading the instant it landed,
+     * with no type error and a symptom ("nothing ever shows") identical to the daemon having sent
+     * nothing. `Instant.epochSeconds` is the only route to a number here, so the unit cannot be got
+     * wrong. **Defaulted** so every existing construction (tests, the coordinator, the scripted
+     * harness) compiles unchanged; only a test supplies its own.
+     */
+    private val now: () -> Instant = Clock.System::now,
 ) : ConversationRepository {
     /**
      * The demuxed list projection: `null` until the first `conversations` snapshot loads, then the
@@ -340,6 +357,42 @@ class RemoteConversationRepository(
      * **explicit wire falling edge**, not inferred from the next forward-progress event.
      */
     private val compactingConversations = MutableStateFlow<Set<String>>(emptySet())
+
+    /**
+     * `conversationId -> the usage-limit reading claude last reported for it` (#802) — what claude said
+     * about its usage-limit window, so a waiting turn can say why. A payload-carrying `Map`, the
+     * [apiRetryByConversation] shape rather than [compactingConversations]' membership `Set`: this frame
+     * carries five wire fields, not an edge bool.
+     *
+     * Written **only** from the single [init] inbound collector: a non-benign frame **replaces** that
+     * conversation's entry and a benign one **removes** it, leaving every other conversation untouched.
+     * Single writer on the one collector coroutine, so the raising and clearing edges never race; each
+     * write is a pure replace or a pure removal that reads no held state, so there is no
+     * check-then-mutate window even in principle, and the atomic [MutableStateFlow.update] matches the
+     * sibling projections' memory-visibility posture. [observeUsageLimit] fans out from it.
+     *
+     * **A cleared entry is REMOVED rather than stored as a tombstone**, deliberately unlike
+     * [apiRetryByConversation]'s stored falling edge: absence is already the observable "nothing to
+     * read" because the observer maps an absent key to `null`, and a stored tombstone would need a
+     * second value meaning the same thing.
+     *
+     * Connection-scoped in-memory state — a fresh repository per connection (#351) starts empty, which
+     * is also this state's **pairing-scoped clear**: a usage-limit posture belongs to an account, and
+     * nothing re-asserts a reading after a reconnect, so a reading can never be attributed to the next
+     * account. **Nothing here is persisted and nothing may be** — a persisted copy would outlive the
+     * connection scope that is the whole clear mechanism.
+     *
+     * Growth, stated rather than defended: one bounded record per distinct `conversation_id` seen on
+     * this connection. Both halves are bounded per frame — the transport's frame contract caps the
+     * envelope ahead of any parse and the daemon bounds both strings at construction — so a flooding
+     * daemon costs one entry per distinct id rather than an unbounded append per frame, and the
+     * connection scope returns it to zero. The posture [queuedByConversation] and
+     * [modelMenusByConversation] already ship; no eviction policy is built for a failure nobody has
+     * observed. In particular **the expiry is not an eviction**: an expired entry stays here and merely
+     * stops being readable (see [observeUsageLimit]), which is what keeps this projection free of the
+     * timer it would otherwise need.
+     */
+    private val usageLimitsByConversation = MutableStateFlow<Map<String, UsageLimitReading>>(emptyMap())
 
     /**
      * `conversationId -> settings-read ordinal` (#590) — the **refresh trigger** for
@@ -794,6 +847,42 @@ class RemoteConversationRepository(
                     }
                 }
             }
+            TYPE_RATE_LIMITED -> {
+                // What claude said about its usage-limit window (#802). Same `interactive` gate as the
+                // live-session / `stall` / `queue_state` / `api_retry` / `compacting` siblings: a
+                // non-interactive phone never decodes a spurious `rate_limited` from a buggy/hostile
+                // daemon that ignored the server-side fan-out gate (fail-closed, defence in depth).
+                //
+                // One transition for this conversation, leaving every other conversation untouched
+                // (AC #2) — a non-benign reading replaces its entry, the benign falling edge removes
+                // it. The `reading == null` branch is a *dispatch* on what the mapper already decided,
+                // not a second reading of the wire: `toReading()` is the sole owner of the benign
+                // comparison, so unlike the `compacting` arm no status is examined here. Routing is
+                // strictly the payload's own conversation_id, which is what makes AC #2's
+                // different-`limit_type` clause hold structurally: `limit_type` is read by no
+                // control-flow path, so pairing the clear to it is not expressible. Removing an absent
+                // id is a no-op, so a benign frame for a conversation holding nothing is inert.
+                //
+                // A malformed payload decodes to null and is dropped so the single inbound consumer
+                // survives (AC #1). Like the `queue_state` / `api_retry` / `compacting` siblings and
+                // unlike the live-session arm, this folds no thread row and does NOT clear a stall in
+                // either direction (AC #5) — a usage-limit report is neither a stall nor turn forward
+                // progress, and clearing one here would let a daemon suppress the phone's stall
+                // indicator by emitting `rate_limited` frames.
+                //
+                // Drop silently. Nothing here logs the payload, and that is mandatory rather than
+                // stylistic: `status` and `limit_type` are claude-authored text the daemon does not
+                // sanitize, a logged conversation_id is a cross-conversation correlation leak, and the
+                // pair together discloses the account's quota posture — a fact about the operator
+                // rather than about this frame.
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    decodeRateLimited(envelope)?.let { (conversationId, reading) ->
+                        usageLimitsByConversation.update {
+                            if (reading == null) it - conversationId else it + (conversationId to reading)
+                        }
+                    }
+                }
+            }
             TYPE_SESSION_TRANSITION -> {
                 // A session boundary (#336, pyrycode#656/#657/#740). Same `interactive` gate as the
                 // live-session / `stall` / `queue_state` siblings: a non-interactive phone never decodes a
@@ -1035,6 +1124,39 @@ class RemoteConversationRepository(
         try {
             val dto = MobileJson.decodeFromJsonElement<CompactingPayloadDto>(envelope.payload)
             dto.conversationId to dto.active
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+
+    /**
+     * Decode one v2 `rate_limited` envelope (#802) to its routing conversation id and the mapped
+     * [UsageLimitReading], or **null** when it cannot be read. Decodes the untrusted [Envelope.payload]
+     * through the single configured [MobileJson] and maps via `toReading()`. Returning already-mapped
+     * domain values keeps the untrusted wire DTO from escaping this boundary, matching every sibling
+     * decoder.
+     *
+     * **The two nullability levels say different things, and conflating them is the trap here.** The
+     * **outer** `null` is "malformed — drop this envelope and hold what we have": the whole body is one
+     * `try`/`catch (IllegalArgumentException)` ([kotlinx.serialization.SerializationException] ⊂
+     * [IllegalArgumentException]), so a missing required field, or one whose JSON shape cannot be read
+     * as its declared type, drops the one envelope while the lone inbound collector survives (AC #1).
+     * The **inner** `null` is the mapper's benign **falling edge** — a perfectly well-formed frame
+     * saying claude's latest reading is benign — which the caller turns into a clear (AC #2). A caller
+     * that collapsed the two would either clear on a malformed frame or ignore every clear.
+     *
+     * Unlike [decodeLiveSessionEvent] there is no unrecognized-*value* drop: an unrecognised `status`
+     * is an ordinary warning and surfaces verbatim, because its value set is almost entirely
+     * unmeasured and narrowing it would discard the first real limit that fires.
+     *
+     * Mirrors [decodeStall] / [decodeCompacting]'s drop idiom — **nothing here logs the payload**, and
+     * here that is mandatory rather than uniform-for-its-own-sake: `status` and `limit_type` are
+     * claude-authored text the daemon does not sanitize, and the caught throwable is **discarded**
+     * rather than surfaced because kotlinx-serialization can quote the offending input in its message.
+     */
+    private fun decodeRateLimited(envelope: Envelope): Pair<String, UsageLimitReading?>? =
+        try {
+            val dto = MobileJson.decodeFromJsonElement<RateLimitedPayloadDto>(envelope.payload)
+            dto.conversationId to dto.toReading()
         } catch (e: IllegalArgumentException) {
             null
         }
@@ -1824,6 +1946,64 @@ class RemoteConversationRepository(
      */
     override fun observeCompacting(conversationId: String): Flow<Boolean> =
         compactingConversations.map { conversationId in it }.distinctUntilChanged()
+
+    /**
+     * The usage-limit reading claude last reported for [conversationId] (#802), a cold projection of
+     * the shared [usageLimitsByConversation] `StateFlow` — **and the only read surface it has**, which
+     * is what makes this the single place the expiry rule lives. Issues no request; rides the live
+     * `rate_limited` frames. An absent key is `null`, so "nothing reported", "cleared by a benign
+     * frame" and "the reported window has passed" are one observable state, which is all a consumer
+     * needs to tell apart.
+     *
+     * [distinctUntilChanged] suppresses only value-*identical* re-emissions, so a `rate_limited` for
+     * **another** conversation does not re-emit this flow, while a genuinely changed reading is a
+     * different [UsageLimitReading] value and does reach the collector — the [observeApiRetry]
+     * property a membership `Set` could not provide. A `StateFlow` always has a current value, so
+     * every collector (including a `flatMapLatest` re-subscription through the facade) receives the
+     * current reading (`null` until a frame lands) on subscription; the one inbound consumer fans out
+     * to unlimited collectors.
+     *
+     * **The expiry is one comparison performed when a reader asks, and there is deliberately no
+     * timer.** Nothing in this class schedules, delays, allocates or iterates from
+     * [UsageLimitReading.resetsAt] — it is claude's unvalidated number, so a delay computed from it
+     * could be negative (firing immediately, and spinning if a handler re-armed) or past a timer's
+     * clamp, which *also* fires immediately rather than never. The consequence, stated rather than
+     * discovered: an already-subscribed collector receives **no spontaneous emission at the deadline**
+     * — it re-evaluates on the next upstream change, while a collector subscribing after the deadline
+     * reads `null` at once because the `StateFlow` replays its current value through this `map`. A
+     * render consumer owns its own recomposition cadence and must not re-derive the rule.
+     *
+     * One further consequence of comparing against a **wall** clock, named so a later reader does not
+     * re-derive it as a bug: a device clock moved backwards can make an expired reading readable
+     * again. That is inherent rather than a defect — `resets_at` is a wall-clock unix instant, so a
+     * monotonic clock would be the wrong comparand — and the blast radius is one stale row that the
+     * next frame corrects. Desktop's `selectUsageLimitFor` carries the identical property.
+     */
+    override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> =
+        usageLimitsByConversation.map { it[conversationId]?.takeIf(::isReadable) }.distinctUntilChanged()
+
+    /**
+     * Whether [reading] is still readable at the current [now] (#802) — the whole of the expiry rule,
+     * in reading order, which is also precedence order:
+     *
+     * ```
+     * resetsAt == 0                    → readable   claude reported NO reset
+     * now().epochSeconds < resetsAt    → readable   inside the window claude reported
+     * now().epochSeconds >= resetsAt   → hidden     the window claude reported has passed
+     * ```
+     *
+     * **The zero test comes first and that ordering is the point.** `0` means claude reported no
+     * reset, *not* the epoch; folded into the comparison it would read as "expired in 1970" and make
+     * every unreported reading invisible the moment it landed — the failure this branch forecloses,
+     * and the common case rather than an exotic one.
+     *
+     * **The boundary is exclusive**, so a reading is hidden *at* [UsageLimitReading.resetsAt] as well
+     * as after it: the reset instant is when the window is fresh again, not the last instant it was
+     * stale. A negative `resetsAt` is a past instant and so is hidden immediately — the honest reading
+     * of an unvalidated number rather than a rejection, since the wire rejects none either and the
+     * decode still **carried** it.
+     */
+    private fun isReadable(reading: UsageLimitReading): Boolean = reading.resetsAt == 0L || now().epochSeconds < reading.resetsAt
 
     /**
      * The model menu this connection heard for [conversationId] (#791), a cold projection of the
@@ -2887,6 +3067,21 @@ class RemoteConversationRepository(
          * wire, so the state is cleared explicitly rather than inferred from forward progress.
          */
         const val TYPE_COMPACTING = "compacting"
+
+        /**
+         * Capability-gated status event: what claude said about its usage-limit window
+         * `{conversation_id, status, limit_type, resets_at, utilization, truncated_fields}` (#802,
+         * pyrycode#1405/#1410). **A frame is not proof the turn was blocked** — the one measured
+         * non-benign status was seen on an account whose turns all ran normally — so this reports what
+         * claude said, not that the user is rate limited. `status` carries the clearing edge when it
+         * holds the benign value, and that clear names a *different* `limit_type` than the warning it
+         * clears, so it pairs by `conversation_id` and never by limit. Unlike [TYPE_COMPACTING]'s
+         * clearing edge this one is **session-scoped**, so a warning raised before a `/clear` or a
+         * session eviction is never followed by one — hence the read-time expiry on
+         * [observeUsageLimit]. Conversation-scoped: no `turn_id`, and receiving one neither opens nor
+         * closes a turn.
+         */
+        const val TYPE_RATE_LIMITED = "rate_limited"
 
         /**
          * Capability-gated thread event: a session transition `{conversation_id, previous_session_id,

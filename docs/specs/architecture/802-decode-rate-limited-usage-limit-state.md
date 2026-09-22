@@ -273,6 +273,32 @@ state itself. **Pending for the documentation stage** — not touched by this ti
    plan says no, following desktop. Resolve by confirming the read-time comparison satisfies AC #4 in
    tests without a second rule at the write.
 
+## Revisions
+
+**2026-09-22 — implementation.** The design shipped unchanged; both Open Questions resolved without
+moving it, and one test-level defect was found and fixed.
+
+1. **Open question 1 — does the render sibling need `truncated_fields`?** Resolved **yes, carry it**.
+   `RateLimitedPayloadDto.truncatedFields` decodes to `UsageLimitReading.truncatedFields` and is
+   asserted verbatim by `usageLimit_absentUntilAFrameArrives_thenSurfacesEveryFieldVerbatim`. It is
+   nullable, so a consumer that has no use for it ignores it at no cost, while a consumer that renders
+   either string has the one signal that says the text was cut. Desktop's contrary call rested on its
+   render slice drawing no daemon string, which is a fact about that slice and not about this decode.
+2. **Open question 2 — drop an expired reading at write time instead of hiding it at read time?**
+   Resolved **no**, as planned. `isReadable` at the single read surface satisfies AC #4 in four tests
+   (`stopsBeingReadableOnceResetsAtHasPassed`, `exactlyAtResetsAt_isUnreadable`,
+   `zeroResetsAt_neverExpires`, and the negative-`resets_at` half of
+   `outOfRangeResetsAt_isCarriedNotRejected`) with no second rule at the write. A write-time drop would
+   also have needed a timer to fire at the deadline, which is exactly what the `resets_at`-is-never-a-
+   scheduling-input finding forbids.
+3. **Test defect found and fixed (no production change).** Two of the new cases pushed a raising and a
+   clearing frame inside **one** `runCurrent()` batch. `MutableStateFlow` conflates, so the collector
+   observed neither edge — `usageLimit_inertTowardNeighbours_keepsStallAndFoldsNoThreadRow` caught it
+   by asserting an emission *count* (`expected:<3> but was:<1>`). Both cases now run each edge in its
+   own batch and assert the intermediate state. Recorded because the failure mode is silent: the same
+   test asserting only the *final* value would have passed green while proving nothing about either
+   edge.
+
 ## Security review
 
 **Verdict:** PASS

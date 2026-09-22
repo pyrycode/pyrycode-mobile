@@ -8,6 +8,7 @@ import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UnrecognizedSite
+import de.pyryco.mobile.data.repository.UsageLimitReading
 import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -235,6 +236,102 @@ internal data class CompactingPayloadDto(
     @SerialName("conversation_id") val conversationId: String,
     val active: Boolean,
 )
+
+/**
+ * The `rate_limited` control event (#802, pyrycode#1405/#1410): what claude said about its usage-limit
+ * window, so a turn that stops making progress because of one can say why. Decode-only — the phone
+ * never sends one. Always decode through [MobileJson].
+ *
+ * Wire SSOT: pyrycode `internal/protocol/interactive.go` (`RateLimitedPayload`) +
+ * `docs/protocol-mobile.md` § `rate_limited`, which is where the field semantics live — cited here,
+ * not restated. Shape: `{conversation_id, status, limit_type, resets_at, utilization,
+ * truncated_fields}`.
+ *
+ * **Four fields are strict-required and two are nullable**, and the split follows the wire rather than
+ * taste. The four required ones set no `omitempty`, so a missing one — or one whose JSON shape cannot
+ * be read as its declared type — fails the structural decode with a
+ * [kotlinx.serialization.SerializationException] and the one envelope is dropped (AC #1), the
+ * [CompactingPayloadDto] posture. [utilization] and [truncatedFields] are the documented nullables:
+ * the daemon always emits both keys, so an unreported value arrives as a literal `null` rather than a
+ * dropped key, and the Kotlin defaults only cover a non-conforming producer. [MobileJson]'s
+ * `explicitNulls = false` collapsing omitted with explicit-`null` is correct for both — the very
+ * collapse `effective_effort` had to *avoid*, because its three states mean three different things.
+ * An out-of-contract `[]` on `truncated_fields` decodes to an empty list rather than being punned to
+ * `null`, so what arrived is what is retained. The measured latitude documented on
+ * [ApiRetryPayloadDto] applies here too: kotlinx's *tree* decoder accepts a **quoted** primitive
+ * (`"resets_at":"0"`) even with `isLenient = false`, so that is not a strictness probe a test should
+ * lean on.
+ *
+ * **[resetsAt] is a [Long] and that is load-bearing rather than stylistic.** The Go field is `int64`
+ * and the contract admits year-40000 values — roughly `1.2e12` unix seconds, an order of magnitude
+ * past `Int32`. An `Int` here would fail the *structural* decode on exactly the out-of-range value the
+ * contract requires be **carried**, turning a carry-verbatim rule into a silent drop through a type
+ * choice. Nothing clamps or range-checks it; `0` means claude reported no reset, **not** the epoch.
+ *
+ * **[utilization] is a `Double?` for the same reason it is a `*float64` upstream**: `null` and `0.0`
+ * are different facts, and absence is the *common* case. Reading a missing reading as zero renders a
+ * fresh window as an exhausted one. It is claude's number and **not a bounded fraction** — nothing
+ * clamps, rounds or rescales it here.
+ *
+ * **SECURITY.** [status] and [limitType] are claude-authored strings that crossed the subprocess trust
+ * boundary; the daemon bounds them at construction and does **not** sanitize them. They cross this
+ * boundary **verbatim** — never trimmed, normalised, lower-cased, allow-listed or shape-checked. No
+ * client-side length cap is added: the daemon bounds both at construction and
+ * `OkHttpRelayTransport`'s frame contract bounds the envelope ahead of any parse, so a third bound
+ * would defend a failure that cannot reach this code, and [truncatedFields] is how a consumer learns a
+ * value lost characters. Nothing on this path is logged. See [UsageLimitReading] for the obligations
+ * that travel with the decoded value.
+ */
+@Serializable
+internal data class RateLimitedPayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    val status: String,
+    @SerialName("limit_type") val limitType: String,
+    @SerialName("resets_at") val resetsAt: Long,
+    val utilization: Double? = null,
+    @SerialName("truncated_fields") val truncatedFields: List<String>? = null,
+)
+
+/**
+ * The single benign `status` value (#802) — the **one** value anything in this client compares against,
+ * and the discriminator that tells a clearing edge from a warning. Every other status is an opaque
+ * label to render, never a case to branch on: the value set beyond this one is almost entirely
+ * unmeasured, so narrowing it would drop the first real limit that fires. `private` so the comparison
+ * cannot spread beyond [toReading].
+ */
+private const val STATUS_BENIGN = "allowed"
+
+/**
+ * Map a decoded [RateLimitedPayloadDto] to the portable [UsageLimitReading], or **null** on the benign
+ * **falling edge** — claude's latest reading of the window is benign, so the holder's entry is cleared.
+ *
+ * This mapper is the **sole owner of the edge semantics**, the [ApiRetryPayloadDto.toStatus] precedent
+ * rather than the `compacting` arm's `if (active)`: there a mapper would have been a ceremonial
+ * identity function, whereas here five wire fields collapse into a four-field reading plus a routing
+ * key the reading must not carry. Keeping the decision here means the benign comparison is expressed
+ * **exactly once** and a second `if` in the inbound arm cannot encode the same rule differently.
+ *
+ * Unlike [TurnStatePayloadDto.toEvent] / [SessionTransitionPayloadDto.toBoundary], a `null` here is
+ * **not** an unrecognized-value drop: an unrecognised status is an ordinary warning and surfaces
+ * verbatim. That asymmetry is the wire's, not this client's — a reader who assumes the two nulls mean
+ * the same thing has it backwards.
+ *
+ * Every field is otherwise a **total verbatim copy**. Nothing is clamped, rounded, rescaled,
+ * range-checked, trimmed or narrowed, and `conversation_id` is deliberately **not** copied into the
+ * reading — it stays the caller's routing key (see [UsageLimitReading]).
+ */
+internal fun RateLimitedPayloadDto.toReading(): UsageLimitReading? =
+    if (status == STATUS_BENIGN) {
+        null
+    } else {
+        UsageLimitReading(
+            status = status,
+            limitType = limitType,
+            resetsAt = resetsAt,
+            utilization = utilization,
+            truncatedFields = truncatedFields,
+        )
+    }
 
 /**
  * Map a decoded [TurnStatePayloadDto] to a [LiveSessionEvent.TurnState], or **null** when [state] is
