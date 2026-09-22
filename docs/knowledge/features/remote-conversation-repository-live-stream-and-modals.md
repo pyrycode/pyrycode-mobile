@@ -80,6 +80,70 @@ repository stays plain orchestration: decode runs behind the authenticated Noise
 the new arm or the drop branch logs the payload** (`title`/`prompt`/option-`label` are operator content —
 pyrycode#701 "never log modal body text"). See [Modal events § Trust boundary](modal-events.md#trust-boundary--no-payload-logging).
 
+## The model-list inbound arm — the connection-scoped retention (#791)
+
+A new `TYPE_MODEL_LIST = "model_list"` arm joins the `onInbound` `when (envelope.type)` demux, byte-for-
+byte the `queue_state` / [`stall`](stall-state.md) sibling shape: gated identically on
+`CAPABILITY_INTERACTIVE in negotiatedCapabilities()` (the reused #385 supplier), calling a private
+`decodeModelList(envelope): Pair<String, ModelMenu>?` and folding the result into connection-scoped
+state. The frame carries the per-conversation menu of models claude will accept — identifiers, labels,
+per-row effort levels, auto-mode support and truncation metadata, drawn from claude's `initialize`
+control reply — arriving once per claude child spawn on the live lane (with an `event_id`) and again as a
+per-conversation burst on every (re)connect (without one); the payload is identical on both paths, so
+nothing here branches on delivery path. Decode boundary:
+[`ModelListPayloads.kt`](mobile-protocol-v2-wire-layer-application-payloads.md#the-model-list-retention-791).
+
+- **`decodeModelList`** copies the `decodeStall` / `decodeQueueState` `try { … } catch
+  (IllegalArgumentException) { null }` drop idiom — a malformed payload yields `null`, the one envelope is
+  dropped, the lone collector survives, and the conversation's previously retained menu stands because
+  nothing was written. **Nothing on this path logs**: every row string is claude-authored text that
+  crossed the subprocess trust boundary, and a logged `conversation_id` is a cross-conversation
+  correlation leak — the uniform rule across every `onInbound` arm. `toMenu()` is total and authors no
+  message at all, so the only throwables here are kotlinx-serialization's, caught and discarded rather
+  than surfaced.
+- **`modelMenusByConversation: MutableStateFlow<Map<String, ModelMenu>>`** is connection-scoped, in-memory
+  state written **only** from the single existing `init` inbound collector — single writer, so snapshots
+  never race, and the atomic `update {}` matches the sibling projections' memory-visibility posture. No
+  new coroutine, no new scope, no new dispatcher.
+- **Snapshot-replace, keyed by the frame's own `conversation_id` and nothing else.** The arm does one
+  `modelMenusByConversation.update { it + (conversationId to menu) }` — a `+` on the map replaces that one
+  key wholesale and leaves every other conversation untouched. Routing is **never** the envelope id (every
+  frame in the reconcile burst repeats the daemon's non-load-bearing envelope id) and **never** burst
+  position (the daemon walks its registry in an order that is not a contract). There is no element-level
+  merge or reconciliation within one row list either — a later frame for a conversation already held
+  fully replaces the prior rows, even when the new list is shorter.
+- **No clearing edge, anywhere.** Nothing removes a key, and no connection edge clears the map. Absence of
+  a frame is the wire's only "no list" signal, so a blanket clear on reconnect or on close would
+  manufacture an unavailable reading the daemon never stated. Unlike
+  [`queuedByConversation`](queued-backlog.md) and [`stalledConversations`](stall-state.md), which track a
+  transient "right now" condition, a published model menu is a standing fact about the connected host for
+  as long as the connection lives — the only reset this state ever gets is a fresh
+  `RemoteConversationRepository` per connection (#351), which is also where "per host" comes from: the
+  published vocabulary varies by machine and account, not by conversation.
+- **`observeModelMenu(conversationId): Flow<ModelMenu?>`** is a pure cold projection —
+  `modelMenusByConversation.map { it[conversationId] }.distinctUntilChanged()` — issuing no request; it
+  rides the frames the daemon sends unasked (the on-demand ask is #792). `null` is **unavailable**: a
+  normal, permanent resting state covering no live connection, a connection without `interactive`, a
+  conversation this connection heard no frame for, and the window before the first frame lands — never an
+  error, never a spinner, never the device `Model`/`Effort` enums, and — because the lookup is by the
+  caller's own id — never another conversation's rows. The
+  [`ConversationRepository`](conversation-repository.md) default (`flowOf(null)`) gives the inline test
+  doubles the same reading for free, and [`StableConversationRepository`](stable-conversation-repository.md)
+  passes through via `switchToLive<ModelMenu?>(null) { it.observeModelMenu(id) }` — here the
+  `flatMapLatest` switch is the **host-isolation mechanism**: dropping the previous connection's
+  projection on a host swap is what stops one host's vocabulary being offered for another's conversation.
+
+**Renders nothing.** This slice adds no UI, no outbound verb, and does not retire the device `Model` /
+`Effort` enums — [#649](https://github.com/pyrycode/pyrycode-mobile/issues/649) reads what this retains
+when the composer's model/effort controls land.
+
+`security-sensitive`: the design mirrors `queue_state`'s posture exactly — decode runs behind the
+authenticated Noise channel, a hostile/buggy daemon can waste at most one envelope per malformed frame
+(fail-closed, no partial menu), and routing by the frame's own `conversation_id` alone forecloses
+cross-conversation injection structurally: a frame can only overwrite the menu of the conversation it
+names. The untrusted-string handling itself is documented on the domain type — see
+[Mobile Protocol v2 § the model-list retention](mobile-protocol-v2-wire-layer-application-payloads.md#the-model-list-retention-791).
+
 ## `answerModal` / `cancelModal` — the v2 modal answer/cancel control-send (#438)
 
 The **outbound (phone → binary) half** of the permission modal feature: the two control messages that
