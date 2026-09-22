@@ -13,6 +13,11 @@ this shell, its second direct caller. Existing dialogs such as
 [CreateFolderDialog](create-folder-dialog.md) remain separate; consumer tickets own
 their migration and operation-specific acceptance.
 
+Since [#815](#the-hardened-gate-mobilegatemodal), the same file also exposes
+[`MobileGateModal`](#the-hardened-gate-mobilegatemodal), a hardened decision-gate entry point sharing this
+shell's private structure. Its caller is the
+[permission-modal overlay](permission-modal-overlay.md#the-overlay-open)'s `PermissionModalOverlay`.
+
 ## Caller contract
 
 ```kotlin
@@ -42,6 +47,51 @@ The content stays composed across loading and error changes. A non-null `error`
 appears after the content in the scroll area, with error color, error semantics
 and a polite live region. Showing an error does not reset entered values or
 replace the form.
+
+## The hardened gate: `MobileGateModal`
+
+```kotlin
+@Composable
+internal fun MobileGateModal(
+    title: String,
+    cancelLabel: String,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+)
+```
+
+Added in #815 for the [permission-modal overlay](permission-modal-overlay.md#the-overlay-open), the shell's
+first caller whose actions are not a fixed Cancel/OK pair but a server-supplied option list. `MobileModal`
+and `MobileGateModal` both delegate to one private `MobileModalShell(title, onDismissRequest, gate: Boolean,
+modifier, error, footer: @Composable RowScope.(dismiss: () -> Unit) -> Unit, content)` — `gate` is the only
+switch between them, so the editing shell's behaviour cannot drift by editing the gate path and vice versa.
+`MobileModal` calls it with `gate = false` and its own Cancel + OK footer; `MobileGateModal` calls it with
+`gate = true`, `error = null` (a gate surfaces send failures on the host's own snackbar, not the shell), and
+a footer that is only Cancel — `content` supplies the actions instead.
+
+`gate = true` changes four things over the plain shell, all on the dialog's own window:
+
+- `DialogProperties(dismissOnBackPress = false, securePolicy = SecureFlagPolicy.SecureOn)` — the plain shell
+  already sets `dismissOnClickOutside = false`; the gate adds no-back-dismissal and `FLAG_SECURE` (`SecureOn`,
+  not the default `Inherit`, because the host Activity carries no `FLAG_SECURE` of its own).
+- A `SideEffect` sets `filterTouchesWhenObscured = true` on the dialog's own decor view, reached through
+  `(LocalView.current.parent as? DialogWindowProvider)?.window` — the tapjacking net moved here from the
+  permission overlay's own `BasicAlertDialog`.
+- No close glyph in the header, so the footer's Cancel is the only dismissal control.
+
+Both footers' Cancel button share one private `ModalCancelButton(label, onClick)` — the small-shape,
+primary-1dp-border, 48dp-minimum `OutlinedButton` styling that predates #815 — so `cancelLabel` is the only
+thing a caller supplies; `MobileModal` passes the literal `"Cancel"`, and `MobileGateModal` takes it as a
+parameter (the permission prompt passes `stringResource(R.string.modal_cancel)`) so this shared component
+does not depend on a caller-owned string resource.
+
+[`MobileModalTest`](../../../app/src/androidTest/java/de/pyryco/mobile/ui/components/MobileModalTest.kt)'s
+`gate_window_is_secure_filters_obscured_touches_and_only_cancel_dismisses` and
+`plain_shell_window_is_not_hardened` assert the four properties in both directions at runtime — present on
+the gate, absent on the plain shell — replacing what used to be a code-review-only guarantee. See
+[Permission-modal overlay § Security](permission-modal-overlay.md#security--the-render-time-obligations-deferred-to-this-surface)
+for the gate's own security rationale.
 
 ## Layout and theme
 
@@ -182,3 +232,11 @@ caller that pre-fills an editable field inside this shell:
   confirmation is confirmed by a button reading "OK" — restyling per caller would
   touch a component with other callers, so the prompt copy has to carry that weight
   instead of the button.
+
+**`PermissionModalOverlay`** (`ui/conversations/thread/ThreadScreen.kt`, #815) is the first — and so far
+only — caller of [`MobileGateModal`](#the-hardened-gate-mobilegatemodal) rather than `MobileModal`. It draws
+the [permission-modal overlay](permission-modal-overlay.md): the server `title` fills the gate's header, the
+prompt and the wire-order option list fill `content`, and the footer's only action is Cancel — the server's
+own options are the actions, so this caller cannot use the fixed Cancel/OK footer `MobileModal`'s other
+callers share. Landing it before the three sibling tickets it was split from (see the plan's Context) was
+deliberate, so those write their content into the final gate container instead of one about to be replaced.
