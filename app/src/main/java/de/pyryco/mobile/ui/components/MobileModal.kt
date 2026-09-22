@@ -81,27 +81,7 @@ internal fun MobileModal(
         error = error,
         footer = { dismiss ->
             ModalCancelButton(label = "Cancel", onClick = dismiss)
-            Button(
-                onClick = {
-                    if (submissionEnabled && !loading) {
-                        logModalEvent("submit_requested")
-                        onSubmit()
-                    }
-                },
-                modifier = Modifier.heightIn(min = 48.dp),
-                enabled = submissionEnabled && !loading,
-                shape = MaterialTheme.shapes.small,
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-            ) {
-                if (loading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.padding(end = 8.dp).size(20.dp),
-                        color = MaterialTheme.colorScheme.primary,
-                        strokeWidth = 2.dp,
-                    )
-                }
-                Text("OK", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-            }
+            ModalSubmitButton(label = "OK", onClick = onSubmit, enabled = submissionEnabled && !loading, loading = loading)
         },
         content = content,
     )
@@ -114,6 +94,10 @@ internal fun MobileModal(
  * The gate's own window sets `FLAG_SECURE` ([SecureFlagPolicy.SecureOn], since the host Activity is not
  * secure) and drops touches delivered while another window obscures it. Back and outside taps are
  * ignored, and no close glyph is drawn, so a stray gesture is never read as an answer.
+ *
+ * A gate whose content is a form (#661, the question modal) passes [submitLabel] for a footer submit
+ * action and shows its send failure in [error]. While [sending], Cancel and submit are both disabled:
+ * on a gate, Cancel is itself a decision the caller sends.
  */
 @Composable
 internal fun MobileGateModal(
@@ -121,15 +105,25 @@ internal fun MobileGateModal(
     cancelLabel: String,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
+    submitLabel: String? = null,
+    onSubmit: () -> Unit = {},
+    submissionEnabled: Boolean = true,
+    sending: Boolean = false,
+    error: String? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     MobileModalShell(
         title = title,
-        onDismissRequest = onCancel,
+        onDismissRequest = { if (!sending) onCancel() },
         gate = true,
         modifier = modifier,
-        error = null,
-        footer = { dismiss -> ModalCancelButton(label = cancelLabel, onClick = dismiss) },
+        error = error,
+        footer = { dismiss ->
+            ModalCancelButton(label = cancelLabel, onClick = dismiss, enabled = !sending)
+            if (submitLabel != null) {
+                ModalSubmitButton(label = submitLabel, onClick = onSubmit, enabled = submissionEnabled && !sending, loading = sending)
+            }
+        },
         content = content,
     )
 }
@@ -256,14 +250,46 @@ private fun MobileModalShell(
 private fun ModalCancelButton(
     label: String,
     onClick: () -> Unit,
+    enabled: Boolean = true,
 ) {
     OutlinedButton(
         onClick = onClick,
         modifier = Modifier.heightIn(min = 48.dp),
+        enabled = enabled,
         shape = MaterialTheme.shapes.small,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
     ) {
+        Text(label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun ModalSubmitButton(
+    label: String,
+    onClick: () -> Unit,
+    enabled: Boolean,
+    loading: Boolean,
+) {
+    Button(
+        onClick = {
+            if (enabled) {
+                logModalEvent("submit_requested")
+                onClick()
+            }
+        },
+        modifier = Modifier.heightIn(min = 48.dp),
+        enabled = enabled,
+        shape = MaterialTheme.shapes.small,
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+    ) {
+        if (loading) {
+            CircularProgressIndicator(
+                modifier = Modifier.padding(end = 8.dp).size(20.dp),
+                color = MaterialTheme.colorScheme.primary,
+                strokeWidth = 2.dp,
+            )
+        }
         Text(label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
     }
 }
