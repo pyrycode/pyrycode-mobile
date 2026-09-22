@@ -16,6 +16,59 @@ Post-#201 the `LazyColumn` is nested inside a `Column` wrapper alongside the `Co
 
 **Streaming auto-scroll (since [#185](../codebase/185.md)).** While any `ThreadItem.MessageItem` in `state.items` carries `message.isStreaming = true`, the `LazyColumn` keeps the streaming bubble's growing bottom edge anchored at the viewport bottom. Six composition-scoped pieces of state hoisted at the top of the `else` block — adjacent to the existing `reversedItems` / `cutoffChronologicalIndex` lines — implement it: `val listState = rememberLazyListState()` (threaded as `state =` on the `LazyColumn`); `val hasStreamingMessage by remember(state.items) { derivedStateOf { state.items.any { it is ThreadItem.MessageItem && it.message.isStreaming } } }` (the gate on the auto-pin coroutine, scan re-runs only when the list reference changes); `var userScrolledAway by remember { mutableStateOf(false) }` (yield flag); `val autoScrollNestedScroll = remember { object : NestedScrollConnection { ... } }` (sets `userScrolledAway = true` iff `source == NestedScrollSource.UserInput && available.y != 0f`, attached via `Modifier.nestedScroll(autoScrollNestedScroll)` on the column); `LaunchedEffect(listState) { snapshotFlow { firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0 }.collect { atBottom -> if (atBottom) userScrolledAway = false } }` (resumes auto-follow when the user manually returns to the bottom); and `LaunchedEffect(hasStreamingMessage, listState) { if (!hasStreamingMessage) return@LaunchedEffect; snapshotFlow { layoutInfo.visibleItemsInfo.firstOrNull { it.index == 0 }?.size ?: 0 }.distinctUntilChanged().collect { if (!userScrolledAway) listState.scrollToItem(0) } }` (the auto-pin loop — re-anchors on every layout-pass size change of item 0). `scrollToItem(0)` (not `animateScrollToItem`) is the right primitive: instant, O(1) when already pinned, and it does **not** dispatch through `NestedScrollSource.UserInput` so it cannot recursively trip its own yield flag. Reverse-layout's bottom anchor is `firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0`; both effects rely on that. The auto-pin `LaunchedEffect` is gated by `hasStreamingMessage`, so non-streaming threads start no collector (AC4); when `isStreaming` flips `false` the effect re-launches with the new key and the early-return cancels the collector (AC3). The Phase-0 seed never flips `isStreaming = false` (the static seed stays streaming forever) — AC3's cancel path is verifiable only by code-review or a local seed flip + re-install; Phase 4's WS feed will exercise it naturally. The companion concern from [#184](../codebase/184.md) — `StreamingAssistantBody` losing its `revealedLength` when the bubble scrolls off-screen — is sidestepped (not solved) in the auto-pin happy path: keeping the bubble in the viewport prevents disposal. If the user yields by scrolling away during streaming, the bubble can still off-screen and re-reset on return; the Phase-4 hoist-into-VM fix from [#184](../codebase/184.md) is the proper remedy.
 
+### The oldest-end history demand (#777)
+
+`requestHistory` ([remote repository § the walk that finally calls
+`requestHistory`](remote-conversation-repository-reads-and-thread-store.md#the-walk-that-finally-calls-requesthistory-777))
+had no caller until #777 wired the screen's scroll position to `ThreadViewModel.onDemandOlderHistory()`
+via a new defaulted `onDemandOlderHistory: () -> Unit = {}` parameter (`MainActivity` binds
+`vm::onDemandOlderHistory`, the only consumer). Two pieces live in the same `else` arm as the
+streaming-auto-scroll state above, right beside `reversedItems` / `cutoffChronologicalIndex`.
+
+**The predicate: under `reverseLayout = true`, "reached the oldest row" is the LAST visible index, not the
+first.** Index 0 is the newest row (§ above), so older rows take higher indices and the reader hits the
+oldest loaded row when the list's last visible item reaches the end of the data. A `LaunchedEffect(listState)`
+runs a `snapshotFlow` that computes `oldestVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index
+?: -1`, tests `historyRowCount > 0 && oldestVisible >= historyRowCount - 1`, applies `distinctUntilChanged()`,
+and calls `onDemandOlderHistory()` on a `true` edge.
+
+**The row count is read through `rememberUpdatedState(state.items.size)`, never through
+`layoutInfo.totalItemsCount`.** The obvious shape — compare against the `LazyColumn`'s own item total —
+counts the oldest-end loading row itself (below), so a page answering `atStart = false` with zero entries
+self-drives with no further user input: ask → the indicator mounts → the total rises → the page settles →
+the indicator unmounts → the total falls → the predicate re-fires on the new edge. Sourcing the count from
+`state.items.size` through `rememberUpdatedState` (and the callback the same way) makes the indicator's own
+presence unable to move the predicate: at the oldest end the last visible index is `rowCount` with the
+indicator mounted and `rowCount - 1` without it, and `>=` holds either way, so `distinctUntilChanged` sees
+no edge and issues no second demand.
+
+**This needed a 30-row regression test to catch, not a 3-row one.** The first version of the demand-loop
+test used three short rows and passed even against the deliberately-broken `totalItemsCount` predicate —
+when every row fits the viewport, the mounted indicator is visible too, so the last visible index tracks
+the total either way and the bug hides. Only a list long enough to scroll, with the loading indicator
+mounting *above* the viewport at the oldest end, exercises the difference; the shipped test seeds 30 rows
+and scrolls there first. Verified by mutation: the `totalItemsCount` variant fails it (2 demands, expected
+1), the shipped variant passes. The lesson generalizes to any `layoutInfo`-derived predicate — an
+under-filled list is the default way such a test accidentally passes.
+
+**The affordance rides `reverseLayout` for free.** A keyed `item(key = "history-loading")` rendering
+`HistoryLoadingRow()` is appended after the `itemsIndexed(...)` block, gated on `state.historyLoading`
+(sourced from `ThreadHistoryDemand.inFlight` via `ThreadViewModel`'s `historyLoading` `ThreadUiState`
+field). Because `reverseLayout = true` draws a later item further up, appending it after the message rows
+places it at the **oldest** end without any special-casing of index 0. `HistoryLoadingRow` is a private
+composable mirroring [`ThinkingIndicator`](thinking-indicator.md)'s shipped idiom — a 16dp indeterminate
+`CircularProgressIndicator`, a `bodySmall` / `onSurfaceVariant` label, and a merged
+`semantics { contentDescription = … }` — because the Figma thread frame (16:8) carries no history-loading
+element of its own; both strings are new `strings.xml` resources (`thread_history_loading_label`,
+`cd_thread_history_loading`) with no interpolation, so nothing daemon-authored reaches this row.
+
+**Known gap: the affordance is unreachable while the thread reads as empty.** The loading row lives inside
+the `else` arm of `if (!state.hasMessages)` (§ *Empty-state branch* below), so a channel whose every loaded
+row predates this connection renders `EmptyThreadState` instead of the loading row while the opening ask is
+in flight — a one-round-trip flash of the empty placeholder rather than a visible loading state, on exactly
+the case the ticket set out to fix. Verifier-flagged as SHOULD FIX (non-blocking) on the #777 PR and not
+addressed in that ticket; open for a follow-up.
+
 ### Workspace-chip wiring (post-#137)
 
 Between the `ConnectionBanner` and the `LazyColumn`, the body `Column` carries a conditional [`WorkspaceChip`](workspace-chip.md):
@@ -66,6 +119,8 @@ if (!state.hasMessages) {
 ```
 
 [`EmptyThreadState`](empty-thread-state.md) renders the centered "Send a message to get started" prompt; the caller supplies the `weight(1f)` so the prompt fills exactly the space the list would have occupied. The 24.dp horizontal inset is intentionally 8dp wider than the chip's `horizontal = 16.dp` — a centered single line wants more breathing room than a left-aligned chip on the 360dp portrait minimum. Predicate is `!state.hasMessages`, not `state.items.isEmpty()` — symmetric with the chip's `!hasMessages` half (chip and prompt appear/disappear together) and correct for the `SessionBoundary`-only edge case where the user taps the chip → `changeWorkspace` emits a boundary before any message lands (the prompt stays visible until a real `MessageItem` arrives, instead of letting a lonely delimiter float above the input bar). The `remember(state.items) { mostRecentSessionBoundaryIndex(...) }` block from [#136](../codebase/136.md) lives **inside the `else` arm only** — its key is `emptyList()` in the empty arm, so computing the cutoff there is wasted work.
+
+**The `#777` history-loading row is inside this `else` arm too, which is a known gap.** The oldest-end loading affordance (§ *The oldest-end history demand* above) is appended inside the `LazyColumn`, so a channel that reads as empty (`!state.hasMessages`) renders `EmptyThreadState` instead while the opening history ask is in flight — the empty-thread case the ticket set out to fix. Verifier-flagged SHOULD FIX, not addressed by #777; see § above for the detail.
 
 ### Status-row wiring (post-#145)
 
