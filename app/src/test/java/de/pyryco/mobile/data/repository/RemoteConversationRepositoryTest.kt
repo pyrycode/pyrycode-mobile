@@ -2186,7 +2186,7 @@ class RemoteConversationRepositoryTest {
                           {"id":5,"type":"modal_shown","payload":{"modal_id":"md","class":"permission","title":"t","prompt":"p","options":[],"default_option_id":""},"ts":"$TS"},
                           {"id":4,"type":"compacting","payload":{"conversation_id":"c1","active":true},"ts":"$TS"},
                           {"id":3,"type":"api_retry","payload":{"conversation_id":"c1","active":true,"attempt":{"current":1,"total":3}},"ts":"$TS"},
-                          {"id":2,"type":"queue_state","payload":{"conversation_id":"c1","queued":[{"queued_msg_id":1,"text":"q","ts":"$TS"}]},"ts":"$TS"},
+                          {"id":2,"type":"queue_state","payload":{"conversation_id":"c1","queued":[{"queued_msg_id":1,"message_id":"m-fixture","text":"q","ts":"$TS"}]},"ts":"$TS"},
                           {"id":1,"type":"turn_state","payload":{"conversation_id":"c1","state":"thinking"},"ts":"$TS"}
                         ],"cursor":"","at_start":true}
                         """.trimIndent(),
@@ -3274,7 +3274,9 @@ class RemoteConversationRepositoryTest {
         }
 
     // AC #2: an empty ack completes the drop successfully and writes NO local projection — the backlog
-    // is owned by observeQueue (#460) and updated only by a later queue_state, never by this send.
+    // is owned by observeQueue (#460) and updated only by a later queue_state, never by this send. Since
+    // #781 the ack can also remove one thread row — the echo this device minted for the dropped item —
+    // but only when a snapshot correlates one, and here no snapshot has landed at all: nothing to match.
     @Test
     fun dropQueuedMessage_onAck_succeedsWithoutMutatingProjection() =
         runTest {
@@ -3371,6 +3373,158 @@ class RemoteConversationRepositoryTest {
             pump.push(ackEnvelope(sent.id))
             runCurrent()
             assertTrue(drop().isSuccess)
+        }
+
+    // ---- #781: a confirmed drop also removes the undelivered echo this device minted ---------------
+
+    // AC #2: the acked drop removes the queued entry's own echo and NOTHING else — every other thread
+    // row keeps its place, in order. The echo is the phone's only record of its own send (interactive
+    // streams no user-message event back), so leaving it reads as a message claude received.
+    @Test
+    fun dropQueuedMessage_onAck_removesOwnEchoAndKeepsEveryOtherRow() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = collectMessages(repo, "c-1")
+            runCurrent()
+
+            val first = sendAndAck(repo, pump, "c-1", "one")
+            val queued = sendAndAck(repo, pump, "c-1", "two")
+            val third = sendAndAck(repo, pump, "c-1", "three")
+            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = queued))))
+            runCurrent()
+            assertEquals(listOf(first, queued, third), messageIds(thread.last()))
+
+            val drop = startDropQueuedMessage(repo, "c-1", 42L)
+            runCurrent()
+            pump.push(ackEnvelope(pump.sent.single { it.type == "dequeue_message" }.id))
+            runCurrent()
+
+            assertTrue(drop().isSuccess)
+            assertEquals(listOf(first, third), messageIds(thread.last()))
+        }
+
+    // AC #3: a failed drop leaves BOTH the entry and its echo in place — the daemon still holds the
+    // message, so it will still run and the echo is still true. Removal is gated on the ack, not the send.
+    @Test
+    fun dropQueuedMessage_onServerError_leavesEchoAndEntryInPlace() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = collectMessages(repo, "c-1")
+            val queue = collectQueue(repo, "c-1")
+            runCurrent()
+
+            val queued = sendAndAck(repo, pump, "c-1", "two")
+            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = queued))))
+            runCurrent()
+
+            val drop = startDropQueuedMessage(repo, "c-1", 42L)
+            runCurrent()
+            pump.push(errorEnvelope(pump.sent.single { it.type == "dequeue_message" }.id, code = "queue.stale_id"))
+            runCurrent()
+
+            assertTrue(drop().exceptionOrNull() is RelayErrorException)
+            assertEquals(listOf(queued), messageIds(thread.last()))
+            assertEquals(listOf(42L), queue.last().map { it.id })
+        }
+
+    // AC #3, the other failure shape: a not-connected send never reaches the daemon, so the echo stays.
+    @Test
+    fun dropQueuedMessage_whenNotConnected_leavesEchoInPlace() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = collectMessages(repo, "c-1")
+            runCurrent()
+
+            val queued = sendAndAck(repo, pump, "c-1", "two")
+            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = queued))))
+            runCurrent()
+
+            pump.sendResult = false
+            val drop = startDropQueuedMessage(repo, "c-1", 42L)
+            runCurrent()
+
+            assertTrue(drop().exceptionOrNull() is IllegalStateException)
+            assertEquals(listOf(queued), messageIds(thread.last()))
+        }
+
+    // AC #4: an item carrying `""` correlates with NOTHING. The drop still goes — the row must leave the
+    // backlog even against a daemon that mints no id — and no echo is guessed at.
+    @Test
+    fun dropQueuedMessage_emptyMessageId_removesNoThreadRow() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = collectMessages(repo, "c-1")
+            runCurrent()
+
+            val queued = sendAndAck(repo, pump, "c-1", "two")
+            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = ""))))
+            runCurrent()
+
+            val drop = startDropQueuedMessage(repo, "c-1", 42L)
+            runCurrent()
+            val sent = pump.sent.single { it.type == "dequeue_message" }
+            pump.push(ackEnvelope(sent.id))
+            runCurrent()
+
+            assertTrue(drop().isSuccess)
+            assertEquals(listOf(queued), messageIds(thread.last()))
+        }
+
+    // AC #4 and the multi-device rule (protocol-mobile.md § Queue (v2)): `queue_state` fans out to EVERY
+    // interactive connection, so items routinely carry ids this device never minted. Such an item is
+    // another device's real queued message: it correlates with nothing here even when a thread row
+    // carries that very id and the texts are identical. `message_id` is client-chosen and unique
+    // nowhere, so a colliding id must never let this phone claim a row it did not send — and text is
+    // never used to match.
+    @Test
+    fun dropQueuedMessage_foreignMessageId_removesNoThreadRow() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = collectMessages(repo, "c-1")
+            runCurrent()
+
+            // A row this device did NOT mint, carrying the id the queued item will carry.
+            pump.push(messageEnvelope("c-1", messageId = "foreign-1", role = "user", text = "two", ts = TS))
+            val own = sendAndAck(repo, pump, "c-1", "two")
+            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = "foreign-1"))))
+            runCurrent()
+
+            val drop = startDropQueuedMessage(repo, "c-1", 42L)
+            runCurrent()
+            pump.push(ackEnvelope(pump.sent.single { it.type == "dequeue_message" }.id))
+            runCurrent()
+
+            assertTrue(drop().isSuccess)
+            assertEquals(listOf("foreign-1", own), messageIds(thread.last()))
+        }
+
+    // The drained-between-render-and-tap race: the id is no longer in this connection's snapshot, so
+    // nothing correlates. The send still goes (the daemon stale-id rejects or no-ops) and no row moves.
+    @Test
+    fun dropQueuedMessage_queuedIdAbsentFromSnapshot_removesNoThreadRow() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = collectMessages(repo, "c-1")
+            runCurrent()
+
+            val queued = sendAndAck(repo, pump, "c-1", "two")
+            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = queued))))
+            runCurrent()
+
+            val drop = startDropQueuedMessage(repo, "c-1", 7L)
+            runCurrent()
+            val sent = pump.sent.single { it.type == "dequeue_message" }
+            pump.push(ackEnvelope(sent.id))
+            runCurrent()
+
+            assertTrue(drop().isSuccess)
+            assertEquals(listOf(queued), messageIds(thread.last()))
         }
 
     // ---- requestScreenSnapshot (#375): request_snapshot request → screen_snapshot correlation ----
@@ -3951,8 +4105,8 @@ class RemoteConversationRepositoryTest {
                 queueStateEnvelope(
                     "c1",
                     listOf(
-                        Triple(1L, "a", "2026-05-31T00:00:01Z"),
-                        Triple(2L, "b", "2026-05-31T00:00:02Z"),
+                        QueuedFixture(1L, "a", "2026-05-31T00:00:01Z"),
+                        QueuedFixture(2L, "b", "2026-05-31T00:00:02Z"),
                     ),
                 ),
             )
@@ -3967,6 +4121,71 @@ class RemoteConversationRepositoryTest {
                 ),
                 queue,
             )
+        }
+
+    // #781 AC #1: the client-minted `message_id` (pyrycode#2092) reaches QueuedMessage VERBATIM — a
+    // mixed-case, space-padded value proves no trim, no case fold and no re-encode on the way through.
+    @Test
+    fun queue_messageId_carriedVerbatim() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val queue = collectQueue(repo, "c1")
+            runCurrent()
+
+            val raw = "  AbC-123_Xy  "
+            pump.push(queueStateEnvelope("c1", listOf(QueuedFixture(1L, "a", "2026-05-31T00:00:01Z", messageId = raw))))
+            runCurrent()
+
+            assertEquals(listOf(raw), queue.last().map { it.messageId })
+        }
+
+    // #781 AC #1: `""` is a LEGAL wire value (the client sent no id; the daemon mints none), so the
+    // snapshot decodes and the backlog surfaces — it is an absent *correlation*, not a malformed item.
+    @Test
+    fun queue_emptyMessageId_decodesAndSurfacesBacklog() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val queue = collectQueue(repo, "c1")
+            runCurrent()
+
+            pump.push(queueStateEnvelope("c1", listOf(QueuedFixture(1L, "a", "2026-05-31T00:00:01Z", messageId = ""))))
+            runCurrent()
+
+            assertEquals(
+                listOf(QueuedMessage(1L, "a", Instant.parse("2026-05-31T00:00:01Z"), messageId = "")),
+                queue.last(),
+            )
+        }
+
+    // #781: `message_id` is strict-required like every sibling field (the wire sets no omitempty), so an
+    // item that OMITS it is a malformed item and drops the whole snapshot — the prior value stands. This
+    // pins the posture: an absent field is a decode failure, an empty one is a legal value (above).
+    @Test
+    fun queue_missingMessageId_dropsSnapshot() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val queue = collectQueue(repo, "c1")
+            runCurrent()
+
+            pump.push(queueStateEnvelope("c1", listOf(QueuedFixture(1L, "a", "2026-05-31T00:00:01Z", messageId = "m1"))))
+            runCurrent()
+            pump.push(
+                Envelope(
+                    id = 2L,
+                    type = "queue_state",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"c1","queued":[{"queued_msg_id":2,"text":"b","ts":"$TS"}]}""",
+                        ),
+                ),
+            )
+            runCurrent()
+
+            assertEquals(listOf(1L), queue.last().map { it.id })
         }
 
     // The #720 trap: `queued_msg_id` is a wire uint64 number decoded as a Long. A numeric id decodes;
@@ -3986,7 +4205,7 @@ class RemoteConversationRepositoryTest {
                     ts = TS,
                     payload =
                         MobileJson.parseToJsonElement(
-                            """{"conversation_id":"c1","queued":[{"queued_msg_id":7,"text":"x","ts":"$TS"}]}""",
+                            """{"conversation_id":"c1","queued":[{"queued_msg_id":7,"message_id":"m-fixture","text":"x","ts":"$TS"}]}""",
                         ),
                 ),
             )
@@ -4001,7 +4220,7 @@ class RemoteConversationRepositoryTest {
                     ts = TS,
                     payload =
                         MobileJson.parseToJsonElement(
-                            """{"conversation_id":"c1","queued":[{"queued_msg_id":"7","text":"x","ts":"$TS"}]}""",
+                            """{"conversation_id":"c1","queued":[{"queued_msg_id":"7","message_id":"m-fixture","text":"x","ts":"$TS"}]}""",
                         ),
                 ),
             )
@@ -4060,7 +4279,7 @@ class RemoteConversationRepositoryTest {
             val queue = collectQueue(repo, "c1")
             runCurrent()
 
-            pump.push(queueStateEnvelope("c1", listOf(Triple(1L, "a", "2026-05-31T00:00:01Z"))))
+            pump.push(queueStateEnvelope("c1", listOf(QueuedFixture(1L, "a", "2026-05-31T00:00:01Z"))))
             runCurrent()
             assertEquals(listOf(QueuedMessage(1L, "a", Instant.parse("2026-05-31T00:00:01Z"))), queue.last())
 
@@ -4068,8 +4287,8 @@ class RemoteConversationRepositoryTest {
                 queueStateEnvelope(
                     "c1",
                     listOf(
-                        Triple(2L, "b", "2026-05-31T00:00:02Z"),
-                        Triple(3L, "c", "2026-05-31T00:00:03Z"),
+                        QueuedFixture(2L, "b", "2026-05-31T00:00:02Z"),
+                        QueuedFixture(3L, "c", "2026-05-31T00:00:03Z"),
                     ),
                 ),
             )
@@ -4093,7 +4312,7 @@ class RemoteConversationRepositoryTest {
             val c2 = collectQueue(repo, "c2")
             runCurrent()
 
-            pump.push(queueStateEnvelope("c1", listOf(Triple(1L, "a", "2026-05-31T00:00:01Z"))))
+            pump.push(queueStateEnvelope("c1", listOf(QueuedFixture(1L, "a", "2026-05-31T00:00:01Z"))))
             runCurrent()
             assertEquals(listOf(QueuedMessage(1L, "a", Instant.parse("2026-05-31T00:00:01Z"))), c1.last())
             assertEquals(listOf(emptyList<QueuedMessage>()), c2)
@@ -4119,7 +4338,7 @@ class RemoteConversationRepositoryTest {
                     ts = TS,
                     payload =
                         MobileJson.parseToJsonElement(
-                            """{"conversation_id":"c1","queued":[{"queued_msg_id":1,"ts":"$TS"}]}""",
+                            """{"conversation_id":"c1","queued":[{"queued_msg_id":1,"message_id":"m-fixture","ts":"$TS"}]}""",
                         ),
                 ),
             )
@@ -4131,14 +4350,14 @@ class RemoteConversationRepositoryTest {
                     ts = TS,
                     payload =
                         MobileJson.parseToJsonElement(
-                            """{"conversation_id":"c1","queued":[{"queued_msg_id":1,"text":"x","ts":"not-a-timestamp"}]}""",
+                            """{"conversation_id":"c1","queued":[{"queued_msg_id":1,"message_id":"m-fixture","text":"x","ts":"not-a-timestamp"}]}""",
                         ),
                 ),
             )
             runCurrent()
             assertEquals(listOf(emptyList<QueuedMessage>()), queue)
 
-            pump.push(queueStateEnvelope("c1", listOf(Triple(9L, "ok", "2026-05-31T00:00:09Z"))))
+            pump.push(queueStateEnvelope("c1", listOf(QueuedFixture(9L, "ok", "2026-05-31T00:00:09Z"))))
             runCurrent()
             assertEquals(listOf(QueuedMessage(9L, "ok", Instant.parse("2026-05-31T00:00:09Z"))), queue.last())
         }
@@ -4152,7 +4371,7 @@ class RemoteConversationRepositoryTest {
             val queue = collectQueue(repo, "c1")
             runCurrent()
 
-            pump.push(queueStateEnvelope("c1", listOf(Triple(1L, "a", "2026-05-31T00:00:01Z"))))
+            pump.push(queueStateEnvelope("c1", listOf(QueuedFixture(1L, "a", "2026-05-31T00:00:01Z"))))
             runCurrent()
             assertEquals(listOf(emptyList<QueuedMessage>()), queue)
         }
@@ -4166,7 +4385,7 @@ class RemoteConversationRepositoryTest {
             val queue = collectQueue(repo, "c1")
             runCurrent()
 
-            pump.push(queueStateEnvelope("c1", listOf(Triple(1L, "a", "2026-05-31T00:00:01Z"))))
+            pump.push(queueStateEnvelope("c1", listOf(QueuedFixture(1L, "a", "2026-05-31T00:00:01Z"))))
             runCurrent()
             assertEquals(listOf(emptyList<QueuedMessage>()), queue)
         }
@@ -6386,6 +6605,24 @@ class RemoteConversationRepositoryTest {
     }
 
     /**
+     * Send [text], ack it, and return the `message_id` the repository minted (#781) — the id now on the
+     * confirmed-inserted echo in the thread, and the one a `queue_state` item would carry back if the
+     * daemon parked this message. Drains the cascade, so the caller can assert immediately afterwards.
+     */
+    private fun TestScope.sendAndAck(
+        repo: RemoteConversationRepository,
+        pump: FakeSessionPump,
+        conversationId: String,
+        text: String,
+    ): String {
+        val send = startSend(repo, conversationId, text)
+        runCurrent()
+        pump.push(ackEnvelope(pump.sent.last { it.type == "send_message" }.id))
+        runCurrent()
+        return send().getOrThrow().id
+    }
+
+    /**
      * Launch [RemoteConversationRepository.createDiscussion] on [backgroundScope] (it suspends
      * awaiting the conversation_created/error reply) and return a getter for its eventual [Result].
      * Read the result only after the correlated reply has been pushed and [runCurrent] has drained
@@ -6882,16 +7119,31 @@ class RemoteConversationRepositoryTest {
     }
 
     /**
-     * A `queue_state` snapshot envelope `{conversation_id, queued:[{queued_msg_id, text, ts}]}` (#460).
-     * Each item is a `(queued_msg_id, text, ts)` triple; `queued_msg_id` is emitted as a JSON **number**
-     * (the wire uint64). An empty [items] emits `"queued":[]`.
+     * One `queued` array element. [messageId] is the client-minted `message_id` pyrycode#2092 relays
+     * verbatim (#781) — defaulted to the legal `""` ("this item correlates with no echo") so a fixture
+     * says nothing about correlation unless the case under test is about it.
+     */
+    private data class QueuedFixture(
+        val queuedMsgId: Long,
+        val text: String,
+        val ts: String,
+        val messageId: String = "",
+    )
+
+    /**
+     * A `queue_state` snapshot envelope `{conversation_id, queued:[{queued_msg_id, message_id, text, ts}]}`
+     * (#460, #781). `queued_msg_id` is emitted as a JSON **number** (the wire uint64) and `message_id` as
+     * a string; both are strict-required on the wire. An empty [items] emits `"queued":[]`.
      */
     private fun queueStateEnvelope(
         conversationId: String,
-        items: List<Triple<Long, String, String>>,
+        items: List<QueuedFixture>,
         id: Long = 1L,
     ): Envelope {
-        val queued = items.joinToString(",") { (msgId, text, ts) -> """{"queued_msg_id":$msgId,"text":"$text","ts":"$ts"}""" }
+        val queued =
+            items.joinToString(",") {
+                """{"queued_msg_id":${it.queuedMsgId},"message_id":"${it.messageId}","text":"${it.text}","ts":"${it.ts}"}"""
+            }
         return Envelope(
             id = id,
             type = "queue_state",

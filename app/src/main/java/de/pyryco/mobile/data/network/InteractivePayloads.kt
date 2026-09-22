@@ -90,7 +90,7 @@ internal data class StallPayloadDto(
  * FIFO/enqueue order. Decode-only — the phone never sends one. Always decode through [MobileJson].
  *
  * Wire SSOT: pyrycode `docs/protocol-mobile.md` § Queue (v2); ADR 025. Shape:
- * `{conversation_id, queued:[{queued_msg_id, text, ts}]}`. [conversationId], and every
+ * `{conversation_id, queued:[{queued_msg_id, message_id, text, ts}]}`. [conversationId], and every
  * [QueuedMessageDto] field, are **required, non-null** — the fail-closed posture of every sibling DTO
  * (a missing/wrong-typed field throws a [kotlinx.serialization.SerializationException], dropping the
  * one envelope). `queued_msg_id` is a wire **uint64** monotonic counter, decoded as a [Long] (the same
@@ -99,11 +99,26 @@ internal data class StallPayloadDto(
  * The **one** documented latitude is [queued] itself: an empty backlog may marshal to either `null`
  * (`[]QueuedItem(nil)`) or `[]`, so it is nullable-defaulted and [toQueue] coalesces both (and a
  * missing key) to `emptyList()`. Without this, a wire `null` into a non-nullable list would throw
- * ([MobileJson] sets no `coerceInputValues`). Every other field stays strict-required.
+ * ([MobileJson] sets no `coerceInputValues`). Every other field stays strict-required — including
+ * [QueuedMessageDto.messageId], whose `""` is a legal *value* rather than an absent field, so the
+ * strictness costs nothing a conforming daemon would trip. The consequence, stated once: a daemon
+ * predating pyrycode#2092 omits the key entirely and its whole snapshot drops, so the backlog view
+ * empties rather than degrading to "no correlation" (#781).
  */
 @Serializable
 internal data class QueuedMessageDto(
     @SerialName("queued_msg_id") val queuedMsgId: Long,
+    /**
+     * The `message_id` the client minted on the `send_message` that produced this item, relayed
+     * **verbatim** by the daemon (pyrycode#2092, #781) — byte-for-byte what a client sent, never
+     * trimmed, lower-cased or re-encoded on the way through, and `""` when the client sent none.
+     *
+     * It **addresses nothing**: `dequeue_message` still resolves `conversation_id` + `queued_msg_id`,
+     * and no daemon path reads this to route, authorize, match or dedupe. It is a correlation key for
+     * the client only, uniqueness enforced nowhere — two items may legally carry the same one.
+     * Compare it for **equality only**: never render it, never key a list on it, never log it.
+     */
+    @SerialName("message_id") val messageId: String,
     val text: String,
     val ts: String,
 )
@@ -122,7 +137,15 @@ internal data class QueueStatePayloadDto(
  * the **whole** snapshot at the decode boundary — the established "one bad row drops the chunk" idiom.
  */
 internal fun QueueStatePayloadDto.toQueue(): List<QueuedMessage> =
-    queued.orEmpty().map { QueuedMessage(id = it.queuedMsgId, text = it.text, timestamp = Instant.parse(it.ts)) }
+    queued.orEmpty().map {
+        QueuedMessage(
+            id = it.queuedMsgId,
+            text = it.text,
+            timestamp = Instant.parse(it.ts),
+            // Verbatim, like `text`: a correlation key is only useful byte-for-byte (#781, AC #1).
+            messageId = it.messageId,
+        )
+    }
 
 /**
  * The `api_retry` control event (#593, pyrycode#1074): claude is stuck retrying an API error, so the

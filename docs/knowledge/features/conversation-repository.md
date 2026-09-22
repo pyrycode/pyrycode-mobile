@@ -38,7 +38,7 @@ interface ConversationRepository {
         error("createWorkspaceFolder is not implemented for this ConversationRepository")
     suspend fun requestScreenSnapshot(conversationId: String): String =
         error("requestScreenSnapshot is not implemented for this ConversationRepository")
-    suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long): Unit =  // #466 — outbound dequeue_message send
+    suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long): Unit =  // #466 send, #781 also drops the sender's own thread echo
         error("dropQueuedMessage is not implemented for this ConversationRepository")
     suspend fun requestHistory(conversationId: String, cursor: String = "", limit: Int = 0): HistoryPage =  // #623 — one backward page of on-disk history
         error("requestHistory is not implemented for this ConversationRepository")
@@ -59,7 +59,7 @@ sealed interface ThreadItem {
 
 enum class BoundaryReason { Clear, IdleEvict, WorkspaceChange }
 
-data class QueuedMessage(val id: Long, val text: String, val timestamp: Instant)  // #460 — element type of observeQueue
+data class QueuedMessage(val id: Long, val text: String, val timestamp: Instant, val messageId: String = "")  // #460, messageId #781
 
 data class HistoryPage(val entries: List<HistoryEntry>, val cursor: String, val atStart: Boolean)  // #623 — return of requestHistory
 data class HistoryEntry(val id: Long, val type: String, val payload: JsonElement, val timestamp: Instant)  // #623 — element type of HistoryPage.entries
@@ -71,7 +71,7 @@ sealed interface ApiRetryStatus {  // #593 — element type of observeApiRetry
 }
 ```
 
-`QueuedMessage` (#460) is the element type of `observeQueue`'s return, **co-located with the interface** (like `ThreadItem` / `ConversationFilter` / `BoundaryReason`) rather than in `data/model/` — a contract's element type lives beside the contract, which also keeps the ktlint single-class-filename rule satisfied (the file already has multiple public top-level types) and avoids a needless extra file. See [Queued backlog](queued-backlog.md).
+`QueuedMessage` (#460) is the element type of `observeQueue`'s return, **co-located with the interface** (like `ThreadItem` / `ConversationFilter` / `BoundaryReason`) rather than in `data/model/` — a contract's element type lives beside the contract, which also keeps the ktlint single-class-filename rule satisfied (the file already has multiple public top-level types) and avoids a needless extra file. `messageId: String = ""` (#781) is the daemon-relayed `send_message` client id (pyrycode#2092), added last and defaulted so the existing positional `QueuedMessage(1L, "…", t0)` preview literals in `QueuedBacklog` and `ThreadScreen` stay untouched. It is a correlation key only — compared for equality, never rendered, never a list key (client-chosen, unique nowhere), never logged — and `""` is the value meaning "correlates with nothing". See [Queued backlog](queued-backlog.md).
 
 `ApiRetryStatus` (#593) is the element type of `observeApiRetry`'s return, co-located the same way. A flat 3-member sealed type rather than a nested `Retrying(attempt: Attempt?)` — avoids a nullable payload and gives a consumer an exhaustive `when` with no null branch. The `data class`/`data object` modifiers are load-bearing: structural equality is what makes the repository's `distinctUntilChanged` projection let a climbed counter (a different `Attempt` value) through while suppressing value-identical re-emissions. See [API-retry status](api-retry-status.md).
 

@@ -115,8 +115,15 @@ def main():
     env.update(PYRY_NAME=identity, PAIR_NAME=identity)
     minimum, expected_class = 1, None
     if args.mode == "ui":
+        # Split the suite across emulator instances booted side by side. Measured 2026-09-22 on
+        # the dispatcher's own gate logs: one instance took 8m25s for the 238-test suite, and
+        # the wait is the single emulator, not Gradle. The scripted scenarios keep one instance.
+        shards = os.environ.get("UI_SHARDS", "2")
+        if not shards.isdigit() or int(shards) < 1:
+            parser.error("UI_SHARDS must be a positive integer")
         command = [str(ROOT / "gradlew"), f":app:{device}DebugAndroidTest", "--rerun",
-                   f"-Pandroid.testInstrumentationRunnerArguments.notPackage={E2E_PACKAGE}", "--console=plain"]
+                   f"-Pandroid.testInstrumentationRunnerArguments.notPackage={E2E_PACKAGE}",
+                   f"-Pandroid.experimental.androidTest.numManagedDeviceShards={shards}", "--console=plain"]
     else:
         env.pop("LIVE", None)
         env.pop("DETERMINISTIC", None)
