@@ -136,7 +136,7 @@ all bundle members exist and the coordinator has started. Reading the owning
 coordinator at that moment preserves its live reconnect cursor without resolving
 an app-wide coordinator or freezing the value at construction. Reconnect creates
 a fresh transport, pump and Noise session while retaining this supplier and its
-coordinator. See [replay ownership](relay-repository-coordinator.md#reconnect-spanning-replay-cursor-412).
+coordinator. See [replay ownership](relay-repository-coordinator-seams-and-passthroughs.md#reconnect-spanning-replay-cursor-412).
 
 **Registry ownership and compatibility selection.** `appModule` eagerly owns the
 registry, which constructs explicit-record bundles for all saved hosts. Empty

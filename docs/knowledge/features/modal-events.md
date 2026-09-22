@@ -229,7 +229,7 @@ tripping the ≥5 split gate) for plumbing this decode slice doesn't use. This i
 a concrete handle ([the coordinator](relay-repository-coordinator.md) holds the repo). Facade/coordinator
 reachability for the consumer was **downstream consumer-slice work** — exactly as `liveSessionEvents`' UI
 reachability was deferred to (and realized in) [#406](../codebase/406.md), and now **realized for modals
-in [#445](../codebase/445.md)** via the coordinator's [`modalEvents`](relay-repository-coordinator.md#modal-event-seam-445-and-the-hoisted-currentmodal-fold-492)
+in [#445](../codebase/445.md)** via the coordinator's [`modalEvents`](relay-repository-coordinator-seams-and-passthroughs.md#modal-event-seam-445-and-the-hoisted-currentmodal-fold-492)
 passthrough seam (the byte-for-byte mirror of the `liveSessionEvents` seam; the fold over it was hoisted
 into the coordinator in [#492](../codebase/492.md)).
 
@@ -323,7 +323,7 @@ options[].id` invariant (producer-owned; a #446 default-to-first render fallback
   (a tool row *is* a thread row; a modal is not).
 - [Relay repository coordinator](relay-repository-coordinator.md) — wires the `negotiatedCapabilities`
   supplier the gate reuses; the [`modalEvents` passthrough seam + the hoisted `currentModal`
-  fold](relay-repository-coordinator.md#modal-event-seam-445-and-the-hoisted-currentmodal-fold-492)
+  fold](relay-repository-coordinator-seams-and-passthroughs.md#modal-event-seam-445-and-the-hoisted-currentmodal-fold-492)
   live here (seam in [#445](../codebase/445.md); fold hoisted in [#492](../codebase/492.md), which also
   demoted `modalEvents` to `private`).
 - [Current-modal state](current-modal-state.md) ([#445](../codebase/445.md) / [#492](../codebase/492.md)) —

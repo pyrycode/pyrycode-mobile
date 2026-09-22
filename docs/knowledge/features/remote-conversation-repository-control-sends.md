@@ -164,7 +164,7 @@ private fun interruptRequest(conversationId: String): Envelope = Envelope(
   or failure. Sending does not prove that the turn stopped; the existing
   conversation-routed `turn_state`/`turn_end` events update the busy flag.
 - **Preserve the callback seam:** the concrete method is reached through the
-  [coordinator passthrough](relay-repository-coordinator.md#outbound-interrupt-passthrough-458)
+  [coordinator passthrough](relay-repository-coordinator-seams-and-passthroughs.md#outbound-interrupt-passthrough-458)
   and a defaulted `suspend (String) -> Unit` callback. A `conversation_id` payload
   does not require adding it to `ConversationRepository` or the facade.
 - **Daemon-owned validation:** the id is JSON data, never authorization. The

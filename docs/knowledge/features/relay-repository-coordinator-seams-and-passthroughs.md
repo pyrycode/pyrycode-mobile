@@ -1,0 +1,276 @@
+# Relay repository coordinator — a Noise pump + remote repository per live connection — seams and passthroughs
+
+Split out of [Relay repository coordinator — a Noise pump + remote repository per live connection](relay-repository-coordinator.md) on 2026-09-22 to keep that document under the 50000-byte size cap the docs guard enforces. Every section below moved here verbatim and kept its heading, so its anchors are unchanged. Part of [Relay repository coordinator — a Noise pump + remote repository per live connection](relay-repository-coordinator.md); see that document for the rest.
+
+## Connect-time FCM push-token re-registration (#365)
+
+Per the daemon's contract (`docs/protocol-mobile.md` § Phone background behaviour) the phone re-registers
+its FCM push token on **every** WS connect, so the daemon's wake target self-heals across app restarts and
+connection drops; the server de-duplicates the `(platform, token, device_name)` triple, so a repeat is a
+cheap (~100 B) no-op. [#365](../codebase/365.md) adds that connect-time orchestration here — the only
+Phase 4 FCM slice that touches the connection lifecycle — reusing [#359](../codebase/359.md)'s
+`RemoteConversationRepository.registerPushToken` sender unchanged.
+
+After publishing the repo, `onConnection` launches `reregisterPushTokenOnOpen(pump, repo)` on the
+per-connection `childScope`. The hook:
+
+1. **Awaits the first transition out of `Handshaking`** — `pump.state.first { it is Open || it is Closed }`.
+   `StateFlow.first {}` checks the current value first, so an already-`Open` pump fires with no missed-edge
+   race.
+2. **Aborts on a pre-Open `Closed`** (handshake fault / transport down) — `return`, nothing to register.
+3. **Reads the token** — `val token = pushToken() ?: return`. A `null` token is a **no-op**: the capability
+   is **dormant** until a token is stored (Firebase #361 via [#364](../codebase/364.md)).
+4. **Sends once** — `repo.registerPushToken(token)`, swallowing failure.
+
+It fires **exactly once per connection**, guaranteed *structurally*: each connection builds a fresh pump +
+child scope + hook, and the `PumpState` machine never revisits `Handshaking` (re-key stays `Open`). No
+client-side dedup — the server dedupes the triple.
+
+Three load-bearing constraints shape it:
+
+- **It uses the *concrete* `repo` handle, not `currentRepository`.** `registerPushToken` is **not** on the
+  `ConversationRepository` interface (#359 — it is a device/connection concern), and `currentRepository` is
+  interface-typed, so the hook calls it through the concrete `RemoteConversationRepository` captured at
+  construction. This is the **first live caller** of the method #359 shipped dormant. It does **not** add a
+  second `currentRepository` observer or a second connection-state subscription — it reuses the one
+  `onConnection` collector + the pump's existing `state`.
+- **`onConnection` stays non-suspending.** `launch` schedules and returns; all suspending work runs on the
+  child scope, off the critical path — preserving the cancellation-atomicity / key-wipe invariant (below).
+  The hook is **never** awaited inline.
+- **Swallow, but propagate cancellation.** A narrow `catch` re-throws `CancellationException` (a drop
+  cancels `childScope` mid-call — absorbing it would break structured-concurrency teardown) and swallows any
+  other `Exception` **without logging** (the token is never logged; the daemon re-registers on the next
+  connect by contract). A server `error` (`RelayErrorException`) or not-Open `IllegalStateException` is
+  swallowed.
+
+### Closing #359's `device_name: ""` defer
+
+\#359 left `RemoteConversationRepository`'s `deviceName` ctor param defaulted to `""` and flagged that
+whichever slice adds the live caller must thread the real name. #365 is that slice: it adds the
+`deviceName: String = ""` coordinator param, threads it into the repo (`RemoteConversationRepository(pump,
+childScope, deviceName)`), and `AppModule` supplies the live `NoiseClientInfo.deviceName` (`Build.MODEL`).
+This matters because pyrycode's handler (#319) acks-with-**no-registry-touch** only when
+`(Platform, Token, DeviceName)` matches the stored device — an empty `device_name` would *fork* the
+server's dedup triple into a duplicate registry entry. See [[post-352-connection-scoped-repo-behind-facade]].
+
+## Two-part connection status (#392)
+
+The coordinator publishes [`connectionStatus`](connection-status.md), the combined
+`ConnectionStatus { relay, pyrycode }` model the Settings status line consumes — surfaced onto
+[`SettingsViewModel`](settings-viewmodel.md) and rendered as the
+[`ConnectionStatusLine`](connection-status-line.md) under the Server row in **[#398](../codebase/398.md)**
+(the live wiring of parent epic #390, `blockedBy #397`). It owns the connection-scoped pump, so it is where the **pyrycode-leg readiness** (the
+honest `relay → daemon` end-to-end signal) is derived — the relay leg's `Connected` only means
+*socket-open*, not Noise-session-open. The leg reaches `PyrycodeLinkStatus.Connected` **only** once the
+pump reaches `Open` (handshake complete) — never on bare socket-up, never between connections —
+closing the false green that bit live testing on 2026-06-08. See
+[connection status](connection-status.md) for the model and the leg semantics.
+
+It is **pure derivation** — no new mutable status state:
+
+- The live pump is reached through the single [`activeConnection`](relay-repository-coordinator.md#the-single-connection-source-and-the-open-gated-currentrepository-421--493)
+  source (`conn?.pump`), written on the non-suspending `onConnection`/`teardownActive` critical section (the
+  fresh `Connection` on connect, `null` on teardown). The pump reference stays **inside** `activeConnection` —
+  only the *derived* readiness is exposed, never the pump itself (the pump is single-owner).
+- A private `pyrycodeStatus: Flow<PyrycodeLinkStatus>` = `activeConnection.flatMapLatest { conn ->
+  conn?.pump?.state ?: flowOf(null) }.map { it.toPyrycodeLinkStatus() }` — the same
+  `flatMapLatest`-over-a-live-child idiom [`StableConversationRepository`](stable-conversation-repository.md)
+  uses for `currentRepository`. It tracks the **current** pump across reconnects with no carryover
+  (`flatMapLatest` cancels the prior pump's `state` collection); "no connection" maps through `null` to the
+  `Down` floor.
+- The public `connectionStatus: StateFlow<ConnectionStatus>` = `combine(relayStatus, pyrycodeStatus) {
+  relay, pyrycode -> ConnectionStatus(relay, pyrycode) }.stateIn(scope, SharingStarted.Eagerly, …)` on
+  the coordinator's **existing** `scope` (cancelled by `close()`, so it doesn't hang `runTest`).
+
+The mapping `internal fun PumpState?.toPyrycodeLinkStatus()` (bottom of the file, sibling to #391's
+`RelayLinkStatus.toConnectionState()`) is total over `PumpState` + `null`: `null`/`Closed → Down`,
+`Handshaking → Handshaking`, `Open → Connected`. It **discards `Open.connId` and `Closed.cause`** —
+the no-log / no-leak contract is structurally enforced (no relay/crypto-derived string reaches the
+status surface). `relayStatus` and `connections` come directly from the owning bundle's supervisor;
+neither needs a separate Koin binding. `AppModule` passes the registry
+compatibility projection, `get<RelayConnectionRegistry>().connectionStatus`, into
+`SettingsViewModel`, keeping both legs on the selected host.
+
+> **Init-order gotcha.** `stateIn(scope, Eagerly, …)` runs at *property initialization*, so
+> `connectionStatus`/`pyrycodeStatus` (and `currentRepository`/`currentModal`) must be declared **after**
+> `scope` and `activeConnection` in the class body — referencing an earlier-declared field is a
+> construction-time NPE (not a compile error). `activeConnection` sits just below `scope` (where the old
+> holders were), so every deriver below it satisfies this.
+
+## Live-session event seam (#406)
+
+The decoded [`LiveSessionEvent`](live-session-events.md) stream ([#385](../codebase/385.md)) lives on
+the **concrete** `RemoteConversationRepository.liveSessionEvents` — connection-scoped and **not** on the
+`ConversationRepository` interface — so a UI ViewModel cannot reach it. The coordinator owns the
+connection-scoped repository, so it threads that non-interface surface up exactly as `pyrycodeStatus`
+reaches the concrete pump through `activeConnection` (and as `registerPushToken` reaches the concrete repo
+through the construction-time handle):
+
+```kotlin
+val liveSessionEvents: Flow<LiveSessionEvent> =
+    activeConnection.flatMapLatest { conn -> conn?.repo?.liveSessionEvents ?: emptyFlow() }
+```
+
+- The concrete `repo` is reached through the single `activeConnection` source (`conn?.repo`) — its
+  `Connection.repo` field is set as part of `activeConnection.value = Connection(pump, scope, repo, transport)` in
+  `onConnection` and cleared to `null` in `teardownActive`, both **non-suspending** writes inside the same
+  critical section, so the cancellation-atomicity invariant is preserved. The repo reference stays **inside**
+  `activeConnection`: only the *derived* event flow is exposed, never the concrete repo reference. (Before
+  [#493](../codebase/493.md) this was a separate private `activeRemoteRepo` mirror; the consolidation folded
+  it into the one source.)
+- **Cold, not `stateIn`'d.** Unlike `connectionStatus` (current-value state), these are *events* with no
+  "current value", so `liveSessionEvents` is a cold `Flow` with no scope of its own. Each consumer's
+  collection independently observes `activeConnection` (a `StateFlow`) and subscribes to the current
+  repo's `SharedFlow` (both multi-subscriber-safe) — no `shareIn`. (A code-review NIT flagged that
+  per-subscriber `flatMapLatest` re-derivation is fine at today's consumer count; revisit only if the
+  count grows.)
+- **Reconnection-surviving.** `flatMapLatest` cancels the prior connection's collection and switches to
+  the fresh repo's `liveSessionEvents` on each new connection; `emptyFlow()` between connections. A push
+  on a now-dead pump surfaces nowhere — a coordinator test pins this.
+- **Generic, not turn-state-specific.** The seam carries the **full** `LiveSessionEvent` stream, not an
+  `isThinking`/turn-state projection — reducing to "latest phase" is a consumer concern. The first
+  consumer is [`ThreadViewModel.isThinking`](turn-state-thinking-flag.md) (#406, the thinking-indicator
+  data half); #387 (tool timeline) and #337 (live assistant text) reuse the same flow without
+  re-plumbing this layer. `AppModule` supplies the registry projection of the
+  selected coordinator's flow, exactly like `connectionStatus`.
+
+## Modal event seam (#445) and the hoisted currentModal fold (#492)
+
+The decoded [`ModalEvent`](modal-events.md) stream ([#437](../codebase/437.md)) lives on the **concrete**
+`RemoteConversationRepository.modalEvents` (`replay = 0`, connection-scoped, **not** on the interface) —
+the same posture as `liveSessionEvents`, so a UI ViewModel cannot reach it directly. The coordinator
+threads it up as a **byte-for-byte mirror** of the live-session seam — switching off the same single
+`activeConnection` source (`conn?.repo`) — and, as of [#492](../codebase/492.md), **folds it here** into
+one "which modal is open" projection per retained host bundle:
+
+```kotlin
+// #492: PRIVATE — its sole consumer is currentModal below.
+@OptIn(ExperimentalCoroutinesApi::class)
+private val modalEvents: Flow<ModalEvent> =
+    activeConnection.flatMapLatest { conn -> conn?.repo?.modalEvents ?: emptyFlow() }
+
+// #492: the hoisted projection, folded once per coordinator.
+val currentModal: StateFlow<ModalUiState> =
+    modalEvents
+        .scan<ModalEvent, ModalUiState>(ModalUiState.Hidden) { state, event -> state.reduce(event) }
+        .stateIn(scope, SharingStarted.Eagerly, ModalUiState.Hidden)
+```
+
+- **`modalEvents` is cold and now `private`** — events, no current value. The fold that holds "which modal
+  is currently open" moved here in #492 from [`ThreadViewModel`](current-modal-state.md): folding it at a
+  screen-scoped VM dropped any `modal_shown` fired before a thread screen subscribed (the source is
+  `replay = 0`), so an outstanding prompt stayed stuck daemon-side while the phone rendered nothing. After
+  the hoist nothing outside the coordinator reads the raw event stream, so it was demoted to `private`.
+- **`currentModal` mirrors `currentRepository` / `connectionStatus`** — accumulate a `replay = 0`-derived
+  stream `Eagerly` on the coordinator `scope` so `.value` is always the true current projection. Started
+  `Eagerly` (not `WhileSubscribed`) is load-bearing: `scan` re-emits its seed on every fresh collection, so
+  a resubscribe past a stop window would overwrite a retained `Open` with `Hidden`, and the `replay = 0`
+  source won't replay to rebuild it (full rationale in [Current-modal state](current-modal-state.md#why-eagerly-not-whilesubscribed)).
+  The pure `ModalUiState.reduce` lives in `data/model` (moved there in #492 so this `data`-layer coordinator
+  can see it) and emits **no log** (modal fields may name a sensitive command/path).
+- **Reconnection-surviving; retains across teardown.** `flatMapLatest` switches to the fresh repo's
+  `modalEvents` on each new connection and cancels the prior; `emptyFlow()` between connections. The `.scan`
+  sits **downstream** of `flatMapLatest`, so a connection drop does **not** restart it — a still-`Open`
+  modal is **retained**, not reset to `Hidden` (the #492 teardown decision: the answer path is guarded by
+  the deterministic `answerModal`/`cancelModal` null-guard, never by this UI projection, so retaining a
+  stale `Open` can't send an answer on a dead connection).
+- `AppModule` passes the registry's selected-host `currentModal` projection into
+  `ThreadViewModel`. Every retained coordinator keeps folding its own modals even
+  while another host is selected; overlapping modal ids never share an accumulator.
+
+## Outbound modal-send passthrough (#451)
+
+The **outbound mirror** of the inbound `modalEvents` seam: where `modalEvents` surfaces decoded modals *up*
+to the ViewModel, the answer/cancel passthrough sends the user's decision *down* to the connection-scoped
+concrete [`RemoteConversationRepository.answerModal` / `cancelModal`](remote-conversation-repository.md)
+([#438](../codebase/438.md)). The asymmetry is correct: inbound is a stream (`Flow`); an answer/cancel is a
+request/reply control **call**, so these are **suspend methods, not flows**. Both read the concrete repo off
+the single `activeConnection` source (`activeConnection.value?.repo`):
+
+```kotlin
+suspend fun answerModal(modalId: String, optionId: String) {
+    val repo = activeConnection.value?.repo ?: throw IllegalStateException("no active connection")
+    repo.answerModal(modalId, optionId)
+}
+// cancelModal(modalId) is identical, minus the optionId.
+```
+
+- **Null-guard only — both not-connected paths funnel to `IllegalStateException`.** When
+  `activeConnection.value == null` (between connections) the guard throws. When a connection exists but the
+  pump is still pre-`Open` (Handshaking), `repo.answerModal` → `sendAndAwaitReply` → `pump.send` returns
+  false → `IllegalStateException` (the #438 precedent). So the passthrough needs **only** the null-guard — a
+  redundant `Open` gate (like `currentRepository`'s, which exists for a different reason: facade
+  publication) would be needless complexity, since the concrete send already fails fast.
+- A server `error` propagates from the concrete repo as `RelayErrorException` **unchanged** — the
+  passthrough neither catches nor maps it (the consuming [`ThreadViewModel`](modal-answer-flow.md) catches
+  both exceptions and surfaces a one-shot error signal).
+- **No log** — the `modalId`/`optionId` may name a sensitive command/path (never-log contract); the
+  passthrough adds no `android.*` (data/ stays portable).
+- The consumer is [`ThreadViewModel.sendAnswer` / `sendCancel`](modal-answer-flow.md), bound at the
+  `AppModule` `ThreadViewModel` factory as suspend **method references**
+  (`answerModal = registry::answerModal`, likewise cancel), which resolve the
+  selected coordinator at call entry, matching the inbound compatibility seams.
+
+## Outbound interrupt passthrough (#458)
+
+The third outbound control passthrough forwards the open thread's conversation id
+unchanged (#626). It reads the concrete repository from `activeConnection` to
+select the transport; the argument selects the conversation to stop. See
+[Interrupt send path](interrupt-send-path.md).
+
+```kotlin
+suspend fun interrupt(conversationId: String) {
+    val repo = activeConnection.value?.repo ?: throw IllegalStateException("no active connection")
+    repo.interrupt(conversationId)
+}
+```
+
+- **Null-guard only**, identical to `cancelModal`: between connections the guard throws; a connection that
+  exists but whose pump is pre-`Open` surfaces as the concrete
+  [`RemoteConversationRepository.interrupt`](remote-conversation-repository.md)'s `check(pump.send(...))` →
+  `IllegalStateException`. No redundant `Open` gate. Never logs.
+- **Explicit target:** the repository encodes the supplied id as
+  `interrupt.payload.conversation_id`. No shared active-conversation cursor is read,
+  so prior activity in A cannot choose the target of a call naming B.
+- **Fire-and-forget:** the passthrough awaits no acknowledgment and changes no
+  local turn state. The open conversation's inbound turn events remain authoritative.
+- Bound at the `AppModule` `ThreadViewModel` factory as a suspend **method reference** (`interrupt =
+  registry::interrupt`) into the VM's defaulted `suspend (String) -> Unit` lambda.
+  The registry selects the host at call entry; the supplied id selects that host's
+  conversation. The consumer is [`ThreadViewModel.onInterrupt` / `sendInterrupt`](interrupt-send-path.md);
+  unlike `sendCancel` its failure catches are **empty** (no error channel or log).
+  `CancellationException` is rethrown before the failure catches.
+
+## Reconnect-spanning replay cursor (#412)
+
+Each bundle's coordinator owns one in-memory [`ReplayCursor`](replay-cursor.md):
+the latest interactive structured-stream [`Envelope.eventId`](mobile-protocol-v2-wire-layer.md)
+observed across that bundle's reconnects. Explicit-record bundles for A and B
+have separate coordinators and cursors even if their relay URL is the same.
+The cursor cannot live on the per-connection
+[`RemoteConversationRepository`](remote-conversation-repository.md), which is
+rebuilt each reconnect: the next `hello` needs the old position before its new
+inbound path exists. It is not persisted across bundle replacement or process
+restart.
+
+```kotlin
+internal val replayCursor: ReplayCursor = ReplayCursor()   // one per coordinator, survives reconnects
+```
+
+- Each per-connection repository receives its coordinator's cursor through
+  `replayCursor = replayCursor` in non-suspending `onConnection`. Inbound recording
+  or a `resync` reset in A changes only A's cursor; B retains its position.
+- `teardownActive` never clears the cursor. Drops, retry and background supervisor
+  close preserve it while replacing the transport, pump, Noise session and
+  repository. Bundle disposal ends this owner's usable lifetime; a new bundle
+  starts empty.
+- The [session factory supplier](noise-ik-session.md#factory-wiring) closes over
+  the owning coordinator's `internal val replayCursor`, with no Koin lookup.
+  It reads `.latest` at `hello`-build, advertising that position as
+  `hello.last_event_id`; `null` omits the field. Reading an app-wide coordinator
+  would mix hosts, and capturing a value at construction would miss later events.
+
+The registry selects among retained explicit-record bundles; it never moves a
+cursor between them. Selection changes leave all host cursors untouched. The
+older `createCompatibility(store)` helper can reread a different host on redial
+while retaining one cursor, so it is not used by app DI for collection ownership.

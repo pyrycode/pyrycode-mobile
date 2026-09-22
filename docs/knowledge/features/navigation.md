@@ -187,7 +187,7 @@ draws its row inert on `null`, and the list's tap does nothing with no host sele
 The ViewModel side of this ownership is [`ThreadDestinationFactory.archive`](dependency-injection.md#destination-ownership) — the exact-host
 repository seam from #636, resolved once at construction rather than per restore tap, so a selection
 change, reconnect or unpair can move neither the rows nor a pending write. See
-[Archived Discussions screen § Settings row + nav graph](archived-discussions-screen.md#settings-row--nav-graph)
+[Archived Discussions screen § Settings row + nav graph](archived-discussions-screen-how-it-works.md#settings-row--nav-graph)
 for the full route/binding/header account.
 
 ### Host availability

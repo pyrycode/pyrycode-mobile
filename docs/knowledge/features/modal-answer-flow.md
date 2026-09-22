@@ -157,7 +157,7 @@ rework defect; see [[catch-illegalstate-swallows-cancellation]]. A broad `catch 
 
 ## The coordinator passthrough
 
-[`RelayRepositoryCoordinator`](relay-repository-coordinator.md#outbound-modal-send-passthrough-451) gains two
+[`RelayRepositoryCoordinator`](relay-repository-coordinator-seams-and-passthroughs.md#outbound-modal-send-passthrough-451) gains two
 **suspend** methods reaching the connection-scoped concrete repo through the coordinator's single
 `activeConnection` source (`activeConnection.value?.repo`; [#493](../codebase/493.md) consolidated the former
 `activeRemoteRepo` mirror into it) — the outbound mirror of the inbound `modalEvents` seam:
@@ -242,8 +242,8 @@ quartet for the passthrough (delegate-over-active-connection + no-connection-thr
   (`vm::onModalOption` / `vm::onModalCancel`) + `armedOptionId` / `modalSendErrors` into the route host.
 - [Remote conversation repository § `answerModal` / `cancelModal`](remote-conversation-repository.md)
   ([#438](../codebase/438.md)) — the concrete outbound send methods the passthrough delegates to.
-- [Relay repository coordinator § Outbound modal-send passthrough](relay-repository-coordinator.md#outbound-modal-send-passthrough-451)
-  — hosts the passthrough; the outbound mirror of its [§ Modal event seam](relay-repository-coordinator.md#modal-event-seam-445-and-the-hoisted-currentmodal-fold-492).
+- [Relay repository coordinator § Outbound modal-send passthrough](relay-repository-coordinator-seams-and-passthroughs.md#outbound-modal-send-passthrough-451)
+  — hosts the passthrough; the outbound mirror of its [§ Modal event seam](relay-repository-coordinator-seams-and-passthroughs.md#modal-event-seam-445-and-the-hoisted-currentmodal-fold-492).
 - [Modal events](modal-events.md) ([#437](../codebase/437.md)) — the upstream decode seam.
 - [Thread screen](thread-screen.md) — the `ThreadViewModel` host; `armedOptionId` / `modalSendErrors` join
   `currentModal` / `isThinking` / `isStalled` / `navigationEvents` as VM-exposed signals.

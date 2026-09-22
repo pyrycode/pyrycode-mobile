@@ -19,7 +19,7 @@ Post-#201 the `LazyColumn` is nested inside a `Column` wrapper alongside the `Co
 ### The oldest-end history demand (#777)
 
 `requestHistory` ([remote repository § the walk that finally calls
-`requestHistory`](remote-conversation-repository-reads-and-thread-store.md#the-walk-that-finally-calls-requesthistory-777))
+`requestHistory`](remote-conversation-repository-reads-and-thread-store-history-paging.md#the-walk-that-finally-calls-requesthistory-777))
 had no caller until #777 wired the screen's scroll position to `ThreadViewModel.onDemandOlderHistory()`
 via a new defaulted `onDemandOlderHistory: () -> Unit = {}` parameter (`MainActivity` binds
 `vm::onDemandOlderHistory`, the only consumer). Two pieces live in the same `else` arm as the

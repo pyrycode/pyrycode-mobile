@@ -157,7 +157,7 @@ live gate proved the replacement handles before #738 removed the button and left
 helpers to re-point at the host row's control. See
 [Conversation tree](../knowledge/features/channel-list-screen.md#conversation-tree-731) for the marker's
 production-side KDoc and its relationship to the tier tags #731 minted the same way, and
-[Add controls](../knowledge/features/channel-list-screen.md#add-controls-738) for `treeHostAddTestTag`'s own
+[Add controls](../knowledge/features/channel-list-screen-tree-and-controls.md#add-controls-738) for `treeHostAddTestTag`'s own
 clamping rule.
 
 Rung 3 covers eight scenarios on this one harness: the **ping** happy path (a constrained reply renders);
