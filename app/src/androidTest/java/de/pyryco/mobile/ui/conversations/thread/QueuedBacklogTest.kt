@@ -8,8 +8,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createComposeRule
-import androidx.compose.ui.test.onLast
-import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -29,11 +28,14 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Screen-level behaviour of the #461 queued-backlog render: while [ThreadScreen]'s
- * [ThreadUiState.queuedMessages] is non-empty, the ordered backlog is shown in wire order, visually
- * additive to the sent-message list; when empty, no backlog section renders. Mirrors
- * [ThinkingIndicatorTest] / [StallPromotionBannerTest] — the state is constructed directly (the composable
- * reads no repository), so this drives the render contract, not the ViewModel surfacing.
+ * Screen-level behaviour of the queued backlog inside [ThreadScreen] — carried over from the #461/#467
+ * foot-of-list section to #782's folded rows. The section is gone; its wire-order, drop-affordance and
+ * id-routing contracts are not, and they are asserted here in the new shape, alongside the one the fold
+ * exists for: a queued send draws **once**.
+ *
+ * The state is constructed directly (the composable reads no repository), so this drives the render
+ * contract, not the ViewModel surfacing. The correlation rules themselves are proven off-device by
+ * [de.pyryco.mobile.ui.conversations.thread.foldQueuedRows]'s unit test.
  */
 @RunWith(AndroidJUnit4::class)
 class QueuedBacklogTest {
@@ -42,8 +44,6 @@ class QueuedBacklogTest {
 
     private fun string(resId: Int): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(resId)
 
-    private val backlogDescription: String = string(R.string.cd_thread_queued_backlog)
-
     private val dropDescription: String = string(R.string.cd_thread_queued_drop)
 
     private val ts: Instant = Instant.parse("2026-06-23T10:00:00Z")
@@ -51,7 +51,8 @@ class QueuedBacklogTest {
     private fun queued(
         id: Long,
         text: String,
-    ): QueuedMessage = QueuedMessage(id, text, ts)
+        messageId: String = "",
+    ): QueuedMessage = QueuedMessage(id = id, text = text, timestamp = ts, messageId = messageId)
 
     private fun sentUserMessage(
         id: String,
@@ -81,7 +82,10 @@ class QueuedBacklogTest {
             queuedMessages = queue,
         )
 
-    private fun setThreadScreen(state: ThreadUiState) {
+    private fun setThreadScreen(
+        state: ThreadUiState,
+        onDropQueued: (Long) -> Unit = {},
+    ) {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
                 ThreadScreen(
@@ -90,50 +94,116 @@ class QueuedBacklogTest {
                     onSendMessage = {},
                     connectionState = ConnectionState.Connected,
                     onRetry = {},
+                    onDropQueued = onDropQueued,
                 )
             }
         }
     }
 
+    private fun topOfText(text: String) =
+        composeTestRule
+            .onNodeWithText(text, useUnmergedTree = true)
+            .getUnclippedBoundsInRoot()
+            .top
+
+    private fun dropAffordances() = composeTestRule.onAllNodes(hasContentDescription(dropDescription), useUnmergedTree = true)
+
+    // AC #1 — the bug this slice fixes. The echo and the backlog item are the same message, so the
+    // thread draws ONE row carrying the queue treatment, not the echo plus a second section row.
     @Test
-    fun renders_queued_messages_in_wire_order() {
+    fun a_parked_send_draws_one_row_carrying_the_treatment() {
         setThreadScreen(
             stateWith(
-                queue =
-                    listOf(
-                        queued(1L, "first queued message"),
-                        queued(2L, "second queued message"),
-                    ),
+                items = listOf(sentUserMessage("m-1", "wait for me")),
+                queue = listOf(queued(7L, "wait for me", messageId = "m-1")),
             ),
         )
 
-        // AC #1 / #5 — both render; the column merges descendants (a11y group) so read the per-row text
-        // through the unmerged tree, then compare vertical position to prove FIFO == wire order.
-        composeTestRule.onNodeWithText("first queued message", useUnmergedTree = true).assertIsDisplayed()
-        composeTestRule.onNodeWithText("second queued message", useUnmergedTree = true).assertIsDisplayed()
-        val firstTop =
-            composeTestRule
-                .onNodeWithText("first queued message", useUnmergedTree = true)
-                .getUnclippedBoundsInRoot()
-                .top
-        val secondTop =
-            composeTestRule
-                .onNodeWithText("second queued message", useUnmergedTree = true)
-                .getUnclippedBoundsInRoot()
-                .top
-        assertTrue("first queued message must render above the second", firstTop < secondTop)
+        composeTestRule.onAllNodesWithText("wait for me", useUnmergedTree = true).assertCountEquals(1)
+        dropAffordances().assertCountEquals(1)
     }
 
+    // AC #1 — correlation is by id, never by text: two echoes with equal text and different ids stay
+    // two rows, and only the named one carries the treatment.
     @Test
-    fun empty_queue_renders_no_backlog() {
-        setThreadScreen(stateWith(queue = emptyList()))
+    fun equal_text_under_different_ids_stays_two_rows() {
+        setThreadScreen(
+            stateWith(
+                items = listOf(sentUserMessage("m-1", "same words"), sentUserMessage("m-2", "same words")),
+                queue = listOf(queued(7L, "same words", messageId = "m-2")),
+            ),
+        )
 
-        // AC #2 — no backlog section when the queue is empty.
-        composeTestRule.onNodeWithContentDescription(backlogDescription).assertDoesNotExist()
+        composeTestRule.onAllNodesWithText("same words", useUnmergedTree = true).assertCountEquals(2)
+        dropAffordances().assertCountEquals(1)
     }
 
+    // AC #2 — delivery keeps the row where it is and takes the treatment away; the message does not
+    // vanish, move or double up. Driven through hoisted state, so it also re-proves the row holds none.
     @Test
-    fun backlog_tracks_the_hoisted_state_with_no_local_state() {
+    fun delivery_keeps_the_row_and_removes_its_treatment() {
+        val items = listOf(sentUserMessage("m-0", "an already sent message"), sentUserMessage("m-1", "wait for me"))
+        var queue by mutableStateOf(listOf(queued(7L, "wait for me", messageId = "m-1")))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadScreen(
+                    state = stateWith(queue = queue, items = items),
+                    onBack = {},
+                    onSendMessage = {},
+                    connectionState = ConnectionState.Connected,
+                    onRetry = {},
+                )
+            }
+        }
+
+        dropAffordances().assertCountEquals(1)
+        val queuedTop = topOfText("wait for me")
+        val sentTop = topOfText("an already sent message")
+        assertTrue("the queued row must render below the message sent before it", sentTop < queuedTop)
+
+        queue = emptyList()
+
+        dropAffordances().assertCountEquals(0)
+        composeTestRule.onAllNodesWithText("wait for me", useUnmergedTree = true).assertCountEquals(1)
+        composeTestRule.onNodeWithText("wait for me", useUnmergedTree = true).assertIsDisplayed()
+        assertTrue(
+            "delivery must not reorder the row",
+            topOfText("an already sent message") < topOfText("wait for me"),
+        )
+    }
+
+    // AC #3 — a backlog item this device minted no echo for is its own row after the thread rows, and
+    // is never hidden. Carried over from `backlog_coexists_with_sent_messages`.
+    @Test
+    fun an_unmatched_item_renders_after_the_thread_rows() {
+        setThreadScreen(
+            stateWith(
+                items = listOf(sentUserMessage("m-0", "an already sent message")),
+                queue = listOf(queued(1L, "queued from the desktop", messageId = "minted-elsewhere")),
+            ),
+        )
+
+        composeTestRule.onNodeWithText("an already sent message", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("queued from the desktop", useUnmergedTree = true).assertIsDisplayed()
+        assertTrue(
+            "an unmatched backlog row must render after the thread rows",
+            topOfText("an already sent message") < topOfText("queued from the desktop"),
+        )
+    }
+
+    // AC #3 — and it is not hidden behind the empty state when the thread has no rows of its own.
+    @Test
+    fun an_unmatched_item_is_visible_on_an_otherwise_empty_thread() {
+        setThreadScreen(stateWith(queue = listOf(queued(1L, "queued from the desktop"))))
+
+        composeTestRule.onNodeWithText("queued from the desktop", useUnmergedTree = true).assertIsDisplayed()
+        dropAffordances().assertCountEquals(1)
+    }
+
+    // AC #5 — rows render in wire order, and an empty backlog leaves none behind. Carried over from
+    // `renders_queued_messages_in_wire_order` + `backlog_tracks_the_hoisted_state_with_no_local_state`.
+    @Test
+    fun queued_rows_render_in_wire_order_and_clear_when_the_backlog_empties() {
         var queue by mutableStateOf(emptyList<QueuedMessage>())
         composeTestRule.setContent {
             PyrycodeMobileTheme {
@@ -147,79 +217,49 @@ class QueuedBacklogTest {
             }
         }
 
-        // AC #3 — reactive: appears when a message joins the queue, clears when it empties.
-        composeTestRule.onNodeWithContentDescription(backlogDescription).assertDoesNotExist()
+        dropAffordances().assertCountEquals(0)
 
-        queue = listOf(queued(1L, "now waiting"))
-        composeTestRule.onNodeWithContentDescription(backlogDescription).assertIsDisplayed()
+        queue = listOf(queued(1L, "first queued message"), queued(2L, "second queued message"))
+
+        composeTestRule.onNodeWithText("first queued message", useUnmergedTree = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("second queued message", useUnmergedTree = true).assertIsDisplayed()
+        assertTrue(
+            "first queued message must render above the second",
+            topOfText("first queued message") < topOfText("second queued message"),
+        )
 
         queue = emptyList()
-        composeTestRule.onNodeWithContentDescription(backlogDescription).assertDoesNotExist()
+
+        dropAffordances().assertCountEquals(0)
+        composeTestRule.onAllNodesWithText("first queued message", useUnmergedTree = true).assertCountEquals(0)
     }
 
+    // AC #1 — every queued row carries an individually-addressable drop affordance. The row merges
+    // descendants for its a11y group, but each clickable IconButton is its own semantics node.
     @Test
-    fun backlog_coexists_with_sent_messages() {
+    fun each_queued_row_exposes_a_drop_affordance() {
         setThreadScreen(
-            stateWith(
-                queue = listOf(queued(1L, "still waiting to send")),
-                items = listOf(sentUserMessage("m0", "an already sent message")),
-            ),
+            stateWith(queue = listOf(queued(1L, "first queued message"), queued(2L, "second queued message"))),
         )
 
-        // The backlog is additive — the sent message still renders and the backlog renders alongside it.
-        composeTestRule.onNodeWithText("an already sent message").assertIsDisplayed()
-        composeTestRule.onNodeWithContentDescription(backlogDescription).assertIsDisplayed()
+        dropAffordances().assertCountEquals(2)
     }
 
-    @Test
-    fun each_row_exposes_a_drop_affordance() {
-        setThreadScreen(
-            stateWith(
-                queue =
-                    listOf(
-                        queued(1L, "first queued message"),
-                        queued(2L, "second queued message"),
-                    ),
-            ),
-        )
-
-        // AC #1 — every rendered row carries an individually-addressable drop affordance. The backlog
-        // Column merges descendants for its a11y group, but each clickable IconButton is its own
-        // semantics node, so the drop nodes stay addressable in the unmerged tree (as the per-row text is).
-        composeTestRule
-            .onAllNodes(hasContentDescription(dropDescription), useUnmergedTree = true)
-            .assertCountEquals(2)
-    }
-
+    // AC #1 — tapping the LOWER row's affordance routes the LOWER row's id. Asserting on the id (not
+    // just "a tap happened") is what proves per-row id wiring; the row is located by its position
+    // rather than by tree order, which is what the wire-order assertion above pins.
     @Test
     fun activating_a_rows_drop_affordance_routes_that_rows_id() {
         val dropped = mutableListOf<Long>()
-        composeTestRule.setContent {
-            PyrycodeMobileTheme {
-                ThreadScreen(
-                    state =
-                        stateWith(
-                            queue =
-                                listOf(
-                                    queued(1L, "first queued message"),
-                                    queued(2L, "second queued message"),
-                                ),
-                        ),
-                    onBack = {},
-                    onSendMessage = {},
-                    connectionState = ConnectionState.Connected,
-                    onRetry = {},
-                    onDropQueued = { dropped += it },
-                )
-            }
-        }
+        setThreadScreen(
+            state = stateWith(queue = listOf(queued(1L, "first queued message"), queued(2L, "second queued message"))),
+            onDropQueued = { dropped += it },
+        )
 
-        // AC #2 / AC #5 (activate half) — tapping the SECOND row's affordance routes the SECOND row's id
-        // through onDropQueued. Asserting on the id (not just "a tap happened") proves per-row id wiring.
-        composeTestRule
-            .onAllNodes(hasContentDescription(dropDescription), useUnmergedTree = true)
-            .onLast()
-            .performClick()
+        val tops = dropAffordances().fetchSemanticsNodes().map { it.boundsInRoot.top }
+        val lowerRow = tops.indices.maxByOrNull { tops[it] } ?: error("no drop affordance rendered")
+        dropAffordances()[lowerRow].performClick()
+
         composeTestRule.runOnIdle {
             assertEquals(listOf(2L), dropped)
         }

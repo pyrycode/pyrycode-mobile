@@ -80,7 +80,7 @@ import de.pyryco.mobile.ui.conversations.components.CompactingIndicator
 import de.pyryco.mobile.ui.conversations.components.ConnectionBanner
 import de.pyryco.mobile.ui.conversations.components.EmptyThreadState
 import de.pyryco.mobile.ui.conversations.components.MessageBubble
-import de.pyryco.mobile.ui.conversations.components.QueuedBacklog
+import de.pyryco.mobile.ui.conversations.components.QueuedMessageRow
 import de.pyryco.mobile.ui.conversations.components.RenameDialog
 import de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog
 import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
@@ -163,7 +163,9 @@ fun ThreadScreen(
     sessionSettingsErrors: Flow<Unit> = emptyFlow(), // #544: payload-free one-shot run-config failure signal
     onModalOption: (String) -> Unit = {}, // #452: wired by MainActivity → vm::onModalOption (passes ModalOption.id)
     onModalCancel: () -> Unit = {}, // #452: wired by MainActivity → vm::onModalCancel
-    onDropQueued: (Long) -> Unit = {}, // #467: wired by MainActivity → vm::onDropQueued (passes QueuedMessage.id)
+    // #467: wired by MainActivity → vm::onDropQueued (passes QueuedMessage.id). Since #782 it is bound
+    // per row by the fold rather than handed to a foot-of-list section.
+    onDropQueued: (Long) -> Unit = {},
     // #777: the reader has reached the oldest loaded row — ask for the next page back. Wired by
     // MainActivity → vm::onDemandOlderHistory. Safe to fire repeatedly: the ViewModel's demand drops an
     // ask that arrives while a request is outstanding or after the walk has stopped.
@@ -284,7 +286,19 @@ fun ThreadScreen(
                             .padding(horizontal = 16.dp, vertical = 8.dp),
                 )
             }
-            if (!state.hasMessages) {
+            // #782: the thread's rows are the join of its items with the daemon's queued backlog, so a
+            // message the daemon parked draws once — in place, carrying the queue treatment — instead
+            // of once as an optimistic echo and again in a foot-of-list section. Pure and cached on
+            // both inputs; the backlog stays replacement truth on ThreadUiState and never folds into
+            // the message reducer.
+            val rows =
+                remember(state.items, state.queuedMessages) {
+                    foldQueuedRows(state.items, state.queuedMessages)
+                }
+            // A backlog item this device minted no echo for is a row of its own, so the empty state
+            // must yield to it (#782 AC #3). When an item *is* matched its echo is a MessageItem, so
+            // hasMessages already covers that case.
+            if (!state.hasMessages && state.queuedMessages.isEmpty()) {
                 EmptyThreadState(
                     modifier =
                         Modifier
@@ -293,7 +307,10 @@ fun ThreadScreen(
                             .padding(horizontal = 24.dp),
                 )
             } else {
-                val reversedItems = state.items.asReversed()
+                val reversedRows = rows.asReversed()
+                // Still read off state.items, and still comparing against an index into `rows`: the two
+                // spaces agree wherever a boundary can land, because `rows` shares its prefix with
+                // `items` index-for-index and only ever appends unmatched queued rows after them.
                 val cutoffChronologicalIndex =
                     remember(state.items) { mostRecentSessionBoundaryIndex(state.items) }
                 val listState = rememberLazyListState()
@@ -336,7 +353,7 @@ fun ThreadScreen(
                 // the indicator's presence unable to move the predicate: at the oldest end the last
                 // visible index is rowCount - 1 without it and rowCount with it, and `>=` holds for both,
                 // so distinctUntilChanged sees no edge and no second demand is issued.
-                val historyRowCount by rememberUpdatedState(state.items.size)
+                val historyRowCount by rememberUpdatedState(rows.size)
                 val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
                 LaunchedEffect(listState) {
                     snapshotFlow {
@@ -371,21 +388,13 @@ fun ThreadScreen(
                     reverseLayout = true,
                 ) {
                     itemsIndexed(
-                        items = reversedItems,
-                        key = { _, item ->
-                            when (item) {
-                                is ThreadItem.MessageItem -> "msg:${item.message.id}"
-                                is ThreadItem.SessionBoundary ->
-                                    "boundary:${item.previousSessionId}->${item.newSessionId}"
-                                // The frame carries neither a message id nor a turn_id, so the row
-                                // brings its own client-stamped identity (#608): a position key would
-                                // shift under render()'s synthetic-message append/drop, and a payload
-                                // key would collide on two identical frames stamped in the same instant.
-                                is ThreadItem.UnrecognizedMessage -> "unrecognized:${item.id}"
-                            }
-                        },
-                    ) { reversedIndex, item ->
-                        val chronologicalIndex = state.items.size - 1 - reversedIndex
+                        items = reversedRows,
+                        // The key derivation and its uniqueness argument live beside the fold, in
+                        // ThreadRows.kt — a matched queued row deliberately takes the key its
+                        // delivered form carries, which is what leaves it in place across delivery.
+                        key = { reversedIndex, row -> row.listKey(rows.size - 1 - reversedIndex) },
+                    ) { reversedIndex, row ->
+                        val chronologicalIndex = rows.size - 1 - reversedIndex
                         val rowAlpha =
                             if (chronologicalIndex < cutoffChronologicalIndex) {
                                 ABOVE_DELIMITER_ALPHA
@@ -393,12 +402,24 @@ fun ThreadScreen(
                                 1f
                             }
                         Box(modifier = Modifier.alpha(rowAlpha)) {
-                            when (item) {
-                                is ThreadItem.MessageItem -> MessageBubble(message = item.message)
-                                is ThreadItem.SessionBoundary ->
-                                    SessionBoundaryDelimiter(boundary = item)
-                                is ThreadItem.UnrecognizedMessage ->
-                                    UnrecognizedMessageRow(item = item)
+                            when (row) {
+                                is ThreadRow.Delivered ->
+                                    when (val item = row.item) {
+                                        is ThreadItem.MessageItem -> MessageBubble(message = item.message)
+                                        is ThreadItem.SessionBoundary ->
+                                            SessionBoundaryDelimiter(boundary = item)
+                                        is ThreadItem.UnrecognizedMessage ->
+                                            UnrecognizedMessageRow(item = item)
+                                    }
+                                // One render path for both kinds of queued row — the one the echo
+                                // correlated to and the one this device minted no echo for — so the
+                                // two cannot drift apart. The id is bound here, so the row never
+                                // holds one.
+                                is ThreadRow.Queued ->
+                                    QueuedMessageRow(
+                                        text = row.text,
+                                        onDrop = { onDropQueued(row.queuedMessageId) },
+                                    )
                             }
                         }
                     }
@@ -415,15 +436,6 @@ fun ThreadScreen(
                     }
                 }
             }
-            // Content continuation below the thread: the ordered queued-message backlog (#461). Sits
-            // directly under the list (it extends the user's side of the conversation) and above the
-            // composer. A separate wrap-content section, not a LazyColumn row, so the
-            // list's keying / alpha-dimming / auto-scroll logic stays untouched.
-            QueuedBacklog(
-                queued = state.queuedMessages,
-                onDrop = onDropQueued,
-                modifier = Modifier.fillMaxWidth(),
-            )
         }
     }
     WorkspacePicker(
@@ -995,9 +1007,27 @@ private fun ThreadScreenDarkPreview() {
     }
 }
 
-@Preview(name = "Thread — Queued backlog · Dark", showBackground = true, widthDp = 412)
+/**
+ * #782: the folded backlog, in both of its forms at once. `q1` correlates with the echo `previewItems`
+ * appends, so it draws **in place** as that message's queued form; `q2` carries an id this device never
+ * minted (a send from the desktop), so it draws as its own row after the thread rows.
+ */
+private fun previewQueuedItems(): List<ThreadItem> =
+    previewItems() +
+        ThreadItem.MessageItem(
+            Message(
+                id = "u-queued",
+                sessionId = "s2",
+                role = Role.User,
+                content = "Also update the migration tests once you're done.",
+                timestamp = Instant.parse("2026-05-17T14:34:00Z"),
+                isStreaming = false,
+            ),
+        )
+
+@Preview(name = "Thread — Queued rows · Dark", showBackground = true, widthDp = 412)
 @Composable
-private fun ThreadScreenQueuedBacklogDarkPreview() {
+private fun ThreadScreenQueuedRowsDarkPreview() {
     PyrycodeMobileTheme(darkTheme = true) {
         ThreadScreen(
             state =
@@ -1005,18 +1035,20 @@ private fun ThreadScreenQueuedBacklogDarkPreview() {
                     conversationId = "seed-channel-personal",
                     displayName = "kitchenclaw refactor",
                     isPromoted = true,
-                    items = previewItems(),
+                    items = previewQueuedItems(),
                     queuedMessages =
                         listOf(
                             QueuedMessage(
                                 id = 1L,
                                 text = "Also update the migration tests once you're done.",
                                 timestamp = Instant.parse("2026-05-17T14:34:00Z"),
+                                messageId = "u-queued",
                             ),
                             QueuedMessage(
                                 id = 2L,
                                 text = "Then push a draft PR.",
                                 timestamp = Instant.parse("2026-05-17T14:34:10Z"),
+                                messageId = "minted-on-another-device",
                             ),
                         ),
                 ),

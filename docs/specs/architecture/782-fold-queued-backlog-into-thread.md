@@ -297,4 +297,10 @@ section was written, and the checklist re-walked from the top.)
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-22
+
+## Revisions
+
+**2026-09-22 — the fold's file is `ThreadRow.kt`, not `ThreadRows.kt`.** ktlint's `standard:filename`
+rule failed the build: a file holding a single class plus extension functions for it must be named
+after the class. No contract change — same package, same symbols, same visibility.
 </content>
