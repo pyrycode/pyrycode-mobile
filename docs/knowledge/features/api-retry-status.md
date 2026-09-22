@@ -144,7 +144,7 @@ overlay of a retry banner) belong to #594.
 
 - [#593 implementation notes](../codebase/593.md) — files, line refs, patterns, lessons.
 - [Remote conversation repository](remote-conversation-repository.md) — hosts the
-  `apiRetryByConversation` projection, the demux arm, and the decode.
+  demux arm; `ApiRetryProjection` holds the `apiRetryByConversation` state, the decode and the read.
 - [Stall state](stall-state.md) (#395) — the capability-gate + malformed-drop precedent; **not**
   cleared by an `api_retry` (a retry is not forward progress).
 - [Queued backlog](queued-backlog.md) (#460) — the structural template: the same

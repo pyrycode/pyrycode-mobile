@@ -38,7 +38,7 @@ Split on 2026-09-05 to keep this document under the 50000-byte cap the docs guar
 - [Remote conversation repository — the Phase 4 `ConversationRepository` — screen snapshot, dequeue, interrupt and new session](remote-conversation-repository-control-sends.md) — `requestScreenSnapshot(conversationId) — the parser-independent screen-snapshot read (#375)`, `requestHistory(conversationId, cursor, limit) — the on-disk history page read (#623)`, `dropQueuedMessage(conversationId, queuedMessageId) — the dequeue_message outbound send (#466)`, `interrupt(conversationId) — explicitly targeted v2 interrupt`, `startNewSession() — explicitly targeted v2 new_session`
 - [Remote conversation repository — the Phase 4 `ConversationRepository` — state and concurrency, error handling and the hand-off](remote-conversation-repository-state-errors-and-handoff.md) — `State & concurrency model`, `Error handling`, `Hand-off — the live binding`
 
-The sections that stay here: `## Where it sits in the Phase 4 stack`, `## The `SessionPump` consumed contract`, `## Stubs — none remain; every method is now live`, `## Testing`, `## Related`.
+The sections that stay here: `## Where it sits in the Phase 4 stack`, `## Status projections: one file per status event`, `## The `SessionPump` consumed contract`, `## Stubs — none remain; every method is now live`, `## Testing`, `## Related`.
 
 ## Where it sits in the Phase 4 stack
 
@@ -63,6 +63,27 @@ Authenticated payloads still require validation: the connection-owned
 bytes. It shares the sole inbound consumer and exposes a separate
 [host transfer API](relay-debug-bundle-transfer.md),
 outside `ConversationRepository` and screen state.
+
+## Status projections: one file per status event
+
+Since 2026-09-22 the five status events the thread observes each live in their own small internal class
+beside the repository: `StallProjection` (#395), `QueueProjection` (#460), `ApiRetryProjection` (#593),
+`CompactingProjection` (#596) and `ThinkingProgressProjection` (#801). Each holds the state, the decoder
+and the cold read that used to sit in `RemoteConversationRepository`, under the same names, so the
+per-event sections in the
+[thread-observables document](remote-conversation-repository-thread-observables.md) still describe
+them. Only the owning class changed, and behaviour did not.
+
+The repository keeps three things. Its `onInbound` arm checks the negotiated `interactive` capability
+and calls the projection's `apply(envelope)`. Its `observe…` override returns the projection's
+`observe(conversationId)`. And a clear that one event causes in another stays in the arm that causes
+it, through the projection's `clear`: every decoded live-session event clears that conversation's
+stall, and a `turn_end` or `session_transition` clears its thinking-progress reading.
+`dropQueuedMessage` reads `QueueProjection.current` to resolve the echo id before it sends.
+
+A new status event takes the same shape: a new `…Projection.kt` holding its state, decoder and read,
+plus one field, one arm and one override in the repository. The split exists so that sibling tickets
+adding events in parallel stop editing the same lines of one very large file.
 
 ## The `SessionPump` consumed contract
 

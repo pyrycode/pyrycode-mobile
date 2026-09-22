@@ -8,13 +8,11 @@ import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.model.ToolCallStatus
-import de.pyryco.mobile.data.network.ApiRetryPayloadDto
 import de.pyryco.mobile.data.network.ArchiveConversationPayloadDto
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.BackfillSincePayloadDto
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.ChangeWorkspacePayloadDto
-import de.pyryco.mobile.data.network.CompactingPayloadDto
 import de.pyryco.mobile.data.network.ConversationDeletedPayloadDto
 import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.ConversationsPayload
@@ -34,8 +32,6 @@ import de.pyryco.mobile.data.network.ModalDismissedPayloadDto
 import de.pyryco.mobile.data.network.ModalShownPayloadDto
 import de.pyryco.mobile.data.network.ModelListPayloadDto
 import de.pyryco.mobile.data.network.PromoteConversationPayloadDto
-import de.pyryco.mobile.data.network.QueueStatePayloadDto
-import de.pyryco.mobile.data.network.RateLimitedPayloadDto
 import de.pyryco.mobile.data.network.RecentWorkspacesListPayloadDto
 import de.pyryco.mobile.data.network.RegisterPushTokenPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
@@ -50,8 +46,6 @@ import de.pyryco.mobile.data.network.SendMessagePayloadDto
 import de.pyryco.mobile.data.network.SessionSettingsUpdatedPayloadDto
 import de.pyryco.mobile.data.network.SessionTransitionPayloadDto
 import de.pyryco.mobile.data.network.SetSessionSettingsPayloadDto
-import de.pyryco.mobile.data.network.StallPayloadDto
-import de.pyryco.mobile.data.network.ThinkingProgressPayloadDto
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
 import de.pyryco.mobile.data.network.ToolUsePayloadDto
 import de.pyryco.mobile.data.network.TurnEndPayloadDto
@@ -66,11 +60,8 @@ import de.pyryco.mobile.data.network.toEvent
 import de.pyryco.mobile.data.network.toHistoryPage
 import de.pyryco.mobile.data.network.toMenu
 import de.pyryco.mobile.data.network.toMessage
-import de.pyryco.mobile.data.network.toQueue
-import de.pyryco.mobile.data.network.toReading
 import de.pyryco.mobile.data.network.toRow
 import de.pyryco.mobile.data.network.toSessionSettings
-import de.pyryco.mobile.data.network.toStatus
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -218,30 +209,17 @@ class RemoteConversationRepository(
     private val threadByConversation = MutableStateFlow<Map<String, List<ThreadItem>>>(emptyMap())
 
     /**
-     * The set of conversation ids currently in a stall (#395) — membership = stalled. Written **only**
-     * from the single [init] inbound collector: a `stall` envelope adds its id (onset), and any
-     * successfully-decoded forward-progress [LiveSessionEvent] removes its conversation (clearing —
-     * the wire carries no clearing edge, so recovery is inferred from forward progress). Single writer
-     * on the one collector coroutine, so onset and clearing never race; the atomic
-     * [MutableStateFlow.update] matches the sibling projections' memory-visibility posture.
-     * [observeStall] fans out from it. Connection-scoped in-memory state — a fresh repository per
-     * connection (#351) starts empty, so a stall never survives a reconnect (it is re-derived from the
-     * live stream). A stall is a transient "right now" condition, not durable state.
+     * The per-conversation status readings, one small projection per wire event: stall (#395), queue
+     * (#460), API retry (#593), compaction (#596), usage limit (#802) and thinking progress (#801). Each
+     * owns its state, its decoder and its read. [onInbound] hands each its own envelope type behind the
+     * `interactive` gate, and the clears one event causes in another stay in the arm that causes them.
      */
-    private val stalledConversations = MutableStateFlow<Set<String>>(emptySet())
-
-    /**
-     * `conversationId -> ordered queued-message backlog` (#460) — the messages the daemon has queued
-     * while claude is busy, in wire/FIFO order. Written **only** from the single [init] inbound
-     * collector: each `queue_state` envelope is a full snapshot that **replaces** that conversation's
-     * entry (the wire form of `msgqueue.Snapshot`), leaving every other conversation untouched. Single
-     * writer on the one collector coroutine, so snapshots never race; the atomic [MutableStateFlow.update]
-     * matches the sibling projections' memory-visibility posture. [observeQueue] fans out from it.
-     * Connection-scoped in-memory state — a fresh repository per connection (#351) starts empty, so a
-     * backlog never survives a reconnect (it is re-derived from the next live `queue_state`). The backlog
-     * is a transient "right now" condition, not durable state.
-     */
-    private val queuedByConversation = MutableStateFlow<Map<String, List<QueuedMessage>>>(emptyMap())
+    private val stallProjection = StallProjection()
+    private val queueProjection = QueueProjection()
+    private val apiRetryProjection = ApiRetryProjection()
+    private val compactingProjection = CompactingProjection()
+    private val usageLimitProjection = UsageLimitProjection(now)
+    private val thinkingProgressProjection = ThinkingProgressProjection()
 
     /**
      * `conversationId -> the model menu this connection heard for it` (#791) — the identifiers, labels,
@@ -257,7 +235,7 @@ class RemoteConversationRepository(
      * starts empty, which is the only reset this state has, and is also where "per host" comes from: the
      * published vocabulary varies by machine and account rather than by conversation.
      *
-     * Unlike [queuedByConversation] this is **not** a transient "right now" condition — a published
+     * Unlike [QueueProjection] this is **not** a transient "right now" condition — a published
      * vocabulary is a standing fact about the host for as long as the connection lives.
      */
     private val modelMenusByConversation = MutableStateFlow<Map<String, ModelMenu>>(emptyMap())
@@ -325,104 +303,6 @@ class RemoteConversationRepository(
     private val mintedMessageIds = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
 
     /**
-     * `conversationId -> current API-retry status` (#593) — whether claude is stuck retrying an API
-     * error, and at which attempt. Written **only** from the single [init] inbound collector: each
-     * `api_retry` envelope **replaces** that conversation's entry (a rising edge with the current
-     * counter, a re-fired rising edge with the climbed one, or [ApiRetryStatus.NotRetrying] on the
-     * falling edge), leaving every other conversation untouched. Single writer on the one collector
-     * coroutine, so the rising and falling edges never race; the write is a pure replace, not a
-     * read-modify-write, so there is no check-then-mutate window even in principle, and the atomic
-     * [MutableStateFlow.update] matches the sibling projections' memory-visibility posture.
-     * [observeApiRetry] fans out from it. A falling edge **stores** [ApiRetryStatus.NotRetrying]
-     * rather than removing the key — observationally identical to an absent key, since the observer
-     * defaults an absent one the same way. Connection-scoped in-memory state — a fresh repository per
-     * connection (#351) starts empty, so a retry state never survives a reconnect (it is re-derived
-     * from the live stream). A retry is a transient "right now" condition, not durable state.
-     */
-    private val apiRetryByConversation = MutableStateFlow<Map<String, ApiRetryStatus>>(emptyMap())
-
-    /**
-     * The set of conversation ids claude is currently auto-compacting (#596) — membership = compacting.
-     * Written **only** from the single [init] inbound collector: a `compacting` envelope's rising edge
-     * adds its id and its falling edge removes it. Single writer on the one collector coroutine, so the
-     * rising and falling edges never race; the write is a genuine **read-modify-write** on the set
-     * (`it + id` / `it - id`), unlike [apiRetryByConversation]'s pure replace, so the atomic
-     * [MutableStateFlow.update] is load-bearing rather than stylistic — a
-     * `.value = compactingConversations.value + id` formulation would open a real check-then-mutate
-     * window. [observeCompacting] fans out from it. Connection-scoped in-memory state — a fresh
-     * repository per connection (#351) starts empty, so a compaction state never survives a reconnect
-     * (it is re-derived from the live stream). Compaction is a transient "right now" condition, not
-     * durable state.
-     *
-     * The one place [stalledConversations]' shape does not transfer: removal here is driven by an
-     * **explicit wire falling edge**, not inferred from the next forward-progress event.
-     */
-    private val compactingConversations = MutableStateFlow<Set<String>>(emptySet())
-
-    /**
-     * `conversationId -> the usage-limit reading claude last reported for it` (#802) — what claude said
-     * about its usage-limit window, so a waiting turn can say why. A payload-carrying `Map`, the
-     * [apiRetryByConversation] shape rather than [compactingConversations]' membership `Set`: this frame
-     * carries five wire fields, not an edge bool.
-     *
-     * Written **only** from the single [init] inbound collector: a non-benign frame **replaces** that
-     * conversation's entry and a benign one **removes** it, leaving every other conversation untouched.
-     * Single writer on the one collector coroutine, so the raising and clearing edges never race; each
-     * write is a pure replace or a pure removal that reads no held state, so there is no
-     * check-then-mutate window even in principle, and the atomic [MutableStateFlow.update] matches the
-     * sibling projections' memory-visibility posture. [observeUsageLimit] fans out from it.
-     *
-     * **A cleared entry is REMOVED rather than stored as a tombstone**, deliberately unlike
-     * [apiRetryByConversation]'s stored falling edge: absence is already the observable "nothing to
-     * read" because the observer maps an absent key to `null`, and a stored tombstone would need a
-     * second value meaning the same thing.
-     *
-     * Connection-scoped in-memory state — a fresh repository per connection (#351) starts empty, which
-     * is also this state's **pairing-scoped clear**: a usage-limit posture belongs to an account, and
-     * nothing re-asserts a reading after a reconnect, so a reading can never be attributed to the next
-     * account. **Nothing here is persisted and nothing may be** — a persisted copy would outlive the
-     * connection scope that is the whole clear mechanism.
-     *
-     * Growth, stated rather than defended: one bounded record per distinct `conversation_id` seen on
-     * this connection. Both halves are bounded per frame — the transport's frame contract caps the
-     * envelope ahead of any parse and the daemon bounds both strings at construction — so a flooding
-     * daemon costs one entry per distinct id rather than an unbounded append per frame, and the
-     * connection scope returns it to zero. The posture [queuedByConversation] and
-     * [modelMenusByConversation] already ship; no eviction policy is built for a failure nobody has
-     * observed. In particular **the expiry is not an eviction**: an expired entry stays here and merely
-     * stops being readable (see [observeUsageLimit]), which is what keeps this projection free of the
-     * timer it would otherwise need.
-     */
-    private val usageLimitsByConversation = MutableStateFlow<Map<String, UsageLimitReading>>(emptyMap())
-
-    /**
-     * `conversationId -> latest thinking-progress reading` (#801) — how far that conversation's current
-     * reasoning has got. A payload-carrying `Map`, [apiRetryByConversation] / [modelMenusByConversation]'s
-     * shape rather than [compactingConversations]' bare `Set`, for the reason #593 chose it: the wire
-     * carries a reading, and membership cannot represent one.
-     *
-     * **The write is a pure replace, and that is the mechanism rather than a convention.** Each frame
-     * stores its own reading with `it + (id to reading)`; the prior value is never read, so there is
-     * nowhere for a running maximum, a difference between readings, or a truthiness gate to live. That
-     * matters here more than on any sibling: the reading **restarts near zero at every inference-request
-     * boundary**, repeatedly inside one turn, so a merge-shaped write is exactly where a well-meaning
-     * monotonicity guard would appear and silently pin the reading at a stale peak.
-     *
-     * Three writers, all on the single [init] inbound collector so no two race: the `thinking_progress`
-     * arm stores a reading, and the `turn_end` and `session_transition` arms each remove a key. The
-     * removals are the **only** clears, because the wire has no falling edge of its own — receiving a
-     * frame neither opens nor closes a turn. Removal of an absent key is a no-op and [MutableStateFlow]
-     * conflates the equal map, so a turn ending on a conversation with no reading emits nothing.
-     * [observeThinkingProgress] fans out from it.
-     *
-     * Connection-scoped in-memory state — a fresh repository per connection (#351) starts empty, so a
-     * reading **never survives a reconnect**, which is a correctness requirement and not merely tidiness:
-     * the daemon re-asserts no `thinking_progress` on connect, so a held one would report the depth of a
-     * think that has since finished.
-     */
-    private val thinkingProgressByConversation = MutableStateFlow<Map<String, ThinkingProgress>>(emptyMap())
-
-    /**
      * `conversationId -> settings-read ordinal` (#590) — the **refresh trigger** for
      * [observeSessionSettings], deliberately not a cache of the readings themselves. A bump means "the
      * reading you hold is stale, read again"; the value is meaningless beyond being different from the
@@ -433,7 +313,7 @@ class RemoteConversationRepository(
      * a `session_transition`, and any caller thread bumps through [refreshSessionSettings] once its
      * settings write has settled. The increment is a genuine **read-modify-write**, so running it inside
      * the atomic [MutableStateFlow.update] is load-bearing rather than stylistic — the
-     * [compactingConversations] posture, not [apiRetryByConversation]'s pure replace. Even the
+     * [CompactingProjection] posture, not [ApiRetryProjection]'s pure replace. Even the
      * degenerate collapse is safe: two bumps folding into one still trigger a read that observes the
      * newest state, because the read asks the daemon rather than replaying a stored edge.
      *
@@ -747,7 +627,7 @@ class RemoteConversationRepository(
                         // the quiet-while-not-idle condition no longer holds. A removal of an absent id
                         // is a no-op, so clearing rides every live event harmlessly. Symmetric with the
                         // onset arm below — both are inside the same `interactive` gate.
-                        stalledConversations.update { it - event.conversationId }
+                        stallProjection.clear(event.conversationId)
                         // Fold the structured turn into the same `threadByConversation` the live
                         // `message` arm writes, so every row interleaves by arrival order (AC #4): a
                         // `tool_use`/`tool_result` pair into one evolving tool row (#387), and the
@@ -770,7 +650,7 @@ class RemoteConversationRepository(
                                 // passing a turn-end test. Routed by the event's own conversation id, so
                                 // one conversation's turn ending cannot clear another's reading, and a
                                 // removal of an absent key is an inert no-op.
-                                thinkingProgressByConversation.update { it - event.conversationId }
+                                thinkingProgressProjection.clear(event.conversationId)
                             }
                             else -> Unit
                         }
@@ -779,32 +659,15 @@ class RemoteConversationRepository(
                 }
             }
             TYPE_STALL -> {
-                // Stall onset (#395). Same `interactive` gate as the live-session arm: a non-interactive
-                // phone never decodes a spurious `stall` from a buggy/hostile daemon that ignored the
-                // server-side fan-out gate (fail-closed, defence in depth). A malformed payload decodes
-                // to null and is dropped so the single inbound consumer survives (AC #3). The wire is
-                // onset-only ({conversation_id}, no clearing edge); re-receipt for an already-stalled
-                // conversation is an idempotent Set add. Drop silently — nothing here logs the payload.
+                // Stall onset (#395): see [StallProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    decodeStall(envelope)?.let { conversationId ->
-                        stalledConversations.update { it + conversationId }
-                    }
+                    stallProjection.apply(envelope)
                 }
             }
             TYPE_QUEUE_STATE -> {
-                // Queued-backlog snapshot (#460). Same `interactive` gate as the live-session / `stall`
-                // siblings: a non-interactive phone never decodes a spurious `queue_state` from a buggy/
-                // hostile daemon that ignored the server-side fan-out gate (fail-closed, defence in depth).
-                // Each snapshot is the authoritative current backlog (msgqueue.Snapshot), so it FULLY
-                // REPLACES this conversation's entry and leaves every other conversation untouched (AC #3);
-                // wire array order is preserved verbatim (AC #1). A malformed payload decodes to null and
-                // is dropped so the single inbound consumer survives (AC #4). Unlike the live-session arm
-                // this folds no thread row and does NOT clear a stall (a backlog is "waiting", not forward
-                // progress). Drop silently — queued `text` is user content; nothing here logs the payload.
+                // Queued-backlog snapshot (#460): see [QueueProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    decodeQueueState(envelope)?.let { (conversationId, queue) ->
-                        queuedByConversation.update { it + (conversationId to queue) }
-                    }
+                    queueProjection.apply(envelope)
                 }
             }
             TYPE_MODEL_LIST -> {
@@ -846,115 +709,27 @@ class RemoteConversationRepository(
                 }
             }
             TYPE_API_RETRY -> {
-                // API-retry status (#593). Same `interactive` gate as the live-session / `stall` /
-                // `queue_state` siblings: a non-interactive phone never decodes a spurious `api_retry`
-                // from a buggy/hostile daemon that ignored the server-side fan-out gate (fail-closed,
-                // defence in depth). One unconditional replace of this conversation's entry, leaving
-                // every other conversation untouched (AC #3) — deliberately no branch on `active` here:
-                // `toStatus()` is the sole owner of the edge semantics (including discarding the stale
-                // counter the falling edge carries), and a second `if` would encode the same rule twice.
-                // A malformed payload decodes to null and is dropped so the single inbound consumer
-                // survives (AC #3). Like the `queue_state` sibling and unlike the live-session arm, this
-                // folds no thread row and does NOT clear a stall — a retry is claude stuck, not turn
-                // forward progress (AC #4). Drop silently — nothing here logs the payload (the counter is
-                // screen-derived data crossing the tui-driver substrate seal).
+                // API-retry status (#593): see [ApiRetryProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    decodeApiRetry(envelope)?.let { (conversationId, status) ->
-                        apiRetryByConversation.update { it + (conversationId to status) }
-                    }
+                    apiRetryProjection.apply(envelope)
                 }
             }
             TYPE_COMPACTING -> {
-                // Context-compaction status (#596). Same `interactive` gate as the live-session /
-                // `stall` / `queue_state` / `api_retry` siblings: a non-interactive phone never decodes a
-                // spurious `compacting` from a buggy/hostile daemon that ignored the server-side fan-out
-                // gate (fail-closed, defence in depth). One membership transition for this conversation,
-                // leaving every other conversation untouched (AC #3) — and here the `if (active)` belongs
-                // in the arm rather than a mapper: unlike `api_retry` there is no mapper to own the edge
-                // semantics (the two wire fields already are the domain shape), so the membership
-                // transition *is* the edge, expressed exactly once. `it - conversationId` on an absent id
-                // is a no-op, so a falling edge with no prior rising edge is harmlessly inert, and a
-                // repeated rising edge is an idempotent Set add. A malformed payload decodes to null and
-                // is dropped so the single inbound consumer survives (AC #5). Like the `queue_state` /
-                // `api_retry` siblings and unlike the live-session arm, this folds no thread row and does
-                // NOT clear a stall — compaction is claude busy elsewhere, not turn forward progress, and
-                // clearing a stall here would let a daemon suppress the phone's stall indicator by
-                // emitting `compacting` frames. Drop silently — nothing here logs the payload (a logged
-                // conversation_id is a cross-conversation correlation leak).
+                // Context-compaction status (#596): see [CompactingProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    decodeCompacting(envelope)?.let { (conversationId, active) ->
-                        compactingConversations.update { if (active) it + conversationId else it - conversationId }
-                    }
+                    compactingProjection.apply(envelope)
                 }
             }
             TYPE_RATE_LIMITED -> {
-                // What claude said about its usage-limit window (#802). Same `interactive` gate as the
-                // live-session / `stall` / `queue_state` / `api_retry` / `compacting` siblings: a
-                // non-interactive phone never decodes a spurious `rate_limited` from a buggy/hostile
-                // daemon that ignored the server-side fan-out gate (fail-closed, defence in depth).
-                //
-                // One transition for this conversation, leaving every other conversation untouched
-                // (AC #2) — a non-benign reading replaces its entry, the benign falling edge removes
-                // it. The `reading == null` branch is a *dispatch* on what the mapper already decided,
-                // not a second reading of the wire: `toReading()` is the sole owner of the benign
-                // comparison, so unlike the `compacting` arm no status is examined here. Routing is
-                // strictly the payload's own conversation_id, which is what makes AC #2's
-                // different-`limit_type` clause hold structurally: `limit_type` is read by no
-                // control-flow path, so pairing the clear to it is not expressible. Removing an absent
-                // id is a no-op, so a benign frame for a conversation holding nothing is inert.
-                //
-                // A malformed payload decodes to null and is dropped so the single inbound consumer
-                // survives (AC #1). Like the `queue_state` / `api_retry` / `compacting` siblings and
-                // unlike the live-session arm, this folds no thread row and does NOT clear a stall in
-                // either direction (AC #5) — a usage-limit report is neither a stall nor turn forward
-                // progress, and clearing one here would let a daemon suppress the phone's stall
-                // indicator by emitting `rate_limited` frames.
-                //
-                // Drop silently. Nothing here logs the payload, and that is mandatory rather than
-                // stylistic: `status` and `limit_type` are claude-authored text the daemon does not
-                // sanitize, a logged conversation_id is a cross-conversation correlation leak, and the
-                // pair together discloses the account's quota posture — a fact about the operator
-                // rather than about this frame.
+                // What claude said about its usage-limit window (#802): see [UsageLimitProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    decodeRateLimited(envelope)?.let { (conversationId, reading) ->
-                        usageLimitsByConversation.update {
-                            if (reading == null) it - conversationId else it + (conversationId to reading)
-                        }
-                    }
+                    usageLimitProjection.apply(envelope)
                 }
             }
             TYPE_THINKING_PROGRESS -> {
-                // How far this conversation's reasoning has got (#801). Same `interactive` gate as the
-                // live-session / `stall` / `queue_state` / `api_retry` / `compacting` siblings: a
-                // non-interactive phone never decodes a spurious `thinking_progress` from a buggy/hostile
-                // daemon that ignored the server-side fan-out gate (fail-closed, defence in depth). One
-                // unconditional REPLACE of this conversation's entry, leaving every other conversation
-                // untouched (AC #3) — and the replace is load-bearing rather than incidental: the reading
-                // is NOT monotonic (it restarts near zero at every inference-request boundary, several
-                // times inside one turn), so it is carried verbatim with no max guard, no difference
-                // against the prior reading, and no truthiness check that would read a legitimate `0`
-                // restart as absence (AC #2). A malformed payload decodes to null and is dropped so the
-                // single inbound consumer survives (AC #1).
-                //
-                // There is deliberately NO clearing branch here: unlike `compacting` / `api_retry` the
-                // wire carries no edge, so the clears live on the `turn_end` and `session_transition`
-                // arms instead. This frame opens and closes no turn — it carries no turn_id, the daemon
-                // emits it during an inference request that may not have produced assistant content yet,
-                // and the turn's thinking state is already `turn_state`'s.
-                //
-                // Like the `queue_state` / `api_retry` / `compacting` siblings and unlike the
-                // live-session arm, this folds no thread row and touches stalledConversations in NEITHER
-                // direction (AC #4). Not raising one is the wire contract's explicit rule — the rate
-                // bound means a quiet window is not a stall, and the PTY surface emits none of these at
-                // all, so nothing here may infer a stall from a gap. Not clearing one is the `compacting`
-                // rule for the same reason it exists there: a reading is claude busy, not turn forward
-                // progress, and clearing a stall here would let a daemon suppress the phone's stall
-                // indicator by emitting these frames. Drop silently — nothing here logs the payload (a
-                // logged conversation_id is a cross-conversation correlation leak).
+                // How far this conversation's reasoning has got (#801): see [ThinkingProgressProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    decodeThinkingProgress(envelope)?.let { (conversationId, reading) ->
-                        thinkingProgressByConversation.update { it + (conversationId to reading) }
-                    }
+                    thinkingProgressProjection.apply(envelope)
                 }
             }
             TYPE_SESSION_TRANSITION -> {
@@ -990,7 +765,7 @@ class RemoteConversationRepository(
                         // Routed by the same decoded conversation_id as its three siblings, so a
                         // transition cannot clear another conversation's reading; removing an absent key
                         // is an inert no-op.
-                        thinkingProgressByConversation.update { it - conversationId }
+                        thinkingProgressProjection.clear(conversationId)
                     }
                 }
             }
@@ -1011,7 +786,7 @@ class RemoteConversationRepository(
                 // a streaming event), does not open, close, or alter a turn (the frame carries no turn_id —
                 // the daemon could not attribute one honestly, and opening a turn would wedge the
                 // conversation since no turn end follows a message nobody could parse), and touches
-                // stalledConversations in NEITHER direction (an unparseable message is not turn forward
+                // the stall state in NEITHER direction (an unparseable message is not turn forward
                 // progress, and clearing here would be a hostile-daemon lever for suppressing the stall
                 // indicator) nor any other conversation status. Drop silently — nothing here logs any
                 // payload field: `raw`/`message_type` are the most untrusted strings the thread holds, and a
@@ -1107,40 +882,6 @@ class RemoteConversationRepository(
         }
 
     /**
-     * Decode one v2 `stall` envelope (#395) to its conversation id, or **null** when it cannot be
-     * read. Decodes the untrusted [Envelope.payload] through the single configured [MobileJson]; the
-     * whole body is one `try`/`catch (IllegalArgumentException)`
-     * ([kotlinx.serialization.SerializationException] ⊂ [IllegalArgumentException]), so a malformed
-     * payload — a missing or wrong-typed `conversation_id` (AC #3) — yields `null`, dropping the one
-     * envelope while the lone inbound collector survives. Mirrors [decodeLiveSessionEvent]'s drop
-     * idiom — **nothing here logs the payload** (uniform with every other `onInbound` arm).
-     */
-    private fun decodeStall(envelope: Envelope): String? =
-        try {
-            MobileJson.decodeFromJsonElement<StallPayloadDto>(envelope.payload).conversationId
-        } catch (e: IllegalArgumentException) {
-            null
-        }
-
-    /**
-     * Decode one v2 `queue_state` envelope (#460) to its conversation id and ordered backlog, or
-     * **null** when it cannot be read. Decodes the untrusted [Envelope.payload] through the single
-     * configured [MobileJson] and maps via `toQueue()`. The whole body is one `try`/`catch
-     * (IllegalArgumentException)` ([kotlinx.serialization.SerializationException] ⊂
-     * [IllegalArgumentException]), so a malformed payload — a missing/wrong-typed `conversation_id`, a
-     * bad item (`queued_msg_id` as a string, missing `text`), or an unparseable item `ts` — yields
-     * `null`, dropping the one envelope while the lone inbound collector survives (AC #4). Mirrors
-     * [decodeStall]'s drop idiom — **nothing here logs the payload** (queued `text` is user content).
-     */
-    private fun decodeQueueState(envelope: Envelope): Pair<String, List<QueuedMessage>>? =
-        try {
-            val dto = MobileJson.decodeFromJsonElement<QueueStatePayloadDto>(envelope.payload)
-            dto.conversationId to dto.toQueue()
-        } catch (e: IllegalArgumentException) {
-            null
-        }
-
-    /**
      * Decode one v2 `model_list` envelope (#791) to its routing conversation id and retained
      * [ModelMenu], or **null** when it cannot be read. Decodes the untrusted [Envelope.payload] through
      * the single configured [MobileJson] and maps via `toMenu()`. The whole body is one `try`/`catch
@@ -1154,7 +895,7 @@ class RemoteConversationRepository(
      * Because `toMenu()` is **total**, structural malformation is the only null path — there is no
      * unrecognized *value* to reject, unlike [decodeLiveSessionEvent]. Returning a [Pair] of the routing
      * id and the already-mapped domain value keeps the untrusted wire DTO from escaping this boundary,
-     * matching every sibling decoder. Mirrors [decodeStall] / [decodeQueueState]'s drop idiom —
+     * matching every sibling decoder. Mirrors the [StallProjection] / [QueueProjection] decoders' drop idiom —
      * **nothing here logs the payload**, which is mandatory rather than stylistic: the rows are
      * claude-authored text the daemon does not sanitize, and the caught throwable (kotlinx-serialization
      * can quote the offending input in its message) is discarded rather than surfaced.
@@ -1168,112 +909,6 @@ class RemoteConversationRepository(
         }
 
     /**
-     * Decode one v2 `api_retry` envelope (#593) to its conversation id and mapped [ApiRetryStatus], or
-     * **null** when it cannot be read. Decodes the untrusted [Envelope.payload] through the single
-     * configured [MobileJson] and maps via `toStatus()`. The whole body is one `try`/`catch
-     * (IllegalArgumentException)` ([kotlinx.serialization.SerializationException] ⊂
-     * [IllegalArgumentException]), so a malformed payload — a missing field, or one whose JSON shape
-     * cannot be read as its declared type — yields `null`, dropping the one envelope while the lone
-     * inbound collector survives (AC #3). Because `toStatus()` is **total**, structural malformation is the only
-     * null path: an undocumented counter shape maps to [ApiRetryStatus.AttemptUnknown] rather than
-     * discarding a real retry onset. Mirrors [decodeStall] / [decodeQueueState]'s drop idiom —
-     * **nothing here logs the payload** (uniform with every other `onInbound` arm).
-     */
-    private fun decodeApiRetry(envelope: Envelope): Pair<String, ApiRetryStatus>? =
-        try {
-            val dto = MobileJson.decodeFromJsonElement<ApiRetryPayloadDto>(envelope.payload)
-            dto.conversationId to dto.toStatus()
-        } catch (e: IllegalArgumentException) {
-            null
-        }
-
-    /**
-     * Decode one v2 `compacting` envelope (#596) to its conversation id and edge bool, or **null** when
-     * it cannot be read. Decodes the untrusted [Envelope.payload] through the single configured
-     * [MobileJson]; returning a [Pair] of already-trusted primitives rather than the DTO keeps the
-     * untrusted wire type from escaping the boundary, matching every sibling decoder. The whole body is
-     * one `try`/`catch (IllegalArgumentException)`
-     * ([kotlinx.serialization.SerializationException] ⊂ [IllegalArgumentException]), so a malformed
-     * payload — a missing field, or one whose JSON shape cannot be read as its declared type — yields
-     * `null`, dropping the one envelope while the lone inbound collector survives (AC #5). Structural
-     * malformation is the **only** null path: there is no unrecognized *value* to reject (`active` is a
-     * bool), so unlike [decodeLiveSessionEvent] no mapper drop exists here. Mirrors [decodeStall] /
-     * [decodeApiRetry]'s drop idiom — **nothing here logs the payload** (uniform with every other
-     * `onInbound` arm).
-     */
-    private fun decodeCompacting(envelope: Envelope): Pair<String, Boolean>? =
-        try {
-            val dto = MobileJson.decodeFromJsonElement<CompactingPayloadDto>(envelope.payload)
-            dto.conversationId to dto.active
-        } catch (e: IllegalArgumentException) {
-            null
-        }
-
-    /**
-     * Decode one v2 `rate_limited` envelope (#802) to its routing conversation id and the mapped
-     * [UsageLimitReading], or **null** when it cannot be read. Decodes the untrusted [Envelope.payload]
-     * through the single configured [MobileJson] and maps via `toReading()`. Returning already-mapped
-     * domain values keeps the untrusted wire DTO from escaping this boundary, matching every sibling
-     * decoder.
-     *
-     * **The two nullability levels say different things, and conflating them is the trap here.** The
-     * **outer** `null` is "malformed — drop this envelope and hold what we have": the whole body is one
-     * `try`/`catch (IllegalArgumentException)` ([kotlinx.serialization.SerializationException] ⊂
-     * [IllegalArgumentException]), so a missing required field, or one whose JSON shape cannot be read
-     * as its declared type, drops the one envelope while the lone inbound collector survives (AC #1).
-     * The **inner** `null` is the mapper's benign **falling edge** — a perfectly well-formed frame
-     * saying claude's latest reading is benign — which the caller turns into a clear (AC #2). A caller
-     * that collapsed the two would either clear on a malformed frame or ignore every clear.
-     *
-     * Unlike [decodeLiveSessionEvent] there is no unrecognized-*value* drop: an unrecognised `status`
-     * is an ordinary warning and surfaces verbatim, because its value set is almost entirely
-     * unmeasured and narrowing it would discard the first real limit that fires.
-     *
-     * Mirrors [decodeStall] / [decodeCompacting]'s drop idiom — **nothing here logs the payload**, and
-     * here that is mandatory rather than uniform-for-its-own-sake: `status` and `limit_type` are
-     * claude-authored text the daemon does not sanitize, and the caught throwable is **discarded**
-     * rather than surfaced because kotlinx-serialization can quote the offending input in its message.
-     */
-    private fun decodeRateLimited(envelope: Envelope): Pair<String, UsageLimitReading?>? =
-        try {
-            val dto = MobileJson.decodeFromJsonElement<RateLimitedPayloadDto>(envelope.payload)
-            dto.conversationId to dto.toReading()
-        } catch (e: IllegalArgumentException) {
-            null
-        }
-
-    /**
-     * Decode one v2 `thinking_progress` envelope (#801) to its routing conversation id and the
-     * [ThinkingProgress] reading, or **null** when it cannot be read. Decodes the untrusted
-     * [Envelope.payload] through the single configured [MobileJson]; returning a [Pair] of the routing
-     * id and the already-mapped domain value keeps the untrusted wire DTO from escaping this boundary,
-     * matching every sibling decoder. The whole body is one `try`/`catch (IllegalArgumentException)`
-     * ([kotlinx.serialization.SerializationException] ⊂ [IllegalArgumentException]), so a malformed
-     * payload — a missing field, or one whose JSON shape cannot be read as its declared type — yields
-     * `null`, dropping the one envelope while the lone inbound collector survives (AC #1).
-     *
-     * Structural malformation is the **only** null path: both readings are plain [Long]s carried
-     * verbatim, so there is no unrecognized *value* to reject and no mapper drop exists here (unlike
-     * [decodeLiveSessionEvent] / [decodeSessionTransition]). In particular a **negative** reading is not
-     * rejected — rewriting server data at the decode boundary would diverge from every sibling's
-     * carry-verbatim posture, and the wire documents no lower bound to enforce. The domain value is
-     * constructed inline rather than by a `toX()` mapper, following [decodeCompacting]: nothing is
-     * narrowed or validated, so a mapper would be a ceremonial field copy.
-     *
-     * Mirrors [decodeStall] / [decodeApiRetry]'s drop idiom — **nothing here logs the payload** (a
-     * logged conversation_id is a cross-conversation correlation leak), and the caught throwable is
-     * discarded rather than surfaced, since kotlinx-serialization can quote the offending input in its
-     * message.
-     */
-    private fun decodeThinkingProgress(envelope: Envelope): Pair<String, ThinkingProgress>? =
-        try {
-            val dto = MobileJson.decodeFromJsonElement<ThinkingProgressPayloadDto>(envelope.payload)
-            dto.conversationId to ThinkingProgress(dto.estimatedTokens, dto.estimatedTokensDelta)
-        } catch (e: IllegalArgumentException) {
-            null
-        }
-
-    /**
      * Decode one v2 `session_transition` envelope (#336) to its routing [conversationId] and the mapped
      * [ThreadItem.SessionBoundary], or **null** when it cannot be folded. Decodes the untrusted
      * [Envelope.payload] through the single configured [MobileJson] and maps via `toBoundary()`. The whole
@@ -1282,7 +917,7 @@ class RemoteConversationRepository(
      * — a missing/wrong-typed required field or an unparseable `occurred_at` — yields `null`, dropping the
      * one envelope while the lone inbound collector survives (AC #5). An **unrecognized `reason`** is a
      * distinct path: `toBoundary()` returns `null` (no throw), so the one envelope drops the same way
-     * (AC #3). Mirrors [decodeStall] / [decodeQueueState]'s drop idiom — **nothing here logs the payload**
+     * (AC #3). Mirrors the [StallProjection] / [QueueProjection] decoders' drop idiom — **nothing here logs the payload**
      * (conversation_id / session ids / workspace_cwd are sensitive; a logged or mis-routed boundary is a
      * cross-conversation leak).
      */
@@ -1334,7 +969,7 @@ class RemoteConversationRepository(
      * [IllegalArgumentException]), so a malformed / partially-decodable payload (missing or wrong-typed
      * required field, AC #3) yields `null`, dropping the one envelope while the lone inbound collector
      * survives. Both mappers are **total** — `class`/`source`/`outcome` are carried verbatim, so there is
-     * no "unrecognized value" drop (AC #3). Mirrors [decodeStall] / [decodeLiveSessionEvent]'s drop idiom
+     * no "unrecognized value" drop (AC #3). Mirrors the [StallProjection] decoder's and [decodeLiveSessionEvent]'s drop idiom
      * — **nothing here logs the payload** (title/prompt/option-label are operator content).
      */
     private fun decodeModalEvent(envelope: Envelope): ModalEvent? =
@@ -2003,142 +1638,18 @@ class RemoteConversationRepository(
      */
     override fun observeLastMessage(conversationId: String): Flow<Message?> = lastMessages.map { it[conversationId] }.distinctUntilChanged()
 
-    /**
-     * Whether [conversationId] is currently stalled (#395), a pure cold projection of the shared
-     * [stalledConversations] `StateFlow` (membership = stalled). Issues no request — rides the live
-     * interactive stream (onset on a `stall` envelope, clearing on the next forward-progress event).
-     * [distinctUntilChanged] means a stall change to **another** conversation does not re-emit this
-     * flow. A `StateFlow` always has a current value, so every collector (including a `flatMapLatest`
-     * re-subscription through the facade) receives the current state (`false` until a stall lands) on
-     * subscription; the one inbound consumer fans out to unlimited collectors.
-     */
-    override fun observeStall(conversationId: String): Flow<Boolean> =
-        stalledConversations.map { conversationId in it }.distinctUntilChanged()
+    override fun observeStall(conversationId: String): Flow<Boolean> = stallProjection.observe(conversationId)
 
-    /**
-     * Ordered queued-message backlog for [conversationId] (#460), a pure cold projection of the shared
-     * [queuedByConversation] `StateFlow`. Issues no request — rides the live `queue_state` snapshots.
-     * `orEmpty()` gives empty-until-first-snapshot (AC #2). [distinctUntilChanged] means a `queue_state`
-     * for **another** conversation, or a value-identical re-snapshot, does not re-emit this flow (AC #3).
-     * A `StateFlow` always has a current value, so every collector (including a `flatMapLatest`
-     * re-subscription through the facade) receives the current backlog (empty until one lands) on
-     * subscription; the one inbound consumer fans out to unlimited collectors.
-     */
-    override fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> =
-        queuedByConversation.map { it[conversationId].orEmpty() }.distinctUntilChanged()
+    override fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> = queueProjection.observe(conversationId)
 
-    /**
-     * Current API-retry status for [conversationId] (#593), a pure cold projection of the shared
-     * [apiRetryByConversation] `StateFlow`. Issues no request — rides the live `api_retry` edges. The
-     * [ApiRetryStatus.NotRetrying] default gives not-retrying-until-the-first-frame (AC #1) and makes an
-     * absent key indistinguishable from a stored falling edge. [distinctUntilChanged] suppresses only
-     * value-*identical* re-emissions, so an `api_retry` for **another** conversation does not re-emit
-     * this flow, while a **climbed counter is a different [ApiRetryStatus.Attempt] value and does reach
-     * the collector as a new emission** (AC #2) — precisely what a membership `Set` could not do, since
-     * `true` → `true` would collapse the climb. A `StateFlow` always has a current value, so every
-     * collector (including a `flatMapLatest` re-subscription through the facade) receives the current
-     * status on subscription; the one inbound consumer fans out to unlimited collectors.
-     */
-    override fun observeApiRetry(conversationId: String): Flow<ApiRetryStatus> =
-        apiRetryByConversation.map { it[conversationId] ?: ApiRetryStatus.NotRetrying }.distinctUntilChanged()
+    override fun observeApiRetry(conversationId: String): Flow<ApiRetryStatus> = apiRetryProjection.observe(conversationId)
 
-    /**
-     * Whether claude is currently auto-compacting [conversationId]'s context (#596), a pure cold
-     * projection of the shared [compactingConversations] `StateFlow` (membership = compacting). Issues no
-     * request — rides the live `compacting` edges. Membership over an empty set gives
-     * not-compacting-until-the-first-frame with no default needed: "absent" and "not compacting" are the
-     * same thing by construction, tidier than [observeApiRetry]'s stored falling edge.
-     * [distinctUntilChanged] suppresses only value-*identical* re-emissions, so a `compacting` for
-     * **another** conversation does not re-emit this flow and a repeated rising edge is genuinely nothing
-     * new — #593's no-dedup hazard does not transfer here, because that one existed only to let a
-     * climbing counter through and a bool has no intermediate values to collapse. A `StateFlow` always
-     * has a current value, so every collector (including a `flatMapLatest` re-subscription through the
-     * facade) receives the current state (`false` until a compaction lands) on subscription; the one
-     * inbound consumer fans out to unlimited collectors.
-     */
-    override fun observeCompacting(conversationId: String): Flow<Boolean> =
-        compactingConversations.map { conversationId in it }.distinctUntilChanged()
+    override fun observeCompacting(conversationId: String): Flow<Boolean> = compactingProjection.observe(conversationId)
 
-    /**
-     * The usage-limit reading claude last reported for [conversationId] (#802), a cold projection of
-     * the shared [usageLimitsByConversation] `StateFlow` — **and the only read surface it has**, which
-     * is what makes this the single place the expiry rule lives. Issues no request; rides the live
-     * `rate_limited` frames. An absent key is `null`, so "nothing reported", "cleared by a benign
-     * frame" and "the reported window has passed" are one observable state, which is all a consumer
-     * needs to tell apart.
-     *
-     * [distinctUntilChanged] suppresses only value-*identical* re-emissions, so a `rate_limited` for
-     * **another** conversation does not re-emit this flow, while a genuinely changed reading is a
-     * different [UsageLimitReading] value and does reach the collector — the [observeApiRetry]
-     * property a membership `Set` could not provide. A `StateFlow` always has a current value, so
-     * every collector (including a `flatMapLatest` re-subscription through the facade) receives the
-     * current reading (`null` until a frame lands) on subscription; the one inbound consumer fans out
-     * to unlimited collectors.
-     *
-     * **The expiry is one comparison performed when a reader asks, and there is deliberately no
-     * timer.** Nothing in this class schedules, delays, allocates or iterates from
-     * [UsageLimitReading.resetsAt] — it is claude's unvalidated number, so a delay computed from it
-     * could be negative (firing immediately, and spinning if a handler re-armed) or past a timer's
-     * clamp, which *also* fires immediately rather than never. The consequence, stated rather than
-     * discovered: an already-subscribed collector receives **no spontaneous emission at the deadline**
-     * — it re-evaluates on the next upstream change, while a collector subscribing after the deadline
-     * reads `null` at once because the `StateFlow` replays its current value through this `map`. A
-     * render consumer owns its own recomposition cadence and must not re-derive the rule.
-     *
-     * One further consequence of comparing against a **wall** clock, named so a later reader does not
-     * re-derive it as a bug: a device clock moved backwards can make an expired reading readable
-     * again. That is inherent rather than a defect — `resets_at` is a wall-clock unix instant, so a
-     * monotonic clock would be the wrong comparand — and the blast radius is one stale row that the
-     * next frame corrects. Desktop's `selectUsageLimitFor` carries the identical property.
-     */
-    override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> =
-        usageLimitsByConversation.map { it[conversationId]?.takeIf(::isReadable) }.distinctUntilChanged()
+    override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> = usageLimitProjection.observe(conversationId)
 
-    /**
-     * Whether [reading] is still readable at the current [now] (#802) — the whole of the expiry rule,
-     * in reading order, which is also precedence order:
-     *
-     * ```
-     * resetsAt == 0                    → readable   claude reported NO reset
-     * now().epochSeconds < resetsAt    → readable   inside the window claude reported
-     * now().epochSeconds >= resetsAt   → hidden     the window claude reported has passed
-     * ```
-     *
-     * **The zero test comes first and that ordering is the point.** `0` means claude reported no
-     * reset, *not* the epoch; folded into the comparison it would read as "expired in 1970" and make
-     * every unreported reading invisible the moment it landed — the failure this branch forecloses,
-     * and the common case rather than an exotic one.
-     *
-     * **The boundary is exclusive**, so a reading is hidden *at* [UsageLimitReading.resetsAt] as well
-     * as after it: the reset instant is when the window is fresh again, not the last instant it was
-     * stale. A negative `resetsAt` is a past instant and so is hidden immediately — the honest reading
-     * of an unvalidated number rather than a rejection, since the wire rejects none either and the
-     * decode still **carried** it.
-     */
-    private fun isReadable(reading: UsageLimitReading): Boolean = reading.resetsAt == 0L || now().epochSeconds < reading.resetsAt
-
-    /**
-     * How far [conversationId]'s current reasoning has got (#801), a pure cold projection of the shared
-     * [thinkingProgressByConversation] `StateFlow`. Issues no request — rides the live
-     * `thinking_progress` frames. An absent key is `null`, which is **no reading**: a normal resting
-     * state covering a conversation this connection heard no frame for, the window before the first
-     * frame, and the state after a clear — never a statement that claude is not thinking, since absence
-     * proves nothing on this wire.
-     *
-     * [distinctUntilChanged] suppresses only value-*identical* re-emissions, so a `thinking_progress`
-     * for **another** conversation does not re-emit this flow. It is **not** a monotonicity filter and
-     * **not** a truthiness gate: a *lower* reading is a different [ThinkingProgress] value and does
-     * reach the collector (the [observeApiRetry] climbed-counter property, in the opposite direction),
-     * and so does a reading of `0` — precisely what a membership `Set` could not express. A
-     * value-identical repeat costs a consumer nothing and leaves the held reading exactly what the
-     * daemon sent.
-     *
-     * A `StateFlow` always has a current value, so every collector (including a `flatMapLatest`
-     * re-subscription through the facade) receives the current reading (`null` until a frame lands) on
-     * subscription; the one inbound consumer fans out to unlimited collectors.
-     */
     override fun observeThinkingProgress(conversationId: String): Flow<ThinkingProgress?> =
-        thinkingProgressByConversation.map { it[conversationId] }.distinctUntilChanged()
+        thinkingProgressProjection.observe(conversationId)
 
     /**
      * The model menu this connection heard for [conversationId] (#791), a cold projection of the
@@ -2490,8 +2001,8 @@ class RemoteConversationRepository(
         // Resolved before the send: a successful drop replaces the snapshot this reads from. "" when the
         // id matches no current item — a correlation this connection cannot make, not an error.
         val echoId =
-            queuedByConversation.value[conversationId]
-                .orEmpty()
+            queueProjection
+                .current(conversationId)
                 .firstOrNull { it.id == queuedMessageId }
                 ?.messageId
                 .orEmpty()
