@@ -236,9 +236,16 @@ interface ConversationRepository {
      * passed back **verbatim**; it is the daemon's per-conversation `queued_msg_id` — a wire `uint64`,
      * so a [Long] (not a `String`; the pyrycode#720 trap), the same width [observeQueue] decodes.
      *
-     * **No projection side effect.** Success is "returned without throwing"; this slice mutates no
-     * local state. The backlog updates only by a subsequent `queue_state` snapshot on [observeQueue]
-     * (#460) — there is nothing to roll back on failure.
+     * **The backlog entry leaves only on the next snapshot; the sender's own echo leaves here (#781).**
+     * The daemon owns the backlog, so the queued row is still removed by a subsequent `queue_state` on
+     * [observeQueue] (#460) and never optimistically. The *thread* echo is different: the daemon never
+     * authored it — the sender posted it locally after its `send_message` ack, because interactive mode
+     * streams no user-message event back — so leaving it behind after a confirmed drop shows a message
+     * claude was never given. On a successful drop an implementation removes the one thread row it
+     * minted for the dropped item, correlating on [QueuedMessage.messageId] and **only** against ids it
+     * minted itself; an item carrying `""`, or one another device queued, correlates with nothing and
+     * its drop touches no thread row. Text never matches. A failed drop removes nothing, so there is
+     * still nothing to roll back.
      *
      * Throws [IllegalArgumentException] for an unknown [conversationId] (the remote surfaces the
      * server's `conversation.not_found` as that type). Throws on a server error
@@ -373,11 +380,27 @@ enum class UnrecognizedSite { LineType, AssistantBlock, UserBlock, Undecodable }
  *
  * [id] is the daemon's per-conversation `queued_msg_id` counter (a wire `uint64`, so [Long]); it is a
  * monotonic ordinal, not a secret. [timestamp] is enqueue time.
+ *
+ * @param messageId The `message_id` the *sending client* minted for this message, relayed verbatim by
+ *   the daemon (pyrycode#2092, #781). It lets a client recognise a queued item as one of its own sends
+ *   — in interactive mode the daemon streams no user-message event back, so a client's optimistic echo
+ *   is its only record of its own message, and without a shared key dropping the queued item leaves
+ *   that echo reading as a message claude received.
+ *
+ *   **Compared for equality only. Never render it, never key a list on it, never log it.** It is
+ *   client-chosen and unique **nowhere**: two items may legally carry the same value, so keying a
+ *   `LazyColumn` on it crashes the thread on duplicate keys (the hazard
+ *   [ThreadItem.UnrecognizedMessage.id] documents for its own id). It addresses nothing on the wire —
+ *   [ConversationRepository.dropQueuedMessage] still resolves `conversation_id` + [id].
+ *
+ *   `""` is a legal value meaning "this item correlates with nothing", and it is the default so a
+ *   caller that has no correlation to express says so by omission.
  */
 data class QueuedMessage(
     val id: Long,
     val text: String,
     val timestamp: Instant,
+    val messageId: String = "",
 )
 
 /**

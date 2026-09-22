@@ -988,13 +988,13 @@ class RelayConnectionFactoryTest {
                 ta.emit(
                     envelope(
                         "queue_state",
-                        """{"conversation_id":"c","queued":[{"queued_msg_id":42,"text":"A queue","ts":"2026-09-20T00:00:00Z"}]}""",
+                        """{"conversation_id":"c","queued":[{"queued_msg_id":42,"message_id":"m-fixture","text":"A queue","ts":"2026-09-20T00:00:00Z"}]}""",
                     ),
                 )
                 tb.emit(
                     envelope(
                         "queue_state",
-                        """{"conversation_id":"c","queued":[{"queued_msg_id":42,"text":"B queue","ts":"2026-09-20T00:00:00Z"}]}""",
+                        """{"conversation_id":"c","queued":[{"queued_msg_id":42,"message_id":"m-fixture","text":"B queue","ts":"2026-09-20T00:00:00Z"}]}""",
                     ),
                 )
                 runCurrent()

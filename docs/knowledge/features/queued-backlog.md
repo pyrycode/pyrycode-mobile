@@ -6,8 +6,10 @@ turns the user fired during a long response. Landed in [#460](../codebase/460.md
 split from #429). The **visible** render (the backlog list UI) shipped in
 [#461](../codebase/461.md) → [`QueuedBacklog`](queued-backlog-section.md); the **outbound** drop send
 (`dequeue_message`) shipped in [#466](../codebase/466.md) → [`dropQueuedMessage`](#dropping-a-queued-entry-dequeue_message-466),
-and the per-row drop **affordance** that fires it shipped in [#467](../codebase/467.md) (the
-[`QueuedBacklog`](queued-backlog-section.md) trailing close button → `ThreadViewModel.onDropQueued`).
+the per-row drop **affordance** that fires it shipped in [#467](../codebase/467.md) (the
+[`QueuedBacklog`](queued-backlog-section.md) trailing close button → `ThreadViewModel.onDropQueued`), and
+carrying the item's `message_id` to drop the sender's own undelivered thread echo alongside the backlog
+entry shipped in #781 (below).
 
 This is the **data layer**: decode the inbound `queue_state` snapshot into observable state (#460), and
 send the outbound `dequeue_message` drop (#466). It renders nothing — the
@@ -21,7 +23,7 @@ visible drop affordance.
 fun observeQueue(conversationId: String): Flow<List<QueuedMessage>> = flowOf(emptyList())
 
 // the portable element type, co-located with the contract (like ThreadItem)
-data class QueuedMessage(val id: Long, val text: String, val timestamp: Instant)
+data class QueuedMessage(val id: Long, val text: String, val timestamp: Instant, val messageId: String = "")
 ```
 
 - Emits the conversation's **current ordered backlog** (FIFO / enqueue order), `emptyList()` until the
@@ -32,6 +34,16 @@ data class QueuedMessage(val id: Long, val text: String, val timestamp: Instant)
   counter, decoded as a `Long` (same posture as `Envelope.eventId`; a `String` is wrong, pyrycode#720
   flags it). It is a plain ordinal, **not a secret/nonce**; [`dropQueuedMessage`](#dropping-a-queued-entry-dequeue_message-466)
   (#466) echoes it back verbatim to drop an entry. `timestamp` is enqueue time.
+- **`messageId` (#781) is the `send_message` client `message_id` the daemon relays verbatim on every
+  item (pyrycode#2092).** Strict-required on the wire DTO — `""` is a legal *value* (the client sent
+  none, or this is a daemon predating #2092's relay — see Edge cases), not an absent field — but
+  defaulted to `""` on the domain type so the constructor stays positional-compatible with every
+  existing `QueuedMessage(...)` preview literal. It **addresses nothing**: `dequeue_message` still
+  resolves `conversation_id` + `queued_msg_id`. It is **compared for equality only** — never rendered,
+  never used as a list key (it is client-chosen and unique **nowhere**; two items may legally carry the
+  same value, and keying a `LazyColumn` on it would crash on the duplicate — the same hazard
+  `ThreadItem.UnrecognizedMessage.id`'s KDoc warns about for a different field), never logged. See
+  [Dropping a queued entry](#dropping-a-queued-entry-dequeue_message-466) for what it is spent on.
 - **On the interface, with a `flowOf(emptyList())` default** — the same surfacing decision as
   [`observeStall`](stall-state.md). The thread ViewModel reaches the backlog through the
   [`StableConversationRepository`](stable-conversation-repository.md) facade it already holds, and the
@@ -84,12 +96,33 @@ suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long): Un
     error("dropQueuedMessage is not implemented for this ConversationRepository")
 ```
 
-- **A pure request/reply with no observable-state effect.** Success is an empty `ack` — the method just
-  returns. It mutates **no** `StateFlow`, mints no domain object, and is invisible to `observeQueue` /
-  `observeMessages` / `observeLastMessage`. The backlog updates later, for free, when the daemon broadcasts
-  the next `queue_state` on the `observeQueue` path above — so there is **nothing to roll back** on failure
-  and **no optimistic mutation** to undo. The send surfaces the outcome; the [#467](../codebase/467.md) drop
-  affordance fires it and swallows any failure **inert** (no user-visible error surface — AC #4 there).
+- **The backlog row still leaves only on the next `queue_state`** (#467's non-optimistic ruling, which the
+  daemon owns) — success is an empty `ack` and the method mutates no `queuedByConversation` entry itself.
+  **The sender's own thread echo is different (#781).** `sendMessage` posts that row locally after its
+  `send_message` ack, because interactive mode streams no user-message event back — the daemon never
+  authored it, so a confirmed drop also removes it, or the thread keeps a row that reads as a message
+  claude received when it never was. The removal targets exactly one `ThreadItem.MessageItem`, correlated
+  on `QueuedMessage.messageId`, and is invisible to `observeQueue` / `observeLastMessage`.
+- **The correlation is resolved and spent entirely inside `RemoteConversationRepository` — no UI,
+  ViewModel or facade signature change.** `dropQueuedMessage(conversationId, queuedMessageId)` still takes
+  only the `queued_msg_id` the caller already has; the repository looks up that item's `messageId` in its
+  **own** `queuedByConversation` snapshot before sending, because a successful drop provokes a fresh
+  `queue_state` that would remove the item first if read afterwards (safe to read early since
+  `queued_msg_id` is a per-conversation counter that is never recycled). On the ack, and only then, the
+  resolved id is checked against a connection-scoped **minted-id ledger** — `conversationId -> the message
+  ids this device minted and echoed`, written by `sendMessage` after its own ack — and the matching thread
+  row is removed only if the id is non-empty and present in that ledger, which also consumes it (so a
+  second queued item legally sharing the same `message_id` removes nothing on its own drop). **This is
+  § Queue (v2)'s multi-device rule made mechanical**: the thread projection alone is not a valid
+  correlation store, because it also holds rows folded from history pages (#623/#778) that can carry
+  another device's ids, and `message_id` is client-chosen with uniqueness enforced nowhere — matching
+  against the projection directly would let a colliding id delete a row this phone never sent. An item
+  carrying `""`, one minted by another device, or a `queuedMessageId` no longer in the snapshot all
+  correlate with nothing: the send still goes, no thread row is touched, and **text is never compared**.
+  A throw from the send skips the removal entirely, so a failed drop leaves both the entry and the echo in
+  place — there is still nothing to roll back. The send surfaces the outcome; the [#467](../codebase/467.md)
+  drop affordance fires it and swallows any failure **inert** (no user-visible error surface — AC #4
+  there).
 - **`queuedMessageId` is the `QueuedMessage.id` echoed back verbatim** — a `Long` (the wire `uint64`),
   encoded by `DequeueMessagePayloadDto` to a JSON **number**, not a String (the pyrycode#720 trap). The
   daemon validates the `(conversation_id, queued_msg_id)` pair against its own per-conversation queue and
@@ -145,6 +178,26 @@ and never surfaces it.
   list is never accumulated client-side. Wire array order is preserved verbatim — no sort, no dedup.
 - **Not durable.** Lost on connection drop / process death; re-derived from the next live snapshot. The
   facade's `whenAbsent = emptyList()` reports an empty backlog between connections.
+- **A daemon predating pyrycode#2092 loses the whole backlog view, not just correlation (#781).**
+  `message_id` is strict-required on `QueuedMessageDto`; an older daemon that omits the key entirely
+  fails the structural decode of the whole item, so the snapshot drops via the existing "one bad item
+  drops the chunk" idiom above — the backlog view goes empty rather than degrading to "no correlation".
+  Accepted deliberately (the wire contract states the field is always present) and recorded here so a
+  version-skew symptom of "the backlog went blank" is traceable back to this trade.
+- **The channel-list preview still shows a dropped message (#781).** `sendMessage` also writes
+  `lastMessages`, which drives the conversation-row preview on the [channel list](channel-list-screen.md);
+  a confirmed drop does not revert it, because the previous value is not retained and re-deriving one from
+  a possibly-partial thread would regress the preview to an older or absent message. Out of scope for the
+  echo-removal AC, which names thread rows only — a decision point for whichever ticket folds the backlog
+  into the thread list.
+- **A backlog diff is deliberately not the removal trigger (#781).** A backlog also shrinks when the
+  daemon *drains* it and runs the message normally, so a diff-driven removal would delete the echo of
+  every message that ran to completion — a worse lie than the one this ticket fixes. `pyrycode-desktop`'s
+  #1213 rejected the same shape for the same reason.
+- **The minted-id ledger** (`RemoteConversationRepository.mintedMessageIds`, `conversationId -> ids this
+  device minted and echoed`) holds one entry per successful send minus every consumed drop, and is
+  connection-scoped and in-memory like every sibling projection (#351) — it dies with the connection and
+  is never persisted or observed.
 
 ## Security
 
@@ -163,10 +216,28 @@ per-conversation counter, not a nonce (no constant-time-compare concern). UI-lea
 messages **without** `FLAG_SECURE`, so the [queued backlog section](queued-backlog-section.md) adds no new
 screen-capture surface — see [#461](../codebase/461.md). #461 is therefore **not** `security-sensitive`.
 
+**#781 (echo removal via `message_id`), also `security-sensitive`, architect self-review PASS.** No new
+trust boundary — `message_id` crosses untrusted→trusted at the same `decodeQueueState` seam as every other
+queue field. `QueuedMessage.messageId` is a **public** domain field with no type-level distinction from a
+trusted string, so its KDoc carries the constraint as a contract: compared for equality only, never
+rendered, never a list key (duplicate values are legal and would crash a `LazyColumn` keyed on it), never
+logged. The **minted-id ledger never holds a wire-supplied value** — it only ever holds ids this device
+itself minted via `UUID.randomUUID()` (a 122-bit CSPRNG v4 UUID) in `sendMessage`, so no wire input can
+grow it, and no constant-time compare is warranted (the id guards no authority — it addresses nothing on
+the wire and the phone already discloses every one of its own ids to the daemon on send). **Accepted, not
+a finding:** a paired daemon — already inside the trust domain per ADR 025 and able to fabricate arbitrary
+thread content by simpler means — knows every `message_id` this phone has sent and could forge a
+`queue_state` item carrying one to make an operator-triggered drop delete a *different* local echo; impact
+is bounded to one row on one device, nothing is disclosed, and no data is lost (the daemon holds the
+transcript). The ledger's actual job is defeating a **paired device**, which does not know this phone's
+minted ids and so cannot forge a match.
+
 ## Related
 
 - [#460 implementation notes](../codebase/460.md) (inbound decode) / [#466 implementation notes](../codebase/466.md)
-  (outbound `dropQueuedMessage` send) — files, line refs, lessons, verification.
+  (outbound `dropQueuedMessage` send) — files, line refs, lessons, verification. #781 (`message_id` +
+  echo removal) postdates the frozen archive; its notes live in this document and in
+  [conversation-repository.md](conversation-repository.md).
 - [Remote conversation repository](remote-conversation-repository.md) — hosts the `queuedByConversation`
   projection, the `TYPE_QUEUE_STATE` arm, the `observeQueue` projection, and the outbound `dropQueuedMessage`
   send.

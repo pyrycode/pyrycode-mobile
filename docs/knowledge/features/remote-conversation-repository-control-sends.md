@@ -50,9 +50,9 @@ override suspend fun requestScreenSnapshot(conversationId: String): String {
 
 The **outbound peer** of the inbound `queue_state` decode ([`observeQueue`](remote-conversation-repository-thread-observables.md#observequeueconversationid--the-thread-observable-queued-backlog-460), #460): sends a
 `dequeue_message` frame so the daemon removes a not-yet-drained message from a conversation's backlog. A
-pure request/reply on the **reused** `sendAndAwaitReply` (#346) primitive — the `requestScreenSnapshot`
-send-template minus the reply decode (the ack is empty), and **unlike** it, mutates **no** projection
-([#466](../codebase/466.md)).
+request/reply on the **reused** `sendAndAwaitReply` (#346) primitive — the `requestScreenSnapshot`
+send-template minus the reply decode (the ack is empty) ([#466](../codebase/466.md)). Since #781, a
+confirmed ack also removes the sender's own undelivered thread echo — see below.
 
 ```kotlin
 override suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long) {
@@ -63,14 +63,33 @@ override suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: 
             DequeueMessagePayloadDto(conversationId = conversationId, queuedMsgId = queuedMessageId),
         ),
     )
+    // resolved before the send (#781) — a successful drop replaces the snapshot this reads from
+    val echoId = queuedByConversation.value[conversationId].orEmpty()
+        .firstOrNull { it.id == queuedMessageId }?.messageId.orEmpty()
     sendAndAwaitReply(request)   // throws on server `error` / not-Open; the empty {} ack carries nothing → ignored
+    removeOwnEcho(conversationId, echoId)
 }
 ```
 
-- **No new collector arm, no new projection.** Success is the empty `{}` ack the success-arm already
-  routes; the reply is **ignored** (no decode), and the backlog updates only via the next `queue_state` on
-  the `queuedByConversation` projection — this send writes no state and has nothing to roll back. The one
-  new bit is the outbound DTO + the companion const `TYPE_DEQUEUE_MESSAGE = "dequeue_message"`.
+- **No new collector arm; the backlog projection itself is still untouched.** Success is the empty `{}`
+  ack the success-arm already routes; the reply is **ignored** (no decode), and the backlog row updates
+  only via the next `queue_state` on the `queuedByConversation` projection — this send writes no queue
+  state and has nothing to roll back there. The new bits are the outbound DTO, the companion const
+  `TYPE_DEQUEUE_MESSAGE = "dequeue_message"`, and — since #781 — the sender's own thread echo removal
+  described immediately below.
+- **`removeOwnEcho` (#781) — the ack also drops this device's own undelivered thread row.** `sendMessage`
+  posts a local echo `Message` after its own ack, because interactive mode streams no user-message event
+  back; if the daemon never runs it, that echo reads as a message claude received when it never was.
+  `queuedMessageId`'s `messageId` (relayed by pyrycode#2092) is resolved from `queuedByConversation`
+  **before** the send — reading after would usually race the ack's own fresh `queue_state` — and, only on
+  a successful ack, checked against a connection-scoped `mintedMessageIds` ledger
+  (`conversationId -> ids this device minted and echoed`, written by `sendMessage`). A match removes the
+  one `ThreadItem.MessageItem` carrying that id from `threadByConversation` and consumes the ledger entry;
+  an empty id, an id minted by another device, or an unresolved `queuedMessageId` all leave the thread
+  untouched. The full correlation rules, the multi-device rationale (`message_id` is client-chosen and
+  unique nowhere, and the thread also holds rows folded from history pages that can carry foreign ids),
+  and the security posture live in [Queued backlog § Dropping a queued
+  entry](queued-backlog.md#dropping-a-queued-entry-dequeue_message-466) — not duplicated here.
 - **Encodes `DequeueMessagePayloadDto` (`{conversation_id, queued_msg_id}`)** through `MobileJson`;
   `queuedMsgId: Long` encodes to a JSON **number** (the wire `uint64`), symmetric with the inbound
   `QueuedMessageDto.queuedMsgId` — not a String (the pyrycode#720 trap). The caller echoes the
