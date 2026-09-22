@@ -8,6 +8,8 @@ import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.BuildConfig
+import de.pyryco.mobile.data.cache.ConversationCache
+import de.pyryco.mobile.data.cache.FileConversationCache
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.KeystoreDeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.KeystorePairedServerStore
@@ -57,6 +59,7 @@ import org.koin.dsl.bind
 import org.koin.dsl.binds
 import org.koin.dsl.module
 import org.koin.dsl.onClose
+import java.io.File
 
 val appModule =
     module {
@@ -66,6 +69,17 @@ val appModule =
             )
         }
         single { AppPreferences(get()) }
+        // #796: the cache's only binding. A `single` because FileConversationCache's Mutex is per
+        // instance, so two instances over one root would lose an update against each other.
+        //
+        // The root is noBackupFilesDir, never filesDir. The manifest ships allowBackup="true" with
+        // empty backup and data-extraction rules, so anything under filesDir rides cloud backup and
+        // device-to-device transfer — while the Keystore-wrapped pairing credentials that authorize
+        // reading this content do not. A restore would render one machine's conversation names and
+        // cwds on a device that never paired the host and cannot reach it. noBackupFilesDir is
+        // excluded from both paths by definition, keeping the cache exactly as transferable as the
+        // credentials it belongs to. ConversationCacheBindingInstrumentedTest holds this.
+        single<ConversationCache> { FileConversationCache(File(androidContext().noBackupFilesDir, "conversations")) }
         single { KeystoreDeviceStaticKeyStore(get()) } bind DeviceStaticKeyStore::class
         // #790: a removed pairing takes its host's unsent composer text with it. Bound here rather
         // than in the unpair controller so neither screen that opens the Edit host modal carries a
@@ -164,7 +178,12 @@ fun hostConversationModule(
     module {
         single { ThreadDestinationFactory(useRelay, get(), get(), get(), decorateRepository) }
         single {
-            if (useRelay) HostConversationSource.relay(get()) else HostConversationSource.demo(get<FakeConversationRepository>())
+            // The demo branch resolves no cache: there is nothing persisted for a fake host to restore.
+            if (useRelay) {
+                HostConversationSource.relay(get(), cache = get())
+            } else {
+                HostConversationSource.demo(get<FakeConversationRepository>())
+            }
         } onClose { it?.dispose() }
     }
 

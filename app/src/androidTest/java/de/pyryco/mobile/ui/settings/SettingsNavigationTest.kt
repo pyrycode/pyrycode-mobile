@@ -26,6 +26,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.PyryNavHost
 import de.pyryco.mobile.Routes
+import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyPair
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.PairedServer
@@ -37,6 +38,7 @@ import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.RelayTransportFactory
 import de.pyryco.mobile.data.network.base64StdEncode
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.di.InertConversationCache
 import de.pyryco.mobile.di.ObservablePairedServerStore
 import de.pyryco.mobile.di.RelayConnectionFactory
 import de.pyryco.mobile.di.RelayConnectionRegistry
@@ -481,6 +483,10 @@ class SettingsNavigationTest {
                     single { registry }
                     single { store } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
                     single { preferences }
+                    // This container has no androidContext(), and the relay host source resolves a
+                    // ConversationCache (#796) whose real binding needs one. See InertConversationCache
+                    // for why these containers override it rather than supply the Context.
+                    single<ConversationCache> { InertConversationCache }
                 },
             )
         return StateRestorationTester(compose).also { tester ->

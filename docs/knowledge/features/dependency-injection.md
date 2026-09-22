@@ -60,7 +60,8 @@ fun hostConversationModule(
 ) = module {
     single { ThreadDestinationFactory(useRelay, get(), get(), get(), decorateRepository) }
     single {
-        if (useRelay) HostConversationSource.relay(get())
+        // #796: the demo branch resolves no cache — there is nothing persisted for a fake host to restore.
+        if (useRelay) HostConversationSource.relay(get(), cache = get())
         else HostConversationSource.demo(get<FakeConversationRepository>())
     } onClose { it?.dispose() }
 }
@@ -140,8 +141,55 @@ collectors and rows. Removal or credential-driven bundle replacement cancels the
 old collectors and discards that host's rows; a replacement starts empty. Updates
 check both the registered generation and current repository identity, because
 cancellation alone cannot reject every late callback. Source disposal cancels its
-collectors, clears the cache and disables lookup; registry disposal publishes no
-hosts. Nothing is persisted across app restart.
+collectors, clears the in-memory cache and disables lookup; registry disposal
+publishes no hosts. The in-memory cache itself does not survive app restart — but
+see below: as of #796, an accepted live list also lands in an on-disk
+`ConversationCache`, and a newly created entry seeds itself from that document
+before its first live emission arrives.
+
+### Restore from the on-disk cache (#796)
+
+`HostConversationSource.relay(...)` takes an optional trailing
+`cache: ConversationCache? = null` (the [conversation cache](conversation-cache.md)'s
+contract). `appModule` binds the one production `FileConversationCache` under
+`Context.noBackupFilesDir` — never `filesDir`, since the manifest's
+`allowBackup="true"` would otherwise carry cached conversation names and cwds into
+cloud backup and device-to-device transfer while the Keystore-wrapped pairing
+credentials that authorize reading them do not — and `hostConversationModule`'s
+relay branch passes it as `cache = get()`; the demo branch passes none.
+
+Each live list `update` accepts — one that clears the existing stale-entry and
+superseded-repository guards — is written to the cache verbatim, archived rows
+included, so the stored document mirrors exactly what the daemon reported and the
+same `withRows` filter (the single promoted/archived split, used by both paths) is
+applied identically on read. When `reconcile` creates a new entry and a cache is
+present, it also launches a read of that host's cached document; a non-empty
+result seeds the snapshot through `withRows`. The seed never writes
+`connectionStatus` — a restored list must not read as a connected one, and
+`TreeHostRow`'s existing status treatment stays the only disconnected affordance
+(see [ChannelListScreen § Edge cases](channel-list-screen.md#edge-cases--limitations)).
+A restore *seeds*; a live list still *replaces* wholesale, exactly as before #796
+— so a conversation id already drawn cannot gain a second row and a conversation
+the daemon stops reporting cannot survive a live replacement, with no merge or
+dedup anywhere.
+
+**The race a restore's read length creates.** A cache read has no bound relative
+to the daemon's own list arriving, so a slow restore can complete *after* a live
+list has already landed for the same entry — and the existing stale-entry /
+superseded-repository guards both check *who is current*, not *what already won*,
+so neither rejects that write. `Held` therefore carries its own `live: Boolean`,
+set the moment a live-list write is accepted; a restoring write is rejected once
+`live` is already set. `live` is read and written only inside the same
+`@Synchronized update` this class already serializes every snapshot mutation
+through, and the cache read suspends *outside* that monitor, so the check-and-set
+is atomic against the live path.
+
+A failed or empty cache read is never treated as authoritative:
+`readConversations` returns `emptyList()` both for a document that was never
+written and for one that failed to parse — the two are indistinguishable by
+design (see [conversation cache § Failure model](conversation-cache.md#failure-model--graceful-reads-reporting-mutations))
+— so only a non-empty read publishes anything, and only a live list may ever
+empty a host.
 
 ### Exact-host repository access
 
@@ -416,6 +464,42 @@ missing identity guard still allowed late writes. Real Noise registry fixtures i
 `RelayConnectionFactoryTest` cover saved metadata, background/resume, credential
 rotation and both selectors' singleton identity and disposal.
 
+`HostConversationSourceTest` also covers #796's cache: a seeded host with no live
+repository draws its cached rows filtered the same way as a live one while its
+`connectionStatus` stays the disconnected value it was given; two disconnected
+hosts each restore only their own rows; a live list landing after a restore
+replaces it wholesale (retired id gone, still-reported id appears once); a restore
+whose read completes *after* a live list has landed does not overwrite it — the
+`live`-flag guard, driven by ordering the fake's read completion behind the live
+emission; the accepted live list is written to the cache verbatim including
+archived rows, and a list rejected by the superseded-repository guard is not
+written; and a failing cache write logs one static event with no server id,
+conversation id, name or cwd in captured `RelayLog` output. `demo(...)` is
+asserted to touch no cache.
+
+`ConversationCacheBindingInstrumentedTest` (`app/src/androidTest/java/de/pyryco/mobile/di/`,
+added in #796) resolves `ConversationCache` from the live Koin container, writes
+one host through it, and asserts the document lands under `Context.noBackupFilesDir`
+and that nothing is created under `Context.filesDir` — the property [conversation
+cache § Root and storage scope](conversation-cache.md#root-and-storage-scope--nobackupfilesdir-never-filesdir)
+names this ticket as owning. It is the only instrumented test that resolves the
+real binding: `SettingsNavigationTest`, `ArchiveNavigationTest` and
+`LiteralScreenNavigationTest` each build a relay-mode container from `appModule`
+on a device, where supplying the real `Context` was available and closer to
+production — but it would hand them the real cache over one `noBackupFilesDir`
+shared by every test and every run on a reused managed device, and #796's own
+restore-on-entry-creation is what makes that unsafe: a `live = true` case in one
+test would leave rows on disk that a later disconnected host with the same server
+id in another test draws for free. Each of the three instead binds a shared
+androidTest `InertConversationCache` fake over the container, the same pattern
+`RelayConnectionFactoryTest` uses with its own file-private copy (separate source
+sets cannot share one). Withholding the Context is also load-bearing on its own:
+it is what turned the new dependency's absence into a loud
+`MissingAndroidContextException` in these three classes rather than a silent
+reach into real DataStore or Keystore state — caught only because the `di` and
+`ui` packages were run as wholes, not the single class each ticket touched. See
+[Edge cases](#edge-cases--limitations) below for the general form of that lesson.
+
 `repositoryForRejectsRetiredRepositoryAtReconnectTransportEdge` observes replacement
 transport arrival with an unconfined collector and calls lookup synchronously,
 before cached repository projections catch up. It requires `null` at that edge
@@ -436,10 +520,11 @@ same handshake. A settled assertion after `runCurrent()` misses the
 - **Module-level `val`, not an `object` / function.** Downstream tickets append single lines; an `object AppModule { val module = … }` form would force every binding to qualify through the object and adds no upside.
 - **No `try/catch` around `startKoin`.** Initialisation failure (duplicate definition, missing factory) crashes the process — the stack trace is the debugging surface. No fallback path makes sense at the composition root.
 - **Kotlin 2.2 alignment:** stay on Koin BOM `4.0.x`. Do not downgrade to `3.5.x` — it predates Kotlin 2.2 toolchain alignment. Bump *up* to the latest stable `4.0.x` patch if Gradle reports a compiler-version mismatch.
+- **A lazy Android-bound Koin definition is only lazy until something upstream resolves it.** Every `single { }` bound with `androidContext()` in `appModule` is dormant in a JVM/instrumented container built without one, as long as nothing that container resolves reaches it — `RelayConnectionFactoryTest`'s bare-`appModule` construction relied on exactly that until #796 made the relay `HostConversationSource` resolve `ConversationCache`, which reddened it and three instrumented navigation tests with `MissingAndroidContextException`. A binding-scoped test run misses this; only running the whole `di`/`ui` package catches a change that makes a previously-dormant dependency hard. See [Testing](#testing) above for the fix (`InertConversationCache` overrides, not a supplied Context).
 
 ## Related
 
 - Ticket notes: `../codebase/32.md` (scaffold), `../codebase/11.md` (first real binding — `AppPreferences`), `../codebase/45.md` (first interface-bound singleton + first `viewModel { }` line), `../codebase/196.md` (`FakeConnectionStateSource` ↔ `ConnectionStateSource`), [`../codebase/350.md`](../codebase/350.md) (the flag-gated `conversationRepositoryModule` selector — the second module + the `buildConfigField` `USE_RELAY_REPOSITORY` flag)
 - Spec: `docs/specs/architecture/32-koin-di-scaffold.md`
-- Host source: [snapshot design and coherent-lookup revision](../../specs/architecture/704-host-conversation-snapshots.md).
+- Host source: [snapshot design and coherent-lookup revision](../../specs/architecture/704-host-conversation-snapshots.md); [conversation cache](conversation-cache.md) is the on-disk store #796 wired the source to, `docs/specs/architecture/796-cached-host-conversation-list-restore.md` its plan.
 - Repository selection: [Stable conversation repository](stable-conversation-repository.md) is the normal build binding; [FakeConversationRepository](conversation-repository.md#phase-1-implementation--fakeconversationrepository) is the explicit demo/test selection. The [#631 plan](../../specs/architecture/631-default-real-repository.md) records the default change on the existing #350 selector.
