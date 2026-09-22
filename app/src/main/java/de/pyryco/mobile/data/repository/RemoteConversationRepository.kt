@@ -5,9 +5,12 @@ import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.ModalEvent
+import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.model.withDismissed
+import de.pyryco.mobile.data.model.withShown
 import de.pyryco.mobile.data.network.ArchiveConversationPayloadDto
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.BackfillSincePayloadDto
@@ -32,6 +35,8 @@ import de.pyryco.mobile.data.network.ModalDismissedPayloadDto
 import de.pyryco.mobile.data.network.ModalShownPayloadDto
 import de.pyryco.mobile.data.network.ModelListPayloadDto
 import de.pyryco.mobile.data.network.PromoteConversationPayloadDto
+import de.pyryco.mobile.data.network.QuestionDismissedPayloadDto
+import de.pyryco.mobile.data.network.QuestionShownPayloadDto
 import de.pyryco.mobile.data.network.RecentWorkspacesListPayloadDto
 import de.pyryco.mobile.data.network.RegisterPushTokenPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
@@ -53,6 +58,7 @@ import de.pyryco.mobile.data.network.TurnStatePayloadDto
 import de.pyryco.mobile.data.network.UnrecognizedMessagePayloadDto
 import de.pyryco.mobile.data.network.WorkspaceFolderCreatedPayloadDto
 import de.pyryco.mobile.data.network.WorkspaceUpdatedPayloadDto
+import de.pyryco.mobile.data.network.toBatch
 import de.pyryco.mobile.data.network.toBoundary
 import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.network.toConversations
@@ -70,7 +76,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
@@ -82,6 +90,7 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -148,6 +157,20 @@ class RemoteConversationRepository(
      * coordinator-wired instance outlives the connection.
      */
     private val replayCursor: ReplayCursor = ReplayCursor(),
+    /**
+     * The wall clock the usage-limit expiry reads (#802) — a **supplier**, not a value, for
+     * [negotiatedCapabilities]' reason: the expiry is evaluated every time a collector reads
+     * [observeUsageLimit], long after construction, so a captured instant would freeze it.
+     *
+     * [kotlinx.datetime.Instant] rather than a bare seconds `Long` is the type-level defence against
+     * the unit hazard this comparison carries: a caller supplying milliseconds would hand over a value
+     * a thousand times larger than any real `resets_at`, expiring every reading the instant it landed,
+     * with no type error and a symptom ("nothing ever shows") identical to the daemon having sent
+     * nothing. `Instant.epochSeconds` is the only route to a number here, so the unit cannot be got
+     * wrong. **Defaulted** so every existing construction (tests, the coordinator, the scripted
+     * harness) compiles unchanged; only a test supplies its own.
+     */
+    private val now: () -> Instant = Clock.System::now,
 ) : ConversationRepository {
     /**
      * The demuxed list projection: `null` until the first `conversations` snapshot loads, then the
@@ -195,14 +218,15 @@ class RemoteConversationRepository(
 
     /**
      * The per-conversation status readings, one small projection per wire event: stall (#395), queue
-     * (#460), API retry (#593), compaction (#596) and thinking progress (#801). Each owns its state, its
-     * decoder and its read. [onInbound] hands each its own envelope type behind the `interactive` gate,
-     * and the clears one event causes in another stay in the arm that causes them.
+     * (#460), API retry (#593), compaction (#596), usage limit (#802) and thinking progress (#801). Each
+     * owns its state, its decoder and its read. [onInbound] hands each its own envelope type behind the
+     * `interactive` gate, and the clears one event causes in another stay in the arm that causes them.
      */
     private val stallProjection = StallProjection()
     private val queueProjection = QueueProjection()
     private val apiRetryProjection = ApiRetryProjection()
     private val compactingProjection = CompactingProjection()
+    private val usageLimitProjection = UsageLimitProjection(now)
     private val thinkingProgressProjection = ThinkingProgressProjection()
 
     /**
@@ -424,6 +448,17 @@ class RemoteConversationRepository(
             onBufferOverflow = BufferOverflow.DROP_OLDEST,
         )
     val modalEvents: SharedFlow<ModalEvent> = mutableModalEvents.asSharedFlow()
+
+    /**
+     * The clarification batches outstanding on **this connection** (#822), folded from `question_shown` /
+     * `question_dismissed` by the single inbound collector. Held state rather than a `replay = 0` event
+     * stream: the daemon's connect-time reconcile re-sends every outstanding batch in one burst, and an
+     * event stream folded downstream could lose part of it to a late subscriber. A new connection builds a
+     * new repository, so this starts empty and the reconcile rebuilds it — the protocol's reset-on-reconnect
+     * rule, the opposite of `currentModal`'s retain. On the concrete repository only, like [modalEvents].
+     */
+    private val mutableQuestionBatches = MutableStateFlow<List<QuestionBatch>>(emptyList())
+    val questionBatches: StateFlow<List<QuestionBatch>> = mutableQuestionBatches.asStateFlow()
 
     init {
         // The single consumer of the hot, single-consumer inbound stream. Cancelled by its owner
@@ -704,6 +739,12 @@ class RemoteConversationRepository(
                     compactingProjection.apply(envelope)
                 }
             }
+            TYPE_RATE_LIMITED -> {
+                // What claude said about its usage-limit window (#802): see [UsageLimitProjection.apply].
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    usageLimitProjection.apply(envelope)
+                }
+            }
             TYPE_THINKING_PROGRESS -> {
                 // How far this conversation's reasoning has got (#801): see [ThinkingProgressProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
@@ -787,6 +828,14 @@ class RemoteConversationRepository(
                 // Drop silently — title/prompt/option-label are operator content; nothing here logs them.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     decodeModalEvent(envelope)?.let { mutableModalEvents.tryEmit(it) }
+                }
+            }
+            TYPE_QUESTION_SHOWN, TYPE_QUESTION_DISMISSED -> {
+                // A v2 clarification batch (#822). Same `interactive` gate as the modal arm above; not a
+                // modal, so it never reaches modalEvents. Held per connection, not a thread row, and it
+                // clears no stall. Drop silently: the claude-authored strings and the nonce are never logged.
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    foldQuestionFrame(envelope)
                 }
             }
             TYPE_RESYNC -> {
@@ -960,6 +1009,30 @@ class RemoteConversationRepository(
         } catch (e: IllegalArgumentException) {
             null
         }
+
+    /**
+     * Fold one question envelope (#822) into [questionBatches] via [withShown] / [withDismissed]. The decode
+     * is strict ([QuestionShownPayloadDto], [QuestionDismissedPayloadDto]); any failure is an
+     * [IllegalArgumentException] ([kotlinx.serialization.SerializationException] ⊂ it) and changes nothing,
+     * so the lone inbound collector survives. The exception is discarded unlogged: kotlinx messages can
+     * quote the JSON input.
+     */
+    private fun foldQuestionFrame(envelope: Envelope) {
+        try {
+            when (envelope.type) {
+                TYPE_QUESTION_SHOWN -> {
+                    val batch = MobileJson.decodeFromJsonElement<QuestionShownPayloadDto>(envelope.payload).toBatch()
+                    mutableQuestionBatches.update { it.withShown(batch) }
+                }
+                TYPE_QUESTION_DISMISSED -> {
+                    val dismissed = MobileJson.decodeFromJsonElement<QuestionDismissedPayloadDto>(envelope.payload)
+                    mutableQuestionBatches.update { it.withDismissed(dismissed.questionBatchId) }
+                }
+            }
+        } catch (e: IllegalArgumentException) {
+            return
+        }
+    }
 
     /**
      * Read the inline `conversation_id` of a `resync` marker (#417) as a JSON string, or **null** when
@@ -1623,6 +1696,8 @@ class RemoteConversationRepository(
     override fun observeApiRetry(conversationId: String): Flow<ApiRetryStatus> = apiRetryProjection.observe(conversationId)
 
     override fun observeCompacting(conversationId: String): Flow<Boolean> = compactingProjection.observe(conversationId)
+
+    override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> = usageLimitProjection.observe(conversationId)
 
     override fun observeThinkingProgress(conversationId: String): Flow<ThinkingProgress?> =
         thinkingProgressProjection.observe(conversationId)
@@ -2691,6 +2766,21 @@ class RemoteConversationRepository(
         const val TYPE_COMPACTING = "compacting"
 
         /**
+         * Capability-gated status event: what claude said about its usage-limit window
+         * `{conversation_id, status, limit_type, resets_at, utilization, truncated_fields}` (#802,
+         * pyrycode#1405/#1410). **A frame is not proof the turn was blocked** — the one measured
+         * non-benign status was seen on an account whose turns all ran normally — so this reports what
+         * claude said, not that the user is rate limited. `status` carries the clearing edge when it
+         * holds the benign value, and that clear names a *different* `limit_type` than the warning it
+         * clears, so it pairs by `conversation_id` and never by limit. Unlike [TYPE_COMPACTING]'s
+         * clearing edge this one is **session-scoped**, so a warning raised before a `/clear` or a
+         * session eviction is never followed by one — hence the read-time expiry on
+         * [observeUsageLimit]. Conversation-scoped: no `turn_id`, and receiving one neither opens nor
+         * closes a turn.
+         */
+        const val TYPE_RATE_LIMITED = "rate_limited"
+
+        /**
          * Capability-gated status event: how far a conversation's current reasoning has got
          * `{conversation_id, estimated_tokens, estimated_tokens_delta}` (#801, pyrycode#1386) — claude's
          * only mid-turn proof of life on the stream-json surface. Unlike [TYPE_COMPACTING] and
@@ -2744,6 +2834,15 @@ class RemoteConversationRepository(
          * `modal_cancel` constants belong to the answer-send slice (#438).
          */
         const val TYPE_MODAL_DISMISSED = "modal_dismissed"
+
+        /**
+         * Capability-gated clarification batch `{conversation_id, question_batch_id, questions}` (#822,
+         * pyrycode § Question (v2)) — claude's whole `AskUserQuestion` call in one frame.
+         */
+        const val TYPE_QUESTION_SHOWN = "question_shown"
+
+        /** Capability-gated retirement of a question batch `{question_batch_id, outcome, source}` (#822). */
+        const val TYPE_QUESTION_DISMISSED = "question_dismissed"
 
         /**
          * Capability-gated outbound modal control: the phone's answer

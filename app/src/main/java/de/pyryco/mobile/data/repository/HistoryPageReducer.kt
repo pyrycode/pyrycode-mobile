@@ -93,8 +93,8 @@ internal fun List<ThreadItem>.withMessage(message: Message): List<ThreadItem> {
  * [Role.Tool] row with this id already exists (possibly already completed by an earlier `tool_result`),
  * it is left untouched — a duplicate never adds a second row nor resets a finished one to `Running`.
  * The `&& role == Role.Tool` match namespaces tool rows so a `toolUseId` can never clobber a real
- * `message_id` row. [timestamp] is the row clock (see this file's header); the tool name / input are
- * carried **verbatim** — never trimmed, parsed, or logged.
+ * `message_id` row. [timestamp] is the row clock (see this file's header); the tool name / input,
+ * the input fields and the parent id (#810) are carried **verbatim** — never trimmed, parsed, or logged.
  */
 internal fun List<ThreadItem>.withToolUse(
     event: LiveSessionEvent.ToolUse,
@@ -118,6 +118,8 @@ internal fun List<ThreadItem>.withToolUse(
                             input = event.inputSummary,
                             output = "",
                             status = ToolCallStatus.Running,
+                            inputFields = event.input,
+                            parentToolUseId = event.parentToolUseId,
                         ),
                 ),
             )
@@ -130,6 +132,10 @@ internal fun List<ThreadItem>.withToolUse(
  * **If no matching row exists, no-op:** a result with no prior use — including one arriving before its
  * use — is dropped, leaving no orphan half-row. A duplicate re-applies the same in-place update
  * (idempotent / last-write-wins, one row). The result summary is carried **verbatim**.
+ *
+ * The result's `parent_tool_use_id` (#810) replaces the row's when non-empty and leaves the use's in
+ * place when empty. A conforming daemon sends the same value on both frames; this only matters across a
+ * mid-stream daemon change where one frame lacks the key, and then it never un-nests a row.
  */
 internal fun List<ThreadItem>.withToolResult(event: LiveSessionEvent.ToolResult): List<ThreadItem> {
     val index = indexOfMessage(event.toolUseId, Role.Tool)
@@ -138,10 +144,13 @@ internal fun List<ThreadItem>.withToolResult(event: LiveSessionEvent.ToolResult)
     val updated =
         row.copy(
             toolCall =
-                row.toolCall?.copy(
-                    output = event.resultSummary,
-                    status = if (event.isError) ToolCallStatus.Failed else ToolCallStatus.Done,
-                ),
+                row.toolCall?.let { call ->
+                    call.copy(
+                        output = event.resultSummary,
+                        status = if (event.isError) ToolCallStatus.Failed else ToolCallStatus.Done,
+                        parentToolUseId = event.parentToolUseId.ifEmpty { call.parentToolUseId },
+                    )
+                },
         )
     return toMutableList().apply { this[index] = ThreadItem.MessageItem(updated) }
 }

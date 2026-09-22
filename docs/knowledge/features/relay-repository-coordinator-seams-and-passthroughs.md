@@ -178,6 +178,56 @@ val currentModal: StateFlow<ModalUiState> =
   `ThreadViewModel`. Every retained coordinator keeps folding its own modals even
   while another host is selected; overlapping modal ids never share an accumulator.
 
+## Question-batch projection (#822)
+
+The held [`QuestionBatch`](remote-conversation-repository-live-stream-and-modals.md#questionbatches--the-v2-clarification-batch-decodefold-seam-822)
+list lives on the **concrete** `RemoteConversationRepository.questionBatches` — a `StateFlow`, not an
+event stream, connection-scoped and **not** on the interface — the same reachability posture as
+`modalEvents`. The coordinator switches to it off the same single `activeConnection` source, byte-for-byte
+the `liveSessionEvents`/`modalEvents` `flatMapLatest` shape, but **stateIn's the switched flow directly**
+instead of folding a `scan` on top — there is nothing to accumulate, because the fold already happened at
+the repository seam:
+
+```kotlin
+@OptIn(ExperimentalCoroutinesApi::class)
+val questionBatches: StateFlow<List<QuestionBatch>> =
+    activeConnection
+        .flatMapLatest { conn -> conn?.repo?.questionBatches ?: flowOf(emptyList()) }
+        .stateIn(scope, SharingStarted.Eagerly, emptyList())
+
+fun observeQuestionBatch(conversationId: String): Flow<QuestionBatch?> =
+    questionBatches.map { it.batchFor(conversationId) }.distinctUntilChanged()
+```
+
+- **Started `Eagerly` for the same reason as `currentModal`** (#492): a `question_shown` that arrives
+  before any thread screen subscribes must not be lost. Unlike `currentModal`'s `scan`, there is no
+  seed-re-emission hazard here to make `Eagerly` load-bearing in that specific way — `stateIn` on a
+  switched `StateFlow` just republishes the source's current value on each subscription — but `Eagerly`
+  is still required so the projection itself exists (and starts collecting the active connection's
+  batches) before any consumer subscribes.
+- **Resets on reconnect — the deliberate inverse of `currentModal`'s retain (#492).** `flatMapLatest`
+  switches to the new connection's `questionBatches`, and that `StateFlow` starts at `emptyList()` because
+  each connection builds a **fresh** `RemoteConversationRepository` (§ How it works, above). So a batch
+  held from the old connection is gone before any frame from the new connection folds — no manual clear
+  needed, it falls out of "fresh repository per connection" structurally. This is correct here for the
+  opposite reason `currentModal` retains: the protocol's § Reconnect / Backfill semantics **resets**
+  question state on reconnect by contract and rebuilds it from the daemon's connect-time reconcile, so a
+  batch resolved while the phone was disconnected is simply absent from that reconcile and must not come
+  back. `currentModal` retains because modal resolution has no equivalent reconcile-on-reconnect signal —
+  see [Current-modal state § Connection teardown = RETAIN, not reset](current-modal-state.md#lifecycle-errors-edge-cases).
+  **Do not copy the retain rule here** if this seam is ever refactored to look more like `currentModal`'s;
+  the two are opposite by design, not by oversight.
+- **`observeQuestionBatch` is the per-conversation read, and the only one #661's panel should use.**
+  `questionBatches` is the whole host's set across every conversation; reading it directly and rendering
+  the first match, or filtering client-side without going through `batchFor`, risks showing one
+  conversation's clarification question inside another conversation's thread. `batchFor` (`data/model/QuestionBatch.kt`)
+  picks the first held batch for the given id — claude blocks on one `AskUserQuestion` at a time, so two
+  outstanding batches for the same conversation is out of contract, and any deterministic tie-break is
+  fine for that case.
+- **No outbound half here.** Sending an answer or refusal is [#825](https://github.com/pyrycode/pyrycode-mobile/issues/825),
+  not this ticket — this seam is read-only, the mirror of `modalEvents` before `answerModal`/`cancelModal`
+  existed.
+
 ## Outbound modal-send passthrough (#451)
 
 The **outbound mirror** of the inbound `modalEvents` seam: where `modalEvents` surfaces decoded modals *up*

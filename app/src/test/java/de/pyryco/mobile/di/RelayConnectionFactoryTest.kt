@@ -946,6 +946,9 @@ class RelayConnectionFactoryTest {
                         single { registry }
                         single { f.store } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
                         single { prefs }
+                        // The thread destination now wraps its repository in the thread cache (#797), whose
+                        // real binding needs a Context this container does not have.
+                        single<ConversationCache> { InertConversationCache }
                     },
                 )
             val vms = mutableListOf<androidx.lifecycle.ViewModel>()
@@ -1208,6 +1211,9 @@ class RelayConnectionFactoryTest {
                         single { registry }
                         single { f.store } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
                         single { prefs }
+                        // The thread destination now wraps its repository in the thread cache (#797), whose
+                        // real binding needs a Context this container does not have.
+                        single<ConversationCache> { InertConversationCache }
                     },
                 )
             val vms = mutableListOf<ThreadViewModel>()
@@ -1293,6 +1299,9 @@ class RelayConnectionFactoryTest {
                         single { registry }
                         single { f.store } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
                         single { prefs }
+                        // The thread destination now wraps its repository in the thread cache (#797), whose
+                        // real binding needs a Context this container does not have.
+                        single<ConversationCache> { InertConversationCache }
                     },
                 )
             var vm: ThreadViewModel? = null

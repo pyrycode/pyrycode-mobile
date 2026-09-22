@@ -14,7 +14,9 @@ The coordinator derives [two-part connection status](relay-repository-coordinato
 switches [live-session events](relay-repository-coordinator-seams-and-passthroughs.md#live-session-event-seam-406) across reconnects, and
 owns [FCM push-token re-registration](#connect-time-fcm-push-token-re-registration-365)
 once per connection. Explicit [diagnostic archive requests](relay-debug-bundle-transfer.md)
-also enter through this owner so admission and teardown share a connection lifetime.
+also enter through this owner so admission and teardown share a connection lifetime. It also
+switches the active connection's [held clarification-question batches](relay-repository-coordinator-seams-and-passthroughs.md#question-batch-projection-822)
+— unlike `currentModal`, that state resets on every reconnect instead of surviving it.
 
 Package: `de.pyryco.mobile.data.repository` (`RelayRepositoryCoordinator` + the `ManagedSessionPump`
 interface it drives, the latter appended to `SessionPump.kt`), co-located with the
@@ -67,6 +69,8 @@ class RelayRepositoryCoordinator(
     val connectionStatus: StateFlow<ConnectionStatus>         // (#392) combined {relay, pyrycode} two-part status
     val liveSessionEvents: Flow<LiveSessionEvent>             // (#406) reconnection-surviving #385 live-event seam
     val currentModal: StateFlow<ModalUiState>                // (#492) the bundle-scoped "which modal is open" projection, folded here (Eagerly) off a now-PRIVATE #437 modal-event seam
+    val questionBatches: StateFlow<List<QuestionBatch>>       // (#822) every clarification batch outstanding on this host, reset on reconnect
+    fun observeQuestionBatch(conversationId: String): Flow<QuestionBatch?>  // (#822) the batch outstanding for one conversation, or null
     suspend fun answerModal(modalId: String, optionId: String)  // (#451) outbound modal_answer passthrough — the inbound-modal mirror, but a call not a flow
     suspend fun cancelModal(modalId: String)                    // (#451) outbound modal_cancel passthrough
     suspend fun interrupt(conversationId: String)                // explicit conversation target; fire-and-forget
@@ -323,6 +327,13 @@ registers once with the live `device_name` (AC #1, exact-payload assertion), a n
 the connection (AC #4), and a pre-`Open` `Closed` registers nothing (boundary). The `ack`/`error`
 correlation mirrors `RemoteConversationRepositoryTest`'s #359 shape.
 
+[#822](https://github.com/pyrycode/pyrycode-mobile/issues/822) added four question-batch cases to the same file: a batch held with no
+subscriber (the eager-fold precedent `currentModal` set in #492); `observeQuestionBatch` returning only
+its own conversation's batch even with an equal id held for another conversation; replacing the
+connection dropping the old batches before a re-sent one is held once under its original id; and two
+coordinators (hosts A and B) with equal conversation and batch ids showing only the host that actually
+received the frame. All four reuse the existing `FakeManagedPump` harness — no new fake.
+
 [#493](../codebase/493.md) added three reconnect-gating tests that **collect every `currentRepository`
 emission** across a **direct A→B** reconnect (no interposed `null`): with connection A `Open` and B's fresh
 pump left at `Handshaking`, B's repo must never appear (`reconnect_directAtoB_neverExposesRepoWhileNewPumpHandshaking`
@@ -353,7 +364,12 @@ The existing key-wipe / single-use-pump / no-carryover tests pass **unmodified**
   `activePumpFlow`, `activeRemoteRepo`, the plain `active` var) into the single `activeConnection`, closing
   the direct-A→B-reconnect race that re-exposed a pre-`Open` repo and
   [re-introduced #421](https://github.com/pyrycode/pyrycode-mobile/issues/421)
-  ("list never loads"). Every seam above now switches off that one source.
+  ("list never loads"). Every seam above now switches off that one source ·
+  [#822](https://github.com/pyrycode/pyrycode-mobile/issues/822) — the
+  [clarification-batch projection](relay-repository-coordinator-seams-and-passthroughs.md#question-batch-projection-822):
+  switches the concrete repository's [`questionBatches`](remote-conversation-repository-live-stream-and-modals.md#questionbatches--the-v2-clarification-batch-decodefold-seam-822)
+  the same way as `modalEvents`, but — unlike `currentModal` (#492) — resets to empty on every reconnect
+  instead of retaining across one, because the daemon's connect-time reconcile rebuilds it.
 - Two-part status: [Connection status](connection-status.md) (`ConnectionStatus` + `PyrycodeLinkStatus`,
   [#392](../codebase/392.md)) — derived/published here; relay leg from
   [`relayStatus`](relay-link-status.md) ([#391](../codebase/391.md)); consumed by the Settings status

@@ -5,9 +5,12 @@ import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -93,5 +96,28 @@ class ToolCallRowTest {
 
         composeTestRule.onNodeWithText("Output").assertIsDisplayed()
         composeTestRule.onNode(hasText("FAILURE", substring = true)).assertIsDisplayed()
+    }
+
+    /**
+     * Code-ish tool output takes the markdown code block's chrome but not its copy control: whether
+     * tool output is copyable is #658's decision, and `CodeBlock`'s control is opt-in for that reason.
+     */
+    @Test
+    fun code_ish_output_renders_the_code_block_without_a_copy_control() {
+        setContent(
+            ToolCall(
+                toolName = "Bash",
+                input = "ls",
+                output = "build.gradle.kts\nsettings.gradle.kts",
+                status = ToolCallStatus.Done,
+            ),
+        )
+        composeTestRule.onNode(hasClickAction()).performClick()
+
+        composeTestRule.onNodeWithText("build.gradle.kts\nsettings.gradle.kts").assertIsDisplayed()
+        val copyCode =
+            InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_thread_copy_code)
+        composeTestRule.onNodeWithContentDescription(copyCode).assertDoesNotExist()
+        composeTestRule.onNodeWithTag(CODE_BLOCK_HEADER_TAG).assertDoesNotExist()
     }
 }

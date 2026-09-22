@@ -28,8 +28,8 @@ fan-out. The five:
 |---|---|---|
 | `turn_state` | `conversation_id`, `state` | coarse turn lifecycle (`thinking`/`responding`/`idle`); **no `turn_id`** |
 | `assistant_delta` | `conversation_id`, `turn_id`, `seq`(int), `text` | incremental, coalesced assistant text |
-| `tool_use` | `conversation_id`, `turn_id`, `tool_use_id`, `name`, `input_summary` | a tool invocation |
-| `tool_result` | `conversation_id`, `turn_id`, `tool_use_id`, `is_error`(bool), `result_summary` | its result (matched to the call by `tool_use_id`) |
+| `tool_use` | `conversation_id`, `turn_id`, `tool_use_id`, `name`, `input_summary`, plus `parent_tool_use_id` / `input` (lenient-defaulted, #810 — see below) | a tool invocation |
+| `tool_result` | `conversation_id`, `turn_id`, `tool_use_id`, `is_error`(bool), `result_summary`, plus `parent_tool_use_id` (lenient-defaulted, #810) | its result (matched to the call by `tool_use_id`) |
 | `turn_end` | `conversation_id`, `turn_id`, `stop_reason` | end of a turn |
 
 Field shapes are the server SSOT (`pyrycode internal/protocol` interactive structs +
@@ -64,6 +64,16 @@ structural decode with a `SerializationException` rather than `null`-punning, so
 the one malformed envelope and keeps the stream alive. The DTOs stay `internal` to `data/network`
 (only `LiveSessionEvent` crosses the package boundary). The file carries multiple top-level types,
 so the [[ktlint-filename-rule-single-class]] does not constrain its name (cf. `MobileWireModels.kt`).
+
+`ToolUsePayloadDto.parentToolUseId` / `.input` and `ToolResultPayloadDto.parentToolUseId` (#810) are
+the deliberate exception to that strict-required posture: they default (`= ""` / `= null`) rather than
+failing decode when absent. The daemon always emits both keys, so an absent one means an older binary
+that meant "main thread" / "no fields" — decoding to the same values is truer to the wire contract than
+dropping the row. `input` is decoded as a raw `JsonElement` and narrowed by a private
+`toInputFields()`: anything but a JSON object yields no fields, and a non-string value inside an object
+is skipped rather than rewritten. See [Live tool-call § `tool_use.input` fields and
+`parent_tool_use_id`](live-tool-call.md#tool_use-input-fields-and-parent_tool_use_id-810) for the full
+posture and the cross-frame precedence rule when the two disagree.
 
 ### 2. Event family — `data/model/LiveSessionEvent.kt` (public, portable)
 
@@ -286,7 +296,9 @@ is **not** one of the five render envelopes and does **not** flow through the de
   a decoded `LiveSessionEvent` clears a stall for its conversation, folded into the same gated arm.
 - [Live tool-call](live-tool-call.md) ([#387](../codebase/387.md)) — the **`tool_use`/`tool_result`
   consumer**: correlates the pair into one status-carrying `Role.Tool` thread row, dispatched on the
-  same gated arm.
+  same gated arm. [#810](https://github.com/pyrycode/pyrycode-mobile/issues/810) added the two
+  lenient-defaulted fields on these DTOs (`input`, `parent_tool_use_id`) — see that doc's
+  [§ `tool_use.input` fields and `parent_tool_use_id`](live-tool-call.md#tool_use-input-fields-and-parent_tool_use_id-810).
 - [Relay repository coordinator](relay-repository-coordinator.md) — wires the capability supplier, and
   ([#406](../codebase/406.md)) surfaces the reconnection-surviving `liveSessionEvents` seam that brings
   these events to UI ViewModels.

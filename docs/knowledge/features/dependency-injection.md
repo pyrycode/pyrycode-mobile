@@ -58,7 +58,8 @@ fun hostConversationModule(
     useRelay: Boolean,
     decorateRepository: (ConversationRepository) -> ConversationRepository = { it },
 ) = module {
-    single { ThreadDestinationFactory(useRelay, get(), get(), get(), decorateRepository) }
+    // #797: the demo branch resolves no cache, same rule as HostConversationSource.demo below.
+    single { ThreadDestinationFactory(useRelay, get(), get(), get(), decorateRepository, cache = if (useRelay) get() else null) }
     single {
         // #796: the demo branch resolves no cache — there is nothing persisted for a fake host to restore.
         if (useRelay) HostConversationSource.relay(get(), cache = get())
@@ -66,6 +67,19 @@ fun hostConversationModule(
     } onClose { it?.dispose() }
 }
 ```
+
+`ThreadDestinationFactory.repository(serverId, bundle)` wraps its `StableConversationRepository`
+in [`CachingConversationRepository`](caching-conversation-repository.md) *before* calling
+`decorateRepository`, so an instrumentation decorator like `TappingConversationRepository` still
+observes the restored, merged thread rather than being layered around a cache it never sees:
+
+```kotlin
+decorateRepository(
+    if (cache != null && serverId.isNotEmpty()) CachingConversationRepository(stable, cache, serverId) else stable,
+)
+```
+
+A blank `serverId` (a malformed route) and the demo branch both skip the cache entirely.
 
 `app/build.gradle.kts` generates `BuildConfig.USE_RELAY_REPOSITORY` from the
 `useRelayRepository` Gradle property. It defaults to `true`, selecting the existing
@@ -374,7 +388,19 @@ passes `decorateRepository = ::TappingConversationRepository`, wrapping the
 factory's exact-host facades as well as the compatibility facade. Decorating only
 the global interface would miss thread reads after the route migration. The
 identity-default decorator adds no production subscription; instrumentation taps
-the existing `observeMessages` collection without another backfill request.
+the existing `observeMessages` collection without another backfill request. Since
+\#797, this composes with the [caching
+wrapper](caching-conversation-repository.md#wiring--under-decoraterepository-not-in-it)
+that now sits underneath the hook: the tap observes the restored, merged thread,
+not a pre-restore projection.
+
+Resolving the cache inside `ThreadDestinationFactory` (#797) means **any** container
+that builds a thread destination under `useRelay = true` now needs a
+`ConversationCache` binding, even one with no `androidContext()` to build a real
+`FileConversationCache` from. Three `RelayConnectionFactoryTest` containers picked
+up the same `single<ConversationCache> { InertConversationCache }` override their
+sibling container already carried for #796's `HostConversationSource` — before
+\#797 that override was only needed where the host-list source was built.
 
 ## Testing
 

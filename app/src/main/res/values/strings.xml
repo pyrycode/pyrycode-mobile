@@ -85,6 +85,7 @@
     <string name="thread_interrupt_label">Stop</string>
     <string name="cd_thread_interrupt">Stop the running turn</string>
     <string name="cd_thread_copy_message">Copy this message</string>
+    <string name="cd_thread_copy_code">Copy this code block</string>
     <string name="thread_queued_state_desc">Waiting to send</string>
     <string name="cd_thread_queued_drop">Drop this queued message</string>
     <string name="thread_unrecognized_label">Unrecognized message</string>
