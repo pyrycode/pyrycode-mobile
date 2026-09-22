@@ -77,3 +77,28 @@ The fallback strings are **Kotlin literals**, not `stringResource(R.string.untit
 ### Free rename re-emission
 
 When #141's rename success path eventually calls `repository.rename(conversationId, newName)`, the fake's `MutableStateFlow<State>` updates; `observeConversations(All)` re-emits a list with the renamed conversation; the `.map { … }` recomputes `displayName`; `stateIn` publishes the new `ThreadUiState`; `collectAsStateWithLifecycle()` triggers recomposition. The `state_displayName_reemitsOnRename` test pins this — #141's only TopAppBar-related work is wiring the dialog's success path to `repository.rename(...)`; the live-title-update is already wired. Out-of-scope item from #139's ticket body ("plumbing a live rename back into the title without re-navigating — covered when #141 lands") is actually **already free** post-#139.
+
+### `items` and `queuedMessages` stay two `ThreadUiState` fields — the join with the backlog is render-time, not VM-time (#782)
+
+`threadContent: Flow<ThreadContent>` (introduced by #461, widened by #778) combines
+`threadItems`, `repository.observeQueue(conversationId)` and `historyDemand` into one
+`ThreadContent(items, queued, historyTail)` carrier — the pre-combiner that keeps the outer
+five-arm `combine(...)` at its typed arity ceiling (`observeConversations`, `threadContent`,
+`pendingWorkspacePicker`, `transientDialogs`, `runConfigFlow`). `ThreadUiState` publishes `content.items`
+and `content.queued` as two **separate** fields, `items: List<ThreadItem>` and
+`queuedMessages: List<QueuedMessage>` — #782 does not touch this VM, this combine, or either field's
+shape.
+
+What #782 added lives entirely downstream, in [`ThreadScreen`](thread-screen-how-it-works-list-and-status-row.md):
+`foldQueuedRows(state.items, state.queuedMessages)` joins the two fields into the `ThreadRow` list the
+screen actually renders. The join is deliberately **not** a third VM-owned projection — `queue_state` is
+daemon state (server SSOT pyrycode#720), not part of the `ThreadFold` turn-stream reducer that produces
+`threadItems`, so folding it in here would blur a line the architecture keeps on purpose: the VM surfaces
+two independent, still-separately-observable signals, and only the view is allowed to know that one of
+them sometimes annotates the other. It is also why a replacing `queue_state` snapshot needs no
+reconciliation logic anywhere in this file — `content.queued` is replaced wholesale by the next
+`observeQueue` emission exactly as it always was, and the screen's `remember`-cached fold re-derives every
+row from whatever `items` / `queuedMessages` pair is current. See
+[Queued backlog rendering § The render-time join](queued-backlog-section.md#the-render-time-join-782) for
+the fold's five correlation rules and [the list section](thread-screen-how-it-works-list-and-status-row.md)
+for where it is called.
