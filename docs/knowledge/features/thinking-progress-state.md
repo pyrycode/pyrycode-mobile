@@ -163,7 +163,7 @@ active) belongs to the rendering sibling, exactly as [Compacting indicator](comp
 ## Related
 
 - [Remote conversation repository](remote-conversation-repository.md) — hosts the
-  `thinkingProgressByConversation` projection, the demux arm, and the decode.
+  demux arm; `ThinkingProgressProjection` holds the `thinkingProgressByConversation` state, the decode and the read.
 - [Compacting state](compacting-state.md) (#596) — the closest sibling in shape (no counter on the wire
   there, unlike this one) but with a real falling edge, unlike this one; both share the capability gate
   and malformed-drop idiom.
