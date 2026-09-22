@@ -35,7 +35,11 @@ Split on 2026-09-05 into four documents, listed in § Map above: [ViewModel stat
 viewModel { get<ThreadDestinationFactory>().thread(get(), get()) }
 ```
 
-The factory receives the entry's `SavedStateHandle` and shared `AppPreferences`.
+The factory receives the entry's `SavedStateHandle` and the app-scoped
+`ComposerDraftStore` ([#789](../codebase/789.md)). It no longer receives
+`AppPreferences` — [#807](../codebase/807.md) removed the thread's last read of it
+(`defaultModel` / `defaultEffort`), so no thread-destination state reads a device
+preference any more; see [thread-status-row.md](thread-status-row.md#sourcing).
 It reads the exact `serverId` and binds a `StableConversationRepository` to that
 retained bundle's coordinator stream; `ThreadViewModel` continues to read the
 host-local `conversationId`. The bundle also supplies connection state, live
