@@ -1,5 +1,6 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -7,6 +8,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -70,7 +72,6 @@ import de.pyryco.mobile.ui.conversations.components.ChannelInfoUiModel
 import de.pyryco.mobile.ui.conversations.components.CompactingIndicator
 import de.pyryco.mobile.ui.conversations.components.ConnectionBanner
 import de.pyryco.mobile.ui.conversations.components.EmptyThreadState
-import de.pyryco.mobile.ui.conversations.components.InterruptAffordance
 import de.pyryco.mobile.ui.conversations.components.MessageBubble
 import de.pyryco.mobile.ui.conversations.components.QueuedBacklog
 import de.pyryco.mobile.ui.conversations.components.RenameDialog
@@ -92,6 +93,19 @@ import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 
 private const val ABOVE_DELIMITER_ALPHA = 0.55f
+
+// Figma 16:8's `Input area` (533:1957) and its offsets inside the 412dp reference frame: a 20dp
+// content gutter (372dp of content), 8dp between the area's three bands, 12dp of air above it where
+// the message area ends, and 16dp below it at the frame's foot.
+private val ComposerGutter = 20.dp
+private val ComposerSectionGap = 8.dp
+private val ComposerTopGap = 12.dp
+private val ComposerBottomGap = 16.dp
+
+// The three status indicators each carry their own 16dp horizontal padding, sized for the full-bleed
+// foot-of-list mount they had until #643. Inset them by the remainder so their content lands on the
+// same 20dp gutter as the input field and the footer, with their own files untouched.
+private val ComposerStatusGutter = ComposerGutter - 16.dp
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -184,14 +198,41 @@ fun ThreadScreen(
                 mutationsSupported = state.mutationsSupported,
             )
         },
+        // Figma 16:8's `Input area` (533:1957): a gap-8 column of the status area, the input field and
+        // the model/effort footer, opening 12dp below the message area and closing 16dp above the
+        // frame's foot. It owns the composer's surface and the IME lift, so the whole input area rises
+        // above the keyboard as one unit while the header and the list stay put — and, sitting in the
+        // bottomBar slot over an opaque surface, it leaves the message list the only scrolling region.
         bottomBar = {
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surface)
+                        .imePadding()
+                        .padding(top = ComposerTopGap, bottom = ComposerBottomGap),
+                verticalArrangement = Arrangement.spacedBy(ComposerSectionGap),
+            ) {
+                ThreadStatusArea(
+                    apiRetry = apiRetry,
+                    isCompacting = isCompacting,
+                    isThinking = isThinking,
+                )
+                ThreadInputBar(
+                    onSend = onSendMessage,
+                    modifier = Modifier.padding(horizontal = ComposerGutter),
+                    isBusy = isBusy,
+                    onInterrupt = onInterrupt,
+                )
+                // The design puts the model/effort line in the footer, below the input field, not above
+                // it. Its own 16dp horizontal padding reproduces the footer frame's further `px-16`
+                // inside the 20dp content gutter applied here.
                 ThreadStatusRow(
                     model = state.selectedModel.label(),
                     effort = state.selectedEffort.label(),
                     onExpandClick = { sheetVisible = true },
+                    modifier = Modifier.padding(horizontal = ComposerGutter),
                 )
-                ThreadInputBar(onSend = onSendMessage)
             }
         },
     ) { inner ->
@@ -312,34 +353,13 @@ fun ThreadScreen(
             }
             // Content continuation below the thread: the ordered queued-message backlog (#461). Sits
             // directly under the list (it extends the user's side of the conversation) and above the
-            // foot-most ThinkingIndicator. A separate wrap-content section, not a LazyColumn row, so the
+            // composer. A separate wrap-content section, not a LazyColumn row, so the
             // list's keying / alpha-dimming / auto-scroll logic stays untouched.
             QueuedBacklog(
                 queued = state.queuedMessages,
                 onDrop = onDropQueued,
                 modifier = Modifier.fillMaxWidth(),
             )
-            // One status slot; the retry status wins whenever it is active (#594), then compaction (#597).
-            // Both signals are conversation-level and outlive the thinking phase, so each must show
-            // regardless of what `turn_state` says — and no two may ever stack. Single-sourcing the mutual
-            // exclusion here, in the screen, is deliberate: `isThinking` stays defined as the `turn_state`
-            // phase (other tests assert it directly), so suppressing it at its source would make the VM's
-            // contract lie. api-retry keeps the top arm because it is the "something is going wrong" signal
-            // while compaction is benign progress, so the benign affordance must never mask the alarming
-            // one; the two overlapping has never been observed. InterruptAffordance below is untouched —
-            // an in-flight turn is still interruptible while retrying or compacting.
-            when {
-                apiRetry != ApiRetryStatus.NotRetrying ->
-                    ApiRetryIndicator(status = apiRetry, modifier = Modifier.fillMaxWidth())
-                isCompacting ->
-                    CompactingIndicator(isCompacting = true, modifier = Modifier.fillMaxWidth())
-                else ->
-                    ThinkingIndicator(isThinking = isThinking, modifier = Modifier.fillMaxWidth())
-            }
-            // The interrupt affordance (#459): shown across the whole in-flight turn (thinking OR
-            // responding), so it sits at the very foot of the list, below the thinking spinner. Interim
-            // placement — design-owed, same status as ThinkingIndicator until the Figma frame draws it.
-            InterruptAffordance(isBusy = isBusy, onInterrupt = onInterrupt, modifier = Modifier.fillMaxWidth())
         }
     }
     WorkspacePicker(
@@ -427,6 +447,37 @@ fun ThreadScreen(
             }
         }
         ModalUiState.Hidden -> Unit
+    }
+}
+
+/**
+ * Figma `16:8`'s `Status area` (`111:3525`) — the composer's top band, carrying whichever of the three
+ * conversation-level waiting signals is live (#643 moved this block here from the foot of the content
+ * `Column`; the arms, their flags and their precedence are unchanged).
+ *
+ * One status slot; the retry status wins whenever it is active (#594), then compaction (#597). Both
+ * signals are conversation-level and outlive the thinking phase, so each must show regardless of what
+ * `turn_state` says — and no two may ever stack. Single-sourcing the mutual exclusion here, in the
+ * screen, is deliberate: `isThinking` stays defined as the `turn_state` phase (other tests assert it
+ * directly), so suppressing it at its source would make the VM's contract lie. api-retry keeps the top
+ * arm because it is the "something is going wrong" signal while compaction is benign progress, so the
+ * benign affordance must never mask the alarming one; the two overlapping has never been observed.
+ *
+ * The design's trailing contextual-action slot stays empty until #675 fills it, so nothing inert is
+ * emitted beside the signal. When no signal is live every arm returns without emitting, so the band
+ * contributes no node and the composer column's gap above the input field collapses with it.
+ */
+@Composable
+private fun ThreadStatusArea(
+    apiRetry: ApiRetryStatus,
+    isCompacting: Boolean,
+    isThinking: Boolean,
+) {
+    val slot = Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter)
+    when {
+        apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = slot)
+        isCompacting -> CompactingIndicator(isCompacting = true, modifier = slot)
+        else -> ThinkingIndicator(isThinking = isThinking, modifier = slot)
     }
 }
 

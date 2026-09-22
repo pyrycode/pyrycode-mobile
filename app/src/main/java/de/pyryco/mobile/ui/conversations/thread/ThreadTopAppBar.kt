@@ -2,23 +2,62 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
+import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 
-@OptIn(ExperimentalMaterial3Api::class)
+// Figma 16:8's `Top bar` (533:1948): a 24dp back glyph, the conversation title, a 24dp overflow glyph,
+// and the 1dp rule that closes the bar 16dp below them. The design positions bare glyphs; a real tap
+// target is 48dp and centres the glyph inside it, leaving `BarTouchSlack` on every side. Each of the
+// design's offsets is therefore taken less that slack, which puts the glyphs where the design draws
+// them — the same derivation `ChannelListTopBar` uses for the list's own bar in this design language.
+private val BarGlyphSize = 24.dp
+private val BarTouchSize = 48.dp
+private val BarTouchSlack = (BarTouchSize - BarGlyphSize) / 2
+private val BarGutter = 20.dp
+private val BarTopGap = 24.dp - BarTouchSlack
+private val BarRuleGap = 16.dp - BarTouchSlack
+private val BarBottomGap = 16.dp
+private const val BAR_RULE_ALPHA = 0.60f
+
+/**
+ * The thread's own bar (#643): back control, conversation title, overflow entry, and the rule that
+ * closes the bar — the Figma `16:8` `Top bar` frame, replacing the stock `TopAppBar` this screen drew
+ * until now, exactly as [de.pyryco.mobile.ui.conversations.list.ChannelListScreen]'s own bar replaced
+ * its own.
+ *
+ * No window insets of its own, unlike the `TopAppBar` it replaces: the outer `Scaffold` in
+ * `MainActivity` declares neither bar slot, so the `innerPadding` it hands `PyryNavHost` is its whole
+ * `contentWindowInsets` and every destination is already padded past the system bars. The stock bar's
+ * `TopAppBarDefaults.windowInsets` was applying a second status-bar inset on top of that.
+ *
+ * The title takes the slot between the two controls and truncates inside it, so an over-long display
+ * name can never overlap or cover either control. Its `clickable` + `Role.Button` semantics ride on
+ * the `Text` so the ripple tracks the visible text rather than the whole slot, and the overflow keeps
+ * its `Box` wrap — that is what anchors the menu beneath its own glyph rather than against the row.
+ */
 @Composable
 fun ThreadTopAppBar(
     title: String,
@@ -33,31 +72,43 @@ fun ThreadTopAppBar(
     modifier: Modifier = Modifier,
     mutationsSupported: Boolean = true,
 ) {
-    TopAppBar(
-        modifier = modifier,
-        navigationIcon = {
-            IconButton(onClick = onBack) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        start = BarGutter - BarTouchSlack,
+                        end = BarGutter - BarTouchSlack,
+                        top = BarTopGap,
+                    ),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack, modifier = Modifier.size(BarTouchSize)) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = stringResource(R.string.cd_back),
+                    modifier = Modifier.size(BarGlyphSize),
                 )
             }
-        },
-        title = {
             Text(
                 text = title,
                 modifier =
                     Modifier
+                        .weight(1f)
                         .clickable(onClick = onTitleClick)
                         .semantics { role = Role.Button },
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-        },
-        actions = {
             Box {
-                IconButton(onClick = onOverflowClick) {
+                IconButton(onClick = onOverflowClick, modifier = Modifier.size(BarTouchSize)) {
                     Icon(
                         imageVector = Icons.Filled.MoreVert,
                         contentDescription = stringResource(R.string.cd_more_actions),
+                        modifier = Modifier.size(BarGlyphSize),
                     )
                 }
                 ThreadOverflowMenu(
@@ -69,6 +120,56 @@ fun ThreadTopAppBar(
                     onShowLiteralScreen = onShowLiteralScreen,
                 )
             }
-        },
-    )
+        }
+        HorizontalDivider(
+            modifier =
+                Modifier.padding(
+                    start = BarGutter,
+                    end = BarGutter,
+                    top = BarRuleGap,
+                    bottom = BarBottomGap,
+                ),
+            // The design names `Schemes/inverse-primary` at 60%, which is the light-scheme primary tone
+            // and reads as a rule only against the dark reference frame. `outlineVariant` is M3's divider
+            // role and is what the shipped list bar maps this same rule to, so both bars stay identical
+            // under either scheme.
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = BAR_RULE_ALPHA),
+        )
+    }
+}
+
+@Preview(name = "ThreadTopAppBar — Light", showBackground = true, widthDp = 412)
+@Composable
+private fun ThreadTopAppBarLightPreview() {
+    PyrycodeMobileTheme(darkTheme = false) {
+        ThreadTopAppBar(
+            title = "pyrycode discord integration",
+            onBack = {},
+            onTitleClick = {},
+            onOverflowClick = {},
+            overflowExpanded = false,
+            onOverflowDismiss = {},
+            onOverflowEvent = {},
+            onShowLiteralScreen = {},
+            isPromoted = true,
+        )
+    }
+}
+
+@Preview(name = "ThreadTopAppBar — Dark, long title", showBackground = true, widthDp = 412)
+@Composable
+private fun ThreadTopAppBarDarkPreview() {
+    PyrycodeMobileTheme(darkTheme = true) {
+        ThreadTopAppBar(
+            title = "a channel display name long enough to overrun the title slot",
+            onBack = {},
+            onTitleClick = {},
+            onOverflowClick = {},
+            overflowExpanded = false,
+            onOverflowDismiss = {},
+            onOverflowEvent = {},
+            onShowLiteralScreen = {},
+            isPromoted = true,
+        )
+    }
 }

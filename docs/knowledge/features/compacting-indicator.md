@@ -48,8 +48,13 @@ Pure function of `isCompacting`: no `ViewModel` reference, no flow collection, n
 
 ## Placement in the thread
 
-[`ThreadScreen`](thread-screen.md) arbitrates the existing foot-of-list status slot
-(`ThreadScreen.kt:319-328`) as a **three-way `when`**, extended from #594's two-way `if`:
+**Moved in [#643](../codebase/643.md).** [`ThreadScreen`](thread-screen.md) arbitrates this status
+slot as a **three-way `when`** (extended from #594's two-way `if`) inside a private `ThreadStatusArea`
+composable (`ThreadScreen.kt:471`), the first child of the composer's `bottomBar` column — through
+\#642 the same `when` lived at the foot of the content `Column`, above the composer rather than inside
+it. The arms, flags and precedence are unchanged by the move; only the mount point and a 4dp-remainder
+horizontal inset (see [Thread screen — overlays and app bar](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643))
+are new:
 
 ```kotlin
 when {
@@ -75,9 +80,11 @@ when {
 
 Both `[isCompacting]` and `[apiRetry]` are **conversation-level, not turn-scoped** — each must show
 regardless of what `turn_state` says, including while `turn_state` is `idle`. `StallPromotionBanner`
-(`ThreadScreen.kt:203`, a **separate** affordance above the message list) and `InterruptAffordance`
-(`:327`, below the slot) are both untouched by this arm — a compacting conversation stays interruptible
-and a stall can never be hidden by an endless stream of `compacting` frames.
+(a **separate** affordance above the message list) and the interrupt control (the send button's stop
+variant in `ThreadInputBar` since [#643](../codebase/643.md), below this slot in the same composer
+column — see [Interrupt affordance](interrupt-affordance.md#placement--wiring)) are both untouched by
+this arm — a compacting conversation stays interruptible and a stall can never be hidden by an endless
+stream of `compacting` frames.
 
 ## Wiring
 
@@ -180,7 +187,8 @@ case).
 - Upstream signal: [Compacting state](compacting-state.md) — `ThreadViewModel.isCompacting` /
   `observeCompacting`, the `compacting` decode this component renders.
 - Host: [Thread screen](thread-screen.md) — threads `isCompacting` as another flat sibling parameter
-  and arbitrates the foot-of-list status slot across three affordances.
+  and arbitrates the status slot across three affordances (the composer's `ThreadStatusArea` since
+  [#643](../codebase/643.md); the foot of the content `Column` before it).
 - Idioms mirrored: [Thinking indicator](thinking-indicator.md) (the direct clone — early-return,
   sibling-`StateFlow`, defaulted-hoisted-parameter, merged-`semantics`, design-owed M3 default,
   light/dark previews), [API-retry indicator](api-retry-indicator.md) (the immediately-preceding render

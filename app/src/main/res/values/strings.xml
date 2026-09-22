@@ -63,9 +63,7 @@
     <string name="cd_restore_archive">Restore %1$s</string>
     <string name="thread_empty_state">Send a message to get started</string>
     <string name="thread_input_placeholder">Message</string>
-    <string name="cd_voice_input">Voice input</string>
     <string name="cd_send_message">Send message</string>
-    <string name="voice_input_toast">Voice input — Phase 6</string>
     <string name="cd_thread_status_expand">Expand status details</string>
     <string name="thread_thinking_label">Thinking…</string>
     <string name="cd_thread_thinking">Agent is thinking</string>
