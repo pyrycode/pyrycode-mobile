@@ -28,6 +28,7 @@ import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RelayTransportFactory
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.data.repository.CachingConversationRepository
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
@@ -176,7 +177,8 @@ fun hostConversationModule(
     decorateRepository: (ConversationRepository) -> ConversationRepository = { it },
 ): Module =
     module {
-        single { ThreadDestinationFactory(useRelay, get(), get(), get(), decorateRepository) }
+        // #797: the demo branch resolves no cache, as HostConversationSource's does below.
+        single { ThreadDestinationFactory(useRelay, get(), get(), get(), decorateRepository, cache = if (useRelay) get() else null) }
         single {
             // The demo branch resolves no cache: there is nothing persisted for a fake host to restore.
             if (useRelay) {
@@ -194,6 +196,7 @@ internal class ThreadDestinationFactory(
     private val fake: FakeConversationRepository,
     private val store: PairedServerCollectionStore,
     private val decorateRepository: (ConversationRepository) -> ConversationRepository,
+    private val cache: ConversationCache? = null,
 ) {
     val hostConnections get() = registry.hostConnections
 
@@ -221,7 +224,13 @@ internal class ThreadDestinationFactory(
             fake
         } else {
             val repositories = bundle?.coordinator?.currentRepository ?: MutableStateFlow(null)
-            decorateRepository(StableConversationRepository(repositories))
+            val stable = StableConversationRepository(repositories)
+            // #797: the thread cache sits under the hook, not in it, so an instrumentation decorator
+            // (E2eTestApplication's TappingConversationRepository) observes the restored thread too. A
+            // blank owner gets no cache, so no rows are ever filed under the empty id.
+            decorateRepository(
+                if (cache != null && serverId.isNotEmpty()) CachingConversationRepository(stable, cache, serverId) else stable,
+            )
         }
 
     fun thread(
