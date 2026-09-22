@@ -139,6 +139,7 @@ internal class PairCodeViewModel(
                 observe(server).first {
                     (it?.relay == RelayLinkStatus.Connected && it.pyrycode == PyrycodeLinkStatus.Connected) ||
                         it?.relay == RelayLinkStatus.DaemonAbsent ||
+                        it?.relay == RelayLinkStatus.PairingRejected ||
                         it?.relay == RelayLinkStatus.Offline
                 }
             }

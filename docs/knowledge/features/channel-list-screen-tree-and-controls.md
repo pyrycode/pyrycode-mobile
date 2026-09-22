@@ -163,8 +163,12 @@ methods, the ordering that keeps a failed store write from clearing the host's c
 
 `RelayLinkStatus.isDisconnected()` (`ConversationTreeRows.kt`, `internal`) classifies a host row's relay
 leg: an exhaustive `when` with no `else`, so a case added to `RelayLinkStatus` later has to be classified
-here rather than silently falling through. `Reconnecting`, `Offline` and `DaemonAbsent` are disconnected;
-`Idle` (a deliberate background close, not an error), `Connecting` and `Connected` are not.
+here rather than silently falling through. `Reconnecting`, `Offline`, `DaemonAbsent` and (#841)
+`PairingRejected` are disconnected; `Idle` (a deliberate background close, not an error), `Connecting`
+and `Connected` are not. `PairingRejected`'s reconnect control therefore reads and routes exactly like
+any other disconnected host's: `reconnectHost` → `retryHost` → the supervisor's `retry()`, which dials
+once and can be rejected again — the exhaustive `when` is what forced this case to be classified rather
+than silently falling through to "connected".
 
 `TreeHostRow` reads `connectionStatus.relay.isDisconnected()` and, when true, draws the design's
 disconnected treatment. `FoldableTreeRow` gained an optional `accent: Color? = null` (default `null` keeps

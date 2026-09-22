@@ -150,6 +150,24 @@ class PairCodeViewModelTest {
             }
         }
 
+    @Test fun rejectedPairingEndsTheConnectionWaitImmediately() =
+        runTest {
+            withVm {
+                vm.onEvent(PairCodeEvent.Code(code))
+                submit()
+                runCurrent()
+                assertEquals(PairCodePhase.Connecting, vm.state.value.phase)
+                status.value = ConnectionStatus(RelayLinkStatus.PairingRejected, PyrycodeLinkStatus.Down)
+                runCurrent()
+                assertEquals(PairCodePhase.Editing, vm.state.value.phase)
+                assertTrue(
+                    vm.state.value.error
+                        .orEmpty()
+                        .contains("Pairing saved"),
+                )
+            }
+        }
+
     private suspend fun TestScope.withVm(block: suspend Fixture.() -> Unit) {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val oldSink = RelayLog.sink
