@@ -2,15 +2,41 @@
 
 Split out of [Thread screen](thread-screen.md) on 2026-09-05 to keep that document under the 50000-byte size cap the docs guard enforces. Every section below moved here verbatim and kept its heading, so its anchors are unchanged. Part of [Thread screen](thread-screen.md); see that document for what it does, its edge cases and its links.
 
-### `LazyColumn(reverseLayout = true)` — established in #126, populated in #246, dimmed in #136, nested in a `Column` since #201
+### `LazyColumn(reverseLayout = true)` — established in #126, populated in #246, dimmed in #136, nested in a `Column` since #201, rows folded with the queued backlog since #782
 
-The body shape since [#246](../codebase/246.md) iterates `state.items.asReversed()` with stable composite keys and dispatches at the `ThreadItem` sealed-interface level only — `MessageItem` → `MessageBubble(message = item.message)`, `SessionBoundary` → `SessionBoundaryDelimiter(boundary = item)`. The screen does **not** re-dispatch by `Message.role`; [`MessageBubble`](message-bubble.md) owns that selection internally. No `verticalArrangement = Arrangement.Bottom` override — `reverseLayout = true` already pins the first item to the bottom edge.
+The body shape since [#246](../codebase/246.md) iterated `state.items.asReversed()` with stable composite keys and dispatched at the `ThreadItem` sealed-interface level. **Since [#782](../codebase/782.md) the list walks `ThreadRow`s, not `ThreadItem`s directly:** `val rows = remember(state.items, state.queuedMessages) { foldQueuedRows(state.items, state.queuedMessages) }` joins the thread's items against the daemon's queued backlog (see
+[Queued backlog rendering § The render-time join](queued-backlog-section.md#the-render-time-join-782)),
+and `itemsIndexed(items = rows.asReversed(), ...)` dispatches at the `ThreadRow` sealed-interface level
+instead: `ThreadRow.Delivered` re-enters the pre-#782 `when (item)` dispatch on its wrapped `ThreadItem`
+(`MessageItem` → `MessageBubble(message = item.message)`, `SessionBoundary` →
+`SessionBoundaryDelimiter(boundary = item)`, `UnrecognizedMessage` → `UnrecognizedMessageRow(item = item)`),
+`ThreadRow.Queued` → `QueuedMessageRow(text = row.text, onDrop = { onDropQueued(row.queuedMessageId) })`.
+The screen does **not** re-dispatch by `Message.role`; [`MessageBubble`](message-bubble.md) owns that
+selection internally. No `verticalArrangement = Arrangement.Bottom` override — `reverseLayout = true`
+already pins the first item to the bottom edge.
 
-**Source-list reversal is required.** `observeMessages` returns items chronologically ascending (index 0 = oldest), but `LazyColumn(reverseLayout = true)` draws the **first** item at the bottom. For "newest at the bottom" the screen reverses before passing — `state.items.asReversed()` is the Kotlin stdlib O(1) view (no allocation, no copy), and it's a `List<ThreadItem>` so it slots into `itemsIndexed(...)` directly. Keys are computed from the underlying items, so the view's reversed index is irrelevant for identity.
+**Source-list reversal is required.** `observeMessages` returns items chronologically ascending (index 0 = oldest), but `LazyColumn(reverseLayout = true)` draws the **first** item at the bottom. For "newest at the bottom" the screen reverses before passing — `rows.asReversed()` (pre-#782: `state.items.asReversed()`) is the Kotlin stdlib O(1) view (no allocation, no copy), and it's a `List<ThreadRow>` so it slots into `itemsIndexed(...)` directly. Keys are computed from the underlying rows, so the view's reversed index is irrelevant for identity.
 
-**Stable keys are per-subtype with a string namespace prefix.** `MessageItem` → `"msg:${item.message.id}"` (the canonical row identity assigned at message creation in `FakeConversationRepository.sendMessage`, surviving all state transitions). `SessionBoundary` → `"boundary:${item.previousSessionId}->${item.newSessionId}"` — each transition is unique by construction (a session can only become "previous" once per stream, and the fake's `buildThreadItems` only emits a boundary when `prior != null && prior != message.sessionId`). The `"msg:"` / `"boundary:"` prefixes namespace the two subtypes so no key collision is possible between a message id and a session id that share a string. The `itemsIndexed(...)` key lambda ignores the `Int` first arg — identity stays anchored to item fields, not position (anti-pattern to mix the two).
+**Stable keys are per-subtype with a string namespace prefix — four namespaces since #782.** The key
+function is `ThreadRow.listKey(chronologicalIndex)`, defined beside the fold in `ThreadRow.kt` rather
+than inline in the screen, so the fold and its key-uniqueness argument sit together. `ThreadRow.Delivered`
+re-derives the pre-#782 per-`ThreadItem` keys: `MessageItem` → `"msg:${message.id}"` (the canonical row
+identity assigned at message creation, surviving all state transitions), `SessionBoundary` →
+`"boundary:${previousSessionId}->${newSessionId}"` (each transition unique by construction), `UnrecognizedMessage`
+→ `"unrecognized:$id"`. `ThreadRow.Queued` adds a fourth namespace, and it is the one place the pre-#782
+one-to-one mapping between "row" and "key namespace" breaks on purpose: a **matched** `Queued` row (a
+send the daemon still reports parked) takes `echoId?.let { "msg:$it" }` — **the same key its `Delivered`
+form carries** — which is exactly what leaves the row in place, unrecreated, when the next snapshot
+delivers it (AC #2 of #782). An **unmatched** row (no echo this device minted) keys on its position,
+`"queued-row:$chronologicalIndex"`, deliberately **not** on the snapshot's `queued_msg_id`: that value is
+daemon-supplied and nothing on this client checks it for uniqueness, so a snapshot repeating one would
+mint two identical `LazyColumn` keys and crash the thread — a hazard the #782 security review caught and
+closed by keying on position instead, which is unique by construction. All four namespaces are distinct
+string literals, so no arm can collide with another. The `itemsIndexed(...)` key lambda ignores the `Int`
+first arg for the `Delivered` / matched-`Queued` arms — identity stays anchored to item fields — but the
+unmatched arm's key is deliberately position-derived, the one namespace where position *is* the identity.
 
-**Above-delimiter opacity (since [#136](../codebase/136.md)).** Each row is wrapped in `Box(Modifier.alpha(rowAlpha))` around the existing `when (item)` dispatch. `rowAlpha` is computed inline: a `chronologicalIndex` is reconstructed from the reversed-list index (`state.items.size - 1 - reversedIndex`), then compared strict-`<` against a `cutoffChronologicalIndex = remember(state.items) { mostRecentSessionBoundaryIndex(state.items) }`. Rows above the cutoff render at the file-private `ABOVE_DELIMITER_ALPHA = 0.55f` constant; rows at or after the cutoff (including the boundary itself) render at `1f`. `mostRecentSessionBoundaryIndex` is an `internal` top-level helper at the bottom of the file (`items.indexOfLast { it is ThreadItem.SessionBoundary }`); its `-1` return for the no-boundary case combines with the strict `<` to give AC3 ("zero boundaries → all rows full opacity") for free. The wrap inherits to every row variant — user/assistant `MessageBubble`, `ToolCallRow`, nested `SessionBoundaryDelimiter` — because `Modifier.alpha(...)` is a render-only `graphicsLayer` effect and none of the row composables hold internal opacity state. **Interaction is not gated** — `ToolCallRow`'s `clickable` `Surface` stays expandable above the cutoff (alpha runs in the draw layer, after pointer input). That matches the user-story intent ("still legible, can scroll up and re-read"); if a future ticket gates above-cutoff interaction, it adds the gate at the inner `Surface`'s `enabled =` (not by stripping the alpha modifier).
+**Above-delimiter opacity (since [#136](../codebase/136.md)).** Each row is wrapped in `Box(Modifier.alpha(rowAlpha))` around the existing `when (row)` dispatch. `rowAlpha` is computed inline: a `chronologicalIndex` is reconstructed from the reversed-list index (`rows.size - 1 - reversedIndex`, since #782 — pre-#782 this read `state.items.size`), then compared strict-`<` against a `cutoffChronologicalIndex = remember(state.items) { mostRecentSessionBoundaryIndex(state.items) }` — **this cutoff itself still reads `state.items`, unchanged by #782**, because `rows` shares a prefix with `items` index-for-index and only ever appends unmatched queued rows after them, so the two index spaces agree wherever a boundary can land. Rows above the cutoff render at the file-private `ABOVE_DELIMITER_ALPHA = 0.55f` constant; rows at or after the cutoff (including the boundary itself) render at `1f`. `mostRecentSessionBoundaryIndex` is an `internal` top-level helper at the bottom of the file (`items.indexOfLast { it is ThreadItem.SessionBoundary }`); its `-1` return for the no-boundary case combines with the strict `<` to give AC3 ("zero boundaries → all rows full opacity") for free. The wrap inherits to every row variant — user/assistant `MessageBubble`, `ToolCallRow`, nested `SessionBoundaryDelimiter`, and since #782 `QueuedMessageRow` — because `Modifier.alpha(...)` is a render-only `graphicsLayer` effect and none of the row composables hold internal opacity state. **Interaction is not gated** — `ToolCallRow`'s `clickable` `Surface` stays expandable above the cutoff (alpha runs in the draw layer, after pointer input). That matches the user-story intent ("still legible, can scroll up and re-read"); if a future ticket gates above-cutoff interaction, it adds the gate at the inner `Surface`'s `enabled =` (not by stripping the alpha modifier).
 
 Post-#201 the `LazyColumn` is nested inside a `Column` wrapper alongside the `ConnectionBanner` (see [Connection-banner wiring](thread-screen-how-it-works-overlays-and-app-bar.md#connection-banner-wiring) below). The list carries `Modifier.fillMaxWidth().weight(1f)` rather than `.fillMaxSize()` — inside a `Column`, `fillMaxSize` ignores `weight` semantics and over-claims vertical space, fighting with siblings. The `reverseLayout = true` semantics are unchanged: the list scrolls upward from the bottom of its weight-allocated region, with the banner pinned above it.
 
@@ -32,15 +58,18 @@ runs a `snapshotFlow` that computes `oldestVisible = listState.layoutInfo.visibl
 ?: -1`, tests `historyRowCount > 0 && oldestVisible >= historyRowCount - 1`, applies `distinctUntilChanged()`,
 and calls `onDemandOlderHistory()` on a `true` edge.
 
-**The row count is read through `rememberUpdatedState(state.items.size)`, never through
-`layoutInfo.totalItemsCount`.** The obvious shape — compare against the `LazyColumn`'s own item total —
-counts the oldest-end loading row itself (below), so a page answering `atStart = false` with zero entries
-self-drives with no further user input: ask → the indicator mounts → the total rises → the page settles →
-the indicator unmounts → the total falls → the predicate re-fires on the new edge. Sourcing the count from
-`state.items.size` through `rememberUpdatedState` (and the callback the same way) makes the indicator's own
-presence unable to move the predicate: at the oldest end the last visible index is `rowCount` with the
-indicator mounted and `rowCount - 1` without it, and `>=` holds either way, so `distinctUntilChanged` sees
-no edge and issues no second demand.
+**The row count is read through `rememberUpdatedState(rows.size)` (since #782 — pre-#782:
+`state.items.size`), never through `layoutInfo.totalItemsCount`.** The obvious shape — compare against the
+`LazyColumn`'s own item total — counts the oldest-end loading row itself (below), so a page answering
+`atStart = false` with zero entries self-drives with no further user input: ask → the indicator mounts →
+the total rises → the page settles → the indicator unmounts → the total falls → the predicate re-fires on
+the new edge. Sourcing the count from `rows.size` through `rememberUpdatedState` (and the callback the
+same way) makes the indicator's own presence unable to move the predicate: at the oldest end the last
+visible index is `rowCount` with the indicator mounted and `rowCount - 1` without it, and `>=` holds
+either way, so `distinctUntilChanged` sees no edge and issues no second demand. #782 moved this from
+`state.items.size` to `rows.size` for the identical reason it moved the alpha cutoff's chronological
+index: an unmatched queued row can sit at the newest end of `rows` without a corresponding entry in
+`items`, and the oldest-end predicate must count what the list actually renders.
 
 **This needed a 30-row regression test to catch, not a 3-row one.** The first version of the demand-loop
 test used three short rows and passed even against the deliberately-broken `totalItemsCount` predicate —
@@ -150,7 +179,11 @@ if (!state.hasMessages) {
 }
 ```
 
-[`EmptyThreadState`](empty-thread-state.md) renders the centered "Send a message to get started" prompt; the caller supplies the `weight(1f)` so the prompt fills exactly the space the list would have occupied. The 24.dp horizontal inset is intentionally 8dp wider than the chip's `horizontal = 16.dp` — a centered single line wants more breathing room than a left-aligned chip on the 360dp portrait minimum. Predicate is `!state.hasMessages`, not `state.items.isEmpty()` — symmetric with the chip's `!hasMessages` half (chip and prompt appear/disappear together) and correct for the `SessionBoundary`-only edge case where the user taps the chip → `changeWorkspace` emits a boundary before any message lands (the prompt stays visible until a real `MessageItem` arrives, instead of letting a lonely delimiter float above the input bar). The `remember(state.items) { mostRecentSessionBoundaryIndex(...) }` block from [#136](../codebase/136.md) lives **inside the `else` arm only** — its key is `emptyList()` in the empty arm, so computing the cutoff there is wasted work.
+[`EmptyThreadState`](empty-thread-state.md) renders the centered "Send a message to get started" prompt; the caller supplies the `weight(1f)` so the prompt fills exactly the space the list would have occupied. The 24.dp horizontal inset is intentionally 8dp wider than the chip's `horizontal = 16.dp` — a centered single line wants more breathing room than a left-aligned chip on the 360dp portrait minimum. Predicate is `!state.hasMessages`, not `state.items.isEmpty()` — symmetric with the chip's `!hasMessages` half (chip and prompt appear/disappear together) and correct for the `SessionBoundary`-only edge case where the user taps the chip → `changeWorkspace` emits a boundary before any message lands (the prompt stays visible until a real `MessageItem` arrives, instead of letting a lonely delimiter float above the input bar). **Since [#782](../codebase/782.md) the predicate is `!state.hasMessages && state.queuedMessages.isEmpty()`** — a backlog item this device minted no echo for renders as its own `ThreadRow.Queued` row with nothing else in `rows` to anchor it (see
+[Queued backlog rendering § Position in the list](queued-backlog-section.md#position-in-the-list)), so
+the empty-state prompt must yield to it; when a backlog item *is* matched, its echo is already a
+`MessageItem` and `hasMessages` alone already covers that case, so the added clause changes nothing for
+it. The `remember(state.items) { mostRecentSessionBoundaryIndex(...) }` block from [#136](../codebase/136.md) lives **inside the `else` arm only** — its key is `emptyList()` in the empty arm, so computing the cutoff there is wasted work.
 
 **The `#777` history-loading row is inside this `else` arm too, which is a known gap.** The oldest-end loading affordance (§ *The oldest-end history demand* above) is appended inside the `LazyColumn`, so a channel that reads as empty (`!state.hasMessages`) renders `EmptyThreadState` instead while the opening history ask is in flight — the empty-thread case the ticket set out to fix. Verifier-flagged SHOULD FIX, not addressed by #777; see § above for the detail.
 
