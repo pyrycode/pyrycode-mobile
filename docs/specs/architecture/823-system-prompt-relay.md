@@ -94,3 +94,23 @@ Pending for the documentation stage: fold the new `requestSystemPrompt` / `setSy
 ## Open questions
 
 - Explicit JSON `null` in a `system_prompt` reply: the protocol says "string or absent"; the ticket says a non-string value fails the read. Resolved as **fail**.
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] No findings — the reply crosses from untrusted to trusted at exactly one function, `toSystemPromptReading`, which yields the typed `SystemPromptReading` (the status a closed enum, the prompt a verbatim `String?`). The status is never taken as free text. The prompt is operator-authored and is held without trimming or normalising, as the ticket requires. Its size is bounded before decode by `OkHttpRelayTransport`'s 65519-byte inbound frame cap. The read deliberately does not reject values over 8192 bytes: `SystemPromptLimit.fits` is available to the editing state, and a write-back of such a value is refused client-side before any frame is sent. Rendering the text in Compose is OUT OF SCOPE here, because this ticket has no UI. #824, #666 and #667 own that and must render it as plain text only.
+- [Trust boundaries] No findings on cross-routing — the reply carries no `conversation_id`, and it completes only the `pendingRequests` entry whose request id it answers. A stale, duplicate or unsolicited `system_prompt` therefore has nowhere to land, and a reading cannot be attributed to another conversation. Another host's reply cannot arrive at all, because each connection has its own repository.
+- [Tokens] No findings — nothing here generates, stores or compares a secret. The conversation id is not a secret, but it is still kept out of every log and every authored message.
+- [Storage] No findings — the remote keeps no copy of the prompt (no cache and no projection field). The fake holds it in memory for demo mode only. Nothing persists to disk.
+- [Android surface] No findings — no intents, deep links, providers, push or WebView.
+- [Crypto] No findings — both verbs ride the existing Noise session through `sendAndAwaitReply`, and no primitive is touched.
+- [Network & I/O] OUT OF SCOPE — like every other one-shot, a read that is never answered on an `interactive` connection waits until teardown (`failAllPending`) or until the caller's own cancellation. Protocol-conformant daemons always answer. A client-side timeout is a caller policy for #824. The non-interactive case, where the daemon never answers by design, fails before any frame is sent, so it cannot hang.
+- [Logs / error messages] SHOULD FIX (implementation discipline, verifier to check) — `toSystemPromptReading` must decode by hand rather than through a kotlinx `decodeFromJsonElement` of a DTO whose field holds the prompt. A library decode failure message can quote the offending input, which would carry prompt text into an exception message. Every message this ticket authors must be a static literal naming at most the key: the `require` over-limit message, the non-interactive refusal and the decode failures. None may carry a value, a length or a conversation id. No `Log` call is added on any path. The one inherited message is `mapError`'s `conversation.not_found` IAE, which quotes the server's `message`. The protocol pins that message as fixed text that echoes no supplied byte.
+- [Concurrency] No findings — no new scope or job. The fake's unknown-conversation check and its write happen inside a single `MutableStateFlow.update`, so there is no check-then-act across a suspension.
+- [Threat model] Hostile daemon frame: a malformed reply fails only that read, and a malformed write ack fails before the upsert. Neither mutates state. Hostile relay: it is content-blind and can only drop or delay frames, which reduces to the teardown or cancellation path above. UI-side leakage: OUT OF SCOPE (no UI), and it belongs to #666 and #667.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`). This review was run after the first plan commit (5447517) because the label check came late. It was still completed and committed before any implementation code, and no design change resulted.
+**Date:** 2026-09-22
