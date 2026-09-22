@@ -1199,9 +1199,9 @@ class RemoteConversationRepository(
      * instant, #775) and a second row with it would collide on the list key, whereas this one does not
      * dedup because **dedup would destroy the signal** — how often this frame fires is the number that
      * tells someone to go fix something, so merging repeats hides it, and each row brings its own
-     * client-stamped id so repeats never collide. The refusal is the point, not an oversight; the daemon does no dedup on the
-     * wire either. A shared helper would have to carry both rationales in one KDoc, and a later change to
-     * one contract would silently change the other.
+     * client-stamped id so repeats never collide. The refusal is the point, not an oversight; the daemon
+     * does no dedup on the wire either. A shared helper would have to carry both rationales in one KDoc,
+     * and a later change to one contract would silently change the other.
      *
      * This cuts against the two nearest folds — [appendMessages] dedups by `message_id` and [applyToolUse]
      * is idempotent on a repeat id. A pure end-append is the one followed here.
