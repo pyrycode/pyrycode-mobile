@@ -54,7 +54,7 @@ internal class UsageLimitProjection(
      * envelope ahead of any parse and the daemon bounds both strings at construction — so a flooding
      * daemon costs one entry per distinct id rather than an unbounded append per frame, and the
      * connection scope returns it to zero. The posture [QueueProjection] and
-     * [RemoteConversationRepository.modelMenusByConversation] already ship; no eviction policy is built for a failure nobody has
+     * the repository's `modelMenusByConversation` already ship; no eviction policy is built for a failure nobody has
      * observed. In particular **the expiry is not an eviction**: an expired entry stays here and merely
      * stops being readable (see [observe]), which is what keeps this projection free of the
      * timer it would otherwise need.
@@ -110,7 +110,7 @@ internal class UsageLimitProjection(
      *
      * [distinctUntilChanged] suppresses only value-*identical* re-emissions, so a `rate_limited` for
      * **another** conversation does not re-emit this flow, while a genuinely changed reading is a
-     * different [UsageLimitReading] value and does reach the collector — the [observeApiRetry]
+     * different [UsageLimitReading] value and does reach the collector — the [ApiRetryProjection.observe]
      * property a membership `Set` could not provide. A `StateFlow` always has a current value, so
      * every collector (including a `flatMapLatest` re-subscription through the facade) receives the
      * current reading (`null` until a frame lands) on subscription; the one inbound consumer fans out

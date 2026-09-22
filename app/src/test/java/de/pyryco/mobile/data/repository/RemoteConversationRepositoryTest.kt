@@ -5130,12 +5130,19 @@ class RemoteConversationRepositoryTest {
 
     // AC #1 (fail-closed): without `interactive` negotiated, a well-formed `rate_limited` never
     // surfaces — a daemon ignoring the server-side fan-out gate cannot push one to a phone that did
-    // not negotiate the capability.
+    // not negotiate the capability. The clock is pinned before FUTURE_RESET: on the real clock the
+    // fixture's reading is already expired, so a `null` would pass with the gate removed.
     @Test
     fun usageLimit_capabilityGateClosed_blocksDecode() =
         runTest {
             val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { emptySet() })
+            val repo =
+                RemoteConversationRepository(
+                    pump,
+                    backgroundScope,
+                    negotiatedCapabilities = { emptySet() },
+                    now = { Instant.fromEpochSeconds(FIXED_NOW) },
+                )
             val readings = collectUsageLimit(repo, "c1")
             runCurrent()
 
@@ -5145,11 +5152,18 @@ class RemoteConversationRepositoryTest {
         }
 
     // AC #1 (fail-closed): a negotiated set carrying another token but NOT `interactive` still blocks.
+    // Clock pinned for the same reason as the closed-gate case.
     @Test
     fun usageLimit_capabilityGateOtherTokenOnly_blocksDecode() =
         runTest {
             val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("something_else") })
+            val repo =
+                RemoteConversationRepository(
+                    pump,
+                    backgroundScope,
+                    negotiatedCapabilities = { setOf("something_else") },
+                    now = { Instant.fromEpochSeconds(FIXED_NOW) },
+                )
             val readings = collectUsageLimit(repo, "c1")
             runCurrent()
 
@@ -5258,12 +5272,14 @@ class RemoteConversationRepositoryTest {
 
     // AC #3: an out-of-range `resets_at` is carried too. The year-40000 case is also the
     // Long-not-Int regression guard — it exceeds Int32, so an `Int` DTO field would fail the
-    // STRUCTURAL decode and drop the very frame this criterion requires be carried.
+    // STRUCTURAL decode and drop the very frame this criterion requires be carried. The clock starts
+    // before the negative value so the carry is observable; "dropped at decode" would read `null`.
     @Test
     fun usageLimit_outOfRangeResetsAt_isCarriedNotRejected() =
         runTest {
             val pump = FakeSessionPump()
-            val repo = interactiveRepo(pump)
+            var nowSeconds = -100L
+            val repo = interactiveRepo(pump) { Instant.fromEpochSeconds(nowSeconds) }
             val negative = collectUsageLimit(repo, "c1")
             val farFuture = collectUsageLimit(repo, "c2")
             runCurrent()
@@ -5271,12 +5287,28 @@ class RemoteConversationRepositoryTest {
             pump.push(rateLimitedEnvelope("c1", resetsAt = -42L, id = 1L))
             pump.push(rateLimitedEnvelope("c2", resetsAt = YEAR_40000_RESET, id = 2L))
             runCurrent()
-            assertEquals(
-                "a negative resets_at is a past instant, so it is carried AND already unreadable",
-                null,
-                negative.last(),
-            )
+            assertEquals("a negative resets_at is carried, not rejected", -42L, negative.last()?.resetsAt)
             assertEquals(YEAR_40000_RESET, farFuture.last()?.resetsAt)
+
+            nowSeconds = FIXED_NOW
+            val late = collectUsageLimit(repo, "c1")
+            runCurrent()
+            assertEquals("and, being a past instant, it is unreadable on the real timeline", listOf<UsageLimitReading?>(null), late)
+        }
+
+    // The DTO KDoc's claim: an out-of-contract `truncated_fields: []` decodes to an empty list rather
+    // than being punned to `null`, so the two stay distinguishable.
+    @Test
+    fun usageLimit_emptyTruncatedFields_staysEmptyNotNull() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = interactiveRepo(pump)
+            val readings = collectUsageLimit(repo, "c1")
+            runCurrent()
+
+            pump.push(rateLimitedEnvelope("c1", truncatedFields = emptyList()))
+            runCurrent()
+            assertEquals(emptyList<String>(), readings.last()?.truncatedFields)
         }
 
     // AC #4: a reading stops being readable once its `resets_at` has passed. Expiry is one comparison

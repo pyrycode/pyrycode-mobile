@@ -299,6 +299,31 @@ moving it, and one test-level defect was found and fixed.
    test asserting only the *final* value would have passed green while proving nothing about either
    edge.
 
+**2026-09-22 — merge onto #819's projection layout (merge commit `e3fbdf4`).** Main moved every status
+event out of `RemoteConversationRepository` into its own projection class (#819). This slice now has
+**five** production files, not four: the new `data/repository/UsageLimitProjection.kt` holds the
+`usageLimitsByConversation` state, `decodeRateLimited`, `isReadable` and the `observe` read, and takes
+the repository's `now` clock. `RemoteConversationRepository` keeps the defaulted `now` parameter, the
+`CAPABILITY_INTERACTIVE`-gated `TYPE_RATE_LIMITED` arm that calls `UsageLimitProjection.apply`, the
+`observeUsageLimit` override and the wire-type constant. Behaviour, contracts and every Security review
+enforcement point are unchanged; only their home moved. Five files is still inside the ≤ 5 boundary.
+
+**2026-09-22 — rework after verifier review (PR #813).** No production change beyond two KDoc links.
+
+1. **MUST FIX — the two capability-gate tests were vacuous.** `usageLimit_capabilityGateClosed_blocksDecode`
+   and `usageLimit_capabilityGateOtherTokenOnly_blocksDecode` built the repository on the default
+   `Clock.System::now`, against which the fixture's `FUTURE_RESET` is already past; with the gate removed
+   the reading was stored but hidden as expired, so `[null]` still held. Both now pin
+   `now = { Instant.fromEpochSeconds(FIXED_NOW) }`. Proven by mutation: with the `TYPE_RATE_LIMITED` arm's
+   gate replaced by `if (true)`, both fail (`tests="2" failures="2"`), and both pass with it restored.
+2. **NIT — negative `resets_at`.** `usageLimit_outOfRangeResetsAt_isCarriedNotRejected` now starts the
+   clock before `-42`, asserts the value is carried, then moves the clock and asserts a late subscriber
+   reads `null` — so "carried, then expired" is told apart from "dropped at decode".
+3. **NIT — `truncated_fields: []`.** New `usageLimit_emptyTruncatedFields_staysEmptyNotNull` asserts the
+   DTO KDoc's claim that an empty array stays `emptyList()` rather than becoming `null`.
+4. **NIT — KDoc links in `UsageLimitProjection`.** `[observeApiRetry]` → `[ApiRetryProjection.observe]`;
+   the link to the private `modelMenusByConversation` is now plain code text.
+
 ## Security review
 
 **Verdict:** PASS
