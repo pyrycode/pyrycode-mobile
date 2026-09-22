@@ -2232,6 +2232,171 @@ class ThreadViewModelTest {
             collector.cancel()
         }
 
+    // ---- #789: per-chat composer drafts ---------------------------------------------------------
+
+    @Test
+    fun onDraftChange_writesThisChatsPairAndNoOther() =
+        runTest {
+            val store = ComposerDraftStore()
+            val vm = makeVm(threadHandle("pyrybox", DRAFT_CONV), FakeConversationRepository(), draftStore = store)
+            advanceUntilIdle()
+
+            vm.onDraftChange("  half a thought\n")
+
+            // Exact text, and under this VM's own pair only.
+            assertEquals("  half a thought\n", store.draftFor("pyrybox", DRAFT_CONV))
+            assertEquals(mapOf("pyrybox" to mapOf(DRAFT_CONV to "  half a thought\n")), store.drafts.value)
+            assertEquals("  half a thought\n", vm.draft.value)
+        }
+
+    @Test
+    fun draft_seedsFromTheStore_soAReturnedToChatRestoresItsText() =
+        runTest {
+            // AC #1: navigating away destroys the destination and its ViewModel; returning builds a new
+            // one against the same app-scoped store, which is where the text was waiting.
+            val store = ComposerDraftStore()
+            val typing = makeVm(threadHandle("pyrybox", DRAFT_CONV), FakeConversationRepository(), draftStore = store)
+            advanceUntilIdle()
+            typing.onDraftChange("unsent")
+
+            val returned = makeVm(threadHandle("pyrybox", DRAFT_CONV), FakeConversationRepository(), draftStore = store)
+            advanceUntilIdle()
+
+            // Seeded at construction — before any emission — so the initial value and the first
+            // emission can never disagree.
+            assertEquals("unsent", returned.draft.value)
+        }
+
+    @Test
+    fun draft_isIndependentPerHost_forTheSameConversationId() =
+        runTest {
+            // AC #1: conversation ids are host-local, so the same id on two hosts is two chats. One
+            // store, two pairs, neither visible in the other.
+            val store = ComposerDraftStore()
+            val onPyrybox = makeVm(threadHandle("pyrybox", DRAFT_CONV), FakeConversationRepository(), draftStore = store)
+            val onLaptop = makeVm(threadHandle("laptop", DRAFT_CONV), FakeConversationRepository(), draftStore = store)
+            advanceUntilIdle()
+
+            onPyrybox.onDraftChange("for pyrybox")
+            onLaptop.onDraftChange("for laptop")
+            advanceUntilIdle()
+
+            assertEquals("for pyrybox", onPyrybox.draft.value)
+            assertEquals("for laptop", onLaptop.draft.value)
+        }
+
+    @Test
+    fun sendMessage_whenAccepted_clearsTheDraft() =
+        runTest {
+            // AC #2, positive half: "accepted" is simply "the suspend call returned".
+            val store = ComposerDraftStore()
+            val vm = makeVm(threadHandle("pyrybox", DRAFT_CONV), FakeConversationRepository(), draftStore = store)
+            advanceUntilIdle()
+            vm.onDraftChange("ship it")
+
+            vm.sendMessage("ship it")
+            advanceUntilIdle()
+
+            assertEquals("", vm.draft.value)
+            // Cleared, not blanked: the entry — and its now-empty host bucket — are gone.
+            assertTrue("an accepted send must remove the entry: ${store.drafts.value}", store.drafts.value.isEmpty())
+        }
+
+    @Test
+    fun sendMessage_whenRefused_leavesTheDraftToResend() =
+        runTest {
+            // AC #2, negative half — the defect this ticket fixes. The clear sits inside the guarded
+            // block after the repo call, so each of the three failure types launchGuardedRepoCall
+            // swallows jumps past it and the text stays put. Uncaught throws are captured because a
+            // throw escaping viewModelScope reaches the default handler, not runTest.
+            val uncaught = mutableListOf<Throwable>()
+            val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
+            try {
+                val failures =
+                    listOf<Throwable>(
+                        IllegalStateException("not connected"),
+                        RelayErrorException(code = "server.error", retryable = false, message = "no"),
+                        UnsupportedOperationException("not wired"),
+                    )
+                for (failure in failures) {
+                    val store = ComposerDraftStore()
+                    val vm =
+                        makeVm(
+                            threadHandle("pyrybox", DRAFT_CONV),
+                            ThrowingConversationRepository(failure),
+                            draftStore = store,
+                        )
+                    advanceUntilIdle()
+                    vm.onDraftChange("worth keeping")
+
+                    vm.sendMessage("worth keeping")
+                    advanceUntilIdle()
+
+                    assertEquals("refused by $failure must keep the draft", "worth keeping", vm.draft.value)
+                    assertEquals("worth keeping", store.draftFor("pyrybox", DRAFT_CONV))
+                }
+                assertTrue("a refused send must stay quiet, not crash: $uncaught", uncaught.isEmpty())
+            } finally {
+                Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+            }
+        }
+
+    @Test
+    fun sendMessage_whenTheDraftChangedInFlight_leavesTheNewTextAlone() =
+        runTest {
+            // The clear is guarded on the draft still equalling what was sent, so an accepted send
+            // cannot swallow text typed while it was in flight.
+            val store = ComposerDraftStore()
+            var vm: ThreadViewModel? = null
+            val repository =
+                TypingDuringSendRepository(
+                    whileSending = { vm?.onDraftChange("sent text and a second thought") },
+                )
+            vm = makeVm(threadHandle("pyrybox", DRAFT_CONV), repository, draftStore = store)
+            advanceUntilIdle()
+            vm.onDraftChange("sent text")
+
+            vm.sendMessage("sent text")
+            advanceUntilIdle()
+
+            assertEquals("sent text and a second thought", vm.draft.value)
+        }
+
+    @Test
+    fun sendMessage_blankText_neverTouchesTheStore() =
+        runTest {
+            // The blank early-return precedes the launch, so a whitespace-only draft — which no send can
+            // consume — is never cleared out from under the user.
+            val store = ComposerDraftStore()
+            val vm = makeVm(threadHandle("pyrybox", DRAFT_CONV), FakeConversationRepository(), draftStore = store)
+            advanceUntilIdle()
+            vm.onDraftChange("   ")
+
+            vm.sendMessage("")
+            vm.sendMessage("   \n\t ")
+            advanceUntilIdle()
+
+            assertEquals("   ", vm.draft.value)
+        }
+
+    @Test
+    fun newSession_leavesTheDraftUntouched() =
+        runTest {
+            // AC #3: resetting the session is a conversation-level action with no claim on the
+            // composer. Nothing in sendNewSession reads or writes the store — this pins that.
+            val store = ComposerDraftStore()
+            val vm = makeVm(threadHandle("pyrybox", DRAFT_CONV), FakeConversationRepository(), draftStore = store)
+            advanceUntilIdle()
+            vm.onDraftChange("survives the reset")
+
+            vm.onOverflowEvent(ThreadEvent.NewSession)
+            advanceUntilIdle()
+
+            assertEquals("survives the reset", vm.draft.value)
+            assertEquals("survives the reset", store.draftFor("pyrybox", DRAFT_CONV))
+        }
+
     @Test
     fun state_workspaceLabel_isScratch_whenCwdIsEmptyString() =
         runTest {
@@ -3259,18 +3424,58 @@ class ThreadViewModelTest {
         }
     }
 
+    /**
+     * A thread destination's handle (#789): both route arguments, as `Routes.hostArguments` supplies
+     * them. The ViewModel keys its draft on the pair, so a host-less handle would not exercise it.
+     */
+    private fun threadHandle(
+        serverId: String,
+        conversationId: String,
+    ): SavedStateHandle = SavedStateHandle(initialState = mapOf("serverId" to serverId, "conversationId" to conversationId))
+
+    /**
+     * Runs [whileSending] inside the suspend `sendMessage` call, before it returns (#789) — the user
+     * typing while their send is in flight. Reads delegate to a seeded fake so `state` still assembles.
+     */
+    private class TypingDuringSendRepository(
+        private val whileSending: () -> Unit,
+        private val delegate: FakeConversationRepository = FakeConversationRepository(),
+    ) : ConversationRepository by delegate {
+        override suspend fun sendMessage(
+            conversationId: String,
+            text: String,
+        ): Message {
+            whileSending()
+            return delegate.sendMessage(conversationId, text)
+        }
+    }
+
     private fun TestScope.makeVm(
         handle: SavedStateHandle,
         repository: ConversationRepository,
         source: ConnectionStateSource = FakeConnectionStateSource(),
         prefs: AppPreferences = AppPreferences(newDataStore()),
+        // #789: defaulted to a fresh store so every pre-existing case is unaffected; the draft cases
+        // pass their own to observe it.
+        draftStore: ComposerDraftStore = ComposerDraftStore(),
         liveSessionEvents: Flow<LiveSessionEvent> = emptyFlow(),
         currentModal: StateFlow<ModalUiState> = MutableStateFlow(ModalUiState.Hidden),
         answerModal: suspend (String, String) -> Unit = { _, _ -> },
         cancelModal: suspend (String) -> Unit = { _ -> },
         interrupt: suspend (String) -> Unit = { },
     ): ThreadViewModel =
-        ThreadViewModel(handle, repository, source, prefs, liveSessionEvents, currentModal, answerModal, cancelModal, interrupt)
+        ThreadViewModel(
+            handle,
+            repository,
+            source,
+            prefs,
+            draftStore,
+            liveSessionEvents,
+            currentModal,
+            answerModal,
+            cancelModal,
+            interrupt,
+        )
 
     /** A VM whose active conversation is [ACTIVE_CONV], wired to a controllable live-event source. */
     private fun TestScope.vmWithLiveEvents(events: Flow<LiveSessionEvent>): ThreadViewModel =
@@ -3691,5 +3896,8 @@ class ThreadViewModelTest {
 
     private companion object {
         const val ACTIVE_CONV = "thread-406-active"
+
+        /** #789: a conversation the seeded fake actually knows, so sends and resets reach it. */
+        const val DRAFT_CONV = "seed-channel-personal"
     }
 }

@@ -19,10 +19,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
@@ -51,30 +47,13 @@ private val ButtonGlyphSize = 28.dp
  * The surrounding surface, the 20dp content gutter and `Modifier.imePadding()` belong to that
  * composer column, not here: the whole input area lifts above the keyboard as one unit while the
  * header and the message list stay stationary. The design draws no rule above the input area.
+ *
+ * Stateless. A self-owning overload holding its own `rememberSaveable` text used to sit beside this one
+ * and was retired in #789: its state died with the thread destination, so a draft was lost on
+ * navigation and the next chat opened in that slot inherited whatever the composition held. The text
+ * now lives in [ComposerDraftStore], keyed per host and conversation, and reaches here through
+ * [ThreadScreen]'s `draft` / `onDraftChange`.
  */
-@Composable
-fun ThreadInputBar(
-    onSend: (String) -> Unit,
-    modifier: Modifier = Modifier,
-    isBusy: Boolean = false,
-    onInterrupt: () -> Unit = {},
-) {
-    var text by rememberSaveable { mutableStateOf("") }
-    ThreadInputBar(
-        text = text,
-        onTextChange = { text = it },
-        onSend = {
-            if (text.isNotBlank()) {
-                onSend(text)
-                text = ""
-            }
-        },
-        modifier = modifier,
-        isBusy = isBusy,
-        onInterrupt = onInterrupt,
-    )
-}
-
 @Composable
 fun ThreadInputBar(
     text: String,
