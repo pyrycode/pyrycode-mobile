@@ -2380,6 +2380,58 @@ class ThreadViewModelTest {
             assertEquals("   ", vm.draft.value)
         }
 
+    // ---- #790: drafts go with their host or conversation -----------------------------------------
+
+    @Test
+    fun deleteConfirm_whenAccepted_dropsOnlyThisChatsDraft() =
+        runTest {
+            // #790 AC #2, positive half, driven from the overflow menu's confirmed delete. The drop
+            // sits in the success continuation, so "accepted" is again "the suspend call returned".
+            val store = ComposerDraftStore()
+            store.setDraft("pyrybox", DRAFT_CONV, "unsent here")
+            store.setDraft("pyrybox", "other-chat", "unsent next door")
+            // Same conversation id on another host: two unrelated chats, ids being host-local.
+            store.setDraft("laptop", DRAFT_CONV, "unsent on the laptop")
+            val vm = makeVm(threadHandle("pyrybox", DRAFT_CONV), FakeConversationRepository(), draftStore = store)
+            advanceUntilIdle()
+
+            vm.onOverflowEvent(ThreadEvent.DeleteConfirm)
+            advanceUntilIdle()
+
+            assertEquals("", vm.draft.value)
+            // Cleared, not blanked — the entry is gone; this host's other chat and the other host's
+            // draft for the same id both survive.
+            assertEquals(
+                mapOf(
+                    "pyrybox" to mapOf("other-chat" to "unsent next door"),
+                    "laptop" to mapOf(DRAFT_CONV to "unsent on the laptop"),
+                ),
+                store.drafts.value,
+            )
+        }
+
+    @Test
+    fun deleteConfirm_whenRefused_leavesTheDraftAlone() =
+        runTest {
+            // #790 AC #2, negative half. The drop is inside the guarded block after repository.delete,
+            // so a failure jumps past it: a conversation that still exists keeps its unsent text.
+            val store = ComposerDraftStore()
+            val vm =
+                makeVm(
+                    threadHandle("pyrybox", DRAFT_CONV),
+                    ThrowingConversationRepository(IllegalStateException("not connected")),
+                    draftStore = store,
+                )
+            advanceUntilIdle()
+            vm.onDraftChange("worth keeping")
+
+            vm.onOverflowEvent(ThreadEvent.DeleteConfirm)
+            advanceUntilIdle()
+
+            assertEquals("worth keeping", vm.draft.value)
+            assertEquals("worth keeping", store.draftFor("pyrybox", DRAFT_CONV))
+        }
+
     @Test
     fun newSession_leavesTheDraftUntouched() =
         runTest {

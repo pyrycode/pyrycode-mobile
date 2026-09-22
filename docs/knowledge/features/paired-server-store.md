@@ -164,8 +164,9 @@ redact all fields, so printing a returned list is also redacted.
 Both store interfaces resolve one observable decorator in `appModule`:
 
 ```kotlin
-single { ObservablePairedServerStore(KeystorePairedServerStore(get())) } binds
-    arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
+single {
+    ObservablePairedServerStore(KeystorePairedServerStore(get()), get<ComposerDraftStore>()::clearHost)
+} binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
 ```
 
 `ObservablePairedServerStore` in `di/` delegates persistence and snapshot reads to
@@ -175,6 +176,29 @@ A successful no-op may still advance the revision. The registry compares the
 resulting records, so unchanged credentials and name-only edits retain connections.
 Use the shared DI store for app mutations: a separate raw store instance cannot
 notify this decorator's observers.
+
+**`remove` also runs a required host-removal hook, after the revision bump
+([#790](https://github.com/pyrycode/pyrycode-mobile/issues/790)).** The constructor
+takes a second, required `onHostRemoved: (String) -> Unit` parameter, called with the
+removed `serverId` once `delegate.remove` and the revision bump have both completed.
+This is the seam this store's own "app mutations go through the shared instance" rule
+exists to make unbypassable: "this host's pairing no longer exists" is a store-level
+fact, and the hook is where that fact fans out to other host-keyed app state, the same
+shape of consequence as the revision bump `RelayConnectionRegistry` reconciles into
+closing the removed id's connection bundle. The production binding is
+`ComposerDraftStore::clearHost` — see
+[Thread screen § Composer draft ownership](thread-screen.md#composer-draft-ownership)
+— dropping every composer draft held for that host, since a `serverId` is stable
+across a re-pair and would otherwise resurface text typed before the unpair. The
+parameter is required rather than defaulted, for the same reason `ThreadViewModel`'s
+`draftStore` is: a forgotten binding is the one failure that leaves every test green
+while production drops nothing; a caller with nothing to clean up passes `{}`
+explicitly. **The hook must not throw and must not block.** It runs after the removal
+has already succeeded, so a throw would surface at `HostEditorController.confirmUnpair`
+as a failed unpair on a removal that in fact succeeded, and a blocking call would stall
+the store on whatever dispatcher `delegate.remove` completed on. `save` and
+`setDisplayName` deliberately do not call it: re-pairing the same id and renaming a
+host both keep their drafts.
 
 `RelayConnectionRegistry` observes the initial revision and subsequent revisions,
 serializes `list()` reads and reconciles one bundle per exact server id. Saves and
@@ -236,7 +260,21 @@ for the channel list's own row.
 reconciliation, name-only and identical-record retention, latest-save
 selection and removal. Its failed-save fixture asserts that the revision and
 previous compatibility choice remain unchanged; persistence tests below cover
-the encrypted store's separate failure contract.
+the encrypted store's separate failure contract. It passes `{}` for the
+[host-removal hook](#wiring--usage) (#790) — no composer is in view — as do
+`ArchiveNavigationTest`, `SettingsNavigationTest` and `LiteralScreenNavigationTest`,
+the other three production-adjacent sites that construct
+`ObservablePairedServerStore` directly.
+
+The hook's own coverage lives with its caller and its production binding, not here:
+`HostChannelListViewModelTest.confirmingUnpairDropsThatHostsDraftsAndLeavesEveryOtherHostsAlone`
+wraps that file's fake `PairedServerCollectionStore` in a real
+`ObservablePairedServerStore` bound to a fixture-held `ComposerDraftStore`, and drives
+the full gesture (`openHostEditor` → `requestHostUnpair` → `confirmHostUnpair`) to
+assert a failed removal drops no draft, a successful one drops the removed host's
+whole bucket, a same-conversation-id draft on another host survives, and no draft
+text reaches a captured log line. See
+[Thread screen § Composer draft ownership](thread-screen.md#composer-draft-ownership).
 
 [`KeystorePairedServerStoreTest`](../../../app/src/androidTest/java/de/pyryco/mobile/data/crypto/KeystorePairedServerStoreTest.kt)
 uses real Android Keystore on a device/emulator. Its 17 tests cover byte-faithful
@@ -286,6 +324,9 @@ against the same DataStore before checking both records after reopening.
 - [Host editor](host-editor.md) — where the calling machine lives since
   [#751](../../specs/architecture/751-settings-host-edit-and-unpair.md) (`HostEditorController`, shared
   by `ChannelListViewModel` and `SettingsViewModel`, each with its own instance and scope)
+- [Draft eviction on unpair (#790)](../../specs/architecture/790-drop-drafts-on-host-or-conversation-removal.md) —
+  the `onHostRemoved` hook on `remove`; see [Wiring & usage](#wiring--usage) here and
+  [Thread screen § Composer draft ownership](thread-screen.md#composer-draft-ownership)
 - [ADR 0006 — Keystore wrap-at-rest](../decisions/0006-keystore-wrap-at-rest-device-static-key.md)
 - [Device static keystore](device-static-keystore.md): separate key custody and
   throw-on-decrypt-failure contract
