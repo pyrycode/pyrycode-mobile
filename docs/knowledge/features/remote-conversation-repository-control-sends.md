@@ -64,7 +64,7 @@ override suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: 
         ),
     )
     // resolved before the send (#781) — a successful drop replaces the snapshot this reads from
-    val echoId = queuedByConversation.value[conversationId].orEmpty()
+    val echoId = queueProjection.current(conversationId)
         .firstOrNull { it.id == queuedMessageId }?.messageId.orEmpty()
     sendAndAwaitReply(request)   // throws on server `error` / not-Open; the empty {} ack carries nothing → ignored
     removeOwnEcho(conversationId, echoId)

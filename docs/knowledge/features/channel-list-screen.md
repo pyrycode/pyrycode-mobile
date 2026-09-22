@@ -145,6 +145,14 @@ distinction from the tree's own blank at all — see the next section.
   snapshot yet) and an upstream failure, now that #738 retired the flat state's distinct `Loading` /
   `Error(message)` texts. No acceptance criterion named this collapse; it falls directly out of AC-4's
   instruction to retire the flat state along with its placeholders.
+- **A disconnected host still draws its previously loaded rows.** Since #796, `HostConversationSource`
+  seeds a newly created host entry from the on-disk [conversation cache](conversation-cache.md) when no
+  live list has arrived yet, so a saved host restarted or unreachable draws the channels and chats it
+  last loaded rather than an empty node beneath its row. The seed never writes `connectionStatus`, so
+  `TreeHostRow` keeps rendering that host's real disconnected status — this screen needed no change and
+  gained no second indicator; see
+  [dependency injection § Restore from the on-disk cache](dependency-injection.md#restore-from-the-on-disk-cache-796)
+  for the write/seed/race mechanism.
 - **Fold state is never pruned against an incoming snapshot.** A host or workspace that momentarily
   disappears during a reconnect comes back exactly as folded as the operator left it — see
   [ChannelListViewModel](channel-list-viewmodel.md) for the ViewModel-side rationale.

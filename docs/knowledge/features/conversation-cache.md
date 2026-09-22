@@ -10,10 +10,12 @@ Package: `de.pyryco.mobile.data.cache`. The portable contract is
 [`ConversationCache.kt`](../../../app/src/main/java/de/pyryco/mobile/data/cache/ConversationCache.kt);
 [`FileConversationCache.kt`](../../../app/src/main/java/de/pyryco/mobile/data/cache/FileConversationCache.kt)
 is the one app-private implementation, added in
-[#795](../../specs/architecture/795-app-private-conversation-cache.md). This slice ships the
-storage layer alone, with **no production consumer and no Koin binding yet** — #796 restores
-each host's list from it, #797 adds the thread-row family, #798 wires the removal operations
-to unpair and to permanent deletion.
+[#795](../../specs/architecture/795-app-private-conversation-cache.md). #795 shipped the storage
+layer alone; [#796](https://github.com/pyrycode/pyrycode-mobile/issues/796) made
+`HostConversationSource` its first production consumer and added the cache's one Koin binding —
+see [dependency injection § Restore from the on-disk cache](dependency-injection.md#restore-from-the-on-disk-cache-796)
+for how the source writes and seeds from it. #797 adds the thread-row family, #798 wires the
+removal operations to unpair and to permanent deletion.
 
 ## The contract
 
@@ -85,9 +87,11 @@ cache exactly as transferable as the credentials it belongs to. This is a strong
 local guarantee than an `<exclude>` added to a shared XML rule file, which a later edit to that
 file could silently widen back open.
 
-This requirement is not provable by this slice's own test suite, since it takes a bare `File`
-and ships no Koin binding. It is recorded here and in the class's KDoc so the wiring ticket
-(#796) cannot miss it, and is the one property that ticket's own tests must establish.
+This requirement was not provable by #795's own test suite, since it took a bare `File` and
+shipped no Koin binding. #796's `ConversationCacheBindingInstrumentedTest`
+(`app/src/androidTest/java/de/pyryco/mobile/di/`) establishes it: it resolves `ConversationCache`
+from the live Koin container, writes one host through it, and asserts the document lands under
+`Context.noBackupFilesDir` and that nothing is created under `Context.filesDir`.
 
 Taking a `File` rather than a `Context` is also what makes the whole contract — persistence
 included — provable in a plain JVM unit test on a `TemporaryFolder`, rather than the
@@ -175,12 +179,9 @@ every reader, and cleared by the next successful write or by `removeHost`.
   also ask the Keystore to unwrap it. What encryption would additionally buy is protection
   against offline disk imaging of a locked device, which is a device-wide FBE property, not
   this file's — out of scope unless the threat model changes.
-- **No Koin binding.** Nothing in the app resolves a `ConversationCache` yet; #796 adds the
-  binding together with the reader that needs it, and must bind the root to
-  `noBackupFilesDir` per § Root and storage scope.
-- **No production consumer.** `HostConversationSource` still holds a host's rows only while a
-  connection is live; wiring this cache into that path is #796 (list), #797 (thread rows) and
-  #798 (removal on unpair / delete).
+- **No thread-row restore yet.** #796 wired the host-list cache and its one Koin binding into
+  `HostConversationSource`; the thread-row family and thread restore are #797, and removal on
+  unpair / permanent deletion is #798.
 
 ## Testing
 
@@ -204,8 +205,13 @@ lesson. `RelayLog.sink`/`enabled` are captured and restored around each test, th
 `SettingsViewModelTest` uses, which is what makes the "no identifier reaches a log" assertion
 real rather than a convention.
 
-No Compose UI test and no emulator scenario: this slice has no operator-facing flow. #796 and
-\#797 carry the rung-3 coverage for what the cache makes visible.
+No Compose UI test and no emulator scenario in this slice — #796's restored rows draw through
+the same `TreeHostRow` / `TreeConversationRow` composables a live row does, so the screen needs
+no cache-specific coverage; see [dependency injection § Testing](dependency-injection.md#testing)
+for `HostConversationSourceTest`'s restore/live-race cases and for why every other instrumented
+container built from `appModule` overrides this binding with a shared `InertConversationCache`
+fake rather than supplying a real `Context`. #797 carries the rung-3 coverage for the thread-row
+family this cache makes visible there.
 
 ## Related
 
@@ -219,4 +225,6 @@ No Compose UI test and no emulator scenario: this slice has no operator-facing f
   reasoning this cache's storage-scope decision extends
 - [Relay log](relay-log.md) — the only logging facility this layer uses
 - Split from [#647](https://github.com/pyrycode/pyrycode-mobile/issues/647); downstream:
-  #796 (host list restore), #797 (thread-row family + thread restore), #798 (removal wiring)
+  [#796](https://github.com/pyrycode/pyrycode-mobile/issues/796) (done — host list restore, see
+  [dependency injection § Restore from the on-disk cache](dependency-injection.md#restore-from-the-on-disk-cache-796)),
+  #797 (thread-row family + thread restore), #798 (removal wiring)

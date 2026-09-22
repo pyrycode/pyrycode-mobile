@@ -11,6 +11,7 @@ import androidx.lifecycle.viewModelScope
 import com.southernstorm.noise.protocol.CipherStatePair
 import com.southernstorm.noise.protocol.HandshakeState
 import com.southernstorm.noise.protocol.Noise
+import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyPair
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.PairedServer
@@ -18,6 +19,7 @@ import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.crypto.PairedServerEntry
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.crypto.PairedServerStoreException
+import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.RelayLinkStatus
@@ -814,7 +816,16 @@ class RelayConnectionFactoryTest {
                 val app =
                     KoinApplication.init().modules(
                         appModule,
-                        module { single { registry } },
+                        module {
+                            single { registry }
+                            // This container has no androidContext(), by design: every Android-bound
+                            // definition in appModule is lazy and this test resolves none of them. The
+                            // relay HostConversationSource does resolve a ConversationCache (#796), whose
+                            // real binding needs noBackupFilesDir, so it is overridden with an inert
+                            // double here. The subject is the shared source and its lookup, not the cache;
+                            // ConversationCacheBindingInstrumentedTest owns the real binding's proof.
+                            single<ConversationCache> { InertConversationCache }
+                        },
                         conversationRepositoryModule(useRelay),
                     )
                 val liveHostId = if (useRelay) "A" else HostConversationSource.DEMO_SERVER_ID
@@ -1563,4 +1574,21 @@ class RelayConnectionFactoryTest {
 
         fun turn(id: Long) = envelope("turn_state", """{"conversation_id":"c","state":"thinking"}""").copy(eventId = id)
     }
+}
+
+/** Satisfies the relay source's cache dependency in Android-less JVM containers; stores nothing. */
+private object InertConversationCache : ConversationCache {
+    override suspend fun readConversations(serverId: String): List<Conversation> = emptyList()
+
+    override suspend fun writeConversations(
+        serverId: String,
+        conversations: List<Conversation>,
+    ) = Result.success(Unit)
+
+    override suspend fun removeHost(serverId: String) = Result.success(Unit)
+
+    override suspend fun removeConversation(
+        serverId: String,
+        conversationId: String,
+    ) = Result.success(Unit)
 }
