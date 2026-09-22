@@ -22,3 +22,7 @@ Register the method in the LIVE `TEST_TARGET` list in `scripts/e2e-emulator.sh` 
 ## Testing strategy
 
 The scenario is itself the proof. Compile with `./gradlew compileDebugAndroidTestKotlin`. The live suite needs real claude and is the dispatcher's post-verifier gate (`needs-real-claude`); the builder does not run it.
+
+## Revisions
+
+- **2026-09-23 — live `minimum` stays at 8.** Raising it to 9 in `scripts/android-test-gate.py` reddened `scripts/test_android_test_gate.py`, whose live-mode cases replay an 8-case fixture (`fixtures/default-workspace-live/588.xml`). The floor is "at least", so 9 executed methods still pass it and AC 2 does not need the raise; a method silently dropped from the list is a failure not yet observed. Only `scripts/e2e-emulator.sh`'s `TEST_TARGET` list and its comments change.
