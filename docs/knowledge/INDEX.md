@@ -18,6 +18,7 @@ broader document search. The frozen archive under `codebase/` is historical.
 ## Data and transport
 
 - [Data model](features/data-model.md): domain entities and portable data-layer rules.
+- [Conversation cache](features/conversation-cache.md): app-private, host-keyed storage that lets loaded conversation content survive a restart.
 - [Conversation repository](features/conversation-repository.md): repository contract and observable thread state.
 - [Remote repository](features/remote-conversation-repository.md): relay-backed reads, writes and live events.
 - [Mobile protocol](features/mobile-protocol-v2-wire-layer.md): versioned envelope and payload handling.
