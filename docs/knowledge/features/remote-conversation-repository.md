@@ -61,7 +61,7 @@ belongs to the [payload mappers](mobile-protocol-v2-wire-layer.md#application-pa
 Authenticated payloads still require validation: the connection-owned
 `DebugBundleTransfer` validates diagnostic chunk fields before retaining opaque
 bytes. It shares the sole inbound consumer and exposes a separate
-[host transfer API](relay-repository-coordinator.md#host-diagnostic-archive-transfer),
+[host transfer API](relay-debug-bundle-transfer.md),
 outside `ConversationRepository` and screen state.
 
 ## The `SessionPump` consumed contract

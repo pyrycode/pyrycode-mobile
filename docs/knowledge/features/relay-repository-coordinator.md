@@ -13,7 +13,7 @@ reference across connection churn and compatibility selection changes.
 The coordinator derives [two-part connection status](#two-part-connection-status-392),
 switches [live-session events](#live-session-event-seam-406) across reconnects, and
 owns [FCM push-token re-registration](#connect-time-fcm-push-token-re-registration-365)
-once per connection. Explicit [diagnostic archive requests](#host-diagnostic-archive-transfer)
+once per connection. Explicit [diagnostic archive requests](relay-debug-bundle-transfer.md)
 also enter through this owner so admission and teardown share a connection lifetime.
 
 Package: `de.pyryco.mobile.data.repository` (`RelayRepositoryCoordinator` + the `ManagedSessionPump`
@@ -527,49 +527,11 @@ for thread subscribers.
 
 ### Host diagnostic archive transfer
 
-`RelayConnectionRegistry.requestDebugBundle(serverId): DebugBundleTransfer` uses
-the caller's exact, case-sensitive host id under the registry's removal lock. It
-requests the whole daemon's archive through that bundle's current paired, Open
-connection, regardless of `interactive`. Unknown, removed, disconnected or
-handshaking hosts return `UNAVAILABLE`; selection changes never redirect an
-attempt, and different hosts can transfer independently. The request follows the
-daemon's [Debug bundle (v2) contract](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#debug-bundle-v2),
-omitting both `payload` and `conversation_id` (see [envelope encoding](mobile-protocol-v2-wire-layer.md#envelope--application-message-frame)).
-
-Observe `transfer.state: StateFlow<DebugBundleState>` for `status`,
-`acceptedChunks` and `retry`. Progress counts accepted chunks, not bytes or a
-percentage. `RECEIVING` becomes `COMPLETE` only on a validated completion marker;
-zero-chunk archives are valid. On completion, `takeArchive()` returns a
-`DebugBundleArchive` once, then returns `null`. Its `sizeBytes` and
-`writeTo(OutputStream)` support a separate save owner: bytes stay outside screen
-state, remain opaque and are never unpacked. The caller owns the output stream,
-output failures and release of the archive reference. Native action/saving belongs
-to [#683](https://github.com/pyrycode/pyrycode-mobile/issues/683). The receiver holds
-chunks in memory; it adds no aggregate size limit or transfer timeout.
-
-| Admission/result | Retry condition |
-| --- | --- |
-| `UNAVAILABLE` | `WHEN_AVAILABLE`: make a new explicit request when this host has a usable connection. |
-| `BUSY` | `AFTER_TRANSFER`: another transfer is receiving; observe that attempt and re-evaluate afterward. No second frame is sent and the active transfer is retained. |
-| `RECONNECT_REQUIRED`, `COMPLETE`, `SEND_FAILED`, `REFUSED`, `INVALID_STREAM`, `DISCONNECTED` | `AFTER_RECONNECT`: a fresh connection is required before another explicit attempt. |
-
-Every attempted send consumes the repository's transfer allowance, including
-success, refusal and a false/throwing send. Chunk/done frames have no request
-correlation, so resetting an accumulator on the same connection could admit old
-frames into a retry. `BUSY`'s `AFTER_TRANSFER` therefore does **not** promise a
-same-connection retry; a later call on that still-open connection returns
-`RECONNECT_REQUIRED`. Reconnect creates a fresh repository and never replays the
-request. Retry values describe availability, not automatic actions.
-
-The repository's sole inbound consumer routes bundle frames and errors whose
-`in_reply_to` matches the bundle request to the transfer. Unrelated errors and
-ordinary events retain their handlers, including after a malformed bundle frame.
-Send failure, correlated refusal, invalid input, disconnect, inbound termination
-or host removal settle a receiving transfer once and wipe/release partial chunks.
-Late frames cannot change a terminal result. Missing completion stays incomplete
-until teardown or inbound termination produces `DISCONNECTED`. Transfer failures
-and diagnostic logs contain only static categories and accepted counts, never archive content,
-recordings, credentials, daemon error bodies or exception details.
+`RelayConnectionRegistry.requestDebugBundle(serverId): DebugBundleTransfer` is the
+Log data pull's entry point, admitted and torn down under this Configuration
+section's connection ownership. See [Host diagnostic archive
+transfer](relay-debug-bundle-transfer.md) for the transfer's admission/retry
+contract, its 32 MiB accumulation bound and its terminal-state guarantees.
 
 ## Edge cases / limitations
 
@@ -586,20 +548,9 @@ recordings, credentials, daemon error bodies or exception details.
 
 ## Testing
 
-`DebugBundleTransferTest` checks opaque output, accepted counts, terminal-once
-failure, late frames, correlated errors and all inbound termination modes. Numeric
-rejection cases must include **zero accepted chunks**: `JsonPrimitive.intOrNull`
-rounded `1e-400` and `-1e-400` to zero, while tests starting after the first chunk
-passed because zero already mismatched the expected one. Both `seq` and `total`
-now use exact integer text parsing; invalid cases assert no archive and continued
-ordinary-event routing. Canonical base64 checks are described in the
-[wire layer](mobile-protocol-v2-wire-layer.md#base64--pubkey-helpers).
-
-Bundle registry tests use two real Noise peers without `interactive`, inspect the
-decrypted serialized request for omitted fields, and change selection/remove one
-host while the other completes. Coordinator tests request immediately after a
-transport change, **before `runCurrent()`**, to catch stale admission; after
-reconnect they assert no automatic send and no old-pump frames reaching a retry.
+Bundle transfer and bundle registry test coverage, including the \#764 accumulation-cap
+cases, is described in [Host diagnostic archive transfer §
+Testing](relay-debug-bundle-transfer.md#testing).
 
 `di/RelayConnectionFactoryTest.kt` covers bundles and registry ownership with real
 Noise peers over channel-backed transports. It verifies independent credentials,
