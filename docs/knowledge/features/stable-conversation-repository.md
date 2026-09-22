@@ -55,9 +55,10 @@ class StableConversationRepository(
 ) : ConversationRepository
 ```
 
-It overrides **all** interface members — the 8 stream-shaped reads (`observeConversations`,
+It overrides **all** interface members — the stream-shaped reads (`observeConversations`,
 `observeMessages`, `observeLastMessage`, `observeStall` (#395), `observeQueue` (#460),
-`observeApiRetry` (#593), `observeCompacting` (#596), **and** `recentWorkspaces`), the 13
+`observeApiRetry` (#593), `observeCompacting` (#596), `observeThinkingProgress` (#801),
+`observeUsageLimit` (#802), **and** `recentWorkspaces`), the 13
 suspend one-shots (`createDiscussion`, `promote`, `archive`, `unarchive`, `delete`, `rename`,
 `startNewSession`, `changeWorkspace`, `sendMessage`, `createWorkspaceFolder`, `requestScreenSnapshot`,
 `setSessionSettings` ([#544](../codebase/544.md), the facade delegation [#543](../codebase/543.md)
@@ -65,6 +66,7 @@ deliberately deferred), **and** `requestHistory` (#623)), **and** the one capabi
 `mutationsSupported` (#507) — including every member that ships a default body on the interface
 (`recentWorkspaces`, `createWorkspaceFolder`, `delete`, `requestScreenSnapshot` (#375),
 `observeStall` (#395), `observeQueue` (#460), `observeApiRetry` (#593), `observeCompacting` (#596),
+`observeThinkingProgress` (#801), `observeUsageLimit` (#802),
 `setSessionSettings` (#543), `requestHistory` (#623), **and** `mutationsSupported` (#507)), so
 delegation is faithful and nothing silently falls back to a default. `setSessionSettings` and `requestHistory` both follow the
 plain one-shot snapshot-or-throw shape below, like every other mutator — neither introduces a new
@@ -106,6 +108,13 @@ private fun <T> switchToLive(whenAbsent: T, select: (ConversationRepository) -> 
   report the depth of a think that has since finished, and `flatMapLatest` dropping the previous
   connection's projection the instant the connection changes makes that structurally impossible with no
   clear written into any demux arm. See [Thinking-progress state](thinking-progress-state.md).
+- `observeUsageLimit(id)` (#802) → `switchToLive<UsageLimitReading?>(null) { … }` — no live connection
+  reports "nothing to read," the same absent value an unheard conversation produces. Unlike
+  `observeThinkingProgress`, this reading already has two ways down on the live repo itself (a benign
+  clearing frame, and the read-time expiry against `resetsAt`); the switch adds a **third**, the
+  account-level pairing-scoped clear — a usage-limit posture belongs to an account, so dropping the
+  previous connection's projection on reconnect stops one account's reading being attributed to the
+  next. See [Usage-limit state](usage-limit-state.md).
 
 When `currentRepository` emits a new value, `flatMapLatest` **cancels the previous inner flow** and
 subscribes the new one:
@@ -293,6 +302,13 @@ pass-through. The eight tests map to the ACs, the key one being
   observe the live repo's thinking-progress reading once the unfiled rendering sibling consumes it, and
   the mechanism (via `flatMapLatest`) that drops a reading across a reconnect with no clear written into
   any demux arm.
+- Delegated observable: [Usage-limit state](usage-limit-state.md)
+  ([#802](../../specs/architecture/802-decode-rate-limited-usage-limit-state.md)) — the
+  `observeUsageLimit` read forwarded with `whenAbsent = null`; the reachability path that will let the
+  thread ViewModel observe the live repo's usage-limit reading once the unfiled rendering sibling
+  consumes it, and the mechanism (via `flatMapLatest`) that gives the reading its account-level
+  pairing-scoped clear on reconnect, on top of the live repo's own benign-frame clear and read-time
+  expiry.
 - Delegated capability: `mutationsSupported` ([#507](../codebase/507.md)) — the fail-safe-deny `false`
   delegation (the third not-connected posture: answer, don't throw); consumed by no composable yet (#508).
 - Delegated one-shot: `requestHistory` (#623) — the on-disk history page read, forwarded verbatim with

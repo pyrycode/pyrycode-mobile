@@ -1,6 +1,6 @@
 # MarkdownText
 
-GFM renderer for assistant-message content (#129; fenced-code styling extended in #130; tables, task lists and strikethrough added in #681 by switching the parser flavour from CommonMark to GFM). Single public composable that takes a markdown source string and renders it into native Compose primitives — every text style resolved from `MaterialTheme.typography`, every link routed through `LocalUriHandler`, every container colour pulled from `MaterialTheme.colorScheme`. No Android-View interop seam; the renderer is pure Compose end-to-end.
+GFM renderer for assistant-message content (#129; fenced-code styling extended in #130; tables, task lists and strikethrough added in #681 by switching the parser flavour from CommonMark to GFM; code-block chrome restyled and given a per-block copy control in #657). Single public composable that takes a markdown source string and renders it into native Compose primitives — every text style resolved from `MaterialTheme.typography`, every link routed through `LocalUriHandler`, every container colour pulled from `MaterialTheme.colorScheme`. No Android-View interop seam; the renderer is pure Compose end-to-end.
 
 Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/MarkdownText.kt`). Sibling of [`MessageBubble`](./message-bubble.md). Library choice rationale: [ADR 0002](../decisions/0002-markdown-renderer-library.md) — the parser library choice (`org.jetbrains:markdown`) and the "own the renderer" decision still stand; the *flavour* it names (`CommonMarkFlavourDescriptor`) does not — #681 switched to `GFMFlavourDescriptor` and the ADR predicted exactly that move in its Consequences section. [ADR 0003](../decisions/0003-syntax-highlighter-library.md) covers the code-block syntax highlighter, unaffected by the flavour change.
 
@@ -50,8 +50,8 @@ The parse is keyed on the `markdown` string itself — the AST is rebuilt only w
 | `ORDERED_LIST` | same but marker is `"${index + 1}."` (1-based); both list kinds dispatch through the same `ListBlock`, so a `CHECK_BOX` child replaces the marker here too — untested directly, but true by the shared code path |
 | `BLOCK_QUOTE` | `Row { Box(width = 4dp, fillMaxHeight, background = onSurfaceVariant); Spacer(12dp); Column { italic paragraphs } }` |
 | `GFMElementTypes.TABLE` | `TableBlock(...)` — see [Tables](#tables) |
-| `CODE_FENCE` | `CodeBlock(joined CODE_FENCE_CONTENT lines, language = first FENCE_LANG child or null)` — see [Code blocks](#code-blocks) |
-| `CODE_BLOCK` | `CodeBlock(joined CODE_LINE tokens, language = null)` — indented 4-space blocks have no info string |
+| `CODE_FENCE` | `CodeBlock(fencedCodeText(node, source), language = first FENCE_LANG child or null, copyable = true)` — see [Code blocks](#code-blocks) |
+| `CODE_BLOCK` | `CodeBlock(indentedCodeText(node, source), language = null, copyable = true)` — indented 4-space blocks have no info string |
 | _else_ | `Text(node.getTextInNode(source).trim(), style = bodyMedium)` — fallback |
 
 The top-level `MarkdownText` wraps the dispatched children in `Column(modifier, verticalArrangement = Arrangement.spacedBy(ParagraphSpacing))` so inter-block gaps come from the column, not from per-element padding. List items use the same `spacedBy(ParagraphSpacing)` so nested blocks inside a list item separate the same way as top-level blocks.
@@ -113,32 +113,57 @@ Two source forms, because the parser only recognises one of them as a node. `~~d
 
 ### Code blocks
 
-Both `CODE_FENCE` and `CODE_BLOCK` dispatch to a single `internal fun CodeBlock(content: String, language: String?)`. Widened from `private` to `internal` in #131 (one-keyword edit, no body change) so [`ToolCallRow`](./tool-call-row.md) can reuse it for code-ish tool output via `language = null` — the same rounded `surfaceContainer` monospace surface, the same horizontal-scroll behaviour, no duplication of the visual contract. The two existing in-file call sites (`CODE_FENCE` / `CODE_BLOCK`) compile unchanged because `internal` is a superset of `private`-within-file. Visual structure since #130:
+Both `CODE_FENCE` and `CODE_BLOCK` dispatch to a single `internal fun CodeBlock(content: String, language: String?, copyable: Boolean = false)`. Widened from `private` to `internal` in #131 (one-keyword edit, no body change) so [`ToolCallRow`](./tool-call-row.md) can reuse it for code-ish tool output via `language = null` — the same bordered monospace surface, the same horizontal-scroll behaviour, no duplication of the visual contract. `copyable` was added in #657 as an opt-in third parameter defaulted to `false`, so [`ToolCallRow`](./tool-call-row.md)'s existing call site compiles unchanged and renders the chrome with no copy control — whether tool output becomes copyable is #658's call, not this ticket's. Only the two markdown dispatch arms pass `copyable = true`.
+
+Visual structure since #657 (Figma `134:4809`, the assistant container's `Code` instance — header/divider/body, read off the node rather than #130's flat tile):
 
 ```kotlin
-Surface(shape = RoundedCornerShape(CodeBlockCornerRadius), color = surfaceContainer) {
-    Box {
-        Text(
-            text = annotated,
-            modifier = Modifier.horizontalScroll(rememberScrollState()).padding(CodeBlockPadding),
-            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-            softWrap = false,
-        )
+Surface(
+    modifier = Modifier.fillMaxWidth(),
+    shape = RoundedCornerShape(CodeBlockCornerRadius),        // 6.dp
+    color = MaterialTheme.colorScheme.background,
+    border = BorderStroke(CodeBlockBorderWidth, MaterialTheme.colorScheme.primaryContainer),
+) {
+    Column {
         if (!language.isNullOrBlank()) {
             Text(
                 text = language,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(horizontal = CodeBlockHorizontalPadding, vertical = CodeBlockLabelVerticalPadding),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth()
+                    .testTag(CODE_BLOCK_HEADER_TAG)
+                    .drawBehind { /* 1dp onPrimaryContainer line along the bottom edge */ }
+                    .padding(horizontal = CodeBlockHorizontalPadding, vertical = CodeBlockHeaderVerticalPadding),
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
+        }
+        Row(verticalAlignment = Alignment.Bottom) {
+            Box(Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
+                Text(annotated, softWrap = false, style = bodyMedium.copy(fontFamily = Monospace), ...)
+            }
+            if (copyable) {
+                CompositionLocalProvider(LocalContentColor provides LocalContentColor.current.copy(alpha = CODE_COPY_ALPHA)) {
+                    CopyTextControl(text = content, contentDescription = stringResource(R.string.cd_thread_copy_code))
+                }
+            }
         }
     }
 }
 ```
 
-The language label sits **outside** the `horizontalScroll` chain, so it stays anchored to the corner regardless of scroll position. Each `CodeBlock` invocation gets its own `rememberScrollState()` — independent fenced blocks scroll independently.
+**The divider hangs on the header, not the body** (desktop's decision, ported rather than re-derived): it's drawn as the header `Text`'s own bottom edge via `drawBehind`, so a block with no info string — an indented block, or a bare fence with no language — renders as `Column { Row(body) }` with neither an empty header bar nor a stranded rule. `CODE_BLOCK_HEADER_TAG` exists to let tests assert that absence directly rather than inferring it from missing text.
+
+**Only the code viewport scrolls.** The header sits above the scroll chain (unchanged from #130's anchoring behaviour) and the copy control is a body-row sibling *outside* the `horizontalScroll` `Box`, not an overlay on top of it — a fixed right-hand rail, per the same anchoring rule the language label already followed. It cannot end up on top of the code at any scroll offset, because it was never inside the scrolling subtree to begin with. The body `Row`'s height is at least the control's own height, which is what gives an empty fence room to contain the glyph without the row collapsing under it. The code `Text`'s `end` padding drops from the full `CodeBlockHorizontalPadding` to the narrower `CodeBlockCopyRailGap` when `copyable` is true, so the rail has a fixed gap rather than overlapping the last characters of a short line.
+
+**Copy control and source exactness.** The mounted control is [`CopyTextControl`](./message-bubble.md#meta-row-and-copy-control-messagemetarowkt-since-644) from `MessageMetaRow.kt` (imported, not reimplemented — it was left `internal` rather than file-private in #644 for exactly this reuse). It copies `content` — the block's own extracted source string, never text read back out of the rendered `Text` node — so two code blocks in one message each copy only their own text, and a copy can never pick up characters from a sibling block or the surrounding message. Its glyph tint is `LocalContentColor.current.copy(alpha = CODE_COPY_ALPHA)` (0.80), **not** the design's named `Schemes/Inverse Primary` token: `#644` already hit this for the meta row's own copy glyph — `inversePrimary` reads as near-invisible de-emphasis only against the dark reference frame, and is `#9DCBFC`-on-`#F8F9FF` (illegible) against this block's light-scheme `background` fill. An alpha expression off the block's own content colour (here, `onBackground`) reads correctly in both schemes; the design's other named tokens (fill, border, divider, header label colour) are taken as given because none of them hit that trap.
+
+Each `CodeBlock` invocation still gets its own `rememberScrollState()` — independent fenced blocks scroll independently, unchanged from #130.
+
+#### Exact-source extraction
+
+The fenced and indented arms no longer join their content tokens directly — `fencedCodeText(fence: ASTNode, source: String)` and `indentedCodeText(block: ASTNode, source: String)` (both `internal`, pure, unit-tested) walk each block's children line by line instead, and the difference is not cosmetic. The old `joinToString("\n")` over content tokens alone silently collapsed runs of blank lines, because a blank line inside a fence arrives as two adjacent `EOL` tokens with **no** `CODE_FENCE_CONTENT` between them to join: `a\n\n\nb` rendered — and copied — as `a\nb`. The shared `codeLines` helper instead treats each `EOL` as closing the current line (so an empty line is still a line), skips a fence's container-prefix `WHITE_SPACE` children (a list item's indent, a blockquote's `> `, neither of which is code), stops at `CODE_FENCE_END`, and keeps a final unterminated line (the streaming case: a fence the reveal hasn't closed yet still returns its partial content). `indentedCodeText` additionally strips the CommonMark 4-space (or one-tab) indent marker per line before joining — that marker is syntax, not code, and any indentation past it is the code's own and survives.
+
+This closed two visible defects at once, both following from "the copied text must be the rendered text": a fence's interior blank lines now render (previously silently dropped), and an indented block no longer shows its 4-space marker as part of the code. Rendered and copied text are the same string by construction — the copy control receives exactly `content`, and `content` is exactly what `Text` renders.
 
 **Syntax highlighting** (#130) uses `dev.snipme:highlights` 1.1.0 — see [ADR 0003](../decisions/0003-syntax-highlighter-library.md). The library tokenises the input string and returns a `CodeStructure` with `PhraseLocation(start, end)` lists per category; `buildHighlightedCode(content, structure)` walks each list and applies `SpanStyle`s bound to `MaterialTheme.colorScheme`:
 
@@ -189,12 +214,17 @@ private val ParagraphSpacing = 8.dp           // inter-block gap (and intra-list
 private val ListItemIndent = 8.dp             // gap between bullet/number and item body
 private val BlockquoteBarWidth = 4.dp
 private val BlockquoteContentIndent = 12.dp   // gap between bar and quoted content
-private val CodeBlockCornerRadius = 8.dp
-private val CodeBlockHorizontalPadding = 12.dp
-private val CodeBlockVerticalPadding = 8.dp
-private val CodeBlockLabelVerticalPadding = 4.dp   // top inset of the language label (#130)
-private val CodeBlockPadding =
-    PaddingValues(horizontal = CodeBlockHorizontalPadding, vertical = CodeBlockVerticalPadding)
+private val CodeBlockCornerRadius = 6.dp          // #657; was 8.dp under #130's flat tile
+private val CodeBlockBorderWidth = 1.dp           // #657
+private val CodeBlockDividerWidth = 1.dp          // #657; the header's own bottom-edge line
+private val CodeBlockHorizontalPadding = 16.dp    // #657; was 12.dp
+private val CodeBlockHeaderVerticalPadding = 8.dp // #657
+private val CodeBlockBodyVerticalPadding = 12.dp  // #657
+private val CodeBlockCopyRailGap = 8.dp           // #657; code-text end padding when copyable
+private val CodeBlockCopyEndPadding = 10.dp       // #657; lands the glyph on the body's 16dp inset
+private val CodeBlockCopyBottomPadding = 6.dp     // #657; lands the glyph on the body's 12dp inset
+private const val CODE_COPY_ALPHA = 0.80f         // #657; same value/reasoning as META_CONTENT_ALPHA
+internal const val CODE_BLOCK_HEADER_TAG = "code-block-header"   // #657; absence-assertion hook
 private val TableBorderWidth = 1.dp
 private val TableCellHorizontalPadding = 12.dp
 private val TableCellVerticalPadding = 4.dp
@@ -212,8 +242,8 @@ Plus two file-private `const val`s bounding table fan-out (`MAX_TABLE_COLUMNS = 
 ## Configuration
 
 - **Library dependencies:** `implementation(libs.jetbrains.markdown)` (parser; catalog pin `jetbrainsMarkdown = "0.7.3"`) and `implementation(libs.snipme.highlights)` (code-block tokeniser since #130; catalog pin `snipmeHighlights = "1.1.0"`) in `app/build.gradle.kts`. No KSP, no kapt, no proguard rules for either.
-- **Two strings since #681:** `markdown_task_mark_checked` / `markdown_task_mark_unchecked` — static TalkBack labels for the task-mark, chosen by a boolean, carrying no format argument and no daemon-authored text. Otherwise renders the input markdown verbatim; no other resource lookup.
-- **No theme overrides.** Reads `colorScheme.surfaceContainer`, `colorScheme.primary`, `colorScheme.secondary`, `colorScheme.tertiary`, `colorScheme.onSurfaceVariant` and `typography.headlineSmall` / `titleLarge` / `titleMedium` / `bodyMedium` / `labelSmall`. All are M3 defaults — no custom slots, no `CompositionLocal` overrides beyond consumer-supplied `LocalContentColor`. `colorScheme.outlineVariant` was read here through #129; #770 moved the last reader (`BlockQuoteBlock`'s bar) to `onSurfaceVariant`, so nothing in this file reads that slot any more.
+- **Two strings since #681, plus one since #657:** `markdown_task_mark_checked` / `markdown_task_mark_unchecked` — static TalkBack labels for the task-mark, chosen by a boolean, carrying no format argument and no daemon-authored text. `cd_thread_copy_code` ("Copy this code block") is the accessible name for each code block's copy control, in the same `cd_thread_*` family as `MessageMetaRow`'s `cd_thread_copy_message`. Otherwise renders the input markdown verbatim; no other resource lookup.
+- **No theme overrides.** Reads `colorScheme.surfaceContainer`, `colorScheme.background`, `colorScheme.primaryContainer`, `colorScheme.onPrimaryContainer`, `colorScheme.primary`, `colorScheme.secondary`, `colorScheme.tertiary`, `colorScheme.onSurfaceVariant` and `typography.headlineSmall` / `titleLarge` / `titleMedium` / `bodyMedium` / `labelSmall` / `labelMedium`. All are M3 defaults — no custom slots, no `CompositionLocal` overrides beyond consumer-supplied `LocalContentColor` (and the code block's own local re-provide of it at `CODE_COPY_ALPHA` for its copy glyph). `colorScheme.outlineVariant` was read here through #129; #770 moved the last reader (`BlockQuoteBlock`'s bar) to `onSurfaceVariant`, so nothing in this file reads that slot any more.
 - **No DI.** Pure leaf composable; no Koin module touched.
 
 ## Previews
@@ -224,13 +254,12 @@ Plus two file-private `const val`s bounding table fan-out (`MAX_TABLE_COLUMNS = 
 
 - **Inline-code background paints at glyph-rect bounds, not at a padded rectangle.** `SpanStyle(background = …)` on an `AnnotatedString` span has no horizontal padding option in Compose's text API — the background tints exactly the glyph rect. Short identifiers (`getUserId()`) read fine; longer code spans look tight. **Acceptable for #129.** If the tightness becomes a complaint, the replacement shape is `InlineTextContent` per code span — don't pre-build that now.
 - **Soft line breaks collapse to a single space.** `EOL` tokens inside a paragraph map to `append(" ")` rather than `append("\n")`. Matches CommonMark's "soft-break = space" rendering rule. Hard breaks (two trailing spaces or a backslash before the newline) are not yet specially handled — they fall through to the same single-space behaviour. Not in AC.
-- **Fenced code blocks render with syntax highlighting since #130** — `Surface(surfaceContainer)` (flat, no outline border — ticket body pinned this over the Figma `surface` + `outline-variant` border), monospace text with token colours bound to `MaterialTheme.colorScheme`, horizontal scroll for long lines (no wrap), optional top-right language label when the fence info string is non-blank. See [Code blocks](#code-blocks) for the full mapping; library choice in [ADR 0003](../decisions/0003-syntax-highlighter-library.md).
+- **Fenced code blocks render with syntax highlighting since #130, with the design's bordered header/body chrome since #657** — `Surface(background fill, primaryContainer border, 6dp corners)`, a header bar with a divider above the body when the fence carries a language, monospace text with token colours bound to `MaterialTheme.colorScheme`, horizontal scroll for long lines (no wrap), and a per-block copy control. See [Code blocks](#code-blocks) for the full mapping; library choice in [ADR 0003](../decisions/0003-syntax-highlighter-library.md).
 - **Highlighter language coverage is bounded.** Kotlin / Bash / JSON (via the JavaScript lexer — JSON's grammar is a subset) tokenise; Markdown and any other language fall through to plain monospace but still show the language label. Adding a language is a one-line addition to `resolveSyntaxLanguage` if the library exposes it.
-- **Long first lines can sit under the language label.** The label overlays the top-right corner of the code body without a separator strip; if the first code line is wide enough to extend under the label area, glyphs and label text overlap visually. Acceptable for Phase 0 — preview-verifiable. Mitigations a future ticket might pick from: pad the first line, tint the label background, or reintroduce a header strip (the Figma original).
-- **Indented code blocks render identically to fenced but never carry a language label.** `CODE_BLOCK` passes `language = null` to `CodeBlock`; CommonMark indented blocks have no info-string syntax.
+- **Indented code blocks render identically to fenced (same header/body chrome) but never carry a header, since they have no info string.** `CODE_BLOCK` passes `language = null` to `CodeBlock`; CommonMark indented blocks have no info-string syntax, and a `null`/blank language suppresses the header and its divider both, not just the label text.
 - **Lists are flat-bulleted.** Unordered lists use `"•"`; ordered lists use `"${index + 1}."` from the 1-based item position within the list. Nested-list indentation depth comes from the recursive `MarkdownBlock` call inside the list item's `Column` — no per-level indent multiplier.
 - **Blockquote paragraphs render italic.** Non-paragraph children inside a blockquote (e.g. a nested list) recurse through `MarkdownBlock` without the italic override. The blockquote bar is `onSurfaceVariant` (since #770; see [Tables](#tables)) and spans the intrinsic height of the content column.
-- **No selection / copy.** The composable uses bare `Text(...)`, not `SelectionContainer { Text(...) }`. If long-press-to-copy lands later, the right place is a screen-level wrap of the thread `LazyColumn` body, not per-renderer.
+- **No free-text selection; code blocks are the one construct with a copy affordance.** The composable uses bare `Text(...)`, not `SelectionContainer { Text(...) }`, everywhere else. Since #657, each fenced or indented code block carries its own [`CopyTextControl`](./message-bubble.md) that copies the block's exact source; nothing else in the renderer (prose, tables, list items, blockquotes) is copyable. If long-press-to-copy for the rest of the message lands later, the right place is a screen-level wrap of the thread `LazyColumn` body, not per-renderer.
 - **Streaming is not specially handled.** `MarkdownText` treats `markdown` as a complete, final string each composition; partial markdown (an unclosed `**bold` mid-stream) still parses (the JetBrains parser is total) and renders as best it can. #184 owns streaming-aware behaviour at the `MessageBubble` layer — `StreamingAssistantBody` appends a `▎` caret glyph to the revealed prefix and passes the result through this renderer unchanged. The renderer never changed signature.
 - **Renderer is total.** The JetBrains parser produces an AST for any input string — there is no exception path. Unsupported element kinds hit the `else` fallback (raw text as a `bodyMedium` paragraph), so the message is never blank. #681 leaned on exactly this property to switch parser flavours without suppressing anything — see the next two points.
 - **Parser flavour is GFM since #681, and that changes more than the three constructs it was switched on for.** `org.jetbrains:markdown` has no per-construct registration — `GFMFlavourDescriptor` is the only off-the-shelf way to reach tables, task lists and strikethrough, and it necessarily also brings bare-URL autolinks (`GFM_AUTOLINK`) and `$…$` inline maths (`INLINE_MATH`) into every message this renderer sees, whether or not that message uses any of the three wanted constructs.
@@ -243,11 +272,12 @@ Plus two file-private `const val`s bounding table fan-out (`MAX_TABLE_COLUMNS = 
 ## Related
 
 - Ticket notes: [`../codebase/129.md`](../codebase/129.md), [`../codebase/130.md`](../codebase/130.md), [`../codebase/131.md`](../codebase/131.md) (`docs/knowledge/codebase/` is frozen since 2026-09-05; #681 has no per-ticket file — its record is the spec below)
-- Specs: `docs/specs/architecture/129-markdown-rendering-assistant-messages.md`, `docs/specs/architecture/130-code-block-rendering-syntax-highlighting.md`, `docs/specs/architecture/131-tool-call-collapsed-expanded-component.md`, `docs/specs/architecture/681-gfm-tables-task-lists-strikethrough.md` (measured AST facts per node kind, the security review, and the `## Revisions` history behind the table-border and cell-trimming fixes), `docs/specs/architecture/768-atx-heading-leading-space.md` (the heading leading-space fix; measured AST facts for `ATX_CONTENT`, security review)
+- Specs: `docs/specs/architecture/129-markdown-rendering-assistant-messages.md`, `docs/specs/architecture/130-code-block-rendering-syntax-highlighting.md`, `docs/specs/architecture/131-tool-call-collapsed-expanded-component.md`, `docs/specs/architecture/681-gfm-tables-task-lists-strikethrough.md` (measured AST facts per node kind, the security review, and the `## Revisions` history behind the table-border and cell-trimming fixes), `docs/specs/architecture/768-atx-heading-leading-space.md` (the heading leading-space fix; measured AST facts for `ATX_CONTENT`, security review), `docs/specs/architecture/657-code-block-chrome-and-copy.md` (the design's header/body chrome, the exact-source extraction helpers, and the `inversePrimary`-illegibility rationale for `CODE_COPY_ALPHA`)
 - Decisions: [ADR 0002 — markdown renderer library](../decisions/0002-markdown-renderer-library.md) (parser library choice; predicted the #681 flavour swap in its own Consequences section), [ADR 0003 — syntax highlighter library](../decisions/0003-syntax-highlighter-library.md)
-- Consumers: [`MessageBubble`](./message-bubble.md) assistant variant (user messages stay plain text); [`ToolCallRow`](./tool-call-row.md) reuses the `internal CodeBlock` for code-ish tool output since #131
+- Consumers: [`MessageBubble`](./message-bubble.md) assistant variant (user messages stay plain text); [`ToolCallRow`](./tool-call-row.md) reuses the `internal CodeBlock` for code-ish tool output since #131, with the opt-in `copyable` parameter (#657) left at its `false` default — see [ToolCallRow](./tool-call-row.md)
 - Sibling component pattern: [`MessageBubble`](./message-bubble.md) (file-private spacing constants; preview pairing shape)
 - Local precedent for `buildAnnotatedString` / `SpanStyle` idioms: `ScannerScreen.kt:252-260`
 - Downstream:
   - #184 — streaming caret + animation (landed). Operates at the `MessageBubble` layer; passes the revealed-prefix-plus-caret string through this renderer unchanged each tick. Partial code fences flow through `CodeBlock` unchanged; the `remember(content, syntaxLanguage)` re-tokenises per reveal tick (sub-millisecond on typical sizes). Tables and task lists flow through the same unchanged-signature path; `singleTildeRuns` re-runs per reveal tick behind its `children.none { TILDE }` early-out rather than being memoised, since `appendInlineChildren` builds outside composition where `remember` is unavailable
+  - #657 — code block header/body chrome and per-block copy control (landed). See [Code blocks](#code-blocks); an unterminated (streaming) fence's partial content still extracts correctly, so #184's per-tick re-render carries no new edge case
   - #680 — live desktop/mobile comparison of the same replies, covering the three constructs this ticket added

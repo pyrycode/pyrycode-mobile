@@ -23,9 +23,17 @@ enum class Role { User, Assistant, Tool }
  */
 enum class ToolCallStatus { Running, Done, Failed }
 
+/**
+ * [input] is the server's one-line précis. [inputFields] (#810) is the tool input's own top-level
+ * fields, verbatim, and [parentToolUseId] names the `Agent`/`Task` call that spawned this one (`""`
+ * is the main thread). Both are inert display and grouping data — never a path to open, a command to
+ * run, a URL or a log line. Defaulted, like [status], so existing constructions need no change.
+ */
 data class ToolCall(
     val toolName: String,
     val input: String,
     val output: String,
     val status: ToolCallStatus = ToolCallStatus.Done,
+    val inputFields: Map<String, String> = emptyMap(),
+    val parentToolUseId: String = "",
 )
