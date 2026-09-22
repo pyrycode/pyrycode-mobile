@@ -58,7 +58,7 @@ An absent payload decodes as `JsonNull`; callers still receive a non-null
 `JsonElement`. `@EncodeDefault(NEVER)` omits that default on encode even though
 `MobileJson.encodeDefaults` is true. `explicitNulls = false` alone does not omit
 the non-null `JsonNull` object. Object/string payloads retain their representation.
-This lets the [host diagnostic transfer](relay-repository-coordinator.md#host-diagnostic-archive-transfer)
+This lets the [host diagnostic transfer](relay-debug-bundle-transfer.md)
 send a bare `request_debug_bundle`. Verify key absence in serialized JSON, as
 `DebugBundleTransferTest` and the registry's real Noise peer test do: decoding an
 envelope back into Kotlin cannot distinguish an omitted payload from `JsonNull`.
@@ -155,6 +155,22 @@ shared decoder alone does not enforce canonical encoding. Its tests reject both
 `YQ` (missing padding) and `YR==` (nonzero pad bits), which otherwise decode to the
 same byte as canonical `YQ==`. This stricter check belongs to the bundle receiver;
 the shared helper's behavior is unchanged.
+
+`DebugBundleTransfer` also charges a running total of these post-round-trip decoded
+bytes against `MAX_ARCHIVE_BYTES` (32 MiB / `33_554_432`), rejecting a chunk that
+would take the accumulated total past it — a peer streaming chunks forever now
+settles `INVALID_STREAM` instead of growing an unbounded `List<ByteArray>` until
+the platform kills the process (\#764). The bound is charged after the canonical
+check above, so the peer's choice of encoding cannot buy it budget, and it is a
+running counter rather than a re-sum of the buffered chunks, since re-summing on
+every chunk would be quadratic in a peer-chosen chunk count. The 32 MiB figure
+is derived from the daemon's own per-session push-queue ceiling (`protocol-mobile.md`
+§ Error codes, close code `4413`), which retains at most 32 MiB of base64 payload
+and so can never actually deliver an archive larger than roughly 25 MB — the same
+32 MiB counted in decoded bytes sits above every deliverable archive while still
+bounding the phone. See [Relay/repository coordinator § Host diagnostic archive
+transfer](relay-debug-bundle-transfer.md) for
+the consumer-facing behavior.
 
 **The two-alphabet trap (#320).** Two different base64 alphabets coexist in one pairing payload: the **outer** QR-string wrapper is base64**url**-no-pad (Go `base64.RawURLEncoding`) — `decodeBase64UrlNoPad` (`Base64.getUrlDecoder()`); the **inner** `server_static_pubkey` is base64-**std**-with-padding — `base64StdDecode` / `decodeServerStaticPubkey`. The two decoders are deliberately co-located here so the trap stays visible. `decodeBase64UrlNoPad`'s load-bearing behavior is **rejecting** the std alphabet's `+`/`/` (throws `IllegalArgumentException`); it tolerates optional `=` padding (real `RawURLEncoding` is unpadded, so it round-trips). Using `base64StdDecode` on the outer wrapper — or `decodeBase64UrlNoPad` on the inner key — is a silent bug. The outer-wrapper consumer is the [Pairing payload parser](pairing-payload-parser.md).
 

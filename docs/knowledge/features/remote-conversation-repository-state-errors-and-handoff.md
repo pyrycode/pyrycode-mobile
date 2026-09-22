@@ -57,7 +57,7 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
   reuse. The collector's `finally` calls `endDebugBundle()` to disable admission
   permanently and settle any incomplete transfer, then `failAllPending()`.
   Coordinator teardown also calls `endDebugBundle()` synchronously before
-  cancellation. See [host API and retry lifetime](relay-repository-coordinator.md#host-diagnostic-archive-transfer).
+  cancellation. See [host API and retry lifetime](relay-debug-bundle-transfer.md).
 - **Dispatcher inherited from the injected scope** (DI uses `Dispatchers.Default`; this is pure CPU/JSON
   work — the socket I/O is the transport's, below the pump). Not hard-coded.
 - `observeConversations`, `observeLastMessage`, and `observeMessages` are cold; N concurrent collectors

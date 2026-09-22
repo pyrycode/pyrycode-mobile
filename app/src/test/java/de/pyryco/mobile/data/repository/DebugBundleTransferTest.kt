@@ -147,6 +147,54 @@ class DebugBundleTransferTest {
             }
         }
 
+    @Test fun accumulationPastTheArchiveCapFailsWhileAStreamEndingAtItStillCompletes() =
+        runTest {
+            // 16 x 2 MiB is exactly the 33_554_432-byte cap. The literal is written here rather than
+            // read from the production constant, so lowering the cap reddens this test instead of
+            // following it. 2 MiB keeps each chunk's transient encode/parse cost small next to the
+            // 32 MiB the accumulation retains.
+            val chunk = ByteArray(2 * 1024 * 1024) { (it % 251).toByte() }
+            val encoded = base64StdEncode(chunk)
+            val chunkCount = 16
+
+            val atCap = Fixture(this)
+            val completed = atCap.repo.requestDebugBundle()
+            repeat(chunkCount) { index ->
+                atCap.pump.emit("debug_bundle_chunk", """{"seq":$index,"data":"$encoded"}""")
+                runCurrent()
+            }
+            assertEquals(chunkCount, completed.state.value.acceptedChunks)
+            atCap.pump.emit("debug_bundle_done", """{"total":$chunkCount}""")
+            runCurrent()
+            assertEquals(DebugBundleStatus.COMPLETE, completed.state.value.status)
+            assertEquals(33_554_432L, completed.takeArchive()!!.sizeBytes)
+            atCap.close()
+
+            val pastCap = Fixture(this)
+            val transfer = pastCap.repo.requestDebugBundle()
+            repeat(chunkCount) { index ->
+                pastCap.pump.emit("debug_bundle_chunk", """{"seq":$index,"data":"$encoded"}""")
+                runCurrent()
+            }
+            assertEquals(chunkCount, transfer.state.value.acceptedChunks)
+            // One byte past the cap, carried by a chunk far smaller than any that preceded it: the
+            // bound is the accumulated total, never one chunk's own size.
+            val oneByte = base64StdEncode(byteArrayOf(7))
+            pastCap.pump.emit("debug_bundle_chunk", """{"seq":$chunkCount,"data":"$oneByte"}""")
+            runCurrent()
+            assertEquals(DebugBundleStatus.INVALID_STREAM, transfer.state.value.status)
+            assertEquals(chunkCount, transfer.state.value.acceptedChunks)
+            assertNull(transfer.takeArchive())
+            val settled = transfer.state.value
+            pastCap.pump.emit("debug_bundle_done", """{"total":$chunkCount}""")
+            pastCap.pump.emit("debug_bundle_chunk", """{"seq":$chunkCount,"data":"YQ=="}""")
+            pastCap.pump.emit("debug_bundle_done", """{"total":${chunkCount + 1}}""")
+            runCurrent()
+            assertEquals(settled, transfer.state.value)
+            assertNull(transfer.takeArchive())
+            pastCap.close()
+        }
+
     @Test fun correlatedRefusalDoesNotConsumeUnrelatedErrorsAndNeverLeaksDetails() =
         runTest {
             val f = Fixture(this)
