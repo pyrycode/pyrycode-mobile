@@ -9,7 +9,9 @@ validation, submission and operation cancellation. Its first production consumer
 control (#744), and since #751 also driven by [Settings](settings-screen.md)'s owner
 row — both through the shared [`HostEditorModal`](host-editor.md) binding. Since #683
 the Storage section's Log data download draws `DebugBundleModal` (#683) directly on
-this shell, its second direct caller. Existing dialogs such as
+this shell, its second direct caller. Since #826 [`EditChatModal`](#callers) draws this shell
+directly as its third caller — desktop's `EditChatDialogView` on the phone, a name field plus an
+outlined archive action, not yet drawn by any screen. Existing dialogs such as
 [CreateFolderDialog](create-folder-dialog.md) remain separate; consumer tickets own
 their migration and operation-specific acceptance.
 
@@ -249,6 +251,25 @@ caller that pre-fills an editable field inside this shell:
   confirmation is confirmed by a button reading "OK" — restyling per caller would
   touch a component with other callers, so the prompt copy has to carry that weight
   instead of the button.
+
+[`EditChatModal`](../../../app/src/main/java/de/pyryco/mobile/ui/components/EditChatModal.kt)
+(#826) is the shell's third direct caller — like `DebugBundleModal`, it draws `MobileModal`
+itself rather than going through `EditHostModal`/`HostEditorModal`. It is desktop's
+`EditChatDialogView` on the phone: a "Channel name:" field pre-filled from the caller, clamped to
+`MAX_WORKSPACE_LABEL_CHARS`, and an outlined "Archive chat" action, following `EditHostModal`'s
+identity-keyed buffer and content-free debug-log patterns. Its two actions read different halves
+of one guard, matching desktop: OK needs a non-blank trimmed name, an available host and no write
+in flight; Archive needs only the host and no write in flight, independent of the field's content,
+and takes no confirmation step, since an archived chat comes back through Archive's Restore.
+Nothing draws this modal yet — #827 wires OK to rename and #828 wires Archive.
+
+A clamp on attacker-influenceable text must not split a UTF-16 surrogate pair when the clamped
+value can round-trip back into a write unedited. `EditChatModal` seeds its field with
+`initialName.take(MAX_WORKSPACE_LABEL_CHARS)`, then drops a trailing lone high surrogate — a plain
+`take(N)` can land mid-pair, and OK sends the field back exactly as typed, so a split pair would
+reach `rename_conversation` as a malformed tail. `EditHostModal`'s `boundedText` and
+`workspaceDisplayName` clamp the same way without the surrogate-safe drop; that gap is out of this
+caller's scope and is filed as #851.
 
 **`PermissionModalOverlay`** (`ui/conversations/thread/ThreadScreen.kt`, #815) is the first of
 [`MobileGateModal`](#the-hardened-gate-mobilegatemodal)'s two callers, and the only one using it rather than
