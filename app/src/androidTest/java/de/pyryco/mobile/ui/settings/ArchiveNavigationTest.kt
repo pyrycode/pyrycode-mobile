@@ -266,7 +266,7 @@ class ArchiveNavigationTest {
                     entries = entries.map { if (it.record.serverId == serverId) it.copy(displayName = displayName) else it }
                 }
             }
-        store = ObservablePairedServerStore(raw)
+        store = ObservablePairedServerStore(raw) { }
         val keys =
             object : DeviceStaticKeyStore {
                 override suspend fun loadOrCreate(serverId: String) =

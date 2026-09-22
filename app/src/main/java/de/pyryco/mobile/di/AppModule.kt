@@ -67,8 +67,14 @@ val appModule =
         }
         single { AppPreferences(get()) }
         single { KeystoreDeviceStaticKeyStore(get()) } bind DeviceStaticKeyStore::class
-        single { ObservablePairedServerStore(KeystorePairedServerStore(get())) } binds
-            arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
+        // #790: a removed pairing takes its host's unsent composer text with it. Bound here rather
+        // than in the unpair controller so neither screen that opens the Edit host modal carries a
+        // draft-store dependency it does not otherwise use, and so any future removal path inherits
+        // the eviction. `save` and `setDisplayName` deliberately do not evict: re-pairing the same id
+        // and renaming a host both keep their drafts.
+        single {
+            ObservablePairedServerStore(KeystorePairedServerStore(get()), get<ComposerDraftStore>()::clearHost)
+        } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
         single { NoiseClientInfo(deviceName = Build.MODEL, clientVersion = BuildConfig.VERSION_NAME) }
         single {
             RelayConnectionFactory(
