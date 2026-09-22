@@ -1114,6 +1114,12 @@ class ThreadViewModel(
                 pendingChannelInfo.value = false
                 launchGuardedRepoCall {
                     repository.delete(state.value.conversationId)
+                    // #790: success-only, the position [sendMessage]'s own clear occupies — each of the
+                    // three failure types [launchGuardedRepoCall] swallows skips this line, leaving the
+                    // draft for a conversation that still exists. Keyed by the route's own pair, the one
+                    // [onDraftChange] wrote under, never re-derived from `state`. Before the `PopBack`
+                    // send so the eviction does not depend on it.
+                    draftStore.clearConversation(serverId, conversationId)
                     navigationChannel.send(ThreadNavigation.PopBack)
                 }
             }

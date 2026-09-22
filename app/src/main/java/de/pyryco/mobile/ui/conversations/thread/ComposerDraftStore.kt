@@ -61,4 +61,41 @@ class ComposerDraftStore {
             if (updated.isEmpty()) hosts - serverId else hosts + (serverId to updated)
         }
     }
+
+    /**
+     * Drop every draft held for [serverId] (#790) — that host's whole bucket, and nothing else.
+     *
+     * Called when a pairing is removed. A `serverId` is stable across a re-pair, so without this,
+     * pairing the same server again would resurface text typed before the unpair; unpairing is the
+     * user's revocation gesture, and unsent text addressed to that host must not survive it.
+     *
+     * Matching is exact, case-sensitive [String] equality — the same identity rule
+     * [de.pyryco.mobile.data.crypto.PairedServerCollectionStore] uses — so two hosts whose ids differ
+     * only in case, or one of whose ids is a prefix of the other, keep their own drafts. Nothing here
+     * builds a key: the bucket is looked up whole and removed whole.
+     *
+     * An unknown or already-empty [serverId] is a no-op, matching that store's own unknown-id contract,
+     * so the caller needs no existence check.
+     *
+     * Non-suspending, and cannot throw: a map minus through [update]'s compare-and-set loop, so a
+     * concurrent write to another host cannot be lost. Its caller runs it after a removal has already
+     * succeeded, where a throw would be reported as a failed unpair.
+     */
+    fun clearHost(serverId: String) {
+        _drafts.update { it - serverId }
+    }
+
+    /**
+     * Drop this pair's draft (#790), leaving the same host's other conversations alone.
+     *
+     * Called when a conversation is deleted. Named rather than spelled `setDraft(…, "")` at the call
+     * site: a deletion is not an edit to empty, and the delete path must not depend on [setDraft]'s
+     * "only the empty string clears" convention to mean "this chat is gone".
+     */
+    fun clearConversation(
+        serverId: String,
+        conversationId: String,
+    ) {
+        setDraft(serverId, conversationId, "")
+    }
 }
