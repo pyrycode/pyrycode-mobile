@@ -10,6 +10,7 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.RelayErrorException
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.Model
@@ -29,6 +30,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
@@ -39,6 +41,14 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Instant
+
+/**
+ * The one `history.*` wire code this screen branches on (#778) — the daemon refused the cursor, so the
+ * walk restarts from the newest page instead of surfacing a dead end. Every other code, known or not,
+ * falls through to a failure, so a hostile daemon cannot reach the restart branch by guessing. The code
+ * vocabulary's SSOT is the protocol document, not this constant.
+ */
+private const val HISTORY_INVALID_CURSOR = "history.invalid_cursor"
 
 sealed interface ThreadEvent {
     data object NewSession : ThreadEvent
@@ -107,10 +117,11 @@ data class ThreadUiState(
     val selectedEffort: Effort = Effort.HIGH,
     val yoloEnabled: Boolean = false,
     val mutationsSupported: Boolean = true,
-    // #777: a history page is in flight — drives the oldest-end loading affordance. The walk's stop
-    // reason deliberately does NOT reach the screen: the screen asks, the VM decides whether the ask is
-    // honoured, and a second copy of that decision in Compose would be a second place to get it wrong.
-    val historyLoading: Boolean = false,
+    // #777/#778: what the thread's single oldest-end slot shows — loading, a retry, a dead end or
+    // nothing. The walk's TERMINATION reasons deliberately do not reach the screen, only its failures:
+    // the screen asks, the VM decides whether the ask is honoured, and a second copy of that decision in
+    // Compose would be a second place to get it wrong.
+    val historyTail: ThreadHistoryTail = ThreadHistoryTail.None,
 )
 
 data class SaveAsChannelDialogState(
@@ -199,15 +210,16 @@ class ThreadViewModel(
         }
 
     /**
-     * This conversation's backward history walk (#777) — cursor, in-flight, page count and stop reason in
-     * one value. Written from exactly two places, both CAS-shaped: [claimHistoryAsk]'s
-     * [MutableStateFlow.compareAndSet] loop and [requestOlderHistory]'s settle/fail
-     * [MutableStateFlow.update]. A plain read-then-assign would open a real window, because the settle
-     * runs in a launched coroutine while the claim runs on the caller's.
+     * This conversation's backward history walk (#777) — cursor, in-flight, page count, stop reason and
+     * walk generation in one value. Written from four places, all CAS-shaped: [claimHistorySlot]'s
+     * [MutableStateFlow.compareAndSet] loop for the ask and the retry claims, [restartHistoryWalk]'s own
+     * loop, and [applyToWalk]'s generation-guarded [MutableStateFlow.update] for every settle and fail. A
+     * plain read-then-assign would open a real window, because the settle runs in a launched coroutine
+     * while the claim runs on the caller's.
      *
      * Not persisted — no [SavedStateHandle], no DataStore. The repository's projections are
-     * connection-scoped, so a cursor that outlived its connection would be a stale-cursor bug, and
-     * restarting the walk on reconnect is #778's job rather than this value's.
+     * connection-scoped, so a cursor that outlived its connection would be a stale-cursor bug; #778
+     * restarts the walk on a new connection instead of resuming it.
      */
     private val historyDemand = MutableStateFlow(ThreadHistoryDemand())
 
@@ -241,7 +253,7 @@ class ThreadViewModel(
      */
     private val threadContent: Flow<ThreadContent> =
         combine(threadItems, repository.observeQueue(conversationId), historyDemand) { items, queued, demand ->
-            ThreadContent(items, queued, demand.inFlight)
+            ThreadContent(items, queued, demand.tail())
         }
 
     val state: StateFlow<ThreadUiState> =
@@ -274,7 +286,7 @@ class ThreadViewModel(
                 selectedEffort = runConfig.effort,
                 yoloEnabled = runConfig.yoloEnabled,
                 mutationsSupported = mutationsSupported,
-                historyLoading = content.historyLoading,
+                historyTail = content.historyTail,
             )
         }.stateIn(
             scope = viewModelScope,
@@ -533,9 +545,35 @@ class ThreadViewModel(
     }
 
     init {
-        // AC #1: opening a thread asks for the newest page. A phone that only ever rendered the live
-        // stream showed nothing that predated its connection.
+        // AC #1 of #777: opening a thread asks for the newest page. A phone that only ever rendered the
+        // live stream showed nothing that predated its connection.
         requestOlderHistory()
+
+        // #778: a new connection restarts the walk from the newest page. The repository's projections are
+        // connection-scoped, so a cursor minted on one connection is not valid on the next — the walk
+        // restarts rather than resumes.
+        //
+        // Two deliberate choices here. It collects the SOURCE rather than the [connectionState] StateFlow:
+        // that flow is WhileSubscribed and seeds Connected, so its first value is synthetic and its
+        // upstream depends on the screen being subscribed. And `drop(1)` after `distinctUntilChanged`
+        // drops exactly the connection the thread opened on — the source hands every collector its current
+        // value on subscription, so restarting on it would restart the walk this init has just started,
+        // spending a page of budget and a round trip on every open. Only a RETURN to connected counts.
+        // A first value of Offline correctly makes the following connect a restart: the opening ask on
+        // that connection already failed.
+        viewModelScope.launch {
+            connectionStateSource
+                .observe()
+                .map { it == ConnectionState.Connected }
+                .distinctUntilChanged()
+                .drop(1)
+                .collect { connected ->
+                    if (connected) {
+                        RelayLog.d { "event=history_walk_restart reason=reconnect" }
+                        restartHistoryWalk(fromWalk = historyDemand.value.walk)
+                    }
+                }
+        }
     }
 
     /**
@@ -548,48 +586,126 @@ class ThreadViewModel(
     }
 
     /**
-     * Issue one backward step of the walk, if the demand allows one.
+     * The reader pressed the oldest-end retry affordance (#778) — ask again for the page that failed.
+     *
+     * Gated on [ThreadHistoryDemand.canRetry], so it is inert unless the walk actually stopped on a
+     * retryable failure. The retry resumes from the **same** cursor, keeping every loaded row and the
+     * walk's position across both the failure and the retry.
+     */
+    fun onRetryOlderHistory() {
+        val claimed = claimHistorySlot { if (it.canRetry) it.retrying() else null } ?: return
+        launchHistoryAsk(claimed)
+    }
+
+    /** Issue one backward step of the walk, if the demand allows one (#777). */
+    private fun requestOlderHistory() {
+        val claimed = claimHistorySlot { if (it.canAsk) it.asking() else null } ?: return
+        launchHistoryAsk(claimed)
+    }
+
+    /**
+     * The walk's single ask site.
      *
      * The returned [de.pyryco.mobile.data.repository.HistoryPage] is read for its `cursor` and `atStart`
      * and **nothing else**: `RemoteConversationRepository.requestHistory` has already merged the page's
      * entries into the thread this VM reads through `observeMessages`, so folding them here as well
      * would render every loaded row twice. Nothing needs a second fold.
+     *
+     * Every write back is guarded on [claimed]'s [ThreadHistoryDemand.walk] (#778), so an ask superseded
+     * by a restart writes nothing at all. On reconnect that case is real, not theoretical: the ask issued
+     * on the connection that just died is still in flight, and its late settle would otherwise store that
+     * dead connection's cursor as the live walk's.
      */
-    private fun requestOlderHistory() {
-        val claimed = claimHistoryAsk() ?: return
+    private fun launchHistoryAsk(claimed: ThreadHistoryDemand) {
+        val walk = claimed.walk
         viewModelScope.launch {
             try {
                 val page = repository.requestHistory(conversationId, claimed.cursor)
-                historyDemand.update { it.settled(pageCursor = page.cursor, atStart = page.atStart) }
+                applyToWalk(walk) { it.settled(pageCursor = page.cursor, atStart = page.atStart) }
             } catch (e: CancellationException) {
                 throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
             } catch (e: RelayErrorException) {
-                // Inert: a server error frame. Never log e.message (server-supplied).
-                historyDemand.update { it.failed() }
+                // A server error frame. Only the CODE is read, and only to choose a branch; e.message is
+                // server-supplied and is never read, logged or surfaced. An unknown or differently-cased
+                // code falls through to the failure branch, so the fallback here is the safe one.
+                if (e.code == HISTORY_INVALID_CURSOR && claimed.cursor.isNotEmpty()) {
+                    // AC #3: the daemon refused the cursor, so walk the log again from the newest page
+                    // rather than surfacing a dead end. Bounded because restartHistoryWalk carries the
+                    // page budget.
+                    RelayLog.d { "event=history_walk_restart reason=invalid_cursor" }
+                    restartHistoryWalk(fromWalk = walk)
+                } else {
+                    // A refusal of the NEWEST-page ask is permanent, not a restart: restarting would
+                    // re-send the same empty cursor for the same refusal, at round-trip speed with no
+                    // user input. There is nothing to restart to when the walk is already at the newest
+                    // page, and this is what keeps the restart cycle structurally impossible rather than
+                    // merely capped.
+                    failWalk(walk, retryable = e.retryable)
+                }
             } catch (e: IllegalStateException) {
-                // Inert: a not-connected session, #488's teardown sweep, or the not-wired interface default.
-                historyDemand.update { it.failed() }
+                // A not-connected session, #488's teardown sweep, or the not-wired interface default.
+                // Not retryable: a button with no connection behind it cannot work, and the reconnect
+                // restart above is what actually recovers this case.
+                failWalk(walk, retryable = false)
             } catch (e: IllegalArgumentException) {
-                // Inert: an unknown conversation id, or a malformed page — kotlinx.serialization's
+                // An unknown conversation id, or a malformed page — kotlinx.serialization's
                 // SerializationException is an IllegalArgumentException, so the decode failure lands here.
-                historyDemand.update { it.failed() }
+                failWalk(walk, retryable = false)
+            }
+        }
+    }
+
+    /** Settle a failed ask, if it still belongs to the current walk. [retryable] is a flag, never text. */
+    private fun failWalk(
+        walk: Int,
+        retryable: Boolean,
+    ) {
+        RelayLog.d { "event=history_ask_failed retryable=$retryable" }
+        applyToWalk(walk) { it.failed(retryable = retryable) }
+    }
+
+    /** Apply [transform] only while the walk is still the one the ask was issued on (#778). */
+    private fun applyToWalk(
+        walk: Int,
+        transform: (ThreadHistoryDemand) -> ThreadHistoryDemand,
+    ) {
+        historyDemand.update { if (it.walk == walk) transform(it) else it }
+    }
+
+    /**
+     * Restart the walk from the newest page on the **same** page budget (#778), and ask for that page
+     * unless the budget is already spent.
+     *
+     * Returns without a write when the generation has already moved — two restarts can genuinely race
+     * (a refused cursor and a reconnect), and each taking a distinct generation means at most one settle
+     * applies: two round trips for one page of budget, which spends the bound faster rather than
+     * laundering it.
+     */
+    private fun restartHistoryWalk(fromWalk: Int) {
+        while (true) {
+            val current = historyDemand.value
+            if (current.walk != fromWalk) return
+            val restarted = current.restarted()
+            if (historyDemand.compareAndSet(current, restarted)) {
+                if (restarted.inFlight) launchHistoryAsk(restarted)
+                return
             }
         }
     }
 
     /**
-     * Claim the walk's single outstanding-request slot, returning the claimed demand (whose `cursor` is
-     * the one to ask with) or `null` when the ask must be dropped.
+     * Claim the walk's single outstanding-request slot under [claim]'s rule, returning the claimed demand
+     * (whose `cursor` is the one to ask with) or `null` when the ask must be dropped.
      *
      * A [MutableStateFlow.compareAndSet] loop rather than a read-then-assign: the settle runs in a
      * launched coroutine, so a check-then-act would admit two concurrent asks through the window between
-     * reading [ThreadHistoryDemand.canAsk] and writing the in-flight flag.
+     * reading the rule and writing the in-flight flag. [claim] is pure and cheap, so re-running it on a
+     * lost CAS is free.
      */
-    private fun claimHistoryAsk(): ThreadHistoryDemand? {
+    private fun claimHistorySlot(claim: (ThreadHistoryDemand) -> ThreadHistoryDemand?): ThreadHistoryDemand? {
         while (true) {
             val current = historyDemand.value
-            if (!current.canAsk) return null
-            val claimed = current.asking()
+            val claimed = claim(current) ?: return null
             if (historyDemand.compareAndSet(current, claimed)) return claimed
         }
     }
@@ -990,13 +1106,13 @@ class ThreadViewModel(
 
     /**
      * The thread's content surface (#461): the rendered rows folded with the queued-message backlog and,
-     * since #777, the history walk's in-flight flag. The flag rides this arm rather than taking a sixth
+     * since #777, the history walk's oldest-end slot. The slot rides this arm rather than taking a sixth
      * one of its own because Kotlin's typed `combine` stops at five and [state] already uses all five.
      */
     private data class ThreadContent(
         val items: List<ThreadItem>,
         val queued: List<QueuedMessage>,
-        val historyLoading: Boolean,
+        val historyTail: ThreadHistoryTail,
     )
 
     private data class TransientDialogs(

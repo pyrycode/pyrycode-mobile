@@ -909,8 +909,13 @@ The remaining checks here are specific to a real relay or real Claude execution:
 ## Follow-ups to ticket
 
 - **Coverage — pending:** [#673](https://github.com/pyrycode/pyrycode-mobile/issues/673)
-  owns two-host navigation/reconnect and phone-reply continuity in the rung-3
-  `InteractiveStreamE2ETest` harness. The production-route Compose tests and
+  owns two-host navigation/reconnect, phone-reply continuity, and history paging
+  (scroll-back and reconnect-continuity) in the rung-3 `InteractiveStreamE2ETest`
+  harness. [#778](https://github.com/pyrycode/pyrycode-mobile/issues/778) shipped
+  the history-page retry and the reconnect/refused-cursor walk restart with
+  deterministic coverage only (`ThreadHistoryDemandTest`, `ThreadViewModelTest`,
+  `ThreadScreenHistoryTest`) and carried no `needs-real-claude`; the live proof for
+  that behaviour still belongs here. The production-route Compose tests and
   two-peer DI tests for #636 establish deterministic ownership boundaries; passing
   the existing eight-test live gate does not establish that future scenario.
 

@@ -422,19 +422,51 @@ records.
   adversarial daemon is the client-side `MAX_HISTORY_PAGES = 100` cap in `settled()`, which does not read
   anything the daemon sent to decide when to stop. The cap is per `ThreadViewModel` instance (so per
   screen-open); leaving and re-entering a thread starts a fresh walk.
-- **A failed ask keeps the cursor and page count, clears in-flight, and stops asking — no retry.**
-  `failed()` sets `stoppedBy = Failed` without touching `cursor` or `pagesLoaded`, so every row already
-  loaded and the walk's position survive a failure. `HistoryWalkStop` is an enum rather than a `Boolean`
-  specifically so [#778](../codebase/778.md) can reopen `Failed` alone — `AtStart` / `NotAdvancing` /
-  `PageCap` stay terminal. Nothing here retries, restarts on reconnect, or persists the cursor: the
-  projections above are connection-scoped (`threadByConversation` starts empty on each connection), so a
-  cursor surviving a reconnect would be a stale-cursor bug rather than a resume point. That restart is
-  #778's job.
+- **A failed ask keeps the cursor and page count, clears in-flight, and stops asking — no retry, as
+  shipped here.** `failed()` set `stoppedBy = Failed` without touching `cursor` or `pagesLoaded`, so every
+  row already loaded and the walk's position survived a failure. `HistoryWalkStop` was an enum rather than
+  a `Boolean` specifically so [#778](../codebase/778.md) could reopen `Failed` alone — `AtStart` /
+  `NotAdvancing` / `PageCap` stayed terminal. Nothing here retried, restarted on reconnect, or persisted
+  the cursor: the projections above are connection-scoped (`threadByConversation` starts empty on each
+  connection), so a cursor surviving a reconnect would be a stale-cursor bug rather than a resume point.
+  [#778](#the-retry-and-the-two-restarts-778) reopened exactly that gap.
 - **The opening ask stays unconditional**, resolving the plan's second Open Question: `mergeHistoryRows`
   (the § above) already skips any row the thread holds, keyed on the renderer's own row key, so a first
   page overlapping the `backfill_since` replay ring is fully absorbed with no duplicate rows. Suppressing
   the ask when the ring already holds rows would buy nothing and would skip a genuinely needed page after
   a daemon restart empties the ring.
 
-The list-side half — the predicate that fires the "reached the oldest row" ask, and the oldest-end loading
-affordance — is [Thread screen § the oldest-end history demand](thread-screen-how-it-works-list-and-status-row.md#the-oldest-end-history-demand-777).
+## The retry and the two restarts (#778)
+
+[#777](../codebase/777.md) left `Failed` as a one-way door: a page that failed left every loaded row and
+the cursor in place but stopped the walk forever, and a reconnect left the walk holding a cursor the new
+connection's projections could never honour. [#778](../codebase/778.md) reopens exactly that door — the
+design lives beside `ThreadViewModel`, not in this repository, and this section records only what it
+depends on here.
+
+- **`HistoryWalkStop.Failed` split into `RetryableFailure` and `PermanentFailure`**, on
+  `RelayErrorException.retryable` — `requestHistory`'s own contract names `history.unavailable` as the
+  **only** retryable code; the unknown-conversation `IllegalArgumentException` and the closed-session
+  `IllegalStateException` this repository's KDoc documents both settle permanently. `AtStart` /
+  `NotAdvancing` / `PageCap` are unchanged and stay terminal.
+- **`ThreadHistoryDemand` still reads `requestHistory`'s return for `cursor` and `atStart` only** — the
+  retry and both restarts ask through the same `requestHistory` call this document describes above, so a
+  retried or restarted page folds into `threadByConversation` exactly the way any other page does, via
+  `mergeHistoryPage`'s existing dedup-by-renderer-key. Nothing on the caller side needed a second fold, and
+  `ThreadHistoryDemand.kt` still imports neither `HistoryPage` nor `HistoryEntry`.
+- **A restart re-asks the newest page (`cursor = ""`) on the same page budget**, never a reset one — a
+  restart that reset `MAX_HISTORY_PAGES` would be a bound with an off switch, and a flapping connection
+  could otherwise launder a fresh budget on every reconnect. Two triggers restart it: `requestHistory`
+  throwing `RelayErrorException("history.invalid_cursor")` for a non-empty cursor (the refused-cursor
+  case), and the injected `ConnectionStateSource` transitioning to `Connected` **after** having left it —
+  not the connection the thread opened on, since that source hands every collector its current value on
+  subscription. Both restarts carry a monotonic `walk` generation so a settle from a connection that has
+  since been superseded is dropped rather than written into the restarted walk; this is what keeps a
+  reconnect from writing a dead connection's cursor into the live one.
+- **A refusal of the newest-page ask (empty cursor) settles permanently instead of restarting** — this is
+  what keeps the restart cycle structurally impossible rather than merely capped: every non-empty-cursor
+  ask the repository ever receives from this walk originates from a reader scroll or a reader press on the
+  retry affordance, never from a restart.
+
+The screen-side half — the one oldest-end slot now showing loading, a retry affordance or a dead end — is
+[Thread screen § the oldest-end history retry and restart](thread-screen-how-it-works-list-and-status-row.md#the-oldest-end-history-retry-and-restart-778).

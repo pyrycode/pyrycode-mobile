@@ -2,6 +2,7 @@ package de.pyryco.mobile.ui.conversations.thread
 
 import android.content.res.Configuration
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -121,6 +122,14 @@ private val HistoryLoadingSpinnerSize = 16.dp
 private val HistoryLoadingSpinnerStroke = 2.dp
 private val HistoryLoadingLabelGap = 8.dp
 
+// #778: the ONE oldest-end slot. Loading, retry and dead-end share this key because they share the slot —
+// at most one of them is ever emitted.
+private const val HISTORY_TAIL_KEY = "history-tail"
+
+// #778: the failure rows' own inset, one step tighter than the loading row's so the tinted surface does
+// not read as a message bubble.
+private val HistoryTailRowPadding = 12.dp
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ThreadScreen(
@@ -159,6 +168,9 @@ fun ThreadScreen(
     // MainActivity → vm::onDemandOlderHistory. Safe to fire repeatedly: the ViewModel's demand drops an
     // ask that arrives while a request is outstanding or after the walk has stopped.
     onDemandOlderHistory: () -> Unit = {},
+    // #778: the reader pressed the oldest-end retry affordance. Wired by MainActivity →
+    // vm::onRetryOlderHistory, and inert unless the walk stopped on a retryable failure.
+    onRetryOlderHistory: () -> Unit = {},
 ) {
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
@@ -391,9 +403,15 @@ fun ThreadScreen(
                         }
                     }
                     // #777: under reverseLayout a later item takes a higher index and draws further up,
-                    // so appending here puts the affordance at the oldest end for free.
-                    if (state.historyLoading) {
-                        item(key = "history-loading") { HistoryLoadingRow() }
+                    // so appending here puts the affordance at the oldest end for free. #778 widened it
+                    // from one row to four states, but it is still ONE slot and one key — loading, a
+                    // retry or a dead end, never two of them at once.
+                    when (state.historyTail) {
+                        ThreadHistoryTail.None -> Unit
+                        ThreadHistoryTail.Loading -> item(key = HISTORY_TAIL_KEY) { HistoryLoadingRow() }
+                        ThreadHistoryTail.Retry ->
+                            item(key = HISTORY_TAIL_KEY) { HistoryRetryRow(onRetry = onRetryOlderHistory) }
+                        ThreadHistoryTail.DeadEnd -> item(key = HISTORY_TAIL_KEY) { HistoryDeadEndRow() }
                     }
                 }
             }
@@ -559,6 +577,86 @@ private fun HistoryLoadingRow() {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+/**
+ * The oldest-end "that page failed, ask again" affordance (#778) — the retry state of the same single
+ * slot [HistoryLoadingRow] occupies.
+ *
+ * The Figma thread frame (16:8) draws no history element, but it does draw one error-plus-action
+ * affordance: the status-area "Pairing error - Re-pair" chip, an error-toned container with an emphasized
+ * small label on a 6dp radius. This is that shape through its shipped Compose equivalent,
+ * [de.pyryco.mobile.ui.conversations.components.ConnectionBanner]'s `errorContainer` /
+ * `onErrorContainer` clickable surface, so the new state reads as the same family as the error
+ * affordance the design already drew.
+ *
+ * Both strings are local resources with no interpolation. In particular the server-authored
+ * `RelayErrorException.message` is never surfaced here — the reader is told the page failed, not what the
+ * daemon called the failure.
+ */
+@Composable
+private fun HistoryRetryRow(onRetry: () -> Unit) {
+    val description = stringResource(R.string.cd_thread_history_retry)
+    HistoryTailSurface {
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    // Fully qualified: a bare `Role` here is the message-author Role already imported.
+                    .clickable(role = androidx.compose.ui.semantics.Role.Button, onClick = onRetry)
+                    .padding(horizontal = HistoryLoadingGutter, vertical = HistoryTailRowPadding)
+                    .semantics(mergeDescendants = true) { contentDescription = description },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(HistoryLoadingLabelGap),
+        ) {
+            Text(
+                text = stringResource(R.string.thread_history_retry_label),
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = stringResource(R.string.thread_history_retry_action),
+                style = MaterialTheme.typography.labelLarge,
+            )
+        }
+    }
+}
+
+/**
+ * The oldest-end "earlier messages are out of reach" affordance (#778) — the same slot and the same
+ * surface as [HistoryRetryRow] with nothing to press.
+ *
+ * A permanent failure is the one the contract marks non-retryable: the remaining `history.*` codes, an
+ * unknown conversation id, a closed session, a malformed page. The reader sees that the log ends here
+ * rather than silently believing they have reached the start of it, which is why this state is visible at
+ * all; a button would be an affordance that cannot work.
+ */
+@Composable
+private fun HistoryDeadEndRow() {
+    val description = stringResource(R.string.cd_thread_history_dead_end)
+    HistoryTailSurface {
+        Text(
+            text = stringResource(R.string.thread_history_dead_end_label),
+            style = MaterialTheme.typography.bodySmall,
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = HistoryLoadingGutter, vertical = HistoryTailRowPadding)
+                    .semantics(mergeDescendants = true) { contentDescription = description },
+        )
+    }
+}
+
+/** The shared error-toned surface behind both oldest-end failure rows (#778). */
+@Composable
+private fun HistoryTailSurface(content: @Composable () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        shape = MaterialTheme.shapes.small,
+        content = content,
+    )
 }
 
 /**
@@ -807,6 +905,37 @@ private fun previewItems(): List<ThreadItem> {
 )
 @Composable
 private fun ThreadScreenHistoryLoadingPreview() {
+    HistoryTailPreview(ThreadHistoryTail.Loading)
+}
+
+/** #778: the same slot's retry state — the design's error-plus-action chip at the oldest end. */
+@Preview(name = "Thread — history retry, light", showBackground = true, widthDp = 412)
+@Preview(
+    name = "Thread — history retry, dark",
+    showBackground = true,
+    widthDp = 412,
+    uiMode = Configuration.UI_MODE_NIGHT_YES,
+)
+@Composable
+private fun ThreadScreenHistoryRetryPreview() {
+    HistoryTailPreview(ThreadHistoryTail.Retry)
+}
+
+/** #778: the same slot's dead end — visible, with nothing to press. */
+@Preview(name = "Thread — history dead end, light", showBackground = true, widthDp = 412)
+@Preview(
+    name = "Thread — history dead end, dark",
+    showBackground = true,
+    widthDp = 412,
+    uiMode = Configuration.UI_MODE_NIGHT_YES,
+)
+@Composable
+private fun ThreadScreenHistoryDeadEndPreview() {
+    HistoryTailPreview(ThreadHistoryTail.DeadEnd)
+}
+
+@Composable
+private fun HistoryTailPreview(tail: ThreadHistoryTail) {
     PyrycodeMobileTheme {
         ThreadScreen(
             state =
@@ -816,7 +945,7 @@ private fun ThreadScreenHistoryLoadingPreview() {
                     isPromoted = true,
                     hasMessages = true,
                     items = previewItems(),
-                    historyLoading = true,
+                    historyTail = tail,
                 ),
             onBack = {},
             onSendMessage = {},

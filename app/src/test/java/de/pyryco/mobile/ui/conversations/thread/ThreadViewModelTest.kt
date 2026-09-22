@@ -15,6 +15,7 @@ import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.network.RelayErrorException
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.preferences.Effort
 import de.pyryco.mobile.data.preferences.Model
@@ -70,14 +71,28 @@ class ThreadViewModelTest {
     @get:Rule
     val tmp = TemporaryFolder()
 
+    /**
+     * The history walk's breadcrumbs (#778), captured rather than printed. Required, not optional:
+     * `RelayLog`'s default sink is `android.util.Log.println`, which throws on plain JVM, and the walk
+     * logs on every classified failure — which the opening ask hits in most of this file's tests, because
+     * the inline doubles inherit the interface default.
+     */
+    private val logs = mutableListOf<String>()
+    private val oldSink = RelayLog.sink
+    private val oldEnabled = RelayLog.enabled
+
     @Before
     fun setUpMainDispatcher() {
         Dispatchers.setMain(UnconfinedTestDispatcher())
+        RelayLog.enabled = true
+        RelayLog.sink = { _, _, message -> logs += message }
     }
 
     @After
     fun tearDownMainDispatcher() {
         Dispatchers.resetMain()
+        RelayLog.sink = oldSink
+        RelayLog.enabled = oldEnabled
     }
 
     private fun TestScope.newDataStore(): DataStore<Preferences> =
@@ -2886,15 +2901,16 @@ class ThreadViewModelTest {
             val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
             repo.messages.value = listOf(messageItem("m1"))
             advanceUntilIdle()
-            // The indicator always clears, so this slice never ships a visibly stuck state...
-            assertFalse(vm.state.value.historyLoading)
+            // The indicator always clears, so the walk never ships a visibly stuck loading state...
+            assertEquals(ThreadHistoryTail.Retry, vm.state.value.historyTail)
             // ...every loaded row survives...
             assertEquals(
                 listOf("m1"),
                 vm.state.value.items
                     .map { (it as ThreadItem.MessageItem).message.id },
             )
-            // ...and the walk then stops asking, with no retry affordance (that is #778).
+            // ...and the SCROLL stops asking. Recovery is a deliberate gesture (#778), never a scroll:
+            // resuming on scroll would make the failure invisible and leave the reader no way to stop.
             repeat(5) { vm.onDemandOlderHistory() }
             advanceUntilIdle()
             assertEquals(listOf(""), repo.asks)
@@ -2933,10 +2949,10 @@ class ThreadViewModelTest {
             val vm = makeVm(historyHandle(), repo)
             val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
             advanceUntilIdle()
-            assertTrue(vm.state.value.historyLoading)
+            assertEquals(ThreadHistoryTail.Loading, vm.state.value.historyTail)
             gate.complete(page(cursor = "c1"))
             advanceUntilIdle()
-            assertFalse(vm.state.value.historyLoading)
+            assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
             collector.cancel()
         }
 
@@ -2971,6 +2987,234 @@ class ThreadViewModelTest {
                     .map { (it as ThreadItem.MessageItem).message.id },
             )
             collector.cancel()
+        }
+
+    // --- #778: retrying a failed page, and restarting the walk -------------------------------------
+
+    @Test
+    fun history_aRetryableFailure_resumesFromTheSameCursorAndKeepsEveryLoadedRow() =
+        runTest {
+            var fail = false
+            val repo =
+                HistoryRepo { asked ->
+                    if (fail) throw RelayErrorException("history.unavailable", true, "boom")
+                    page(cursor = if (asked.isEmpty()) "c1" else "c2")
+                }
+            val vm = makeVm(historyHandle(), repo)
+            val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            repo.messages.value = listOf(messageItem("m1"))
+            advanceUntilIdle()
+
+            fail = true
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+            assertEquals(ThreadHistoryTail.Retry, vm.state.value.historyTail)
+
+            fail = false
+            vm.onRetryOlderHistory()
+            advanceUntilIdle()
+            // AC #1: the retry asks with the SAME cursor, so it loads the page that failed...
+            assertEquals(listOf("", "c1", "c1"), repo.asks)
+            // ...and both the failure and the retry left every loaded row alone.
+            assertEquals(
+                listOf("m1"),
+                vm.state.value.items
+                    .map { (it as ThreadItem.MessageItem).message.id },
+            )
+            assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
+            collector.cancel()
+        }
+
+    @Test
+    fun history_aPermanentFailure_isVisibleAndOffersNoRetry() =
+        runTest {
+            // AC #2, across all three permanent shapes the contract names.
+            listOf(
+                RelayErrorException("history.invalid_page_size", false, "nope"),
+                IllegalArgumentException("unknown conversation"),
+                IllegalStateException("not connected"),
+            ).forEach { failure ->
+                val repo = HistoryRepo { throw failure }
+                val vm = makeVm(historyHandle(), repo)
+                val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+                advanceUntilIdle()
+
+                assertEquals("$failure", ThreadHistoryTail.DeadEnd, vm.state.value.historyTail)
+                // The walk does not resume from it — neither a scroll nor a retry press moves it.
+                repeat(3) { vm.onDemandOlderHistory() }
+                vm.onRetryOlderHistory()
+                advanceUntilIdle()
+                assertEquals("$failure", listOf(""), repo.asks)
+                collector.cancel()
+            }
+        }
+
+    @Test
+    fun history_aRefusedCursor_restartsFromTheNewestPageWithoutDroppingRows() =
+        runTest {
+            // AC #3. The first page walks; the ask that follows is refused; the walk starts over.
+            val repo =
+                HistoryRepo { asked ->
+                    if (asked.isEmpty()) page(cursor = "c1") else throw RelayErrorException("history.invalid_cursor", false, "stale")
+                }
+            val vm = makeVm(historyHandle(), repo)
+            val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            repo.messages.value = listOf(messageItem("m1"))
+            advanceUntilIdle()
+
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+
+            // Restarted from the newest page rather than surfacing a dead end...
+            assertEquals(listOf("", "c1", ""), repo.asks)
+            assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
+            // ...and the rows already on screen were not dropped to do it.
+            assertEquals(
+                listOf("m1"),
+                vm.state.value.items
+                    .map { (it as ThreadItem.MessageItem).message.id },
+            )
+            collector.cancel()
+        }
+
+    @Test
+    fun history_aRefusedNewestPage_settlesPermanentlyRatherThanRestartingForever() =
+        runTest {
+            // The security shape the ticket names: restart -> newest page -> refusal -> restart with no
+            // user input. Restarting always asks with the empty cursor, so refusing THAT ask is the one
+            // case where a restart would re-send the identical request. It is permanent instead, which is
+            // what makes the cycle structurally impossible rather than merely capped.
+            val repo = HistoryRepo { throw RelayErrorException("history.invalid_cursor", false, "stale") }
+            val vm = makeVm(historyHandle(), repo)
+            val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            advanceUntilIdle()
+
+            assertEquals(listOf(""), repo.asks)
+            assertEquals(ThreadHistoryTail.DeadEnd, vm.state.value.historyTail)
+            collector.cancel()
+        }
+
+    @Test
+    fun history_aNewConnection_restartsTheWalkFromTheNewestPage() =
+        runTest {
+            // AC #4. The opening ask walks to c1; the connection drops and returns; the walk starts over.
+            val source = FakeConnectionStateSource()
+            val repo = HistoryRepo { asked -> page(cursor = if (asked.isEmpty()) "c1" else "c2") }
+            makeVm(historyHandle(), repo, source = source)
+            advanceUntilIdle()
+            assertEquals(listOf(""), repo.asks)
+
+            source.emit(ConnectionState.Offline)
+            advanceUntilIdle()
+            assertEquals("a disconnect is not a new connection", listOf(""), repo.asks)
+
+            source.emit(ConnectionState.Connected)
+            advanceUntilIdle()
+            // Restarted from the newest page; the cursor minted on the previous connection is not sent.
+            assertEquals(listOf("", ""), repo.asks)
+        }
+
+    @Test
+    fun history_theConnectionTheThreadOpenedOn_doesNotCountAsANewOne() =
+        runTest {
+            // The named trap: ConnectionStateSource hands every collector its current value on
+            // subscription, so restarting on the first emission would restart the walk init just started
+            // — a page of budget and a round trip on every single open.
+            val source = FakeConnectionStateSource()
+            val repo = HistoryRepo { page(cursor = "c1") }
+            makeVm(historyHandle(), repo, source = source)
+            advanceUntilIdle()
+            assertEquals(listOf(""), repo.asks)
+
+            // Re-emitting the same connected state is not a new connection either.
+            source.emit(ConnectionState.Connected)
+            advanceUntilIdle()
+            assertEquals(listOf(""), repo.asks)
+        }
+
+    @Test
+    fun history_aReconnectMidFlight_dropsThePreviousConnectionsPageAndKeepsTheRestartedCursor() =
+        runTest {
+            // The race the walk generation exists for: the ask issued on the connection that just died is
+            // still in flight, and its late settle would otherwise store that dead connection's cursor.
+            val gate = CompletableDeferred<HistoryPage>()
+            val source = FakeConnectionStateSource()
+            var first = true
+            val repo =
+                HistoryRepo {
+                    if (first) {
+                        first = false
+                        gate.await()
+                    } else {
+                        page(cursor = "fresh")
+                    }
+                }
+            val vm = makeVm(historyHandle(), repo, source = source)
+            advanceUntilIdle()
+
+            source.emit(ConnectionState.Offline)
+            source.emit(ConnectionState.Connected)
+            advanceUntilIdle()
+            // Releasing the dead connection's page must not move the restarted walk.
+            gate.complete(page(cursor = "stale"))
+            advanceUntilIdle()
+
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+            assertEquals(listOf("", "", "fresh"), repo.asks)
+        }
+
+    @Test
+    fun history_aFlappingConnection_cannotLaunderAFreshPageBudget() =
+        runTest {
+            // AC #4's budget clause. Every restart carries pagesLoaded, so the total ask count across any
+            // number of reconnects is still the client-side cap — not the cap times the flap count.
+            val source = FakeConnectionStateSource()
+            val repo = HistoryRepo { asked -> page(cursor = if (asked == "a") "b" else "a") }
+            val vm = makeVm(historyHandle(), repo, source = source)
+            advanceUntilIdle()
+
+            repeat(MAX_HISTORY_PAGES * 3) {
+                source.emit(ConnectionState.Offline)
+                source.emit(ConnectionState.Connected)
+                advanceUntilIdle()
+                vm.onDemandOlderHistory()
+                advanceUntilIdle()
+            }
+            assertEquals(MAX_HISTORY_PAGES, repo.asks.size)
+        }
+
+    @Test
+    fun history_breadcrumbsNameTheBranchAndCarryNothingTheDaemonWrote() =
+        runTest {
+            // Every value a hostile daemon controls on these paths — the cursor it minted, the code it
+            // chose, the message it wrote — must be absent from the log. The reason labels are LOCAL
+            // literals chosen by which branch fired, not e.code, so an attacker cannot write a log line.
+            val source = FakeConnectionStateSource()
+            var asks = 0
+            val repo =
+                HistoryRepo {
+                    when (asks++) {
+                        0 -> page(cursor = "SECRET-CURSOR")
+                        1 -> throw RelayErrorException("history.invalid_cursor", false, "SERVER-PROSE")
+                        else -> throw RelayErrorException("history.unavailable", true, "SERVER-PROSE")
+                    }
+                }
+            val vm = makeVm(historyHandle(), repo, source = source)
+            advanceUntilIdle()
+            vm.onDemandOlderHistory()
+            advanceUntilIdle()
+            source.emit(ConnectionState.Offline)
+            source.emit(ConnectionState.Connected)
+            advanceUntilIdle()
+
+            assertTrue("$logs", logs.any { it == "event=history_walk_restart reason=invalid_cursor" })
+            assertTrue("$logs", logs.any { it == "event=history_walk_restart reason=reconnect" })
+            assertTrue("$logs", logs.any { it == "event=history_ask_failed retryable=true" })
+            listOf("SECRET-CURSOR", "SERVER-PROSE", "history.invalid_cursor", "history.unavailable")
+                .forEach { leaked ->
+                    assertFalse("$leaked reached a log line: $logs", logs.any { leaked in it })
+                }
         }
 
     private fun historyHandle() = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
