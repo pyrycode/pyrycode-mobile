@@ -70,6 +70,81 @@ class HistoryPageReducerTest {
         assertEquals(ToolCallStatus.Done, toolCall?.status)
     }
 
+    // ---- #810: the tool call's own input fields and its parent identity reach the row --------------
+
+    @Test
+    fun reduce_toolUse_carriesInputFieldsAndParentVerbatim() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(
+                        1,
+                        "tool_use",
+                        toolUsePayload(
+                            "t1",
+                            name = "Edit",
+                            input = "a.kt",
+                            extra = """"parent_tool_use_id":"agent-1","input":{"file_path":"../a.kt","old_string":"x…"}""",
+                        ),
+                    ),
+                ),
+                interactive = true,
+            )
+
+        val toolCall = rows.messageRow("t1")?.toolCall
+        assertEquals(mapOf("file_path" to "../a.kt", "old_string" to "x…"), toolCall?.inputFields)
+        assertEquals("agent-1", toolCall?.parentToolUseId)
+        assertEquals("a.kt", toolCall?.input)
+    }
+
+    @Test
+    fun reduce_toolUseWithoutTheNewKeys_isATopLevelRowWithNoFields() {
+        val rows = reduceHistoryPage(listOf(entry(1, "tool_use", toolUsePayload("t1", name = "Read", input = "a.kt"))), interactive = true)
+
+        val toolCall = rows.messageRow("t1")?.toolCall
+        assertEquals(emptyMap<String, String>(), toolCall?.inputFields)
+        assertEquals("", toolCall?.parentToolUseId)
+    }
+
+    @Test
+    fun reduce_toolResultNamingAParent_setsTheRowsParent() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(
+                        2,
+                        "tool_result",
+                        toolResultPayload("t1", isError = false, summary = "ok", extra = """"parent_tool_use_id":"agent-1""""),
+                    ),
+                    entry(1, "tool_use", toolUsePayload("t1", name = "Read", input = "a.kt")),
+                ),
+                interactive = true,
+            )
+
+        assertEquals("agent-1", rows.messageRow("t1")?.toolCall?.parentToolUseId)
+    }
+
+    @Test
+    fun reduce_toolResultWithEmptyParent_keepsTheParentItsUseNamed() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(2, "tool_result", toolResultPayload("t1", isError = true, summary = "no", extra = """"parent_tool_use_id":""""")),
+                    entry(
+                        1,
+                        "tool_use",
+                        toolUsePayload("t1", name = "Read", input = "a.kt", extra = """"parent_tool_use_id":"agent-1","input":{"k":"v"}"""),
+                    ),
+                ),
+                interactive = true,
+            )
+
+        val toolCall = rows.messageRow("t1")?.toolCall
+        assertEquals("agent-1", toolCall?.parentToolUseId)
+        assertEquals(mapOf("k" to "v"), toolCall?.inputFields)
+        assertEquals(ToolCallStatus.Failed, toolCall?.status)
+    }
+
     @Test
     fun reduce_assistantDeltasAndTurnEnd_foldToOneFinalizedRow() {
         val rows =
@@ -352,16 +427,22 @@ class HistoryPageReducerTest {
         toolUseId: String,
         name: String,
         input: String,
+        extra: String = "",
     ): String =
-        """{"conversation_id":"$CONVERSATION","turn_id":"turn-1","tool_use_id":"$toolUseId","name":"$name","input_summary":"$input"}"""
+        """{"conversation_id":"$CONVERSATION","turn_id":"turn-1","tool_use_id":"$toolUseId","name":"$name","input_summary":"$input"""" +
+            extraFields(extra) + "}"
 
     private fun toolResultPayload(
         toolUseId: String,
         isError: Boolean,
         summary: String,
+        extra: String = "",
     ): String =
         """{"conversation_id":"$CONVERSATION","turn_id":"turn-1","tool_use_id":"$toolUseId",""" +
-            """"is_error":$isError,"result_summary":"$summary"}"""
+            """"is_error":$isError,"result_summary":"$summary"""" + extraFields(extra) + "}"
+
+    /** An optional `"key":value` fragment appended to a payload; empty leaves the payload as it was. */
+    private fun extraFields(extra: String): String = if (extra.isEmpty()) "" else ",$extra"
 
     private fun assistantDeltaPayload(
         turnId: String,

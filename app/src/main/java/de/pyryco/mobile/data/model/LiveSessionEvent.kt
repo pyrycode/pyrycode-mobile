@@ -52,24 +52,35 @@ sealed interface LiveSessionEvent {
         val text: String,
     ) : LiveSessionEvent
 
-    /** A tool invocation (`tool_use`). [toolUseId] correlates this call with its later [ToolResult]
-     *  (correlation itself is a consumer concern). [inputSummary] is a server-authored précis. */
+    /**
+     * A tool invocation (`tool_use`). [toolUseId] correlates this call with its later [ToolResult]
+     * (correlation itself is a consumer concern). [inputSummary] is a server-authored précis.
+     *
+     * [parentToolUseId] (#810) is the `Agent`/`Task` call that spawned the subagent making this call —
+     * `""` means the main thread. [input] is the tool input's own top-level fields, verbatim. Both are
+     * inert display and grouping data the daemon neither resolved nor validated: a value may be a
+     * traversing path or a literal shell command line, and the parent may name a call never seen here.
+     */
     data class ToolUse(
         override val conversationId: String,
         val turnId: String,
         val toolUseId: String,
         val name: String,
         val inputSummary: String,
+        val parentToolUseId: String = "",
+        val input: Map<String, String> = emptyMap(),
     ) : LiveSessionEvent
 
     /** A tool invocation's result (`tool_result`), matched to its [ToolUse] by [toolUseId].
-     *  [resultSummary] is a server-authored précis (not the raw output). */
+     *  [resultSummary] is a server-authored précis (not the raw output). [parentToolUseId] is as on
+     *  [ToolUse] (#810). */
     data class ToolResult(
         override val conversationId: String,
         val turnId: String,
         val toolUseId: String,
         val isError: Boolean,
         val resultSummary: String,
+        val parentToolUseId: String = "",
     ) : LiveSessionEvent
 
     /** End of a turn (`turn_end`). [stopReason] is carried as a plain string (wire values include
