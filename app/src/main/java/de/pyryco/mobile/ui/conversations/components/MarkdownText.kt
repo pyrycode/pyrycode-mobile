@@ -403,7 +403,7 @@ private fun TableBlock(
                                     AnnotatedString("")
                                 } else {
                                     buildAnnotatedString {
-                                        appendInlineChildren(cell.children, source, uriHandler, colors)
+                                        appendInlineChildren(cell.trimmedContent(), source, uriHandler, colors)
                                     }
                                 },
                             modifier =
@@ -422,6 +422,23 @@ private fun TableBlock(
         }
     }
 }
+
+/**
+ * A cell's inline children with the source's own padding dropped.
+ *
+ * `| Name |` lexes the cell as `WHITE_SPACE, TEXT("Name"), WHITE_SPACE`, so walking the children as
+ * they arrive renders `" Name "` — the pipes' breathing room, promoted into the content. GFM says a
+ * cell's content is its inline content with leading and trailing whitespace trimmed, and here it is
+ * visible rather than cosmetic: the padded string is what `textAlign` centres and end-aligns, so a
+ * right-aligned column would sit a space short of its own edge.
+ *
+ * Trimming the TOKENS and not the built string is what keeps the span offsets honest — an
+ * `AnnotatedString` trimmed after the fact carries styles that no longer line up with its text.
+ */
+private fun ASTNode.trimmedContent(): List<ASTNode> =
+    children
+        .dropWhile { it.type == MarkdownTokenTypes.WHITE_SPACE }
+        .dropLastWhile { it.type == MarkdownTokenTypes.WHITE_SPACE }
 
 internal enum class TableColumnAlignment { Start, Center, End }
 

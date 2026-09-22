@@ -66,7 +66,7 @@ Every size is a named file-private constant in the existing block at the top of 
 
 `MarkdownBlock` gains a `GFMElementTypes.TABLE` arm dispatching to a new private `TableBlock`.
 
-`TableBlock` reads the node into a rectangular grid before laying anything out: the `HEADER`'s `CELL` children are row 0, each `ROW`'s `CELL` children a further row, and the column count is row 0's size, bounded by `MaxTableColumns` and `MaxTableRows` (see the security review — the grid is one composable per cell, with no lazy layout, so its extent is a fan-out budget over untrusted text). A short row reads as empty cells and a long row's overflow is dropped — the library's own generator truncates the same way, and the dropped text is already fused into a trailing separator token by the lexer, so there is nothing addressable to render. Column alignments come from the delimiter row via the pure helper below, defaulting to `Start` for any column the delimiter row does not describe.
+`TableBlock` reads the node into a rectangular grid before laying anything out: the `HEADER`'s `CELL` children are row 0, each `ROW`'s `CELL` children a further row, and the column count is row 0's size, bounded by `MAX_TABLE_COLUMNS` and `MAX_TABLE_ROWS` (see the security review — the grid is one composable per cell, with no lazy layout, so its extent is a fan-out budget over untrusted text). A short row reads as empty cells and a long row's overflow is dropped — the library's own generator truncates the same way, and the dropped text is already fused into a trailing separator token by the lexer, so there is nothing addressable to render. Column alignments come from the delimiter row via the pure helper below, defaulting to `Start` for any column the delimiter row does not describe.
 
 Layout is **column-major** — a `Row` of per-column `Column`s, each `Column` at `IntrinsicSize.Max` width with its cells at `fillMaxWidth` — so a column's width is its widest cell and `textAlign` has a box to align within. Row heights stay in step across columns without a measuring pass because **cells do not wrap**: each cell is one line of `bodyMedium`, whose `lineHeight` is fixed by the type style rather than by the glyphs, so a monospace code span or a bold header sits at the same height as plain text. Non-wrapping is also the behaviour AC1 asks for — a table too wide for the bubble scrolls rather than reflowing.
 
@@ -189,7 +189,7 @@ The subject of this review is not the three constructs — it is what else the f
 
 - **[Trust boundaries] No finding — the accessibility channel carries no daemon text.** The task mark's `contentDescription` is a static string resource chosen by a boolean. Interpolating the item's text into it would have pushed untrusted content into a new announcement path; it is not done, and the two resources take no format argument.
 
-- **[Network & I/O / Android attack surface] SHOULD FIX — bound the table's composable fan-out.** The grid is one `Text` per cell with no lazy layout, where the same source previously produced a single paragraph. A cell costs roughly two source characters, so a hostile or merely broken reply amplifies by a large constant into composition, measure and layout, re-paid on every streaming reveal tick (#184 re-parses ~50×/sec). Mitigation, taken in Phase B: `MaxTableColumns` / `MaxTableRows` constants applied with `take` when the grid is built, set generously above any real reply so no legitimate table is affected, with the truncation recorded in the feature overview. Two constants and two calls — deterministic, not a heuristic.
+- **[Network & I/O / Android attack surface] SHOULD FIX — bound the table's composable fan-out.** The grid is one `Text` per cell with no lazy layout, where the same source previously produced a single paragraph. A cell costs roughly two source characters, so a hostile or merely broken reply amplifies by a large constant into composition, measure and layout, re-paid on every streaming reveal tick (#184 re-parses ~50×/sec). Mitigation, taken in Phase B: `MAX_TABLE_COLUMNS` / `MAX_TABLE_ROWS` constants applied with `take` when the grid is built, set generously above any real reply so no legitimate table is affected, with the truncation recorded in the feature overview. Two constants and two calls — deterministic, not a heuristic.
 
 - **[Network & I/O] SHOULD FIX — keep the tilde scan single-pass.** The obvious shape for the single-tilde pairing is "for each opener, search forward for a closer", which is quadratic in the number of tildes in one paragraph and is reached by a line of lone `~` characters — cheap to author, and again re-paid per reveal tick. Folded back into § Design above before this review was written: one forward pass, one pending opener. Recorded here because the quadratic version is the one a later edit would naturally reintroduce.
 
@@ -211,3 +211,25 @@ The subject of this review is not the three constructs — it is what else the f
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-22
+
+## Revisions
+
+**2026-09-22 — table cells trim the source's own padding.** The committed design walked a `CELL`'s
+children as the lexer hands them over. On the device that renders `" Name "` for `| Name |`: the
+pipes' breathing room lexes as `WHITE_SPACE` tokens inside the cell, and the walker appends them
+like any other leaf. GFM specifies a cell's content as its inline content with leading and trailing
+whitespace trimmed, and here the difference is visible rather than pedantic — the padded string is
+what `textAlign` centres and end-aligns, so a right-aligned column sat a space short of its own
+edge. `TableBlock` now routes each cell through a `trimmedContent` helper that drops leading and
+trailing `WHITE_SPACE` children. Trimming the tokens rather than the built `AnnotatedString` is what
+keeps the span offsets aligned with the text. Found by `MarkdownTextTest`'s first device run, which
+is also the run that settled **Open question 1**: cells are one line by construction, so row heights
+stay in step across columns with no intrinsic-height band needed.
+
+**2026-09-22 — a pre-existing heading defect found, filed, not fixed (#768).** The mixed-construct
+test was the first rendered-text assertion any heading has ever had, and it caught that every ATX
+heading renders with a leading space: `HeadingBlock` filters the marker whitespace among the
+`ATX_n` node's direct children, but the parser nests that token one level down inside `ATX_CONTENT`.
+Pre-existing since #129 and outside this ticket's scope, so it is filed as #768 rather than fixed
+here; the assertion uses `substring = true` and points at that ticket, so it needs no change when
+the fix lands. #768's body names `trimmedContent` above as the helper to reuse.
