@@ -220,3 +220,35 @@ coercion touches only count-typed fields; every claude-authored **string** field
 when wrong-typed, which is the case the security posture actually rests on. Worth checking before writing
 a "rejects a wrong-typed numeric field" test against this codec on any future payload — the rejection is
 real for a `String` target, not for an `Int` one.
+
+### The on-demand ask — `request_model_list` (#792)
+
+`RequestModelListPayloadDto` (`ModelListPayloads.kt`, joining `ModelListPayloadDto`) is the third and
+last way a client gets a menu, and the only one it can trigger itself — the connect-time reconcile and
+the live per-spawn frame each cover every conversation that exists at one of those two edges, but a
+conversation created *after* the phone connected crosses neither. **Encode-only, `internal`**, one
+always-present `@SerialName("conversation_id")` key with no default — the `RequestSessionSettingsPayloadDto`
+/ `RequestHistoryPayloadDto` decision: correlation rides `Envelope.inReplyTo`, so the payload carries no
+request-id key. `internal` joins this file's existing visibility rather than the public request DTOs
+elsewhere, since the one consumer (`RemoteConversationRepository`) is in the same module.
+
+The reply is **the same `ModelListPayloadDto`** #791 already decodes — no second decode, no second
+payload shape — carrying an `in_reply_to` and, like the reconcile burst's own frames, no `event_id`; it
+never enters the [replay ring](replay-cursor.md) and advances no cursor. A refusal is an `error` with one
+of two codes told apart at the reading: `model_list.unavailable` (the daemon hosts the conversation but
+has no vocabulary to answer with yet — the same ask may succeed later) and `conversation.not_found` (the
+daemon does not host what was named — terminal for that id). `TYPE_REQUEST_MODEL_LIST =
+"request_model_list"` and `ERROR_MODEL_LIST_UNAVAILABLE = "model_list.unavailable"` join the
+`RemoteConversationRepository` companion registry beside `TYPE_MODEL_LIST` and
+`ERROR_CONVERSATION_NOT_FOUND`.
+
+**The empty string names nothing and is refused daemon-side**, so the sender declines to put one on the
+wire at all rather than sending a frame it knows will be refused — desktop's falsy-id guard
+(`requestModelList` in `modelListBridge.ts`), same reasoning. A connection that has not negotiated
+`interactive` is answered with **nothing at all** — no menu, no error, no signal — so nothing is ever
+sent on one.
+
+The triggering rule, the one-shot ledger, the split success/refusal reply paths and the no-retry
+discipline are a repository-layer concern, not a wire-decode one — see [Remote repository § The
+on-demand ask](remote-conversation-repository-live-stream-and-modals.md#the-on-demand-ask--request_model_list-792),
+not duplicated here.
