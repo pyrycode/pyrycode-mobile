@@ -52,6 +52,15 @@ class DebugBundleTransfer internal constructor(
     private val mutableState = MutableStateFlow(initial)
     val state = mutableState.asStateFlow()
     private val chunks = mutableListOf<ByteArray>()
+
+    /**
+     * Decoded bytes accepted so far, charged against [MAX_ARCHIVE_BYTES]. A running total rather
+     * than a re-sum of [chunks], whose element count the peer chooses: re-summing on every chunk
+     * would be quadratic in that count and make the bound itself the exhaustion it exists to
+     * prevent. Never reset — the transfer is single-use, and [accept] returns at its terminal-state
+     * check before any later frame could read a stale total.
+     */
+    private var acceptedBytes = 0L
     private var archive: DebugBundleArchive? = null
 
     init {
@@ -83,7 +92,12 @@ class DebugBundleTransfer internal constructor(
                 require(data != null && data.isString)
                 val bytes = base64StdDecode(data.content)
                 require(base64StdEncode(bytes) == data.content)
+                // Charged against the accumulated total, never one chunk's own size, and against the
+                // bytes the round trip above has already made canonical — so the peer's choice of
+                // encoding cannot buy it budget. Subtraction, not addition, so no total can overflow.
+                require(bytes.size <= MAX_ARCHIVE_BYTES - acceptedBytes)
                 chunks += bytes
+                acceptedBytes += bytes.size
                 mutableState.value = state.value.copy(acceptedChunks = chunks.size)
             } else {
                 archive = DebugBundleArchive(chunks.toList())
@@ -111,6 +125,20 @@ class DebugBundleTransfer internal constructor(
     }
 
     internal companion object {
+        /**
+         * The accumulation bound, in decoded archive bytes. A stream past it is an `INVALID_STREAM`
+         * like any other malformed one, so a peer that streams chunks and never sends
+         * `debug_bundle_done` costs bounded memory instead of the process.
+         *
+         * Derivation: the daemon retains at most 32 MiB of base64 payload in one session's push
+         * queue and tears the session down past it (`protocol-mobile.md` § Error codes, close code
+         * `4413`), so the largest archive it can actually deliver is about three quarters of that —
+         * roughly 25 MB. The same 32 MiB counted in *decoded* bytes therefore sits above every
+         * deliverable archive while bounding the phone, the memory-constrained side, at a size any
+         * API 33 heap absorbs.
+         */
+        const val MAX_ARCHIVE_BYTES = 33_554_432L
+
         fun rejected(status: DebugBundleStatus): DebugBundleTransfer =
             DebugBundleTransfer(
                 0,
