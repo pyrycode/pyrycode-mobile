@@ -133,6 +133,10 @@ class ThreadViewModel(
     private val repository: ConversationRepository,
     private val connectionStateSource: ConnectionStateSource,
     private val appPreferences: AppPreferences,
+    // #789: the app-scoped store holding this chat's unsent composer text. Required, unlike the inert
+    // defaults below: a default would hand every ViewModel its own store, which is exactly the
+    // destination-scoped ownership this ticket removes — and a miswire would reproduce it invisibly.
+    private val draftStore: ComposerDraftStore,
     // #406: the coordinator's reconnection-surviving live-event seam, reduced to [isThinking]. Defaulted
     // to an empty flow so the fake-backed graph + existing tests stay inert (the flag holds `false`).
     liveSessionEvents: Flow<LiveSessionEvent> = emptyFlow(),
@@ -155,6 +159,32 @@ class ThreadViewModel(
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
+
+    // #789: the owning host, read off the same handle the destination factory reads it from. Paired with
+    // [conversationId] it keys this chat's composer draft — never the conversation id alone, which is
+    // host-local and would collide across hosts. Both route arguments are required path segments and
+    // `HostDestination` rejects an unresolvable owner, so this is never blank in production.
+    private val serverId: String =
+        savedStateHandle.get<String>("serverId").orEmpty()
+
+    /**
+     * This chat's unsent composer text (#789), `""` when it has none. Read from the app-scoped
+     * [draftStore] rather than held here, so it survives this destination's composition — and,
+     * `Eagerly`, so the seeded initial value and the first emission can never disagree.
+     *
+     * A [StateFlow] drops equal consecutive values, so another chat's or another host's edit cannot
+     * recompose this composer. Deliberately **not** a [ThreadUiState] field: the state `combine` is at
+     * its five-arity ceiling, and a sibling flow matches how `connectionState` / `isBusy` /
+     * `currentModal` are already exposed.
+     */
+    val draft: StateFlow<String> =
+        draftStore.drafts
+            .map { it[serverId]?.get(conversationId).orEmpty() }
+            .stateIn(
+                viewModelScope,
+                SharingStarted.Eagerly,
+                draftStore.draftFor(serverId, conversationId),
+            )
 
     // #507: snapshot the repository's mutation-capability once at construction (the mode is static per
     // build config — a Koin fake-vs-relay swap, never a runtime toggle). Reading through the facade here
@@ -710,10 +740,36 @@ class ThreadViewModel(
         }
     }
 
+    /** Record an edit to this chat's composer (#789). Exact text; the store clears only on `""`. */
+    fun onDraftChange(text: String) {
+        draftStore.setDraft(serverId, conversationId, text)
+    }
+
+    /**
+     * Send [text], then clear this chat's draft — **only** once the daemon has accepted it (#789).
+     *
+     * The clear sits *inside* the guarded lambda, which is the whole mechanism:
+     * [launchGuardedRepoCall]'s catches wrap the block, so a [de.pyryco.mobile.data.network
+     * .RelayErrorException] server error, a not-connected [IllegalStateException] or an unwired
+     * [UnsupportedOperationException] skips this line and leaves the text in the composer, ready to
+     * resend. Before this, the composer cleared on tap and the guard swallowed the failure, so a
+     * refused send silently ate the message. Same success-only-continuation shape as [sendArchive].
+     *
+     * The equality guard keeps an in-flight send from eating text typed while it was in flight. It
+     * compares against [ComposerDraftStore] directly and **not** against [draft]: the exposed flow is
+     * derived, so its value lags an edit made from inside an already-running coroutine until that
+     * dispatch yields, and the guard would then clear text it had never seen. The store's own value is
+     * the authority and is read synchronously. [draft] is for rendering; this is for deciding.
+     *
+     * It is a check-then-act after a suspension point and is safe because both sides and
+     * [onDraftChange] run on `viewModelScope`'s `Dispatchers.Main.immediate`, so no edit can interleave
+     * between them.
+     */
     fun sendMessage(text: String) {
         if (text.isBlank()) return
         launchGuardedRepoCall {
             repository.sendMessage(state.value.conversationId, text)
+            if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
         }
     }
 

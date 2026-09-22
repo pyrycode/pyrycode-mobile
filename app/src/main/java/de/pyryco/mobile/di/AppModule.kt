@@ -35,6 +35,7 @@ import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
+import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import de.pyryco.mobile.ui.conversations.thread.LiteralScreenViewModel
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.onboarding.PairCodeViewModel
@@ -109,6 +110,11 @@ val appModule =
         // Registered as its own resolvable type only; conversationRepositoryModule (#350) flag-selects
         // whether this facade or the Fake wins the ConversationRepository binding.
         single { StableConversationRepository(get<RelayConnectionRegistry>().currentRepository) }
+        // #789: unsent composer text, one store for the app process. App-scoped rather than
+        // destination-scoped is the whole point — a draft has to outlive the back-stack entry that
+        // typed it. Holds no connection and no disk handle, so it is unaffected by reconnects and by
+        // the lifecycle driver's background close.
+        single { ComposerDraftStore() }
         viewModel { ScannerViewModel() }
         viewModel {
             val registry = get<RelayConnectionRegistry>()
@@ -119,7 +125,7 @@ val appModule =
         viewModel { DiscussionListViewModel(get(), get()) }
         viewModel { get<ThreadDestinationFactory>().settings(get(), get()) }
         viewModel { get<ThreadDestinationFactory>().archive(get()) }
-        viewModel { get<ThreadDestinationFactory>().thread(get(), get()) }
+        viewModel { get<ThreadDestinationFactory>().thread(get(), get(), get()) }
         viewModel { get<ThreadDestinationFactory>().literal(get()) }
     }
 
@@ -196,13 +202,17 @@ internal class ThreadDestinationFactory(
     fun thread(
         handle: SavedStateHandle,
         preferences: AppPreferences,
+        // #789: the app-scoped composer-draft store. Passed per call, the same shape [preferences]
+        // already uses — one process-wide singleton reaching every thread destination, which is what
+        // lets a draft outlive the back-stack entry that typed it.
+        draftStore: ComposerDraftStore,
     ): ThreadViewModel {
         val serverId = handle.get<String>("serverId").orEmpty()
         val bundle = if (useRelay) registry.connectionFor(serverId) else null
         val repository = repository(serverId, bundle)
         RelayLog.d { "event=thread_destination_bound" }
         if (!useRelay && serverId == HostConversationSource.DEMO_SERVER_ID) {
-            return ThreadViewModel(handle, repository, FakeConnectionStateSource(), preferences)
+            return ThreadViewModel(handle, repository, FakeConnectionStateSource(), preferences, draftStore)
         }
         val connection =
             object : ConnectionStateSource {
@@ -217,6 +227,7 @@ internal class ThreadDestinationFactory(
             repository,
             connection,
             preferences,
+            draftStore,
             liveSessionEvents = bundle?.coordinator?.liveSessionEvents ?: emptyFlow(),
             currentModal = bundle?.coordinator?.currentModal ?: MutableStateFlow(ModalUiState.Hidden),
             answerModal = { modal, option -> checkNotNull(bundle).coordinator.answerModal(modal, option) },
