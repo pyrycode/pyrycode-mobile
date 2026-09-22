@@ -1,6 +1,8 @@
 package de.pyryco.mobile.data.cache
 
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.repository.ThreadItem
 
 /**
  * App-private custody of what the phone has already loaded from one host (#795).
@@ -47,6 +49,31 @@ interface ConversationCache {
     ): Result<Unit>
 
     /**
+     * The thread rows last written for [conversationId] under [serverId] (#797), in arrival order.
+     *
+     * Graceful like [readConversations]: anything unreadable yields an empty list, and a read never
+     * repairs what it could not parse. A row read back is always settled — never streaming, never a
+     * running tool — and no message id or session-boundary pair appears twice.
+     *
+     * The default stores nothing, so a double that does not exercise threads need not override it.
+     */
+    suspend fun readThread(
+        serverId: String,
+        conversationId: String,
+    ): List<ThreadItem> = emptyList()
+
+    /**
+     * Replace [conversationId]'s stored thread with [cacheableThreadRows] of [rows] — never the raw
+     * list, so no caller can persist an unrecognized, streaming or running row. Reports failure like
+     * [writeConversations]; a failed write leaves the previous document intact.
+     */
+    suspend fun writeThread(
+        serverId: String,
+        conversationId: String,
+        rows: List<ThreadItem>,
+    ): Result<Unit> = Result.success(Unit)
+
+    /**
      * Remove every cached artefact belonging to [serverId], leaving every other host readable.
      *
      * An unknown host is a successful no-op, so a caller unpairing a host need not check first.
@@ -57,9 +84,8 @@ interface ConversationCache {
      * Remove every cached artefact keyed by [conversationId] under [serverId], leaving that host's
      * other conversations readable.
      *
-     * Today that is its metadata entry, because metadata is the only family this cache stores. A
-     * family added later — the thread rows of #797 — must extend this operation, or a permanently
-     * deleted conversation would leave its content behind.
+     * That is its metadata entry and its thread rows (#797). A family added later must extend this
+     * operation too, or a permanently deleted conversation would leave its content behind.
      *
      * An unknown conversation is a successful no-op.
      */
@@ -68,6 +94,28 @@ interface ConversationCache {
         conversationId: String,
     ): Result<Unit>
 }
+
+/** How many of a thread's newest settled rows the cache keeps, so a long thread cannot grow without limit. */
+const val MAX_CACHED_THREAD_ROWS = 200
+
+/**
+ * The rows of a drawn thread the cache may hold (#797): its newest [MAX_CACHED_THREAD_ROWS] settled rows.
+ *
+ * Drops every [ThreadItem.UnrecognizedMessage] (unbounded, model-adjacent JSON its KDoc forbids
+ * persisting) and every in-flight row — a streaming message or a running tool call — because those are
+ * live state: restored, they would be a permanent caret or spinner. The one definition the cache
+ * enforces on write and the caching repository compares against, so the two can never disagree.
+ */
+fun cacheableThreadRows(rows: List<ThreadItem>): List<ThreadItem> =
+    rows
+        .filter { row ->
+            when (row) {
+                is ThreadItem.MessageItem ->
+                    !row.message.isStreaming && row.message.toolCall?.status != ToolCallStatus.Running
+                is ThreadItem.SessionBoundary -> true
+                is ThreadItem.UnrecognizedMessage -> false
+            }
+        }.takeLast(MAX_CACHED_THREAD_ROWS)
 
 /**
  * Signals an expected storage failure from a [ConversationCache] mutation.

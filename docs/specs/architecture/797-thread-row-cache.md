@@ -128,3 +128,11 @@ Pending for the documentation stage: `docs/knowledge/features/conversation-cache
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-23
+
+## Revisions
+
+### 2026-09-23 — during implementation
+
+- The thread-family cache cases live in a new `FileConversationCacheThreadTest` beside `FileConversationCacheTest` rather than extending it; same second-instance discipline, same coverage list as § Testing strategy.
+- `ThreadDestinationFactory`'s new `cache` parameter defaults to `null`. Three `RelayConnectionFactoryTest` containers (`useRelay = true`, no `androidContext()`) now resolve the cache through the thread destination, so they gain the same `single<ConversationCache> { InertConversationCache }` override their sibling container already carried for #796. No production contract changed.
+- Open question 1 resolved as planned (open-time snapshot). Open question 2 resolved as planned (blank owner → no cache layer).
