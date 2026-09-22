@@ -5,6 +5,11 @@ thread screen shows a "Stop" control; tapping it requests a stop for that conver
 and the control disappears when its turn ends. Landed in [#459](../codebase/459.md) (split from #430, `blockedBy` #458), Phase 3 of
 epic pyrycode#597 (phone control), ADR 025.
 
+**As of [#643](../codebase/643.md), the control the user sees is the composer's message-input button
+in its stop variant, not a standalone affordance** — see [Placement & wiring](#placement--wiring). The
+`isBusy` signal, the `onInterrupt` send path and this composable's own file/tests are otherwise
+unchanged; only the production mount point moved.
+
 Unlike the thinking indicator — whose data (`isThinking`, [#406](../codebase/406.md)) and UI
 (`ThinkingIndicator`, [#407](../codebase/407.md)) were split across two tickets — #459 ships **both**
 halves: a new `ThreadViewModel.isBusy` flow **and** the `InterruptAffordance` composable. This doc covers
@@ -86,30 +91,55 @@ The exact visual (button vs. chip, icon, colour slot, placement) is **design-owe
 
 ## Placement & wiring
 
-Mounted in [`ThreadScreen`](thread-screen.md)'s foot-of-list `Column`, **immediately below**
-[`ThinkingIndicator`](thinking-indicator.md) (`ThreadScreen.kt:279`):
+**Retired from the screen in [#643](../codebase/643.md).** Through #459–#642, `InterruptAffordance` mounted
+in `ThreadScreen`'s foot-of-list `Column`, immediately below `ThinkingIndicator` — the two visibly
+**stacked** whenever `isThinking && isBusy` were both true (during the `thinking` phase specifically),
+a code-review NIT flagged at the time as interim and owed to the Figma `16:8` pass.
+
+**#643 applied that pass and removed the call site instead of reconciling the stack**, following
+desktop's #678 precedent: the thread screen's message-input button (in [`ThreadInputBar`](thread-input-bar.md#the-message-input-button--one-control-two-actions))
+now carries the stop action as one of two states, replacing the standalone control rather than
+repositioning it. `isBusy` and `onInterrupt` still reach the screen exactly as before — as defaulted
+hoisted params on `ThreadScreen` (see below) — they are just threaded one slot further, into the
+composer's `ThreadInputBar` call, instead of into a standalone `InterruptAffordance` call:
 
 ```kotlin
-Column {
-    ConnectionBanner(...)
-    StallPromotionBanner(...)
-    // optional WorkspaceChip …
-    if (!state.hasMessages) EmptyThreadState(...) else LazyColumn(reverseLayout = true, ...) { … }
-    QueuedBacklog(...)
-    ThinkingIndicator(isThinking = isThinking, modifier = Modifier.fillMaxWidth())
-    InterruptAffordance(isBusy = isBusy, onInterrupt = onInterrupt, modifier = Modifier.fillMaxWidth())
-}
+// ThreadScreen's bottomBar, post-#643 — the composer column, not the foot of the content Column
+ThreadStatusArea(apiRetry, isCompacting, isThinking)   // the old ThinkingIndicator slot, moved here too
+ThreadInputBar(onSend = onSendMessage, isBusy = isBusy, onInterrupt = onInterrupt, …)
+ThreadStatusRow(model = …, effort = …, …)
 ```
 
-Foot-of-list mirrors the transient-affordance placement already used for the thinking spinner — the
-control sits at the most-recent edge (`reverseLayout = true`), above the composer. It is a wrap-height
-sibling row, **not** a `LazyColumn` item, so list keying / auto-scroll are untouched.
+The send/stop precedence in `ThreadInputBar` is explicit and text-first:
 
-The flag + action are threaded as **defaulted** hoisted params, sibling to `isThinking`/`isStalled`:
+| `text` | `isBusy` | description | action |
+|---|---|---|---|
+| non-blank | either | `cd_send_message` | `onSend` |
+| blank | `true` | `cd_thread_interrupt` | `onInterrupt` |
+| blank | `false` | `cd_send_message` (disabled) | — |
 
-- **`ThreadScreen`** gains `isBusy: Boolean = false` and `onInterrupt: () -> Unit = {}` (`:102`, after
-  `modifier`). Defaults keep the in-file previews + androidTest + all ~20 other named-argument call sites
-  inert; only the live caller sets them.
+Text present wins over an in-flight turn deliberately: sending while the agent is busy is a shipped
+path (the daemon queues it, [`QueuedBacklog`](queued-backlog-section.md) renders it, #461/#467), and a
+stop variant that pre-empted a typed message would remove the only tap that reaches that path. Stop
+therefore owns the button exactly when the composer is empty — the state anyone actually reaching for
+stop is in. The flagged-at-review consequence: **stop is unreachable while a draft sits in the
+composer**, so a user who has started typing must clear the field to interrupt. Deliberate (one design
+button slot, queue-while-busy is real) but worth watching under a real in-flight turn — [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679) carries the live proof of the reframed screen.
+
+**The composable and its file remain, without a production call site.** `InterruptAffordance.kt` was not
+touched by #643 and keeps its own tests (below); `codegraph_callers` finds none outside its own file.
+Deliberate and in-scope per the ticket ("the composable and its file remain"), but it is dead production
+code until something claims it — flagged in review as worth a follow-up to either retire the file or
+record what still keeps it alive. If you're looking for the live control, it's the button in
+[`ThreadInputBar`](thread-input-bar.md#the-message-input-button--one-control-two-actions), not this file.
+
+The flag + action reach `ThreadScreen` as **defaulted** hoisted params, sibling to `isThinking`/`isStalled` — this part is unchanged by #643:
+
+- **`ThreadScreen`** has `isBusy: Boolean = false` and `onInterrupt: () -> Unit = {}` as defaulted
+  parameters (`ThreadScreen.kt:123-124`, unchanged in position since #459). Defaults keep the in-file
+  previews + androidTest + all other named-argument call sites inert; only the live caller sets them.
+  #643 changed which composable inside `ThreadScreen` receives them (`ThreadInputBar` instead of
+  `InterruptAffordance`), not the parameters themselves.
 - **`MainActivity`** collects `val isBusy by vm.isBusy.collectAsStateWithLifecycle()` in the thread route
   (beside `isThinking`/`isStalled`) and passes `isBusy = isBusy` + `onInterrupt = vm::onInterrupt`. The
   `vm::onInterrupt` bound method-ref is recomposition-stable (the `onModalCancel = vm::onModalCancel`
@@ -127,10 +157,13 @@ turn_end / turn_state{idle} ─────┤  (liveSessionEvents, per conversa
                                                  ▼
                           ThreadScreen(isBusy, onInterrupt = vm::onInterrupt)
                                                  ▼
-              InterruptAffordance(isBusy) ── tap ──▶ onInterrupt()
+     ThreadInputBar's message-input button (stop variant, isBusy && text.isBlank()) ── tap ──▶ onInterrupt()
                                                  ▼
                   sendInterrupt() ──▶ interrupt(conversationId) ──▶ targeted `interrupt` frame
 ```
+
+Pre-#643 this last hop was `InterruptAffordance(isBusy) ── tap ──▶ onInterrupt()`; the signal and
+send path on either side of that hop are untouched, only the control that turns the tap into the call.
 
 ## Lifecycle, errors, edge cases
 
@@ -150,18 +183,23 @@ turn_end / turn_state{idle} ─────┤  (liveSessionEvents, per conversa
 
 ### Edge cases / limitations
 
-- **Visual is design-owed.** Figma [`16-8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8)
-  does **not** draw a dedicated interrupt control (confirmed against the locked layout — same status as
-  `ThinkingIndicator` and the stall CTA). The interim treatment is the M3 idiom (`FilledTonalButton` +
-  stop glyph + "Stop") at the foot of the list. When the frame draws the control, re-tune visual /
-  placement here — no contract change.
-- **Thinking-phase dual-affordance stacking (intentional, interim).** During `thinking`, both
-  `isThinking` and `isBusy` are `true`, so the foot renders the thinking spinner **and** the "Stop" button
-  stacked; only during `responding` does "Stop" appear alone. Correct per the AC (in-flight spans thinking
-  + responding); the design-owed follow-up reconciles the stacking. Flagged by code review (non-blocking
-  NIT) so the future design pass knows it is deliberate.
-- **No animation.** Show/hide is an instant early-return swap, matching `ThinkingIndicator`. A fade-in is a
-  design-owed nicety, deferred with the frame.
+**Resolved by [#643](../codebase/643.md) for production** — both edge cases below described this
+composable's own foot-of-list mount and no longer apply to the live screen, since `InterruptAffordance`
+has no production call site any more (see [Placement & wiring](#placement--wiring)). They still describe
+`InterruptAffordance.kt` itself, which is unchanged and could resurface elsewhere:
+
+- **Visual was design-owed; now resolved for the live control.** Figma `16:8` never drew this standalone
+  composable — it draws only the composer's single message-input button, which is what the live screen
+  shows now. `InterruptAffordance` itself keeps its interim `FilledTonalButton` + stop glyph + "Stop"
+  treatment (M3 idiom, no Figma counterpart of its own).
+- **Thinking-phase dual-affordance stacking — was intentional/interim, gone from production.** Through
+  #459–#642, `isThinking && isBusy` both `true` during the `thinking` phase meant the foot rendered the
+  spinner and the standalone "Stop" button stacked. #643 removed the standalone call site, so the live
+  screen never stacks them — the status area (thinking/retry/compacting) and the composer's send/stop
+  button are two different rows by construction, not by suppressing either signal.
+- **No animation.** Show/hide is an instant early-return swap inside `InterruptAffordance` itself, matching
+  `ThinkingIndicator`. Not relevant to the live control, which swaps icon/description on the message-input
+  button instead.
 
 ## Testing
 
@@ -179,14 +217,24 @@ Test-first, mirroring the `isThinking` coverage.
   composition pass before any `push*`. Recording only a count would miss a wrong
   target. These fixtures prove callback routing and visibility, not a real daemon
   stop; [#679's live scenario](interrupt-send-path.md#testing) remains separate.
+  **Since [#643](../codebase/643.md), "Stop" here means the message-input button's stop
+  variant** (`cd_thread_interrupt` on `ThreadInputBar`'s button, empty field + `isBusy`), not the
+  retired standalone control — the test kept passing unchanged because it locates the control by
+  content description, not by composable identity or screen position.
   Instrumented-source changes require `./gradlew compileDebugAndroidTestKotlin`;
   aggregate JVM tests, lint and assemble do not compile them. See
   [development verification](development-verification.md#gradle-and-source-checks).
+- **Instrumented, added in [#643](../codebase/643.md) (`ThreadFrameTest.kt`)** — `inputButton_stopsWhileBusyWithEmptyField`
+  and `inputButton_sendsWhenTextPresent` pin the send/stop precedence table directly on the stateless
+  `ThreadInputBar`; `busyThread_hasExactlyOneStopControl` mounts the full `ThreadScreen` with
+  `isBusy`/`isThinking` both set and asserts exactly one `cd_thread_interrupt` node exists — the
+  regression guard against the two affordances ever stacking again.
 
 ## Related
 
-- Ticket notes: [`../codebase/459.md`](../codebase/459.md). Spec:
-  `docs/specs/architecture/459-interrupt-affordance.md`.
+- Ticket notes: [`../codebase/459.md`](../codebase/459.md) (original implementation), [`../codebase/643.md`](../codebase/643.md)
+  (retired the standalone call site onto `ThreadInputBar`'s button). Specs:
+  `docs/specs/architecture/459-interrupt-affordance.md`, `docs/specs/architecture/643-thread-header-and-composer-layout.md`.
 - Send path (the tap target, sibling slice): [Interrupt send path](interrupt-send-path.md)
   ([#458](../codebase/458.md), targeting updated in #626) — `onInterrupt()` supplies
   the open conversation's id through `coordinator::interrupt` into the wire payload.
@@ -198,8 +246,11 @@ Test-first, mirroring the `isThinking` coverage.
   [Queued backlog section](queued-backlog-section.md) ([#461](../codebase/461.md)/[#467](../codebase/467.md)).
 - Upstream seam: [Live-session events](live-session-events.md) ([#385](../codebase/385.md)) →
   [Relay repository coordinator](relay-repository-coordinator.md) `liveSessionEvents`.
-- Host: [Thread screen](thread-screen.md) — `isBusy` is the fifth hoisted sibling `StateFlow`; the
-  affordance is the foot-of-list `Column`'s newest member.
+- Host: [Thread screen](thread-screen.md) — `isBusy` is the fifth hoisted sibling `StateFlow`. Until
+  [#643](../codebase/643.md) the affordance was the foot-of-list `Column`'s newest member; since #643
+  its action lives on [`ThreadInputBar`](thread-input-bar.md#the-message-input-button--one-control-two-actions)'s
+  message-input button instead — see [Thread screen — overlays and app bar](thread-screen-how-it-works-overlays-and-app-bar.md#interrupt-affordance-placement-post-459-retired-from-the-screen-in-643)
+  for the placement history.
 - Parent / epic: split from [#430](https://github.com/pyrycode/pyrycode-mobile/issues/430); Phase 3 epic
   pyrycode#597, ADR 025; server SSOT pyrycode#707 (`interrupt` wire).
 </content>

@@ -93,10 +93,15 @@ fix if that ever happens is a one-line const change, not a config knob.
 
 ## Placement in the thread
 
-[`ThreadScreen`](thread-screen.md) arbitrates the existing foot-of-list status slot
-(`ThreadScreen.kt:319-328`). Originally an either/or replacing the bare `ThinkingIndicator(...)` call,
-[#597](../codebase/597.md) extended it to a **three-way `when`** to admit
-[`CompactingIndicator`](compacting-indicator.md):
+**Moved in [#643](../codebase/643.md).** [`ThreadScreen`](thread-screen.md) arbitrates this status slot
+inside a private `ThreadStatusArea` composable (`ThreadScreen.kt:471`), the first child of the
+composer's `bottomBar` column — through #642 it was the foot of the content `Column`, above the
+composer rather than inside it. Originally an either/or replacing the bare `ThinkingIndicator(...)`
+call, [#597](../codebase/597.md) extended it to a **three-way `when`** to admit
+[`CompactingIndicator`](compacting-indicator.md); #643 relocated the whole `when` verbatim (arms, flags
+and precedence untouched) and gave it its own 4dp-remainder horizontal inset so its content lands on
+the composer's shared 20dp gutter (see [Thread screen — overlays and app bar](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643)
+for the gutter arithmetic):
 
 ```kotlin
 when {
@@ -117,8 +122,10 @@ conversation-level and outlives the `thinking` turn phase, so it must show *rega
 suppressing it at its source would make the `ThreadViewModel` contract lie. api-retry keeps the top arm
 over compaction because it is the "something is going wrong" signal while compaction is benign
 progress — the benign affordance must never mask the alarming one (the two have never been observed
-overlapping, so no AC is spent on the combination). `InterruptAffordance`, mounted directly below this
-slot, is untouched — an in-flight turn stays interruptible while retrying or compacting.
+overlapping, so no AC is spent on the combination). The interrupt control — mounted directly below
+this slot until [#643](../codebase/643.md), now the send button's stop variant in `ThreadInputBar`
+just below the status area (see [Interrupt affordance](interrupt-affordance.md#placement--wiring)) —
+is untouched by this arm: an in-flight turn stays interruptible while retrying or compacting.
 
 This is the counterpoint to [`StallPromotionBanner`](stall-promotion-banner.md), which lives in a
 different slot entirely (above the list, below `ConnectionBanner`) and is independent — every signal in
@@ -214,7 +221,8 @@ both rendered branches are covered.
 - Upstream signal: [API-retry status](api-retry-status.md) — `ThreadViewModel.apiRetry` /
   `observeApiRetry`, the `api_retry` decode this component renders.
 - Host: [Thread screen](thread-screen.md) — threads `apiRetry` as another flat sibling parameter and
-  arbitrates the foot-of-list status slot, now a three-way `when` across it,
+  arbitrates the status slot (the composer's `ThreadStatusArea` since [#643](../codebase/643.md);
+  the foot of the content `Column` before it), a three-way `when` across it,
   [`CompactingIndicator`](compacting-indicator.md), and `ThinkingIndicator`.
 - Idioms mirrored: [Thinking indicator](thinking-indicator.md) (the direct clone — early-return,
   sibling-`StateFlow`, defaulted-hoisted-parameter, merged-`semantics`, design-owed M3 default,
