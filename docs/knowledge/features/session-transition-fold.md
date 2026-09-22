@@ -126,7 +126,13 @@ TYPE_SESSION_TRANSITION -> {
 - **`appendSessionBoundary`** pure-appends in arrival order, **no dedup**:
   `threadByConversation.update { it + (conversationId to (it[conversationId].orEmpty() + boundary)) }`.
   The wire carries no row id and the repo is connection-scoped (#351), so within a connection arrival
-  order is correct — the same posture as `applyAssistantDelta`'s arrival-order concatenation.
+  order is correct — the same posture as `applyAssistantDelta`'s arrival-order concatenation. This absence
+  of dedup is a live crash surface, found during [#645](../codebase/645.md)'s security review: `ThreadScreen`
+  keys a boundary row on `(previousSessionId, newSessionId)` alone, so a daemon sending two boundaries that
+  share that pair (differing only in `occurred_at`) gives the `LazyColumn` two rows with one key. #645
+  closed this for the [history-page merge](remote-conversation-repository-reads-and-thread-store.md#history-pages-fold-into-the-same-thread-645)
+  only, by deduping on that same session pair; the live-lane fix (editing `appendSessionBoundary` or the
+  renderer's key) is tracked as [#775](../codebase/775.md).
 - **Routes strictly by the payload's `conversation_id`.** A boundary can only ever surface in
   `observeMessages(thatId)` — cross-routing is structurally impossible. A boundary for a conversation no
   collector observes simply sits unread in the map (exactly as a `message`/`queue_state` for an unknown
