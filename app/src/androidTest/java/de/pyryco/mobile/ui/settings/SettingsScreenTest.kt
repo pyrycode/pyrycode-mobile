@@ -1,5 +1,7 @@
 package de.pyryco.mobile.ui.settings
 
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.hasAnyDescendant
@@ -8,6 +10,7 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
@@ -18,7 +21,9 @@ import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.ui.host.HostEditorState
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -293,6 +298,130 @@ class SettingsScreenTest {
         assertEquals(1, pairCount)
     }
 
+    @Test
+    fun logDataRow_opensTheModalWhenThisDestinationOwnsAHost() {
+        var opened = 0
+        setSettings(onOpenLogData = { opened++ })
+
+        composeTestRule
+            .onNode(hasText("Log data") and hasClickAction())
+            .performScrollTo()
+            .performClick()
+
+        assertEquals(1, opened)
+    }
+
+    @Test
+    fun logDataRow_drawsInertWhenThisDestinationOwnsNoHost() {
+        // The Archive row's own no-owner treatment (#715): the entry stays visible, but a tap it
+        // could only reject is not offered.
+        setSettings(onOpenLogData = null)
+
+        composeTestRule.onNode(hasText("Log data")).performScrollTo().assertHasNoClickAction()
+    }
+
+    @Test
+    fun logDataModal_namesTheHostAndTheWholeDaemonWhileReceiving() {
+        setSettings(logData = DebugBundleDownloadState(hostName = "Pyrybox", receiving = true, acceptedChunks = 3))
+
+        composeTestRule.onNode(hasText("Pyrybox", substring = true)).assertExists()
+        composeTestRule.onNode(hasText("whole daemon archive", substring = true)).assertExists()
+        composeTestRule.onNode(hasText("3 parts", substring = true)).assertExists()
+    }
+
+    @Test
+    fun logDataModal_reportsACancelledPickerAndOffersTheSaveAgain() {
+        var saveRequests = 0
+        var newRequests = 0
+        setSettings(
+            logData =
+                DebugBundleDownloadState(
+                    hostName = "Pyrybox",
+                    readyBytes = 2048,
+                    failure = DebugBundleFailure.PICKER_CANCELLED,
+                ),
+            onLogDataRequested = { newRequests++ },
+            onLogDataSaveRequested = { saveRequests++ },
+        )
+
+        composeTestRule.onNode(hasText("Nothing was saved", substring = true)).assertExists()
+        composeTestRule.onNode(hasText("OK") and hasClickAction()).performClick()
+
+        // The held archive is saved again, not re-downloaded: a cancelled picker costs no transfer.
+        assertEquals(1, saveRequests)
+        assertEquals(0, newRequests)
+    }
+
+    @Test
+    fun logDataModal_reportsAFailedSaveWithoutClaimingAnythingWasSaved() {
+        setSettings(
+            logData =
+                DebugBundleDownloadState(
+                    hostName = "Pyrybox",
+                    readyBytes = 2048,
+                    failure = DebugBundleFailure.WRITE_FAILED,
+                ),
+        )
+
+        composeTestRule.onNode(hasText("Couldn't write the archive there.", substring = true)).assertExists()
+        composeTestRule.onAllNodes(hasText("Saved to", substring = true)).assertCountEquals(0)
+    }
+
+    @Test
+    fun logDataModal_statesWhatTheArchiveCoversWithoutClippingIt() {
+        // The host name at the clamp's own bound, which is this modal's worst case: the scope sentence
+        // is 99 characters before it is interpolated at all, so a single-line treatment ellipsises it
+        // long before `not one conversation` — the half AC1 and the plan's security review both exist
+        // to guarantee, and the one the operator needs before choosing a destination.
+        setSettings(
+            logData =
+                DebugBundleDownloadState(
+                    hostName = "Pyrybox ".repeat(16).take(MAX_WORKSPACE_LABEL_CHARS),
+                    receiving = true,
+                ),
+        )
+
+        composeTestRule.onNode(hasText("not one conversation.", substring = true)).assertTextIsNotClipped()
+    }
+
+    @Test
+    fun logDataModal_namesTheSaveDestinationWithoutClippingIt() {
+        // AC3 requires the success line to name where the archive went, and the name comes from a
+        // third-party document provider that is free to return a long one.
+        setSettings(
+            logData =
+                DebugBundleDownloadState(
+                    hostName = "Pyrybox",
+                    savedTo = "Downloads/pyrycode/diagnostics/2026-09-22/pyrycode-debug-bundle.tar.gz",
+                ),
+        )
+
+        composeTestRule.onNode(hasText("Saved to", substring = true)).assertTextIsNotClipped()
+    }
+
+    /**
+     * Asserts the node's text is laid out in full rather than painted to a clip.
+     *
+     * Every `hasText` assertion above matches the **semantics** string, which `maxLines` does not bound:
+     * a sentence ellipsised after one line still carries its whole text into semantics, so those
+     * assertions pass identically whether the operator can read it or not. Reading the node's own
+     * [TextLayoutResult] is what closes that gap — [TextLayoutResult.hasVisualOverflow] is true exactly
+     * when the layout did not fit the space it was given.
+     */
+    private fun SemanticsNodeInteraction.assertTextIsNotClipped() {
+        val layouts = mutableListOf<TextLayoutResult>()
+        val readLayout =
+            requireNotNull(fetchSemanticsNode().config[SemanticsActions.GetTextLayoutResult].action) {
+                "node exposes no text layout to read"
+            }
+        readLayout(layouts)
+        val layout = layouts.firstOrNull() ?: throw AssertionError("node produced no text layout")
+        assertFalse(
+            "text is clipped after ${layout.lineCount} line(s): \"${layout.layoutInput.text}\"",
+            layout.hasVisualOverflow,
+        )
+    }
+
     private fun setSettings(
         connection: SettingsConnectionState = SettingsConnectionState.Resolving,
         archivedDiscussionCount: Int = 0,
@@ -303,6 +432,10 @@ class SettingsScreenTest {
         hostEditor: HostEditorState? = null,
         onEditHost: () -> Unit = {},
         onPairServer: () -> Unit = {},
+        onOpenLogData: (() -> Unit)? = {},
+        logData: DebugBundleDownloadState? = null,
+        onLogDataRequested: () -> Unit = {},
+        onLogDataSaveRequested: () -> Unit = {},
         onOpenAbout: () -> Unit = {},
     ) {
         composeTestRule.setContent {
@@ -339,6 +472,11 @@ class SettingsScreenTest {
                     onPairServer = onPairServer,
                     onBack = {},
                     onOpenArchivedDiscussions = onOpenArchivedDiscussions,
+                    onOpenLogData = onOpenLogData,
+                    logData = logData,
+                    onLogDataRequested = onLogDataRequested,
+                    onLogDataSaveRequested = onLogDataSaveRequested,
+                    onLogDataDismissed = {},
                     onOpenAbout = onOpenAbout,
                 )
             }

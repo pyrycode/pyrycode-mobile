@@ -256,7 +256,10 @@ internal class ThreadDestinationFactory(
     ): SettingsViewModel {
         val serverId = handle.get<String>("serverId").orEmpty()
         RelayLog.d { "event=settings_destination_bound" }
-        return SettingsViewModel(preferences, repository(serverId), serverId, hosts(), store)
+        // Since #683 the view model also downloads this host's diagnostic archive. The registry is
+        // already held here, so the hand-off is one method reference and no new Koin definition —
+        // and the view model receives only the question, never the registry or the store behind it.
+        return SettingsViewModel(preferences, repository(serverId), serverId, hosts(), store, registry::requestDebugBundle)
     }
 
     /**

@@ -14,9 +14,16 @@ class SettingsViewModel(
     private val ownerServerId: String,   // from Routes.settingsOwner(handle); blank = no host
     hosts: Flow<List<SettingsHost>>,     // every saved host's identity + live status
     pairedServers: PairedServerCollectionStore,   // #751 — handed straight to hostEditorController
+    requestDebugBundle: (String) -> DebugBundleTransfer,   // #683 — registry::requestDebugBundle in production
 ) : ViewModel() {
     private val hostEditorController = HostEditorController(viewModelScope, pairedServers, appPreferences)  // #751
-    val hostEditor: StateFlow<HostEditorState?> = hostEditorController.state   // #751
+    val hostEditor: StateFlow<HostEditorState?> = hostEditorController.state
+
+    // #683 — one instance per destination, over this view model's own scope, for the reason the
+    // editor above has one: clearing this owner cancels its collect and its write, and two Settings
+    // entries on the back stack never share a download. See § Log data download below.
+    private val debugBundleController = DebugBundleDownloadController(viewModelScope, ownerServerId, requestDebugBundle)
+    val logDataDownload: StateFlow<DebugBundleDownloadState?> = debugBundleController.state   // #751
 
     val connection: StateFlow<SettingsConnectionState> =           // #750, replacing #749's host
         hosts
@@ -192,6 +199,27 @@ class SettingsViewModel(
         hostEditorController.open(ownerServerId)
     }
 
+    // #683 — same second-lock shape as openOwnerHostEditor above. The name shown is the one the
+    // Connection section already resolved for the owner's own row, read off `connection.value`
+    // rather than a second store lookup, so the modal can never name the host differently than the
+    // row it was opened from; a row that hasn't arrived yet, or a host no longer paired, falls back
+    // to the captured id itself. requestLogArchive / onLogArchiveDestination / dismissLogData are
+    // one-line delegations to debugBundleController — see § Log data download below.
+    fun openLogData() {
+        if (ownerServerId.isBlank()) {
+            RelayLog.d { "event=log_data_rejected code=no_owner" }
+            return
+        }
+        val loaded = connection.value as? SettingsConnectionState.Loaded
+        debugBundleController.open(loaded?.hosts?.firstOrNull { it.isOwner }?.name ?: ownerServerId)
+    }
+
+    fun requestLogArchive() = debugBundleController.requestArchive()
+
+    fun onLogArchiveDestination(destination: ArchiveDestination?) = debugBundleController.onDestination(destination)
+
+    fun dismissLogData() = debugBundleController.dismiss()
+
     private companion object {
         const val STOP_TIMEOUT_MILLIS = 5_000L
     }
@@ -209,3 +237,74 @@ class SettingsViewModel(
 - **`.catch { emit(0) }` upstream of `stateIn` (archived count) and `.catch { emit(Loaded(emptyList(), ownerMissing = false)) }` (connection).** Deliberate divergence from `ArchivedDiscussionsViewModel`, which surfaces `Error(message)` for the same upstream because the list IS its screen's primary content. Settings' supporting text and connection rows are read-only metadata about hosts and conversations that live elsewhere, so an upstream throw collapses to `"0 archived"` or to naming no host rather than tearing down the flow. The rule these consumers now demonstrate: **supportive-metadata projections swallow upstream errors; primary-content projections surface them.** Future supportive-metadata flows (count badges, last-updated timestamps, "N pending" lines) should follow.
 - **Fire-and-forget writes.** None of `onSelectTheme`, `onToggleUseWallpaperColors`, `onSelectDefaultModel`, `onSelectDefaultEffort`, `onToggleDefaultYolo`, `onTogglePushNotifications`, `onSelectDefaultWorkspace` `await`s the `edit { … }` or surfaces a result. The persisted value re-emits through the upstream `Flow` after the setter returns; both this VM's projection and (for `themeMode` / `useWallpaperColors`) the root-level `MainActivity` collector that drives `PyrycodeMobileTheme(darkTheme = …, dynamicColor = …)` pick up the change. `defaultModel` has [`ThreadViewModel.selectedModelFlow`](thread-screen.md) as a second consumer since #253 (StatusSheet model section), so an `onSelectDefaultModel` write fans out to both this VM's projection and the StatusSheet's current-model display on every open conversation. `defaultEffort`'s second consumer is `ThreadViewModel.selectedEffortFlow` (#229) via the StatusSheet `FilterChip` row. `defaultYolo` (since #234) has **no second consumer** — an `onToggleDefaultYolo` write fans out only to this VM's own projection (the row's reflected Switch state); #229 deliberately does not seed per-conversation YOLO from it (see § Edge cases). `pushNotifications` (since #268) likewise has **no second consumer** — an `onTogglePushNotifications` write fans out only to this VM's own projection; notification *delivery* is Phase 4, so nothing else reads `notificationsEnabled` today. `defaultWorkspace` has a second consumer in [`ChannelListViewModel`](channel-list-viewmodel.md) (#240), but **not a live one** — it reads `appPreferences.defaultWorkspace(capturedServerId).first()` as a one-shot snapshot at FAB-short-press time, not a continuous collector, so an `onSelectDefaultWorkspace` write doesn't fan out live; it's simply persisted and picked up on the next short-press for that same host. Since #714 both readers key off `serverId` rather than sharing one unqualified flow, so a write from Settings for host A and a short-press read for host B legitimately never see each other — only a write and a later read for the *same* host agree. Same fire-and-forget shape as `MainActivity.kt`'s `setPairedServerExists` call from #12 — see [App preferences § Edge cases](app-preferences.md) for why no `Result`-returning write API exists today.
 - **`onSelectDefaultWorkspace` targets the *pending* owner, not `ownerServerId` (#714).** `pendingWorkspacePicker.value` is read into a local `serverId` and cleared **before** `viewModelScope.launch` — no suspension point sits between deciding the write's target and clearing the flag, so a dismissal or a second pick racing the coroutine cannot retarget an in-flight write. Reading off the pending value rather than off the constructor-captured `ownerServerId` is what gives a late-arriving pick (one behind a dismiss, or a second one behind a first) somewhere to fail: `serverId == null` and the write is dropped and logged, rather than silently landing on whatever owner happens to be captured.
+
+## Log data download (#683)
+
+`ui/settings/DebugBundleDownload.kt` holds `DebugBundleDownloadController` + `DebugBundleDownloadState` +
+`DebugBundleModal`, the Storage section's `Log data` entry — this ticket's only caller of #682's
+transfer, [`RelayConnectionRegistry.requestDebugBundle`](dependency-injection.md). One controller
+instance per Settings destination, constructed over `viewModelScope` exactly like
+[`HostEditorController`](host-editor.md) and for the same reason: clearing this owner cancels its own
+collect and its own write, and two Settings entries on the back stack never share a download.
+`serverId` is fixed at construction from the destination's captured owner (#749) and is the only thing
+ever handed to `request` — selecting another host, opening another host's Settings, or unpairing has no
+second id here to move a request or a pending save onto.
+
+**Single-request guard.** `requestArchive()` returns early unless `DebugBundleDownloadState.idle` is
+true — nothing receiving, nothing saving, no archive held, nothing saved. Deterministic code, and its
+belt-and-suspenders half is a different fabric: `RemoteConversationRepository.requestDebugBundle`
+already holds one transfer per connection and answers a second request `BUSY`, not a second copy of
+this guard.
+
+**Take-once discipline.** `DebugBundleTransfer.takeArchive()` yields the completed archive once and
+nulls itself, so the controller calls it exactly once, at `COMPLETE`, into its own private `archive`
+field — never into `DebugBundleDownloadState`, which carries only `readyBytes: Long?`. Taking it inside
+the save path instead would leave a cancelled picker or a failed write with nothing left to save, since
+a second `takeArchive()` call returns null; taking it at completion and clearing the field only after a
+write returns is what lets both retries find the same archive still held. `dismiss()` drops it too —
+daemon bytes do not outlive the modal that is saving them — but the picker round trip does not go
+through `dismiss()`, so only a real dismissal discards an unsaved download.
+
+**Nine failure categories, one static sentence each, no raw daemon or exception text.** `failureFor` is
+a single exhaustive `when (status: DebugBundleStatus)` with no `else` arm — the one place the closed
+status set is interpreted, so #682 adding an arm breaks this file's build and nowhere else. The seven
+non-terminal `DebugBundleStatus` values (`UNAVAILABLE`, `BUSY`, `RECONNECT_REQUIRED`, `SEND_FAILED`,
+`REFUSED`, `INVALID_STREAM`, `DISCONNECTED`) each map to their own `DebugBundleFailure` arm and leave
+the action idle for a fresh request; `RECEIVING`/`COMPLETE` map to `null`. Two more arms have no
+transfer status behind them — `PICKER_CANCELLED` (the launcher returned no `Uri`) and `WRITE_FAILED`
+(`name()`, `openStream()`, `writeTo` or `flush` threw) — and both leave the archive held so OK
+re-opens the picker rather than losing the completed download. A failed write calls
+`destination.discard()` under `runCatching` before publishing, so the picker-created document does not
+survive as a partial archive; a `discard()` that itself throws is swallowed, since the save has already
+failed and there is nothing further to report.
+
+**The modal names the host through `connection`, not a second lookup.** `openLogData()` reads the
+Connection section's already-resolved name off `connection.value`'s `Loaded.hosts` (falling back to
+the raw `ownerServerId` when that row hasn't arrived yet or the host is no longer paired), so the modal
+and the row it was opened from can never disagree about what the host is called. `open(hostName)`
+clamps it to `MAX_WORKSPACE_LABEL_CHARS` — the same bound every surface rendering externally authored
+text on this screen applies — and `onDestination`'s success path applies the identical clamp to the
+picked document's own `OpenableColumns.DISPLAY_NAME` before publishing it as `savedTo`: that string is
+supplied by whichever document provider the operator chose, a third-party app under no obligation to
+return the name the app suggested, so it is untrusted the same way a scanned-QR host name is.
+
+**`maxLines` is not the security bound and a render defect proved it isn't.** Code review's MUST FIX on
+this PR: an early draft rendered every modal line, including the scope sentence naming the whole-daemon
+warning, through `maxLines = 1` — clipping the sentence AC1 and the plan's own security review both
+required, on a line long enough (99 characters before the host name) to overflow the shell's ~355dp
+content column well before reaching it. The clamp above is the actual bound on layout cost; `maxLines`
+only stops pixels, since Compose measures the whole string regardless, so removing it removes no
+protection. `ModalLine` (renamed from the pre-fix `BoundedModalLine`) now wraps every line instead,
+costing height only inside the shell's already-scrolling content column. The gate gap it exposed:
+Compose's `hasText` matches the semantics string, which `maxLines` never bounds, so a `hasText`
+assertion passes on a sentence the operator — and TalkBack — cannot read; the fix is asserting
+`TextLayoutResult.hasVisualOverflow` via `SemanticsActions.GetTextLayoutResult` wherever required copy
+might outrun its column. `DebugBundleModal` carries five light/dark `@Preview` pairs, one per content
+state (receiving, ready, saving, saved, and a cancelled-picker retry rendered at the name clamp — the
+densest content the modal draws), added in the same rework.
+
+The write itself — off `Dispatchers.IO`, `savedTo` published only after the stream closes, terminal
+transitions `compareAndSet` against the state published before the suspension — and
+`documentArchiveDestination`'s `ContentResolver`-backed `ArchiveDestination` (a SAF `Uri` grant only,
+`"wt"` truncates so a retry replaces an earlier partial attempt, no `exists()` probe) are documented in
+the file's own KDoc rather than restated here.

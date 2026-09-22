@@ -79,8 +79,11 @@ import de.pyryco.mobile.ui.settings.AboutScreen
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsEvent
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsScreen
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
+import de.pyryco.mobile.ui.settings.DEBUG_BUNDLE_FILE_NAME
+import de.pyryco.mobile.ui.settings.DEBUG_BUNDLE_MEDIA_TYPE
 import de.pyryco.mobile.ui.settings.SettingsScreen
 import de.pyryco.mobile.ui.settings.SettingsViewModel
+import de.pyryco.mobile.ui.settings.documentArchiveDestination
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
@@ -494,6 +497,19 @@ internal fun PyryNavHost(
             // The editor this destination opens on its own host (#751), driven by the same machine
             // the channel list drives — the view model holds its own instance of it, not a shared one.
             val hostEditor by vm.hostEditor.collectAsStateWithLifecycle()
+            // The Log data download (#683). The picker is a document-creation contract rather than a
+            // path: the operator names the destination, the app never builds one, and the suggested
+            // name and media type are fixed constants no daemon field can influence.
+            val logData by vm.logDataDownload.collectAsStateWithLifecycle()
+            val resolver = LocalContext.current.contentResolver
+            val archiveLauncher =
+                rememberLauncherForActivityResult(
+                    ActivityResultContracts.CreateDocument(DEBUG_BUNDLE_MEDIA_TYPE),
+                ) { uri ->
+                    // A null Uri is a cancelled picker, which the controller reports without
+                    // touching the archive it is still holding for the retry.
+                    vm.onLogArchiveDestination(uri?.let { documentArchiveDestination(resolver, it) })
+                }
             HostWorkspaceRepository(workspacePickerOwner, destinations) {
                 SettingsScreen(
                     connection = connection,
@@ -552,6 +568,14 @@ internal fun PyryNavHost(
                         settingsOwner.takeIf { it.isNotEmpty() }?.let { owner ->
                             { navController.navigate(Routes.archive(owner)) }
                         },
+                    // Null for a destination owning no host, exactly as the Archive row above is
+                    // (#715): there is no host to ask, so the row offers no tap rather than one
+                    // the view model could only reject. The view model keeps its own guard anyway.
+                    onOpenLogData = settingsOwner.takeIf { it.isNotEmpty() }?.let { { vm.openLogData() } },
+                    logData = logData,
+                    onLogDataRequested = vm::requestLogArchive,
+                    onLogDataSaveRequested = { archiveLauncher.launch(DEBUG_BUNDLE_FILE_NAME) },
+                    onLogDataDismissed = vm::dismissLogData,
                     onOpenAbout = { navController.navigate(Routes.ABOUT) },
                 )
             }
