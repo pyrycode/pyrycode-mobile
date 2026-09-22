@@ -179,6 +179,23 @@ behaviour. Not done here; this role does not write those files.
    contractually indistinguishable from "never written", so an empty read must never be treated as
    "the daemon has no conversations"; only a live list may empty a host.
 
+## Revisions
+
+**2026-09-22 — a fourth file: an inert cache double in `RelayConnectionFactoryTest`.**
+§ Design claimed no call site moves, which held for the `relay(...)` signature but missed a Koin one.
+`selectorSharesHostSourceAndKeepsDemoLookupSeparateFromSavedRelayHosts` builds a relay-mode container
+from `appModule` **without** `androidContext()` — legal today because every Android-bound definition
+in `appModule` is lazy and that test resolves none of them. Making the relay branch resolve
+`ConversationCache` broke that: the new binding calls `androidContext()` at creation, so the test
+failed with `MissingAndroidContextException`. Caught by running the `di` package rather than only the
+class under change.
+
+The production wiring is the correct half — `PyryApp` and `E2eTestApplication` both always supply an
+Android context — so the fix is a container-local `InertConversationCache` override in that one test,
+not a weaker binding. That test's subject is the shared source and its host lookup, and it is left
+proving exactly what it proved before. `ConversationCacheBindingInstrumentedTest` remains the only
+place the real binding is exercised.
+
 ## Security review
 
 **Verdict:** PASS
