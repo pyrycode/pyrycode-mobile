@@ -1,5 +1,6 @@
 package de.pyryco.mobile.di
 
+import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
@@ -37,11 +38,21 @@ internal data class HostConversationConnection(
     val status: StateFlow<ConnectionStatus>,
 )
 
-/** App-owned cache: collection continues without subscribers until [dispose]. */
+/**
+ * App-owned cache: collection continues without subscribers until [dispose].
+ *
+ * A host's rows otherwise live only while its repository does, so the teardown the lifecycle driver
+ * performs on background — and the process death that may follow — draws every saved host empty. With
+ * a [ConversationCache] present (#796) each accepted live list is written to it and a new host entry
+ * is seeded from it, so previously loaded rows survive both. The seed never touches
+ * [HostConversationSnapshot.connectionStatus]: a restored list must not read as a connected one. The
+ * demo path passes no cache and is unaffected.
+ */
 class HostConversationSource internal constructor(
     private val connections: StateFlow<List<HostConversationConnection>>,
     private val lookup: (String) -> ConversationRepository?,
     dispatcher: CoroutineDispatcher = Dispatchers.Default,
+    private val cache: ConversationCache? = null,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val held = mutableMapOf<String, Held>()
@@ -76,17 +87,29 @@ class HostConversationSource internal constructor(
                 scope.launch(entry.job) {
                     connection.status.collect { status -> update(entry) { it.copy(connectionStatus = status) } }
                 }
+                cache?.let { store ->
+                    scope.launch(entry.job) {
+                        // A read never throws for an unreadable or absent document; it yields empty, and an
+                        // empty result must not be read as "the daemon has no conversations". Only a live
+                        // list may empty a host, so nothing is published when there is nothing cached.
+                        val restored = store.readConversations(connection.serverId)
+                        if (restored.isNotEmpty()) update(entry, restore = true) { it.withRows(restored) }
+                    }
+                }
                 scope.launch(entry.job) {
                     connection.repositories.collectLatest { repository ->
                         repository
                             ?.observeConversations(ConversationFilter.All)
                             ?.catch { RelayLog.d { "event=host_snapshot_list_failed" } }
                             ?.collect { rows ->
-                                update(entry, repository) {
-                                    it.copy(
-                                        channels = rows.filter { row -> row.isPromoted && !row.archived },
-                                        chats = rows.filter { row -> !row.isPromoted && !row.archived },
-                                    )
+                                // Only a list the guards accepted is cached, so a superseded generation
+                                // cannot reach disk after being rejected for the snapshot. What is stored is
+                                // the daemon's list verbatim, archived rows included: the document mirrors
+                                // what was reported and `withRows` filters both sides of it identically.
+                                if (update(entry, repository) { it.withRows(rows) }) {
+                                    cache
+                                        ?.writeConversations(connection.serverId, rows)
+                                        ?.onFailure { RelayLog.d { "event=host_snapshot_cache_write_failed" } }
                                 }
                             }
                     }
@@ -97,23 +120,38 @@ class HostConversationSource internal constructor(
         RelayLog.d { "event=host_snapshots_reconciled count=${held.size}" }
     }
 
+    /** Reports whether the snapshot was actually transformed, so only an accepted list is cached. */
     @Synchronized
     private fun update(
         entry: Held,
         repository: ConversationRepository? = null,
+        restore: Boolean = false,
         transform: (HostConversationSnapshot) -> HostConversationSnapshot,
-    ) {
+    ): Boolean {
         val connection = entry.connection
         if (disposed ||
             held[connection.serverId] !== entry ||
             connections.value.none { it.serverId == connection.serverId && it.repositories === connection.repositories } ||
-            (repository != null && connection.repositories.value !== repository)
+            (repository != null && connection.repositories.value !== repository) ||
+            // A slow restore that finishes after the daemon's list landed must not undo it. The cache
+            // read suspends outside this monitor, so reading and setting `live` under it is atomic
+            // against the live path.
+            (restore && entry.live)
         ) {
-            return
+            return false
         }
+        if (repository != null) entry.live = true
         entry.snapshot = transform(entry.snapshot)
         publish()
+        return true
     }
+
+    /** The one promoted/archived split: a restored host is filtered by exactly the live rule. */
+    private fun HostConversationSnapshot.withRows(rows: List<Conversation>) =
+        copy(
+            channels = rows.filter { it.isPromoted && !it.archived },
+            chats = rows.filter { !it.isPromoted && !it.archived },
+        )
 
     private fun publish() {
         state.value = connections.value.mapNotNull { held[it.serverId]?.snapshot }
@@ -134,17 +172,22 @@ class HostConversationSource internal constructor(
         val job: Job,
     ) {
         var snapshot = HostConversationSnapshot(connection.serverId, connection.displayName, connection.status.value)
+
+        /** Set once a live list is accepted; a cache restore landing afterwards must not replace it. */
+        var live = false
     }
 
     companion object {
         const val DEMO_SERVER_ID = "demo"
 
+        /** [cache] trails [dispatcher] so no existing positional call site moves; null disables both sides. */
         fun relay(
             registry: RelayConnectionRegistry,
             dispatcher: CoroutineDispatcher = Dispatchers.Default,
+            cache: ConversationCache? = null,
         ) = HostConversationSource(registry.hostConnections, { serverId ->
             registry.connectionFor(serverId)?.coordinator?.liveRepository()
-        }, dispatcher)
+        }, dispatcher, cache)
 
         fun demo(
             repository: ConversationRepository,
