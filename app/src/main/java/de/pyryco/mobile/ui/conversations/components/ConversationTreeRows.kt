@@ -299,7 +299,12 @@ fun TreeWorkspaceRow(
  *
  * The leading status slot is drawn only in the idle treatment and takes no state input: #668
  * introduces unread/activity state and the precedence behind it. [selected] draws the design's plain
- * highlighted treatment; the phone has no hover, and the edit content is #665.
+ * highlighted treatment.
+ *
+ * A non-null [onEditTapped] draws the design's hover pencil at the trailing edge, permanently, since the
+ * phone has no hover (#827) — the host row's pencil made the same trade (#744). The caller decides which
+ * rows get it: Chats rows do, Channels rows wait for #667. It is a [TreeRowControl], so a tap on it
+ * edits the row without opening it or moving the highlight.
  */
 @Composable
 fun TreeConversationRow(
@@ -307,7 +312,10 @@ fun TreeConversationRow(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    onEditTapped: (() -> Unit)? = null,
 ) {
+    // Clamped once and reused for the name and the pencil's label, as the host row does.
+    val bounded = boundedRowText(conversationName)
     val fill =
         if (selected) {
             MaterialTheme.colorScheme.primaryContainer.copy(alpha = SELECTED_FILL_ALPHA)
@@ -329,13 +337,21 @@ fun TreeConversationRow(
         IdleStatusDot()
         Spacer(modifier = Modifier.width(TreeGlyphGap))
         Text(
-            text = boundedRowText(conversationName),
+            text = bounded,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = false),
+            // Filling the width pushes the pencil to the trailing edge and ellipsizes a long name before it.
+            modifier = Modifier.weight(1f, fill = onEditTapped != null),
         )
+        if (onEditTapped != null) {
+            TreeRowControl(
+                icon = Icons.Filled.Edit,
+                contentDescription = stringResource(R.string.cd_tree_chat_edit, bounded),
+                onClick = onEditTapped,
+            )
+        }
     }
 }
 
@@ -410,7 +426,7 @@ private fun FoldableTreeRow(
 
 /**
  * The trailing row control: the section header's and the host row's plus (#738), the host row's
- * pencil (#744) and a disconnected host's plug (#840). The body was already glyph-agnostic, so the caller supplies the [icon] and nothing else
+ * pencil (#744), a disconnected host's plug (#840) and a chat row's pencil (#827). The body was already glyph-agnostic, so the caller supplies the [icon] and nothing else
  * differs between them.
  *
  * [contentDescription] is the whole accessible name, because the controls repeat down the screen and two
@@ -526,7 +542,7 @@ private fun TreeRowsPreviewMatrix() {
                 selected = true,
                 onClick = {},
             )
-            TreeConversationRow(conversationName = "rocd-thinking", selected = false, onClick = {})
+            TreeConversationRow(conversationName = "rocd-thinking", selected = false, onClick = {}, onEditTapped = {})
             TreeHostRow(
                 serverId = "macbook",
                 hostName = "Macbook",
