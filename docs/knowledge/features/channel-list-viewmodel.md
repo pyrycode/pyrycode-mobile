@@ -136,6 +136,10 @@ rule a third time: `TreeHostEditTapped(serverId) -> vm.openHostEditor(serverId)`
 \#745 adds three more events off the open modal's `Unpair host` action, none carrying a `serverId` — the
 target is already the open editor's: `HostUnpairRequested -> vm.requestHostUnpair()`,
 `HostUnpairConfirmed -> vm.confirmHostUnpair()` and `HostUnpairDeclined -> vm.declineHostUnpair()`.
+\#840 adds a fourth control on the same rule: `TreeHostReconnectTapped(serverId) -> vm.reconnectHost(serverId)`.
+`reconnectHost` is a one-line forward to the shared `HostConversationSource.retryHost(serverId)` — see
+[Dependency injection § Exact-host Retry and lifecycle](dependency-injection.md#exact-host-retry-and-lifecycle)
+— and touches no VM state: not `collapsedKeys`, not the snapshot, not the editor.
 
 **The editor's six methods (#744/#745, delegated to a shared controller since #751).** `openHostEditor`,
 `submitHostName`, `requestHostUnpair`, `declineHostUnpair`, `confirmHostUnpair` and `dismissHostEditor`
