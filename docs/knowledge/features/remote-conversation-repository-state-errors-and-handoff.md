@@ -7,8 +7,8 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
 - **Five `StateFlow` projections — `projection` (the conversation list, #312), `lastMessages` (#329's
   per-conversation most-recent `Message`), `threadByConversation` (#313's per-conversation ordered
   thread), `stalledConversations` (#395's per-conversation stall `Set<String>`), and `queuedByConversation`
-  (#460's per-conversation queued backlog `Map<String, List<QueuedMessage>>`) — fed by one inbound
-  collector** launched on the injected connection `scope`. No second collector or scope is added per
+  (#460's per-conversation queued backlog `Map<String, List<QueuedMessage>>`, both held in their own
+  projection classes since 2026-09-22) — fed by one inbound collector** launched on the injected connection `scope`. No second collector or scope is added per
   slice; a single `message` envelope can update **two** projections (`lastMessages` +
   `threadByConversation`), and a single decoded `LiveSessionEvent` both `tryEmit`s on `liveSessionEvents`
   and clears `stalledConversations` for its conversation (#395). `stalledConversations` is **single-writer**

@@ -112,8 +112,8 @@ where it is actually rendered, in [`LiteralScreenSurface`](literal-screen-surfac
 ## Related
 
 - [#395 implementation notes](../codebase/395.md) — files, line refs, lessons, verification.
-- [Remote conversation repository](remote-conversation-repository.md) — hosts the `stalledConversations`
-  projection, the onset arm, and the clearing hook.
+- [Remote conversation repository](remote-conversation-repository.md) — hosts the onset arm and the clearing hook;
+  `StallProjection` holds the `stalledConversations` state, the decode and the read.
 - [Live-session events](live-session-events.md) (#385) — every decoded event is the forward-progress
   signal that clears a stall; the gate + single-collector substrate this reuses.
 - [Queued backlog](queued-backlog.md) (#460) — the structural twin: the same decode→state→observe shape

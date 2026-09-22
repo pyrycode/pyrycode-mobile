@@ -141,7 +141,7 @@ threats (screenshot/overlay of a compaction banner) belong to #597.
 
 - [#596 implementation notes](../codebase/596.md) — files, line refs, patterns, lessons.
 - [Remote conversation repository](remote-conversation-repository.md) — hosts the
-  `compactingConversations` projection, the demux arm, and the decode.
+  demux arm; `CompactingProjection` holds the `compactingConversations` state, the decode and the read.
 - [Stall state](stall-state.md) (#395) — the shape this arm clones (bare membership `Set`,
   capability gate, malformed-drop idiom); **not** cleared by a `compacting` frame (compaction is not
   forward progress).
