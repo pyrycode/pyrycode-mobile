@@ -50,7 +50,7 @@
 #   DETERMINISTIC=1 SCENARIO=replay-order PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh  # rung 4, post-reconnect replay ordering
 #   DETERMINISTIC=1 INTERACTIVE_RUNNER=stream-json PYRYCODE_SRC=~/src/pyrycode bash scripts/e2e-emulator.sh  # rung 4, pinned runner
 # Tunables (env):
-#   PORT=8888  DEVICE=pixel2Api33Atd  PAIR_NAME=e2e-emulator  PYRY_NAME=e2e-emulator
+#   PORT=<a free port>  DEVICE=pixel2Api33Atd  PAIR_NAME=e2e-emulator  PYRY_NAME=e2e-emulator
 #   PYRY_BIN=pyry  RELAY_BIN=pyrycode-relay
 #   LIVE=  LIVE_RELAY_HOST=pyrycode-relay.pyryco.de   (LIVE=1 → PAIR_NAME/PYRY_NAME default to e2e-live)
 #   DETERMINISTIC=  SCENARIO=ping  PYRYCODE_SRC=  FAKE_CLAUDE_BIN=  FIXTURE_FILE=  FIXTURE_FILE_2=
@@ -66,7 +66,12 @@
 set -euo pipefail
 
 # ---- config -----------------------------------------------------------------------------------
-PORT="${PORT:-8888}"
+# A free port by default, so two harness runs on one host never share a relay. With the port
+# fixed at 8888 the dispatcher (two tickets at once since 2026-09-22) and a builder's own scenario
+# run could collide: the second run's relay died on the taken port, the health check below then
+# passed against the FIRST run's relay, and whichever run finished first tore that relay down under
+# the other. Set PORT to pin one; the guard before the relay start refuses a port already serving.
+PORT="${PORT:-$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')}"
 DEVICE="${DEVICE:-pixel2Api33Atd}"            # matches the managedDevices block in app/build.gradle.kts
 PYRY_BIN="${PYRY_BIN:-pyry}"
 RELAY_BIN="${RELAY_BIN:-pyrycode-relay}"      # not needed on the LIVE path (no local relay)
@@ -379,14 +384,20 @@ fi
 # LIVE dials the production relay directly (RELAY_PID stays empty → cleanup's kill guard no-ops); a down
 # or stale relay surfaces later as the phone's connect timeout — the failure class this mode exists to catch.
 if [ -z "${LIVE}" ]; then
+  # Refuse a port that already answers: that is another run's relay, and passing its health check
+  # as our own is exactly the silent sharing the free-port default exists to prevent.
+  if curl -fsS "http://127.0.0.1:${PORT}/healthz" >/dev/null 2>&1; then
+    die "port ${PORT} already serves a relay (another harness run owns it) — unset PORT to pick a free one"
+  fi
   log "starting relay on :${PORT} (plain ws, no TLS)…"
   "${RELAY_BIN}" --insecure-listen=":${PORT}" --metrics-listen= >"${RELAY_LOG}" 2>&1 &
   RELAY_PID=$!
 
   log "waiting for relay /healthz…"
   for _ in $(seq 1 30); do
-    if curl -fsS "http://127.0.0.1:${PORT}/healthz" >/dev/null 2>&1; then break; fi
+    # Liveness first: a relay that lost the bind race is dead before anything answers on the port.
     kill -0 "${RELAY_PID}" 2>/dev/null || die "relay exited early — see ${RELAY_LOG}"
+    if curl -fsS "http://127.0.0.1:${PORT}/healthz" >/dev/null 2>&1; then break; fi
     sleep 0.5
   done
   curl -fsS "http://127.0.0.1:${PORT}/healthz" >/dev/null 2>&1 || die "relay never became healthy — see ${RELAY_LOG}"
