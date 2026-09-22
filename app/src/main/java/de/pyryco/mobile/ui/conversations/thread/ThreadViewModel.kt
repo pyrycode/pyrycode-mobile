@@ -1396,7 +1396,7 @@ private fun String.toChannelSlug(): String =
  * function reaches `Text` and nothing else — never `MarkdownText`, a WebView, a URL, a filename, a
  * `testTag`, a map key or a log field.
  */
-internal fun String.inert(): String = filterNot { it.isISOControl() }.take(MAX_RUN_CONFIG_LABEL_CHARS)
+private fun String.inert(): String = filterNot { it.isISOControl() }.take(MAX_RUN_CONFIG_LABEL_CHARS)
 
 private const val MAX_RUN_CONFIG_LABEL_CHARS = 128
 
