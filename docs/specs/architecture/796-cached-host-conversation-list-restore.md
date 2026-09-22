@@ -196,6 +196,33 @@ not a weaker binding. That test's subject is the shared source and its host look
 proving exactly what it proved before. `ConversationCacheBindingInstrumentedTest` remains the only
 place the real binding is exercised.
 
+**2026-09-22 (rework) — the same Koin dependency in three *instrumented* containers.**
+The entry above found the pattern and fixed the one site it swept. Its own lesson — "caught by running
+the `di` package rather than only the class under change" — did not go far enough: the sweep had to
+cover every construction of a container from `appModule`, in `androidTest/` as well as `test/`. Three
+instrumented classes build a relay-mode container the same way and were never run during development,
+so the UI gate failed 14 tests across `SettingsNavigationTest`, `ArchiveNavigationTest` and
+`LiteralScreenNavigationTest`, all `MissingAndroidContextException` from the new `ConversationCache`
+single. The full set of construction sites is now accounted for: `PyryApp` and both `E2eTestApplication`
+branches supply an Android context, `RelayConnectionFactoryTest` and these three override the cache.
+
+**The fix overrides the binding rather than supplying the Context, deliberately.** These run on a
+device, so `androidContext(InstrumentationRegistry.getInstrumentation().targetContext)` was available
+and is closer to production — but it would hand these tests the *real* cache, rooted at one
+`noBackupFilesDir` shared by every test in the run and every run on a reused ATD. This ticket's own
+feature is what makes that unsafe: the source writes each host's list as it arrives and seeds a
+snapshot from that document when no live repository exists, so a `live = true` case would leave rows
+on disk that a later disconnected host with the same server id draws for free. These classes assert on
+which conversations appear under which host, and several run without connecting — an order-dependent
+pass, not a proof. Withholding the Context is also load-bearing in its own right: it is what made this
+dependency fail loudly instead of quietly reaching real DataStore or Keystore state, and it is what
+will surface the next one.
+
+The double moves to a shared `InertConversationCache` under androidTest `de.pyryco.mobile.di`, carrying
+the rationale once; the three containers reference it. `RelayConnectionFactoryTest` keeps its own
+file-private copy — separate source sets cannot share it — and
+`ConversationCacheBindingInstrumentedTest` remains the only test that resolves the real binding.
+
 ## Security review
 
 **Verdict:** PASS
