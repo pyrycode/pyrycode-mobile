@@ -2472,6 +2472,114 @@ class RemoteConversationRepositoryTest {
             assertEquals(listOf("live-1"), messageIds(thread.last()))
         }
 
+    // ---- #810: a tool call's input fields and parent identity reach the retained row on both lanes
+
+    // AC #3: the same tool_use + tool_result pair, once live under c1 and once replayed through a
+    // history_page under c2, retains the same ToolCall. Timestamps differ by lane by design (the live
+    // clock vs the stored entry's ts), so the comparison is the ToolCall, not the whole Message.
+    @Test
+    fun toolCall_liveAndHistoryLanes_retainIdenticalRows() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val live = collectMessages(repo, "c1")
+            val replayed = collectMessages(repo, "c2")
+            runCurrent()
+
+            pump.push(
+                Envelope(id = 1L, type = "tool_use", ts = TS, payload = MobileJson.parseToJsonElement(TOOL_USE_810.replace("CONV", "c1"))),
+            )
+            pump.push(
+                Envelope(
+                    id = 2L,
+                    type = "tool_result",
+                    ts = TS,
+                    payload = MobileJson.parseToJsonElement(TOOL_RESULT_810.replace("CONV", "c1")),
+                ),
+            )
+            runCurrent()
+
+            startRequestHistory(repo, "c2")
+            runCurrent()
+            val sentId = pump.sent.last { it.type == "request_history" }.id
+            val useEntry = TOOL_USE_810.replace("CONV", "c2")
+            val resultEntry = TOOL_RESULT_810.replace("CONV", "c2")
+            pump.push(
+                historyPageEnvelope(
+                    inReplyTo = sentId,
+                    raw =
+                        """
+                        {"entries":[
+                          {"id":2,"type":"tool_result","payload":$resultEntry,"ts":"2026-09-05T10:02:00Z"},
+                          {"id":1,"type":"tool_use","payload":$useEntry,"ts":"2026-09-05T10:01:00Z"}
+                        ],"cursor":"","at_start":true}
+                        """.trimIndent(),
+                ),
+            )
+            runCurrent()
+
+            val liveCall = (live.last().single() as ThreadItem.MessageItem).message.toolCall
+            val replayedCall = (replayed.last().single() as ThreadItem.MessageItem).message.toolCall
+            assertEquals(
+                ToolCall(
+                    toolName = "Edit",
+                    input = "a.kt",
+                    output = "ok",
+                    status = ToolCallStatus.Done,
+                    inputFields = mapOf("file_path" to "../src/a.kt", "old_string" to "x\ny…"),
+                    parentToolUseId = "agent-1",
+                ),
+                liveCall,
+            )
+            assertEquals(liveCall, replayedCall)
+        }
+
+    // AC #4: frames for c1 never alter c2's retained rows — even a tool_result for c1 whose
+    // tool_use_id collides with a row c2 already holds.
+    @Test
+    fun toolCall_framesForOneConversation_neverAlterAnothersRows() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val first = collectMessages(repo, "c1")
+            val second = collectMessages(repo, "c2")
+            runCurrent()
+
+            pump.push(
+                Envelope(id = 1L, type = "tool_use", ts = TS, payload = MobileJson.parseToJsonElement(TOOL_USE_810.replace("CONV", "c2"))),
+            )
+            runCurrent()
+            val before = second.last()
+
+            pump.push(
+                Envelope(
+                    id = 2L,
+                    type = "tool_use",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"c1","turn_id":"t9","tool_use_id":"tu-other","parent_tool_use_id":"agent-9",""" +
+                                """"name":"Bash","input_summary":"ls","input":{"command":"ls"}}""",
+                        ),
+                ),
+            )
+            pump.push(
+                Envelope(
+                    id = 3L,
+                    type = "tool_result",
+                    ts = TS,
+                    payload = MobileJson.parseToJsonElement(TOOL_RESULT_810.replace("CONV", "c1").replace("\"ok\"", "\"boom\"")),
+                ),
+            )
+            runCurrent()
+
+            assertEquals(before, second.last())
+            assertEquals(ToolCallStatus.Running, (second.last().single() as ThreadItem.MessageItem).message.toolCall?.status)
+            val firstCall = (first.last().single() as ThreadItem.MessageItem).message.toolCall
+            assertEquals(mapOf("command" to "ls"), firstCall?.inputFields)
+            assertEquals("agent-9", firstCall?.parentToolUseId)
+        }
+
     // ---- archive / unarchive (#549): archive_conversation / unarchive_conversation request →
     // ---- conversation_updated/error correlation, folding the is_archived flag ---------------------
 
@@ -9117,6 +9225,16 @@ class RemoteConversationRepositoryTest {
 
     private companion object {
         const val TS = "2026-05-31T00:00:00Z"
+
+        /** A #810 `tool_use` payload with input fields and a parent; `CONV` is the conversation placeholder. */
+        const val TOOL_USE_810 =
+            """{"conversation_id":"CONV","turn_id":"t1","tool_use_id":"tu-810","parent_tool_use_id":"agent-1",""" +
+                """"name":"Edit","input_summary":"a.kt","input":{"file_path":"../src/a.kt","old_string":"x\ny…"}}"""
+
+        /** The `tool_result` completing [TOOL_USE_810], carrying the same parent. */
+        const val TOOL_RESULT_810 =
+            """{"conversation_id":"CONV","turn_id":"t1","tool_use_id":"tu-810","parent_tool_use_id":"agent-1",""" +
+                """"is_error":false,"result_summary":"ok"}"""
 
         /** A plain row: auto mode accepted, two effort levels, nothing cut (#791). */
         val ROW_SONNET = ModelRowFixture("claude-sonnet-5", "sonnet", "Sonnet 5")
