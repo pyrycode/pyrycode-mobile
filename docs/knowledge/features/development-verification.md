@@ -220,6 +220,12 @@ Plain JVM tests have no Robolectric runtime and this module does not enable defa
 Android return values. A reachable `android.util.Log.*` call throws "not mocked".
 Route log emission through an injectable sink, as `data/network/RelayLog.kt` does,
 so tests can capture the call and restore process-global flags after each test.
+Installing that sink is order-sensitive when the class under test logs from a
+constructor path: a test that builds `HostConversationSource` at field
+initialization (rather than inside `@Before` or the test body, after the sink is
+installed) reaches the source's first `reconcile` log before the sink exists, and
+the resulting `android.util.Log` call fails the test as an uncaught exception
+before any assertion runs (#840).
 
 Spotless also runs ktlint's filename rule. If a Kotlin file contains one non-private
 top-level class-like type, the filename must match that type, including for

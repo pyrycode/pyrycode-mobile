@@ -155,6 +155,14 @@ sealed interface ChannelListEvent {
     ) : ChannelListEvent
 
     /**
+     * A disconnected host row's plug control: redial **that** row's host and no other (#840). Carries the
+     * `serverId` only — never the displayed name, which the daemon authors.
+     */
+    data class TreeHostReconnectTapped(
+        val serverId: String,
+    ) : ChannelListEvent
+
+    /**
      * The open modal's OK, carrying the entered name already trimmed by the component.
      *
      * No `serverId`, deliberately: the target is the open editor's, held in the view model, and a second
@@ -365,6 +373,7 @@ private fun LazyListScope.treeSection(
                 onAddTapped = { onEvent(ChannelListEvent.TreeHostAddTapped(host.serverId)) },
                 onAddLongPressed = { onEvent(ChannelListEvent.TreeHostAddLongPressed(host.serverId)) },
                 modifier = Modifier.padding(top = if (index == 0) TreeFirstHostGap else TreeHostGap),
+                onReconnectTapped = { onEvent(ChannelListEvent.TreeHostReconnectTapped(host.serverId)) },
             )
         }
         if (hostKey in hostState.collapsed) return@forEachIndexed
