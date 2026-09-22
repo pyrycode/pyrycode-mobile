@@ -1,5 +1,7 @@
 package de.pyryco.mobile.ui.conversations.components
 
+import org.intellij.markdown.MarkdownElementTypes
+import org.intellij.markdown.MarkdownTokenTypes
 import org.intellij.markdown.ast.ASTNode
 import org.intellij.markdown.ast.getTextInNode
 import org.intellij.markdown.flavours.gfm.GFMElementTypes
@@ -29,6 +31,8 @@ class MarkdownTextParsingTest {
     private fun ASTNode.descendants(): Sequence<ASTNode> = sequenceOf(this) + children.asSequence().flatMap { it.descendants() }
 
     private fun ASTNode.firstOfType(type: org.intellij.markdown.IElementType): ASTNode? = descendants().firstOrNull { it.type == type }
+
+    private fun ASTNode.childTypes(): List<org.intellij.markdown.IElementType> = children.map { it.type }
 
     // ---------------------------------------------------------------- alignments
 
@@ -217,5 +221,76 @@ class MarkdownTextParsingTest {
         val tag = parse(source).firstOfType(org.intellij.markdown.MarkdownTokenTypes.HTML_TAG)
         assertNotNull(tag)
         assertTrue(tag!!.children.isEmpty())
+    }
+
+    // ------------------------------------------------- parser contract: ATX headings (#768)
+
+    /**
+     * The nesting the heading trim rests on. A heading's DIRECT children are the marker and one
+     * content node — the marker whitespace is not among them, which is why filtering at this level
+     * (as `HeadingBlock` did from #129 until #768) never saw it and every heading rendered a
+     * leading space.
+     */
+    @Test
+    fun `an atx heading nests its content one level inside ATX_CONTENT`() {
+        val source = "# Heading with text"
+        val heading = parse(source).firstOfType(MarkdownElementTypes.ATX_1)!!
+        assertEquals(
+            listOf(MarkdownTokenTypes.ATX_HEADER, MarkdownTokenTypes.ATX_CONTENT),
+            heading.childTypes(),
+        )
+        val content = heading.children.single { it.type == MarkdownTokenTypes.ATX_CONTENT }
+        assertEquals(" Heading with text", content.getTextInNode(source).toString())
+        assertEquals(MarkdownTokenTypes.WHITE_SPACE, content.childTypes().first())
+    }
+
+    /**
+     * Why the fix trims the EDGES and does not simply extend the old filter one level down:
+     * `ATX_CONTENT`'s interior `WHITE_SPACE` tokens are the real spaces between words, so dropping
+     * every one of them would render `` `code`andbold ``.
+     */
+    @Test
+    fun `interior whitespace inside ATX_CONTENT is the spacing between words`() {
+        val source = "## `code` and **bold**"
+        val content =
+            parse(source)
+                .firstOfType(MarkdownElementTypes.ATX_2)!!
+                .children
+                .single { it.type == MarkdownTokenTypes.ATX_CONTENT }
+        assertEquals(
+            listOf(
+                MarkdownTokenTypes.WHITE_SPACE,
+                MarkdownElementTypes.CODE_SPAN,
+                MarkdownTokenTypes.WHITE_SPACE,
+                MarkdownTokenTypes.TEXT,
+                MarkdownTokenTypes.WHITE_SPACE,
+                MarkdownElementTypes.STRONG,
+            ),
+            content.childTypes(),
+        )
+    }
+
+    /**
+     * The closed form. The closing `##` is the heading's own second marker token and never reaches
+     * `ATX_CONTENT`, but the space before it does — so this form rendered `" Trailing "`, padded at
+     * both ends, and both ends come off together.
+     */
+    @Test
+    fun `a closed atx heading keeps its trailing space inside ATX_CONTENT`() {
+        val source = "## Trailing ##"
+        val heading = parse(source).firstOfType(MarkdownElementTypes.ATX_2)!!
+        val content = heading.children.single { it.type == MarkdownTokenTypes.ATX_CONTENT }
+        assertEquals(" Trailing ", content.getTextInNode(source).toString())
+        assertEquals(MarkdownTokenTypes.WHITE_SPACE, content.childTypes().last())
+    }
+
+    /**
+     * A marker-only heading has NO content child at all. A lookup that assumed one was present
+     * would throw, in a renderer this repo documents as total.
+     */
+    @Test
+    fun `a marker-only heading has no ATX_CONTENT child`() {
+        val heading = parse("##").firstOfType(MarkdownElementTypes.ATX_2)!!
+        assertEquals(listOf(MarkdownTokenTypes.ATX_HEADER), heading.childTypes())
     }
 }

@@ -190,6 +190,22 @@ private fun MarkdownBlock(
     }
 }
 
+/**
+ * The heading's content is nested ONE LEVEL DOWN, and that is the whole subtlety (#768). `# Title`
+ * parses as `ATX_HEADER [#]` beside `ATX_CONTENT [ Title]`, with the marker's whitespace inside the
+ * content node — so a filter over the heading's own children (what this did from #129) never saw
+ * that token, and every heading rendered a space indented from the paragraphs around it. Walking
+ * `ATX_CONTENT` puts the markers outside the walk by construction: the opening one, the closing one
+ * of the `## Title ##` form, and any trailing `EOL`.
+ *
+ * Only the EDGE whitespace goes, via the same [trimmedContent] the table cells use. `ATX_CONTENT`'s
+ * interior `WHITE_SPACE` tokens are the real spaces between words — `` ## `code` and **bold** ``
+ * lexes as `WHITE_SPACE, CODE_SPAN, WHITE_SPACE, TEXT, WHITE_SPACE, STRONG` — so dropping every one
+ * of them a level deeper would render `` `code`andbold ``.
+ *
+ * A marker-only `##` has no `ATX_CONTENT` child at all, hence the null arm rather than a lookup that
+ * assumes one: it renders empty, as it already did, in a renderer that is total by design.
+ */
 @Composable
 private fun HeadingBlock(
     node: ASTNode,
@@ -198,18 +214,12 @@ private fun HeadingBlock(
     style: androidx.compose.ui.text.TextStyle,
 ) {
     val colors = currentInlineColors()
+    val content = node.children.firstOrNull { it.type == MarkdownTokenTypes.ATX_CONTENT }
     val text =
         buildAnnotatedString {
-            appendInlineChildren(
-                node.children.filter {
-                    it.type != MarkdownTokenTypes.ATX_HEADER &&
-                        it.type != MarkdownTokenTypes.WHITE_SPACE &&
-                        it.type != MarkdownTokenTypes.EOL
-                },
-                source,
-                uriHandler,
-                colors,
-            )
+            if (content != null) {
+                appendInlineChildren(content.trimmedContent(), source, uriHandler, colors)
+            }
         }
     Text(text = text, style = style)
 }
@@ -432,7 +442,8 @@ private fun TableBlock(
 }
 
 /**
- * A cell's inline children with the source's own padding dropped.
+ * Inline children with the source's own padding dropped — a table cell's since #681, and a
+ * heading's `ATX_CONTENT` since #768, which is the identical defect one construct away.
  *
  * `| Name |` lexes the cell as `WHITE_SPACE, TEXT("Name"), WHITE_SPACE`, so walking the children as
  * they arrive renders `" Name "` — the pipes' breathing room, promoted into the content. GFM says a
