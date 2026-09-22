@@ -214,6 +214,29 @@ helper (defaulted to a fresh store, so every existing case is unaffected):
   running `DeterministicInteractiveStreamE2ETest`'s ping scenario, whose first act is typing into this
   field. Record the outcome under `## Revisions` if it forces a design change.
 
+## Revisions
+
+### 2026-09-22 — the clear compares against the store, not the exposed flow
+
+The Design section described the post-send clear as guarded on "the draft still equals the text that
+was sent" without naming which reader supplies "the draft". Implementing it against `draft` — the
+`StateFlow` this ticket exposes — was wrong, and
+`sendMessage_whenTheDraftChangedInFlight_leavesTheNewTextAlone` caught it: `draft` is a *derived* flow,
+so an edit made from inside an already-running coroutine does not reach it until that dispatch yields.
+The guard therefore compared a stale value, found it equal to the sent text, and cleared text it had
+never seen — the exact data loss the guard exists to prevent.
+
+`sendMessage` now reads `draftStore.draftFor(serverId, conversationId)`, whose `MutableStateFlow.value`
+is authoritative and synchronous. The split is the durable point: `draft` is for rendering, the store
+is for deciding. No other part of the design moved.
+
+### 2026-09-22 — Open question resolved: no dispatch lag in the e2e path
+
+The store → `stateIn` → `collectAsStateWithLifecycle` hop does not lag `performTextInput`.
+`python3 scripts/android-test-gate.py scripted ping` is green against the production wiring
+(1 executed, 0 failures, 0 skipped, exit 0): the emulator connected, typed and sent the prompt through
+the new draft path, and the scripted reply rendered. No design change followed.
+
 ## Sizing
 
 Six production files, one over the ≤5 boundary. The sixth is the Koin wiring the refiner's estimate
