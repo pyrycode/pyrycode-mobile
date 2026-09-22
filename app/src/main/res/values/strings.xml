@@ -160,6 +160,13 @@
     <!-- Generic for the same reason edit_host_save_failed is, and it names the failed operation. -->
     <string name="edit_host_unpair_failed">Couldn\'t unpair the host. Try again.</string>
     <!--
+      The Edit chat modal (#826), in desktop's EditChatDialogView copy: sentence-case title against the
+      frame's "Edit Chat", and the frame's "Channel name:" label for every chat, promoted or not.
+    -->
+    <string name="edit_chat_title">Edit chat</string>
+    <string name="edit_chat_name_label">Channel name:</string>
+    <string name="edit_chat_archive">Archive chat</string>
+    <!--
       The Log data entry and its modal (#683). The row headline joins the Storage section in
       Clear cache\'s language; the title repeats it so the modal names what it was opened from.
     -->
