@@ -92,10 +92,17 @@ CLAUDE.md's "Don't" section names Compose Multiplatform as a walk-back trigger. 
 
 ## What's deliberately absent
 
-- **No serialization annotations.** `@Serializable` / `@JsonClass` belong to Phase 4 when the wire protocol ships. Adding them speculatively pulls in a Gradle plugin (`kotlin("plugin.serialization")`) the project doesn't otherwise need.
+- **No serialization annotations on the model itself.** `@Serializable` / `@JsonClass` never land
+  on `Conversation`, `Session` or `Message` directly. The wire layer (Phase 4) and
+  [the app-private conversation cache](conversation-cache.md) (#795) each need a serializable
+  shape for a subset of these fields; both keep their own private record type with its own
+  mapping functions rather than annotating the domain model, which would pull persistence and
+  wire concerns into a type every layer depends on.
 - **No `require(...)` / `init { }` validation.** Schema-shape only; constructors cannot fail. The repository layer will enforce invariants (e.g. `currentSessionId ∈ sessionHistory ∪ {new}`) when it lands.
 - **No `SessionBoundary` marker here.** CLAUDE.md describes a synthetic marker the repository interleaves into the message stream to drive thread-screen delimiters; that type lives with the repository contract as `ThreadItem.SessionBoundary` in `data/repository/ConversationRepository.kt` (landed in #3). See `conversation-repository.md`.
-- **No persistence.** DataStore / Room are out of scope; the fake repository will hold these in memory.
+- **No persistence on the model itself.** The conversation cache (#795) is the first persistence
+  consumer; it stores a cache-local copy rather than the domain type, so `Conversation` stays
+  free of persistence shape the way it already stays free of wire shape.
 
 ## Related
 
