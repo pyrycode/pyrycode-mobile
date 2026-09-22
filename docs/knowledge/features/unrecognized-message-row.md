@@ -158,6 +158,12 @@ All three of `ThreadScreen`'s exhaustive `when`s over `ThreadItem` gained a thir
   `Box` (`ThreadScreen.kt:296`), so above-delimiter dimming applies with zero new code.
 - **`ThreadItem.timestamp()`** — `occurredAt`.
 
+**Since #644**, the row's outer `Row` carries [`MessageContentGutter`](message-bubble.md) (20dp) on both
+horizontal edges, applied at this file's own call site rather than by `ThreadScreen` or by an edit to
+[`MessageBubble.kt`](message-bubble.md) (neither owns this file). This row was the one list kind still
+bleeding to the screen edge once the message bubbles and the tool-call row picked up the same gutter —
+without it, this row read as ragged next to its neighbours.
+
 Every other `ThreadItem` reference in the tree (`ThreadViewModel.kt`, other `ThreadScreen.kt` sites) is
 an `is`-check inside `any`/`filter`/`filterIsInstance`/`lastOrNull`, which a new sealed subtype cannot
 break — see [Thread screen](./thread-screen.md).

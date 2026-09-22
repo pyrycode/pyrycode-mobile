@@ -50,14 +50,17 @@ list in. Statelessness is an AC (#4), not a style choice.
   - **one `QueuedMessageRow` per entry, in `queued` order verbatim** — no sort, no dedup (FIFO == wire
     order, AC #1; the data layer already preserves wire order, see [Queued backlog](queued-backlog.md)).
 - **Each row mirrors the sent user bubble, de-emphasized (the visual distinction AC #1 requires).** A
-  private `QueuedMessageRow` lays out an **end-aligned** `Row` at `Modifier.alpha(QUEUED_ALPHA = 0.6f)`:
+  private `QueuedMessageRow` lays out an **end-aligned** `Row`, inset on its leading edge by
+  [`MessageRoleInset`](message-bubble.md) (100dp, since #644 — see [Constants](#constants) below) and at
+  `Modifier.alpha(QUEUED_ALPHA = 0.6f)`:
   - a leading **decorative** "waiting" glyph — `Icons.Outlined.Schedule`, tinted `onSurfaceVariant`,
     `contentDescription = null` (the row text + the section content-description carry the meaning;
     `material-icons-extended` is already a dependency, used by [`ToolCallRow`](tool-call-row.md));
-  - a `Surface` bubble in the **same rounded user shape** (`bottomEnd = 6.dp` notch) and the same
-    `primaryContainer` / `onPrimaryContainer` colour family as [`UserMessageBubble`](message-bubble.md),
-    holding **plain** `Text(entry.text, bodyMedium)` — **never `MarkdownText`**, matching
-    `UserMessageBubble`, since this is un-sent user *input*;
+  - a `Surface` bubble in the **same uniform 6dp-cornered shape** (`BubbleShape`, since #644 — no longer
+    the pre-#644 asymmetric `bottomEnd = 6.dp` "tail") and the same `primaryContainer` /
+    `onPrimaryContainer` colour family as [`UserMessageBubble`](message-bubble.md), holding **plain**
+    `Text(entry.text, bodyMedium)` — **never `MarkdownText`**, matching `UserMessageBubble`, since this is
+    un-sent user *input*;
   - a **trailing drop affordance** (#467) — `IconButton(onClick = { onDrop(id) })` holding
     `Icon(Icons.Outlined.Close, tint = onSurfaceVariant)` with `contentDescription` from
     `cd_thread_queued_drop`. `Close` (×, *un-queue*) over `Delete` (trash, *delete*): a queued message is
@@ -88,12 +91,24 @@ drop button should lift out of the `QUEUED_ALPHA` dim for stronger tap affordanc
 
 ### Constants
 
-File-private `val`s at the top of `QueuedBacklog.kt` — no raw `.dp` literal in the body, the same
-named-constant posture as the sibling components. The bubble shape/sizing constants
-(`QueuedBubbleShape`, `QueuedBubbleMaxWidth`, the bubble paddings) **mirror** `UserMessageBubble`'s — those
-are `private` to `MessageBubble.kt`, so the handful needed are **redeclared locally** rather than widened
-to `internal` (a size-S slice doesn't carry a cross-component refactor; rule-of-three triggers extraction).
-`QUEUED_ALPHA = 0.6f` and the glyph size/gap are local too.
+**Since #644, the bubble geometry is *consumed* from [`MessageBubble.kt`](message-bubble.md), not copied.**
+`BubbleShape`, `BubbleHorizontalPadding`, `BubbleVerticalPadding` and `MessageRoleInset` were widened to
+`internal` there specifically so this file could stop redeclaring them — the pre-#644 doc recorded
+`QueuedBubbleShape` / `QueuedBubbleMaxWidth` / local padding copies as a deliberate size-S workaround for
+those constants being `private`; #644 removed the reason for the workaround; `QueuedBubbleShape` and
+`QueuedBubbleMaxWidth` are gone. `BacklogHorizontalPadding` is likewise gone, replaced by
+`MessageContentGutter` from the same file, so a queued row sits on the same gutter as the bubbles above it.
+Only `BacklogVerticalPadding`, `BacklogRowSpacing`, `WaitingGlyphSize`, `WaitingGlyphGap` and
+`QUEUED_ALPHA = 0.6f` remain file-private `val`s local to this file's own layout (the glyph and the
+"Queued" caption have no shared equivalent elsewhere).
+
+**Recorded deviation: the row *does* take `MessageRoleInset` (100dp), unlike a first-draft plan for #644
+that argued against it.** The waiting glyph and the trailing drop `IconButton` already consume roughly
+72dp of the row; adding the inset on top narrows the bubble below a sent one. The alternative — no inset —
+was tried and rejected: without the inset (and with the old 320dp cap gone along with the rest of the
+copied constants), a long queued bubble grew to the *full* row width at the reference size — wider than a
+sent bubble's 272dp maximum, which breaks the "same bubble family" property the queued row exists to
+preserve. The narrower-but-still-in-family bubble is the accepted cost.
 
 ## Placement in the thread
 
@@ -247,7 +262,8 @@ non-empty queue.
 - Host: [Thread screen](thread-screen.md) — surfaces `queuedMessages` on `ThreadUiState` and mounts the
   section between the list and `ThinkingIndicator`.
 - Bubble mirrored: [Message bubble](message-bubble.md) (`UserMessageBubble` — the shape/colour family the
-  queued row de-emphasizes).
+  queued row de-emphasizes; since #644 the geometry constants (`BubbleShape`, paddings, `MessageRoleInset`)
+  are consumed from there directly rather than copied — see [Constants](#constants) above).
 - Render twins (same shape, opposite hoisting decision): [Thinking indicator](thinking-indicator.md) (#407
   — foot-of-list, sibling `StateFlow`), [Stall promotion banner](stall-promotion-banner.md) (#396 — top
   banner, sibling `StateFlow`). Both design-owed M3 defaults against the same un-drawn `16-8` frame.
