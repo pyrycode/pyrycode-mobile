@@ -132,6 +132,11 @@
     <string name="modal_armed_option_desc">Tap again to confirm</string>
     <string name="modal_cancel">Cancel</string>
     <string name="modal_send_failed">Couldn\'t send your answer. Try again.</string>
+    <string name="question_modal_title">Claude has questions</string>
+    <string name="question_other">Other</string>
+    <string name="question_other_placeholder">Type your answer</string>
+    <string name="question_continue">Continue</string>
+    <string name="question_send_failed">Couldn\'t send. Try again.</string>
     <string name="new_session_failed">Couldn\'t reset the session. Check your connection.</string>
     <string name="archive_failed">Couldn\'t archive this conversation. Try again.</string>
     <string name="change_workspace_failed">Couldn\'t change the workspace. Try again.</string>

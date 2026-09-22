@@ -332,6 +332,10 @@ and the snackbar-vs-inline dismiss affordance remains design-owed.
 - [Shared mobile modal](mobile-modal.md) ([#815](mobile-modal.md#the-hardened-gate-mobilegatemodal)) — the
   overlay's current container: the `MobileGateModal` entry point that now owns the dialog chrome, the four
   window-hardening properties and the Cancel-only footer this document used to describe as the overlay's own.
+- [Question batch modal](question-batch-modal.md) ([#661](question-batch-modal.md)) — `MobileGateModal`'s
+  second caller, the first to use its submit/sending/error extension. Its lock/single-send/late-completion
+  idiom mirrors this overlay's own armed-answer send, but it is drawn from `MainActivity` beside
+  `ThreadScreen` rather than as an eighth `Scaffold` sibling inside it.
 - [Modal answer flow](modal-answer-flow.md) ([#451](../codebase/451.md)) — the behavior half whose
   `armedOptionId` / `modalSendErrors` signals this renders and whose `onModalOption` / `onModalCancel`
   decision methods the route host wires.
