@@ -7,9 +7,11 @@ validation, submission and operation cancellation. Its first production consumer
 [`EditHostModal`](#callers) (#743), first driven onto a screen by
 [`ChannelListScreen`](channel-list-screen.md#host-row-edit-control-744)'s host-row edit
 control (#744), and since #751 also driven by [Settings](settings-screen.md)'s owner
-row — both through the shared [`HostEditorModal`](host-editor.md) binding. Existing
-dialogs such as [CreateFolderDialog](create-folder-dialog.md) remain separate;
-consumer tickets own their migration and operation-specific acceptance.
+row — both through the shared [`HostEditorModal`](host-editor.md) binding. Since #683
+the Storage section's Log data download draws `DebugBundleModal` (#683) directly on
+this shell, its second direct caller. Existing dialogs such as
+[CreateFolderDialog](create-folder-dialog.md) remain separate; consumer tickets own
+their migration and operation-specific acceptance.
 
 ## Caller contract
 
@@ -86,6 +88,24 @@ consumer's operation. The [plan revisions](../../specs/architecture/638-mobile-m
 record the activity-recreation failure and the required setup order.
 
 ## Callers
+
+**`DebugBundleModal`** (`ui/settings/DebugBundleDownload.kt`, #683) is the shell's second direct
+caller — reusing `MobileModal` itself rather than going through `EditHostModal`/`HostEditorModal`.
+It draws the Settings Storage section's Log data download: present exactly while its state is
+non-null (the same presence rule `HostEditorModal` uses), `loading` mapped from
+`receiving || saving`, and `error` from one of nine static failure sentences. Worth reusing for the
+next caller with prose longer than a bare value: an early draft applied `maxLines = 1` to every line
+of its content, including a two-clause sentence the acceptance criteria required in full — the clamp
+that actually bounds an externally authored value (a scanned host name, a picked document's
+`DISPLAY_NAME`) is applied where that value enters state, not at render, and `maxLines` never
+substitutes for it since Compose measures the whole string regardless of what paints. `maxLines = 1`
+stays correct for a bare value in a fixed-height row — `EditHostModal`'s `IdentityRow`, this shell's
+own design source — but a caller composing a full sentence into this shell's content column should
+let it wrap; the column already scrolls, so wrapping costs height only. A `hasText` Compose assertion
+passes on text clipped this way, since it matches semantics rather than the painted layout — assert
+`TextLayoutResult.hasVisualOverflow` (via `SemanticsActions.GetTextLayoutResult`) instead wherever a
+caller's copy might outrun its column. See [SettingsViewModel — how it works § Log data
+download](settings-viewmodel-how-it-works.md#log-data-download-683) for the full state machine.
 
 [`EditHostModal`](../../../app/src/main/java/de/pyryco/mobile/ui/components/EditHostModal.kt)
 (#743) draws the shell's content with two inert identity rows, a name field
