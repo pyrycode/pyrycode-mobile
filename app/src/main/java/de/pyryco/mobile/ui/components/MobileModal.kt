@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,8 +35,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.error
@@ -48,6 +51,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
+import androidx.compose.ui.window.SecureFlagPolicy
 import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -68,6 +73,78 @@ internal fun MobileModal(
     error: String? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    MobileModalShell(
+        title = title,
+        onDismissRequest = onDismissRequest,
+        gate = false,
+        modifier = modifier,
+        error = error,
+        footer = { dismiss ->
+            ModalCancelButton(label = "Cancel", onClick = dismiss)
+            Button(
+                onClick = {
+                    if (submissionEnabled && !loading) {
+                        logModalEvent("submit_requested")
+                        onSubmit()
+                    }
+                },
+                modifier = Modifier.heightIn(min = 48.dp),
+                enabled = submissionEnabled && !loading,
+                shape = MaterialTheme.shapes.small,
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+            ) {
+                if (loading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.padding(end = 8.dp).size(20.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        strokeWidth = 2.dp,
+                    )
+                }
+                Text("OK", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+            }
+        },
+        content = content,
+    )
+}
+
+/**
+ * The shell hardened for a decision gate (#815), such as the permission prompt: the caller's [content]
+ * carries the actions and the footer's [onCancel] is the only dismissal control.
+ *
+ * The gate's own window sets `FLAG_SECURE` ([SecureFlagPolicy.SecureOn], since the host Activity is not
+ * secure) and drops touches delivered while another window obscures it. Back and outside taps are
+ * ignored, and no close glyph is drawn, so a stray gesture is never read as an answer.
+ */
+@Composable
+internal fun MobileGateModal(
+    title: String,
+    cancelLabel: String,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    MobileModalShell(
+        title = title,
+        onDismissRequest = onCancel,
+        gate = true,
+        modifier = modifier,
+        error = null,
+        footer = { dismiss -> ModalCancelButton(label = cancelLabel, onClick = dismiss) },
+        content = content,
+    )
+}
+
+/** [gate] is the only switch between the editing shell and the hardened decision gate. */
+@Composable
+private fun MobileModalShell(
+    title: String,
+    onDismissRequest: () -> Unit,
+    gate: Boolean,
+    error: String?,
+    footer: @Composable RowScope.(dismiss: () -> Unit) -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
     DisposableEffect(Unit) {
         logModalEvent("opened")
         onDispose { logModalEvent("closed") }
@@ -83,11 +160,17 @@ internal fun MobileModal(
         onDismissRequest = dismiss,
         properties =
             DialogProperties(
+                dismissOnBackPress = !gate,
+                dismissOnClickOutside = false,
+                securePolicy = if (gate) SecureFlagPolicy.SecureOn else SecureFlagPolicy.Inherit,
                 usePlatformDefaultWidth = false,
                 decorFitsSystemWindows = false,
-                dismissOnClickOutside = false,
             ),
     ) {
+        if (gate) {
+            val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
+            SideEffect { dialogWindow?.decorView?.filterTouchesWhenObscured = true }
+        }
         // Figma's onPrimaryFixed and 44/6 dp shapes are not configured in our theme.
         // Use its adaptive container pair and extraLarge/small shapes in both modes.
         Surface(
@@ -116,16 +199,19 @@ internal fun MobileModal(
                             modifier = Modifier.weight(1f).semantics { heading() },
                             style = MaterialTheme.typography.titleLarge,
                         )
-                        IconButton(onClick = dismiss, modifier = Modifier.size(48.dp)) {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_modal_close),
-                                contentDescription = "Close",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier =
-                                    Modifier
-                                        .size(28.dp)
-                                        .background(MaterialTheme.colorScheme.onPrimary, CircleShape),
-                            )
+                        // A gate's footer Cancel is its only dismissal control, so it draws no close glyph.
+                        if (!gate) {
+                            IconButton(onClick = dismiss, modifier = Modifier.size(48.dp)) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_modal_close),
+                                    contentDescription = "Close",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier =
+                                        Modifier
+                                            .size(28.dp)
+                                            .background(MaterialTheme.colorScheme.onPrimary, CircleShape),
+                                )
+                            }
                         }
                     }
                     HorizontalDivider(color = MaterialTheme.colorScheme.inversePrimary.copy(alpha = 0.6f))
@@ -159,39 +245,26 @@ internal fun MobileModal(
                     horizontalArrangement = Arrangement.spacedBy(20.dp, Alignment.CenterHorizontally),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    OutlinedButton(
-                        onClick = dismiss,
-                        modifier = Modifier.heightIn(min = 48.dp),
-                        shape = MaterialTheme.shapes.small,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-                    ) {
-                        Text("Cancel", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                    }
-                    Button(
-                        onClick = {
-                            if (submissionEnabled && !loading) {
-                                logModalEvent("submit_requested")
-                                onSubmit()
-                            }
-                        },
-                        modifier = Modifier.heightIn(min = 48.dp),
-                        enabled = submissionEnabled && !loading,
-                        shape = MaterialTheme.shapes.small,
-                        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
-                    ) {
-                        if (loading) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.padding(end = 8.dp).size(20.dp),
-                                color = MaterialTheme.colorScheme.primary,
-                                strokeWidth = 2.dp,
-                            )
-                        }
-                        Text("OK", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
-                    }
+                    footer(dismiss)
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ModalCancelButton(
+    label: String,
+    onClick: () -> Unit,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = Modifier.heightIn(min = 48.dp),
+        shape = MaterialTheme.shapes.small,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
     }
 }
 
