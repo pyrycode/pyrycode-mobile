@@ -1,15 +1,18 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import android.content.res.Configuration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -17,6 +20,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AlertDialogDefaults
 import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
@@ -34,6 +38,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -46,6 +51,7 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.tooling.preview.Preview
@@ -107,6 +113,14 @@ private val ComposerBottomGap = 16.dp
 // same 20dp gutter as the input field and the footer, with their own files untouched.
 private val ComposerStatusGutter = ComposerGutter - 16.dp
 
+// #777: the oldest-end loading row, sized to ThinkingIndicator's shipped spinner-and-label idiom and
+// inset on the same 20dp content gutter as the rest of the thread.
+private val HistoryLoadingGutter = ComposerGutter
+private val HistoryLoadingVerticalPadding = 12.dp
+private val HistoryLoadingSpinnerSize = 16.dp
+private val HistoryLoadingSpinnerStroke = 2.dp
+private val HistoryLoadingLabelGap = 8.dp
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ThreadScreen(
@@ -141,6 +155,10 @@ fun ThreadScreen(
     onModalOption: (String) -> Unit = {}, // #452: wired by MainActivity → vm::onModalOption (passes ModalOption.id)
     onModalCancel: () -> Unit = {}, // #452: wired by MainActivity → vm::onModalCancel
     onDropQueued: (Long) -> Unit = {}, // #467: wired by MainActivity → vm::onDropQueued (passes QueuedMessage.id)
+    // #777: the reader has reached the oldest loaded row — ask for the next page back. Wired by
+    // MainActivity → vm::onDemandOlderHistory. Safe to fire repeatedly: the ViewModel's demand drops an
+    // ask that arrives while a request is outstanding or after the walk has stopped.
+    onDemandOlderHistory: () -> Unit = {},
 ) {
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
@@ -295,6 +313,29 @@ fun ThreadScreen(
                         if (atBottom) userScrolledAway = false
                     }
                 }
+                // #777: the oldest-end demand predicate. Under reverseLayout the oldest row is the LAST
+                // visible index, not the first.
+                //
+                // The row count is read through rememberUpdatedState over the THREAD ITEMS, never through
+                // layoutInfo.totalItemsCount: the latter counts the oldest-end loading row itself, so a
+                // page answering atStart = false with zero entries would self-drive with no further user
+                // input — ask, the indicator mounts, the count rises, the page settles, the indicator
+                // unmounts, the count falls, the predicate re-fires. Reading the thread's own count makes
+                // the indicator's presence unable to move the predicate: at the oldest end the last
+                // visible index is rowCount - 1 without it and rowCount with it, and `>=` holds for both,
+                // so distinctUntilChanged sees no edge and no second demand is issued.
+                val historyRowCount by rememberUpdatedState(state.items.size)
+                val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
+                LaunchedEffect(listState) {
+                    snapshotFlow {
+                        val oldestVisible =
+                            listState.layoutInfo.visibleItemsInfo
+                                .lastOrNull()
+                                ?.index ?: -1
+                        historyRowCount > 0 && oldestVisible >= historyRowCount - 1
+                    }.distinctUntilChanged()
+                        .collect { atOldestRow -> if (atOldestRow) demandOlderHistory() }
+                }
                 LaunchedEffect(hasStreamingMessage, listState) {
                     if (!hasStreamingMessage) return@LaunchedEffect
                     snapshotFlow {
@@ -348,6 +389,11 @@ fun ThreadScreen(
                                     UnrecognizedMessageRow(item = item)
                             }
                         }
+                    }
+                    // #777: under reverseLayout a later item takes a higher index and draws further up,
+                    // so appending here puts the affordance at the oldest end for free.
+                    if (state.historyLoading) {
+                        item(key = "history-loading") { HistoryLoadingRow() }
                     }
                 }
             }
@@ -478,6 +524,40 @@ private fun ThreadStatusArea(
         apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = slot)
         isCompacting -> CompactingIndicator(isCompacting = true, modifier = slot)
         else -> ThinkingIndicator(isThinking = isThinking, modifier = slot)
+    }
+}
+
+/**
+ * The oldest-end "a history page is in flight" affordance (#777) — the one row in the thread
+ * [LazyColumn] that is not a [ThreadItem].
+ *
+ * The Figma thread frame (16:8) carries no history-loading element, so this follows the app's shipped
+ * Material 3 progress idiom instead: [de.pyryco.mobile.ui.conversations.components.ThinkingIndicator]'s
+ * small indeterminate spinner beside a `bodySmall` / `onSurfaceVariant` label, itself the stand-in for a
+ * frame the design has not yet drawn. Both strings are local resources with no interpolation — nothing
+ * daemon-authored reaches the screen through this row.
+ */
+@Composable
+private fun HistoryLoadingRow() {
+    val description = stringResource(R.string.cd_thread_history_loading)
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = HistoryLoadingGutter, vertical = HistoryLoadingVerticalPadding)
+                .semantics(mergeDescendants = true) { contentDescription = description },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(HistoryLoadingLabelGap, Alignment.CenterHorizontally),
+    ) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(HistoryLoadingSpinnerSize),
+            strokeWidth = HistoryLoadingSpinnerStroke,
+        )
+        Text(
+            text = stringResource(R.string.thread_history_loading_label),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -715,6 +795,35 @@ private fun previewItems(): List<ThreadItem> {
             workspaceCwd = null,
         ),
     )
+}
+
+/** #777: the oldest-end loading affordance, in both palettes, with the thread otherwise unchanged. */
+@Preview(name = "Thread — history loading, light", showBackground = true, widthDp = 412)
+@Preview(
+    name = "Thread — history loading, dark",
+    showBackground = true,
+    widthDp = 412,
+    uiMode = Configuration.UI_MODE_NIGHT_YES,
+)
+@Composable
+private fun ThreadScreenHistoryLoadingPreview() {
+    PyrycodeMobileTheme {
+        ThreadScreen(
+            state =
+                ThreadUiState(
+                    conversationId = "seed-channel-personal",
+                    displayName = "kitchenclaw refactor",
+                    isPromoted = true,
+                    hasMessages = true,
+                    items = previewItems(),
+                    historyLoading = true,
+                ),
+            onBack = {},
+            onSendMessage = {},
+            connectionState = ConnectionState.Connected,
+            onRetry = {},
+        )
+    }
 }
 
 @Preview(name = "Thread — Light", showBackground = true, widthDp = 412)

@@ -391,3 +391,50 @@ arm and land in the silent `else`.
 [Session-transition fold](session-transition-fold.md)) — the merge above closes this only for the history
 path. Fixing the live side means editing `appendSessionBoundary` or the renderer's key, tracked as
 [#775](../codebase/775.md).
+
+## The walk that finally calls `requestHistory` (#777)
+
+[#645](../codebase/645.md) shipped the fold and left `requestHistory` with no caller. [#777](../codebase/777.md)
+adds the caller, and it lives **beside `ThreadViewModel`**, not in this repository — the contract above is
+unchanged, and this section exists because the demand's design leans on guarantees this document already
+records.
+
+- **`ThreadHistoryDemand`** (`ui/conversations/thread/ThreadHistoryDemand.kt`) is a pure value — cursor,
+  pages-loaded count, in-flight flag, and a `HistoryWalkStop?` (`AtStart` / `NotAdvancing` / `PageCap` /
+  `Failed`, `null` while still walking). `ThreadViewModel` asks with it in `init` (empty cursor = newest)
+  and again each time the thread screen reports the reader has reached the oldest loaded row.
+- **The walk reads `requestHistory`'s returned `HistoryPage` for `cursor` and `atStart` only.**
+  `settled(pageCursor: String, atStart: Boolean)` takes the two scalars rather than the whole `HistoryPage`
+  — `ThreadHistoryDemand.kt` imports neither `HistoryPage` nor `HistoryEntry`, so no daemon-authored entry
+  text can structurally reach the walk's state. This is the caller-side half of "nothing needs a second
+  fold": `RemoteConversationRepository.requestHistory` already merged the page into `threadByConversation`
+  before returning (the § above), and `ThreadViewModel` reads that merged result through the existing
+  `observeMessages` collector exactly as it does today — the walk never touches an entry.
+- **One outstanding request per conversation, claimed CAS-style.** `ThreadViewModel` claims the slot with a
+  `MutableStateFlow.compareAndSet` retry loop, not a read-then-assign — the settle runs in a launched
+  coroutine, so a plain check-then-act would open a window for two concurrent asks. An ask arriving while
+  one is in flight is dropped, never queued.
+- **Two termination rules, and only one is a security bound.** `atStart` is the wire's only true
+  termination signal and is checked before the cursor comparison, because the wire leaves the returned
+  cursor empty whenever `atStart` is true. `pageCursor.isEmpty() || pageCursor == cursor` (`NotAdvancing`)
+  is an **honest-bug guard only** — a daemon alternating between two distinct cursor values defeats it
+  while still answering `atStart = false` forever. The load-bearing bound against a deliberately
+  adversarial daemon is the client-side `MAX_HISTORY_PAGES = 100` cap in `settled()`, which does not read
+  anything the daemon sent to decide when to stop. The cap is per `ThreadViewModel` instance (so per
+  screen-open); leaving and re-entering a thread starts a fresh walk.
+- **A failed ask keeps the cursor and page count, clears in-flight, and stops asking — no retry.**
+  `failed()` sets `stoppedBy = Failed` without touching `cursor` or `pagesLoaded`, so every row already
+  loaded and the walk's position survive a failure. `HistoryWalkStop` is an enum rather than a `Boolean`
+  specifically so [#778](../codebase/778.md) can reopen `Failed` alone — `AtStart` / `NotAdvancing` /
+  `PageCap` stay terminal. Nothing here retries, restarts on reconnect, or persists the cursor: the
+  projections above are connection-scoped (`threadByConversation` starts empty on each connection), so a
+  cursor surviving a reconnect would be a stale-cursor bug rather than a resume point. That restart is
+  #778's job.
+- **The opening ask stays unconditional**, resolving the plan's second Open Question: `mergeHistoryRows`
+  (the § above) already skips any row the thread holds, keyed on the renderer's own row key, so a first
+  page overlapping the `backfill_since` replay ring is fully absorbed with no duplicate rows. Suppressing
+  the ask when the ring already holds rows would buy nothing and would skip a genuinely needed page after
+  a daemon restart empties the ring.
+
+The list-side half — the predicate that fires the "reached the oldest row" ask, and the oldest-end loading
+affordance — is [Thread screen § the oldest-end history demand](thread-screen-how-it-works-list-and-status-row.md#the-oldest-end-history-demand-777).
