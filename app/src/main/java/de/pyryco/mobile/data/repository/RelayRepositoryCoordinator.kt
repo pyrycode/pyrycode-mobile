@@ -5,6 +5,7 @@ import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
+import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.model.batchFor
@@ -402,6 +403,26 @@ class RelayRepositoryCoordinator(
     suspend fun interrupt(conversationId: String) {
         val repo = activeConnection.value?.repo ?: throw IllegalStateException("no active connection")
         repo.interrupt(conversationId)
+    }
+
+    /**
+     * Outbound `question_answer` passthrough (#825) to this host's current connection's
+     * [RemoteConversationRepository.answerQuestionBatch], which validates against the batches that
+     * connection holds (the state [questionBatches] projects). Fire-and-forget, never clears the batch,
+     * and adds no log. Throws [IllegalStateException] when no connection is active.
+     */
+    suspend fun answerQuestionBatch(
+        questionBatchId: String,
+        answers: List<QuestionAnswer>,
+    ) {
+        val repo = activeConnection.value?.repo ?: throw IllegalStateException("no active connection")
+        repo.answerQuestionBatch(questionBatchId, answers)
+    }
+
+    /** Outbound `question_refused` passthrough (#825): the [answerQuestionBatch] mirror. */
+    suspend fun refuseQuestionBatch(questionBatchId: String) {
+        val repo = activeConnection.value?.repo ?: throw IllegalStateException("no active connection")
+        repo.refuseQuestionBatch(questionBatchId)
     }
 
     private class Connection(

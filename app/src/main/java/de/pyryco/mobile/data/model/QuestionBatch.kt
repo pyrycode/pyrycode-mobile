@@ -30,6 +30,17 @@ data class QuestionBatch(
 )
 
 /**
+ * The operator's selection for the question at [questionIndex] of a held [QuestionBatch] (#825): the
+ * index is the question's 0-based position in [QuestionBatch.questions]. [values] are operator-authored
+ * — free text or a copied label, several for a multi-select — sent verbatim and never compared with the
+ * offered labels. Never log them.
+ */
+data class QuestionAnswer(
+    val questionIndex: Int,
+    val values: List<String>,
+)
+
+/**
  * Folds a `question_shown` into the held batches, following desktop's `reduceQuestionBatches`: a batch
  * with no questions is out of contract and changes nothing (it neither adds nor replaces); a held batch
  * with the same [QuestionBatch.questionBatchId] is replaced in place (the reconnect reconcile re-sends
