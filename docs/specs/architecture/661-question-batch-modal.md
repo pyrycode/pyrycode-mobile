@@ -116,3 +116,7 @@ Pending for the documentation stage: the ticket names no documentation section. 
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-23
+
+## Revisions
+
+- 2026-09-23 (build): `QuestionBatchModal` also takes `modifier: Modifier = Modifier`, which is passed to the gate. The 320 × 640 test needs it to size the dialog's own window. `DeviceConfigurationOverride` alone does not constrain a `Dialog`, and `MobileModalTest` relies on the same seam. The IME test finds the gate's window with `WindowInspector.getGlobalWindowViews()` instead of a `LocalView` captured in content, because the composable exposes no content hook.
