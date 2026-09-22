@@ -70,6 +70,13 @@ ViewModel, so equal conversation ids on A and B remain distinct. The temporary
 flat-list adapters capture selection only at entry, then consume host-qualified
 navigation; see [navigation ownership](navigation.md#how-it-works).
 
+Since [#661](question-batch-modal.md), this same destination block also collects
+`vm.questionModal` and draws [`QuestionBatchModal`](question-batch-modal.md) — a gate-shaped `Dialog`
+overlay for the conversation's held clarification batch — directly beside the `ThreadScreen` call rather
+than through a `ThreadScreen` parameter or an eighth `Scaffold` sibling inside it. Not every thread-adjacent
+surface is a `ThreadScreen` param; a gate whose own window makes tree placement irrelevant can be drawn from
+here instead, at one file's cost instead of two.
+
 The destination collects the ViewModel's state, connection/live indicators and
 permission state with `collectAsStateWithLifecycle()`, and passes callbacks and
 error flows into the stateless `ThreadScreen`. `ThreadNavigation.PopBack` remains
