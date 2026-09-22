@@ -238,9 +238,9 @@ minted ids and so cannot forge a match.
   (outbound `dropQueuedMessage` send) — files, line refs, lessons, verification. #781 (`message_id` +
   echo removal) postdates the frozen archive; its notes live in this document and in
   [conversation-repository.md](conversation-repository.md).
-- [Remote conversation repository](remote-conversation-repository.md) — hosts the `queuedByConversation`
-  projection, the `TYPE_QUEUE_STATE` arm, the `observeQueue` projection, and the outbound `dropQueuedMessage`
-  send.
+- [Remote conversation repository](remote-conversation-repository.md) — hosts the `TYPE_QUEUE_STATE` arm and the outbound
+  `dropQueuedMessage` send; `QueueProjection` holds the `queuedByConversation` state, the decode and the
+  `observeQueue` read.
 - [Stall state](stall-state.md) (#395) — the structural twin: the decode→state→observe shape, gate, and
   test harness this reuses; the onset-only counterpoint to this full-snapshot model.
 - [API-retry status](api-retry-status.md) (#593) — follows this arm's payload-carrying `Map` projection

@@ -2,6 +2,8 @@
 
 Split out of [Remote conversation repository — the Phase 4 `ConversationRepository`](remote-conversation-repository.md) on 2026-09-05 to keep that document under the 50000-byte size cap the docs guard enforces. Every section below moved here verbatim and kept its heading, so its anchors are unchanged. Part of [Remote conversation repository — the Phase 4 `ConversationRepository`](remote-conversation-repository.md); see that document for what it does, its edge cases and its links.
 
+Since 2026-09-22 the state, decoder and read in the stall, queue, API-retry, compacting and thinking-progress sections below live in their own projection classes, under the names used here; the repository's arm only checks the capability and hands the envelope over. See [status projections](remote-conversation-repository.md#status-projections-one-file-per-status-event).
+
 ## `observeStall(conversationId)` — the thread-observable stall state (#395)
 
 Whether a conversation's remote claude has **stopped making forward progress** (PTY quiet while not
