@@ -25,6 +25,7 @@ import de.pyryco.mobile.data.network.DeleteConversationPayloadDto
 import de.pyryco.mobile.data.network.DequeueMessagePayloadDto
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.ErrorPayload
+import de.pyryco.mobile.data.network.HistoryPagePayloadDto
 import de.pyryco.mobile.data.network.MessageChunkPayloadDto
 import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
@@ -39,6 +40,7 @@ import de.pyryco.mobile.data.network.RegisterPushTokenPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RenameConversationPayloadDto
 import de.pyryco.mobile.data.network.ReplayCursor
+import de.pyryco.mobile.data.network.RequestHistoryPayloadDto
 import de.pyryco.mobile.data.network.RequestSnapshotPayloadDto
 import de.pyryco.mobile.data.network.ScreenSnapshotPayloadDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
@@ -57,6 +59,7 @@ import de.pyryco.mobile.data.network.toBoundary
 import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.network.toConversations
 import de.pyryco.mobile.data.network.toEvent
+import de.pyryco.mobile.data.network.toHistoryPage
 import de.pyryco.mobile.data.network.toMessage
 import de.pyryco.mobile.data.network.toQueue
 import de.pyryco.mobile.data.network.toRow
@@ -496,7 +499,7 @@ class RemoteConversationRepository(
             }
             TYPE_ACK, TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_DELETED,
             TYPE_SCREEN_SNAPSHOT, TYPE_SESSION_SETTINGS_UPDATED, TYPE_WORKSPACE_FOLDER_CREATED,
-            TYPE_RECENT_WORKSPACES_LIST,
+            TYPE_RECENT_WORKSPACES_LIST, TYPE_HISTORY_PAGE,
             ->
                 // Success reply to a correlated request, handed verbatim to the waiter. An `ack`
                 // (#346) carries the empty `{}` the bare-ack waiter ignores; a `conversation_created`
@@ -514,7 +517,8 @@ class RemoteConversationRepository(
                 // no-op: `list_conversations` / `backfill_since` draw no reply here; `screen_snapshot` /
                 // `session_settings_updated` / `conversation_deleted` / `workspace_folder_created` /
                 // `recent_workspaces_list` are always correlated replies (the daemon never broadcasts
-                // them), so an unmatched one is
+                // them); a `history_page` (#623) carries the `{entries,cursor,at_start}` the
+                // [requestHistory] waiter decodes for its page. So an unmatched one is
                 // harmless; and `complete` is idempotent so a duplicate reply is harmless.
                 // `conversation_created` stays here deliberately: unlike `conversation_updated` (which
                 // #721 moved to its own arm above) it is a correlated reply only — the create-on-host
@@ -1415,6 +1419,54 @@ class RemoteConversationRepository(
         )
 
     /**
+     * One backward step of [conversationId]'s history walk over v2 `request_history` (#623, server
+     * pyrycode#2113/#2116). The [rename] shape — encode → [sendAndAwaitReply] → typed-decode — **minus
+     * the state fold**: a page is returned to the caller and folded into the timeline by #645, so this
+     * repository touches no projection and nothing here is cached.
+     *
+     * [cursor] and [limit] are forwarded **verbatim** (as [rename] forwards the dialog's name). The
+     * cursor is opaque — never parsed, rebuilt or validated here — and the daemon re-validates both:
+     * a cursor that does not decode, was minted for another conversation, or names a position no
+     * longer in the log is one merged `history.invalid_cursor`, and a negative limit is
+     * `history.invalid_page_size`.
+     *
+     * **Deliberately no `.catch {}`**, unlike its one-shot sibling [recentWorkspaces], which fails
+     * closed to empty for a picker: every failure must reach the caller so a walk can tell the one
+     * **retryable** code (`history.unavailable`) from the three permanent ones. [mapError] needs no
+     * new mapping — it is already generic over unrecognised codes, and it already turns the daemon's
+     * `conversation.not_found` into the [IllegalArgumentException] the [ConversationRepository]
+     * contract pins for an unknown conversation. So: [IllegalStateException] when the session is not
+     * connected or tears down mid-await (#488), [IllegalArgumentException] for an unknown
+     * conversation, [de.pyryco.mobile.data.network.RelayErrorException] carrying `code`/`retryable`
+     * for every `history.*` code, and the #318 decode exception for a malformed page. Each fails
+     * **only this ask** — the failure lands on this caller's deferred, the shared inbound collector
+     * never sees it, and no other conversation's projection changes.
+     *
+     * Emits no log on any branch, like the rest of this class: the cursor and the entries' `type` /
+     * `payload` are replayed content and never reach Logcat.
+     */
+    override suspend fun requestHistory(
+        conversationId: String,
+        cursor: String,
+        limit: Int,
+    ): HistoryPage {
+        val request =
+            Envelope(
+                id = requestId.incrementAndGet(),
+                type = TYPE_REQUEST_HISTORY,
+                ts = Clock.System.now().toString(),
+                payload =
+                    MobileJson.encodeToJsonElement(
+                        RequestHistoryPayloadDto(conversationId = conversationId, cursor = cursor, limit = limit),
+                    ),
+            )
+        // Throws on a server `error` / not-Open session before the decode below. The reply is the
+        // {entries,cursor,at_start} page; a malformed one throws here and mutates nothing.
+        val reply = sendAndAwaitReply(request)
+        return MobileJson.decodeFromJsonElement<HistoryPagePayloadDto>(reply).toHistoryPage()
+    }
+
+    /**
      * The `backfill_since` request for [conversationId]'s full thread (#313). Wire shape per server
      * SSOT `internal/protocol/messaging.go` `BackfillSincePayload` (#272): full history is requested
      * from the Unix epoch ([BACKFILL_ALL_HISTORY_SINCE]) with an advisory cap
@@ -2212,6 +2264,17 @@ class RemoteConversationRepository(
          * the [onInbound] success-reply arm, or its pending deferred hangs (the delete/create-family hazard).
          */
         const val TYPE_RECENT_WORKSPACES_LIST = "recent_workspaces_list"
+
+        /** Request: one backward page of a conversation's stored history (#623, pyrycode#2113). Reply is [TYPE_HISTORY_PAGE]. */
+        const val TYPE_REQUEST_HISTORY = "request_history"
+
+        /**
+         * Correlated reply for [TYPE_REQUEST_HISTORY] (#623, pyrycode#2116): one page of entries,
+         * newest-first, with the next cursor and `at_start`. A **new** reply type, so it must be
+         * registered in the [onInbound] success-reply arm or its pending deferred hangs (the
+         * delete/create-family hazard [TYPE_RECENT_WORKSPACES_LIST] records).
+         */
+        const val TYPE_HISTORY_PAGE = "history_page"
 
         /**
          * Live/echo single-`message` payload (#317) — feeds both the last-message preview (#329) and

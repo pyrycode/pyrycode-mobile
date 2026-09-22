@@ -143,6 +143,18 @@ class StableConversationRepository(
         queuedMessageId: Long,
     ): Unit = live.dropQueuedMessage(conversationId, queuedMessageId)
 
+    /**
+     * One-shot delegation with the cursor and limit forwarded **verbatim** (#623) — a page is per-ask
+     * data, so there is nothing to project, switch or cache here. With no connection live this throws
+     * [IllegalStateException] before any frame is built, the same type the delegate throws on a
+     * not-`Open` pump, so a walking caller handles one type either way.
+     */
+    override suspend fun requestHistory(
+        conversationId: String,
+        cursor: String,
+        limit: Int,
+    ): HistoryPage = live.requestHistory(conversationId, cursor, limit)
+
     private companion object {
         const val NOT_CONNECTED = "No live relay connection"
     }

@@ -85,6 +85,57 @@ override suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: 
   monotonic `queued_msg_id` is never recycled, so a replayed drop hits an already-consumed id → a benign
   daemon stale-id reject (the `modal_cancel` no-token posture). Authorization is daemon-side.
 
+## `requestHistory(conversationId, cursor, limit)` — the on-disk history page read (#623)
+
+One backward step of a conversation's scroll-back over v2 `request_history` (server pyrycode#2113,
+answered by pyrycode#2116). The [`rename`](remote-conversation-repository-send-create-promote-rename.md#renameconversationid-name--the-fourth-mutation-530)
+shape — encode → `sendAndAwaitReply` → typed-decode — **minus the state fold**: a page is handed back
+to the caller and folded into the timeline by #645, so this method touches no projection and caches
+nothing.
+
+```kotlin
+override suspend fun requestHistory(conversationId: String, cursor: String, limit: Int): HistoryPage {
+    val request = Envelope(
+        id = requestId.incrementAndGet(),
+        type = TYPE_REQUEST_HISTORY, ts = Clock.System.now().toString(),
+        payload = MobileJson.encodeToJsonElement(
+            RequestHistoryPayloadDto(conversationId = conversationId, cursor = cursor, limit = limit),
+        ),
+    )
+    val reply = sendAndAwaitReply(request)   // throws on server `error` / not-Open; decode below unreachable on failure
+    return MobileJson.decodeFromJsonElement<HistoryPagePayloadDto>(reply).toHistoryPage()
+}
+```
+
+- **`cursor` and `limit` are forwarded verbatim**, never parsed, rebuilt or validated here — the daemon
+  re-validates both: a cursor that does not decode, was minted for another conversation, or names a
+  position no longer in the log is one merged `history.invalid_cursor`, and a negative limit is
+  `history.invalid_page_size`.
+- **`history_page` is a new correlated reply type**, added to the success-arm `when` alongside
+  `TYPE_RECENT_WORKSPACES_LIST` — without that registration the waiting deferred hangs forever, the
+  same hazard every new reply type on this seam carries.
+- **Deliberately no `.catch {}`**, unlike its one-shot sibling [`recentWorkspaces`](remote-conversation-repository-workspace-and-push.md#recentworkspaces--the-fourth-read-verb-leanest-of-the-family-no-fold-565),
+  which fails closed to empty for a picker: every failure must reach the caller so a walk can tell the
+  one **retryable** code (`history.unavailable`) from the three permanent ones
+  (`history.invalid_cursor` / `history.invalid_page_size` / `history.invalid_request`). `mapError`
+  needs no new mapping — it is already generic over unrecognised codes, and it already turns the
+  daemon's `conversation.not_found` into the `IllegalArgumentException` the `ConversationRepository`
+  contract pins for an unknown conversation.
+- **Strict decode, no defaults.** `HistoryPagePayloadDto`/`HistoryEntryDto` require every field —
+  `at_start` in particular must never default to `false`, which would read as "keep walking" on a page
+  that omitted the key. A missing `entries`/`cursor`/`at_start` or a malformed `ts` throws at decode,
+  scoped to this caller alone; the shared inbound collector never sees it and no other conversation's
+  projection changes.
+- **`HistoryEntryDto.payload` stays a raw `JsonElement`** through the decode — the mapper
+  (`toHistoryPage()`, `data/network/HistoryPayloads.kt`) copies it across unexamined, so a consumer
+  (#645) re-reduces it through the same per-type decode arms the live lane runs rather than paying for
+  a second parse. `HistoryEntryDto.id` maps straight to `HistoryEntry.id`; an entry carrying both `id`
+  and an unrelated `event_id`-shaped key decodes from `id` only — the two are different sequences that
+  both look like small integers (see [`HistoryEntry`](conversation-repository.md#shape)).
+- **`security-sensitive` → never-log.** Like `requestScreenSnapshot`, the class adds zero `Log.*` call
+  sites for this method: the cursor and every entry's `type`/`payload` are replayed content and never
+  reach Logcat, on any branch including the not-connected `check` and every decode-failure path.
+
 <a id="interrupt--the-bare-v2-interrupt-control-send-458"></a>
 
 ## `interrupt(conversationId)` — explicitly targeted v2 `interrupt`
