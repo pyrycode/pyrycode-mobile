@@ -40,6 +40,7 @@ import kotlinx.serialization.json.put
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -5062,6 +5063,278 @@ class RemoteConversationRepositoryTest {
             assertEquals(listOf(false, true), compacting)
         }
 
+    // ---- #801: decode `thinking_progress` as a conversation-observable reading --------------------
+
+    // AC #1: a conversation no frame has named reads as NO READING (`null`), and the first frame
+    // surfaces the daemon's two integers verbatim.
+    @Test
+    fun thinkingProgress_noReadingUntilAFrameArrives_thenSurfacesItVerbatim() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val readings = collectThinkingProgress(repo, "c1")
+            runCurrent()
+            assertEquals(listOf<ThinkingProgress?>(null), readings)
+
+            pump.push(thinkingProgressEnvelope("c1", estimatedTokens = 184, estimatedTokensDelta = 12))
+            runCurrent()
+            assertEquals(listOf(null, ThinkingProgress(184, 12)), readings)
+        }
+
+    // AC #2, the load-bearing test of the slice: the reading is NOT monotonic — it restarts near zero
+    // at every inference-request boundary, several times inside one turn. A falling reading must reach
+    // the collector as the LOWER value; a running `max` guard would pin it at 184 and pass every other
+    // test in this block. The sequence is the committed capture's shape (5→184, then 4→167).
+    @Test
+    fun thinkingProgress_fallingReading_carriedVerbatimWithNoMaxGuard() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val readings = collectThinkingProgress(repo, "c1")
+            runCurrent()
+
+            // runCurrent() between the frames: the projection is a StateFlow, so two pushes drained in
+            // one turn conflate to the latest and the intermediate reading is never observed — which
+            // would leave this asserting something weaker than it reads.
+            pump.push(thinkingProgressEnvelope("c1", estimatedTokens = 184, estimatedTokensDelta = 21, id = 1L))
+            runCurrent()
+            pump.push(thinkingProgressEnvelope("c1", estimatedTokens = 4, estimatedTokensDelta = 4, id = 2L))
+            runCurrent()
+
+            assertEquals(listOf(null, ThinkingProgress(184, 21), ThinkingProgress(4, 4)), readings)
+            assertEquals("a restart must not be clamped to the prior maximum", ThinkingProgress(4, 4), readings.last())
+        }
+
+    // AC #2: a `0` reading is a REAL reading (the inference-request restart), never absence. A
+    // truthiness check on the token count would surface `null` here and read as "nothing to show".
+    @Test
+    fun thinkingProgress_zeroReading_isAReadingNotAbsence() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val readings = collectThinkingProgress(repo, "c1")
+            runCurrent()
+
+            pump.push(thinkingProgressEnvelope("c1", estimatedTokens = 197, estimatedTokensDelta = 9, id = 1L))
+            runCurrent()
+            pump.push(thinkingProgressEnvelope("c1", estimatedTokens = 0, estimatedTokensDelta = 0, id = 2L))
+            runCurrent()
+
+            assertEquals(listOf(null, ThinkingProgress(197, 9), ThinkingProgress(0, 0)), readings)
+            assertNotNull("a zero reading is a reading, not an absent one", readings.last())
+        }
+
+    // AC #2: a value-identical repeat leaves the HELD reading exactly what the daemon sent. The
+    // projection is distinctUntilChanged, so the repeat adds no emission — that suppresses a duplicate
+    // value, it does not alter the reading, which is what this asserts.
+    @Test
+    fun thinkingProgress_repeatedReading_holdsTheDaemonsValue() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val readings = collectThinkingProgress(repo, "c1")
+            runCurrent()
+
+            pump.push(thinkingProgressEnvelope("c1", estimatedTokens = 126, estimatedTokensDelta = 64, id = 1L))
+            pump.push(thinkingProgressEnvelope("c1", estimatedTokens = 126, estimatedTokensDelta = 64, id = 2L))
+            runCurrent()
+
+            assertEquals(listOf(null, ThinkingProgress(126, 64)), readings)
+            assertEquals(ThinkingProgress(126, 64), readings.last())
+        }
+
+    // AC #3: a frame naming one conversation leaves every other conversation's reading undisturbed,
+    // and observeThinkingProgress is distinctUntilChanged, so another conversation's frames — including
+    // a whole restart sequence — never re-emit this flow.
+    @Test
+    fun thinkingProgress_perConversationIsolationAndNoCrossReemit() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val c1 = collectThinkingProgress(repo, "c1")
+            val c2 = collectThinkingProgress(repo, "c2")
+            runCurrent()
+
+            pump.push(thinkingProgressEnvelope("c1", estimatedTokens = 5, estimatedTokensDelta = 5, id = 1L))
+            runCurrent()
+            pump.push(thinkingProgressEnvelope("c2", estimatedTokens = 88, estimatedTokensDelta = 17, id = 2L))
+            runCurrent()
+            pump.push(thinkingProgressEnvelope("c2", estimatedTokens = 3, estimatedTokensDelta = 3, id = 3L))
+            runCurrent()
+
+            assertEquals(listOf(null, ThinkingProgress(5, 5)), c1)
+            assertEquals(listOf(null, ThinkingProgress(88, 17), ThinkingProgress(3, 3)), c2)
+        }
+
+    // AC #3: the reading has no falling edge of its own, so the conversation's TURN END clears it.
+    @Test
+    fun thinkingProgress_turnEndClearsTheReading() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val readings = collectThinkingProgress(repo, "c1")
+            runCurrent()
+
+            pump.push(thinkingProgressEnvelope("c1", estimatedTokens = 167, estimatedTokensDelta = 31, id = 1L))
+            runCurrent()
+            assertEquals(listOf(null, ThinkingProgress(167, 31)), readings)
+
+            pump.push(turnEndEnvelope("c1", "t1", "end_turn", id = 2L))
+            runCurrent()
+            assertEquals(listOf(null, ThinkingProgress(167, 31), null), readings)
+            assertNull("a finished turn must not leave a reading standing", readings.last())
+        }
+
+    // AC #3: the clear is scoped to the conversation the clearing frame names — one conversation's turn
+    // ending must not wipe another's live reading. This is the case a clear hoisted out of the
+    // per-conversation routing would fail.
+    @Test
+    fun thinkingProgress_turnEndForAnotherConversation_leavesThisReadingStanding() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val c1 = collectThinkingProgress(repo, "c1")
+            runCurrent()
+
+            pump.push(thinkingProgressEnvelope("c1", estimatedTokens = 42, estimatedTokensDelta = 42, id = 1L))
+            pump.push(turnEndEnvelope("c2", "t9", "end_turn", id = 2L))
+            runCurrent()
+
+            assertEquals(listOf(null, ThinkingProgress(42, 42)), c1)
+        }
+
+    // AC #3: a SESSION TRANSITION clears the reading too — the second of the two clears, since the
+    // think the reading described belongs to the session that just ended.
+    @Test
+    fun thinkingProgress_sessionTransitionClearsTheReading() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val readings = collectThinkingProgress(repo, "c1")
+            runCurrent()
+
+            pump.push(thinkingProgressEnvelope("c1", estimatedTokens = 91, estimatedTokensDelta = 8, id = 1L))
+            runCurrent()
+            assertEquals(listOf(null, ThinkingProgress(91, 8)), readings)
+
+            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear", id = 2L))
+            runCurrent()
+            assertEquals(listOf(null, ThinkingProgress(91, 8), null), readings)
+        }
+
+    // The reading survives an ordinary live event that is not a turn end — an `assistant_delta` must
+    // leave it standing. This is the test that fails if the turn-end clear is hoisted beside the
+    // live-session arm's pre-`when` stall clear, where it would fire on EVERY live event: that
+    // placement still passes the turn-end case above, so this is the one that catches it.
+    @Test
+    fun thinkingProgress_nonTurnEndLiveEvent_leavesTheReadingStanding() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val readings = collectThinkingProgress(repo, "c1")
+            runCurrent()
+
+            pump.push(thinkingProgressEnvelope("c1", estimatedTokens = 73, estimatedTokensDelta = 11, id = 1L))
+            runCurrent()
+            assertEquals(listOf(null, ThinkingProgress(73, 11)), readings)
+
+            pump.push(assistantDeltaEnvelope("c1", "t1", 0, "still working", id = 2L))
+            runCurrent()
+            assertEquals("an assistant delta is not a turn end — the reading stands", ThinkingProgress(73, 11), readings.last())
+            assertEquals(listOf(null, ThinkingProgress(73, 11)), readings)
+        }
+
+    // AC #4: a frame neither raises a stall nor clears a standing one. Raising one is forbidden by the
+    // wire contract (the rate bound means a quiet window is not a stall, and the PTY surface emits none
+    // at all); clearing one would hand a hostile daemon a lever to suppress the phone's stall indicator
+    // by emitting these frames. Its own reading still lands, and it folds no thread row.
+    @Test
+    fun thinkingProgress_inertTowardStall_neitherRaisesNorClearsIt() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val stalls = collectStall(repo, "c1")
+            val thread = collectMessages(repo, "c1")
+            val readings = collectThinkingProgress(repo, "c1")
+            runCurrent()
+
+            // Raises nothing: a reading on an unstalled conversation leaves it unstalled.
+            pump.push(thinkingProgressEnvelope("c1", estimatedTokens = 64, estimatedTokensDelta = 64, id = 1L))
+            runCurrent()
+            assertEquals("a reading is not a stall", listOf(false), stalls)
+
+            pump.push(stallEnvelope("c1", id = 2L))
+            runCurrent()
+            assertEquals(listOf(false, true), stalls)
+
+            // Clears nothing: the stall stands across a further reading.
+            pump.push(thinkingProgressEnvelope("c1", estimatedTokens = 128, estimatedTokensDelta = 64, id = 3L))
+            runCurrent()
+            assertEquals("a reading is not forward progress — the stall stands", listOf(false, true), stalls)
+            assertEquals("no thread row folded", listOf(emptyList<ThreadItem>()), thread)
+            assertEquals(listOf(null, ThinkingProgress(64, 64), ThinkingProgress(128, 64)), readings)
+        }
+
+    // AC #1: a malformed `thinking_progress` is dropped without disturbing the observed reading or
+    // tearing down the single inbound consumer — a later valid frame still surfaces, proving it
+    // survived. No quoted-primitive probe here: kotlinx's tree decoder accepts one even at
+    // `isLenient = false` (measured against ApiRetryPayloadDto), so it would decode green and prove
+    // nothing.
+    @Test
+    fun thinkingProgress_malformed_droppedCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val readings = collectThinkingProgress(repo, "c1")
+            runCurrent()
+
+            // Missing the required `conversation_id` → SerializationException → envelope dropped.
+            pump.push(thinkingProgressProbe(1L, """{"estimated_tokens":10,"estimated_tokens_delta":10}"""))
+            // Wrong-typed `conversation_id` (number, not string) → dropped.
+            pump.push(thinkingProgressProbe(2L, """{"conversation_id":7,"estimated_tokens":10,"estimated_tokens_delta":10}"""))
+            // Missing `estimated_tokens` → dropped (no field is defaulted; the wire never omits it).
+            pump.push(thinkingProgressProbe(3L, """{"conversation_id":"c1","estimated_tokens_delta":10}"""))
+            // Missing `estimated_tokens_delta` → dropped.
+            pump.push(thinkingProgressProbe(4L, """{"conversation_id":"c1","estimated_tokens":10}"""))
+            // Genuinely wrong-shaped readings — an object, then an array.
+            pump.push(thinkingProgressProbe(5L, """{"conversation_id":"c1","estimated_tokens":{},"estimated_tokens_delta":10}"""))
+            pump.push(thinkingProgressProbe(6L, """{"conversation_id":"c1","estimated_tokens":10,"estimated_tokens_delta":[1]}"""))
+            runCurrent()
+            assertEquals(listOf<ThinkingProgress?>(null), readings)
+
+            pump.push(thinkingProgressEnvelope("c1", estimatedTokens = 33, estimatedTokensDelta = 33, id = 7L))
+            runCurrent()
+            assertEquals(listOf(null, ThinkingProgress(33, 33)), readings)
+        }
+
+    // AC #1 (fail-closed): without `interactive` negotiated, a well-formed frame never surfaces.
+    @Test
+    fun thinkingProgress_capabilityGateClosed_blocksDecode() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { emptySet() })
+            val readings = collectThinkingProgress(repo, "c1")
+            runCurrent()
+
+            pump.push(thinkingProgressEnvelope("c1", estimatedTokens = 184, estimatedTokensDelta = 12))
+            runCurrent()
+            assertEquals(listOf<ThinkingProgress?>(null), readings)
+        }
+
+    // AC #1 (fail-closed): a negotiated set with another token but NOT `interactive` still blocks.
+    @Test
+    fun thinkingProgress_capabilityGateOtherTokenOnly_blocksDecode() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("something_else") })
+            val readings = collectThinkingProgress(repo, "c1")
+            runCurrent()
+
+            pump.push(thinkingProgressEnvelope("c1", estimatedTokens = 184, estimatedTokensDelta = 12))
+            runCurrent()
+            assertEquals(listOf<ThinkingProgress?>(null), readings)
+        }
+
     // ---- #791: decode `model_list` into an observable per-conversation model menu ----------------
     // Payload SHAPES are proven at the decode boundary (ModelListPayloadsTest); this block owns the
     // inbound arm — the `interactive` gate, the routing, the snapshot replace and the drop posture.
@@ -8020,6 +8293,43 @@ class RemoteConversationRepositoryTest {
         id: Long,
         payload: String,
     ): Envelope = Envelope(id = id, type = "compacting", ts = TS, payload = MobileJson.parseToJsonElement(payload))
+
+    private fun TestScope.collectThinkingProgress(
+        repo: RemoteConversationRepository,
+        conversationId: String,
+    ): MutableList<ThinkingProgress?> {
+        val emissions = mutableListOf<ThinkingProgress?>()
+        backgroundScope.launch { repo.observeThinkingProgress(conversationId).collect { emissions += it } }
+        return emissions
+    }
+
+    /**
+     * A `thinking_progress` envelope `{conversation_id, estimated_tokens, estimated_tokens_delta}`
+     * (#801). All three fields are always present on the wire (no `omitempty`), so the helper always
+     * emits all three — including a `0` reading, which is the inference-request restart and not an
+     * omitted value. Neither reading is bounded here: a fixture may fall, repeat or sit at zero.
+     */
+    private fun thinkingProgressEnvelope(
+        conversationId: String,
+        estimatedTokens: Long,
+        estimatedTokensDelta: Long,
+        id: Long = 1L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "thinking_progress",
+            ts = TS,
+            payload =
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"$conversationId","estimated_tokens":$estimatedTokens,"estimated_tokens_delta":$estimatedTokensDelta}""",
+                ),
+        )
+
+    /** A raw `thinking_progress` envelope carrying [payload] verbatim — for the malformed-payload probes. */
+    private fun thinkingProgressProbe(
+        id: Long,
+        payload: String,
+    ): Envelope = Envelope(id = id, type = "thinking_progress", ts = TS, payload = MobileJson.parseToJsonElement(payload))
 
     private fun TestScope.collectModelMenu(
         repo: RemoteConversationRepository,
