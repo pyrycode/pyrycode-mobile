@@ -15,8 +15,10 @@ their migration and operation-specific acceptance.
 
 Since [#815](#the-hardened-gate-mobilegatemodal), the same file also exposes
 [`MobileGateModal`](#the-hardened-gate-mobilegatemodal), a hardened decision-gate entry point sharing this
-shell's private structure. Its caller is the
-[permission-modal overlay](permission-modal-overlay.md#the-overlay-open)'s `PermissionModalOverlay`.
+shell's private structure. Its first caller is the
+[permission-modal overlay](permission-modal-overlay.md#the-overlay-open)'s `PermissionModalOverlay`; since
+[#661](question-batch-modal.md) [`QuestionBatchModal`](question-batch-modal.md) is its second, adding the
+optional submit/sending/error parameters described below.
 
 ## Caller contract
 
@@ -57,6 +59,11 @@ internal fun MobileGateModal(
     cancelLabel: String,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
+    submitLabel: String? = null,
+    onSubmit: () -> Unit = {},
+    submissionEnabled: Boolean = true,
+    sending: Boolean = false,
+    error: String? = null,
     content: @Composable ColumnScope.() -> Unit,
 )
 ```
@@ -67,8 +74,18 @@ and `MobileGateModal` both delegate to one private `MobileModalShell(title, onDi
 modifier, error, footer: @Composable RowScope.(dismiss: () -> Unit) -> Unit, content)` — `gate` is the only
 switch between them, so the editing shell's behaviour cannot drift by editing the gate path and vice versa.
 `MobileModal` calls it with `gate = false` and its own Cancel + OK footer; `MobileGateModal` calls it with
-`gate = true`, `error = null` (a gate surfaces send failures on the host's own snackbar, not the shell), and
-a footer that is only Cancel — `content` supplies the actions instead.
+`gate = true` and a footer built from its own parameters — `content` supplies any non-footer actions.
+
+Since [#661](question-batch-modal.md), five parameters are defaulted inert (`submitLabel = null`,
+`onSubmit = {}`, `submissionEnabled = true`, `sending = false`, `error = null`) so the permission prompt —
+whose actions live entirely in `content`, not the footer — is unchanged. A caller whose gate content is a
+form instead passes `submitLabel` and the footer adds a filled `ModalSubmitButton` (the same styling
+`MobileModal`'s OK reuses, with a progress indicator while `sending`) beside `ModalCancelButton`. While
+`sending`, **both** footer buttons are disabled — on a gate, Cancel is itself a decision the caller sends,
+not a free dismissal, so it must not double-send any more than submit can. `error`, unlike the plain
+shell's, is meant for a **send failure** rather than a validation message — the gate has no other error
+slot, since it surfaces send failures nowhere else. [`QuestionBatchModal`](question-batch-modal.md) is the
+first and so far only caller of this five-parameter extension.
 
 `gate = true` changes four things over the plain shell, all on the dialog's own window:
 
@@ -233,10 +250,21 @@ caller that pre-fills an editable field inside this shell:
   touch a component with other callers, so the prompt copy has to carry that weight
   instead of the button.
 
-**`PermissionModalOverlay`** (`ui/conversations/thread/ThreadScreen.kt`, #815) is the first — and so far
-only — caller of [`MobileGateModal`](#the-hardened-gate-mobilegatemodal) rather than `MobileModal`. It draws
-the [permission-modal overlay](permission-modal-overlay.md): the server `title` fills the gate's header, the
-prompt and the wire-order option list fill `content`, and the footer's only action is Cancel — the server's
-own options are the actions, so this caller cannot use the fixed Cancel/OK footer `MobileModal`'s other
-callers share. Landing it before the three sibling tickets it was split from (see the plan's Context) was
-deliberate, so those write their content into the final gate container instead of one about to be replaced.
+**`PermissionModalOverlay`** (`ui/conversations/thread/ThreadScreen.kt`, #815) is the first of
+[`MobileGateModal`](#the-hardened-gate-mobilegatemodal)'s two callers, and the only one using it rather than
+`MobileModal` before #661. It draws the [permission-modal overlay](permission-modal-overlay.md): the server
+`title` fills the gate's header, the prompt and the wire-order option list fill `content`, and the footer's
+only action is Cancel — the server's own options are the actions, so this caller cannot use the fixed
+Cancel/OK footer `MobileModal`'s other callers share. Landing it before the three sibling tickets it was
+split from (see the plan's Context) was deliberate, so those write their content into the final gate
+container instead of one about to be replaced.
+
+**`QuestionBatchModal`** (`ui/conversations/thread/QuestionBatchModal.kt`, #661) is
+[`MobileGateModal`](#the-hardened-gate-mobilegatemodal)'s second caller, and the first to use its
+submit/sending/error extension: `submitLabel` = "Continue", `submissionEnabled` = every question answered,
+`sending` = a send in flight or already succeeded (locked until the daemon's dismissal, not just until the
+send settles), and `error` a fixed string while the last send failed. Unlike `PermissionModalOverlay`, which
+draws its own gate call inline in `ThreadScreen.kt`, this caller is drawn directly from `MainActivity`
+beside `ThreadScreen` rather than inside it — `MobileGateModal` opens its own `Dialog` window, so its place
+in the composition tree does not affect what it draws over. See
+[Question batch modal](question-batch-modal.md) for the full caller contract.
