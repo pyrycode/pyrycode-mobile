@@ -111,6 +111,45 @@ class CachingConversationRepositoryTest {
         }
 
     @Test
+    fun `a disconnect keeps the rows drawn during the connection and writes nothing`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val cache = RecordingCache(listOf(message("m1")))
+            val emissions = mutableListOf<List<ThreadItem>>()
+            val job =
+                launch { CachingConversationRepository(delegate, cache, "server-a").observeMessages("conv-1").collect { emissions += it } }
+
+            live.value = listOf(message("m1"), message("m2"), message("t1", isStreaming = true))
+            val written = listOf(message("m1"), message("m2"))
+            assertEquals(listOf(written), cache.writes)
+
+            // The stable facade's empty emission on a connection loss.
+            live.value = emptyList()
+
+            assertEquals(written, emissions.last())
+            assertEquals(listOf(written), cache.writes)
+            job.cancel()
+        }
+
+    @Test
+    fun `a reconnect after a disconnect merges over everything drawn so far`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val cache = RecordingCache(listOf(message("m1")))
+            val emissions = mutableListOf<List<ThreadItem>>()
+            val job =
+                launch { CachingConversationRepository(delegate, cache, "server-a").observeMessages("conv-1").collect { emissions += it } }
+
+            live.value = listOf(message("m1"), message("m2"))
+            live.value = emptyList()
+            // The next connection's newest page re-delivers m2 and adds m3.
+            live.value = listOf(message("m2"), message("m3"))
+
+            val drawn = listOf(message("m1"), message("m2"), message("m3"))
+            assertEquals(drawn, emissions.last())
+            assertEquals(drawn, cache.writes.last())
+            job.cancel()
+        }
+
+    @Test
     fun `an in-flight turn writes nothing until it settles`() =
         runTest(UnconfinedTestDispatcher()) {
             val cache = RecordingCache(listOf(message("m1")))

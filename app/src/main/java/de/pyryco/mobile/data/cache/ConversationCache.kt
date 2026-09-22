@@ -107,15 +107,20 @@ const val MAX_CACHED_THREAD_ROWS = 200
  * enforces on write and the caching repository compares against, so the two can never disagree.
  */
 fun cacheableThreadRows(rows: List<ThreadItem>): List<ThreadItem> =
-    rows
-        .filter { row ->
-            when (row) {
-                is ThreadItem.MessageItem ->
-                    !row.message.isStreaming && row.message.toolCall?.status != ToolCallStatus.Running
-                is ThreadItem.SessionBoundary -> true
-                is ThreadItem.UnrecognizedMessage -> false
-            }
-        }.takeLast(MAX_CACHED_THREAD_ROWS)
+    settledThreadRows(rows)
+        .filterNot { it is ThreadItem.UnrecognizedMessage }
+        .takeLast(MAX_CACHED_THREAD_ROWS)
+
+/**
+ * [rows] without its in-flight rows — a streaming message or a running tool call — which only a live
+ * connection can settle. Unbounded and keeps unrecognized rows: it is what a thread may keep drawing
+ * once its connection is gone, not what the cache may hold.
+ */
+fun settledThreadRows(rows: List<ThreadItem>): List<ThreadItem> =
+    rows.filterNot { row ->
+        row is ThreadItem.MessageItem &&
+            (row.message.isStreaming || row.message.toolCall?.status == ToolCallStatus.Running)
+    }
 
 /**
  * Signals an expected storage failure from a [ConversationCache] mutation.

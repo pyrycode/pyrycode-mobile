@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.cacheableThreadRows
+import de.pyryco.mobile.data.cache.settledThreadRows
 import de.pyryco.mobile.data.network.RelayLog
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -21,9 +22,18 @@ import kotlinx.coroutines.flow.flow
  * disconnected case with no branch of its own. The history walk is untouched: it reads only a page's
  * cursor and `atStart`, so restored rows cannot tell it the log has started.
  *
- * The restored set is read **once per collection** and kept for it. A later failed read therefore
- * cannot blank rows already drawn, and a row the live projection deliberately removes (a dropped
- * queued send's echo) is not resurrected from an ever-growing union.
+ * The restored set is read **once per collection**, so a later failed read cannot blank rows already
+ * drawn. It is the merge base while live rows flow: a row the live projection deliberately removes (a
+ * dropped queued send's echo) is not resurrected from an ever-growing union.
+ *
+ * An empty live projection is a connection boundary — the stable facade emits `emptyList()` on every
+ * disconnect and before a new connection's first page. There the base moves to the settled rows last
+ * drawn ([settledThreadRows]), so losing reception keeps the thread on screen and never rewrites the
+ * cache with the open-time snapshot, and the next connection's rows merge over everything drawn so far.
+ *
+ * If more than one page arrived while offline, a reconnect's newest page does not overlap the base's
+ * tail: the base draws above a gap in arrival order until the reader scrolls up and the history walk,
+ * whose pages land in the live projection, fills it.
  *
  * What is written is the thread as drawn, restored-plus-live, not the live projection alone: right
  * after a reconnect the live side holds only the newest page and would shrink the cache. It is written
@@ -40,10 +50,13 @@ class CachingConversationRepository(
 ) : ConversationRepository by delegate {
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
         flow {
-            val restored = cache.readThread(serverId, conversationId)
-            var lastWritten = restored
+            var base = cache.readThread(serverId, conversationId)
+            var lastWritten = base
+            var lastDrawn = base
             delegate.observeMessages(conversationId).collect { live ->
-                val drawn = live.mergeHistoryRows(restored)
+                if (live.isEmpty()) base = settledThreadRows(lastDrawn)
+                val drawn = live.mergeHistoryRows(base)
+                lastDrawn = drawn
                 emit(drawn)
                 val cacheable = cacheableThreadRows(drawn)
                 if (cacheable != lastWritten) {
