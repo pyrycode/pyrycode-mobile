@@ -8,6 +8,7 @@ import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.data.model.ConnectionState
@@ -29,12 +30,12 @@ class ThreadScreenHistoryTest {
 
     @Test
     fun loading_row_is_shown_at_the_oldest_end_only_while_a_page_is_in_flight() {
-        var state by mutableStateOf(threadState(rows(count = 3), historyLoading = false))
+        var state by mutableStateOf(threadState(rows(count = 3), ThreadHistoryTail.None))
         setScreen({ state }, onDemand = {})
         composeRule.onNodeWithContentDescription(HISTORY_LOADING_DESCRIPTION).assertDoesNotExist()
-        composeRule.runOnIdle { state = state.copy(historyLoading = true) }
+        composeRule.runOnIdle { state = state.copy(historyTail = ThreadHistoryTail.Loading) }
         composeRule.onNodeWithContentDescription(HISTORY_LOADING_DESCRIPTION).assertIsDisplayed()
-        composeRule.runOnIdle { state = state.copy(historyLoading = false) }
+        composeRule.runOnIdle { state = state.copy(historyTail = ThreadHistoryTail.None) }
         composeRule.onNodeWithContentDescription(HISTORY_LOADING_DESCRIPTION).assertDoesNotExist()
     }
 
@@ -50,7 +51,7 @@ class ThreadScreenHistoryTest {
         // total either way and a totalItemsCount predicate passes by accident. Overflowing, the indicator
         // mounts ABOVE the viewport, so a totalItemsCount predicate flips true -> false on mount and back
         // on unmount, and each unmount is an edge that issues another demand.
-        var state by mutableStateOf(threadState(rows(count = 30), historyLoading = false))
+        var state by mutableStateOf(threadState(rows(count = 30), ThreadHistoryTail.None))
         var demands = 0
         setScreen({ state }, onDemand = { demands++ })
         composeRule.onNode(hasScrollAction()).performScrollToIndex(29)
@@ -58,9 +59,9 @@ class ThreadScreenHistoryTest {
         val afterReachingTheOldestRow = demands
         assertEquals(1, afterReachingTheOldestRow)
         repeat(3) {
-            composeRule.runOnIdle { state = state.copy(historyLoading = true) }
+            composeRule.runOnIdle { state = state.copy(historyTail = ThreadHistoryTail.Loading) }
             composeRule.waitForIdle()
-            composeRule.runOnIdle { state = state.copy(historyLoading = false) }
+            composeRule.runOnIdle { state = state.copy(historyTail = ThreadHistoryTail.None) }
             composeRule.waitForIdle()
         }
         assertEquals(afterReachingTheOldestRow, demands)
@@ -70,7 +71,7 @@ class ThreadScreenHistoryTest {
     fun a_prepended_page_leaves_the_row_the_reader_is_looking_at_where_it_was() {
         // reverseLayout puts older rows at HIGHER indices, so a prepend lands beyond the viewport rather
         // than shifting it, and the per-subtype keys are computed from item fields and never position.
-        var state by mutableStateOf(threadState(rows(count = 30), historyLoading = false))
+        var state by mutableStateOf(threadState(rows(count = 30), ThreadHistoryTail.None))
         setScreen({ state }, onDemand = {})
         composeRule.onNode(hasScrollAction()).performScrollToIndex(10)
         composeRule.waitForIdle()
@@ -79,9 +80,66 @@ class ThreadScreenHistoryTest {
         composeRule.onNodeWithText("Row 19.").assertIsDisplayed()
     }
 
+    // --- #778: the failure states of the same oldest-end slot --------------------------------------
+
+    @Test
+    fun retry_row_is_shown_for_a_retryable_failure_and_its_press_reaches_the_callback() {
+        var state by mutableStateOf(threadState(rows(count = 3), ThreadHistoryTail.Retry))
+        var retries = 0
+        setScreen({ state }, onDemand = {}, onRetryOlder = { retries++ })
+
+        composeRule.onNodeWithContentDescription(HISTORY_RETRY_DESCRIPTION).assertIsDisplayed()
+        composeRule.onNodeWithContentDescription(HISTORY_RETRY_DESCRIPTION).performClick()
+        assertEquals(1, retries)
+
+        // The slot is one slot: settling back to loading replaces the row rather than stacking one.
+        composeRule.runOnIdle { state = state.copy(historyTail = ThreadHistoryTail.Loading) }
+        composeRule.onNodeWithContentDescription(HISTORY_RETRY_DESCRIPTION).assertDoesNotExist()
+        composeRule.onNodeWithContentDescription(HISTORY_LOADING_DESCRIPTION).assertIsDisplayed()
+    }
+
+    @Test
+    fun dead_end_row_is_shown_for_a_permanent_failure_with_nothing_to_press() {
+        val state = threadState(rows(count = 3), ThreadHistoryTail.DeadEnd)
+        var retries = 0
+        setScreen({ state }, onDemand = {}, onRetryOlder = { retries++ })
+
+        composeRule.onNodeWithContentDescription(HISTORY_DEAD_END_DESCRIPTION).assertIsDisplayed()
+        composeRule.onNodeWithContentDescription(HISTORY_RETRY_DESCRIPTION).assertDoesNotExist()
+        // A dead end offers no affordance at all: pressing where the retry would be does nothing.
+        composeRule.onNodeWithContentDescription(HISTORY_DEAD_END_DESCRIPTION).performClick()
+        assertEquals(0, retries)
+    }
+
+    @Test
+    fun cycling_the_whole_tail_with_the_rows_unchanged_issues_no_further_demand() {
+        // #777's regression, re-run across the widened slot: three mountable rows instead of one, and
+        // still none of them may move a predicate that counts THREAD rows. The list must overflow the
+        // viewport and be scrolled to the oldest end, or a totalItemsCount predicate passes by accident.
+        var state by mutableStateOf(threadState(rows(count = 30), ThreadHistoryTail.None))
+        var demands = 0
+        setScreen({ state }, onDemand = { demands++ }, onRetryOlder = {})
+        composeRule.onNode(hasScrollAction()).performScrollToIndex(29)
+        composeRule.waitForIdle()
+        val afterReachingTheOldestRow = demands
+        assertEquals(1, afterReachingTheOldestRow)
+
+        listOf(
+            ThreadHistoryTail.Loading,
+            ThreadHistoryTail.Retry,
+            ThreadHistoryTail.DeadEnd,
+            ThreadHistoryTail.None,
+        ).forEach { tail ->
+            composeRule.runOnIdle { state = state.copy(historyTail = tail) }
+            composeRule.waitForIdle()
+        }
+        assertEquals(afterReachingTheOldestRow, demands)
+    }
+
     private fun setScreen(
         state: () -> ThreadUiState,
         onDemand: () -> Unit,
+        onRetryOlder: () -> Unit = {},
     ) {
         composeRule.setContent {
             PyrycodeMobileTheme {
@@ -92,6 +150,7 @@ class ThreadScreenHistoryTest {
                     connectionState = ConnectionState.Connected,
                     onRetry = {},
                     onDemandOlderHistory = onDemand,
+                    onRetryOlderHistory = onRetryOlder,
                 )
             }
         }
@@ -99,14 +158,14 @@ class ThreadScreenHistoryTest {
 
     private fun threadState(
         items: List<ThreadItem>,
-        historyLoading: Boolean,
+        historyTail: ThreadHistoryTail,
     ) = ThreadUiState(
         conversationId = "conversation",
         displayName = "History walk",
         isPromoted = true,
         hasMessages = true,
         items = items,
-        historyLoading = historyLoading,
+        historyTail = historyTail,
     )
 
     private fun rows(
@@ -128,5 +187,7 @@ class ThreadScreenHistoryTest {
 
     private companion object {
         const val HISTORY_LOADING_DESCRIPTION = "Loading earlier messages in this conversation"
+        const val HISTORY_RETRY_DESCRIPTION = "Couldn't load earlier messages. Try again."
+        const val HISTORY_DEAD_END_DESCRIPTION = "Earlier messages in this conversation are unavailable"
     }
 }

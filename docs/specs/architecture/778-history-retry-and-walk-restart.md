@@ -227,6 +227,50 @@ Per AC #5 **no rung-3 scenario ships here** — the live proof stays with #673 �
 2. Whether the retry claim needs its own guard against a stale in-flight ask. Resolve by checking whether
    `canRetry`'s `!inFlight` term already makes the case unreachable.
 
+## Revisions
+
+### 2026-09-22 — Open questions resolved during implementation
+
+Both resolved without changing the committed design.
+
+1. **`IllegalStateException` stays `PermanentFailure`.** A closed session does recover, but not through a
+   button: the thing that recovers it is the reconnect restart, which fires on its own. Offering a retry
+   there would be an affordance with no connection behind it, and pressing it would fail identically.
+   `history_aPermanentFailure_isVisibleAndOffersNoRetry` covers it alongside the other two shapes.
+2. **The retry claim needs no extra guard.** `canRetry`'s `!inFlight` term already makes a stale
+   in-flight retry unreachable, and the claim is CAS-shaped besides.
+   `canRetry_isFalseForEveryTerminalStopAndWhileInFlight` pins it.
+
+### 2026-09-22 — The breadcrumbs forced a test-fixture change #777 had silently avoided
+
+`RelayLog`'s default sink is `android.util.Log.println`, which throws on plain JVM, and its gate defaults
+to `BuildConfig.DEBUG` (true under unit test). Adding the three log calls therefore broke **every** test
+in `ThreadViewModelTest`, not just the history ones: most of the file's inline doubles inherit
+`requestHistory`'s throwing interface default, so the opening ask reaches a classified failure — and now a
+log call — during construction. Fixed with the seam `RelayLog` documents for exactly this and that
+`SettingsViewModelTest` already uses: swap `sink` and `enabled` in `@Before`, restore in `@After`. The
+captured log is then asserted on, so `history_breadcrumbsNameTheBranchAndCarryNothingTheDaemonWrote`
+proves the security review's "no cursor, no code, no server prose in a log line" claim as a test rather
+than as a Phase B grep. #777's total silence was load-bearing for this file in a way its plan never said.
+
+### 2026-09-22 — The two guards the security review called load-bearing were mutation-checked
+
+Not assumed — removed, one at a time, to confirm a test reddens:
+
+- Dropping the walk-generation check in `applyToWalk` fails
+  `history_aReconnectMidFlight_dropsThePreviousConnectionsPageAndKeepsTheRestartedCursor`, and nothing
+  else — so that test is the guard's sole proof and must not be weakened.
+- Dropping `claimed.cursor.isNotEmpty()` from the `invalid_cursor` branch fails
+  `history_aRefusedNewestPage_settlesPermanentlyRatherThanRestartingForever`. The mutated run took 4m05s
+  against a 9s baseline: the unguarded walk really does spin restart → ask → refusal → restart until
+  `runTest`'s own timeout, because a failure never spends page budget. That is the security note's
+  "no user input at all" cycle, reproduced.
+
+The third property, the carried page budget, is asserted directly by exact page counts in
+`restarted_cannotBuyAnAskTheCapAlreadyRefused`, `repeatedRestarts_spendTheBudgetRatherThanResettingIt`
+and `history_aFlappingConnection_cannotLaunderAFreshPageBudget`; it was **not** mutation-checked, since an
+assertion on an exact count cannot pass against a reset counter.
+
 ## Documentation handoff
 
 Pending for the documentation stage; not written by this ticket.
