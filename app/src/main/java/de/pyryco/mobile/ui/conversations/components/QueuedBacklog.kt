@@ -7,8 +7,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Schedule
@@ -31,21 +29,19 @@ import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 
-private val BacklogHorizontalPadding = 16.dp
+// Sit on the same gutter as the message rows above (MessageBubble.kt's MessageContentGutter).
 private val BacklogVerticalPadding = 8.dp
 private val BacklogRowSpacing = 8.dp
 
-// Mirror UserMessageBubble's shape/sizing (its constants are private to that file).
-private val QueuedBubbleMaxWidth = 320.dp
-private val QueuedBubbleShape =
-    RoundedCornerShape(
-        topStart = 20.dp,
-        topEnd = 20.dp,
-        bottomEnd = 6.dp,
-        bottomStart = 20.dp,
-    )
-private val BubbleHorizontalPadding = 14.dp
-private val BubbleVerticalPadding = 12.dp
+// The bubble geometry is now *consumed* from MessageBubble.kt (BubbleShape, BubbleHorizontalPadding,
+// BubbleVerticalPadding, MessageRoleInset — `internal`, same package) rather than copied here. Those
+// copies existed only because the originals were file-private; a queued row and a sent one are one
+// bubble family and there is nothing left to drift.
+//
+// The row takes MessageRoleInset so it occupies the same user-side lane a sent bubble does. Its bubble
+// then ends up narrower than a sent one, because the waiting glyph and the drop button share that lane
+// with it — which is the honest reading. Dropping the old 320dp cap without taking the inset would have
+// let a long queued bubble grow *wider* than a sent one, which is the one outcome that breaks family.
 private val WaitingGlyphSize = 16.dp
 private val WaitingGlyphGap = 8.dp
 
@@ -85,7 +81,7 @@ fun QueuedBacklog(
             modifier
                 .fillMaxWidth()
                 .padding(
-                    horizontal = BacklogHorizontalPadding,
+                    horizontal = MessageContentGutter,
                     vertical = BacklogVerticalPadding,
                 ).semantics(mergeDescendants = true) { contentDescription = description },
         verticalArrangement = Arrangement.spacedBy(BacklogRowSpacing),
@@ -112,6 +108,7 @@ private fun QueuedMessageRow(
         modifier =
             modifier
                 .fillMaxWidth()
+                .padding(start = MessageRoleInset)
                 .alpha(QUEUED_ALPHA),
         horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically,
@@ -127,8 +124,7 @@ private fun QueuedMessageRow(
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Surface(
-            modifier = Modifier.widthIn(max = QueuedBubbleMaxWidth),
-            shape = QueuedBubbleShape,
+            shape = BubbleShape,
             color = MaterialTheme.colorScheme.primaryContainer,
         ) {
             Text(

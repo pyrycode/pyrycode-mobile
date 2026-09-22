@@ -77,6 +77,7 @@
     <string name="cd_thread_stall_promotion">Claude seems to have stalled. Show the literal screen.</string>
     <string name="thread_interrupt_label">Stop</string>
     <string name="cd_thread_interrupt">Stop the running turn</string>
+    <string name="cd_thread_copy_message">Copy this message</string>
     <string name="thread_queued_backlog_label">Queued</string>
     <string name="cd_thread_queued_backlog">Queued messages waiting to send</string>
     <string name="cd_thread_queued_drop">Drop this queued message</string>

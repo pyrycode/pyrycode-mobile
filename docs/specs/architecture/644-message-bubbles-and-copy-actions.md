@@ -174,3 +174,18 @@ Pending for the documentation stage — no doc file is edited by this ticket:
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-22
+
+## Revisions
+
+### 2026-09-22 — implementation
+
+Three departures from the Design section above, each found while implementing it:
+
+1. **`QueuedBacklog`'s row *does* take `MessageRoleInset`.** The Design section argued against it — the waiting glyph and the drop button already consume ~72dp of the row, so the inset squeezes the queued bubble below a sent one. Implementing it exposed the worse half of that trade: the old `QueuedBubbleMaxWidth = 320.dp` cap goes away with the rest of the copied constants, and without the inset a long queued bubble grows to the full row (~300dp at the reference width) — *wider* than a sent bubble's 272dp. A queued row reading as wider than a sent one is exactly the "same bubble family" property AC #1 asks for, so the inset wins and the narrower bubble is the accepted cost. Recorded in `QueuedBacklog.kt`'s constant block.
+2. **The shared row-spacing constant is `MessageAreaRowSpacing`, not `MessageRowVerticalSpacing`.** `ToolCallRow.kt` — the `Role.Tool` arm, owned by #658 — already holds a file-private `MessageRowVerticalSpacing = 12.dp`. Promoting `MessageBubble.kt`'s to `internal` under that name is a package-level conflicting declaration and an overload ambiguity at `ToolCallRow`'s own use site. Renaming mine to the design's own vocabulary (the `Message area` frame's gap) was the only fix that left #658's file untouched.
+3. **The markdown preview's pinned streaming snapshot routes through the real `MessageContainer`.** It previously rendered in a bare `Box` with its own `CompositionLocalProvider(LocalContentColor provides onSurface)`, which was correct while the assistant body was unboxed and is now misleading — the preview would show the caret outside the container the feature puts it in. Consequence worth noting: `Box`, `CompositionLocalProvider` and `LocalContentColor` are no longer referenced anywhere in `MessageBubble.kt`. The bubble's content colour comes entirely from `Surface(contentColor = …)`, which is the single mechanism feeding both `MarkdownText` and the meta row's de-emphasis.
+
+### Open questions resolved
+
+- **Unweighted boundary label.** Holds. `Row` measures the non-weighted `Text` against the full available width before the weighted rules claim any, so a long `Workspace changed to …` label wraps centred and squeezes the rules toward zero rather than pushing past the viewport. No `weight(1f, fill = false)` fallback was needed. Confirmed by `SessionBoundaryDelimiterTest` staying green unchanged and by the 320dp narrow preview.
+- **Streaming copy test and the caret's blink loop.** `mainClock.autoAdvance = false` proved unnecessary and was not used. The caret's `while (true)` producer is idle between its 500ms delays, so the harness reaches idle the same way `ScriptedThreadRenderTest` already relies on while driving streaming rows; the test polls with `waitUntil` for a blink-on frame instead of sampling one, which is what makes the caret assertion stable rather than clock control.

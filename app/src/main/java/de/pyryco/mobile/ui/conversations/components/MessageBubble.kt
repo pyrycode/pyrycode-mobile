@@ -2,41 +2,44 @@ package de.pyryco.mobile.ui.conversations.components
 
 import android.content.res.Configuration
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.delay
-import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
 
-private val MessageRowVerticalSpacing = 12.dp
-private val UserBubbleMaxWidth = 320.dp
-private val UserBubbleShape =
-    RoundedCornerShape(
-        topStart = 20.dp,
-        topEnd = 20.dp,
-        bottomEnd = 6.dp,
-        bottomStart = 20.dp,
-    )
-private val BubbleHorizontalPadding = 14.dp
-private val BubbleVerticalPadding = 12.dp
+// Figma 16:8 `Message area` (533:1956) and the shared `Message` component it fills with. `internal`
+// rather than file-private where QueuedBacklog needs the same numbers — it used to keep its own copies
+// precisely because these were unreachable, and the ticket asks the two to stay one family.
+internal val MessageAreaRowSpacing = 16.dp // `Message area` gap-[16px]
+internal val BubbleShape = RoundedCornerShape(6.dp) // `Message` rounded-[6px]
+internal val BubbleHorizontalPadding = 20.dp // `Message` px-[20px]
+internal val BubbleVerticalPadding = 16.dp // `Message` py-[16px]
+internal val BubbleContentSpacing = 12.dp // `Message` gap-[12px] — body to meta row
+
+// The frame's 412dp reference width carries a 20dp gutter on each edge, leaving the 372dp content area;
+// each role container then insets its *opposite* edge by 100dp (`pr-[100px]` / `pl-[100px]`), which caps
+// a bubble at 272dp there. The inset is the mechanism and 272dp is its value at the reference width, so
+// there is no separate max-width constant to drift away from it. The gutter lives on the component
+// because ThreadScreen's LazyColumn applies none and this ticket does not touch it.
+internal val MessageContentGutter = 20.dp
+internal val MessageRoleInset = 100.dp
 
 private const val STREAMING_CARET_GLYPH = "▎"
 private const val STREAMING_REVEAL_CHARS_PER_SECOND = 50
@@ -50,66 +53,131 @@ fun MessageBubble(
     modifier: Modifier = Modifier,
 ) {
     when (message.role) {
-        Role.User -> UserMessageBubble(message.content, modifier)
+        Role.User -> UserMessageBubble(message, modifier)
         Role.Assistant -> AssistantMessage(message, modifier)
         Role.Tool -> message.toolCall?.let { ToolCallRow(toolCall = it, modifier = modifier) }
     }
 }
 
+/**
+ * The design's `User message container` (Figma node `114:3559`): right-aligned, leading edge inset by
+ * [MessageRoleInset], filled from the `primaryContainer` pair.
+ *
+ * Content stays unparsed plain [Text] — the user wrote it, it is not a markdown source.
+ */
 @Composable
 private fun UserMessageBubble(
-    content: String,
+    message: Message,
     modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier =
-            modifier
-                .fillMaxWidth()
-                .padding(bottom = MessageRowVerticalSpacing),
-        horizontalArrangement = Arrangement.End,
+    MessageContainer(
+        message = message,
+        alignment = Alignment.End,
+        bubbleColor = MaterialTheme.colorScheme.primaryContainer,
+        bubbleContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        modifier = modifier,
     ) {
-        Surface(
-            modifier = Modifier.widthIn(max = UserBubbleMaxWidth),
-            shape = UserBubbleShape,
-            color = MaterialTheme.colorScheme.primaryContainer,
-        ) {
-            Text(
-                text = content,
-                modifier =
-                    Modifier.padding(
-                        horizontal = BubbleHorizontalPadding,
-                        vertical = BubbleVerticalPadding,
-                    ),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-            )
-        }
+        Text(
+            text = message.content,
+            style = MaterialTheme.typography.bodyMedium,
+        )
     }
 }
 
+/**
+ * The design's `Assistant message container` (Figma node `114:3558`): left-aligned, trailing edge inset
+ * by [MessageRoleInset], filled from the `secondaryContainer` pair.
+ *
+ * The body keeps both renderers it has had since #184 — the progressive-reveal [StreamingAssistantBody]
+ * while `isStreaming`, the static [MarkdownText] once finalized. Neither is wrapped in its own
+ * `LocalContentColor` provider any more: the enclosing [Surface] supplies the ambient, which is the
+ * contract `MarkdownText` documents for a host surface.
+ *
+ * The #128 divergence closes here. That ticket's acceptance criteria overrode the Figma frame to ship a
+ * flat, unboxed assistant body, and the note deferred reconciliation to a downstream design call; #644
+ * *is* that call, and it resolves in favour of the design.
+ */
 @Composable
 private fun AssistantMessage(
     message: Message,
     modifier: Modifier = Modifier,
 ) {
-    Box(
+    MessageContainer(
+        message = message,
+        alignment = Alignment.Start,
+        bubbleColor = MaterialTheme.colorScheme.secondaryContainer,
+        bubbleContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        modifier = modifier,
+    ) {
+        if (message.isStreaming) {
+            StreamingAssistantBody(
+                content = message.content,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else {
+            MarkdownText(
+                markdown = message.content,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
+/**
+ * The shared `Message` component both roles render through, plus the role container that positions it.
+ *
+ * The only per-role inputs are [alignment] and the two colours; the geometry — gutter, [MessageRoleInset]
+ * on the opposite edge, 6dp corners, 20/16 inner padding, 12dp between body and meta row — is identical,
+ * which is what makes the two bubbles read as one family.
+ *
+ * The meta row is handed [Message.content] directly, never anything read back out of [body], so an
+ * assistant bubble copies its markdown source rather than the parsed render.
+ */
+@Composable
+private fun MessageContainer(
+    message: Message,
+    alignment: Alignment.Horizontal,
+    bubbleColor: Color,
+    bubbleContentColor: Color,
+    modifier: Modifier = Modifier,
+    body: @Composable () -> Unit,
+) {
+    val isUserSide = alignment == Alignment.End
+    Row(
         modifier =
             modifier
                 .fillMaxWidth()
-                .padding(bottom = MessageRowVerticalSpacing),
+                .padding(
+                    start = MessageContentGutter + if (isUserSide) MessageRoleInset else 0.dp,
+                    end = MessageContentGutter + if (isUserSide) 0.dp else MessageRoleInset,
+                    bottom = MessageAreaRowSpacing,
+                ),
+        // One child, so the zero spacing carries nothing; this is how a Row takes an
+        // Alignment.Horizontal parameter rather than a hardcoded Arrangement.Start / .End.
+        horizontalArrangement = Arrangement.spacedBy(0.dp, alignment),
     ) {
-        CompositionLocalProvider(
-            LocalContentColor provides MaterialTheme.colorScheme.onSurface,
+        Surface(
+            shape = BubbleShape,
+            color = bubbleColor,
+            contentColor = bubbleContentColor,
         ) {
-            if (message.isStreaming) {
-                StreamingAssistantBody(
-                    content = message.content,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            } else {
-                MarkdownText(
-                    markdown = message.content,
-                    modifier = Modifier.fillMaxWidth(),
+            Column(
+                modifier =
+                    Modifier.padding(
+                        horizontal = BubbleHorizontalPadding,
+                        vertical = BubbleVerticalPadding,
+                    ),
+                verticalArrangement = Arrangement.spacedBy(BubbleContentSpacing),
+                // The design puts `items-start` on the `Message` column for *both* roles — a short
+                // user body is left-aligned inside its bubble — and `justify-end` on the user's meta
+                // row alone. So the column aligns Start and the meta row overrides for its own side.
+                horizontalAlignment = Alignment.Start,
+            ) {
+                body()
+                MessageMetaRow(
+                    timestamp = message.timestamp,
+                    copyText = message.content,
+                    modifier = Modifier.align(alignment),
                 )
             }
         }
@@ -150,22 +218,29 @@ private fun StreamingAssistantBodyView(
     MarkdownText(markdown = displayText, modifier = modifier)
 }
 
+// Pinned rather than Clock.System.now() so the meta row renders a stable, reviewable timestamp — the
+// design's own sample moment, which a de-DE preview host reproduces as `13.01.2026 - 13:55`.
+private val PreviewTimestamp = Instant.parse("2026-01-13T12:55:00Z")
+
 private fun previewMessage(
     role: Role,
     content: String,
+    isStreaming: Boolean = false,
 ): Message =
     Message(
         id = "preview-${role.name}",
         sessionId = "preview-session",
         role = role,
         content = content,
-        timestamp = Clock.System.now(),
-        isStreaming = false,
+        timestamp = PreviewTimestamp,
+        isStreaming = isStreaming,
     )
 
+// No horizontal padding: the component owns the design's 20dp gutter now, so the preview viewport is
+// the frame's full 412dp reference width and the bubbles land on the real geometry.
 @Composable
 private fun MessageBubblePreviewSequence() {
-    Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+    Column {
         MessageBubble(
             previewMessage(
                 role = Role.User,
@@ -213,6 +288,20 @@ private fun MessageBubbleLightPreview() {
 )
 @Composable
 private fun MessageBubbleDarkPreview() {
+    PyrycodeMobileTheme(darkTheme = true) {
+        Surface {
+            MessageBubblePreviewSequence()
+        }
+    }
+}
+
+// Narrow-width check, the peer of SessionBoundaryDelimiterNarrowPreview: at 320dp the 20dp gutters and
+// the 100dp role inset leave a 180dp bubble, so the meta row's timestamp-plus-glyph is the widest thing
+// in it and sets the bubble's floor. Kept reviewable because that is the width at which the design's
+// generous insets bite hardest.
+@Preview(name = "MessageBubble — Narrow", showBackground = true, widthDp = 320)
+@Composable
+private fun MessageBubbleNarrowPreview() {
     PyrycodeMobileTheme(darkTheme = true) {
         Surface {
             MessageBubblePreviewSequence()
@@ -270,23 +359,24 @@ Markdown:
 ```
 """
 
+// Each bubble carries its own bottom spacing, so the column adds none.
 @Composable
 private fun MessageBubbleMarkdownPreviewBody() {
-    Column(
-        modifier = Modifier.padding(horizontal = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(MessageRowVerticalSpacing),
-    ) {
-        Box(modifier = Modifier.fillMaxWidth()) {
-            CompositionLocalProvider(
-                LocalContentColor provides MaterialTheme.colorScheme.onSurface,
-            ) {
-                StreamingAssistantBodyView(
-                    revealedText =
-                        MARKDOWN_PREVIEW_FIXTURE.take(MARKDOWN_PREVIEW_FIXTURE.length / 2),
-                    caretVisible = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
+    Column {
+        // The half-revealed streaming snapshot, pinned so the caret lands deterministically where the
+        // produceState-driven path would render at an unpredictable position — now routed through the
+        // real assistant container, so the preview shows the caret *inside* the new bubble.
+        MessageContainer(
+            message = previewMessage(Role.Assistant, MARKDOWN_PREVIEW_FIXTURE, isStreaming = true),
+            alignment = Alignment.Start,
+            bubbleColor = MaterialTheme.colorScheme.secondaryContainer,
+            bubbleContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        ) {
+            StreamingAssistantBodyView(
+                revealedText = MARKDOWN_PREVIEW_FIXTURE.take(MARKDOWN_PREVIEW_FIXTURE.length / 2),
+                caretVisible = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
         MessageBubble(previewMessage(Role.Assistant, MARKDOWN_PREVIEW_FIXTURE))
     }
