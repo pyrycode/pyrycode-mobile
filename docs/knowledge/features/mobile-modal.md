@@ -5,7 +5,7 @@ is the reusable full-height editing shell in `de.pyryco.mobile.ui.components`.
 It supplies presentation and callbacks; callers own visibility, form values,
 validation, submission and operation cancellation. Its first production consumer is
 [`EditHostModal`](#callers) (#743), first driven onto a screen by
-[`ChannelListScreen`](channel-list-screen.md#host-row-edit-control-744)'s host-row edit
+[`ChannelListScreen`](channel-list-screen-tree-and-controls.md#host-row-edit-control-744)'s host-row edit
 control (#744), and since #751 also driven by [Settings](settings-screen.md)'s owner
 row — both through the shared [`HostEditorModal`](host-editor.md) binding. Since #683
 the Storage section's Log data download draws `DebugBundleModal` (#683) directly on
@@ -112,7 +112,7 @@ download](settings-viewmodel-how-it-works.md#log-data-download-683) for the full
 pre-filled from the caller, and an outlined unpair action. It is stateless and
 caller-driven like the shell itself — no storage, connection or navigation — which
 is what lets more than one screen compose the same component instead of a second
-removal flow. [`ChannelListScreen`](channel-list-screen.md#host-row-edit-control-744)
+removal flow. [`ChannelListScreen`](channel-list-screen-tree-and-controls.md#host-row-edit-control-744)
 (#744) is its first driving caller: the tree's host row opens it on that row's own
 host, [`ChannelListViewModel`](channel-list-viewmodel.md) reads the identity and relay
 address with `PairedServerCollectionStore.loadById` at open time and saves the entered

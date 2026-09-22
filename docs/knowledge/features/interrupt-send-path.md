@@ -40,7 +40,7 @@ ThreadViewModel.onInterrupt()
   fixtures. The action always attempts the send; visibility is governed by
   `isBusy`, while the daemon decides whether there is a running turn to stop.
 - **DI and coordinator:** `AppModule` binds `interrupt = coordinator::interrupt`.
-  The [passthrough](relay-repository-coordinator.md#outbound-interrupt-passthrough-458)
+  The [passthrough](relay-repository-coordinator-seams-and-passthroughs.md#outbound-interrupt-passthrough-458)
   reads the active connection's concrete repository and forwards the id unchanged.
   The connection selects the transport, while the argument selects the conversation.
 - **Repository:** [`interrupt(conversationId)`](remote-conversation-repository-control-sends.md#interruptconversationid--explicitly-targeted-v2-interrupt)

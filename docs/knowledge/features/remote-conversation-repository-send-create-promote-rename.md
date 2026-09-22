@@ -153,7 +153,7 @@ override suspend fun createDiscussion(workspace: String?): Conversation {
   false`) a null `cwd` is **omitted** from the JSON (not `"cwd":null`), which the server decodes
   identically to an absent key (its `*string` field has no `omitempty`) — so `createDiscussion(null)`
   encodes to `{"is_promoted":false}` and means "server assigns the scratch cwd". See the
-  [wire-layer doc](mobile-protocol-v2-wire-layer.md#outbound-request-encoders--the-ackerror-correlated-reply-models-346).
+  [wire-layer doc](mobile-protocol-v2-wire-layer-application-payloads.md#outbound-request-encoders--the-ackerror-correlated-reply-models-346).
 - **The returned `cwd` is the server's reply value, never the input.** A null `workspace` returns the
   server-assigned scratch cwd (`DEFAULT_SCRATCH_CWD`); this is the one divergence from
   `FakeConversationRepository.createDiscussion`, which picks `cwd = workspace ?: ""` locally (AC #1).
@@ -231,7 +231,7 @@ override suspend fun promote(conversationId: String, name: String, workspace: St
   `PromoteConversationPayloadDto(conversationId, name, cwd)` carries all three as **non-null** `String`s
   (contrast `CreateConversationPayloadDto`'s optional `cwd`) — there is no `explicitNulls` elision to
   reason about; the encoded payload always has `conversation_id`, `name`, `cwd`. See the
-  [wire-layer doc](mobile-protocol-v2-wire-layer.md#outbound-request-encoders--the-ackerror-correlated-reply-models-346).
+  [wire-layer doc](mobile-protocol-v2-wire-layer-application-payloads.md#outbound-request-encoders--the-ackerror-correlated-reply-models-346).
 - **Delta 2 — the reply is `conversation_updated`** (routed into the **same** success arm as
   `conversation_created`), decoded through the **same** #318 `ConversationResponseDto` (one DTO models
   both response types). A malformed reply throws the #318 decode exception in the **caller's** coroutine

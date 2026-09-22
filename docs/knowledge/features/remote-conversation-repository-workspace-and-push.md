@@ -162,7 +162,7 @@ suspend fun registerPushToken(token: String) {
 ```
 
 - **`RegisterPushTokenPayloadDto`** is the fifth encode-only request DTO (`{platform, token, device_name}`,
-  all required) — see the [wire-layer doc](mobile-protocol-v2-wire-layer.md#outbound-request-encoders--the-ackerror-correlated-reply-models-346).
+  all required) — see the [wire-layer doc](mobile-protocol-v2-wire-layer-application-payloads.md#outbound-request-encoders--the-ackerror-correlated-reply-models-346).
   `platform` is the constant `"fcm"`; `device_name` is the connection-level constructor `deviceName`.
 - **`sendAndAwaitReply` does all the work, unchanged:** it throws `IllegalStateException` when `pump.send`
   returns `false` (session not Open), suspends until the correlated reply lands, returns normally on the

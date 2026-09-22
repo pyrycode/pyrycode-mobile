@@ -41,7 +41,7 @@ interface the thread ViewModel consumes. So the ViewModel cannot reach it direct
 
 [`RelayRepositoryCoordinator`](relay-repository-coordinator.md) — the layer that already owns the
 per-connection pump and repository — exposes a stable public flow over it (see
-[§ Live-session event seam](relay-repository-coordinator.md#live-session-event-seam-406) there):
+[§ Live-session event seam](relay-repository-coordinator-seams-and-passthroughs.md#live-session-event-seam-406) there):
 
 ```kotlin
 val liveSessionEvents: Flow<LiveSessionEvent> =

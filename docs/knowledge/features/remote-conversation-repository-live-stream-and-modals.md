@@ -97,7 +97,7 @@ suspend fun cancelModal(modalId: String)                     // modal_cancel{mod
 Each builds an `Envelope(id = requestId.incrementAndGet(), type = TYPE_MODAL_ANSWER/_CANCEL, ts =
 Clock.System.now()…, payload = MobileJson.encodeToJsonElement(dto))` and `sendAndAwaitReply`s it,
 **discarding the empty `{}` ack** — success is simply "the call returned without throwing". The
-[`ModalAnswerPayloadDto` / `ModalCancelPayloadDto`](mobile-protocol-v2-wire-layer.md#outbound-request-encoders--the-ackerror-correlated-reply-models-346)
+[`ModalAnswerPayloadDto` / `ModalCancelPayloadDto`](mobile-protocol-v2-wire-layer-application-payloads.md#outbound-request-encoders--the-ackerror-correlated-reply-models-346)
 encode DTOs (new `data/network/ModalOutboundPayloads.kt`) are the **encode mirror** of #437's decode DTOs.
 
 - **`modalId`/`optionId` are echoed verbatim — never parsed or validated.** They are the opaque tokens
