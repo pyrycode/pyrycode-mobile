@@ -60,7 +60,9 @@ class PingReplyTest {
             }
         }
 
-        // Even exact "ping" in the title and backlog is not a reply in the message list.
+        // Even exact "ping" in the title and in a queued row is not a reply. Since #782 the queued row
+        // is drawn inline among the delivered rows rather than in a foot-of-list section, so this is
+        // also what pins that an inline queued entry is still not a reply.
         composeTestRule.onAllNodes(pingReplyMatcher(), useUnmergedTree = true).assertCountEquals(0)
         val baseline = substringCount()
         assertEquals(3, baseline)

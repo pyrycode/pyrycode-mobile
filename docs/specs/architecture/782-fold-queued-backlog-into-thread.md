@@ -312,4 +312,43 @@ names and it is over. It was not split: every candidate slice — the fold alone
 produces a child whose only consumer is its sibling, which the floor rule forbids, and the floor beats
 the ceiling. The comparable is the refiner's own analogue, `pyrycode-desktop` #1214 at 895/315 over 11
 files. Recorded here so the next calibration reads the real number.
+
+**2026-09-22 (rework 1) — `pingReplyMatcher` had to move its anchor: the fold invalidated a premise
+stated in another test's helper.** The pre-verifier UI gate went red on
+`PingReplyTest.reply_matches_when_queue_disappears_without_substring_count_growth` (1 of 375; green on
+`main`). `pingReplyMatcher`, added by #694, was `hasText("ping") and hasAnyAncestor(hasScrollAction())`,
+and its own comment named the premise this slice retires: *"the title/backlog sit outside ThreadScreen's
+scrollable message list."* Folding the queued row inline gives a queued entry whose text is exactly
+`"ping"` a scroll ancestor, so the matcher found it and the test's `assertCountEquals(0)` failed. Not
+flaky and not a test-data accident — `PingReplyTest` seeds that entry deliberately, and the assertion is
+the first one after `setContent`.
+
+The plan's blast-radius reading missed it because it searched for readers of the symbols this slice
+changes. Nothing here reads `QueuedBacklog`, `foldQueuedRows` or `ThreadUiState`: what broke was a
+Compose matcher that described the queued row's **placement**, which is exactly what this ticket moves.
+A structural-position premise is invisible to a symbol-level search, and that is the general lesson.
+
+**Resolution, test-side only — no production change.** The matcher now anchors on
+`MessageBubble`'s `MESSAGE_BUBBLE_TEST_TAG` instead of on "has a scrollable ancestor":
+
+```kotlin
+hasText("ping", ignoreCase = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+```
+
+This keeps #694's actual intent — reply detection is independent of queued text — and states it as
+content rather than placement, which is strictly stronger: a queued row renders its own `Surface` and
+never a message bubble, and neither does the app bar title, so both are excluded without the scroll
+clause. Both roles reach the tag through `MessageContainer`, so an assistant reply still matches. An
+existing `internal` tag is reused; no `testTag` is added to production code and `QueuedMessageRow` is
+untouched.
+
+The wider blast radius the verifier flagged is covered by the same one-line change:
+`awaitDisplayedPingReply` shares the matcher and is called through a **singular** `onNode(...)` by three
+`InteractiveStreamE2ETest` scenarios, which would have thrown on multiple matches once they reached a
+queued `"ping"`. Those are live rung-3 scenarios and did not run this dispatch, since the gates stop at
+the first red. `DeterministicInteractiveStreamE2ETest` does not use the matcher.
+
+No new test was added: `PingReplyTest` already seeds a queued `"ping"` alongside the prompt, so its
+first assertion *is* the regression case — it simply used to pass for a reason (placement) that this
+slice removed, and now passes for the reason that survives (content).
 </content>
