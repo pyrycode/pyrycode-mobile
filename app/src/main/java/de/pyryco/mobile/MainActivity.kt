@@ -62,6 +62,7 @@ import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import de.pyryco.mobile.ui.conversations.list.PendingPromotion
 import de.pyryco.mobile.ui.conversations.thread.LiteralScreenSurface
 import de.pyryco.mobile.ui.conversations.thread.LiteralScreenViewModel
+import de.pyryco.mobile.ui.conversations.thread.QuestionBatchModal
 import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
@@ -452,6 +453,9 @@ internal fun PyryNavHost(
                     draft = draft,
                     onDraftChange = vm::onDraftChange,
                 )
+                // #661: its own gate window, so it is drawn beside the screen rather than threaded through it.
+                val questionModal by vm.questionModal.collectAsStateWithLifecycle()
+                questionModal?.let { QuestionBatchModal(state = it, onEvent = vm::onQuestionEvent) }
             }
         }
         composable(

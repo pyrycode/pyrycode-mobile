@@ -266,6 +266,9 @@ internal class ThreadDestinationFactory(
             answerModal = { modal, option -> checkNotNull(bundle).coordinator.answerModal(modal, option) },
             cancelModal = { modal -> checkNotNull(bundle).coordinator.cancelModal(modal) },
             interrupt = { id -> checkNotNull(bundle).coordinator.interrupt(id) },
+            questionBatch = { id -> bundle?.coordinator?.observeQuestionBatch(id) ?: flowOf(null) },
+            answerQuestionBatch = { batch, answers -> checkNotNull(bundle).coordinator.answerQuestionBatch(batch, answers) },
+            refuseQuestionBatch = { batch -> checkNotNull(bundle).coordinator.refuseQuestionBatch(batch) },
         )
     }
 
