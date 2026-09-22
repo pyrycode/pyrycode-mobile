@@ -35,8 +35,9 @@ two signals **verbatim — no UI-side re-derivation**:
   `isArmed = option.id == armedOptionId` — a plain `==` against the VM's already-scoped projection; it never
   re-derives the arm. Every tap forwards verbatim via `onClick = { onOption(option.id) }`; the
   single-tap-default / second-confirm gate stays entirely in the VM ([#451](modal-answer-flow.md)).
-- **Explicit Cancel.** A low-emphasis `TextButton` (`Modifier.align(Alignment.End)`) below the options — the
-  **only** path to `onModalCancel` (back-press / outside-tap dismissal stay disabled, see below).
+- **Explicit Cancel.** A low-emphasis `TextButton` below the options — the **only** path to `onModalCancel`
+  (back-press / outside-tap dismissal stay disabled, see below). Since #815 this moved into the shared
+  `MobileGateModal` footer as an outlined `ModalCancelButton`; see § The overlay.
 - **Send-error snackbar.** A failed `modal_answer` / `modal_cancel` surfaces on the existing
   `snackbarHostState` via a **fixed local string** `modal_send_failed` — see § Send-error confidentiality.
 - **Tapjacking net.** Now that the taps are live, `filterTouchesWhenObscured = true` on the dialog's own
@@ -46,9 +47,13 @@ two signals **verbatim — no UI-side re-derivation**:
 
 ## Where it lives
 
-All in `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt` (private composables,
-inline per the `DeleteConfirmationDialog` precedent — **not** a new file): `PermissionModalOverlay`,
-`ModalOptionButton`, `dismissReasonText`. The state type is [`ModalUiState`](current-modal-state.md)
+`PermissionModalOverlay`, `ModalOptionButton` and `dismissReasonText` are private composables in
+`app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt`, inline per the
+`DeleteConfirmationDialog` precedent — **not** a new file. Since #815, the overlay's
+dialog chrome and window hardening are no longer its own: `PermissionModalOverlay` draws its content inside
+[`MobileGateModal`](mobile-modal.md#the-hardened-gate-mobilegatemodal), the hardened entry point
+[Shared mobile modal](mobile-modal.md) exposes on its shell. `ModalOptionButton` and `dismissReasonText`
+stay in `ThreadScreen.kt`. The state type is [`ModalUiState`](current-modal-state.md)
 (`data/model/ModalUiState.kt`, from #445 — moved from `ui/conversations/thread/` to `data/model` in
 [#492](../codebase/492.md) when the fold hoisted to the coordinator, so `ThreadScreen` now imports it).
 Collected in the route host at
@@ -68,7 +73,7 @@ ThreadScreen(state, …, modalState = Hidden, armedOptionId = null, modalSendErr
              onModalOption = vm::onModalOption, onModalCancel = vm::onModalCancel)   ◀── all live since #452
         │  LaunchedEffect(modalSendErrors){ collect → snackbar(modal_send_failed) }   (#452 error collect)
         │  when (modalState):
-        ├─ Open      → PermissionModalOverlay(open, armedOptionId, onOption, onCancel)  ── BasicAlertDialog
+        ├─ Open      → PermissionModalOverlay(open, armedOptionId, onOption, onCancel)  ── MobileGateModal (#815)
         ├─ Dismissed → LaunchedEffect(modalId) { snackbarHostState.showSnackbar(dismissReasonText(source)) }
         └─ Hidden    → Unit
 ```
@@ -90,37 +95,30 @@ so there is **one** `currentModal` across the app and the overlay shows over **w
 
 ## The overlay (`Open`)
 
-`PermissionModalOverlay(open: ModalUiState.Open, armedOptionId, onOption, onCancel)` is a
-**`BasicAlertDialog`** (M3, `@ExperimentalMaterial3Api` — `ThreadScreen` already opts in), **not** the
-opinionated two-button `AlertDialog`: the option count is variable (`permission` = 4, `trust` = 2), so all
-options render uniformly in a `Column` to preserve array order and a single highlight path.
+Since [#815](mobile-modal.md#the-hardened-gate-mobilegatemodal), `PermissionModalOverlay(open:
+ModalUiState.Open, armedOptionId, onOption, onCancel)` draws inside
+[`MobileGateModal`](mobile-modal.md#the-hardened-gate-mobilegatemodal) — the shared mobile-modal shell's
+hardened decision-gate entry point — rather than its own `BasicAlertDialog`. The dialog chrome, the window
+hardening (`SecureOn`, the obscured-touch filter, disabled back/outside dismissal, no close glyph) and the
+Cancel-only footer all now live in `MobileGateModal` / the private `MobileModalShell` it shares with
+`MobileModal`; see that document for the shell-side contract. This surface supplies only its content: the
+server title (passed as `MobileGateModal`'s `title`), the prompt and the option list — the option count is
+variable (`permission` = 4, `trust` = 2), so all options render uniformly in a `Column` to preserve array
+order and a single highlight path.
 
 ```kotlin
-BasicAlertDialog(
-    onDismissRequest = onCancel,                    // inert while both dismiss flags are false
-    properties = DialogProperties(
-        securePolicy = SecureFlagPolicy.SecureOn,   // FLAG_SECURE on the dialog's OWN window — see Security
-        dismissOnBackPress = false,                 // a permission gate must not treat a stray back / outside
-        dismissOnClickOutside = false,              //   tap as an implicit answer (cancel = the explicit button)
-    ),
+MobileGateModal(
+    title = open.title,
+    cancelLabel = stringResource(R.string.modal_cancel),
+    onCancel = onCancel,
 ) {
-    // #452: now that the taps are live, harden the dialog's OWN window against tapjacking.
-    val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
-    SideEffect { dialogWindow?.decorView?.filterTouchesWhenObscured = true }
-    Surface(shape = AlertDialogDefaults.shape, color = .containerColor, tonalElevation = .TonalElevation) {
-        Column(Modifier.padding(24.dp)) {
-            Text(open.title, style = headlineSmall)   // verbatim, plain Text — never MarkdownText
-            Text(open.prompt, style = bodyMedium)     // verbatim, plain Text
-            open.options.forEach { option ->          // wire array order = canonical display/selection order
-                ModalOptionButton(option.label,
-                    isDefault = option.id == open.defaultOptionId,
-                    isArmed   = option.id == armedOptionId,        // #452: reflects the VM's armed option
-                    onClick   = { onOption(option.id) })           // every tap forwards verbatim
-            }
-            Spacer(Modifier.height(8.dp))
-            TextButton(onClick = onCancel, Modifier.align(Alignment.End)) {   // #452: the explicit Cancel
-                Text(stringResource(R.string.modal_cancel))
-            }
+    Text(text = open.prompt, style = MaterialTheme.typography.bodyLarge)   // verbatim, plain Text
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        open.options.forEach { option ->          // wire array order = canonical display/selection order
+            ModalOptionButton(option.label,
+                isDefault = option.id == open.defaultOptionId,
+                isArmed   = option.id == armedOptionId,        // #452: reflects the VM's armed option
+                onClick   = { onOption(option.id) })           // every tap forwards verbatim
         }
     }
 }
@@ -138,7 +136,16 @@ extended from #446's 2-way by [#452](../codebase/452.md):
 |---|---|---|
 | `isArmed` — the VM's armed non-default, awaiting its second confirm (#452) | `FilledTonalButton` (kept **below** the default's filled emphasis so the safe default stays dominant) | `stateDescription = modal_armed_option_desc` ("Tap again to confirm") |
 | `isDefault` — the fail-safe-deny default | high-emphasis filled `Button` | `stateDescription = modal_default_option_desc` ("Default") |
-| neither — a resting non-default | `OutlinedButton` | none (a first tap arms it via the VM) |
+| neither — a resting non-default | `OutlinedButton`, with the shell's primary 1 dp border since #815 (matching the footer Cancel) | none (a first tap arms it via the VM) |
+
+All three states have shared the shell's `MaterialTheme.shapes.small` and 48 dp minimum action height since
+[#815](mobile-modal.md#the-hardened-gate-mobilegatemodal), when the overlay moved into `MobileGateModal`.
+That move also changed the surface the armed button sits on, from `surfaceContainerHigh` to
+`primaryContainer`: in the static light scheme the armed `FilledTonalButton`'s `secondaryContainer` fill
+(`#D6E4F7`) now sits close to the container colour (`#CFE4FF`), so on screen the armed option reads closer
+to a resting option than before, though the `stateDescription` marker (the load-bearing, testable contract)
+is unaffected. #815's verifier review flagged this as non-blocking and worth fixing before or alongside its
+three sibling tickets — no ticket owns the fix yet.
 
 The **fail-safe-deny highlight** — the producer (pyrycode#716) marks **no** option "destructive"; its safety
 design is that the `defaultOptionId` is always the deny/safe option (`reject_once` / `exit`), so the visually
@@ -211,20 +218,26 @@ the render-time output-encoding, the screen-capture hardening, the send-error co
   [`MarkdownText`](markdown-text.md) (which parses) — explicitly forbidden, mirroring
   [`LiteralScreenSurface`](literal-screen-surface.md)'s verbatim-`Text` rule. No `buildAnnotatedString`
   parse, no `SelectionContainer` (text selection is a clipboard-exfiltration path past `FLAG_SECURE`).
-- **Screen-capture hardening** — `DialogProperties(securePolicy = SecureFlagPolicy.SecureOn)` sets
-  `FLAG_SECURE` on the **dialog's own window**. A Compose dialog draws in its own window, so the
-  [#381](../codebase/381.md) `LiteralScreenSurface.SecureScreen()` precedent (which flags the **Activity**
-  window) would **not** cover it; `SecureOn`, **not** the default `Inherit`, is the load-bearing choice
-  because the host thread screen carries `FLAG_SECURE` nowhere. A deterministic Compose property — a real
-  code-level net, not a stochastic rule. (Cannot be asserted via the Compose test API — there is no
-  semantics node for a window flag; **code-review-verified**.)
-- **Tapjacking** ([#452](../codebase/452.md), now that the taps are live) — `filterTouchesWhenObscured =
-  true` on the dialog's **own** window (`(LocalView.current.parent as? DialogWindowProvider)?.window` →
-  `SideEffect { decorView.filterTouchesWhenObscured = true }`), the deterministic View-level analog of
-  `SecureOn` (min SDK 33). It drops touches delivered while another window obscures the dialog —
+- **Screen-capture hardening** — since [#815](mobile-modal.md#the-hardened-gate-mobilegatemodal), owned by
+  [`MobileGateModal`](mobile-modal.md#the-hardened-gate-mobilegatemodal)'s private `gate = true` shell
+  branch: `DialogProperties(securePolicy = SecureFlagPolicy.SecureOn)` sets `FLAG_SECURE` on the **dialog's
+  own window**. A Compose dialog draws in its own window, so the [#381](../codebase/381.md)
+  `LiteralScreenSurface.SecureScreen()` precedent (which flags the **Activity** window) would **not** cover
+  it; `SecureOn`, **not** the default `Inherit`, is the load-bearing choice because the host thread screen
+  carries `FLAG_SECURE` nowhere. A deterministic Compose property — a real code-level net, not a stochastic
+  rule. Previously this had no Compose-test semantics node and was code-review-verified only; #815's
+  `MobileModalTest.gate_window_is_secure_filters_obscured_touches_and_only_cancel_dismisses` now asserts
+  `window.attributes.flags and FLAG_SECURE` at runtime by reaching the dialog window through
+  `(LocalView.current.parent as DialogWindowProvider).window` — the same seam this render captures.
+  `plain_shell_window_is_not_hardened` asserts in the other direction, that `MobileModal`'s plain shell
+  (Edit host, Log data download) carries neither flag, so the hardening cannot leak across the private
+  `gate` switch.
+- **Tapjacking** ([#452](../codebase/452.md), now that the taps are live; owned by `MobileGateModal` since
+  #815) — `filterTouchesWhenObscured = true` on the dialog's **own** window, the deterministic View-level
+  analog of `SecureOn` (min SDK 33). It drops touches delivered while another window obscures the dialog —
   **different fabric** from the second-confirm UX belt (#451): a single obscured tap can at worst arm/deny,
-  and the filter additionally hardens the deliberate two-tap tapjack of an *allow*. Like a window flag, it
-  has no Compose-test semantics node ⇒ **code-review-verified by inspection**.
+  and the filter additionally hardens the deliberate two-tap tapjack of an *allow*. Like `FLAG_SECURE`, this
+  is now runtime-asserted by the same #815 `MobileModalTest` pair rather than code-review-verified only.
 - **Fail-safe-deny preserved; the UI cannot make an allow easier** ([#452](../codebase/452.md)) — the render
   only *reflects* the VM-owned `armedOptionId` (scoped, #451); it never re-derives the arm, interprets
   option-id semantics, or auto-answers. Every tap forwards verbatim via `onClick = { onOption(option.id) }`;
@@ -238,12 +251,16 @@ the render-time output-encoding, the screen-capture hardening, the send-error co
 
 ## Non-dismissable here, and the stale-`Open` question
 
-The overlay never leaves composition on a **stray** gesture: `dismissOnBackPress` /
-`dismissOnClickOutside` are `false`, so back-press / outside-tap are ignored (a permission gate must not read
-them as an implicit answer) and it leaves composition only when `currentModal` transitions away from `Open`
-(a daemon `Dismissed`, including timeout) **or** the user makes a deliberate choice. Cancel is the
-**explicit** low-emphasis `TextButton` ([#452](../codebase/452.md)) → `onModalCancel` → `modal_cancel`;
-`onDismissRequest` stays bound to `onCancel` but is inert while both dismiss flags are `false`.
+The overlay never leaves composition on a **stray** gesture: `MobileGateModal`'s `dismissOnBackPress` /
+`dismissOnClickOutside` are `false` and it draws no close glyph (#815), so back-press / outside-tap / close
+are all ignored (a permission gate must not read them as an implicit answer) and it leaves composition only
+when `currentModal` transitions away from `Open` (a daemon `Dismissed`, including timeout) **or** the user
+makes a deliberate choice. Cancel is the **explicit** outlined button in the shell's footer ([#452](../codebase/452.md)
+introduced it as a low-emphasis `TextButton`; [#815](mobile-modal.md#the-hardened-gate-mobilegatemodal)
+moved it into the shared `ModalCancelButton` styling, matching `MobileModal`'s own Cancel) → `onModalCancel`
+→ `modal_cancel`; `onDismissRequest` stays bound to `onCancel` but is inert while both dismiss flags are
+`false`. `ThreadScreenModalTest.back_press_neither_answers_nor_cancels_and_no_close_glyph_is_offered` (#815)
+asserts the no-close-glyph and inert-back-press guarantees at the screen layer.
 
 The [#445 open question](current-modal-state.md#lifecycle-errors-edge-cases) — should a connection drop clear
 a stale `Open`? — is **not** built here, nor in #451/#452: the daemon validates `modalId` server-side so a
@@ -274,8 +291,17 @@ fallback, hidden) **extended by [#452](../codebase/452.md)** with the AC#4 inter
 No unit test (pure UI; the fold logic is unit-tested in #445, the decision logic in #451).
 `connectedAndroidTest` was **not** run in the build environment (no device — the project norm); the test
 compiles under the green `assembleDebug` / `check` / `compileDebugAndroidTestKotlin` gates ([[androidtest-not-compiled-by-mandatory-gates]]).
-`FLAG_SECURE` and `filterTouchesWhenObscured` are window flags with **no** Compose-test semantics node —
-code-review-verified invariants, not runtime-asserted.
+
+Since [#815](mobile-modal.md#the-hardened-gate-mobilegatemodal), `FLAG_SECURE` and `filterTouchesWhenObscured`
+are **runtime-asserted**, not only code-review-verified: a window flag has no Compose-test semantics node,
+but content composed inside a Compose `Dialog` can capture `LocalView.current`, and
+`(view.parent as DialogWindowProvider).window` exposes `attributes.flags` and
+`decorView.filterTouchesWhenObscured` to an instrumented test. `MobileModalTest`'s
+`gate_window_is_secure_filters_obscured_touches_and_only_cancel_dismisses` and
+`plain_shell_window_is_not_hardened` assert both flags in both directions (present on the gate, absent on
+the plain shell) using this seam, and `ThreadScreenModalTest.back_press_neither_answers_nor_cancels_and_no_close_glyph_is_offered`
+covers the same guarantee at the screen layer. Focused run: `MobileModalTest` (9), `ThreadScreenModalTest`
+(16), `EditHostModalTest` (6) — 31 tests, 0 failures, on the managed `pixel2Api33Atd` device.
 
 > **Known test-strength NIT (code review, optional):** the send-error confidentiality test drives the error
 > over a `Hidden` modal, so the `prompt` (`rm -rf …`) is never composed and the `assertDoesNotExist("rm -rf")`
@@ -286,18 +312,26 @@ code-review-verified invariants, not runtime-asserted.
 ## Visual spec status
 
 Design source [`16-8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8) is the host
-**Conversation Thread** frame; the modal overlay itself is **not yet drawn** there — **design-owed**, same
-treatment as the sibling Phase-3 interactive surfaces [#407](../codebase/407.md) (thinking indicator) /
-[#388](../codebase/388.md) (tool-row status) / [#396](../codebase/396.md) (stall promotion). The behaviour
-+ M3 structure are built now against
-M3 dialog defaults; the modal's visual spec (and the placeholder string copy + the snackbar-vs-inline
-dismiss affordance) reconcile when it lands.
+**Conversation Thread** frame and still does not draw the modal overlay directly — same treatment as the
+sibling Phase-3 interactive surfaces [#407](../codebase/407.md) (thinking indicator) /
+[#388](../codebase/388.md) (tool-row status) / [#396](../codebase/396.md) (stall promotion). Since
+[#815](mobile-modal.md#the-hardened-gate-mobilegatemodal), the overlay's *container* is no longer built
+against bare M3 dialog defaults: it is drawn inside `MobileGateModal`, which follows the same landed
+[`533-2369`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=533-2369) generic mobile-modal
+frame [#638](mobile-modal.md) built the shared shell from (full-height rounded column, `titleLarge` header
+over an `inversePrimary` divider, centred scrolling content, centred footer). The close glyph that frame
+draws is deliberately left out here, since Cancel must stay the only dismissal control. The prompt copy
+itself (title / prompt / option `label`s) is still server-authored placeholder text, not a designed string,
+and the snackbar-vs-inline dismiss affordance remains design-owed.
 
 ## Related
 
 - [#446 implementation notes](../codebase/446.md) — the base overlay: files, line refs, lessons, NITs.
 - [#452 implementation notes](../codebase/452.md) — the live armed affordance + Cancel + send-error +
   tapjacking + route-host wiring: files, line refs, the tapjacking pattern, lessons.
+- [Shared mobile modal](mobile-modal.md) ([#815](mobile-modal.md#the-hardened-gate-mobilegatemodal)) — the
+  overlay's current container: the `MobileGateModal` entry point that now owns the dialog chrome, the four
+  window-hardening properties and the Cancel-only footer this document used to describe as the overlay's own.
 - [Modal answer flow](modal-answer-flow.md) ([#451](../codebase/451.md)) — the behavior half whose
   `armedOptionId` / `modalSendErrors` signals this renders and whose `onModalOption` / `onModalCancel`
   decision methods the route host wires.
