@@ -4,8 +4,11 @@ import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.cacheableThreadRows
 import de.pyryco.mobile.data.cache.settledThreadRows
 import de.pyryco.mobile.data.network.RelayLog
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Keeps one host's threads readable while that host is unreachable (#797).
@@ -41,6 +44,10 @@ import kotlinx.coroutines.flow.flow
  * writes nothing until the turn settles. Holds no scope and launches nothing; cancellation is the
  * collector's.
  *
+ * A confirmed [delete] also removes the conversation's cached content (#798) — the host is this
+ * wrapper's own [serverId], captured from the destination that issued the call, never a global
+ * selection. Archive and unarchive stay plain delegation: they are not removals.
+ *
  * Never logs a row, a conversation id or a server id.
  */
 class CachingConversationRepository(
@@ -48,6 +55,10 @@ class CachingConversationRepository(
     private val cache: ConversationCache,
     private val serverId: String,
 ) : ConversationRepository by delegate {
+    // Ids this destination deleted. The thread that issued the delete keeps collecting until its PopBack,
+    // and a write from that collector after the removal would put the rows straight back.
+    private val deleted = ConcurrentHashMap.newKeySet<String>()
+
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
         flow {
             var base = cache.readThread(serverId, conversationId)
@@ -59,7 +70,7 @@ class CachingConversationRepository(
                 lastDrawn = drawn
                 emit(drawn)
                 val cacheable = cacheableThreadRows(drawn)
-                if (cacheable != lastWritten) {
+                if (cacheable != lastWritten && conversationId !in deleted) {
                     // A failed write leaves lastWritten behind, so the next change retries it.
                     if (cache.writeThread(serverId, conversationId, cacheable).isSuccess) {
                         lastWritten = cacheable
@@ -69,4 +80,17 @@ class CachingConversationRepository(
                 }
             }
         }
+
+    /**
+     * Deletes on the daemon first; only once that succeeded does the cached copy go. A refused delete
+     * propagates with the cache untouched, since the conversation still exists. A failed cache removal
+     * is logged and not surfaced — the conversation is gone, and reporting a failure would claim it is
+     * not. `NonCancellable` so a screen cleared mid-removal cannot strand the content.
+     */
+    override suspend fun delete(conversationId: String) {
+        delegate.delete(conversationId)
+        deleted += conversationId
+        withContext(NonCancellable) { cache.removeConversation(serverId, conversationId) }
+            .onFailure { RelayLog.d { "event=conversation_cache_remove_failed" } }
+    }
 }

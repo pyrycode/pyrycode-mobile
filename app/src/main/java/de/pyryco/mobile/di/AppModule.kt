@@ -82,13 +82,13 @@ val appModule =
         // credentials it belongs to. ConversationCacheBindingInstrumentedTest holds this.
         single<ConversationCache> { FileConversationCache(File(androidContext().noBackupFilesDir, "conversations")) }
         single { KeystoreDeviceStaticKeyStore(get()) } bind DeviceStaticKeyStore::class
-        // #790: a removed pairing takes its host's unsent composer text with it. Bound here rather
-        // than in the unpair controller so neither screen that opens the Edit host modal carries a
-        // draft-store dependency it does not otherwise use, and so any future removal path inherits
-        // the eviction. `save` and `setDisplayName` deliberately do not evict: re-pairing the same id
-        // and renaming a host both keep their drafts.
+        // #790: a removed pairing takes its host's unsent composer text with it, and (#798) its cached
+        // conversation content. Bound here rather than in the unpair controller so neither screen that
+        // opens the Edit host modal carries a draft-store or cache dependency it does not otherwise use,
+        // and so any future removal path inherits the eviction. `save` and `setDisplayName` deliberately
+        // do not evict: re-pairing the same id and renaming a host both keep their drafts and content.
         single {
-            ObservablePairedServerStore(KeystorePairedServerStore(get()), get<ComposerDraftStore>()::clearHost)
+            ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), lazy { get() }))
         } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
         single { NoiseClientInfo(deviceName = Build.MODEL, clientVersion = BuildConfig.VERSION_NAME) }
         single {
