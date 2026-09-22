@@ -90,6 +90,9 @@ class ScriptedThreadHarness(
             repository = TappingConversationRepository(repo),
             connectionStateSource = connectionStateSource,
             appPreferences = AppPreferences(newDataStore()),
+            // #789: a store of this harness's own — the scenarios never type, and an isolated one keeps
+            // the scripted render independent of any other surface's composer state.
+            draftStore = ComposerDraftStore(),
             liveSessionEvents = repo.liveSessionEvents,
             interrupt = { interruptTargets += it },
         )

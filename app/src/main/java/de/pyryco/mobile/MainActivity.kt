@@ -409,6 +409,7 @@ internal fun PyryNavHost(
                 val isBusy by vm.isBusy.collectAsStateWithLifecycle()
                 val modalState by vm.currentModal.collectAsStateWithLifecycle()
                 val armedOptionId by vm.armedOptionId.collectAsStateWithLifecycle()
+                val draft by vm.draft.collectAsStateWithLifecycle()
                 LaunchedEffect(vm) {
                     vm.navigationEvents.collect { event ->
                         when (event) {
@@ -448,6 +449,8 @@ internal fun PyryNavHost(
                     onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
                     onDemandOlderHistory = vm::onDemandOlderHistory,
                     onRetryOlderHistory = vm::onRetryOlderHistory,
+                    draft = draft,
+                    onDraftChange = vm::onDraftChange,
                 )
             }
         }
