@@ -77,3 +77,33 @@ growth and revealing a delimiter after a tall finalized wrap-up. Both live besid
 `QueuedBacklogTest`, outside the routine UI gate's excluded `e2e` package. See
 [Compose evidence](development-verification.md#compose-evidence) for matcher scope
 and the distinction between semantic existence and display.
+
+`PingReplyAssertions.kt`'s `pingReplyMatcher()` anchors on content, not placement
+(changed by [#782](../codebase/782.md)). #694 originally wrote it as `hasText("ping")
+and hasAnyAncestor(hasScrollAction())`, reasoning that the app bar title and the
+foot-of-list `QueuedBacklog` section both sat outside `ThreadScreen`'s scrollable
+message list, so "has a scroll ancestor" was enough to exclude them. #782 folded the
+queued row inline into the same `LazyColumn` (see
+[Queued backlog rendering](queued-backlog-section.md)), so a queued entry whose text
+is exactly `"ping"` gained a scroll ancestor and the matcher started matching it,
+reddening `PingReplyTest` on the pre-verifier UI gate. The matcher now anchors on
+`MessageContainer`'s `MESSAGE_BUBBLE_TEST_TAG` instead —
+`hasText("ping", ignoreCase = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))`
+— which states #694's actual intent (reply detection is independent of queued text) as
+content rather than placement: a queued row renders its own `Surface` and never a
+message bubble, and neither does the app bar title, so both are excluded without a
+scroll clause, and an assistant reply still matches because both roles reach the tag
+through `MessageContainer`. `awaitDisplayedPingReply` shares the matcher, so the same
+fix also covers its three `InteractiveStreamE2ETest` call sites, each a singular
+`onNode(...)` that would otherwise throw on multiple matches once a queued `"ping"`
+reached them.
+
+**General lesson for the next structural change to `ThreadScreen`'s list:** a
+blast-radius search keyed on the symbols a change touches (`QueuedBacklog`,
+`foldQueuedRows`, `ThreadUiState`) will not surface a test helper whose matcher
+encodes a *structural position* rather than a symbol reference — `pingReplyMatcher`
+read as "text is not decoration" but was actually written as "text is inside the
+scrollable list," and nothing in #782's diff mentioned it. Search test helpers for
+placement-coded matchers (`hasAnyAncestor(hasScrollAction())`, sibling-index lookups,
+tree-order assumptions under `reverseLayout`) whenever a change moves content between
+regions of the screen, not just when it changes the content's type.
