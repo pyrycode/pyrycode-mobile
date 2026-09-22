@@ -334,6 +334,51 @@ internal fun RateLimitedPayloadDto.toReading(): UsageLimitReading? =
     }
 
 /**
+ * The `thinking_progress` control event (#801, pyrycode#1386): claude is actively reasoning, and
+ * roughly how much — its **only** mid-turn proof of life on the stream-json surface, since nothing else
+ * crosses the wire during a long assistant turn. Decode-only — the phone never sends one. Always decode
+ * through [MobileJson].
+ *
+ * Wire SSOT: pyrycode `internal/protocol/interactive.go` (`ThinkingProgressPayload`) +
+ * `docs/protocol-mobile.md` § `thinking_progress`, which owns the measured consumer hazards; they are
+ * restated on [de.pyryco.mobile.data.repository.ThinkingProgress] for the consumers that hold the
+ * decoded value, not here. Shape: `{conversation_id, estimated_tokens, estimated_tokens_delta}` — three
+ * fields, all **strict-required, non-null** with no Kotlin default (the [CompactingPayloadDto]
+ * posture): the Go struct sets no `omitempty`, so a `0` reading arrives **present-and-zero** rather
+ * than omitted, which is exactly what lets every field stay required. A missing field, or one whose
+ * JSON shape cannot be read as its declared type, fails the structural decode with a
+ * [kotlinx.serialization.SerializationException] and the one envelope is dropped (AC #1). The measured
+ * latitude documented on [ApiRetryPayloadDto] applies here too: kotlinx's *tree* decoder accepts a
+ * **quoted** primitive even with `isLenient = false`, so that is not a strictness probe a test should
+ * lean on.
+ *
+ * Both readings are [Long], not [Int]: the Go fields are 64-bit `int`s, so a narrower Kotlin type would
+ * fail to decode a value the wire can legally express and drop the frame — the width trap
+ * [de.pyryco.mobile.data.repository.QueuedMessage.id] records for `queued_msg_id`. Neither is validated
+ * or bounded here; a reading is carried **verbatim**, including one that falls below its predecessor
+ * (the frame is emitted per inference request, and the reading restarts at every request boundary).
+ *
+ * No `toX()` mapper, following [CompactingPayloadDto]'s precedent and deliberately unlike
+ * [ApiRetryPayloadDto.toStatus]: that one exists to collapse four wire fields into a counter-carrying
+ * domain type with real edge semantics, whereas here nothing is narrowed, dropped or validated — the
+ * two integers already *are* the domain shape — so a mapper would be a ceremonial field copy. The
+ * decoder strips the routing id and constructs the domain value inline.
+ *
+ * This is **state**, not one of the [LiveSessionEvent] streaming events, so it never lands on the live
+ * event stream. It carries **no `turn_id`** and drives no turn lifecycle: the daemon emits it during an
+ * inference request that may not have produced assistant content yet, so a turn opened on one would
+ * have no guaranteed end, and the turn's thinking state is already [LiveSessionEvent.TurnState]'s. It
+ * also carries **no reasoning text** — the content of claude's thinking is never forwarded on this wire
+ * (ADR 025), so a consumer that tries to render text has nothing to render.
+ */
+@Serializable
+internal data class ThinkingProgressPayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    @SerialName("estimated_tokens") val estimatedTokens: Long,
+    @SerialName("estimated_tokens_delta") val estimatedTokensDelta: Long,
+)
+
+/**
  * Map a decoded [TurnStatePayloadDto] to a [LiveSessionEvent.TurnState], or **null** when [state] is
  * not one of the three documented values (AC #3). Modeling `state` as a plain `String` in the DTO
  * (not a strict enum) keeps the unrecognized-value decision a *mapper* concern: an unknown `state`

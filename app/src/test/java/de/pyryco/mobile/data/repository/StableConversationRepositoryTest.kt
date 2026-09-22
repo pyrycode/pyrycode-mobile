@@ -422,6 +422,48 @@ class StableConversationRepositoryTest {
             assertEquals(listOf(null, reading, null), readings)
         }
 
+    // ---- #801: observeThinkingProgress delegates and tracks connection churn ---------------------
+
+    @Test
+    fun observeThinkingProgress_whileAbsent_emitsNull() =
+        runTest {
+            val current = MutableStateFlow<ConversationRepository?>(null)
+            val facade = StableConversationRepository(current)
+
+            val readings = mutableListOf<ThinkingProgress?>()
+            backgroundScope.launch { facade.observeThinkingProgress("c1").collect { readings += it } }
+            runCurrent()
+
+            assertEquals(listOf<ThinkingProgress?>(null), readings)
+        }
+
+    // The slice's reconnect proof: a reading is NOT held across a connection switch. The daemon
+    // re-asserts no `thinking_progress` on connect, so a held one would report the depth of a think
+    // that has since finished — and the clear is structural (a fresh connection-scoped repository plus
+    // this flatMapLatest), not a clear written into any demux arm.
+    @Test
+    fun observeThinkingProgress_delegatesToLiveRepo_andDoesNotSurviveAReconnect() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            val readings = mutableListOf<ThinkingProgress?>()
+            backgroundScope.launch { facade.observeThinkingProgress("c1").collect { readings += it } }
+            runCurrent()
+            assertEquals(listOf<ThinkingProgress?>(null), readings)
+
+            repoA.pushThinkingProgress(ThinkingProgress(184, 12))
+            runCurrent()
+            assertEquals(listOf(null, ThinkingProgress(184, 12)), readings)
+
+            // Switching to a fresh connection drops the prior connection's reading back to unavailable.
+            current.value = repoB
+            runCurrent()
+            assertEquals(listOf(null, ThinkingProgress(184, 12), null), readings)
+        }
+
     // ---- #590: observeSessionSettings delegates, and a host switch resets the reading ------------
 
     @Test
@@ -620,6 +662,14 @@ class StableConversationRepositoryTest {
         override fun observeCompacting(conversationId: String): Flow<Boolean> = compacting
 
         override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> = usageLimit
+
+        private val thinkingProgress = MutableStateFlow<ThinkingProgress?>(null)
+
+        fun pushThinkingProgress(value: ThinkingProgress?) {
+            thinkingProgress.value = value
+        }
+
+        override fun observeThinkingProgress(conversationId: String): Flow<ThinkingProgress?> = thinkingProgress
 
         private val sessionSettings = MutableStateFlow<SessionSettings?>(null)
 

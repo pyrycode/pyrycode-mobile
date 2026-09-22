@@ -109,6 +109,37 @@ interface ConversationRepository {
     fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> = flowOf(null)
 
     /**
+     * Emits how far [conversationId]'s current reasoning has got (#801) — claude's own running token
+     * estimate, and the **only** mid-turn proof of life the stream-json surface offers, since nothing
+     * else crosses the wire during a long assistant turn. Cold flow; re-emits on every change.
+     *
+     * **`null` is "no reading", and it is never a statement that claude is not thinking.** It covers no
+     * live connection, a connection without the `interactive` capability, a conversation no frame named,
+     * the window before the first frame, and the state after a clear. **Absence proves nothing**, for two
+     * measured reasons the wire contract owns: the PTY surface emits none of these at all, and the
+     * producer's rate bound means a quiet window may only be one where the accumulated delta has not yet
+     * crossed the threshold. Nothing may infer a stall from a gap here — [observeStall] is the separate
+     * signal for that, untouched by this one in both directions.
+     *
+     * **The reading is not monotonic.** It restarts near zero at every inference-request boundary, which
+     * happens repeatedly inside one turn, so a consumer must never clamp it with a running maximum and
+     * never subtract two readings expecting a non-negative result. A reading that falls, repeats or
+     * arrives as `0` is a real reading carried verbatim, not an absent one — `0` in particular is a
+     * fresh restart and must not be read as "nothing to show".
+     *
+     * **It reports no turn.** The frame carries no turn id and opens or closes no turn; the turn's own
+     * thinking state is [de.pyryco.mobile.data.network.LiveSessionEvent.TurnState]'s. Having no falling
+     * edge of its own, the reading is cleared by *other* events — the conversation's turn end and its
+     * session transition — and is never held across a reconnect, since the daemon re-asserts none on
+     * connect and a held one would report the depth of a think that has since finished.
+     *
+     * Default `flowOf(null)` — implementations without an interactive wire (the fake, inline test
+     * doubles) inherit "no reading" and need no override, the same cascade-avoidance as
+     * [observeCompacting] / [observeApiRetry] / [observeModelMenu].
+     */
+    fun observeThinkingProgress(conversationId: String): Flow<ThinkingProgress?> = flowOf(null)
+
+    /**
      * Whether this repository can actually perform the conversation-mutation actions
      * ([archive] / [unarchive] / [rename] / [startNewSession] / [changeWorkspace] / [delete]).
      * A UI gating consumer reads this to stop offering actions the backend cannot service.
@@ -797,4 +828,40 @@ data class UsageLimitReading(
     val resetsAt: Long,
     val utilization: Double?,
     val truncatedFields: List<String>?,
+)
+
+/**
+ * How far a conversation's current reasoning has got (#801, pyrycode#1386) — the element type of
+ * [ConversationRepository.observeThinkingProgress], co-located with the contract it serves like
+ * [ApiRetryStatus] / [SessionSettings] / [ModelMenu].
+ *
+ * A **reading, not a state transition**: it reports depth, never that a turn began or ended, and
+ * absence of one proves nothing (see the observe seam for both measured reasons). There is no
+ * "not thinking" member and deliberately no sealed family — the wire has no falling edge of its own, so
+ * such a member would be a claim the daemon never makes; "no reading" is `null` at the flow instead.
+ *
+ * **Two [Long]s and no [String].** The routing `conversation_id` stays a key in the repository
+ * projection and never reaches this value, so no daemon-supplied text — banner, screen scrape or
+ * otherwise — can structurally reach a consumer through this arm; it is the narrowest payload in the
+ * conversation-status family. [Long] rather than [Int] because the wire field is a 64-bit integer, and
+ * because [SessionSettings.usedTokens] / [SessionSettings.windowTokens] are already [Long] — a consumer
+ * reading this against the context window needs no widening cast.
+ *
+ * `data` is load-bearing rather than cosmetic: structural equality is what makes the repository's
+ * `distinctUntilChanged` projection behave (the [ApiRetryStatus] rule). A changed reading is a
+ * different value and re-emits; another conversation's frame leaves this one equal and does not.
+ *
+ * @param estimatedTokens Claude's estimate of the tokens spent thinking as of the emitting line,
+ *   **carried verbatim and not monotonic**: it is cumulative within one *inference request*, not within
+ *   a turn, and restarts near zero at every request boundary — repeatedly inside a single turn. Never
+ *   clamp it with a running maximum and never difference two readings expecting a non-negative result.
+ *   `0` is a real reading (a fresh restart), not an absent one.
+ * @param estimatedTokensDelta Claude's per-line increment, exactly as the emitting line carried it.
+ *   **The values a client receives do not sum to the turn's total** — the producer's rate bound drops
+ *   most of claude's lines and their increments go with them, and no field reports the residue. It is a
+ *   rate reading, never an accumulator input.
+ */
+data class ThinkingProgress(
+    val estimatedTokens: Long,
+    val estimatedTokensDelta: Long,
 )

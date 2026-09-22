@@ -93,6 +93,18 @@ class StableConversationRepository(
         switchToLive<UsageLimitReading?>(null) { it.observeUsageLimit(conversationId) }
 
     /**
+     * The thinking-progress reading for [conversationId] (#801), switched over the live connection like
+     * every other cold read — and here the switch is the **whole clearing mechanism for a reconnect**,
+     * not just plumbing. The reading has no falling edge on the wire, so a retained one would report the
+     * depth of a think that has since finished; [flatMapLatest] dropping the previous connection's
+     * projection the instant the connection changes is what makes that structurally impossible, with no
+     * clear written into any demux arm. `null` while none is live is the same "no reading" value an
+     * unheard conversation produces, so a consumer has one absent case, not two.
+     */
+    override fun observeThinkingProgress(conversationId: String): Flow<ThinkingProgress?> =
+        switchToLive<ThinkingProgress?>(null) { it.observeThinkingProgress(conversationId) }
+
+    /**
      * The settings reading for [conversationId] (#590), switched over the live connection like every
      * other cold read — and here the switch is the **host-isolation mechanism**, not just plumbing:
      * [flatMapLatest] drops the previous connection's read the instant the connection changes, and the

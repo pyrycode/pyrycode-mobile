@@ -51,6 +51,7 @@ import de.pyryco.mobile.data.network.SessionSettingsUpdatedPayloadDto
 import de.pyryco.mobile.data.network.SessionTransitionPayloadDto
 import de.pyryco.mobile.data.network.SetSessionSettingsPayloadDto
 import de.pyryco.mobile.data.network.StallPayloadDto
+import de.pyryco.mobile.data.network.ThinkingProgressPayloadDto
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
 import de.pyryco.mobile.data.network.ToolUsePayloadDto
 import de.pyryco.mobile.data.network.TurnEndPayloadDto
@@ -395,6 +396,33 @@ class RemoteConversationRepository(
     private val usageLimitsByConversation = MutableStateFlow<Map<String, UsageLimitReading>>(emptyMap())
 
     /**
+     * `conversationId -> latest thinking-progress reading` (#801) — how far that conversation's current
+     * reasoning has got. A payload-carrying `Map`, [apiRetryByConversation] / [modelMenusByConversation]'s
+     * shape rather than [compactingConversations]' bare `Set`, for the reason #593 chose it: the wire
+     * carries a reading, and membership cannot represent one.
+     *
+     * **The write is a pure replace, and that is the mechanism rather than a convention.** Each frame
+     * stores its own reading with `it + (id to reading)`; the prior value is never read, so there is
+     * nowhere for a running maximum, a difference between readings, or a truthiness gate to live. That
+     * matters here more than on any sibling: the reading **restarts near zero at every inference-request
+     * boundary**, repeatedly inside one turn, so a merge-shaped write is exactly where a well-meaning
+     * monotonicity guard would appear and silently pin the reading at a stale peak.
+     *
+     * Three writers, all on the single [init] inbound collector so no two race: the `thinking_progress`
+     * arm stores a reading, and the `turn_end` and `session_transition` arms each remove a key. The
+     * removals are the **only** clears, because the wire has no falling edge of its own — receiving a
+     * frame neither opens nor closes a turn. Removal of an absent key is a no-op and [MutableStateFlow]
+     * conflates the equal map, so a turn ending on a conversation with no reading emits nothing.
+     * [observeThinkingProgress] fans out from it.
+     *
+     * Connection-scoped in-memory state — a fresh repository per connection (#351) starts empty, so a
+     * reading **never survives a reconnect**, which is a correctness requirement and not merely tidiness:
+     * the daemon re-asserts no `thinking_progress` on connect, so a held one would report the depth of a
+     * think that has since finished.
+     */
+    private val thinkingProgressByConversation = MutableStateFlow<Map<String, ThinkingProgress>>(emptyMap())
+
+    /**
      * `conversationId -> settings-read ordinal` (#590) — the **refresh trigger** for
      * [observeSessionSettings], deliberately not a cache of the readings themselves. A bump means "the
      * reading you hold is stale, read again"; the value is meaningless beyond being different from the
@@ -731,7 +759,19 @@ class RemoteConversationRepository(
                             is LiveSessionEvent.AssistantDelta -> applyAssistantDelta(event)
                             is LiveSessionEvent.ToolUse -> applyToolUse(event)
                             is LiveSessionEvent.ToolResult -> applyToolResult(event)
-                            is LiveSessionEvent.TurnEnd -> finalizeAssistantTurn(event)
+                            is LiveSessionEvent.TurnEnd -> {
+                                finalizeAssistantTurn(event)
+                                // First of the two clears for #801's thinking-progress reading, which has
+                                // no falling edge of its own: the turn whose reasoning it described has
+                                // ended, so a retained reading would report the depth of a finished think.
+                                // This belongs HERE, inside the TurnEnd branch — NOT beside the stall
+                                // clear above, which runs for every live event: hoisted there it would
+                                // wipe the reading on each `assistant_delta` and `tool_use` while still
+                                // passing a turn-end test. Routed by the event's own conversation id, so
+                                // one conversation's turn ending cannot clear another's reading, and a
+                                // removal of an absent key is an inert no-op.
+                                thinkingProgressByConversation.update { it - event.conversationId }
+                            }
                             else -> Unit
                         }
                         mutableLiveSessionEvents.tryEmit(event)
@@ -883,6 +923,40 @@ class RemoteConversationRepository(
                     }
                 }
             }
+            TYPE_THINKING_PROGRESS -> {
+                // How far this conversation's reasoning has got (#801). Same `interactive` gate as the
+                // live-session / `stall` / `queue_state` / `api_retry` / `compacting` siblings: a
+                // non-interactive phone never decodes a spurious `thinking_progress` from a buggy/hostile
+                // daemon that ignored the server-side fan-out gate (fail-closed, defence in depth). One
+                // unconditional REPLACE of this conversation's entry, leaving every other conversation
+                // untouched (AC #3) — and the replace is load-bearing rather than incidental: the reading
+                // is NOT monotonic (it restarts near zero at every inference-request boundary, several
+                // times inside one turn), so it is carried verbatim with no max guard, no difference
+                // against the prior reading, and no truthiness check that would read a legitimate `0`
+                // restart as absence (AC #2). A malformed payload decodes to null and is dropped so the
+                // single inbound consumer survives (AC #1).
+                //
+                // There is deliberately NO clearing branch here: unlike `compacting` / `api_retry` the
+                // wire carries no edge, so the clears live on the `turn_end` and `session_transition`
+                // arms instead. This frame opens and closes no turn — it carries no turn_id, the daemon
+                // emits it during an inference request that may not have produced assistant content yet,
+                // and the turn's thinking state is already `turn_state`'s.
+                //
+                // Like the `queue_state` / `api_retry` / `compacting` siblings and unlike the
+                // live-session arm, this folds no thread row and touches stalledConversations in NEITHER
+                // direction (AC #4). Not raising one is the wire contract's explicit rule — the rate
+                // bound means a quiet window is not a stall, and the PTY surface emits none of these at
+                // all, so nothing here may infer a stall from a gap. Not clearing one is the `compacting`
+                // rule for the same reason it exists there: a reading is claude busy, not turn forward
+                // progress, and clearing a stall here would let a daemon suppress the phone's stall
+                // indicator by emitting these frames. Drop silently — nothing here logs the payload (a
+                // logged conversation_id is a cross-conversation correlation leak).
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    decodeThinkingProgress(envelope)?.let { (conversationId, reading) ->
+                        thinkingProgressByConversation.update { it + (conversationId to reading) }
+                    }
+                }
+            }
             TYPE_SESSION_TRANSITION -> {
                 // A session boundary (#336, pyrycode#656/#657/#740). Same `interactive` gate as the
                 // live-session / `stall` / `queue_state` siblings: a non-interactive phone never decodes a
@@ -910,6 +984,13 @@ class RemoteConversationRepository(
                         // conversation_id as its two siblings, so a transition cannot invalidate another
                         // conversation's reading.
                         bumpSettingsRevision(conversationId)
+                        // Fourth write since #801, and the second of the two clears for the
+                        // thinking-progress reading: the session whose reasoning it described has been
+                        // replaced, so the reading describes a think that can no longer be running.
+                        // Routed by the same decoded conversation_id as its three siblings, so a
+                        // transition cannot clear another conversation's reading; removing an absent key
+                        // is an inert no-op.
+                        thinkingProgressByConversation.update { it - conversationId }
                     }
                 }
             }
@@ -1157,6 +1238,37 @@ class RemoteConversationRepository(
         try {
             val dto = MobileJson.decodeFromJsonElement<RateLimitedPayloadDto>(envelope.payload)
             dto.conversationId to dto.toReading()
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+
+    /**
+     * Decode one v2 `thinking_progress` envelope (#801) to its routing conversation id and the
+     * [ThinkingProgress] reading, or **null** when it cannot be read. Decodes the untrusted
+     * [Envelope.payload] through the single configured [MobileJson]; returning a [Pair] of the routing
+     * id and the already-mapped domain value keeps the untrusted wire DTO from escaping this boundary,
+     * matching every sibling decoder. The whole body is one `try`/`catch (IllegalArgumentException)`
+     * ([kotlinx.serialization.SerializationException] ⊂ [IllegalArgumentException]), so a malformed
+     * payload — a missing field, or one whose JSON shape cannot be read as its declared type — yields
+     * `null`, dropping the one envelope while the lone inbound collector survives (AC #1).
+     *
+     * Structural malformation is the **only** null path: both readings are plain [Long]s carried
+     * verbatim, so there is no unrecognized *value* to reject and no mapper drop exists here (unlike
+     * [decodeLiveSessionEvent] / [decodeSessionTransition]). In particular a **negative** reading is not
+     * rejected — rewriting server data at the decode boundary would diverge from every sibling's
+     * carry-verbatim posture, and the wire documents no lower bound to enforce. The domain value is
+     * constructed inline rather than by a `toX()` mapper, following [decodeCompacting]: nothing is
+     * narrowed or validated, so a mapper would be a ceremonial field copy.
+     *
+     * Mirrors [decodeStall] / [decodeApiRetry]'s drop idiom — **nothing here logs the payload** (a
+     * logged conversation_id is a cross-conversation correlation leak), and the caught throwable is
+     * discarded rather than surfaced, since kotlinx-serialization can quote the offending input in its
+     * message.
+     */
+    private fun decodeThinkingProgress(envelope: Envelope): Pair<String, ThinkingProgress>? =
+        try {
+            val dto = MobileJson.decodeFromJsonElement<ThinkingProgressPayloadDto>(envelope.payload)
+            dto.conversationId to ThinkingProgress(dto.estimatedTokens, dto.estimatedTokensDelta)
         } catch (e: IllegalArgumentException) {
             null
         }
@@ -2004,6 +2116,29 @@ class RemoteConversationRepository(
      * decode still **carried** it.
      */
     private fun isReadable(reading: UsageLimitReading): Boolean = reading.resetsAt == 0L || now().epochSeconds < reading.resetsAt
+
+    /**
+     * How far [conversationId]'s current reasoning has got (#801), a pure cold projection of the shared
+     * [thinkingProgressByConversation] `StateFlow`. Issues no request — rides the live
+     * `thinking_progress` frames. An absent key is `null`, which is **no reading**: a normal resting
+     * state covering a conversation this connection heard no frame for, the window before the first
+     * frame, and the state after a clear — never a statement that claude is not thinking, since absence
+     * proves nothing on this wire.
+     *
+     * [distinctUntilChanged] suppresses only value-*identical* re-emissions, so a `thinking_progress`
+     * for **another** conversation does not re-emit this flow. It is **not** a monotonicity filter and
+     * **not** a truthiness gate: a *lower* reading is a different [ThinkingProgress] value and does
+     * reach the collector (the [observeApiRetry] climbed-counter property, in the opposite direction),
+     * and so does a reading of `0` — precisely what a membership `Set` could not express. A
+     * value-identical repeat costs a consumer nothing and leaves the held reading exactly what the
+     * daemon sent.
+     *
+     * A `StateFlow` always has a current value, so every collector (including a `flatMapLatest`
+     * re-subscription through the facade) receives the current reading (`null` until a frame lands) on
+     * subscription; the one inbound consumer fans out to unlimited collectors.
+     */
+    override fun observeThinkingProgress(conversationId: String): Flow<ThinkingProgress?> =
+        thinkingProgressByConversation.map { it[conversationId] }.distinctUntilChanged()
 
     /**
      * The model menu this connection heard for [conversationId] (#791), a cold projection of the
@@ -3082,6 +3217,17 @@ class RemoteConversationRepository(
          * closes a turn.
          */
         const val TYPE_RATE_LIMITED = "rate_limited"
+
+        /**
+         * Capability-gated status event: how far a conversation's current reasoning has got
+         * `{conversation_id, estimated_tokens, estimated_tokens_delta}` (#801, pyrycode#1386) — claude's
+         * only mid-turn proof of life on the stream-json surface. Unlike [TYPE_COMPACTING] and
+         * [TYPE_API_RETRY] it carries **no edge at all**: it is a reading, with no `active` flag and no
+         * falling edge, so its clears live on the [TYPE_SESSION_TRANSITION] and `turn_end` arms rather
+         * than on this one. Rate-bounded and **not monotonic** (it restarts at every inference-request
+         * boundary), and **absence proves nothing** — the PTY surface emits none at all.
+         */
+        const val TYPE_THINKING_PROGRESS = "thinking_progress"
 
         /**
          * Capability-gated thread event: a session transition `{conversation_id, previous_session_id,

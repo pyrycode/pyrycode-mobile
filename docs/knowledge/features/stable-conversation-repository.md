@@ -99,6 +99,13 @@ private fun <T> switchToLive(whenAbsent: T, select: (ConversationRepository) -> 
   compacting"; a compaction state from a prior connection never leaks across a reconnect (each
   connection's remote repo starts with an empty `compactingConversations` set, #351). See
   [Compacting state](compacting-state.md).
+- `observeThinkingProgress(id)` (#801) → `switchToLive<ThinkingProgress?>(null) { … }` — no live
+  connection reports "no reading," the same absent value an unheard conversation produces, so a
+  consumer has one absent case, not two. Here the switch is the **whole clearing mechanism for a
+  reconnect**, not just plumbing: the reading has no falling edge on the wire, so a retained one would
+  report the depth of a think that has since finished, and `flatMapLatest` dropping the previous
+  connection's projection the instant the connection changes makes that structurally impossible with no
+  clear written into any demux arm. See [Thinking-progress state](thinking-progress-state.md).
 
 When `currentRepository` emits a new value, `flatMapLatest` **cancels the previous inner flow** and
 subscribes the new one:
@@ -280,6 +287,12 @@ pass-through. The eight tests map to the ACs, the key one being
 - Delegated observable: [Compacting state](compacting-state.md) ([#596](../codebase/596.md)) — the
   `observeCompacting` read forwarded with `whenAbsent = false`, the reachability path that will let the
   thread ViewModel observe the live repo's compaction state once sibling #597 renders it.
+- Delegated observable: [Thinking-progress state](thinking-progress-state.md)
+  ([#801](../../specs/architecture/801-thinking-progress-decode.md)) — the `observeThinkingProgress`
+  read forwarded with `whenAbsent = null`; the reachability path that will let the thread ViewModel
+  observe the live repo's thinking-progress reading once the unfiled rendering sibling consumes it, and
+  the mechanism (via `flatMapLatest`) that drops a reading across a reconnect with no clear written into
+  any demux arm.
 - Delegated capability: `mutationsSupported` ([#507](../codebase/507.md)) — the fail-safe-deny `false`
   delegation (the third not-connected posture: answer, don't throw); consumed by no composable yet (#508).
 - Delegated one-shot: `requestHistory` (#623) — the on-disk history page read, forwarded verbatim with
