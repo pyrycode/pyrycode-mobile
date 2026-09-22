@@ -56,3 +56,20 @@ None named by the ticket. Pending for the documentation stage: fold the boundary
 ## Open questions
 
 - None outstanding; the Technical Note's `occurred_at` question is resolved above from the daemon source.
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] No findings. Every boundary still enters through one decoder, `SessionTransitionPayloadDto.toBoundary`, for both the live arm (`decodeSessionTransition`) and history (`withHistoryEntry`); the only other producers are `FakeConversationRepository`'s seed and `ThreadScreen` previews. The ids and `occurredAt` are daemon-supplied and reach only the dedup predicate and the list key, never a log, URL, path or markup. The key is the one place daemon strings are concatenated, and the plan length-prefixes both ids so a hostile id containing `->`, `:` or `@` cannot forge a second triple's key; `Instant.toString()` is injective and sits last. Namespaces (`msg:`, `boundary:`, `unrecognized:`, `queued-row:`) stay disjoint by literal prefix.
+- [Trust boundaries] No findings on the dedup direction. A hostile daemon repeating a triple with a different `reason` or `workspaceCwd` is collapsed to the first row, because `holdsBoundary` and the key read the same three fields. Fail-safe direction: a dropped delimiter, never two rows with one key.
+- [Tokens / storage / IPC / crypto] Not applicable: the change adds no token, no file, no intent, no primitive; it edits an in-memory predicate and a string key.
+- [Network & I/O] SHOULD FIX (accepted, not gated): the live append now scans the conversation's thread once per `session_transition` (O(n)), as the history path already does per page row. A daemon flooding transitions grows the thread without bound, but it could already do that with any row kind; the scan adds a linear factor, not a new vector. No cap added here.
+- [Logs] No findings: nothing new is logged; the session-transition arm keeps its "drop silently" posture.
+- [Concurrency] No findings: the hold check runs inside the existing `threadByConversation.update` CAS, so check-and-append is atomic against the other writers; returning the unchanged map on a repeat emits nothing (StateFlow conflation).
+- [Threat model] OUT OF SCOPE: cross-reconnect replay of boundaries (a reconnect re-delivering an old transition) stays the deferred #402 concern; the triple identity happens to collapse an identical replay, but no reconnect-specific guarantee is claimed.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-09-23
