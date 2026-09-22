@@ -11,14 +11,14 @@ import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
-import de.pyryco.mobile.data.preferences.AppPreferences
-import de.pyryco.mobile.data.preferences.Effort
-import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.ModelMenu
+import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
+import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
@@ -107,14 +108,12 @@ data class ThreadUiState(
     val workspacePath: String = "",
     val lastUsedAt: Instant? = null,
     val sessionCount: Int = 0,
-    // #544: the routing key for session-scoped settings mutations — Conversation.currentSessionId (not
-    // the conversation id; this is the first session-scoped mobile mutation). A routing field carried on
-    // the state (sourced from the fetched conversation), not rendered by any composable — the same posture
-    // as mutationsSupported. Empty until the conversation is resolved (and empty on the live path, where
-    // the v2 wire carries no session id yet — a send then fail-safes to session.not_found → revert).
-    val currentSessionId: String = "",
-    val selectedModel: Model = Model.OPUS_4_7,
-    val selectedEffort: Effort = Effort.HIGH,
+    // #807: the thread's whole run-configuration surface — what the daemon has configured, what it
+    // published as selectable, and what a tap has asked for but not yet had confirmed. Replaces #544's
+    // `selectedModel` / `selectedEffort` device-enum pair AND its `currentSessionId` routing field: the
+    // session a write must address is [SessionSettings.sessionId], not Conversation.currentSessionId, and
+    // one carrier for all three keeps the footer and the Status sheet agreeing by construction.
+    val runConfig: ThreadRunConfig = ThreadRunConfig(),
     val yoloEnabled: Boolean = false,
     val mutationsSupported: Boolean = true,
     // #777/#778: what the thread's single oldest-end slot shows — loading, a retry, a dead end or
@@ -128,11 +127,119 @@ data class SaveAsChannelDialogState(
     val initialName: String,
 )
 
+/**
+ * One selectable model (#807) — a [de.pyryco.mobile.data.repository.ModelMenuRow] reduced to what the
+ * Status sheet renders plus the argument a write sends back.
+ *
+ * **[value] is the only field that stays verbatim, and the only one that is never rendered.** It is the
+ * argument [ConversationRepository.setSessionSettings] takes; it is an alias (`sonnet`), a bracketed
+ * variant (`opus[1m]`) or `default`, so nothing parses it and nothing presents it as a version.
+ * [label] and [detail] are the same daemon strings put through [inert] — see its KDoc for why the
+ * client owes that.
+ */
+data class ThreadModelChoice(
+    val value: String,
+    val label: String,
+    /** The row's `resolvedModel`, or `""` when it says nothing [label] does not already say. */
+    val detail: String,
+    val effortChoices: List<ThreadEffortChoice>,
+)
+
+/** One selectable reasoning-effort level of one [ThreadModelChoice] (#807). Same split as its parent:
+ *  [value] is the verbatim write argument, [label] the inert render of it. */
+data class ThreadEffortChoice(
+    val value: String,
+    val label: String,
+)
+
+/**
+ * The thread's run configuration (#807) — the daemon's saved reading, the vocabulary it published, and a
+ * tap that has not yet been confirmed, in one value the footer line and the Status sheet both read.
+ *
+ * **Nothing here falls back to `AppPreferences`.** An unavailable reading is rendered as *unknown*: the
+ * three-entry `Model` and five-entry `Effort` device enums are this phone's guesses, and a value this
+ * server never published is refused server-side.
+ *
+ * @param choices The published models in the daemon's own order, which is the display order.
+ * @param menuAvailable Whether a menu was ever published for this conversation. `false` with empty
+ *   [choices] is "no list"; `true` with empty [choices] is the different, equally legal reading that
+ *   claude offered nothing.
+ * @param droppedModels Entries the **producer** cut, exactly as reported and never recomputed from
+ *   `choices.size` — what lets the sheet say "10 of 47" rather than present a shortened menu as complete.
+ * @param hiddenChoices Entries **this client** cut at [MAX_RENDERED_MODEL_CHOICES]. Separate from
+ *   [droppedModels] so each number keeps its provenance; the sheet sums them for display only.
+ * @param settingsAvailable Whether a settings reading is available at all. `false` ⇒ both labels read
+ *   unknown; it covers no connection, no `interactive` capability, and the window before the first reply.
+ * @param savedModel The saved model override verbatim, `""` meaning "no override, inherited default".
+ * @param savedEffort The **saved** effort choice verbatim, `""` meaning inherited default. Never
+ *   `effectiveEffort`, which is claude's *applied* reading and is #651's, not this surface's.
+ * @param pendingModel / @param pendingEffort A tap whose write has not settled, or `null`. Cleared by an
+ *   arriving reading — never by the acknowledgement, which is not a reading.
+ * @param sessionId The session a write must address. **`""` means the daemon has no session to address**,
+ *   so the controls are read-only and nothing is sent.
+ */
+data class ThreadRunConfig(
+    val choices: List<ThreadModelChoice> = emptyList(),
+    val menuAvailable: Boolean = false,
+    val droppedModels: Int = 0,
+    val hiddenChoices: Int = 0,
+    val settingsAvailable: Boolean = false,
+    val savedModel: String = "",
+    val savedEffort: String = "",
+    val pendingModel: String? = null,
+    val pendingEffort: String? = null,
+    val sessionId: String = "",
+) {
+    /** What the surfaces show: a pending tap while one is outstanding, the confirmed reading otherwise. */
+    val selectedModel: String get() = pendingModel ?: savedModel
+
+    /** The [selectedModel] twin for effort. */
+    val selectedEffort: String get() = pendingEffort ?: savedEffort
+
+    /** The published row [selectedModel] names, or `null` when the menu published no matching one. */
+    val selectedChoice: ThreadModelChoice? get() = choices.firstOrNull { it.value == selectedModel }
+
+    /** The effort levels **the selected row** supports. Empty is a positive statement that this model
+     *  exposes no effort control — never a cue to substitute the `Effort` entries. */
+    val effortChoices: List<ThreadEffortChoice> get() = selectedChoice?.effortChoices.orEmpty()
+
+    /** Whether a write is outstanding: the surfaces keep it visibly distinct from confirmed state. */
+    val pending: Boolean get() = pendingModel != null || pendingEffort != null
+
+    /** Whether a write can be addressed at all — the `""`-session-id read-only gate. */
+    val writable: Boolean get() = sessionId.isNotEmpty()
+
+    /** The footer's model segment. */
+    val modelLabel: String get() = label(selectedModel) { selectedChoice?.label }
+
+    /** The footer's effort segment. No menu lookup: a level is its own label. */
+    val effortLabel: String get() = label(selectedEffort) { null }
+
+    /**
+     * The three display states the contracts keep apart, collapsed to one string for the footer: no
+     * reading at all is *unknown*; a reading of `""` is the daemon's inherited default, which is a real
+     * answer rather than an absent one; anything else is the published label when the menu named one and
+     * the reported value itself — made [inert], since it is daemon-authored too — when it did not.
+     */
+    private inline fun label(
+        raw: String,
+        published: () -> String?,
+    ): String =
+        when {
+            !settingsAvailable -> UNKNOWN_RUN_CONFIG_LABEL
+            raw.isEmpty() -> INHERITED_RUN_CONFIG_LABEL
+            else -> published() ?: raw.inert()
+        }
+}
+
+internal const val UNKNOWN_RUN_CONFIG_LABEL = "unknown"
+
+internal const val INHERITED_RUN_CONFIG_LABEL = "default"
+
 class ThreadViewModel(
     savedStateHandle: SavedStateHandle,
     private val repository: ConversationRepository,
     private val connectionStateSource: ConnectionStateSource,
-    private val appPreferences: AppPreferences,
     // #789: the app-scoped store holding this chat's unsent composer text. Required, unlike the inert
     // defaults below: a default would hand every ViewModel its own store, which is exactly the
     // destination-scoped ownership this ticket removes — and a miswire would reproduce it invisibly.
@@ -205,24 +312,50 @@ class ThreadViewModel(
     private val navigationChannel = Channel<ThreadNavigation>(capacity = Channel.BUFFERED)
     val navigationEvents: Flow<ThreadNavigation> = navigationChannel.receiveAsFlow()
 
-    private val modelOverride = MutableStateFlow<Model?>(null)
+    /** A model tap whose write has not settled (#807), or `null`. Single-writer, like [yoloEnabled]:
+     *  [onModelSelected] sets it, a failed write clears it, and [sessionSettings]'s `onEach` clears it
+     *  when a reading lands. */
+    private val pendingModel = MutableStateFlow<String?>(null)
 
-    private val selectedModelFlow: Flow<Model> =
-        combine(appPreferences.defaultModel, modelOverride) { default, override -> override ?: default }
+    /** The [pendingModel] twin for effort (#807). */
+    private val pendingEffort = MutableStateFlow<String?>(null)
 
-    private val effortOverride = MutableStateFlow<Effort?>(null)
-
-    private val selectedEffortFlow: Flow<Effort> =
-        combine(appPreferences.defaultEffort, effortOverride) { default, override -> override ?: default }
+    /**
+     * This conversation's saved run configuration (#590), the authority for the displayed model and
+     * effort and for the session id a write addresses (#807).
+     *
+     * The `onEach` is the pending-clearing rule AC #3 states: **an arriving reading** ends a pending
+     * selection, never the acknowledgement, which echoes only the input session id and confirms nothing.
+     * It rides this flow rather than a second collector because `observeSessionSettings` is cold and
+     * per-collector — a separate subscription would send a second `request_session_settings` frame on
+     * every thread entry. A reading that lands between a tap and its ack clears early, deliberately: a
+     * reading outranks an unacked optimistic value for the same reason the ack does not outrank it.
+     */
+    private val sessionSettings: Flow<SessionSettings?> =
+        repository
+            .observeSessionSettings(conversationId)
+            .onEach {
+                pendingModel.value = null
+                pendingEffort.value = null
+            }
 
     private val yoloEnabled = MutableStateFlow(false)
 
+    /**
+     * The run-configuration arm of [state] (#807). Five inputs, which is exactly Kotlin's typed `combine`
+     * ceiling — the reason this stays one arm of the five-arm `state` combine instead of needing a sixth
+     * or the sibling-[StateFlow] shape [draft] uses.
+     */
     private val runConfigFlow: Flow<RunConfig> =
         combine(
-            selectedModelFlow,
-            selectedEffortFlow,
+            sessionSettings,
+            repository.observeModelMenu(conversationId),
+            pendingModel,
+            pendingEffort,
             yoloEnabled,
-        ) { model, effort, yolo -> RunConfig(model, effort, yolo) }
+        ) { settings, menu, model, effort, yolo ->
+            RunConfig(runConfig(settings, menu, model, effort), yolo)
+        }
 
     private val transientDialogs: Flow<TransientDialogs> =
         combine(
@@ -311,9 +444,7 @@ class ThreadViewModel(
                 workspacePath = conv?.cwd ?: "",
                 lastUsedAt = conv?.lastUsedAt,
                 sessionCount = conv?.sessionHistory?.size ?: 0,
-                currentSessionId = conv?.currentSessionId ?: "",
-                selectedModel = runConfig.model,
-                selectedEffort = runConfig.effort,
+                runConfig = runConfig.config,
                 yoloEnabled = runConfig.yoloEnabled,
                 mutationsSupported = mutationsSupported,
                 historyTail = content.historyTail,
@@ -1025,35 +1156,65 @@ class ThreadViewModel(
     }
 
     /**
-     * Apply a Status-sheet model change (#544): optimistically move the control, send only the changed
-     * field to the current session, and revert on failure. No-op if [model] already matches the displayed
-     * value — a radio `onClick` fires even when the option is already selected, and a redundant round-trip
-     * would be wasteful. Captures the *previous nullable* [modelOverride] (not the resolved [Model]) so a
-     * revert restores the pre-existing "null = track the app-preferences default" semantics.
+     * Apply a Status-sheet model change (#544, re-sourced by #807): mark the tap pending, send only the
+     * changed field to the session the settings reading names, and clear the pending on failure.
+     *
+     * [value] is a published [ThreadModelChoice.value] — the daemon's own argument, forwarded verbatim
+     * and never parsed. Three guards, each a real case rather than an optimisation: a radio `onClick`
+     * fires even for the already-selected option; a second tap while a write is outstanding would put two
+     * writes for one control in flight; and an empty session id means the daemon has no session to
+     * address, which is read-only rather than a failure to surface.
+     *
+     * The pending is cleared by an arriving reading, not by the ack — see [sessionSettings]. The failure
+     * path clears it, which is what restores the last confirmed reading.
      */
-    fun onModelSelected(model: Model) {
-        if (model == state.value.selectedModel) return
-        val previous = modelOverride.value
-        modelOverride.value = model
-        sendSessionSettings(model = model.wire()) { modelOverride.value = previous }
+    fun onModelSelected(value: String) {
+        val config = state.value.runConfig
+        if (config.pending || value == config.selectedModel) return
+        if (!skipUnlessWritable(config)) return
+        pendingModel.value = value
+        sendSessionSettings(config.sessionId, model = value) { pendingModel.value = null }
     }
 
-    /** The [onModelSelected] twin for effort (#544). Same optimistic-then-revert shape over [effortOverride];
-     *  `effort.wire()` is `Effort.name.lowercase()`, the exact daemon `validEffort` vocabulary. */
-    fun onEffortSelected(effort: Effort) {
-        if (effort == state.value.selectedEffort) return
-        val previous = effortOverride.value
-        effortOverride.value = effort
-        sendSessionSettings(effort = effort.wire()) { effortOverride.value = previous }
+    /** The [onModelSelected] twin for effort (#807). [level] is a published [ThreadEffortChoice.value] of
+     *  the selected row, forwarded verbatim — never `Effort.name.lowercase()`, whose five entries are this
+     *  device's guess at a vocabulary the row itself publishes. */
+    fun onEffortSelected(level: String) {
+        val config = state.value.runConfig
+        if (config.pending || level == config.selectedEffort) return
+        if (!skipUnlessWritable(config)) return
+        pendingEffort.value = level
+        sendSessionSettings(config.sessionId, effort = level) { pendingEffort.value = null }
     }
 
-    /** The [onModelSelected] twin for YOLO (#544). [yoloEnabled] is a raw [Boolean] source (not derived from
-     *  a preference default), so the guard and the revert both compare/restore its `.value` directly. */
+    /**
+     * The [onModelSelected] twin for YOLO (#544). [yoloEnabled] is a raw [Boolean] source, so the guard
+     * and the revert compare/restore its `.value` directly.
+     *
+     * #807 re-routed its session id along with the other two: [sendSessionSettings] is shared, and the
+     * authoritative key is the settings reading's. Keeping `Conversation.currentSessionId` alive for this
+     * one control would leave two routing sources — a second place to get the same thing wrong.
+     */
     fun onYoloToggled(enabled: Boolean) {
         if (enabled == yoloEnabled.value) return
+        val config = state.value.runConfig
+        if (!skipUnlessWritable(config)) return
         val previous = yoloEnabled.value
         yoloEnabled.value = enabled
-        sendSessionSettings(yolo = enabled) { yoloEnabled.value = previous }
+        sendSessionSettings(config.sessionId, yolo = enabled) { yoloEnabled.value = previous }
+    }
+
+    /**
+     * The read-only gate (#807): `true` when a write can be addressed. A `""` session id means the daemon
+     * reported no session to address, and writing with one is refused server-side — so the tap is dropped
+     * rather than failed. Logged content-free (static codes only, the [RelayLog] posture this file's
+     * `event=history_ask_failed` already uses) because a silently dropped user action is otherwise
+     * undiagnosable; no session id, model value or effort level is ever a log field.
+     */
+    private fun skipUnlessWritable(config: ThreadRunConfig): Boolean {
+        if (config.writable) return true
+        RelayLog.d { "event=run_config_write_skipped reason=no_session" }
+        return false
     }
 
     /**
@@ -1078,15 +1239,19 @@ class ThreadViewModel(
      * protocol violation (parity with [sendArchive] / [sendChangeWorkspace]).
      */
     private fun sendSessionSettings(
+        sessionId: String,
         model: String? = null,
         effort: String? = null,
         yolo: Boolean? = null,
         revert: () -> Unit,
     ) {
-        val sessionId = state.value.currentSessionId
         viewModelScope.launch {
             try {
                 repository.setSessionSettings(sessionId, model, effort, yolo)
+                // #807: the ack echoes only the input session id and confirms no value, so a settled write
+                // asks for a fresh reading rather than promoting the optimistic one. The pending survives
+                // until that reading lands (see [sessionSettings]); only the failure paths below clear it.
+                repository.refreshSessionSettings(conversationId)
             } catch (e: CancellationException) {
                 throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
             } catch (e: RelayErrorException) {
@@ -1160,9 +1325,11 @@ class ThreadViewModel(
         val optionId: String,
     )
 
+    /** The run-configuration arm's payload: the #807 daemon-sourced surface plus the YOLO flag, which is
+     *  a [ThreadUiState] field of its own rather than part of [ThreadRunConfig] — #807 re-sources model
+     *  and effort only, and folding YOLO into that type would move a control this ticket does not touch. */
     private data class RunConfig(
-        val model: Model,
-        val effort: Effort,
+        val config: ThreadRunConfig,
         val yoloEnabled: Boolean,
     )
 
@@ -1207,20 +1374,78 @@ private fun String.toChannelSlug(): String =
 
 // ---- #544: Model / Effort → set_session_settings wire strings (file-private) ---------------------
 //
-// Kept here (not on Model.kt / Effort.kt) to hold the ticket's production file count at four — no other
-// consumer needs them, and adding them to the enum files would trip the ≥5-prod-file commit gate for no
-// benefit. Effort.wire() is the exact daemon `validEffort` set ({low, medium, high, xhigh, max}); Model.wire()
-// uses the version-pinned canonical claude ids the daemon shape-validates (`validModel`) and forwards to
-// claude's --model. The daemon is the value authority (re-validates); the phone forwards a bounded enum.
+// #807 deleted `Effort.wire()` / `Model.wire()`, the two enum-to-daemon-string mappers #544 added here.
+// Their premise was that the phone knows the server's vocabulary; it does not. Every argument sent now
+// comes from `ModelMenuRow.value` / `effortLevels` — the server's own strings, forwarded verbatim.
 
-private fun Effort.wire(): String = name.lowercase()
+/**
+ * The client's share of the #791 trust boundary: one daemon-authored string reduced to inert display
+ * text. `ModelMenuRow`'s contract is explicit that `displayName` / `resolvedModel` / `effortLevels` (and
+ * `SessionSettings.model` / `effort` alongside them) are **claude-authored** and that the daemon bounds
+ * but does not sanitize them — no control character and no terminal escape sequence is stripped anywhere
+ * upstream, so the render boundary that owes it is this one.
+ *
+ * Two steps, each load-bearing. Dropping every [Char.isISOControl] character removes `ESC` and the whole
+ * C0/C1 range — the terminal-escape vector — and with it the newlines and tabs that would break the
+ * single-line footer. The [MAX_RUN_CONFIG_LABEL_CHARS] bound is the `MAX_WORKSPACE_LABEL_CHARS` posture
+ * this codebase already applies to externally authored labels, against a producer cap that is daemon-side
+ * and explicitly not a wire constant.
+ *
+ * **Never applied to a write argument.** `ThreadModelChoice.value` and `ThreadEffortChoice.value` stay
+ * byte-identical to what the daemon published, because they are sent back, not shown. The output of this
+ * function reaches `Text` and nothing else — never `MarkdownText`, a WebView, a URL, a filename, a
+ * `testTag`, a map key or a log field.
+ */
+internal fun String.inert(): String = filterNot { it.isISOControl() }.take(MAX_RUN_CONFIG_LABEL_CHARS)
 
-private fun Model.wire(): String =
-    when (this) {
-        Model.OPUS_4_7 -> "claude-opus-4-7"
-        Model.SONNET_4_6 -> "claude-sonnet-4-6"
-        Model.HAIKU_4_5 -> "claude-haiku-4-5"
-    }
+private const val MAX_RUN_CONFIG_LABEL_CHARS = 128
+
+/**
+ * The most published models this client will lay out. `ModelMenu.rows` is bounded by the producer, but
+ * that cap is daemon-side and not a wire constant, and the Status sheet's Model section is a plain
+ * `Column` rather than a lazy list — so an oversized menu from a buggy or hostile daemon would compose
+ * every row at once. The remainder is reported as [ThreadRunConfig.hiddenChoices], kept apart from the
+ * producer's own [ThreadRunConfig.droppedModels] so neither number is mistaken for the other.
+ */
+private const val MAX_RENDERED_MODEL_CHOICES = 32
+
+/**
+ * Folds the two daemon readings and the two pending taps into the surface both render sites read (#807).
+ * A `null` reading is *unavailable* and never a device default: the flags say which, and no field is
+ * manufactured to fill a gap.
+ */
+private fun runConfig(
+    settings: SessionSettings?,
+    menu: ModelMenu?,
+    pendingModel: String?,
+    pendingEffort: String?,
+): ThreadRunConfig {
+    val rows = menu?.rows.orEmpty()
+    return ThreadRunConfig(
+        choices = rows.take(MAX_RENDERED_MODEL_CHOICES).map { it.toChoice() },
+        menuAvailable = menu != null,
+        droppedModels = menu?.droppedModels ?: 0,
+        hiddenChoices = (rows.size - MAX_RENDERED_MODEL_CHOICES).coerceAtLeast(0),
+        settingsAvailable = settings != null,
+        savedModel = settings?.model.orEmpty(),
+        savedEffort = settings?.effort.orEmpty(),
+        pendingModel = pendingModel,
+        pendingEffort = pendingEffort,
+        sessionId = settings?.sessionId.orEmpty(),
+    )
+}
+
+/** One published row, split into the verbatim write argument and the inert render of it. `resolvedModel`
+ *  becomes [ThreadModelChoice.detail] only when it says something the label does not. */
+private fun ModelMenuRow.toChoice(): ThreadModelChoice {
+    val label = displayName.inert()
+    return ThreadModelChoice(
+        value = value,
+        label = label,
+        detail = resolvedModel.inert().takeIf { it.isNotBlank() && it != label }.orEmpty(),
+        effortChoices = effortLevels.map { ThreadEffortChoice(value = it, label = it.inert()) },
+    )
+}
 
 private fun Conversation.displayName(): String =
     name?.takeIf { it.isNotBlank() }

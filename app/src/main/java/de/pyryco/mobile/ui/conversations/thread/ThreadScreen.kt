@@ -66,9 +66,6 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
-import de.pyryco.mobile.data.preferences.Effort
-import de.pyryco.mobile.data.preferences.Model
-import de.pyryco.mobile.data.preferences.label
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.QueuedMessage
@@ -148,8 +145,9 @@ fun ThreadScreen(
     onTitleClick: () -> Unit = {},
     onOverflowEvent: (ThreadEvent) -> Unit = {},
     onShowLiteralScreen: () -> Unit = {},
-    onModelSelected: (Model) -> Unit = {},
-    onEffortSelected: (Effort) -> Unit = {},
+    // #807: a published ModelMenuRow.value / effort level, forwarded verbatim — never a device enum.
+    onModelSelected: (String) -> Unit = {},
+    onEffortSelected: (String) -> Unit = {},
     onYoloToggled: (Boolean) -> Unit = {},
     onWorkspaceChipTapped: () -> Unit = {},
     onWorkspacePicked: (String) -> Unit = {},
@@ -272,10 +270,11 @@ fun ThreadScreen(
                 // it. Its own 16dp horizontal padding reproduces the footer frame's further `px-16`
                 // inside the 20dp content gutter applied here.
                 ThreadStatusRow(
-                    model = state.selectedModel.label(),
-                    effort = state.selectedEffort.label(),
+                    model = state.runConfig.modelLabel,
+                    effort = state.runConfig.effortLabel,
                     onExpandClick = { sheetVisible = true },
                     modifier = Modifier.padding(horizontal = ComposerGutter),
+                    pending = state.runConfig.pending,
                 )
             }
         },
@@ -475,16 +474,25 @@ fun ThreadScreen(
     }
     if (sheetVisible) {
         StatusSheet(
-            selectedModel = state.selectedModel,
-            onModelSelected = { model ->
-                onModelSelected(model)
+            choices = state.runConfig.choices,
+            menuAvailable = state.runConfig.menuAvailable,
+            // The producer's own cut plus this client's render cap, summed for display only — each keeps
+            // its own field on the state so neither is ever recomputed from the other.
+            notListedModels = state.runConfig.droppedModels + state.runConfig.hiddenChoices,
+            selectedModel = state.runConfig.selectedModel,
+            onModelSelected = { value ->
+                onModelSelected(value)
                 sheetVisible = false
             },
-            selectedEffort = state.selectedEffort,
-            onEffortSelected = { effort ->
-                onEffortSelected(effort)
+            effortChoices = state.runConfig.effortChoices,
+            selectedEffort = state.runConfig.selectedEffort,
+            onEffortSelected = { level ->
+                onEffortSelected(level)
                 sheetVisible = false
             },
+            pending = state.runConfig.pending,
+            // An empty session id means the daemon has no session to address, so the controls read only.
+            enabled = state.runConfig.writable,
             yoloEnabled = state.yoloEnabled,
             onYoloToggled = onYoloToggled,
             onDismiss = { sheetVisible = false },
