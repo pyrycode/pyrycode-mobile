@@ -82,6 +82,26 @@ class StableConversationRepository(
     override fun observeCompacting(conversationId: String): Flow<Boolean> = switchToLive(false) { it.observeCompacting(conversationId) }
 
     /**
+     * The settings reading for [conversationId] (#590), switched over the live connection like every
+     * other cold read — and here the switch is the **host-isolation mechanism**, not just plumbing:
+     * [flatMapLatest] drops the previous connection's read the instant the connection changes, and the
+     * new repository issues a fresh one against the new host. `null` while none is live is the same
+     * "reading unavailable" value a failed read produces, so a consumer has one absent case, not two.
+     */
+    override fun observeSessionSettings(conversationId: String): Flow<SessionSettings?> =
+        switchToLive<SessionSettings?>(null) { it.observeSessionSettings(conversationId) }
+
+    /**
+     * Invalidate [conversationId]'s settings reading on the live repository (#590). Deliberately routed
+     * through [currentRepository]`.value` rather than [live]: an invalidation with no connection is a
+     * no-op, not an [IllegalStateException] — the caller has nothing to recover, and the next connection
+     * re-reads on subscription regardless. The one facade method that must not throw.
+     */
+    override fun refreshSessionSettings(conversationId: String) {
+        currentRepository.value?.refreshSessionSettings(conversationId)
+    }
+
+    /**
      * Delegates the capability to the live repository's value, reporting `false` when no connection is
      * live (fail-safe-deny — the safe answer for a gating consumer is "hide the actions"). This is the
      * plain-`Boolean` analog of [observeStall]'s `switchToLive(false)`: a getter that re-reads

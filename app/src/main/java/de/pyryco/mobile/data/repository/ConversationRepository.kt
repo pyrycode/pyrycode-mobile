@@ -297,6 +297,50 @@ interface ConversationRepository {
         cursor: String = "",
         limit: Int = 0,
     ): HistoryPage = error("requestHistory is not implemented for this ConversationRepository")
+
+    /**
+     * The run configuration of the session bound to [conversationId] — the settings **read** half (#590),
+     * the counterpart of [setSessionSettings]'s write. Emits the latest [SessionSettings] this context
+     * has read, or `null` while none is available.
+     *
+     * **`null` is "unavailable", never a fallback.** It covers no live connection, a connection without
+     * the `interactive` capability, a failed or malformed read, and the window before the first reply
+     * lands. A consumer must render it as *unknown* — it is never device defaults from `AppPreferences`
+     * and never another conversation's values.
+     *
+     * **A fresh read is issued on four triggers**: subscription (thread entry), the owning host's
+     * reconnect (a fresh connection-scoped repository re-subscribes underneath the facade), that
+     * conversation's `session_transition`, and a caller's [refreshSessionSettings] — which is how a
+     * settled settings write gets a fresh reading. Nothing else sends a frame, and the frame sent is
+     * `request_session_settings` alone: no claude child starts, no model turn begins, no
+     * `set_session_settings` rides along, and nothing is written to device preferences.
+     *
+     * **A superseded reply cannot overwrite the current reading.** A newer trigger cancels the in-flight
+     * read before starting the next; a late or duplicate reply correlates with a request that is no
+     * longer pending and is dropped; and a reply carries no conversation identity of its own, so the
+     * reading is routed strictly by the id the caller asked with and cannot cross-route. A reply from
+     * another host cannot arrive at all — that connection has its own repository.
+     *
+     * Cold and per-collector, like [observeMessages]: each subscription drives its own read.
+     *
+     * Default emits `null` forever — implementations without a settings wire (the inline test doubles)
+     * inherit it, the same cascade-avoidance as [delete] / [requestScreenSnapshot] / [requestHistory].
+     */
+    fun observeSessionSettings(conversationId: String): Flow<SessionSettings?> = flowOf(null)
+
+    /**
+     * Ask for a fresh [observeSessionSettings] reading of [conversationId] (#590) — the caller-driven
+     * fourth trigger, for the moment a settings write has settled and the retained reading is known to
+     * be stale. The new value arrives on the flow the caller already collects; there is no second read
+     * method returning it directly.
+     *
+     * **Fire-and-forget, non-suspending and non-throwing.** An invalidation with no live connection is a
+     * no-op rather than a failure: the caller has nothing to recover, and the next connection re-reads
+     * on subscription anyway. Sends no frame itself — a collector does, if one is listening.
+     *
+     * Default is a no-op, so no test double needs to override it.
+     */
+    fun refreshSessionSettings(conversationId: String) = Unit
 }
 
 enum class ConversationFilter { All, Channels, Discussions, Archived }
@@ -457,6 +501,81 @@ data class HistoryEntry(
     val payload: JsonElement,
     val timestamp: Instant,
 )
+
+/**
+ * The run configuration of one session (#590) — the return of [ConversationRepository.observeSessionSettings].
+ * The element type is co-located with the contract it serves, like [ThreadItem] / [QueuedMessage] /
+ * [HistoryPage].
+ *
+ * **Every field is retained exactly as the daemon reported it.** Nothing here is defaulted,
+ * normalised, trimmed or mapped onto a client vocabulary, because each zero value carries meaning of
+ * its own. The `data` modifier is load-bearing rather than cosmetic: structural equality is what makes
+ * a consumer's `distinctUntilChanged` behave, the [ApiRetryStatus] rule.
+ *
+ * @param sessionId The session a [ConversationRepository.setSessionSettings] must address. **`""` means
+ *   the daemon has no session to address** — a consumer treats the settings as read-only rather than
+ *   writing with an empty id, which the daemon rejects.
+ * @param model The stored model **override**, not what claude announced for the turn. An arbitrary wire
+ *   string: never mapped through `Model` (three entries; the wire carries anything), and `""` means "no
+ *   override, inherited default" rather than an absent value.
+ * @param effort The **saved** per-session reasoning-effort choice, `""` meaning inherited default. It
+ *   stays the saved choice and is never replaced by [effectiveEffort]'s applied reading.
+ * @param effectiveEffort Claude's **applied** effort, independent of [effort] — three states that must
+ *   stay apart; see [EffectiveEffort].
+ * @param permissionMode The last permission posture claude confirmed for the **exact current child** —
+ *   one of the write half's five modes, or `bypassPermissions`, which this read accepts even though the
+ *   write half refuses that spelling. **`""` means no confirmation is available**, not that no session
+ *   resolved and *not* Manual approval: it accompanies a live child that has not confirmed yet and a
+ *   dormant session with no child. Stored settings and launch argv are never fallback proof. An open
+ *   `String`, not an enum, because `""` is a real reported value a closed set could not carry honestly.
+ * @param yolo Bypass-permissions, derived from the same confirmation: `true` only for a confirmed
+ *   `bypassPermissions`. **`false` alone is not proof that approvals are enforced** — it also
+ *   accompanies an unavailable confirmation, so it is read beside [permissionMode], never alone.
+ * @param usedTokens Context tokens consumed by the latest turn, read under the addressed session's own
+ *   working directory. `0` against a non-zero [windowTokens] is a genuinely fresh session; a dormant
+ *   session reports `0` here **and** in [windowTokens], the two read as a pair rather than separately.
+ * @param windowTokens Context-window size. **`0` means the usage reader is unwired**, not an empty
+ *   window — do not render a percentage from it.
+ */
+data class SessionSettings(
+    val sessionId: String,
+    val model: String,
+    val effort: String,
+    val effectiveEffort: EffectiveEffort,
+    val permissionMode: String,
+    val yolo: Boolean,
+    val usedTokens: Long,
+    val windowTokens: Long,
+)
+
+/**
+ * Claude's applied reasoning effort as reported beside the saved [SessionSettings.effort] (#590) — a
+ * closed three-state reading, because the wire's `effective_effort` key has three meanings a consumer
+ * must not collapse.
+ *
+ * A sealed family rather than a `String?` for the reason the wire itself gives: an omitted key and an
+ * explicit `null` say different things, and `MobileJson`'s `explicitNulls = false` would decode both to
+ * the same Kotlin `null`. Modelled like [ApiRetryStatus] — two data objects and one value-carrying
+ * member, so a consumer's `when` stays exhaustive and a third meaning cannot appear as a silent blank.
+ *
+ * This is **never** the value to write back: it reports what claude applied, while
+ * [ConversationRepository.setSessionSettings] writes the saved choice.
+ */
+sealed interface EffectiveEffort {
+    /** The key was **omitted** — the applied value is unavailable or this producer does not report one. */
+    data object Unavailable : EffectiveEffort
+
+    /** The key was an **explicit `null`** — claude reported no effort parameter for this session. */
+    data object NotReported : EffectiveEffort
+
+    /**
+     * A confirmed applied level, carried **verbatim**: `""` (claude's own default) and a level this
+     * build does not recognise are both legal values, so nothing validates or maps [value].
+     */
+    data class Applied(
+        val value: String,
+    ) : EffectiveEffort
+}
 
 /**
  * Whether a conversation's remote claude is stuck retrying an API error, and how far into the retry

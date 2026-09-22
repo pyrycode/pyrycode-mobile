@@ -40,6 +40,7 @@ import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RenameConversationPayloadDto
 import de.pyryco.mobile.data.network.ReplayCursor
 import de.pyryco.mobile.data.network.RequestHistoryPayloadDto
+import de.pyryco.mobile.data.network.RequestSessionSettingsPayloadDto
 import de.pyryco.mobile.data.network.RequestSnapshotPayloadDto
 import de.pyryco.mobile.data.network.ScreenSnapshotPayloadDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
@@ -62,9 +63,11 @@ import de.pyryco.mobile.data.network.toHistoryPage
 import de.pyryco.mobile.data.network.toMessage
 import de.pyryco.mobile.data.network.toQueue
 import de.pyryco.mobile.data.network.toRow
+import de.pyryco.mobile.data.network.toSessionSettings
 import de.pyryco.mobile.data.network.toStatus
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -75,8 +78,10 @@ import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
@@ -274,6 +279,26 @@ class RemoteConversationRepository(
      * **explicit wire falling edge**, not inferred from the next forward-progress event.
      */
     private val compactingConversations = MutableStateFlow<Set<String>>(emptySet())
+
+    /**
+     * `conversationId -> settings-read ordinal` (#590) — the **refresh trigger** for
+     * [observeSessionSettings], deliberately not a cache of the readings themselves. A bump means "the
+     * reading you hold is stale, read again"; the value is meaningless beyond being different from the
+     * last one, and is never compared across connections (a new connection is a new repository with a
+     * fresh map).
+     *
+     * Two writers, unlike the single-collector projections above: the [init] inbound collector bumps on
+     * a `session_transition`, and any caller thread bumps through [refreshSessionSettings] once its
+     * settings write has settled. The increment is a genuine **read-modify-write**, so running it inside
+     * the atomic [MutableStateFlow.update] is load-bearing rather than stylistic — the
+     * [compactingConversations] posture, not [apiRetryByConversation]'s pure replace. Even the
+     * degenerate collapse is safe: two bumps folding into one still trigger a read that observes the
+     * newest state, because the read asks the daemon rather than replaying a stored edge.
+     *
+     * An absent key reads as ordinal `0`, so a first collector needs no seeding and a conversation
+     * nobody has opened costs nothing.
+     */
+    private val settingsRevision = MutableStateFlow<Map<String, Long>>(emptyMap())
 
     private val requestId = AtomicLong(0)
     private var debugBundle: DebugBundleTransfer? = null
@@ -521,7 +546,7 @@ class RemoteConversationRepository(
             }
             TYPE_ACK, TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_DELETED,
             TYPE_SCREEN_SNAPSHOT, TYPE_SESSION_SETTINGS_UPDATED, TYPE_WORKSPACE_FOLDER_CREATED,
-            TYPE_RECENT_WORKSPACES_LIST, TYPE_HISTORY_PAGE,
+            TYPE_RECENT_WORKSPACES_LIST, TYPE_HISTORY_PAGE, TYPE_SESSION_SETTINGS,
             ->
                 // Success reply to a correlated request, handed verbatim to the waiter. An `ack`
                 // (#346) carries the empty `{}` the bare-ack waiter ignores; a `conversation_created`
@@ -540,7 +565,12 @@ class RemoteConversationRepository(
                 // `session_settings_updated` / `conversation_deleted` / `workspace_folder_created` /
                 // `recent_workspaces_list` are always correlated replies (the daemon never broadcasts
                 // them); a `history_page` (#623) carries the `{entries,cursor,at_start}` the
-                // [requestHistory] waiter decodes for its page. So an unmatched one is
+                // [requestHistory] waiter decodes for its page; a `session_settings` (#590) carries the
+                // run configuration the [observeSessionSettings] read decodes. That last one is where the
+                // demux does load-bearing safety work: the reply carries NO conversation_id of its own, so
+                // a stale, duplicate or unsolicited one has no pending entry to complete and therefore no
+                // slot to land in — a reading can only ever be routed by the id its caller asked with. So
+                // an unmatched one is
                 // harmless; and `complete` is idempotent so a duplicate reply is harmless.
                 // `conversation_created` stays here deliberately: unlike `conversation_updated` (which
                 // #721 moved to its own arm above) it is a correlated reply only — the create-on-host
@@ -676,6 +706,13 @@ class RemoteConversationRepository(
                     decodeSessionTransition(envelope)?.let { (conversationId, boundary) ->
                         appendSessionBoundary(conversationId, boundary)
                         updateCurrentSessionId(conversationId, boundary.newSessionId)
+                        // Third write since #590: the session this conversation's settings describe has
+                        // been replaced, so every reading of it is stale. Bump the trigger rather than
+                        // reading here — the read belongs on a collector's coroutine, and a conversation
+                        // nobody is watching must not send a frame. Routed by the same decoded
+                        // conversation_id as its two siblings, so a transition cannot invalidate another
+                        // conversation's reading.
+                        bumpSettingsRevision(conversationId)
                     }
                 }
             }
@@ -1441,6 +1478,101 @@ class RemoteConversationRepository(
             val existing = current[conversationId].orEmpty()
             current + (conversationId to existing.mergeHistoryRows(reduceHistoryPage(page.entries, interactive)))
         }
+    }
+
+    /**
+     * The run configuration of [conversationId]'s session over v2 `request_session_settings` (#590,
+     * daemon pyrycode#1610/#2449/#2510). A cold per-collector read that re-issues on every trigger and
+     * folds **nothing** — no projection on this class holds a [SessionSettings], so there is no stale
+     * value to invalidate and no slot for a late reply to land in.
+     *
+     * Reads the conversation's own [settingsRevision] slice, so a bump for **another** conversation does
+     * not re-read this one; [distinctUntilChanged] means a value-identical re-emission does not either.
+     * [flatMapLatest] is what makes a superseded read harmless: a new trigger **cancels** the in-flight
+     * one before starting the next, so a reply that arrives late has no collector to reach and its
+     * deferred is already deregistered by [sendAndAwaitReply]'s `finally`.
+     *
+     * The [onStart] `null` is not cosmetic. It resets the reading to *unavailable* at the head of every
+     * subscription, which is what keeps a host handoff clean: the facade re-subscribes on the new
+     * connection, and without it a consumer would keep rendering the **previous host's** values until
+     * the new read landed (AC #1).
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    override fun observeSessionSettings(conversationId: String): Flow<SessionSettings?> =
+        settingsRevision
+            .map { it[conversationId] ?: 0L }
+            .distinctUntilChanged()
+            .flatMapLatest { sessionSettingsRead(conversationId) }
+            .onStart { emit(null) }
+
+    /**
+     * One settings read as a single-emission flow (#590). Fails **closed to `null`** rather than to the
+     * caller, because the consumer of a footer reading has nothing to retry with — the next trigger
+     * re-reads from scratch — and AC #4 requires a failed read to leave the reading unavailable rather
+     * than fall back to anything.
+     *
+     * [kotlinx.coroutines.flow.catch] rather than a `try`/`catch`: it converts an upstream failure
+     * without swallowing the **collector's own cancellation**, which a `runCatching` around a suspend
+     * call would. Scoped to this inner flow rather than applied to [observeSessionSettings] as a whole,
+     * because a terminal `catch` there would end the outer flow and the conversation would never read
+     * again after one failure.
+     *
+     * **The caught throwable is discarded and never logged, and that is load-bearing.** Only the
+     * `effective_effort` message is ours and content-free; a structural decode failure is authored by
+     * kotlinx-serialization, whose message can quote the offending input. Dropping it is what keeps AC
+     * #2's "logs no payload content" true — a later `catch { Log.w(TAG, it) }` would leak daemon payload
+     * content to Logcat in one line.
+     *
+     * **Gated fail-closed on `interactive`**, like the live-stream arms: the daemon leaves a conn that
+     * did not negotiate it fully inert on this verb — no reply, not even a signal that the conversation
+     * exists — so an ungated send would suspend until teardown. Not sending is also what keeps "the read
+     * sends `request_session_settings` and nothing else" true in the degenerate case.
+     */
+    private fun sessionSettingsRead(conversationId: String): Flow<SessionSettings?> =
+        flow {
+            emit(
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) readSessionSettings(conversationId) else null,
+            )
+        }.catch { emit(null) }
+
+    /**
+     * Send one `request_session_settings` and decode its correlated `session_settings` reply (#590) —
+     * the [requestHistory] body minus the projection fold. The reply is routed **by the id this call
+     * asked with**: it carries no `conversation_id` of its own, so a reading structurally cannot
+     * cross-route into another conversation, the property [mergeHistoryPage] relies on one level up.
+     *
+     * Throws rather than returning null — [sessionSettingsRead] owns the conversion — so every failure
+     * mode stays distinguishable at this seam: [IllegalStateException] when the pump is not `Open` or
+     * tears down mid-await (#488), [RelayErrorException] for a server `error` (this verb publishes no
+     * reject codes of its own — it always answers — so one can only be transport-level), and a
+     * [kotlinx.serialization.SerializationException] for a malformed reply. The daemon's all-zero reply
+     * is a **successful** read of "nothing resolved", not a failure.
+     *
+     * Emits no log on any branch, like the rest of this class: the session id, the model and the effort
+     * strings never reach Logcat.
+     */
+    private suspend fun readSessionSettings(conversationId: String): SessionSettings {
+        val request =
+            Envelope(
+                id = requestId.incrementAndGet(),
+                type = TYPE_REQUEST_SESSION_SETTINGS,
+                ts = Clock.System.now().toString(),
+                payload = MobileJson.encodeToJsonElement(RequestSessionSettingsPayloadDto(conversationId = conversationId)),
+            )
+        return sendAndAwaitReply(request).toSessionSettings()
+    }
+
+    /**
+     * Invalidate [conversationId]'s settings reading (#590) — the caller-driven trigger, for the moment
+     * a settings write has settled. Sends nothing itself: it bumps [settingsRevision], and a collector
+     * (if one is listening) issues the read on its own coroutine. Non-suspending and non-throwing, so a
+     * caller with no live connection drops it rather than handling a failure it cannot act on.
+     */
+    override fun refreshSessionSettings(conversationId: String) = bumpSettingsRevision(conversationId)
+
+    /** Atomic read-modify-write of one conversation's settings-read ordinal; see [settingsRevision]. */
+    private fun bumpSettingsRevision(conversationId: String) {
+        settingsRevision.update { current -> current + (conversationId to (current[conversationId] ?: 0L) + 1L) }
     }
 
     /**
@@ -2384,6 +2516,17 @@ class RemoteConversationRepository(
 
         /** Correlated ack for [TYPE_SET_SESSION_SETTINGS] carrying only `{session_id}` (#543, #844). */
         const val TYPE_SESSION_SETTINGS_UPDATED = "session_settings_updated"
+
+        /** Request: the run configuration of one conversation's session (#590). Reply is [TYPE_SESSION_SETTINGS]. */
+        const val TYPE_REQUEST_SESSION_SETTINGS = "request_session_settings"
+
+        /**
+         * Correlated reply for [TYPE_REQUEST_SESSION_SETTINGS] (#590): the resolved session's id, stored
+         * model and effort, claude's applied effort when available, the current child's confirmed
+         * permission posture when available, and the context-window reading. **Never an error frame** —
+         * an unhosted, unbound, unnamed or unwired conversation is answered with the all-zero reply.
+         */
+        const val TYPE_SESSION_SETTINGS = "session_settings"
 
         /**
          * Correlated success reply carrying the bare promoted conversation object (#348, #274) — **and**

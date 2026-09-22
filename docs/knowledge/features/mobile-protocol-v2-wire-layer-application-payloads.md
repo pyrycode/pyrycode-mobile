@@ -108,3 +108,53 @@ content-bearing `MessagePayloadDto`; `toString`-redaction is reserved for the `t
 no-content-logging obligation (the #346 posture) was a **code-level invariant on the consumer**, now
 honored by [#375](../codebase/375.md)'s `requestScreenSnapshot` (which adds zero log calls — the request,
 reply, `conversationId`, and decoded `text` are never logged), not this zero-log-call wire slice.
+
+### The session-settings read exchange (#590)
+
+`SessionSettingsPayloads.kt` (already holding the write half's `SetSessionSettingsPayloadDto`/
+`SessionSettingsUpdatedPayloadDto` — #543) gains the **read** half: `RequestSessionSettingsPayloadDto`
+(encode-only `request_session_settings` request, one required `@SerialName("conversation_id")` key) and
+`SessionSettingsPayloadDto` (decode-only `session_settings` reply). Wire SSOT:
+`../pyrycode/docs/protocol-mobile.md` § `request_session_settings` / § `session_settings`. Consumed by
+[`RemoteConversationRepository.observeSessionSettings`](remote-conversation-repository-conversation-writes.md#observesessionsettingsconversationid--refreshsessionsettingsconversationid--the-settings-read-counterpart-to-setsessionsettings-590).
+
+- **`SessionSettingsPayloadDto` models seven fields, deliberately not eight — the eighth (`effective_effort`)
+  never reaches this DTO.** Every modeled field (`session_id`, `model`, `effort`, `yolo`, `permission_mode`,
+  `used_tokens`, `window_tokens`) is **required, with no default** — the wire emits all seven
+  unconditionally, so a missing key is a malformed reply rather than a silently-defaulted one, and each
+  zero (`permission_mode: ""` especially) is a *read* answer, not a manufactured one. `used_tokens`/
+  `window_tokens` decode as `Long` (the pyrycode#720 64-bit-Go-`int` width trap, same posture as `HistoryEntry.id`).
+- **The reply is decoded in two steps, and the order is load-bearing — the reason it is not one DTO.**
+  `MobileJson`'s `explicitNulls = false` means a `String?`-with-`null`-default field cannot tell an omitted
+  key from an explicit `null` apart; both decode to the same Kotlin `null`. That is exactly the collapse
+  [`WorkspaceUpdatedPayloadDto`](#workspace-label-pushes-721-a-new-dto-and-conversation_updateds-second-producer)
+  deliberately *wants* for its `label` field — and the trap this payload must *avoid* for `effective_effort`,
+  since the three wire states (omitted / `null` / a string) mean three different things here (unavailable /
+  Claude-reports-none / a confirmed level). So `toSessionSettings()` runs:
+  1. `MobileJson.decodeFromJsonElement<SessionSettingsPayloadDto>(this)` — the **structural boundary** for
+     the seven original fields. A non-object payload, a missing key, or a wrong-typed one fails **here**,
+     before any presence read runs.
+  2. A private `JsonObject.readEffectiveEffort()` reads the optional eighth key **by presence** off the
+     same object step 1 already proved is an object: an **absent** key → `EffectiveEffort.Unavailable`
+     (also every reply from an older daemon that predates the field — it decodes successfully rather than
+     failing); `JsonNull` (checked first, since `JsonNull` is itself a `JsonPrimitive`) →
+     `EffectiveEffort.NotReported`; a string `JsonPrimitive` → `EffectiveEffort.Applied(content)` verbatim,
+     `""` and an unrecognised level both included; anything else (number, boolean, object, array) throws.
+  This is the [`HistoryEntryDto`](#the-screen-snapshot-exchange-374) idea — keep the raw element where
+  decoding must not flatten the wire shape — applied to one field of an otherwise-ordinary DTO rather than
+  a whole entry.
+- **The thrown message for a wrong-typed `effective_effort` is a static literal naming only the key** —
+  `"session_settings: effective_effort must be a string or null"`, no value, no type fragment. It is the
+  **one** failure mode in this exchange whose message is this repository's own; every other decode failure
+  (a missing/wrong-typed original field) is authored by kotlinx-serialization, whose message can quote the
+  offending input, so the no-payload-content guarantee for *those* rests on the caught throwable being
+  discarded at the consumer, not on the message being clean — see the read flow's `.catch` in
+  [the repository doc](remote-conversation-repository-conversation-writes.md#observesessionsettingsconversationid--refreshsessionsettingsconversationid--the-settings-read-counterpart-to-setsessionsettings-590).
+- **Never an error frame.** An empty/unhosted/unbound/dormant conversation id is answered with the same
+  all-zero `session_settings` reply as a populated one — the daemon's own contract, not a client-side
+  fallback — which is what keeps this verb from being usable as a conversation-membership probe. `model`/
+  `effort`/`Applied.value` are never mapped through `Model`/`Effort`; `""` means "no override, inherited
+  default", a real value rather than an absence.
+- **`RequestSessionSettingsPayloadDto` is encode-only**, the same one-required-key discipline as
+  `CreateConversationPayloadDto` — model only what is sent. Correlation rides `Envelope.inReplyTo` as
+  usual, so there is no request-id field on the payload itself.
