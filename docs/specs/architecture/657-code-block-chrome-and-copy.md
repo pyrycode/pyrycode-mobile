@@ -97,3 +97,24 @@ The existing `MarkdownTextTest` cases cover "nothing else moves". No rung-3 or r
 
 - Does the managed device's compose-test `swipeLeft` scroll a `horizontalScroll` child inside a `Row` reliably? If not, drive the scroll through `performScrollToIndex`-free means (`performTouchInput { swipeLeft() }` on the code text).
 - Overlap: `origin/feature/803` (#803, In Code Review) also edits `strings.xml`, adding lines about 18 lines above this ticket's insertion point. This is a non-adjacent append. Verify with `git merge-tree` before opening the PR, not by blocking.
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] No findings. The block's text and its language label are both daemon-authored, arriving through `Message.content` → the parsed AST → `CodeBlock`. They reach exactly two sinks: a Compose `Text` (rendered as text, never markup, URL, filename or log), and the clipboard via `CopyTextControl`, which bounds the write at `MAX_CLIPBOARD_CHARS`. The label is one line with an ellipsis, so an oversized info string cannot grow the header. The control's accessible name is the static `cd_thread_copy_code`, and neither the language nor the code is interpolated into an announcement path.
+- [Trust boundaries / amplification] No findings. `fencedCodeText` and `indentedCodeText` are a single forward pass over the node's children with one `StringBuilder`. They are linear in the block, as the `joinToString` they replace was, so re-running per streaming reveal tick costs the same order as today. No nested search, no regex.
+- [Tokens / storage / crypto / network] Not applicable. The change touches no token, file, key, socket or frame. It is a presentation-layer composable plus two pure string helpers.
+- [Inter-process surface] No findings. The clipboard is the only cross-process write. It happens only on the user's own tap, with that block's text, bounded as above, so a hostile reply cannot turn the tap into a `TransactionTooLargeException`. The copy is not flagged `ClipDescription.EXTRA_IS_SENSITIVE`, matching the shipped message-copy control. OUT OF SCOPE: whether copied conversation text should carry that flag is a cross-control question for both copy sites, not this block.
+- [Logs] No findings. Nothing in this change logs, and `CopyTextControl` deliberately logs nothing. The helpers return strings and do not report.
+- [Concurrency] Not applicable. No coroutine, no shared state. The only state is the existing per-block `rememberScrollState()`.
+- [Threat model: hostile daemon frame] No findings beyond the existing ones. A pathological fence (huge line, many blank lines, unterminated) is handled by the same total, linear extraction and the existing `runCatching` tokeniser.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-09-22
+
+## Revisions
+
+- 2026-09-22: the security review above was run after the plan's first commit (`spec:` commit) instead of before it, because the label was read late. It was appended in a separate commit before any implementation code, and the design is unchanged by it.
