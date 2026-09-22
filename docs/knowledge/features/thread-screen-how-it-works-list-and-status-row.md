@@ -52,22 +52,54 @@ and scrolls there first. Verified by mutation: the `totalItemsCount` variant fai
 under-filled list is the default way such a test accidentally passes.
 
 **The affordance rides `reverseLayout` for free.** A keyed `item(key = "history-loading")` rendering
-`HistoryLoadingRow()` is appended after the `itemsIndexed(...)` block, gated on `state.historyLoading`
-(sourced from `ThreadHistoryDemand.inFlight` via `ThreadViewModel`'s `historyLoading` `ThreadUiState`
-field). Because `reverseLayout = true` draws a later item further up, appending it after the message rows
-places it at the **oldest** end without any special-casing of index 0. `HistoryLoadingRow` is a private
-composable mirroring [`ThinkingIndicator`](thinking-indicator.md)'s shipped idiom — a 16dp indeterminate
+`HistoryLoadingRow()` is appended after the `itemsIndexed(...)` block. Because `reverseLayout = true` draws
+a later item further up, appending it after the message rows places it at the **oldest** end without any
+special-casing of index 0. `HistoryLoadingRow` is a private composable mirroring
+[`ThinkingIndicator`](thinking-indicator.md)'s shipped idiom — a 16dp indeterminate
 `CircularProgressIndicator`, a `bodySmall` / `onSurfaceVariant` label, and a merged
 `semantics { contentDescription = … }` — because the Figma thread frame (16:8) carries no history-loading
-element of its own; both strings are new `strings.xml` resources (`thread_history_loading_label`,
-`cd_thread_history_loading`) with no interpolation, so nothing daemon-authored reaches this row.
+element of its own; both strings are `strings.xml` resources (`thread_history_loading_label`,
+`cd_thread_history_loading`) with no interpolation, so nothing daemon-authored reaches this row. [#778](../codebase/778.md) widened the gate from a `Boolean` to `state.historyTail` — see § below.
 
 **Known gap: the affordance is unreachable while the thread reads as empty.** The loading row lives inside
 the `else` arm of `if (!state.hasMessages)` (§ *Empty-state branch* below), so a channel whose every loaded
 row predates this connection renders `EmptyThreadState` instead of the loading row while the opening ask is
 in flight — a one-round-trip flash of the empty placeholder rather than a visible loading state, on exactly
 the case the ticket set out to fix. Verifier-flagged as SHOULD FIX (non-blocking) on the #777 PR and not
-addressed in that ticket; open for a follow-up.
+addressed in that ticket; still open — #778 widened the same slot without closing this gap, since it lives
+in the same `else` arm.
+
+### The oldest-end history retry and restart (#778)
+
+[#777](../codebase/777.md)'s loading row was a one-state affordance gated on a `Boolean`; [#778](../codebase/778.md)
+widens the **same slot** to four mutually exclusive states without adding rows — the one-slot invariant is
+enforced by construction, since `when (state.historyTail)` emits at most one `item(key = "history-tail")`.
+
+- **`ThreadUiState.historyLoading: Boolean` was replaced outright by `historyTail: ThreadHistoryTail`**
+  (`None` / `Loading` / `Retry` / `DeadEnd`), read from `ThreadHistoryDemand.tail()` via the same
+  `ThreadContent` `combine` arm #777 used — no sixth arm, because Kotlin's typed `combine` stops at five.
+  The walk's *termination* reasons (`AtStart` / `NotAdvancing` / `PageCap`) still never reach the screen,
+  only its two failure reasons do — the screen asks, the ViewModel decides whether the ask is honoured, and
+  a second copy of that decision in Compose would be a second place to get it wrong.
+- **`HistoryRetryRow(onRetry)`** is an `errorContainer` / `onErrorContainer` `Surface` on
+  `MaterialTheme.shapes.small` — the shipped [`ConnectionBanner`](connection-banner.md) idiom, reused
+  rather than a new error style, because the Figma thread frame carries no history element of its own but
+  does carry one error-plus-action affordance (the status-area "Pairing error - Re-pair" chip) in that same
+  shape. Its content `Row` carries `Modifier.clickable(role = Role.Button)`, a `bodySmall` failure label and
+  a `labelLarge` action label, with a merged `contentDescription`. Pressing it calls the new defaulted
+  `onRetryOlderHistory: () -> Unit = {}` parameter, wired by `MainActivity` to `vm::onRetryOlderHistory` —
+  the only consumer.
+- **`HistoryDeadEndRow()`** is the same `Surface` with no `clickable` and no action label — visible, with
+  nothing to press, because a closed-session or non-retryable failure has no button that could work; the
+  reconnect restart is what actually recovers a closed session, not a tap.
+- **Neither row reads `RelayErrorException.message`.** Both strings are local `strings.xml` resources
+  (`thread_history_retry_label`, `thread_history_retry_action`, `thread_history_dead_end_label`, plus their
+  content-description twins) with no interpolation — the same "nothing daemon-authored reaches this row"
+  posture `HistoryLoadingRow` already had.
+- **The demand predicate is unchanged and must stay that way.** It already counts `state.items.size`
+  through `rememberUpdatedState` rather than `layoutInfo.totalItemsCount` (§ above) — widening the oldest-end
+  slot from one row to three possible ones does not move it, for the identical reason: the slot's own
+  presence must never be able to re-trigger the predicate that mounts it.
 
 ### Workspace-chip wiring (post-#137)
 
