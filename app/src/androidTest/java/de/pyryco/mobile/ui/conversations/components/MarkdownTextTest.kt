@@ -17,6 +17,9 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.width
@@ -88,6 +91,10 @@ class MarkdownTextTest {
         spanStyles
             .filter { it.item.textDecoration == TextDecoration.LineThrough }
             .map { it.item.color }
+
+    /** The substrings carrying a span style matching [predicate], in span order. */
+    private fun AnnotatedString.substringsStyled(predicate: (SpanStyle) -> Boolean): List<String> =
+        spanStyles.filter { predicate(it.item) }.map { this.text.substring(it.start, it.end) }
 
     // ------------------------------------------------------------------ AC1 — tables
 
@@ -267,11 +274,7 @@ class MarkdownTextTest {
             """.trimIndent(),
         )
 
-        // `substring = true` because of #768, NOT because the assertion needed loosening: every ATX
-        // heading currently renders with a leading space, since `HeadingBlock` filters the marker
-        // whitespace at the ATX_n level and the parser nests it one level down inside ATX_CONTENT.
-        // Pre-existing since #129 and out of scope here; this line needs no change when #768 lands.
-        composeTestRule.onNodeWithText("Release check", substring = true).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Release check").assertIsDisplayed()
         composeTestRule.onNodeWithText("Step").assertIsDisplayed()
         composeTestRule.onNodeWithText("ci").assertIsDisplayed()
         composeTestRule
@@ -282,6 +285,59 @@ class MarkdownTextTest {
 
         val annotated = annotatedTextOf("The old new path, and inline code:")
         assertEquals(listOf("old"), annotated.struckSubstrings())
+    }
+
+    // ------------------------------------------------------- #768 — the heading's marker whitespace
+
+    /**
+     * Exact matches, not `substring` ones, and that is the whole point: the parser nests a
+     * heading's content inside `ATX_CONTENT` with the marker whitespace as its first token, so
+     * every heading rendered one space indented from the paragraphs around it from #129 until
+     * here. A `substring` assertion passes green on that defect, which is how it survived two
+     * tickets' worth of heading tests.
+     */
+    @Test
+    fun atx_headings_render_without_the_marker_whitespace() {
+        render("# One\n\n## Two\n\n### Three\n\n## Trailing ##\n")
+
+        composeTestRule.onNodeWithText("One").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Two").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Three").assertIsDisplayed()
+        // The closed form pads the content at BOTH ends — the space before the closing marker is
+        // inside `ATX_CONTENT` too — so both edges come off together.
+        composeTestRule.onNodeWithText("Trailing").assertIsDisplayed()
+    }
+
+    /**
+     * Only the EDGE whitespace goes. `ATX_CONTENT`'s interior `WHITE_SPACE` tokens are the real
+     * spaces between words, so the exact text match below is what separates this fix from the
+     * tempting wrong one — filtering every `WHITE_SPACE` a level deeper renders `codeandboldandlink`.
+     */
+    @Test
+    fun a_heading_keeps_its_inline_markup_and_its_interior_spacing() {
+        render("## `code` and **bold** and [link](https://example.com)")
+
+        val annotated = annotatedTextOf("code and bold and link")
+        assertEquals(
+            listOf("code"),
+            annotated.substringsStyled { it.fontFamily == FontFamily.Monospace },
+        )
+        assertEquals(
+            listOf("bold"),
+            annotated.substringsStyled { it.fontWeight == FontWeight.Bold },
+        )
+        assertEquals(1, annotated.getLinkAnnotations(0, annotated.text.length).size)
+    }
+
+    /**
+     * A marker-only heading has no `ATX_CONTENT` child at all. The following paragraph renders only
+     * if the content lookup tolerated its absence — a throw here takes the whole composition down.
+     */
+    @Test
+    fun a_marker_only_heading_renders_without_throwing() {
+        render("##\n\nAfter the empty heading\n")
+
+        composeTestRule.onNodeWithText("After the empty heading").assertIsDisplayed()
     }
 
     private companion object {
