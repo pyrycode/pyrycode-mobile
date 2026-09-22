@@ -3,6 +3,7 @@ package de.pyryco.mobile.data.network
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.encodeToJsonElement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -268,6 +269,27 @@ class ModelListPayloadsTest {
             )
 
         assertEquals("r", menu.rows.single().resolvedModel)
+    }
+
+    // ---- #792: the on-demand request payload ---------------------------------------------------
+
+    // The ask names one conversation and nothing else. No request-id key: correlation rides the
+    // envelope's `in_reply_to`, so a key here would be a second, disagreeable identity.
+    @Test
+    fun requestPayload_isExactlyTheOneConversationIdKey() {
+        val encoded = MobileJson.encodeToJsonElement(RequestModelListPayloadDto(conversationId = CONVERSATION_ID))
+
+        assertEquals(MobileJson.parseToJsonElement("""{"conversation_id":"$CONVERSATION_ID"}"""), encoded)
+    }
+
+    // `conversation_id` is always present on the wire (no `omitempty`), so an empty id still encodes
+    // the key rather than being elided by MobileJson's `explicitNulls = false`. The daemon refuses it;
+    // the sender's own guard is what keeps such a frame off the wire (RemoteConversationRepositoryTest).
+    @Test
+    fun requestPayload_emptyConversationId_stillEncodesTheKey() {
+        val encoded = MobileJson.encodeToJsonElement(RequestModelListPayloadDto(conversationId = ""))
+
+        assertEquals(MobileJson.parseToJsonElement("""{"conversation_id":""}"""), encoded)
     }
 
     private fun decode(raw: String): ModelMenu =
