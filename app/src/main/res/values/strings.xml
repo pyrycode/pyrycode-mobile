@@ -184,4 +184,12 @@
     <string name="log_data_failed_disconnected">The connection to that host dropped before the archive finished.</string>
     <string name="log_data_failed_cancelled">Nothing was saved. Choose a destination to save the archive.</string>
     <string name="log_data_failed_write">Couldn\'t write the archive there. Try another destination.</string>
+    <!--
+      The static mark a task-list item draws in place of its bullet in an assistant reply (#681).
+      Announced by TalkBack so the state is not carried by the border alone; the mark renders a
+      message already sent, so it is not actionable and these carry no format argument and no
+      daemon-authored text.
+    -->
+    <string name="markdown_task_mark_checked">Task done</string>
+    <string name="markdown_task_mark_unchecked">Task not done</string>
 </resources>

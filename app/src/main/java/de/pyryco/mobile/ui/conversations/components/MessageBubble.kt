@@ -350,6 +350,18 @@ Plain paragraph with **bold**, *italic*, `inline code`, and a [link](https://pyr
 1. Ordered list item 1
 2. Ordered list item 2
 
+- [x] Task list item, done
+- [ ] Task list item, not done
+- Plain item in the same list, keeping its bullet
+
+Struck text: ~~two tildes~~ and ~one tilde~, beside a path that keeps both of its: ~/src ~/out.
+
+| Construct | Alignment | Count |
+|:----------|:---------:|------:|
+| Table | centre | 1 |
+| Task list | centre | 3 |
+| Strikethrough | centre | 2 |
+
 > Blockquote — single line of quoted text.
 
 Kotlin:
