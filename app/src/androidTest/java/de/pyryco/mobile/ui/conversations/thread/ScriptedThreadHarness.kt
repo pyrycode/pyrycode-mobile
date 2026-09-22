@@ -3,15 +3,10 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
 import androidx.compose.ui.test.onAllNodesWithText
-import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.PreferenceDataStoreFactory
-import androidx.datastore.preferences.core.Preferences
 import androidx.lifecycle.SavedStateHandle
-import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
-import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.RemoteConversationRepository
 import de.pyryco.mobile.data.repository.SessionPump
@@ -26,8 +21,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import java.io.File
-import java.util.UUID
 
 /**
  * Layer 1a component-level harness (#432): drives a scripted sequence of structured live-session
@@ -89,7 +82,6 @@ class ScriptedThreadHarness(
             // function in isolation. It records and nothing more, so every other scenario is unaffected.
             repository = TappingConversationRepository(repo),
             connectionStateSource = connectionStateSource,
-            appPreferences = AppPreferences(newDataStore()),
             // #789: a store of this harness's own — the scenarios never type, and an isolated one keeps
             // the scripted render independent of any other surface's composer state.
             draftStore = ComposerDraftStore(),
@@ -275,15 +267,6 @@ class ScriptedThreadHarness(
                 .fetchSemanticsNodes()
                 .isNotEmpty()
         }
-    }
-
-    private fun newDataStore(): DataStore<Preferences> {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        // Per-run unique file under the instrumentation sandbox; leaking it across runs is acceptable.
-        return PreferenceDataStoreFactory.create(
-            scope = scope,
-            produceFile = { File(context.filesDir, "scripted_thread_harness_${UUID.randomUUID()}.preferences_pb") },
-        )
     }
 
     private companion object {

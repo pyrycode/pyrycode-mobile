@@ -145,7 +145,7 @@ val appModule =
         viewModel { DiscussionListViewModel(get(), get()) }
         viewModel { get<ThreadDestinationFactory>().settings(get(), get()) }
         viewModel { get<ThreadDestinationFactory>().archive(get()) }
-        viewModel { get<ThreadDestinationFactory>().thread(get(), get(), get()) }
+        viewModel { get<ThreadDestinationFactory>().thread(get(), get()) }
         viewModel { get<ThreadDestinationFactory>().literal(get()) }
     }
 
@@ -226,10 +226,10 @@ internal class ThreadDestinationFactory(
 
     fun thread(
         handle: SavedStateHandle,
-        preferences: AppPreferences,
-        // #789: the app-scoped composer-draft store. Passed per call, the same shape [preferences]
-        // already uses — one process-wide singleton reaching every thread destination, which is what
-        // lets a draft outlive the back-stack entry that typed it.
+        // #789: the app-scoped composer-draft store. One process-wide singleton reaching every thread
+        // destination, which is what lets a draft outlive the back-stack entry that typed it. #807 removed
+        // the `AppPreferences` that used to sit beside it: the thread's model and effort come from the
+        // daemon's session settings now, and no other thread state reads a device preference.
         draftStore: ComposerDraftStore,
     ): ThreadViewModel {
         val serverId = handle.get<String>("serverId").orEmpty()
@@ -237,7 +237,7 @@ internal class ThreadDestinationFactory(
         val repository = repository(serverId, bundle)
         RelayLog.d { "event=thread_destination_bound" }
         if (!useRelay && serverId == HostConversationSource.DEMO_SERVER_ID) {
-            return ThreadViewModel(handle, repository, FakeConnectionStateSource(), preferences, draftStore)
+            return ThreadViewModel(handle, repository, FakeConnectionStateSource(), draftStore)
         }
         val connection =
             object : ConnectionStateSource {
@@ -251,7 +251,6 @@ internal class ThreadDestinationFactory(
             handle,
             repository,
             connection,
-            preferences,
             draftStore,
             liveSessionEvents = bundle?.coordinator?.liveSessionEvents ?: emptyFlow(),
             currentModal = bundle?.coordinator?.currentModal ?: MutableStateFlow(ModalUiState.Hidden),
