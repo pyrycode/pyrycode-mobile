@@ -120,9 +120,10 @@ nothing here branches on delivery path. Decode boundary:
   as long as the connection lives — the only reset this state ever gets is a fresh
   `RemoteConversationRepository` per connection (#351), which is also where "per host" comes from: the
   published vocabulary varies by machine and account, not by conversation.
-- **`observeModelMenu(conversationId): Flow<ModelMenu?>`** is a pure cold projection —
-  `modelMenusByConversation.map { it[conversationId] }.distinctUntilChanged()` — issuing no request; it
-  rides the frames the daemon sends unasked (the on-demand ask is #792). `null` is **unavailable**: a
+- **`observeModelMenu(conversationId): Flow<ModelMenu?>`** is a cold projection —
+  `modelMenusByConversation.map { it[conversationId] }.distinctUntilChanged()` — over the frames the
+  daemon sends unasked, plus (since #792, below) this connection's own on-demand ask when nothing has
+  arrived yet. `null` is **unavailable**: a
   normal, permanent resting state covering no live connection, a connection without `interactive`, a
   conversation this connection heard no frame for, and the window before the first frame lands — never an
   error, never a spinner, never the device `Model`/`Effort` enums, and — because the lookup is by the
@@ -143,6 +144,76 @@ authenticated Noise channel, a hostile/buggy daemon can waste at most one envelo
 cross-conversation injection structurally: a frame can only overwrite the menu of the conversation it
 names. The untrusted-string handling itself is documented on the domain type — see
 [Mobile Protocol v2 § the model-list retention](mobile-protocol-v2-wire-layer-application-payloads.md#the-model-list-retention-791).
+
+## The on-demand ask — `request_model_list` (#792)
+
+Closes the window #791's two unsolicited paths leave open: a conversation **created after the phone
+connected** crosses neither the live per-spawn frame nor the connect-time reconcile burst, so without an
+ask a new conversation's `observeModelMenu` reading stays `null` forever with nothing to trigger a
+change. `request_model_list` is the third and last way a client gets a menu and the only one it can
+trigger itself. Its answer is #791's own `model_list` frame, unchanged, correlated by `in_reply_to` —
+so it lands through the existing decode and retention with no second payload shape and no new render
+obligation. Wire request DTO: [Mobile Protocol v2 § the on-demand
+ask](mobile-protocol-v2-wire-layer-application-payloads.md#the-on-demand-ask--request_model_list-792).
+
+- **Triggered from the reading, not a new public method.** `observeModelMenu` gained an
+  `.onStart { askForModelMenu(conversationId) }` — subscribing to a conversation's menu *is* wanting it,
+  and this is the seam where the conversation to name is already known, the `observeSessionSettings`
+  precedent of a reading issuing its own request. The ask is not exposed on `ConversationRepository`, the
+  facade or the fake, so no consumer call site changes; `StableConversationRepository`'s host-swap
+  re-subscription (`switchToLive`) is what re-triggers it against a new connection.
+- **Fire-and-forget, the `requestDebugBundle` shape — not `sendAndAwaitReply`.** The verb's two replies
+  arrive on different arms and neither can complete a correlated waiter the usual way: a success is the
+  `model_list` frame #791's own arm applies by the payload's own `conversation_id`, and it must never
+  also settle a deferred — that would put a broadcast-shaped frame into a registry where a stale or
+  misrouted one could land in a slot it was never addressed to; a refusal is a separate `error`. Awaiting
+  the send would therefore suspend until connection teardown on the very outcome the verb exists to
+  produce, and a connection without `interactive` is answered with nothing at all, so there would be
+  nothing to await.
+- **Two ledgers, different lifetimes.** `askedModelMenus: MutableSet<String>` (a `ConcurrentHashMap` key
+  set) is the one-shot record — a conversation already holding a menu, or already asked, is not asked
+  again — connection-scoped like `modelMenusByConversation`, so "once" means once per connection; a fresh
+  connection's reconcile burst is the recovery path. `modelListAsks: ConcurrentHashMap<Long, String>`
+  (request envelope id → conversation id) is the refusal correlation, consumed by whichever reply
+  arrives first. It is **disjoint from `pendingRequests` by construction**, so an `in_reply_to` resolves
+  in at most one map and the two correlation paths cannot consume each other's reply.
+  `askedModelMenus.add` is an atomic test-and-set, not a read-then-write, so two collectors subscribing to
+  the same conversation at once still produce one ask; a send the transport refused rolls both ledger
+  entries back, which is not a retry (nothing re-sends) — it only declines to burn the one shot on a
+  frame that never left.
+- **The success arm consumes the correlation and discards it — it never becomes the retention's routing
+  key.** `envelope.inReplyTo?.let(modelListAsks::remove)` runs before the existing decode; the retention
+  write still routes on the payload's own `conversation_id`, never on what the correlation named. A
+  security-review finding named the tempting alternative explicitly: resolving the ask's conversation id
+  from `modelListAsks` and retaining under *that* id would let a daemon answer an ask for A with a
+  payload naming B and land B's rows under A — the cross-conversation injection #791's
+  routing-by-payload-only rule already forecloses, and this ask must not reopen it. The removal does
+  **not** release `askedModelMenus` — the ask was answered.
+- **The refusal arm reads only `ErrorPayload.code`, never reusing `mapError`** (which collapses
+  `conversation.not_found` into an `IllegalArgumentException` and would discard the very distinction this
+  branch exists to draw):
+  - `model_list.unavailable` — the daemon hosts the conversation but has nothing to answer with yet, so
+    the same request may succeed later. `askedModelMenus` is released so a **later subscription** may ask
+    again.
+  - `conversation.not_found` — the daemon does not host what was named. Terminal for that id on this
+    connection; the entry stands.
+  - any other code, or a payload that will not decode — fail closed, treated as terminal.
+
+  Neither branch writes `modelMenusByConversation`: a refusal never becomes an empty menu, and both leave
+  the reading at its existing `null`.
+- **No retry loop.** Releasing the one-shot on `model_list.unavailable` states the wire's own contract by
+  declining to suppress a future ask; nothing here schedules, backs off or re-sends, and only a **new**
+  subscription asks again — which nothing in this design creates. A reply that never arrives, or a
+  timeout, needs no handling: there is no waiter to expire. The conversation stays unavailable and the
+  next connect's reconcile burst is the recovery path.
+- **Never logs, on either arm.** The conversation id is a cross-conversation correlation key and a
+  refusal's `message` is daemon-authored prose; pairing them in one line is exactly what this ticket's
+  security note forbids, so the refusal branch reads `code` and discards the rest, and `askForModelMenu`
+  authors no message at all — deliberately not `interrupt`'s `check(pump.send(…)) { … }` idiom, so there
+  is no failure text to leak.
+
+**Renders nothing**, the same posture as #791 — the composer's model/effort controls are
+[#649](https://github.com/pyrycode/pyrycode-mobile/issues/649).
 
 ## `answerModal` / `cancelModal` — the v2 modal answer/cancel control-send (#438)
 
