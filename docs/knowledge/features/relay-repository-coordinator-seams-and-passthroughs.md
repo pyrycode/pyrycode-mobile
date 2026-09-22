@@ -224,9 +224,9 @@ fun observeQuestionBatch(conversationId: String): Flow<QuestionBatch?> =
   picks the first held batch for the given id — claude blocks on one `AskUserQuestion` at a time, so two
   outstanding batches for the same conversation is out of contract, and any deterministic tie-break is
   fine for that case.
-- **No outbound half here.** Sending an answer or refusal is [#825](https://github.com/pyrycode/pyrycode-mobile/issues/825),
-  not this ticket — this seam is read-only, the mirror of `modalEvents` before `answerModal`/`cancelModal`
-  existed.
+- **The outbound half is a separate passthrough**, added by [#825](https://github.com/pyrycode/pyrycode-mobile/issues/825)
+  below (§ [Outbound question-answer / refuse passthrough](#outbound-question-answer--refuse-passthrough-825)) —
+  this seam itself stays read-only, the mirror of `modalEvents` before `answerModal`/`cancelModal` existed.
 
 ## Outbound modal-send passthrough (#451)
 
@@ -290,6 +290,35 @@ suspend fun interrupt(conversationId: String) {
   conversation. The consumer is [`ThreadViewModel.onInterrupt` / `sendInterrupt`](interrupt-send-path.md);
   unlike `sendCancel` its failure catches are **empty** (no error channel or log).
   `CancellationException` is rethrown before the failure catches.
+
+## Outbound question-answer / refuse passthrough (#825)
+
+The outbound mirror of the [question-batch projection](#question-batch-projection-822) above: forwards
+the operator's decision down to the connection-scoped concrete
+[`RemoteConversationRepository.answerQuestionBatch` / `refuseQuestionBatch`](remote-conversation-repository-control-sends.md#answerquestionbatch--refusequestionbatch--the-v2-question_answer--question_refused-sends-825).
+Same shape as the `answerModal`/`interrupt` passthroughs: both read the concrete repo off the single
+`activeConnection` source.
+
+```kotlin
+suspend fun answerQuestionBatch(questionBatchId: String, answers: List<QuestionAnswer>) {
+    val repo = activeConnection.value?.repo ?: throw IllegalStateException("no active connection")
+    repo.answerQuestionBatch(questionBatchId, answers)
+}
+// refuseQuestionBatch(questionBatchId) is the same null-guard, minus answers.
+```
+
+- **Null-guard only** — between connections the guard throws; a connection whose pump is pre-`Open`
+  surfaces through the concrete repository's own `check(pump.send(...))` as `IllegalStateException`. No
+  redundant `Open` gate, matching `answerModal` / `interrupt`.
+- **Validation happens on the other side of the guard**, in the concrete repository, against the same
+  held state `questionBatches` projects — not against this coordinator's `stateIn` copy, which trails by
+  a dispatch. A batch folded a moment ago is answerable through this passthrough with no lag window.
+- **Host isolation is structural.** Each host has its own coordinator, `activeConnection` and repository,
+  so a send for host A's batch can only reach A's pump even when host B holds a batch sharing the same
+  id.
+- Bound at the `AppModule` `ThreadViewModel` factory beside `answerModal`/`interrupt` for
+  [#661](https://github.com/pyrycode/pyrycode-mobile/issues/661)'s panel. Never logs; never grants a
+  permission.
 
 ## Reconnect-spanning replay cursor (#412)
 
