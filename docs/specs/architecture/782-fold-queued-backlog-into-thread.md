@@ -303,4 +303,13 @@ section was written, and the checklist re-walked from the top.)
 **2026-09-22 — the fold's file is `ThreadRow.kt`, not `ThreadRows.kt`.** ktlint's `standard:filename`
 rule failed the build: a file holding a single class plus extension functions for it must be named
 after the class. No contract change — same package, same symbols, same visibility.
+
+**2026-09-22 — sizing: the ticket landed over the 800-line boundary, recorded rather than split.**
+Actual 1070 insertions / 312 deletions over 8 files, against a plan that estimated ~770. About 160 of
+those insertions are `QueuedBacklog.kt`'s content carried into `QueuedMessageRow.kt` by the rename and
+306 are this plan, so newly-authored work is nearer 600, but the raw count is the one the boundary
+names and it is over. It was not split: every candidate slice — the fold alone, or the render alone —
+produces a child whose only consumer is its sibling, which the floor rule forbids, and the floor beats
+the ceiling. The comparable is the refiner's own analogue, `pyrycode-desktop` #1214 at 895/315 over 11
+files. Recorded here so the next calibration reads the real number.
 </content>
