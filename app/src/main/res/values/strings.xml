@@ -16,12 +16,13 @@
     <!--
       Both add controls repeat down the screen — a section header per section, a host row per host in each of
       them — so each names the section or host it acts on, the way the fold labels above name their row. %1$s
-      is the section title for the first and the host's (clamped) name for the other two.
+      is the section title for the first and the host's (clamped) name for the rest.
     -->
     <string name="cd_tree_section_pair_host">Pair another host, %1$s</string>
     <string name="cd_tree_host_edit">Edit host %1$s</string>
     <string name="cd_tree_host_new_chat">New chat on %1$s</string>
     <string name="cd_tree_host_pick_workspace">Pick a workspace for the new chat on %1$s</string>
+    <string name="cd_tree_host_reconnect">Reconnect %1$s</string>
     <string name="untitled_discussion">Untitled discussion</string>
     <string name="channels_section_header">Channels</string>
     <string name="chats_section_header">Chats</string>

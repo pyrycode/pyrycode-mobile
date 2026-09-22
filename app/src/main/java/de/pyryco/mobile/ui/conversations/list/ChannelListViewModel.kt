@@ -185,6 +185,15 @@ class ChannelListViewModel(
         }
     }
 
+    /**
+     * A disconnected host row's plug control (#840): redial the row's own host and no other. The
+     * registry refuses while backgrounded or after removal; the fold, selection and rows are untouched.
+     */
+    fun reconnectHost(serverId: String) {
+        RelayLog.d { "event=tree_host_reconnect_tapped" }
+        hostSource.retryHost(serverId)
+    }
+
     fun openHostWorkspacePicker(serverId: String) {
         pendingHostWorkspacePicker.value = serverId
         RelayLog.d { "event=host_workspace_picker_opened" }

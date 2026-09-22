@@ -99,6 +99,29 @@ class HostConversationSourceTest {
         }
 
     @Test
+    fun retryHostForwardsExactlyTheNamedHostAndNothingAfterDispose() =
+        runTest {
+            val a = Host("Host")
+            val b = Host("host")
+            val retried = mutableListOf<String>()
+            val source =
+                HostConversationSource(
+                    MutableStateFlow(listOf(a.entry, b.entry)),
+                    { null },
+                    StandardTestDispatcher(testScheduler),
+                    retry = { retried += it },
+                )
+            runCurrent()
+
+            source.retryHost("host")
+            assertEquals(listOf("host"), retried)
+
+            source.dispose()
+            source.retryHost("Host")
+            assertEquals(listOf("host"), retried)
+        }
+
+    @Test
     fun cacheOutlivesSubscribersAndReconnectSilenceButEmptyReplyReplacesRows() =
         runTest {
             val a = Host("A")
