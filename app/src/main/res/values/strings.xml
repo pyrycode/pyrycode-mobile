@@ -154,4 +154,35 @@
     <string name="edit_host_unpair_confirm_body">%1$s will be removed from this phone: its pairing, its connection and its saved workspace. Pairing it again needs its QR code.</string>
     <!-- Generic for the same reason edit_host_save_failed is, and it names the failed operation. -->
     <string name="edit_host_unpair_failed">Couldn\'t unpair the host. Try again.</string>
+    <!--
+      The Log data entry and its modal (#683). The row headline joins the Storage section in
+      Clear cache\'s language; the title repeats it so the modal names what it was opened from.
+    -->
+    <string name="log_data_settings_row">Log data</string>
+    <string name="log_data_title">Log data</string>
+    <!--
+      Names the host and what the archive actually is. Both halves are required: it covers the whole
+      daemon rather than one conversation, and it carries that daemon\'s logs and paths — the operator
+      is about to choose where those go. The host name arrives already clamped.
+    -->
+    <string name="log_data_scope">%1$s\'s whole daemon archive: logs and paths from every conversation on that host, not one conversation.</string>
+    <!-- Progress is the accepted chunk count, which is the only number the transfer publishes. -->
+    <string name="log_data_receiving">Receiving… %1$d parts.</string>
+    <string name="log_data_ready">Ready to save — %1$s.</string>
+    <string name="log_data_saving">Saving…</string>
+    <!-- The chosen document\'s own name, arriving already clamped. -->
+    <string name="log_data_saved">Saved to %1$s.</string>
+    <!--
+      Nine failures, nine static sentences. Each carries no raw daemon text, no exception text and no
+      format argument, because the shell renders them verbatim into a live region.
+    -->
+    <string name="log_data_failed_unavailable">That host isn\'t available right now. Try again once it\'s connected.</string>
+    <string name="log_data_failed_busy">That host is already preparing an archive. Try again when it\'s done.</string>
+    <string name="log_data_failed_reconnect">That host needs to reconnect before it can send another archive.</string>
+    <string name="log_data_failed_send">Couldn\'t send the request to that host. Try again.</string>
+    <string name="log_data_failed_refused">That host refused the request.</string>
+    <string name="log_data_failed_stream">That host\'s archive didn\'t arrive intact. Try again.</string>
+    <string name="log_data_failed_disconnected">The connection to that host dropped before the archive finished.</string>
+    <string name="log_data_failed_cancelled">Nothing was saved. Choose a destination to save the archive.</string>
+    <string name="log_data_failed_write">Couldn\'t write the archive there. Try another destination.</string>
 </resources>

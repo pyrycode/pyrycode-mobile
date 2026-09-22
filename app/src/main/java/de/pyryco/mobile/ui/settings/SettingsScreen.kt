@@ -106,6 +106,17 @@ fun SettingsScreen(
      * anywhere should not offer the tap, and a destination with no owner has no archive to open.
      */
     onOpenArchivedDiscussions: (() -> Unit)?,
+    /**
+     * Opens the Log data modal on this destination's own host, or null when it owns none (#683).
+     * Null draws the row inert through [SettingsRow]'s nullable-click affordance, the way #715 draws
+     * the Archive row: a destination with no host has no archive to download.
+     */
+    onOpenLogData: (() -> Unit)?,
+    /** The open Log data modal, or null when none is (#683). */
+    logData: DebugBundleDownloadState?,
+    onLogDataRequested: () -> Unit,
+    onLogDataSaveRequested: () -> Unit,
+    onLogDataDismissed: () -> Unit,
     onOpenAbout: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -178,6 +189,15 @@ fun SettingsScreen(
             onUnpairConfirmed = onHostUnpairConfirmed,
             onUnpairDeclined = onHostUnpairDeclined,
             onDismissRequest = onEditHostDismissed,
+        )
+
+        // The Storage section's own modal (#683), drawn through the same shell and the same
+        // presence rule as the editor above it.
+        DebugBundleModal(
+            state = logData,
+            onRequest = onLogDataRequested,
+            onSave = onLogDataSaveRequested,
+            onDismissRequest = onLogDataDismissed,
         )
 
         Column(
@@ -322,6 +342,14 @@ fun SettingsScreen(
                     ),
                 trailing = { ChevronIcon() },
                 onClick = onOpenArchivedDiscussions,
+            )
+            // One more Storage row in Clear cache's own language — headline plus chevron, no
+            // supporting line and no new section header. The locked frame has no Log data row, so
+            // the entry borrows the shape the section already draws rather than inventing one (#683).
+            SettingsRow(
+                headline = stringResource(R.string.log_data_settings_row),
+                trailing = { ChevronIcon() },
+                onClick = onOpenLogData,
             )
             SettingsRow(
                 headline = "Clear cache",
@@ -493,6 +521,12 @@ private fun SettingsScreenLightPreview() {
             onPairServer = {},
             onBack = {},
             onOpenArchivedDiscussions = {},
+            // Closed, as the editor above is: the frame's own state (#683).
+            onOpenLogData = {},
+            logData = null,
+            onLogDataRequested = {},
+            onLogDataSaveRequested = {},
+            onLogDataDismissed = {},
             onOpenAbout = {},
         )
     }
@@ -536,6 +570,12 @@ private fun SettingsScreenDarkPreview() {
             onPairServer = {},
             onBack = {},
             onOpenArchivedDiscussions = {},
+            // Closed, as the editor above is: the frame's own state (#683).
+            onOpenLogData = {},
+            logData = null,
+            onLogDataRequested = {},
+            onLogDataSaveRequested = {},
+            onLogDataDismissed = {},
             onOpenAbout = {},
         )
     }

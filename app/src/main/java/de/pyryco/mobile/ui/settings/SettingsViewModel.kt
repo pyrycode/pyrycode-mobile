@@ -12,6 +12,7 @@ import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.DebugBundleTransfer
 import de.pyryco.mobile.ui.host.HostEditorController
 import de.pyryco.mobile.ui.host.HostEditorState
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -91,6 +92,12 @@ class SettingsViewModel(
     hosts: Flow<List<SettingsHost>>,
     /** The Edit host modal's read and write (#751), handed straight to the shared machine below. */
     pairedServers: PairedServerCollectionStore,
+    /**
+     * Asks one host for its diagnostic archive (#683), `RelayConnectionRegistry.requestDebugBundle`
+     * in production. A lambda rather than the registry so this view model's download reaches no
+     * store, no record and no credential — it can ask exactly one question about exactly one host.
+     */
+    requestDebugBundle: (String) -> DebugBundleTransfer,
 ) : ViewModel() {
     /**
      * The Edit host modal, driven by the same machine the channel list drives (#751).
@@ -100,6 +107,18 @@ class SettingsViewModel(
      */
     private val hostEditorController = HostEditorController(viewModelScope, pairedServers, appPreferences)
     val hostEditor: StateFlow<HostEditorState?> = hostEditorController.state
+
+    /**
+     * The Log data download (#683), bound at construction to the id this destination captured.
+     *
+     * One instance per destination over this view model's own scope, for the reason the editor above
+     * has one: clearing this owner has to cancel the collect and the write, and two Settings entries
+     * on the back stack must not share a download. The controller holds the only server id it will
+     * ever ask about, so selecting another host, opening another host's Settings or unpairing can
+     * move neither a request nor a pending save.
+     */
+    private val debugBundleController = DebugBundleDownloadController(viewModelScope, ownerServerId, requestDebugBundle)
+    val logDataDownload: StateFlow<DebugBundleDownloadState?> = debugBundleController.state
 
     /**
      * Every saved host with its own live status, and the destination's owner marked among them
@@ -380,6 +399,33 @@ class SettingsViewModel(
     fun confirmHostUnpair() = hostEditorController.confirmUnpair()
 
     fun dismissHostEditor() = hostEditorController.dismiss()
+
+    /**
+     * Opens the Log data modal on **this destination's own** host (#683).
+     *
+     * The name shown is the one the Connection section already resolved for the owning row — its
+     * local name, or its server id when unnamed — read from [connection] rather than from a second
+     * store lookup, so the modal and the row it was opened from can never name the host differently.
+     * A host whose row has not arrived yet, or one no longer paired, falls back to the captured id.
+     *
+     * Guarded on a blank owner like [openOwnerHostEditor], and for the same reason: this is the
+     * second lock. The screen offers no affordance at all for a destination owning no host.
+     */
+    fun openLogData() {
+        if (ownerServerId.isBlank()) {
+            RelayLog.d { "event=log_data_rejected code=no_owner" }
+            return
+        }
+        val loaded = connection.value as? SettingsConnectionState.Loaded
+        debugBundleController.open(loaded?.hosts?.firstOrNull { it.isOwner }?.name ?: ownerServerId)
+    }
+
+    fun requestLogArchive() = debugBundleController.requestArchive()
+
+    /** The picker's result: a destination to write into, or null when the operator cancelled. */
+    fun onLogArchiveDestination(destination: ArchiveDestination?) = debugBundleController.onDestination(destination)
+
+    fun dismissLogData() = debugBundleController.dismiss()
 
     private companion object {
         const val STOP_TIMEOUT_MILLIS = 5_000L

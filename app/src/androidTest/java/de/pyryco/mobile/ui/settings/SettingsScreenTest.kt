@@ -293,6 +293,75 @@ class SettingsScreenTest {
         assertEquals(1, pairCount)
     }
 
+    @Test
+    fun logDataRow_opensTheModalWhenThisDestinationOwnsAHost() {
+        var opened = 0
+        setSettings(onOpenLogData = { opened++ })
+
+        composeTestRule
+            .onNode(hasText("Log data") and hasClickAction())
+            .performScrollTo()
+            .performClick()
+
+        assertEquals(1, opened)
+    }
+
+    @Test
+    fun logDataRow_drawsInertWhenThisDestinationOwnsNoHost() {
+        // The Archive row's own no-owner treatment (#715): the entry stays visible, but a tap it
+        // could only reject is not offered.
+        setSettings(onOpenLogData = null)
+
+        composeTestRule.onNode(hasText("Log data")).performScrollTo().assertHasNoClickAction()
+    }
+
+    @Test
+    fun logDataModal_namesTheHostAndTheWholeDaemonWhileReceiving() {
+        setSettings(logData = DebugBundleDownloadState(hostName = "Pyrybox", receiving = true, acceptedChunks = 3))
+
+        composeTestRule.onNode(hasText("Pyrybox", substring = true)).assertExists()
+        composeTestRule.onNode(hasText("whole daemon archive", substring = true)).assertExists()
+        composeTestRule.onNode(hasText("3 parts", substring = true)).assertExists()
+    }
+
+    @Test
+    fun logDataModal_reportsACancelledPickerAndOffersTheSaveAgain() {
+        var saveRequests = 0
+        var newRequests = 0
+        setSettings(
+            logData =
+                DebugBundleDownloadState(
+                    hostName = "Pyrybox",
+                    readyBytes = 2048,
+                    failure = DebugBundleFailure.PICKER_CANCELLED,
+                ),
+            onLogDataRequested = { newRequests++ },
+            onLogDataSaveRequested = { saveRequests++ },
+        )
+
+        composeTestRule.onNode(hasText("Nothing was saved", substring = true)).assertExists()
+        composeTestRule.onNode(hasText("OK") and hasClickAction()).performClick()
+
+        // The held archive is saved again, not re-downloaded: a cancelled picker costs no transfer.
+        assertEquals(1, saveRequests)
+        assertEquals(0, newRequests)
+    }
+
+    @Test
+    fun logDataModal_reportsAFailedSaveWithoutClaimingAnythingWasSaved() {
+        setSettings(
+            logData =
+                DebugBundleDownloadState(
+                    hostName = "Pyrybox",
+                    readyBytes = 2048,
+                    failure = DebugBundleFailure.WRITE_FAILED,
+                ),
+        )
+
+        composeTestRule.onNode(hasText("Couldn't write the archive there.", substring = true)).assertExists()
+        composeTestRule.onAllNodes(hasText("Saved to", substring = true)).assertCountEquals(0)
+    }
+
     private fun setSettings(
         connection: SettingsConnectionState = SettingsConnectionState.Resolving,
         archivedDiscussionCount: Int = 0,
@@ -303,6 +372,10 @@ class SettingsScreenTest {
         hostEditor: HostEditorState? = null,
         onEditHost: () -> Unit = {},
         onPairServer: () -> Unit = {},
+        onOpenLogData: (() -> Unit)? = {},
+        logData: DebugBundleDownloadState? = null,
+        onLogDataRequested: () -> Unit = {},
+        onLogDataSaveRequested: () -> Unit = {},
         onOpenAbout: () -> Unit = {},
     ) {
         composeTestRule.setContent {
@@ -339,6 +412,11 @@ class SettingsScreenTest {
                     onPairServer = onPairServer,
                     onBack = {},
                     onOpenArchivedDiscussions = onOpenArchivedDiscussions,
+                    onOpenLogData = onOpenLogData,
+                    logData = logData,
+                    onLogDataRequested = onLogDataRequested,
+                    onLogDataSaveRequested = onLogDataSaveRequested,
+                    onLogDataDismissed = {},
                     onOpenAbout = onOpenAbout,
                 )
             }

@@ -21,6 +21,8 @@ import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.preferences.ThemeMode
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.DebugBundleStatus
+import de.pyryco.mobile.data.repository.DebugBundleTransfer
 import de.pyryco.mobile.data.repository.ThreadItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -85,7 +87,60 @@ class SettingsViewModelTest {
         ownerServerId: String = "",
         hosts: Flow<List<SettingsHost>> = MutableStateFlow(emptyList()),
         pairedServers: PairedServerCollectionStore = Store(),
-    ): SettingsViewModel = SettingsViewModel(prefs, repo, ownerServerId, hosts, pairedServers)
+        requestDebugBundle: (String) -> DebugBundleTransfer = { DebugBundleTransfer.rejected(DebugBundleStatus.UNAVAILABLE) },
+    ): SettingsViewModel = SettingsViewModel(prefs, repo, ownerServerId, hosts, pairedServers, requestDebugBundle)
+
+    @Test
+    fun logData_opensOnTheCapturedOwnerAndAsksThatHostAlone() =
+        runTest(dispatcher) {
+            val asked = mutableListOf<String>()
+            val vm =
+                makeVm(
+                    AppPreferences(newDataStore()),
+                    ownerServerId = "alpha",
+                    hosts = MutableStateFlow(listOf(host("alpha", "Alpha"), host("beta", "Beta"))),
+                    requestDebugBundle = { id ->
+                        asked += id
+                        DebugBundleTransfer.rejected(DebugBundleStatus.UNAVAILABLE)
+                    },
+                )
+            // The name is read off the resolved Connection section, so the modal and the row it was
+            // opened from can never name the host differently.
+            backgroundScope.launch { vm.connection.collect { } }
+            advanceUntilIdle()
+
+            vm.openLogData()
+            vm.requestLogArchive()
+            advanceUntilIdle()
+
+            assertEquals("Alpha", vm.logDataDownload.value?.hostName)
+            assertEquals(listOf("alpha"), asked)
+            assertEquals(DebugBundleFailure.UNAVAILABLE, vm.logDataDownload.value?.failure)
+        }
+
+    @Test
+    fun logData_offersNothingWhenThisDestinationOwnsNoHost() =
+        runTest(dispatcher) {
+            val asked = mutableListOf<String>()
+            val vm =
+                makeVm(
+                    AppPreferences(newDataStore()),
+                    ownerServerId = "",
+                    hosts = MutableStateFlow(listOf(host("alpha", "Alpha"))),
+                    requestDebugBundle = { id ->
+                        asked += id
+                        DebugBundleTransfer.rejected(DebugBundleStatus.UNAVAILABLE)
+                    },
+                )
+
+            vm.openLogData()
+            vm.requestLogArchive()
+            advanceUntilIdle()
+
+            assertNull(vm.logDataDownload.value)
+            assertEquals(emptyList<String>(), asked)
+            assertTrue(logs.any { it.contains("event=log_data_rejected") && it.contains("code=no_owner") })
+        }
 
     private fun host(
         serverId: String,
