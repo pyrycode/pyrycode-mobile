@@ -173,6 +173,12 @@ fun ThreadScreen(
     // #778: the reader pressed the oldest-end retry affordance. Wired by MainActivity →
     // vm::onRetryOlderHistory, and inert unless the walk stopped on a retryable failure.
     onRetryOlderHistory: () -> Unit = {},
+    // #789: this chat's unsent composer text and its edit sink, owned by the app-scoped
+    // ComposerDraftStore and bound by MainActivity → vm.draft / vm::onDraftChange. Defaulted so the
+    // screen tests that never type keep rendering an empty composer, exactly as they did when the input
+    // bar owned its own text.
+    draft: String = "",
+    onDraftChange: (String) -> Unit = {},
 ) {
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
@@ -251,7 +257,13 @@ fun ThreadScreen(
                     isThinking = isThinking,
                 )
                 ThreadInputBar(
-                    onSend = onSendMessage,
+                    text = draft,
+                    onTextChange = onDraftChange,
+                    // The composer no longer clears itself here (#789): sendMessage clears the draft
+                    // once the daemon has accepted it, so a refused send leaves the text to resend.
+                    // Blank sends are still refused — the button disables, and the IME Send action that
+                    // can still fire on an empty field hits the ViewModel's own blank guard.
+                    onSend = { onSendMessage(draft) },
                     modifier = Modifier.padding(horizontal = ComposerGutter),
                     isBusy = isBusy,
                     onInterrupt = onInterrupt,
