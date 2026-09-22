@@ -6,18 +6,19 @@ import org.junit.Test
 
 class RelayLinkDisconnectedTest {
     @Test
-    fun onlyTheThreeErrorStatesReadAsDisconnected() {
+    fun onlyTheErrorStatesReadAsDisconnected() {
         val classified =
             listOf(
                 RelayLinkStatus.Reconnecting(secondsRemaining = 5),
                 RelayLinkStatus.Offline,
                 RelayLinkStatus.DaemonAbsent,
+                RelayLinkStatus.PairingRejected,
                 // Idle is a deliberate background close, not an error.
                 RelayLinkStatus.Idle,
                 RelayLinkStatus.Connecting,
                 RelayLinkStatus.Connected,
             ).map { it.isDisconnected() }
 
-        assertEquals(listOf(true, true, true, false, false, false), classified)
+        assertEquals(listOf(true, true, true, true, false, false, false), classified)
     }
 }

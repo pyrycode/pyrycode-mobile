@@ -255,7 +255,11 @@ fun treeHostReconnectTestTag(serverId: String): String = "tree-host-reconnect:${
  */
 internal fun RelayLinkStatus.isDisconnected(): Boolean =
     when (this) {
-        is RelayLinkStatus.Reconnecting, RelayLinkStatus.Offline, RelayLinkStatus.DaemonAbsent -> true
+        is RelayLinkStatus.Reconnecting,
+        RelayLinkStatus.Offline,
+        RelayLinkStatus.DaemonAbsent,
+        RelayLinkStatus.PairingRejected,
+        -> true
         RelayLinkStatus.Idle, RelayLinkStatus.Connecting, RelayLinkStatus.Connected -> false
     }
 
