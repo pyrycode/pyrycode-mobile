@@ -35,7 +35,7 @@ Split on 2026-09-05 to keep this document under the 50000-byte cap the docs guar
 - [Remote conversation repository — the Phase 4 `ConversationRepository` — workspace folders, recent workspaces and push registration](remote-conversation-repository-workspace-and-push.md) — `createWorkspaceFolder(name) — the tenth mutation, leanest write-verb, first override of a previously-defaulted read/write pair ([#564](../codebase/564.md))`, `recentWorkspaces() — the fourth read verb, leanest of the family, no fold ([#565](../codebase/565.md))`, `registerPushToken(token) — the device-concern push registration (#359)`
 - [Remote conversation repository — the Phase 4 `ConversationRepository` — live stream, modal seams and the replay cursor](remote-conversation-repository-live-stream-and-modals.md) — `liveSessionEvents — the v2 structured-stream decode seam (#385)`, `modalEvents — the v2 permission/choice-modal decode seam (#437)`, `answerModal / cancelModal — the v2 modal answer/cancel control-send (#438)`, `recordReplayCursor(envelope) — the replay-cursor side-write (#412)`, `The resync arm — reset the cursor + surface the gap (#417)`
 - [Remote conversation repository — the Phase 4 `ConversationRepository` — thread-observable states and live tool rows](remote-conversation-repository-thread-observables.md) — `observeStall(conversationId) — the thread-observable stall state (#395)`, `observeQueue(conversationId) — the thread-observable queued backlog (#460)`, `observeApiRetry(conversationId) — the thread-observable API-retry state (#593)`, `observeCompacting(conversationId) — the thread-observable compaction state (#596)`, `Live tool-call rows — applyToolUse / applyToolResult (#387)`
-- [Remote conversation repository — the Phase 4 `ConversationRepository` — screen snapshot, dequeue, interrupt and new session](remote-conversation-repository-control-sends.md) — `requestScreenSnapshot(conversationId) — the parser-independent screen-snapshot read (#375)`, `dropQueuedMessage(conversationId, queuedMessageId) — the dequeue_message outbound send (#466)`, `interrupt(conversationId) — explicitly targeted v2 interrupt`, `startNewSession() — explicitly targeted v2 new_session`
+- [Remote conversation repository — the Phase 4 `ConversationRepository` — screen snapshot, dequeue, interrupt and new session](remote-conversation-repository-control-sends.md) — `requestScreenSnapshot(conversationId) — the parser-independent screen-snapshot read (#375)`, `requestHistory(conversationId, cursor, limit) — the on-disk history page read (#623)`, `dropQueuedMessage(conversationId, queuedMessageId) — the dequeue_message outbound send (#466)`, `interrupt(conversationId) — explicitly targeted v2 interrupt`, `startNewSession() — explicitly targeted v2 new_session`
 - [Remote conversation repository — the Phase 4 `ConversationRepository` — state and concurrency, error handling and the hand-off](remote-conversation-repository-state-errors-and-handoff.md) — `State & concurrency model`, `Error handling`, `Hand-off — the live binding`
 
 The sections that stay here: `## Where it sits in the Phase 4 stack`, `## The `SessionPump` consumed contract`, `## Stubs — none remain; every method is now live`, `## Testing`, `## Related`.
@@ -94,7 +94,8 @@ The three live read paths plus `sendMessage` (#346) / `createDiscussion` (#347) 
 `rename` ([#530](../codebase/530.md)) / `startNewSession` ([#539](../codebase/539.md)) /
 `setSessionSettings` ([#543](../codebase/543.md)) / `archive` / `unarchive` ([#549](../codebase/549.md)) /
 `delete` ([#532](../codebase/532.md)) / `changeWorkspace` ([#560](../codebase/560.md)) /
-`createWorkspaceFolder` ([#564](../codebase/564.md)) / `recentWorkspaces` ([#565](../codebase/565.md))
+`createWorkspaceFolder` ([#564](../codebase/564.md)) / `recentWorkspaces` ([#565](../codebase/565.md)) /
+`requestHistory` (#623)
 cover every method the interface declares that this repository overrides — `changeWorkspace` was the
 **last** `UnsupportedOperationException` stub (#549's doc named it as the "remaining throwing sibling");
 `createWorkspaceFolder` and `recentWorkspaces` were separate, interface-default (not throwing-stub)
@@ -160,7 +161,8 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   `docs/specs/architecture/348-remote-promote.md` ·
   `docs/specs/architecture/359-register-push-token-wire-sender.md` ·
   `docs/specs/architecture/543-wire-session-settings.md` ·
-  `docs/specs/architecture/549-archive-unarchive-conversation-wire.md`.
+  `docs/specs/architecture/549-archive-unarchive-conversation-wire.md` ·
+  `docs/specs/architecture/623-paged-conversation-history.md`.
 - Siblings (extend the same class + `onInbound` `when`): [#329](../codebase/329.md)
   (`observeLastMessage`, **landed** — consumes [#317](../codebase/317.md), rides the live `message`
   stream), [#313](../codebase/313.md) (`observeMessages`, **landed** — consumes #317 + adds the
@@ -225,7 +227,12 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   so `if (active)` branches inside the arm itself rather than a mapper owning it; never touches the
   live-session arm, so it does not clear a stall or fold a thread row, **on the interface with a
   `flowOf(false)` default** — see [Compacting state](compacting-state.md); UI reaction is sibling #597,
-  not shipped).
+  not shipped), #623 (`requestHistory`, **landed** — the on-disk history page read; reuses
+  `sendAndAwaitReply` + `mapError` verbatim, adds a **new** reply-type demux arm (`history_page`, not a
+  reused one) and, like `registerPushToken`/`setSessionSettings`, folds no projection — a page is
+  returned to the caller and folded into the timeline by #645. `at_start` is the **only** end-of-log
+  signal, strict-decoded with no default so an absent key fails rather than silently reading as "keep
+  walking". No live rung: this slice has no operator-facing surface; scroll-back's live rung is #646).
 - Connection wiring: [`RelayRepositoryCoordinator`](relay-repository-coordinator.md)
   ([#351](../codebase/351.md), **landed**) — constructs this repository per live connection against the
   pump + a child scope, made `NoiseSessionPump : ManagedSessionPump : SessionPump`, and publishes the
