@@ -368,7 +368,15 @@ private fun TableBlock(
     uriHandler: UriHandler,
 ) {
     val colors = currentInlineColors()
-    val borderColor = MaterialTheme.colorScheme.primaryContainer
+    // The grid conveys the table's structure, so this line has to clear WCAG 1.4.11's 3:1 against
+    // the bubble it renders on — always `secondaryContainer`, since `MessageBubble` is the only
+    // caller. Desktop's `--color-primary-container` does not survive that port: M3 gives
+    // `primaryContainer` and `secondaryContainer` the same tone by construction (90 light / 30
+    // dark), so that pairing is luminance-identical — 1.01:1 — in any palette, generated or
+    // dynamic, and the collapsed grid below lands as nothing. `onSurfaceVariant` measures 7.27:1
+    // light and 5.51:1 dark, and is already this file's token for the task mark and struck text.
+    // Do not swap this for `outlineVariant` (1.00:1 dark) without measuring against the bubble.
+    val borderColor = MaterialTheme.colorScheme.onSurfaceVariant
     // Row 0 is the header; the rest are body rows. A short row reads as empty cells and a long
     // row's overflow is dropped — the lexer has already fused that overflow into a trailing
     // separator token, so there is nothing addressable left to render.

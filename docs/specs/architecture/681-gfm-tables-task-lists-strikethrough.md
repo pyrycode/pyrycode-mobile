@@ -52,7 +52,7 @@ All production changes land in `MarkdownText.kt`, plus the preview fixture in `M
 | Desktop CSS | This renderer |
 |---|---|
 | `table { display: block; overflow-x: auto }` | a `Box` carrying `horizontalScroll`, wrapping the table content |
-| `th, td { border: 1px solid var(--color-primary-container) }`, collapsed | `colorScheme.primaryContainer`, drawn as collapsed edges (below) |
+| `th, td { border: 1px solid var(--color-primary-container) }`, collapsed | `colorScheme.onSurfaceVariant`, drawn as collapsed edges (below) — **not** the same-named M3 slot; see Revisions 2026-09-22 |
 | `th, td { padding: var(--space-1) var(--space-3) }` | `TableCellPadding`, a new file-private constant |
 | `th`'s UA bold | `FontWeight.Bold` on header cells |
 | `th, td { text-align: start }` unless the delimiter row declares otherwise | `TextAlign.Start` default, overridden per column |
@@ -130,7 +130,7 @@ Each of these is pinned by a test rather than left to rest on an absent branch.
 
 ## State + concurrency model
 
-None added. `MarkdownText` is a leaf composable with no coroutine, no flow and no scope; the only state is the existing `remember(markdown)` around the parse and per-`CodeBlock` scroll state. The table adds one `rememberScrollState()` per table, so tables scroll independently of each other and of code blocks. `parseTableAlignments` and the tilde pairing are memoised on the inputs that determine them, keeping the per-tick cost of #184's streaming re-parse where it already is.
+None added. `MarkdownText` is a leaf composable with no coroutine, no flow and no scope; the only state is the existing `remember(markdown)` around the parse and per-`CodeBlock` scroll state. The table adds one `rememberScrollState()` per table, so tables scroll independently of each other and of code blocks. `parseTableAlignments` is memoised on the delimiter row that determines it. The tilde pairing is not — `appendInlineChildren` builds an `AnnotatedString` outside composition, where `remember` is unavailable, so `singleTildeRuns` re-runs per composition behind a `children.none { TILDE }` early-out. Both keep the per-tick cost of #184's streaming re-parse where it already is.
 
 ## Error handling
 
@@ -233,3 +233,23 @@ heading renders with a leading space: `HeadingBlock` filters the marker whitespa
 Pre-existing since #129 and outside this ticket's scope, so it is filed as #768 rather than fixed
 here; the assertion uses `substring = true` and points at that ticket, so it needs no change when
 the fix lands. #768's body names `trimmedContent` above as the helper to reuse.
+
+**2026-09-22 — the table border moves off `primaryContainer`; a token name is not a token.** The
+§ Design mapping row above read desktop's `--color-primary-container` onto the M3 slot of the same
+name. That transcription is wrong, and it is wrong structurally rather than by a near-miss in this
+palette: M3 assigns `primaryContainer` and `secondaryContainer` the same tone by construction (90
+light, 30 dark), and `MessageBubble` — `MarkdownText`'s only caller, via `AssistantMessage` and
+`StreamingAssistantBodyView` — always grounds the renderer on `secondaryContainer`. The two are
+therefore luminance-identical at 1.01:1 in **any** M3 palette, generated or dynamic, so the
+collapsed single-stroke grid that `tableCellEdges` and `tableOuterEdges` exist to draw rendered as
+nothing and AC1's table read as an unruled run of words. `borderColor` is now
+`colorScheme.onSurfaceVariant` — 7.27:1 light, 5.51:1 dark against that bubble, the only measured
+candidate clearing WCAG 1.4.11's 3:1 in both, and already this file's token for the task mark border
+and the struck span, so the three de-emphasised structural elements share one token. Found in
+verifier review of PR #769, which measured it; the lesson is that porting a CSS custom property to
+the M3 slot of the same name carries no contrast guarantee, because the two design systems ground
+their bubbles differently. `outlineVariant` is explicitly not the answer (1.00:1 dark on the same
+ground); `BlockQuoteBlock`'s bar already uses it and has the same defect, pre-existing since #129,
+left untouched here per § Scope Discipline and filed as #770. The binding now carries a comment
+recording the contrast any replacement has to clear — the border is the one part of `TableBlock`
+with no assertion behind it, since a pixel test would cost more than it proves.
