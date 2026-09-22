@@ -49,6 +49,10 @@ fun ThreadStatusRow(
     effort: String,
     onExpandClick: () -> Unit,
     modifier: Modifier = Modifier,
+    // #807: a run-configuration change has been sent but not yet confirmed by a fresh settings reading.
+    // The row already renders at 0.85 alpha; dropping further is the footer's share of keeping a pending
+    // selection distinguishable from confirmed state, while the Status sheet carries the explicit cue.
+    pending: Boolean = false,
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
     val onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
@@ -64,7 +68,7 @@ fun ThreadStatusRow(
                 .clickable(onClick = onExpandClick)
                 .semantics { role = Role.Button }
                 .padding(horizontal = 16.dp, vertical = 4.dp)
-                .alpha(0.85f),
+                .alpha(if (pending) 0.55f else 0.85f),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(

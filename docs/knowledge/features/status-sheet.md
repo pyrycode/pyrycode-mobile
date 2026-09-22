@@ -1,6 +1,6 @@
 # StatusSheet
 
-Stateless Material 3 `ModalBottomSheet` (shell + Model section [#254](../codebase/254.md); Effort + YOLO sections [#229](../codebase/229.md); Context window section [#230](../codebase/230.md), rendered as an honest "unavailable" state since [#601](../codebase/601.md)) that hosts the Status Sheet — the surface a user opens by tapping the [`ThreadStatusRow`](thread-status-row.md) to inspect or change per-conversation run configuration. Renders Figma node `20:100`: a `"Run configuration"` title row with a trailing close icon, over four sections in order — **Model** (`selectableGroup`-wrapped radio rows for Opus 4.7 / Sonnet 4.6 / Haiku 4.5, each pairing the [`Model.label()`](app-preferences.md#design-decision-defer-label-extensions-on-data-layer-enums) title with a short Figma-derived description), **Effort** (single `Row` of five `FilterChip`s — `low` / `medium` / `high` / `xhigh` / `max` from the public [`Effort.label()`](app-preferences.md#design-decision-defer-label-extensions-on-data-layer-enums) extension), **YOLO mode** (full-width `toggleable` row with a two-line label + an M3 `Switch`), and **Context window** (since [#601](../codebase/601.md): a `bodyLarge` `"Context usage unavailable"` label + `bodySmall` caption, no progress bar — the daemon does not serve mobile a real figure yet; see [§ `ContextWindowSection`](#contextwindowsection)).
+Stateless Material 3 `ModalBottomSheet` (shell + Model section [#254](../codebase/254.md); Effort + YOLO sections [#229](../codebase/229.md); Context window section [#230](../codebase/230.md), rendered as an honest "unavailable" state since [#601](../codebase/601.md); re-sourced off the daemon's own published configuration by [#807](../codebase/807.md)) that hosts the Status Sheet — the surface a user opens by tapping the [`ThreadStatusRow`](thread-status-row.md) to inspect or change per-conversation run configuration. Renders Figma node `20:100`: a `"Run configuration"` title row with a trailing close icon, over four sections in order — **Model** (`selectableGroup`-wrapped radio rows for the daemon's own published models, each pairing the row's inert `displayName` with an inert `resolvedModel` detail when it says something the label does not), **Effort** (a `Row` of `FilterChip`s for the *selected* model's own published `effortLevels`, empty when it publishes none), **YOLO mode** (full-width `toggleable` row with a two-line label + an M3 `Switch`), and **Context window** (since [#601](../codebase/601.md): a `bodyLarge` `"Context usage unavailable"` label + `bodySmall` caption, no progress bar — the daemon does not serve mobile a real figure yet; see [§ `ContextWindowSection`](#contextwindowsection)). **Through [#807](../codebase/807.md) the Model and Effort sections iterated the three-entry `Model` and five-entry `Effort` device enums** (Opus 4.7 / Sonnet 4.6 / Haiku 4.5, and `low`/`medium`/`high`/`xhigh`/`max`) — this phone's guesses at a vocabulary the daemon actually publishes per conversation, and a value the server never published was refused server-side. #807 deleted that sourcing outright; see [§ Shape](#shape) and [thread-status-row.md § Sourcing](thread-status-row.md#sourcing) for the replacement.
 
 Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/`). File: `StatusSheet.kt`. Third **sheet** in that package after [`WorkspacePickerSheet`](workspace-picker-sheet.md) ([#212](../codebase/212.md)) and [`ChannelInfoSheet`](channel-info-sheet.md) ([#217](../codebase/217.md)); follows their shell + `*Content` split verbatim.
 
@@ -10,10 +10,16 @@ Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/p
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StatusSheet(
-    selectedModel: Model,
-    onModelSelected: (Model) -> Unit,
-    selectedEffort: Effort,
-    onEffortSelected: (Effort) -> Unit,
+    choices: List<ThreadModelChoice>,
+    menuAvailable: Boolean,
+    notListedModels: Int,
+    selectedModel: String,
+    onModelSelected: (String) -> Unit,
+    effortChoices: List<ThreadEffortChoice>,
+    selectedEffort: String,
+    onEffortSelected: (String) -> Unit,
+    pending: Boolean,
+    enabled: Boolean,
     yoloEnabled: Boolean,
     onYoloToggled: (Boolean) -> Unit,
     onDismiss: () -> Unit,
@@ -22,22 +28,32 @@ fun StatusSheet(
 )
 ```
 
+**Through [#807](../codebase/807.md)** this signature took `selectedModel: Model`, `onModelSelected: (Model) -> Unit`, `selectedEffort: Effort` and `onEffortSelected: (Effort) -> Unit` — the sheet iterated `Model.entries` / `Effort.entries` directly. **#807 deleted every reference to those enums from this file.** The sheet is now a dumb renderer of pre-sanitized choices the ViewModel assembles from the daemon's own readings ([`ThreadModelChoice`](thread-status-row.md#sourcing) / `ThreadEffortChoice`, both defined in `ThreadViewModel.kt`); `StatusSheet.kt` imports nothing from `data/` and never sees a raw `ModelMenuRow`.
+
 - **Public** (no `internal`) — same posture as the public shell in [`WorkspacePickerSheet`](workspace-picker-sheet.md) post-#220. The sheet has one production consumer ([`ThreadScreen`](thread-screen.md)) but the visibility decision tracks the sibling sheets, not consumer count.
 - **`sheetState` defaulted but exposed** — the host can drive an animated close before invoking `onDismiss` if needed; defaulting keeps the host wiring one-line. `skipPartiallyExpanded = true` because the body is a short list, not a half-sheet.
 - **No nullable callbacks** — every section in this sheet (four post-[#230](../codebase/230.md)) always renders, so all callbacks are always wired.
-- **`selectedModel: Model` and `selectedEffort: Effort` are typed enums** — [#253](../codebase/253.md) lifted `selectedModel`, [#229](../codebase/229.md) followed the same shape for `selectedEffort`. The radio/chip selection compares against the enum rather than a label string, so a future relabel (e.g. `"Opus 4.7"` → `"Claude Opus 4.7"`) doesn't break selection identity.
-- **`yoloEnabled: Boolean` is a primitive flag** — no nullable, no wrapper. The architectural single-writer invariant ([#229](../codebase/229.md)) is enforced at the VM layer (`private val yoloEnabled: MutableStateFlow<Boolean>` with one mutator, `ThreadViewModel.onYoloToggled`); the sheet's parameter is just the projection of that field.
+- **`choices: List<ThreadModelChoice>` and `selectedModel` / `selectedEffort: String` (#807)** — the daemon's own published rows, in the daemon's own order, and the write arguments (`ModelMenuRow.value` / an effort level) verbatim. Selection compares `choice.value == selectedModel` — a `String` identity comparison, not an enum one, because there is no fixed vocabulary to type against any more. `effortChoices: List<ThreadEffortChoice>` is the *selected* row's own levels, not a fixed five-entry list; empty is a positive "this model publishes no effort control."
+- **`menuAvailable: Boolean` and `notListedModels: Int` (#807)** — the [#601](../codebase/601.md) honest-unavailable idiom extended to the Model section: `menuAvailable = false` renders "Model list unavailable"; `true` with empty `choices` renders "This server published no models" (a different, equally legal reading). `notListedModels` sums the producer's own `droppedModels` (never recomputed) and this client's own render cap (`hiddenChoices`, § below) — reported, never inferred from `choices.size`.
+- **`pending: Boolean` and `enabled: Boolean` (#807)** — `pending` is true while a model/effort write has been sent but not yet confirmed by a fresh settings reading; the Model and Effort section headers gain a `"· applying…"` suffix and their controls disable. `enabled` is the read-only gate: `false` when `SessionSettings.sessionId` is `""` (the daemon has no session to address), disabling the same controls with no suffix. The two compose independently (`enabled && !pending`).
+- **`yoloEnabled: Boolean` is a primitive flag** — no nullable, no wrapper. The architectural single-writer invariant ([#229](../codebase/229.md)) is enforced at the VM layer (`private val yoloEnabled: MutableStateFlow<Boolean>` with one mutator, `ThreadViewModel.onYoloToggled`); the sheet's parameter is just the projection of that field. **Known gap (verifier SHOULD FIX, #807, not yet fixed):** unlike the Model and Effort sections, `YoloRow` does not read `enabled` or `pending` — the switch stays interactive and shows no cue on a read-only session or during a pending write, even though [`onYoloToggled`](thread-status-row.md#sourcing) now shares the same session-id routing and the same read-only gate as the other two controls. A tap on a read-only session is silently dropped server-side (`skipUnlessWritable` in `ThreadViewModel`) with no visible feedback in the sheet.
 - **No `tokenPercent` / `tokensUsed` / `tokensTotal` parameters.** [#230](../codebase/230.md) added them as `Int = 0`-defaulted display fields; [#601](../codebase/601.md) removed all three along with the render they fed, because the daemon has never served mobile a real figure and a hardcoded `73%` could never warn an operator about an actually-filling context window. Through #601 `ThreadUiState` still carried `tokenPercent` / `tokensUsed` / `tokensTotal` (populated from `STUB_TOKEN_PERCENT = 73` / `STUB_TOKENS_USED = 146_000` / `STUB_TOKENS_TOTAL = 200_000` at the VM) — the sheet simply stopped reading them, which is what let #601 ship without a `ThreadViewModel` edit. [#603](../codebase/603.md) has since deleted the fields and the `STUB_*` constants outright, once both #601 and [#602](../codebase/602.md) (the [status row](thread-status-row.md)) had stopped reading them. [#591](https://github.com/pyrycode/pyrycode-mobile/issues/591) (blocked on daemon-side pyrycode PR #1215) re-adds parameters here when there is a real figure to carry; see [§ Edge cases / limitations](status-sheet-hosting-tests-and-edge-cases.md#edge-cases--limitations).
 
-A peer `internal` composable carries the body:
+A peer `internal` composable carries the body, mirroring `StatusSheet`'s full parameter list:
 
 ```kotlin
 @Composable
 internal fun StatusSheetContent(
-    selectedModel: Model,
-    onModelSelected: (Model) -> Unit,
-    selectedEffort: Effort,
-    onEffortSelected: (Effort) -> Unit,
+    choices: List<ThreadModelChoice>,
+    menuAvailable: Boolean,
+    notListedModels: Int,
+    selectedModel: String,
+    onModelSelected: (String) -> Unit,
+    effortChoices: List<ThreadEffortChoice>,
+    selectedEffort: String,
+    onEffortSelected: (String) -> Unit,
+    pending: Boolean,
+    enabled: Boolean,
     yoloEnabled: Boolean,
     onYoloToggled: (Boolean) -> Unit,
     onDismiss: () -> Unit,
@@ -48,41 +64,62 @@ internal fun StatusSheetContent(
 
 ## What it does
 
-Single `Column(fillMaxWidth)` inside the `ModalBottomSheet`:
+Single `Column(fillMaxWidth)` inside the `ModalBottomSheet`, scrolling since [#807](../codebase/807.md) (`Modifier.verticalScroll(rememberScrollState())` — the daemon's own render cap is not a wire constant, so a long menu must not clip the sections below it):
 
 1. **`TitleRow(title = "Run configuration", onClose = onDismiss)`** — `titleLarge` in `onSurface` filling the row, trailing `IconButton(Icons.Filled.Close)` with `contentDescription = "Close"` and `tint = onSurfaceVariant`. Padding `start = 16, end = 4, top = 4, bottom = 12` per Figma `20:104`.
-2. **`SectionHeader(text = "Model")`** — `labelLarge` in `onSurfaceVariant`, padding `start = 24, end = 16, top = 12, bottom = 4` per Figma `20:113`. Same shape as [`WorkspacePickerSheet`](workspace-picker-sheet.md)'s `"Recent"` / `"Other"` headers.
-3. **`Column(modifier = Modifier.selectableGroup())`** wrapping `Model.entries.forEach { model -> ModelRow(model, selected = model == selectedModel, onClick = { onModelSelected(model) }) }` — three rows in source order (`OPUS_4_7`, `SONNET_4_6`, `HAIKU_4_5`). The `selectableGroup()` modifier is the M3-recommended container for a radio set; TalkBack announces "1 of 3 selected" semantics at the group boundary rather than per row.
-4. **`SectionHeader(text = "Effort")`** ([#229](../codebase/229.md)) — same padding + style as the Model header per Figma `20:130`.
-5. **`EffortChipRow(selectedEffort, onEffortSelected)`** ([#229](../codebase/229.md)) — single `Row` of five `FilterChip`s; see [§ `EffortChipRow`](#effortchiprow) below.
-6. **`SectionHeader(text = "YOLO mode")`** ([#229](../codebase/229.md)) — same padding + style as above per Figma `20:142`.
-7. **`YoloRow(yoloEnabled, onYoloToggled)`** ([#229](../codebase/229.md)) — full-width `toggleable` row with two-line label + M3 `Switch`; see [§ `YoloRow`](#yolorow) below.
+2. **`SectionHeader(text = sectionTitle("Model", pending))`** — `labelLarge` in `onSurfaceVariant`, padding `start = 24, end = 16, top = 12, bottom = 4` per Figma `20:113`. Same shape as [`WorkspacePickerSheet`](workspace-picker-sheet.md)'s `"Recent"` / `"Other"` headers. `sectionTitle` (#807) appends `" · applying…"` while `pending` is true — see [§ `pending` and `enabled`](#pending-and-enabled-807) below.
+3. **`ModelSection(choices, menuAvailable, notListedModels, selectedModel, onModelSelected, enabled = enabled && !pending)`** ([#807](../codebase/807.md), replacing the `Model.entries.forEach` iteration) — a `Column(Modifier.selectableGroup())` of `ModelRow`s over the daemon's own published `choices`, in the daemon's own order, or an [honest-unavailable](#contextwindowsection) note when `choices` is empty; see [§ `ModelRow`](#modelrow) below.
+4. **`SectionHeader(text = sectionTitle("Effort", pending))`** ([#229](../codebase/229.md)) — same padding + style as the Model header per Figma `20:130`.
+5. **`EffortChipRow(effortChoices, selectedEffort, onEffortSelected, enabled = enabled && !pending)`** ([#229](../codebase/229.md); re-sourced by [#807](../codebase/807.md)) — a `Row` of `FilterChip`s over the *selected model's own* published effort levels; see [§ `EffortChipRow`](#effortchiprow) below.
+6. **`SectionHeader(text = "YOLO mode")`** ([#229](../codebase/229.md)) — same padding + style as above per Figma `20:142`. Unlike the Model/Effort headers, this one does not carry the `pending` suffix — see [§ `YoloRow`](#yolorow) below for the known gap.
+7. **`YoloRow(enabled = yoloEnabled, onToggled = onYoloToggled)`** ([#229](../codebase/229.md)) — full-width `toggleable` row with two-line label + M3 `Switch`; see [§ `YoloRow`](#yolorow) below.
 8. **`SectionHeader(text = "Context window")`** ([#230](../codebase/230.md)) — same padding + style as above per Figma `20:151`.
 9. **`ContextWindowSection()`** ([#230](../codebase/230.md); parameterless since [#601](../codebase/601.md)) — read-only "unavailable" label + caption, no progress bar; see [§ `ContextWindowSection`](#contextwindowsection) below.
 10. **`Spacer(height = 24.dp)`** — bottom inset, matching the trailing spacer on the sibling sheets.
 
 `ModalBottomSheet`'s default `BottomSheetDefaults.DragHandle` paints the M3 drag pill at the top; the composable doesn't override it.
 
+### `pending` and `enabled` (#807)
+
+`sectionTitle(base, pending) = if (pending) "$base · applying…" else base` — a file-private helper applied to the Model and Effort headers only, so a tap that has been sent but not yet confirmed by a fresh settings reading is visible in the section title itself, not just inferred from greyed controls. Both sections' `enabled` argument is `enabled && !pending`: `enabled = false` (an empty `SessionSettings.sessionId` — the daemon has no session to address) disables the controls with no suffix; `pending` disables them **with** the suffix. The two states compose rather than being mutually exclusive.
+
+### `ModelSection`
+
+```kotlin
+@Composable
+private fun ModelSection(
+    choices: List<ThreadModelChoice>,
+    menuAvailable: Boolean,
+    notListedModels: Int,
+    selectedModel: String,
+    onModelSelected: (String) -> Unit,
+    enabled: Boolean,
+)
+```
+
+Replaces the pre-#807 direct `Model.entries.forEach` iteration. Three readings, kept apart per the [#601](../codebase/601.md) honest-unavailable idiom: `choices.isEmpty() && !menuAvailable` renders `"Model list unavailable"`; `choices.isEmpty() && menuAvailable` renders `"This server published no models"` (a different, equally legal reading — claude offered nothing); otherwise a `Column(Modifier.selectableGroup())` of `ModelRow`s, each `selected = choice.value == selectedModel`. When `notListedModels > 0` a trailing `Caption` reads `"${choices.size} shown · $notListedModels not listed"` — `notListedModels` is reported by the caller (`ThreadRunConfig.droppedModels + hiddenChoices`, both from the ViewModel), never recomputed from `choices.size`, which is what lets this say "3 of 47" instead of presenting a shortened menu as complete.
+
 ### `ModelRow`
 
 ```kotlin
 @Composable
 private fun ModelRow(
-    model: Model,
+    choice: ThreadModelChoice,
     selected: Boolean,
+    enabled: Boolean,
     onClick: () -> Unit,
 )
 ```
 
-`Row(Modifier.fillMaxWidth().selectable(selected, onClick, role = Role.RadioButton).padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.Top)` with three children:
+`Row(Modifier.fillMaxWidth().selectable(selected, enabled, onClick, role = Role.RadioButton).padding(horizontal = 16.dp, vertical = 4.dp), verticalAlignment = Alignment.Top)` with three children:
 
-1. `RadioButton(selected = selected, onClick = null)` — default M3 colors. **`onClick = null` is required**, not optional — the row's `selectable` modifier owns the click semantics; passing the handler to both fires the callback twice. The lint-clean shape is `onClick = null` on the inner `RadioButton`.
+1. `RadioButton(selected = selected, enabled = enabled, onClick = null)` — default M3 colors. **`onClick = null` is required**, not optional — the row's `selectable` modifier owns the click semantics; passing the handler to both fires the callback twice. The lint-clean shape is `onClick = null` on the inner `RadioButton`.
 2. `Spacer(width = 12.dp)`.
 3. `Column` with two `Text`s:
-   - Title `Text(text = model.label(), style = bodyLarge, color = onSurface)` — uses the existing [`Model.label()`](app-preferences.md#design-decision-defer-label-extensions-on-data-layer-enums) extension at `data/preferences/Model.kt` ([#253](../codebase/253.md)). Do not duplicate the strings.
-   - Description `Text(text = model.description(), style = bodySmall, color = onSurfaceVariant)` — uses a private file-local `Model.description(): String` extension co-located in `StatusSheet.kt` (mapping table below).
+   - Title `Text(text = choice.label, style = bodyLarge, color = onSurface, maxLines = 2, overflow = Ellipsis)` — `choice.label` is the daemon's own `displayName`, already made inert by the ViewModel (see [thread-status-row.md § Sourcing](thread-status-row.md#sourcing)). `maxLines` guards the layout against a label the daemon bounded but did not shape.
+   - Detail `Text(text = choice.detail, style = bodySmall, color = onSurfaceVariant, maxLines = 1, overflow = Ellipsis)`, rendered only `if (choice.detail.isNotEmpty())` — `choice.detail` is the row's own `resolvedModel`, inert, and blanked by the ViewModel when it says nothing `choice.label` doesn't already say. Replaces the pre-#807 private `Model.description()` mapping table (below) — the row's own `resolvedModel` is the honest equivalent: what this family currently resolves to, rather than three Figma-derived taglines for three device enum entries that no longer drive this sheet.
 
-`Alignment.Top` (not `CenterVertically`) is load-bearing: the description text wraps to multiple lines on narrow widths; centring the radio against the wrapped block looks broken. Top-aligning the radio to the title baseline keeps the visual anchor stable across description heights.
+`Alignment.Top` (not `CenterVertically`) is load-bearing: the detail text wraps to multiple lines on narrow widths; centring the radio against the wrapped block looks broken. Top-aligning the radio to the title baseline keeps the visual anchor stable across detail heights.
 
 ### `Modifier.selectable(role = Role.RadioButton)` on the row, not on the radio
 
@@ -90,11 +127,11 @@ private fun ModelRow(
 Row(
     modifier = Modifier
         .fillMaxWidth()
-        .selectable(selected = selected, onClick = onClick, role = Role.RadioButton)
+        .selectable(selected = selected, enabled = enabled, onClick = onClick, role = Role.RadioButton)
         .padding(horizontal = 16.dp, vertical = 4.dp),
     verticalAlignment = Alignment.Top,
 ) {
-    RadioButton(selected = selected, onClick = null)
+    RadioButton(selected = selected, enabled = enabled, onClick = null)
     // ...
 }
 ```
@@ -104,17 +141,9 @@ This is the canonical M3 shape for a radio row whose tappable region is the whol
 1. **Touch target.** The radio circle is ~20dp; the row (title + description + padding) is ~56dp+. Without `selectable` on the row, taps outside the radio do nothing.
 2. **Semantics.** `role = Role.RadioButton` on `selectable` flows TalkBack semantics through the parent — the row is announced as a radio button, and the inner `RadioButton(onClick = null)` doesn't double-announce.
 
-### Model descriptions
+### Model descriptions — retired by #807
 
-Private file-local `Model.description(): String` extension, mapping per Figma nodes `20:117/122/127`:
-
-| `Model` | Description |
-| --- | --- |
-| `OPUS_4_7` | `"best for complex work"` |
-| `SONNET_4_6` | `"faster, cheaper"` |
-| `HAIKU_4_5` | `"fastest"` |
-
-The extension is **private**, not promoted to `data/preferences/Model.kt` alongside `label()`. Reason: these are Figma-derived presentation strings specific to this sheet's "user picks a model" framing. A future Settings model-picker may want different copy (e.g. "Default for new conversations" framing) or no descriptions at all — re-promote only when a second consumer materialises with the same framing. The label/title is shared via `Model.label()` ([#253](../codebase/253.md)); the descriptions are deliberately not.
+Through [#807](../codebase/807.md) `ModelRow` rendered a second line from a private file-local `Model.description(): String` extension, a fixed three-entry mapping table (`OPUS_4_7 → "best for complex work"`, `SONNET_4_6 → "faster, cheaper"`, `HAIKU_4_5 → "fastest"`) per Figma nodes `20:117/122/127`. **#807 deleted the extension and the table.** There is no fixed vocabulary left to map descriptions onto; `ThreadModelChoice.detail` (the row's own `resolvedModel`, made inert) is the honest replacement — see [§ `ModelRow`](#modelrow) above.
 
 ### `EffortChipRow`
 
@@ -122,17 +151,21 @@ The extension is **private**, not promoted to `data/preferences/Model.kt` alongs
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EffortChipRow(
-    selectedEffort: Effort,
-    onEffortSelected: (Effort) -> Unit,
+    effortChoices: List<ThreadEffortChoice>,
+    selectedEffort: String,
+    onEffortSelected: (String) -> Unit,
+    enabled: Boolean,
 )
 ```
 
-`Row(Modifier.fillMaxWidth().selectableGroup().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp))` iterating `Effort.entries` (`LOW, MEDIUM, HIGH, XHIGH, MAX`) — five `FilterChip(selected = effort == selectedEffort, onClick = { onEffortSelected(effort) }, label = { Text(effort.label()) })`. No leading icon, no trailing icon.
+**Through [#807](../codebase/807.md)** this iterated `Effort.entries` (`LOW, MEDIUM, HIGH, XHIGH, MAX`) — a fixed five-entry device vocabulary — regardless of which model was selected. **#807 replaced that with the *selected model's own* published levels**: `effortChoices` is `ThreadRunConfig.effortChoices` at the call site, i.e. the selected `ThreadModelChoice.effortChoices` — empty when that model publishes none. Empty renders an [`UnavailableNote`](#contextwindowsection) — `"No effort levels published for this model."` — rather than five now-meaningless chips.
+
+`Row(Modifier.fillMaxWidth().selectableGroup().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp))` iterating `effortChoices` — `FilterChip(selected = effort.value == selectedEffort, enabled = enabled, onClick = { onEffortSelected(effort.value) }, label = { Text(effort.label, maxLines = 1, overflow = Ellipsis) })`. No leading icon, no trailing icon.
 
 - **`FilterChip` defaults match Figma `20:131–140` exactly — no `FilterChipDefaults.filterChipColors(...)` override.** Selected: `secondaryContainer` background + `onSecondaryContainer` label, no border. Unselected: 1dp `outline` border + transparent background + `onSurfaceVariant` label. The default `FilterChipDefaults.filterChipBorder(...)` paints the unselected outline; the selected state replaces border with background fill automatically.
-- **`Effort.entries.forEach`, not five hand-written calls.** Same precedent as `ModelRow`'s `Model.entries.forEach` — source order at `data/preferences/Effort.kt` is the single source of truth; enum reorder / insertion propagates without UI edits.
-- **Labels resolve via the public [`Effort.label()`](app-preferences.md#design-decision-defer-label-extensions-on-data-layer-enums) extension** at `ui/settings/EffortPickerDialog.kt:77` — widened from `internal` to top-level public in [#229](../codebase/229.md) when this slice became the second consumer (alongside the [#233](../codebase/233.md) Settings dialog). Returns lowercase `"low"` / `"medium"` / `"high"` / `"xhigh"` / `"max"`.
-- **A11y.** `FilterChip` owns `Role.Button` with selection state; `selectableGroup()` lets TalkBack announce "in group of 5".
+- **`effortChoices.forEach`, not `Effort.entries.forEach`.** The wire order the selected row published, not a fixed enum's source order — a model reordering or narrowing its own levels propagates without a UI edit, same principle the pre-#807 `Effort.entries.forEach` claimed for the device enum.
+- **Labels are `effort.label` — the level itself, made inert by the ViewModel** (see [thread-status-row.md § Sourcing](thread-status-row.md#sourcing)), not a resolved `Effort.label()` extension call. `Effort.entries` / `Effort.label()` still exist for Settings' own device-default picker (see [app-preferences.md](app-preferences.md)) but have no consumer in this file any more.
+- **A11y.** `FilterChip` owns `Role.Button` with selection state; `selectableGroup()` lets TalkBack announce the group size.
 
 ### `YoloRow`
 
@@ -153,6 +186,8 @@ private fun YoloRow(
 3. `Switch(checked = enabled, onCheckedChange = null)` — `null` because the surrounding `toggleable` owns the click.
 
 Same canonical M3 shape family as `ModelRow`'s `Modifier.selectable + RadioButton(onClick = null)` — the parent owns click + a11y semantics; the inner control's handler must be `null` or the callback fires twice. The 8.dp vertical padding (vs. the 4.dp on `ModelRow`) is deliberate — the two-line label needs the extra breathing room.
+
+**Known gap since [#807](../codebase/807.md) (verifier SHOULD FIX, not yet fixed):** `YoloRow`'s own `enabled` parameter is overloaded — it means *the switch's checked state* (`value = enabled` in the `toggleable`), not "the control is interactive." The call site (`StatusSheetContent`) passes `YoloRow(enabled = yoloEnabled, onToggled = onYoloToggled)` with no `pending` or read-only-session argument at all, unlike `ModelSection` / `EffortChipRow` which both receive `enabled && !pending`. So on a read-only session (empty `SessionSettings.sessionId`) or during a pending model/effort write, the YOLO switch still looks live, does not visibly disable, and shows no `"· applying…"` cue — a tap is silently dropped by `ThreadViewModel.skipUnlessWritable` with no on-screen feedback. Model and Effort do not have this gap. The fix (per the verifier's review comment on #807) is to thread `enabled` and `pending` into `YoloRow` the same way and drive `toggleable(enabled = …)` / `Switch(enabled = …)` from it; not done as of this writing.
 
 ### `ContextWindowSection`
 
@@ -184,7 +219,7 @@ All references resolve through `MaterialTheme.colorScheme.*` and `MaterialTheme.
 |---|---|---|
 | `Schemes/surface-container-low` | `colorScheme.surfaceContainerLow` (sheet bg) | `ModalBottomSheet` default |
 | `Schemes/on-surface` | `colorScheme.onSurface` | Title, row titles, YOLO row title, Context window label |
-| `Schemes/on-surface-variant` | `colorScheme.onSurfaceVariant` | Section header, row descriptions, close icon, unselected `FilterChip` label, YOLO supporting text, Context window caption |
+| `Schemes/on-surface-variant` | `colorScheme.onSurfaceVariant` | Section header, model row details, close icon, unselected `FilterChip` label, YOLO supporting text, Context window caption |
 | `Schemes/secondary-container` | `colorScheme.secondaryContainer` | Selected `FilterChip` background |
 | `Schemes/on-secondary-container` | `colorScheme.onSecondaryContainer` | Selected `FilterChip` label |
 | `Schemes/outline` | `colorScheme.outline` | Unselected `FilterChip` 1dp border |
@@ -194,21 +229,21 @@ All references resolve through `MaterialTheme.colorScheme.*` and `MaterialTheme.
 | `Static/Title Large` | `typography.titleLarge` | `"Run configuration"` |
 | `Static/Label Large` | `typography.labelLarge` | `"Model"` / `"Effort"` / `"YOLO mode"` / `"Context window"` section headers |
 | `Static/Body Large` | `typography.bodyLarge` | Model row titles, YOLO row title, Context window label |
-| `Static/Body Small` | `typography.bodySmall` | Model row descriptions, YOLO row supporting text, Context window caption |
+| `Static/Body Small` | `typography.bodySmall` | Model row details, YOLO row supporting text, Context window caption |
 
 [#601](../codebase/601.md) removed four rows this file no longer draws: `surface-container-highest` (progress-bar track), `primary` / `warning` / `error` (progress-bar fill, threshold-driven). `warning` was still consumed elsewhere through #601 — `ThreadStatusRow`'s `tokenPercentColor` threshold helper — but [#602](../codebase/602.md) has since deleted that helper too, so `warning` no longer has a consumer in this feature area; see [warning-color.md](warning-color.md) for its other uses.
 
 ## Recomposition / stability
 
 - All four callback params (`onModelSelected`, `onEffortSelected`, `onYoloToggled`, `onDismiss`) are `(T) -> Unit` / `() -> Unit` lambdas; the caller is responsible for `remember`-stabilising hot ones. Same posture as the rest of `ui/conversations/components/`.
-- No internal mutable state, no `LaunchedEffect`, no `DisposableEffect`, no `rememberSaveable`. The only `remember` is the defaulted `rememberModalBottomSheetState(...)` parameter, which the host can override.
-- `selectedModel: Model`, `selectedEffort: Effort`, `yoloEnabled: Boolean` are all primitive (enum, boolean) — Compose-stable by definition; the row / chip / switch composables skip recomposition when their inputs are unchanged.
+- No internal mutable state, no `LaunchedEffect`, no `DisposableEffect`, no `rememberSaveable`. The only `remember` is the defaulted `rememberModalBottomSheetState(...)` parameter (plus, since [#807](../codebase/807.md), `rememberScrollState()` for the body's `verticalScroll`), which the host can override.
+- **Since [#807](../codebase/807.md):** `selectedModel: String`, `selectedEffort: String` and the `choices` / `effortChoices` lists replace the pre-#807 `selectedModel: Model` / `selectedEffort: Effort` enum pair. `String` and `List<ThreadModelChoice>` / `List<ThreadEffortChoice>` (both immutable `data class`es) are Compose-stable, so the row / chip / switch composables still skip recomposition when their inputs are unchanged — the stability property is preserved, only the types moved off the device enums. `yoloEnabled: Boolean` is unchanged.
 - **Since [#601](../codebase/601.md): `ContextWindowSection()` is parameterless and reads only `MaterialTheme`**, so it recomposes on theme change alone — where previously (via `tokenPercent` / `tokensUsed` / `tokensTotal`) it also recomposed on any context-figure change. Those figures were constants, so the practical delta before #601 was zero, but the direction is now correct. No lambda captures, no unstable types, no `remember` needed. `LinearProgressIndicator`, its deferred `progress = { lambda }` read, and the `progressColor` / `formatTokens` helpers that fed it are gone along with the params.
 
 ## Configuration
 
-- **No new dependencies.** `ModalBottomSheet` + `rememberModalBottomSheetState` + `SheetState` + `RadioButton` + `FilterChip` + `Switch` all ship in `androidx.compose.material3` already in the BOM (`composeBom = 2026.02.01`); `Modifier.selectable` / `selectableGroup` / `toggleable` are in `androidx.compose.foundation.selection`; `Icons.Filled.Close` is in `material-icons-extended`. No `gradle/libs.versions.toml` edit across [#254](../codebase/254.md), [#229](../codebase/229.md), [#230](../codebase/230.md), or [#601](../codebase/601.md). [#601](../codebase/601.md) removed the `LinearProgressIndicator` import (with its `gapSize` / `drawStopIndicator` params) — no dependency change, just an unused import gone.
-- **No new string resources.** Literals inline (`"Run configuration"`, `"Model"`, `"best for complex work"`, `"faster, cheaper"`, `"fastest"`, `"Effort"`, `"YOLO mode"`, `"Auto-accept tool calls"`, `"Claude runs commands without asking for confirmation. Use carefully."`, `"Context window"`, `"When full, oldest messages get dropped from claude's view (delimiter still shows; old messages stay in your scroll)."`, `"Close"`); first-localisation pass migrates everything together. Same posture as [`WorkspacePickerSheet`](workspace-picker-sheet.md) and [`ChannelInfoSheet`](channel-info-sheet.md).
+- **No new dependencies.** `ModalBottomSheet` + `rememberModalBottomSheetState` + `SheetState` + `RadioButton` + `FilterChip` + `Switch` all ship in `androidx.compose.material3` already in the BOM (`composeBom = 2026.02.01`); `Modifier.selectable` / `selectableGroup` / `toggleable` are in `androidx.compose.foundation.selection`; `Icons.Filled.Close` is in `material-icons-extended`. No `gradle/libs.versions.toml` edit across [#254](../codebase/254.md), [#229](../codebase/229.md), [#230](../codebase/230.md), [#601](../codebase/601.md), or [#807](../codebase/807.md). [#601](../codebase/601.md) removed the `LinearProgressIndicator` import (with its `gapSize` / `drawStopIndicator` params) — no dependency change, just an unused import gone. [#807](../codebase/807.md) added `Modifier.verticalScroll` + `rememberScrollState()`, both already in `androidx.compose.foundation` — no new dependency.
+- **No new string resources.** Literals inline (`"Run configuration"`, `"Model"`, `"Effort"`, `"YOLO mode"`, `"Auto-accept tool calls"`, `"Claude runs commands without asking for confirmation. Use carefully."`, `"Context window"`, `"When full, oldest messages get dropped from claude's view (delimiter still shows; old messages stay in your scroll)."`, `"Close"`, plus the [#807](../codebase/807.md) fallback copy `"Model list unavailable"` / `"This server published no models."` / `"No effort levels published for this model."`); first-localisation pass migrates everything together. Same posture as [`WorkspacePickerSheet`](workspace-picker-sheet.md) and [`ChannelInfoSheet`](channel-info-sheet.md). The pre-#807 Model-description literals (`"best for complex work"` etc.) are gone with the table that held them.
 
 ## Hosting in `ThreadScreen`
 
@@ -216,19 +251,21 @@ Split into [StatusSheet — hosting, tests and edge cases](status-sheet-hosting-
 
 ## Related
 
-- Ticket notes: [`../codebase/254.md`](../codebase/254.md) (shell + Model section), [`../codebase/229.md`](../codebase/229.md) (Effort + YOLO sections), [`../codebase/230.md`](../codebase/230.md) (Context window section, stub), [`../codebase/601.md`](../codebase/601.md) (Context window section, "unavailable" render)
-- Specs: `docs/specs/architecture/254-statussheet-scaffold-model-section.md`, `docs/specs/architecture/229-statussheet-effort-yolo.md`, `docs/specs/architecture/230-status-sheet-context-window.md`, `docs/specs/architecture/601-status-sheet-context-usage-unavailable.md`
+- Ticket notes: [`../codebase/254.md`](../codebase/254.md) (shell + Model section), [`../codebase/229.md`](../codebase/229.md) (Effort + YOLO sections), [`../codebase/230.md`](../codebase/230.md) (Context window section, stub), [`../codebase/601.md`](../codebase/601.md) (Context window section, "unavailable" render), [`../codebase/807.md`](../codebase/807.md) (Model + Effort sections re-sourced off the daemon's `observeSessionSettings` + `observeModelMenu` readings, retiring the `Model` / `Effort` device enums from this file entirely)
+- Specs: `docs/specs/architecture/254-statussheet-scaffold-model-section.md`, `docs/specs/architecture/229-statussheet-effort-yolo.md`, `docs/specs/architecture/230-status-sheet-context-window.md`, `docs/specs/architecture/601-status-sheet-context-usage-unavailable.md`, `docs/specs/architecture/807-thread-run-config-from-daemon.md`
 - Parent: split from [#228](https://github.com/pyrycode/pyrycode-mobile/issues/228) / [#146](https://github.com/pyrycode/pyrycode-mobile/issues/146).
 - Upstream:
-  - [Thread screen](thread-screen.md) — the host. Owns the `rememberSaveable`-hoisted `sheetVisible` flag, mounts `StatusSheet` as a `Scaffold` sibling alongside the existing [`WorkspacePicker`](workspace-picker.md), and wires `onModelSelected = vm::onModelSelected, onEffortSelected = vm::onEffortSelected, onYoloToggled = vm::onYoloToggled` at `MainActivity`. Since [#601](../codebase/601.md) it no longer reads `tokenPercent` / `tokensUsed` / `tokensTotal` off `state` at this call site — `onDismiss` is the trailing argument now. Since [#544](../codebase/544.md) it also collects `sessionSettingsErrors` into the shared snackbar host — see § Hosting in `ThreadScreen` above.
-  - [`../codebase/544.md`](../codebase/544.md) — sends the three controls' changes to the daemon (`ConversationRepository.setSessionSettings`, [#543](../codebase/543.md)) and reverts + snackbars on failure; the sheet's own composable is untouched.
-  - [Thread status row](thread-status-row.md) — the entry point. The row's `onExpandClick` (shipped in [#145](../codebase/145.md) as a hoisted placeholder) now fires `{ sheetVisible = true }` internally inside `ThreadScreen`. Rendered the `73%` stub via `tokenPercentColor` through #601, which deliberately left this row untouched; [#602](../codebase/602.md) is the sibling ticket that removed its fabricated segment and the helper.
-  - [App preferences](app-preferences.md) — the `Model` + `Effort` enums + both [`Model.label()`](app-preferences.md#design-decision-defer-label-extensions-on-data-layer-enums) and (since [#229](../codebase/229.md)) public `Effort.label()` extensions, plus the `AppPreferences.defaultModel` / `defaultEffort` flows that back the VM's `selectedModelFlow` / `selectedEffortFlow`. The dormant `AppPreferences.defaultYolo` flow is deliberately not consumed.
+  - [Thread screen](thread-screen.md) — the host. Owns the `rememberSaveable`-hoisted `sheetVisible` flag, mounts `StatusSheet` as a `Scaffold` sibling alongside the existing [`WorkspacePicker`](workspace-picker.md), and wires `onModelSelected = vm::onModelSelected, onEffortSelected = vm::onEffortSelected, onYoloToggled = vm::onYoloToggled` at `MainActivity` (the first two retyped to `(String) -> Unit` by [#807](../codebase/807.md)). Since [#601](../codebase/601.md) it no longer reads `tokenPercent` / `tokensUsed` / `tokensTotal` off `state` at this call site — `onDismiss` is the trailing argument now. Since [#544](../codebase/544.md) it also collects `sessionSettingsErrors` into the shared snackbar host — see § Hosting in `ThreadScreen` above.
+  - [`../codebase/544.md`](../codebase/544.md) — sends the three controls' changes to the daemon (`ConversationRepository.setSessionSettings`, [#543](../codebase/543.md)) and reverts + snackbars on failure; [#807](../codebase/807.md) re-routed the addressed session id from `Conversation.currentSessionId` to `SessionSettings.sessionId` but kept the send/revert shape — the sheet's own composable is untouched either way.
+  - [Thread status row](thread-status-row.md) — the entry point. The row's `onExpandClick` (shipped in [#145](../codebase/145.md) as a hoisted placeholder) now fires `{ sheetVisible = true }` internally inside `ThreadScreen`. Rendered the `73%` stub via `tokenPercentColor` through #601, which deliberately left this row untouched; [#602](../codebase/602.md) is the sibling ticket that removed its fabricated segment and the helper. [#807](../codebase/807.md) re-sourced the row's `model` / `effort` off the same `ThreadRunConfig` this sheet reads and added its `pending` parameter — see [thread-status-row.md § Sourcing](thread-status-row.md#sourcing).
+  - [App preferences](app-preferences.md) — the `Model` + `Effort` enums + both [`Model.label()`](app-preferences.md#design-decision-defer-label-extensions-on-data-layer-enums) and (since [#229](../codebase/229.md)) public `Effort.label()` extensions. Through [#807](../codebase/807.md), `AppPreferences.defaultModel` / `defaultEffort` backed the VM's `selectedModelFlow` / `selectedEffortFlow`; **#807 deleted that consumer** — the two flows now back only Settings' own device-default picker, the same "write-live, one consumer" posture `defaultYolo` already had.
+  - [Conversation repository](conversation-repository.md) — `observeSessionSettings` (#590) and `observeModelMenu` (#791/#792), the two daemon readings [#807](../codebase/807.md) folded into `ThreadRunConfig`. This sheet never sees either type directly; the ViewModel is the trust boundary.
   - [Warning color slot](warning-color.md) — `MaterialTheme.colorScheme.warning` ([#119](../codebase/119.md)) was consumed at the 50-95% band of `progressColor` (Context window fill) until [#601](../codebase/601.md) deleted it, and at the same band of `tokenPercentColor` (status row text) until [#602](../codebase/602.md) deleted that helper too.
   - [`WorkspacePickerSheet`](workspace-picker-sheet.md) ([#212](../codebase/212.md)) + [`ChannelInfoSheet`](channel-info-sheet.md) ([#217](../codebase/217.md)) — sibling sheets following the same shell + `*Content` split. Three identical `TitleRow` / `SectionHeader` privates now live in the package; extraction is deferred until the first divergent-shape ticket lands.
 - Sibling / downstream:
   - **[#591](https://github.com/pyrycode/pyrycode-mobile/issues/591)** (blocked on daemon-side pyrycode PR #1215) — serves a real context figure and re-adds parameters to `StatusSheet` / `StatusSheetContent` / `ContextWindowSection` to render it in place of the "unavailable" text this ticket ships. [#603](../codebase/603.md) has since deleted `ThreadUiState.tokenPercent` / `tokensUsed` / `tokensTotal` and the `STUB_*` constants outright, so #591 designs the shape it needs against real wire data rather than restoring these — see [`../codebase/603.md`](../codebase/603.md).
   - **`Section` abstraction across the four sections** — still deferred per [#230](../codebase/230.md). Four `SectionHeader + <body>` pairs now live in the `Column`; the body shape diverges (radio rows / chip row / toggle row / label+progress+caption block), so a `SheetSection(header: String, body: @Composable () -> Unit)` thin wrapper might be the right abstraction. The architect's call for [#230](../codebase/230.md) was "still not yet — wait for a fifth occurrence or a real shape divergence".
-  - Future Settings model-picker (`AppPreferences.setDefaultModel(...)` write-site, still pending per [`app-preferences`](app-preferences.md) gap) — re-uses [`Model.label()`](app-preferences.md#design-decision-defer-label-extensions-on-data-layer-enums) but **does not** re-use the private `Model.description()` extension here; it declares its own (different framing).
+  - Settings model-picker / effort-picker (`ui/settings/ModelPickerDialog.kt`, `EffortPickerDialog.kt`) — still iterate the `Model` / `Effort` device enums for Settings' own defaults-for-new-conversations feature, out of [#807](../codebase/807.md)'s scope. They reuse [`Model.label()`](app-preferences.md#design-decision-defer-label-extensions-on-data-layer-enums) / `Effort.label()`; the retired private `Model.description()` extension here was never shared with them.
+  - **YOLO read-only / pending disable — open, verifier SHOULD FIX from [#807](../codebase/807.md)'s review, not yet fixed.** See [§ `YoloRow`](#yolorow) above.
   - Settings YOLO cleanup — the dormant `mutableStateOf(false)` row at `SettingsScreen.kt:80, 169` and the dormant `AppPreferences.defaultYolo` flow can be removed in a separate ticket. Any future "default YOLO for new conversations" feature must respect the single-writer invariant on `ThreadViewModel.yoloEnabled` — likely via a new-conversation materialiser that reads the preference once at creation, not at every conversation open.
 - Figma: [`20:100`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=20-100) (full Run-configuration sheet; this doc covers the shell + the Model section region at `20:113/117/122/127`, the Effort region at `20:130/131–140`, the YOLO region at `20:142+`, and the Context window region at `20:151-155`).
