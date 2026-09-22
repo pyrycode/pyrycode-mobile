@@ -117,3 +117,11 @@ Pending for the documentation stage:
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-22
+
+## Revisions
+
+- **2026-09-22 (build).**
+  - The private `MobileModalShell` takes `modifier: Modifier = Modifier` after `footer`, not before `error`. Slack compose-lint (`ComposeModifierWithoutDefault`) rejects a modifier without a default. No behaviour changes.
+  - Added a light/dark `PermissionModalOverlayPreview` at 412 × 892 dp for visual comparison with the Figma frame.
+  - Open question resolved: `DialogProperties` accepts `securePolicy` together with `decorFitsSystemWindows`, and the code compiles.
+  - The § Context trial merge ran: `ThreadScreen.kt` auto-merges with `origin/feature/803`. That branch's only conflicts are with main, in `ThreadViewModel.kt` and its test, and this ticket does not touch either file.
