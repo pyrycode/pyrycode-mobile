@@ -323,7 +323,15 @@ private fun BlockQuoteBlock(
     source: String,
     uriHandler: UriHandler,
 ) {
-    val barColor = MaterialTheme.colorScheme.outlineVariant
+    // The bar is the only thing marking a quote as quoted — this block adds no treatment beyond
+    // the paragraph italic — so it conveys structure and has to clear WCAG 1.4.11's 3:1 against the
+    // bubble it renders on: always `secondaryContainer`, since `MessageBubble` is the only caller.
+    // `outlineVariant` shipped here from #129 and does not survive that ground — 1.00:1 dark,
+    // 1.32:1 light, so the bar was invisible rather than merely faint. `onSurfaceVariant` measures
+    // 7.27:1 light and 5.51:1 dark against the same bubble, and is already this file's token for
+    // the table grid, the task mark and struck text. Measure against the bubble before replacing
+    // it; the bar has no assertion behind it.
+    val barColor = MaterialTheme.colorScheme.onSurfaceVariant
     Row(modifier = Modifier.height(IntrinsicSize.Min)) {
         Box(
             modifier =
