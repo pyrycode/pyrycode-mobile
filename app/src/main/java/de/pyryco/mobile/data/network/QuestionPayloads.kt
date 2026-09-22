@@ -74,3 +74,31 @@ private fun QuestionDto.toQuestion(): Question =
 /** Static message: never interpolate the offending value (the `readEffectiveEffort` posture). */
 private fun JsonPrimitive.strictBoolean(): Boolean =
     (if (isString) null else booleanOrNull) ?: throw SerializationException("question_shown: multi_select must be a boolean")
+
+/**
+ * One entry of an outbound `question_answer` (#825): the question by index, never by its claude-authored
+ * text, and the operator's [values] verbatim.
+ */
+@Serializable
+internal data class QuestionAnswerEntryDto(
+    @SerialName("question_index") val questionIndex: Int,
+    val values: List<String>,
+)
+
+/**
+ * Outbound `question_answer` (#825), field-for-field with the daemon's `question_answer.json` fixture.
+ * No `conversation_id` (the batch id is the sole correlation) and no vendor `response` field.
+ */
+@Serializable
+internal data class QuestionAnswerPayloadDto(
+    @SerialName("question_batch_id") val questionBatchId: String,
+    @SerialName("answer_token") val answerToken: String,
+    val answers: List<QuestionAnswerEntryDto>,
+)
+
+/** Outbound `question_refused` (#825): the batch id and the token, and nothing else. */
+@Serializable
+internal data class QuestionRefusedPayloadDto(
+    @SerialName("question_batch_id") val questionBatchId: String,
+    @SerialName("answer_token") val answerToken: String,
+)

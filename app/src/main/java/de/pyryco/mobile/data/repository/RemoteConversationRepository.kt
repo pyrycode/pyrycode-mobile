@@ -5,6 +5,7 @@ import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.ModalEvent
+import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
@@ -35,7 +36,10 @@ import de.pyryco.mobile.data.network.ModalDismissedPayloadDto
 import de.pyryco.mobile.data.network.ModalShownPayloadDto
 import de.pyryco.mobile.data.network.ModelListPayloadDto
 import de.pyryco.mobile.data.network.PromoteConversationPayloadDto
+import de.pyryco.mobile.data.network.QuestionAnswerEntryDto
+import de.pyryco.mobile.data.network.QuestionAnswerPayloadDto
 import de.pyryco.mobile.data.network.QuestionDismissedPayloadDto
+import de.pyryco.mobile.data.network.QuestionRefusedPayloadDto
 import de.pyryco.mobile.data.network.QuestionShownPayloadDto
 import de.pyryco.mobile.data.network.RecentWorkspacesListPayloadDto
 import de.pyryco.mobile.data.network.RegisterPushTokenPayloadDto
@@ -2206,6 +2210,71 @@ class RemoteConversationRepository(
         )
 
     /**
+     * Answer the held clarification batch [questionBatchId] (#825) over v2 `question_answer`
+     * (protocol-mobile.md, Question v2). Fire-and-forget like [interrupt]: the daemon replies with
+     * neither `ack` nor `error` and silently drops an answer it cannot resolve, so everything checkable
+     * is checked here first and nothing is awaited. The only resolution signal is the inbound
+     * `question_dismissed` — this method never clears the batch from [questionBatches].
+     *
+     * Entries go out in batch order; [QuestionAnswer.values] are sent verbatim and never compared with
+     * the offered labels. Throws [IllegalStateException] when this connection holds no such batch (never
+     * shown, dismissed, or dropped by the reconnect that built this repository) or the pump refuses the
+     * frame, and [IllegalArgumentException] when [answers] do not cover every question exactly once.
+     * Messages are static: the nonce and the operator's values never reach an exception or a log.
+     */
+    suspend fun answerQuestionBatch(
+        questionBatchId: String,
+        answers: List<QuestionAnswer>,
+    ) {
+        val batch = heldQuestionBatch(questionBatchId)
+        require(answers.map { it.questionIndex }.sorted() == batch.questions.indices.toList()) {
+            "$TYPE_QUESTION_ANSWER must answer every question exactly once"
+        }
+        val payload =
+            QuestionAnswerPayloadDto(
+                questionBatchId = questionBatchId,
+                answerToken = questionToken("answer", questionBatchId),
+                answers = answers.sortedBy { it.questionIndex }.map { QuestionAnswerEntryDto(it.questionIndex, it.values) },
+            )
+        sendQuestionFrame(TYPE_QUESTION_ANSWER, MobileJson.encodeToJsonElement(payload))
+    }
+
+    /**
+     * Decline the held clarification batch [questionBatchId] (#825) over v2 `question_refused`: the
+     * batch id and a token, nothing else. Same fire-and-forget, no-clear and failure posture as
+     * [answerQuestionBatch].
+     */
+    suspend fun refuseQuestionBatch(questionBatchId: String) {
+        heldQuestionBatch(questionBatchId)
+        val payload = QuestionRefusedPayloadDto(questionBatchId, questionToken("refuse", questionBatchId))
+        sendQuestionFrame(TYPE_QUESTION_REFUSED, MobileJson.encodeToJsonElement(payload))
+    }
+
+    private fun heldQuestionBatch(questionBatchId: String): QuestionBatch =
+        checkNotNull(mutableQuestionBatches.value.firstOrNull { it.questionBatchId == questionBatchId }) {
+            "question batch not outstanding"
+        }
+
+    private fun sendQuestionFrame(
+        type: String,
+        payload: JsonElement,
+    ) {
+        val request = Envelope(id = requestId.incrementAndGet(), type = type, ts = Clock.System.now().toString(), payload = payload)
+        check(pump.send(request)) { "$type not sent: session not connected" }
+    }
+
+    /**
+     * The `answer_token` for a question send (#825): the verb and the daemon-minted batch nonce, so a
+     * retry of the same send reuses the token while an answer and a refusal, or two batches, never share
+     * one. It carries no answer value and no claude-authored text. Secrecy does not matter; the daemon's
+     * real dedup is its one-shot consume of the batch id.
+     */
+    private fun questionToken(
+        verb: String,
+        questionBatchId: String,
+    ): String = "$verb:$questionBatchId"
+
+    /**
      * Mint the `answer_token` for a `modal_answer`: a deterministic, collision-free encoding of the
      * answer's identity `(modalId, optionId)` (pyrycode#701 — uniqueness + stability matter, secrecy
      * does not). A **pure** function: no stored state, no random, no clock — purity is what gives the
@@ -2843,6 +2912,12 @@ class RemoteConversationRepository(
 
         /** Capability-gated retirement of a question batch `{question_batch_id, outcome, source}` (#822). */
         const val TYPE_QUESTION_DISMISSED = "question_dismissed"
+
+        /** Outbound answer to a held question batch `{question_batch_id, answer_token, answers}` (#825); no reply. */
+        const val TYPE_QUESTION_ANSWER = "question_answer"
+
+        /** Outbound refusal of a held question batch `{question_batch_id, answer_token}` (#825); no reply. */
+        const val TYPE_QUESTION_REFUSED = "question_refused"
 
         /**
          * Capability-gated outbound modal control: the phone's answer
