@@ -77,3 +77,15 @@ This is the test. Compile via `./gradlew compileDebugAndroidTestKotlin`; `bash -
 ### Open question resolved
 
 Not resolved by a run yet: the drive assumes the thread stays composed across the cut, and the offline reads in steps 3–4 fail directly if it does not. The post-verifier live run is the first to answer it.
+
+### 2026-09-23 — count after reconnect only once the prompt is drawn too (live gate FAIL, 13 executed / 1 failed)
+
+**Finding.** The first live run passed every offline read, then failed step 6: `inThreadList(OFFLINE_PROMPT)` counted 0 right after the offline reply displayed. The reply and the prompt reach the phone by different paths. The daemon's ring replay on the new connection carries the reply, but no live frame carries another device's message text (the #848 finding). The prompt arrives only through the newest-page `request_history` that `ThreadViewModel` re-issues when the connection returns. In the run's `daemon.log`, the phone's new connection completed its handshake at 07:09:59.4, and the next test began at 07:10:01. No history page was served for the scenario's conversation after the reconnect. Earlier in the same run, a history page took about 0.9–1.3 s after a handshake, so the assertion ran before the history ask was answered.
+
+**New contract.** Step 6 waits, inside `REPLY_TIMEOUT_MS`, until the offline reply is displayed **and** `OFFLINE_PROMPT` is drawn in the thread list, then runs the unchanged exact-once counts and the order check. If the reconnect never re-asks for history, the failure is now this wait timing out, which would be a product finding rather than a test race.
+
+**Also.** `scripts/e2e-emulator.sh` now ends the `go version -m` pipeline in `|| true`, so a failing `go` prints `daemon revision: unavailable` instead of stopping the script under `set -e` (a non-blocking verifier note).
+
+### Open question resolved (2026-09-23, first live run)
+
+The thread stays composed across the cut. The first live run passed steps 3–5 (open-thread read, list row, reopened thread from the disk restore, offline negative), so the drive holds as written.

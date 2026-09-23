@@ -622,7 +622,7 @@ MOBILE_REVISION="$(git -C "${REPO_ROOT}" rev-parse HEAD 2>/dev/null || true)"
 log "mobile revision: ${MOBILE_REVISION:-unavailable}"
 DAEMON_REVISION=""
 if command -v go >/dev/null 2>&1; then
-  DAEMON_REVISION="$(go version -m "$(command -v "${PYRY_BIN}")" 2>/dev/null | sed -n 's/.*vcs.revision=//p')"
+  DAEMON_REVISION="$(go version -m "$(command -v "${PYRY_BIN}")" 2>/dev/null | sed -n 's/.*vcs.revision=//p' || true)"
 fi
 log "daemon revision: ${DAEMON_REVISION:-unavailable}; binary: ${PYRY_BIN}"
 log "starting pyry daemon (PYRY_MOBILE_V2=1) → ${DAEMON_RELAY_URL}…"

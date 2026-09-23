@@ -1499,6 +1499,8 @@ class InteractiveStreamE2ETest {
      *  * **meanwhile** — the [SecondClientPeer] sends [OFFLINE_PROMPT] and its turn ends, and the phone
      *    draws none of it, which is what shows it really was offline;
      *  * **reconnected** — the thread draws that turn after the ping, and each of the four messages once.
+     *    The reply comes back through the ring replay and the prompt only through the history ask the
+     *    reconnect restarts, so the counts wait until both are drawn.
      *
      * The cut waits until the phone itself has settled the ping reply — its thread cache holds it, which
      * the open thread's collector writes only after drawing the settled row. A disconnect keeps only settled
@@ -1571,9 +1573,15 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(offlineReplyMatcher(), useUnmergedTree = true).assertCountEquals(0)
 
             // 6. AC-2: reconnect with the thread open. The peer's turn follows the ping, and nothing draws twice.
+            //    The reply and the prompt arrive by different paths: the ring replay carries the reply, but
+            //    no live frame carries another device's message text, so the prompt waits for the thread's
+            //    history ask that the reconnect restarts. Count only once both are drawn.
             setHostLink(serverId, up = true)
             val offlineReply = composeTestRule.onNode(offlineReplyMatcher(), useUnmergedTree = true)
-            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) { offlineReply.isDisplayed() }
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                offlineReply.isDisplayed() &&
+                    composeTestRule.onAllNodes(inThreadList(OFFLINE_PROMPT), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
             composeTestRule.waitForIdle()
             assertDrawnOnce(inThreadList(PING_PROMPT), pingReplyMatcher(), inThreadList(OFFLINE_PROMPT), offlineReplyMatcher())
             val tops =
