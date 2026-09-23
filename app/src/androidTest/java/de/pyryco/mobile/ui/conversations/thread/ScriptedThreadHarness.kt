@@ -110,6 +110,7 @@ class ScriptedThreadHarness(
                     isThinking = vm.isThinking.collectAsState().value,
                     apiRetry = vm.apiRetry.collectAsState().value,
                     usageLimit = vm.usageLimit.collectAsState().value,
+                    resetting = vm.resetting.collectAsState().value,
                     isCompacting = vm.isCompacting.collectAsState().value,
                     // #805: a `replay = 0` live-event fold like isBusy, so it subscribes in this same pass.
                     turnOutcome = vm.turnOutcome.collectAsState().value,
@@ -162,6 +163,21 @@ class ScriptedThreadHarness(
      * subscribe-before-push hazard — pushed after [start] anyway, for uniformity.
      */
     fun pushCompacting(active: Boolean) = pump.push(compactingEnvelope(conversationId, active))
+
+    /**
+     * Script one `resetting` edge (#871/#872). [active] `true` is a rising edge carrying [phase]
+     * (`wrapping_up` | `restarting`) and [handoff] (`pending` | `written` | `skipped`); a second rising
+     * edge is a phase change of the same reset. `false` is the falling edge, whose strings the wire sends
+     * empty. Both stay plain `String`s so a scenario can script any token. [targetConversationId] defaults
+     * to the harness's own conversation; pass another id to prove a reset elsewhere never shows here. Like
+     * [pushCompacting] it projects a retained `MutableStateFlow`, so it has no subscribe-before-push hazard.
+     */
+    fun pushResetting(
+        active: Boolean,
+        phase: String = "",
+        handoff: String = "",
+        targetConversationId: String = conversationId,
+    ) = pump.push(resettingEnvelope(targetConversationId, active, phase, handoff))
 
     /**
      * Script one `rate_limited` reading (#802/#804). A non-`allowed` [status] raises or replaces the
@@ -397,6 +413,23 @@ private fun compactingEnvelope(
         type = "compacting",
         ts = TS,
         payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId","active":$active}"""),
+    )
+
+/** A `resetting` envelope `{conversation_id, active, phase, handoff}` (#871). */
+private fun resettingEnvelope(
+    conversationId: String,
+    active: Boolean,
+    phase: String,
+    handoff: String,
+): Envelope =
+    Envelope(
+        id = 1L,
+        type = "resetting",
+        ts = TS,
+        payload =
+            MobileJson.parseToJsonElement(
+                """{"conversation_id":"$conversationId","active":$active,"phase":"$phase","handoff":"$handoff"}""",
+            ),
     )
 
 /**
