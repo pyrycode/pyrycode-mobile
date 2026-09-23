@@ -291,4 +291,9 @@
     -->
     <string name="markdown_task_mark_checked">Task done</string>
     <string name="markdown_task_mark_unchecked">Task not done</string>
+    <!-- #685: alert copy is fixed app text; no conversation name or daemon text ever reaches the shade. -->
+    <string name="notification_channel_attention">Replies and prompts</string>
+    <string name="notification_channel_attention_description">When claude finishes a reply or needs your answer</string>
+    <string name="notification_turn_completed">claude finished a reply</string>
+    <string name="notification_prompt">claude is waiting for your answer</string>
 </resources>

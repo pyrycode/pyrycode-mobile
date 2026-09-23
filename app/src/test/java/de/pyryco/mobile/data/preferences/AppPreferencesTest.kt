@@ -168,6 +168,15 @@ class AppPreferencesTest {
         }
 
     @Test
+    fun notificationPermissionAsked_defaultsToFalseAndStaysSet() =
+        runBlocking {
+            assertEquals(false, prefs.notificationPermissionAsked.first())
+            prefs.setNotificationPermissionAsked()
+            assertEquals(true, prefs.notificationPermissionAsked.first())
+            assertEquals(true, prefs.notificationsEnabled.first())
+        }
+
+    @Test
     fun defaultWorkspace_defaultsToScratchCwd() =
         runBlocking {
             assertEquals(DEFAULT_SCRATCH_CWD, prefs.defaultWorkspace.first())

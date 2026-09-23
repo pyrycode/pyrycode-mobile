@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.SavedStateHandle
 import de.pyryco.mobile.BuildConfig
@@ -36,6 +37,7 @@ import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
+import de.pyryco.mobile.notifications.AttentionNotifier
 import de.pyryco.mobile.push.PushTokenSink
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
@@ -131,6 +133,23 @@ val appModule =
                 controller = get<RelayConnectionController>(),
                 lifecycle = ProcessLifecycleOwner.get().lifecycle,
             ).also { it.start() }
+        } onClose { it?.dispose() }
+        // #685: alerts. Eager for the driver's reason — a push can start the process with no activity,
+        // and the publisher must already be subscribed when the wake's hosts connect. The ledger sits
+        // in noBackupFilesDir beside the conversation cache: it holds digests only, and never travels.
+        single(createdAtStart = true) {
+            AttentionNotifier(
+                context = androidContext(),
+                alerts = get<HostConversationSource>().alerts,
+                notificationsEnabled = get<AppPreferences>().notificationsEnabled,
+                isForeground = {
+                    ProcessLifecycleOwner
+                        .get()
+                        .lifecycle.currentState
+                        .isAtLeast(Lifecycle.State.STARTED)
+                },
+                ledgerFile = File(androidContext().noBackupFilesDir, "attention_alerts"),
+            )
         } onClose { it?.dispose() }
         // #361: the FCM service's token writes outlive the service instance that received them.
         single { PushTokenSink(get()) } onClose { it?.dispose() }

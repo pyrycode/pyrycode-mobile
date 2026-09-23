@@ -140,3 +140,11 @@ Pending for the documentation stage:
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-24
+
+## Revisions
+
+### 2026-09-24 — during implementation
+
+- **Blank-conversation batches.** `promptKeys` drops a question batch with a blank `conversationId`, as it already dropped a blank-conversation modal: its tap could never route, since `NotificationTap.target` refuses a blank id. Covered in `aPromptAlertsOncePerModalOrBatchAndABlankConversationPromptAlertsNothing`.
+- **Where the prompt is proven.** `rememberNotificationPermissionRequest` is `internal` (not private) so `app/src/test/.../NotificationPermissionPromptTest.kt` can drive it under Robolectric with `createAndroidComposeRule<ComponentActivity>()` and assert the request through `ShadowActivity.lastRequestedPermission`; it also pins the `shouldAskNotificationPermission` truth table. It stays out of `app/src/sharedTest`: Robolectric shadows do not exist on the device, and a device run would raise the real system dialog. For the same reason `NotificationTapNavigationTest` seeds `notification_permission_asked = true`.
+- **Open question resolved.** The two-hosts notifier test asserts the two posted notifications' tap targets (`NotificationTap.target` over each `contentIntent`), which proves distinct per-host notifications without depending on `ShadowNotificationManager` exposing tags.

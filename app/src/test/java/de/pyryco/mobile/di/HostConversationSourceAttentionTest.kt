@@ -15,8 +15,11 @@ import de.pyryco.mobile.data.repository.FakeConversationRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -179,6 +182,63 @@ class HostConversationSourceAttentionTest {
                 after.dispose()
             }
         }
+
+    @Test
+    fun aNewlyCompletedTurnAlertsOnceEvenWhileViewedAndARedeliveryAlertsNothing() =
+        withSource { a, _, source ->
+            val alerts = collectAlerts(source)
+            viewing.view("a", "c")
+            a.events.emit(end("c", "t1"))
+            a.events.emit(end("c", "t1"))
+            a.events.emit(end("c", ""))
+            a.events.emit(LiveSessionEvent.TurnState("c", LiveSessionEvent.TurnState.Phase.Thinking))
+            runCurrent()
+
+            assertEquals(listOf(AttentionAlert("a", "c", AttentionAlert.Kind.TurnCompleted, "t1")), alerts)
+        }
+
+    @Test
+    fun theSameConversationIdOnTwoHostsGivesTwoAlerts() =
+        withSource { a, b, source ->
+            val alerts = collectAlerts(source)
+            a.events.emit(end("same", "t1"))
+            b.events.emit(end("same", "t1"))
+            runCurrent()
+
+            assertEquals(listOf("a", "b"), alerts.map { it.serverId }.sorted())
+            assertTrue(alerts.all { it.conversationId == "same" && it.key == "t1" })
+        }
+
+    @Test
+    fun aPromptAlertsOncePerModalOrBatchAndABlankConversationPromptAlertsNothing() =
+        withSource { a, b, source ->
+            val alerts = collectAlerts(source)
+            val open = ModalUiState.Open("m1", "permission", "t", "p", emptyList(), "deny", "c")
+            a.modal.value = open
+            runCurrent()
+            a.modal.value = open.copy(prompt = "re-shown")
+            a.batches.value = listOf(QuestionBatch("c", "q1", emptyList()))
+            b.modal.value = open.copy(conversationId = "")
+            b.batches.value = listOf(QuestionBatch(" ", "q0", emptyList()))
+            runCurrent()
+            a.batches.value = listOf(QuestionBatch("c", "q1", emptyList()), QuestionBatch("d", "q2", emptyList()))
+            runCurrent()
+
+            assertEquals(
+                listOf(
+                    AttentionAlert("a", "c", AttentionAlert.Kind.Prompt, "modal:m1"),
+                    AttentionAlert("a", "c", AttentionAlert.Kind.Prompt, "batch:q1"),
+                    AttentionAlert("a", "d", AttentionAlert.Kind.Prompt, "batch:q2"),
+                ),
+                alerts,
+            )
+        }
+
+    private fun TestScope.collectAlerts(source: HostConversationSource): List<AttentionAlert> {
+        val alerts = mutableListOf<AttentionAlert>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { source.alerts.toList(alerts) }
+        return alerts
+    }
 
     private val viewing = ConversationViewing()
 
