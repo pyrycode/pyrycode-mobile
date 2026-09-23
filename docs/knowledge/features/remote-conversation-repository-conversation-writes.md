@@ -10,20 +10,23 @@ Applies the operator's model / effort / YOLO change to a **running session** ove
 scope), not this repository's projection, so there is nothing to `upsertConversation`. It is also the
 **first session-scoped mutation** — every prior one (`sendMessage`, `createDiscussion`, `promote`,
 `rename`, `startNewSession`) keys off `conversationId`; this one takes `sessionId`, sourced by #544 from
-`Conversation.currentSessionId`.
+`Conversation.currentSessionId`. The body now lives on `SessionSettingsCommands` (#916,
+`data/repository/SessionSettingsCommands.kt`, alongside `observeSessionSettings` and the system-prompt
+pair below); the repository's `override suspend fun setSessionSettings` is a one-line hand-off.
 
 ```kotlin
-override suspend fun setSessionSettings(
+// SessionSettingsCommands
+suspend fun setSessionSettings(
     sessionId: String, model: String?, effort: String?, yolo: Boolean?,
 ) {
     val request = Envelope(
-        id = relayRequests.nextRequestId(),
+        id = requests.nextRequestId(),
         type = TYPE_SET_SESSION_SETTINGS, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(
             SetSessionSettingsPayloadDto(sessionId = sessionId, model = model, effort = effort, yolo = yolo),
         ),
     )
-    val reply = relayRequests.sendAndAwaitReply(request)   // throws on server `error` / not-Open before any decode
+    val reply = requests.sendAndAwaitReply(request)   // throws on server `error` / not-Open before any decode
     MobileJson.decodeFromJsonElement<SessionSettingsUpdatedPayloadDto>(reply)  // validation only, discarded
 }
 ```
@@ -61,10 +64,16 @@ override suspend fun setSessionSettings(
 The **read** half `setSessionSettings` never had: a conversation-scoped `request_session_settings` →
 `session_settings` round trip, exposed as a cold per-conversation reading rather than a one-shot return —
 a **new consumer shape**, not another mutation. `#590` is a net-new read path, not a replacement: mobile
-never shipped the bootstrap-scoped read desktop had to retire.
+never shipped the bootstrap-scoped read desktop had to retire. `settingsRevision` and this whole read —
+`observeSessionSettings`, `sessionSettingsRead`, `readSessionSettings`, `refreshSessionSettings` and
+`bumpSettingsRevision` — now live on `SessionSettingsCommands` (#916,
+`data/repository/SessionSettingsCommands.kt`); the repository's `override fun observeSessionSettings` /
+`refreshSessionSettings` are one-line hand-offs, and its `session_transition` arm calls
+`sessionSettingsCommands.bumpSettingsRevision(conversationId)` at the position this used to occupy inline.
 
 ```kotlin
-override fun observeSessionSettings(conversationId: String): Flow<SessionSettings?> =
+// SessionSettingsCommands
+fun observeSessionSettings(conversationId: String): Flow<SessionSettings?> =
     settingsRevision
         .map { it[conversationId] ?: 0L }
         .distinctUntilChanged()
@@ -76,7 +85,10 @@ private fun sessionSettingsRead(conversationId: String): Flow<SessionSettings?> 
         emit(if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) readSessionSettings(conversationId) else null)
     }.catch { emit(null) }
 
-override fun refreshSessionSettings(conversationId: String) = bumpSettingsRevision(conversationId)
+fun refreshSessionSettings(conversationId: String) = bumpSettingsRevision(conversationId)
+
+/** Public so the repository's `session_transition` arm can call it (was private). */
+fun bumpSettingsRevision(conversationId: String) { /* … */ }
 ```
 
 - **Nothing is cached on this class — the projection is the trigger, not the reading.** `settingsRevision:
@@ -118,8 +130,8 @@ override fun refreshSessionSettings(conversationId: String) = bumpSettingsRevisi
   ungated send would suspend until teardown rather than erroring. Not sending is what keeps "the read sends
   `request_session_settings` and nothing else" true even in the degenerate case: no claude child starts, no
   model turn begins, no `set_session_settings` rides along, and nothing is written to `AppPreferences`.
-- **`readSessionSettings` is the `requestHistory` body minus the fold** — encode
-  `RequestSessionSettingsPayloadDto(conversationId)`, `relayRequests.sendAndAwaitReply`, decode the reply through
+- **`readSessionSettings` is the repository's `requestHistory` body minus the fold** — encode
+  `RequestSessionSettingsPayloadDto(conversationId)`, `requests.sendAndAwaitReply`, decode the reply through
   [`toSessionSettings()`](mobile-protocol-v2-wire-layer-application-payloads.md#the-session-settings-read-exchange-590).
   It throws rather than converting to `null` itself — `sessionSettingsRead` owns that conversion — so every
   failure mode (pump not `Open`, a server `error`, a malformed reply) stays distinguishable at the seam that
@@ -310,17 +322,21 @@ Changes an existing conversation's workspace over v2 `change_workspace` (server 
 the `UnsupportedOperationException` throw this method carried since #312 — and, per [#549](../codebase/549.md)'s
 note naming it "the remaining throwing sibling," the **last** stub on this class. "Workspace" **is** the
 conversation's `cwd`; there is no separate workspace-id concept. Byte-for-byte the [`rename`](remote-conversation-repository-send-create-promote-rename.md#renameconversationid-name--the-fourth-mutation-530)
-shape with a `cwd` payload instead of `name`:
+shape with a `cwd` payload instead of `name`. The body now lives on `WorkspaceCommands` (#916,
+`data/repository/WorkspaceCommands.kt`, beside `createWorkspaceFolder`/`renameWorkspace`/`archiveWorkspace`
+in [the workspace-and-push doc](remote-conversation-repository-workspace-and-push.md)); the repository's
+`override suspend fun changeWorkspace` is a one-line hand-off:
 
 ```kotlin
-override suspend fun changeWorkspace(conversationId: String, workspace: String): Session {
+// WorkspaceCommands
+suspend fun changeWorkspace(conversationId: String, workspace: String): Session {
     val request = Envelope(
-        id = relayRequests.nextRequestId(), type = TYPE_CHANGE_WORKSPACE, ts = Clock.System.now().toString(),
+        id = requests.nextRequestId(), type = TYPE_CHANGE_WORKSPACE, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(ChangeWorkspacePayloadDto(conversationId = conversationId, cwd = workspace)),
     )
-    val reply = relayRequests.sendAndAwaitReply(request) // throws on server `error` / not-Open; the decode below is unreachable on failure
+    val reply = requests.sendAndAwaitReply(request) // throws on server `error` / not-Open; the decode below is unreachable on failure
     val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-    conversationListProjection.upsertConversation(conversation) // confirmed-upsert — ONLY after a successful decode
+    conversationList.upsertConversation(conversation) // confirmed-upsert — ONLY after a successful decode
     return Session(id = "", conversationId = conversationId, claudeSessionUuid = "",
         startedAt = Clock.System.now(), endedAt = null)
 }
@@ -365,26 +381,30 @@ Reads and writes the system prompt a conversation stores over v2 `request_system
 `set_system_prompt` (server pyrycode#2152). Both name a **conversation**, never a session — the read
 works while nothing is running, and the write takes effect at the conversation's next session start;
 neither call restarts or resets a running one. No UI ships in this ticket; #824's shared editing state
-and, through it, the create-channel (#666) and edit-channel (#667) modals are the consumers.
+and, through it, the create-channel (#666) and edit-channel (#667) modals are the consumers. Both bodies
+now live on `SessionSettingsCommands` (#916, `data/repository/SessionSettingsCommands.kt`, beside
+`setSessionSettings` above); the repository's `override suspend fun requestSystemPrompt` /
+`setSystemPrompt` are one-line hand-offs.
 
 ```kotlin
-override suspend fun requestSystemPrompt(conversationId: String): SystemPromptReading {
+// SessionSettingsCommands
+suspend fun requestSystemPrompt(conversationId: String): SystemPromptReading {
     check(CAPABILITY_INTERACTIVE in negotiatedCapabilities()) { SYSTEM_PROMPT_READ_NOT_INTERACTIVE }
     val request = Envelope(
-        id = relayRequests.nextRequestId(), type = TYPE_REQUEST_SYSTEM_PROMPT, ts = Clock.System.now().toString(),
+        id = requests.nextRequestId(), type = TYPE_REQUEST_SYSTEM_PROMPT, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(RequestSystemPromptPayloadDto(conversationId = conversationId)),
     )
-    return relayRequests.sendAndAwaitReply(request).toSystemPromptReading()
+    return requests.sendAndAwaitReply(request).toSystemPromptReading()
 }
 
-override suspend fun setSystemPrompt(conversationId: String, systemPrompt: String?) {
+suspend fun setSystemPrompt(conversationId: String, systemPrompt: String?) {
     require(systemPrompt == null || SystemPromptLimit.fits(systemPrompt)) { SYSTEM_PROMPT_TOO_LONG }
     val request = Envelope(
-        id = relayRequests.nextRequestId(), type = TYPE_SET_SYSTEM_PROMPT, ts = Clock.System.now().toString(),
+        id = requests.nextRequestId(), type = TYPE_SET_SYSTEM_PROMPT, ts = Clock.System.now().toString(),
         payload = setSystemPromptPayload(conversationId, systemPrompt),
     )
-    val reply = relayRequests.sendAndAwaitReply(request)
-    conversationListProjection.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation())
+    val reply = requests.sendAndAwaitReply(request)
+    conversationList.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation())
 }
 ```
 

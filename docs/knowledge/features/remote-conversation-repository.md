@@ -38,7 +38,7 @@ Split on 2026-09-05 to keep this document under the 50000-byte cap the docs guar
 - [Remote conversation repository — the Phase 4 `ConversationRepository` — screen snapshot, dequeue, interrupt and new session](remote-conversation-repository-control-sends.md) — `requestScreenSnapshot(conversationId) — the parser-independent screen-snapshot read (#375)`, `requestHistory(conversationId, cursor, limit) — the on-disk history page read (#623)`, `dropQueuedMessage(conversationId, queuedMessageId) — the dequeue_message outbound send (#466)`, `interrupt(conversationId) — explicitly targeted v2 interrupt`, `startNewSession() — explicitly targeted v2 new_session`, `answerQuestionBatch(questionBatchId, answers) / refuseQuestionBatch(questionBatchId) — the v2 question_answer / question_refused sends (#825)`
 - [Remote conversation repository — the Phase 4 `ConversationRepository` — state and concurrency, error handling and the hand-off](remote-conversation-repository-state-errors-and-handoff.md) — `State & concurrency model`, `Error handling`, `Hand-off — the live binding`
 
-The sections that stay here: `## Where it sits in the Phase 4 stack`, `## Status projections: one file per status event`, `## The `SessionPump` consumed contract`, `## Stubs — none remain; every method is now live`, `## Testing`, `## Related`.
+The sections that stay here: `## Where it sits in the Phase 4 stack`, `## Status projections: one file per status event`, `## The repository split (#912–#916): complete`, `## The `SessionPump` consumed contract`, `## Stubs — none remain; every method is now live`, `## Testing`, `## Related`.
 
 ## Where it sits in the Phase 4 stack
 
@@ -90,17 +90,58 @@ A new status event takes the same shape: a new `…Projection.kt` holding its st
 plus one field, one arm and one override in the repository. The split exists so that sibling tickets
 adding events in parallel stop editing the same lines of one very large file.
 
-**The thread store followed the same split (#912), as `ThreadProjection`.** It isn't a status event —
+**The thread store followed the same split (#912), as `ThreadProjection`.** (See § The repository split
+(#912–#916): complete, below, for the full command-class picture #914–#916 added on top of this.) It isn't a status event —
 it's the thread itself: the ordered per-conversation rows, the minted-id ledger (#781) and the
 pending-drops ledger (#859), plus every write that folds a thread row (`appendMessages`,
 `appendSessionBoundary`, `applyUnrecognizedMessage`, `applyBanner`, `applyCompactionBoundary`,
 `applyToolUse`/`applyToolResult`/`applyToolDenied`/`applyToolProgress`,
 `applyAssistantDelta`/`finalizeAssistantTurn`, `mergeHistoryPage` and `remove`). The repository still owns
-the `interactive` gate in each `onInbound` arm and still owns `sendMessage`, `dropQueuedMessage` and
-`requestHistory`, which now record into the projection instead of into a repository field;
-`observeMessages` fans out through `threadProjection.observe(conversationId)`. See
+the `interactive` gate in each `onInbound` arm and still owns `requestHistory`, which records into the
+projection instead of into a repository field; `sendMessage` and `dropQueuedMessage` moved on to
+`MessageCommands` (#915), which records into the same projection. `observeMessages` fans out through
+`threadProjection.observe(conversationId)`. See
 [Remote conversation repository — reads and the thread store](remote-conversation-repository-reads-and-thread-store.md)
 for the store itself.
+
+## The repository split (#912–#916): complete
+
+Five tickets moved everything out of `RemoteConversationRepository` that was not routing: the thread
+store into `ThreadProjection` (#912), the conversation list and last-message previews into
+`ConversationListProjection` (#913), conversation-scoped commands (create, promote, rename, archive,
+unarchive, delete, new session, interrupt, push-token registration, modal answer/cancel) into
+`ConversationCommands` (#914), message and transfer commands (sending, uploads, the screen snapshot,
+dequeue, the debug bundle) into `MessageCommands` (#915), and session settings, the system prompt and
+workspace management into `SessionSettingsCommands` / `WorkspaceCommands` (#916). Each moved cluster kept
+its behaviour, names and KDoc; the repository holds a one-line hand-off for every public method that
+moved. No further cluster is scheduled to move.
+
+What the repository still owns, after #916:
+
+- **The single inbound collector and `onInbound`'s demux** — the one `pump.inbound` consumer, routing
+  every envelope type to the right projection, command class or waiter. The two routing sites #916 left
+  in place: the `session_transition` arm calls `sessionSettingsCommands.bumpSettingsRevision`, and the
+  `TYPE_WORKSPACE_UPDATED` arm applies the label through `conversationListProjection.applyWorkspaceLabel`
+  and calls `workspaceCommands.malformedWorkspaceReply()` on a decode failure.
+- **Every status projection** the thread reads from: `ConversationListProjection`, `ThreadProjection`,
+  `StallProjection`, `QueueProjection`, `ApiRetryProjection`, `CompactingProjection`, `UsageLimitProjection`,
+  `ThinkingProgressProjection`, `ResettingProjection`, `ModelMenuProjection`, `QuestionBatchProjection` and
+  `BackgroundTaskProjection` — each its own small class, constructed once per repository instance, per the
+  split described above in § Status projections.
+- **`RelayRequests`** — the one request-id counter and reply-waiter table every command class, and the
+  repository's own remaining reads, share.
+- **The reads that fan out directly to a projection, with no command-class indirection**:
+  `observeConversations`, `observeMessages`, `observeLastMessage`, `observeStall`, `observeQueue`,
+  `observeApiRetry`, `observeCompacting`, `observeResetting`, `observeUsageLimit`,
+  `observeThinkingProgress` and `observeModelMenu`.
+- **`requestHistory`** — the on-disk history page read; kept here because it folds its page straight into
+  `ThreadProjection`, and #916 explicitly left it in place.
+- **The v2 structured-stream and modal decode seams** — `liveSessionEvents`, `modalEvents`,
+  `answerQuestionBatch` / `refuseQuestionBatch` (fold into `QuestionBatchProjection`), and the replay
+  cursor (`recordReplayCursor`, the resync arm).
+- **The four command classes, as constructed dependencies, plus a one-line hand-off for each of their
+  public methods**: `conversationCommands` (#914), `messageCommands` (#915), and `sessionSettingsCommands`
+  / `workspaceCommands` (both #916).
 
 ## The `SessionPump` consumed contract
 

@@ -2,7 +2,6 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.Conversation
-import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.ModalEvent
@@ -12,10 +11,8 @@ import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.BackfillSincePayloadDto
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
-import de.pyryco.mobile.data.network.ChangeWorkspacePayloadDto
 import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.ConversationsPayload
-import de.pyryco.mobile.data.network.CreateWorkspaceFolderPayloadDto
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.HistoryPagePayloadDto
 import de.pyryco.mobile.data.network.MessageChunkPayloadDto
@@ -23,48 +20,29 @@ import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.ModalDismissedPayloadDto
 import de.pyryco.mobile.data.network.ModalShownPayloadDto
-import de.pyryco.mobile.data.network.RecentWorkspacesListPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
-import de.pyryco.mobile.data.network.RenameWorkspacePayloadDto
 import de.pyryco.mobile.data.network.ReplayCursor
 import de.pyryco.mobile.data.network.RequestHistoryPayloadDto
-import de.pyryco.mobile.data.network.RequestSessionSettingsPayloadDto
-import de.pyryco.mobile.data.network.RequestSystemPromptPayloadDto
-import de.pyryco.mobile.data.network.SessionSettingsUpdatedPayloadDto
 import de.pyryco.mobile.data.network.SessionTransitionPayloadDto
-import de.pyryco.mobile.data.network.SetSessionSettingsPayloadDto
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
 import de.pyryco.mobile.data.network.ToolUsePayloadDto
 import de.pyryco.mobile.data.network.TurnEndPayloadDto
 import de.pyryco.mobile.data.network.TurnStatePayloadDto
-import de.pyryco.mobile.data.network.WorkspaceFolderCreatedPayloadDto
 import de.pyryco.mobile.data.network.WorkspaceUpdatedPayloadDto
-import de.pyryco.mobile.data.network.setSystemPromptPayload
 import de.pyryco.mobile.data.network.toBoundary
 import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.network.toEvent
 import de.pyryco.mobile.data.network.toHistoryPage
 import de.pyryco.mobile.data.network.toMessage
-import de.pyryco.mobile.data.network.toSessionSettings
-import de.pyryco.mobile.data.network.toSystemPromptReading
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
-import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onStart
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
@@ -197,26 +175,6 @@ class RemoteConversationRepository(
         )
 
     /**
-     * `conversationId -> settings-read ordinal` (#590) — the **refresh trigger** for
-     * [observeSessionSettings], deliberately not a cache of the readings themselves. A bump means "the
-     * reading you hold is stale, read again"; the value is meaningless beyond being different from the
-     * last one, and is never compared across connections (a new connection is a new repository with a
-     * fresh map).
-     *
-     * Two writers, unlike the single-collector projections above: the [init] inbound collector bumps on
-     * a `session_transition`, and any caller thread bumps through [refreshSessionSettings] once its
-     * settings write has settled. The increment is a genuine **read-modify-write**, so running it inside
-     * the atomic [MutableStateFlow.update] is load-bearing rather than stylistic — the
-     * [CompactingProjection] posture, not [ApiRetryProjection]'s pure replace. Even the
-     * degenerate collapse is safe: two bumps folding into one still trigger a read that observes the
-     * newest state, because the read asks the daemon rather than replaying a stored edge.
-     *
-     * An absent key reads as ordinal `0`, so a first collector needs no seeding and a conversation
-     * nobody has opened costs nothing.
-     */
-    private val settingsRevision = MutableStateFlow<Map<String, Long>>(emptyMap())
-
-    /**
      * The request↔reply plumbing of this connection (#914): the one envelope-id counter every request takes
      * its id from, the reply waiters, the correlated await and the teardown sweep. [onInbound] completes or
      * fails waiters through it, and the [init] collector's `finally` sweeps it last.
@@ -250,6 +208,31 @@ class RemoteConversationRepository(
             conversationList = conversationListProjection,
             threadProjection = threadProjection,
             queueProjection = queueProjection,
+        )
+
+    /**
+     * The session settings and system prompt commands (#916): the settings read, its refresh trigger and
+     * the per-conversation revision map behind it, the settings write, and the system prompt read and
+     * write. [onInbound]'s `session_transition` arm bumps its revision; each public command below hands
+     * off to it in one line.
+     */
+    private val sessionSettingsCommands =
+        SessionSettingsCommands(
+            requests = relayRequests,
+            negotiatedCapabilities = negotiatedCapabilities,
+            conversationList = conversationListProjection,
+        )
+
+    /**
+     * The workspace commands (#916): recent workspaces, changing a conversation's workspace, creating a
+     * workspace folder, and renaming and archiving a workspace. [onInbound]'s `workspace_updated` arm
+     * takes its static malformed-reply error from it; each public command below hands off to it in one line.
+     */
+    private val workspaceCommands =
+        WorkspaceCommands(
+            requests = relayRequests,
+            conversationList = conversationListProjection,
+            conversationCommands = conversationCommands,
         )
 
     /** One attempt per connection (#683); see [MessageCommands.requestDebugBundle]. */
@@ -445,7 +428,7 @@ class RemoteConversationRepository(
                     try {
                         MobileJson.decodeFromJsonElement<WorkspaceUpdatedPayloadDto>(envelope.payload)
                     } catch (e: IllegalArgumentException) {
-                        waiter?.completeExceptionally(malformedWorkspaceReply())
+                        waiter?.completeExceptionally(workspaceCommands.malformedWorkspaceReply())
                         return
                     }
                 conversationListProjection.applyWorkspaceLabel(decoded.path, decoded.label)
@@ -637,7 +620,7 @@ class RemoteConversationRepository(
                         // nobody is watching must not send a frame. Routed by the same decoded
                         // conversation_id as its two siblings, so a transition cannot invalidate another
                         // conversation's reading.
-                        bumpSettingsRevision(conversationId)
+                        sessionSettingsCommands.bumpSettingsRevision(conversationId)
                         // Fourth write since #801, and the second of the two clears for the
                         // thinking-progress reading: the session whose reasoning it described has been
                         // replaced, so the reading describes a think that can no longer be running.
@@ -877,42 +860,8 @@ class RemoteConversationRepository(
             payload = JsonObject(emptyMap()),
         )
 
-    /**
-     * Recently-used workspace folders (#565), a **one-shot request/reply** read verb modeled on
-     * [observeConversations]'s `list_conversations` but **without** a push projection — #888 is one-shot
-     * daemon-side (no live re-emit on change exists to subscribe to). Each collection issues one
-     * `recent_workspaces` request (empty `{}` payload) and awaits the correlated `recent_workspaces_list`
-     * reply via [RelayRequests.sendAndAwaitReply], so a fresh picker open re-fetches (cold, per-collector; no caching,
-     * no cross-collection dedup, no projection touched).
-     *
-     * Emits the reply's paths in **wire order** — ordering and dedup are daemon-authoritative (#888), so
-     * the client does **not** re-sort — after excluding the two "no bound workspace" sentinels the
-     * interface contract mandates: the empty string `""` (via [String.isNotBlank], a safe superset the
-     * daemon already trims) and [DEFAULT_SCRATCH_CWD] (load-bearing — #888 folds distinct `Cwd` values
-     * and does **not** strip scratch).
-     *
-     * Fails **closed to empty**: `.catch { emit(emptyList()) }` degrades every non-cancellation throwable
-     * to one empty emission (AC #4) — the not-`Open` [IllegalStateException] from [RelayRequests.sendAndAwaitReply]'s
-     * `check`, a server [RelayErrorException] (this verb names no conversation, so there is **no**
-     * `not_found` path), a teardown-mid-await [IllegalStateException] (#488 `failAllPending`), and a
-     * malformed-reply decode exception. [kotlinx.coroutines.flow.catch] is cancellation-transparent — it
-     * does not swallow the [kotlinx.coroutines.CancellationException] a lifecycle-STOP / sheet-dismiss
-     * raises — so a cancelled collect stops cleanly with no spurious empty emit.
-     */
-    override fun recentWorkspaces(): Flow<List<String>> =
-        flow {
-            val reply = relayRequests.sendAndAwaitReply(recentWorkspacesRequest())
-            val list = MobileJson.decodeFromJsonElement<RecentWorkspacesListPayloadDto>(reply)
-            emit(list.workspaces.map { it.path }.filter { it.isNotBlank() && it != DEFAULT_SCRATCH_CWD })
-        }.catch { emit(emptyList()) }
-
-    private fun recentWorkspacesRequest(): Envelope =
-        Envelope(
-            id = relayRequests.nextRequestId(),
-            type = TYPE_RECENT_WORKSPACES,
-            ts = Clock.System.now().toString(),
-            payload = JsonObject(emptyMap()),
-        )
+    /** Recently-used workspace folders (#565), failing closed to empty; see [WorkspaceCommands.recentWorkspaces]. */
+    override fun recentWorkspaces(): Flow<List<String>> = workspaceCommands.recentWorkspaces()
 
     /**
      * One backward step of [conversationId]'s history walk over v2 `request_history` (#623, server
@@ -965,100 +914,12 @@ class RemoteConversationRepository(
         return page
     }
 
-    /**
-     * The run configuration of [conversationId]'s session over v2 `request_session_settings` (#590,
-     * daemon pyrycode#1610/#2449/#2510). A cold per-collector read that re-issues on every trigger and
-     * folds **nothing** — no projection on this class holds a [SessionSettings], so there is no stale
-     * value to invalidate and no slot for a late reply to land in.
-     *
-     * Reads the conversation's own [settingsRevision] slice, so a bump for **another** conversation does
-     * not re-read this one; [distinctUntilChanged] means a value-identical re-emission does not either.
-     * [flatMapLatest] is what makes a superseded read harmless: a new trigger **cancels** the in-flight
-     * one before starting the next, so a reply that arrives late has no collector to reach and its
-     * deferred is already deregistered by [RelayRequests.sendAndAwaitReply]'s `finally`.
-     *
-     * The [onStart] `null` is not cosmetic. It resets the reading to *unavailable* at the head of every
-     * subscription, which is what keeps a host handoff clean: the facade re-subscribes on the new
-     * connection, and without it a consumer would keep rendering the **previous host's** values until
-     * the new read landed (AC #1).
-     */
-    @OptIn(ExperimentalCoroutinesApi::class)
+    /** The run configuration of a conversation's session (#590); see [SessionSettingsCommands.observeSessionSettings]. */
     override fun observeSessionSettings(conversationId: String): Flow<SessionSettings?> =
-        settingsRevision
-            .map { it[conversationId] ?: 0L }
-            .distinctUntilChanged()
-            .flatMapLatest { sessionSettingsRead(conversationId) }
-            .onStart { emit(null) }
+        sessionSettingsCommands.observeSessionSettings(conversationId)
 
-    /**
-     * One settings read as a single-emission flow (#590). Fails **closed to `null`** rather than to the
-     * caller, because the consumer of a footer reading has nothing to retry with — the next trigger
-     * re-reads from scratch — and AC #4 requires a failed read to leave the reading unavailable rather
-     * than fall back to anything.
-     *
-     * [kotlinx.coroutines.flow.catch] rather than a `try`/`catch`: it converts an upstream failure
-     * without swallowing the **collector's own cancellation**, which a `runCatching` around a suspend
-     * call would. Scoped to this inner flow rather than applied to [observeSessionSettings] as a whole,
-     * because a terminal `catch` there would end the outer flow and the conversation would never read
-     * again after one failure.
-     *
-     * **The caught throwable is discarded and never logged, and that is load-bearing.** Only the
-     * `effective_effort` message is ours and content-free; a structural decode failure is authored by
-     * kotlinx-serialization, whose message can quote the offending input. Dropping it is what keeps AC
-     * #2's "logs no payload content" true — a later `catch { Log.w(TAG, it) }` would leak daemon payload
-     * content to Logcat in one line.
-     *
-     * **Gated fail-closed on `interactive`**, like the live-stream arms: the daemon leaves a conn that
-     * did not negotiate it fully inert on this verb — no reply, not even a signal that the conversation
-     * exists — so an ungated send would suspend until teardown. Not sending is also what keeps "the read
-     * sends `request_session_settings` and nothing else" true in the degenerate case.
-     */
-    private fun sessionSettingsRead(conversationId: String): Flow<SessionSettings?> =
-        flow {
-            emit(
-                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) readSessionSettings(conversationId) else null,
-            )
-        }.catch { emit(null) }
-
-    /**
-     * Send one `request_session_settings` and decode its correlated `session_settings` reply (#590) —
-     * the [requestHistory] body minus the projection fold. The reply is routed **by the id this call
-     * asked with**: it carries no `conversation_id` of its own, so a reading structurally cannot
-     * cross-route into another conversation, the property [ThreadProjection.mergeHistoryPage] relies on one level up.
-     *
-     * Throws rather than returning null — [sessionSettingsRead] owns the conversion — so every failure
-     * mode stays distinguishable at this seam: [IllegalStateException] when the pump is not `Open` or
-     * tears down mid-await (#488), [RelayErrorException] for a server `error` (this verb publishes no
-     * reject codes of its own — it always answers — so one can only be transport-level), and a
-     * [kotlinx.serialization.SerializationException] for a malformed reply. The daemon's all-zero reply
-     * is a **successful** read of "nothing resolved", not a failure.
-     *
-     * Emits no log on any branch, like the rest of this class: the session id, the model and the effort
-     * strings never reach Logcat.
-     */
-    private suspend fun readSessionSettings(conversationId: String): SessionSettings {
-        val request =
-            Envelope(
-                id = relayRequests.nextRequestId(),
-                type = TYPE_REQUEST_SESSION_SETTINGS,
-                ts = Clock.System.now().toString(),
-                payload = MobileJson.encodeToJsonElement(RequestSessionSettingsPayloadDto(conversationId = conversationId)),
-            )
-        return relayRequests.sendAndAwaitReply(request).toSessionSettings()
-    }
-
-    /**
-     * Invalidate [conversationId]'s settings reading (#590) — the caller-driven trigger, for the moment
-     * a settings write has settled. Sends nothing itself: it bumps [settingsRevision], and a collector
-     * (if one is listening) issues the read on its own coroutine. Non-suspending and non-throwing, so a
-     * caller with no live connection drops it rather than handling a failure it cannot act on.
-     */
-    override fun refreshSessionSettings(conversationId: String) = bumpSettingsRevision(conversationId)
-
-    /** Atomic read-modify-write of one conversation's settings-read ordinal; see [settingsRevision]. */
-    private fun bumpSettingsRevision(conversationId: String) {
-        settingsRevision.update { current -> current + (conversationId to (current[conversationId] ?: 0L) + 1L) }
-    }
+    /** Invalidate a conversation's settings reading (#590); see [SessionSettingsCommands.refreshSessionSettings]. */
+    override fun refreshSessionSettings(conversationId: String) = sessionSettingsCommands.refreshSessionSettings(conversationId)
 
     /**
      * The `backfill_since` request for [conversationId]'s full thread (#313). Wire shape per server
@@ -1223,108 +1084,24 @@ class RemoteConversationRepository(
         name: String,
     ): Conversation = conversationCommands.rename(conversationId, name)
 
-    /**
-     * Apply the operator's run-configuration change — [model] / [effort] / [yolo] — to the running
-     * session [sessionId] over v2 `set_session_settings` (#543, server #844/#845). A direct analogue of
-     * [rename] (encode → [RelayRequests.sendAndAwaitReply] → typed-decode) **minus the state fold**: session settings
-     * are ViewModel state (#544), not a projection in this repo, so there is nothing to upsert.
-     *
-     * Encodes [SetSessionSettingsPayloadDto] under the presence contract — a `null` field is **omitted**
-     * ([MobileJson]'s `explicitNulls = false`), meaning "leave unchanged"; a non-null value (including
-     * `false` / `""`) is always sent — then awaits the correlated `session_settings_updated` ack. The
-     * ack carries only `{session_id}` (an echo of the input, not the applied settings), so it is decoded
-     * through the [SessionSettingsUpdatedPayloadDto] boundary **only** to validate the reply shape
-     * (#318 posture — a malformed ack throws here); the decoded value is discarded. Returns [Unit] —
-     * there is nothing to return, and no projection is touched.
-     *
-     * [sessionId] / [model] / [effort] / [yolo] are forwarded **verbatim** (as [rename] forwards the
-     * dialog's name); the daemon re-validates `model` / `effort` server-side and gates on the
-     * interactive capability. Throws [IllegalStateException] when the session is not connected, and —
-     * unlike the conversation-scoped verbs — has **no** [IllegalArgumentException] path: the
-     * unhosted-session code is `session.not_found` (not `conversation.not_found`), so every server
-     * `error` maps to a [RelayErrorException] carrying its `code` (`session.not_found` /
-     * `protocol.malformed` / `server.binary_offline`). A malformed ack throws the #318 decode exception.
-     * None of these mutate any projection.
-     */
+    /** Apply a run-configuration change over `set_session_settings` (#543); see [SessionSettingsCommands.setSessionSettings]. */
     override suspend fun setSessionSettings(
         sessionId: String,
         model: String?,
         effort: String?,
         yolo: Boolean?,
         permissionMode: String?,
-    ) {
-        val request =
-            Envelope(
-                id = relayRequests.nextRequestId(),
-                type = TYPE_SET_SESSION_SETTINGS,
-                ts = Clock.System.now().toString(),
-                payload =
-                    MobileJson.encodeToJsonElement(
-                        SetSessionSettingsPayloadDto(
-                            sessionId = sessionId,
-                            model = model,
-                            effort = effort,
-                            yolo = yolo,
-                            permissionMode = permissionMode,
-                        ),
-                    ),
-            )
-        // Throws on a server `error` / not-Open session before the decode below. The reply is the bare
-        // {session_id} ack; decode validates its shape (a malformed ack throws) — the result is discarded.
-        val reply = relayRequests.sendAndAwaitReply(request)
-        MobileJson.decodeFromJsonElement<SessionSettingsUpdatedPayloadDto>(reply)
-    }
+    ): Unit = sessionSettingsCommands.setSessionSettings(sessionId, model, effort, yolo, permissionMode)
 
-    /**
-     * Read [conversationId]'s stored system prompt over v2 `request_system_prompt` (#823) — the
-     * [readSessionSettings] shape as a public one-shot. The `system_prompt` reply carries no
-     * conversation id, so it can only complete the waiter this call registered.
-     *
-     * **Gated fail-closed on `interactive`** before any frame is built: the daemon leaves a conn without
-     * it fully inert on this verb, so an ungated send would wait until teardown. Throws
-     * [IllegalStateException] for that and for a not-`Open` pump or teardown mid-await (#488), and a
-     * [kotlinx.serialization.SerializationException] for a malformed reply. Touches no state on any
-     * branch and logs nothing: the prompt, its length and the conversation id never reach Logcat.
-     */
-    override suspend fun requestSystemPrompt(conversationId: String): SystemPromptReading {
-        check(CAPABILITY_INTERACTIVE in negotiatedCapabilities()) { SYSTEM_PROMPT_READ_NOT_INTERACTIVE }
-        val request =
-            Envelope(
-                id = relayRequests.nextRequestId(),
-                type = TYPE_REQUEST_SYSTEM_PROMPT,
-                ts = Clock.System.now().toString(),
-                payload = MobileJson.encodeToJsonElement(RequestSystemPromptPayloadDto(conversationId = conversationId)),
-            )
-        return relayRequests.sendAndAwaitReply(request).toSystemPromptReading()
-    }
+    /** Read a conversation's stored system prompt (#823); see [SessionSettingsCommands.requestSystemPrompt]. */
+    override suspend fun requestSystemPrompt(conversationId: String): SystemPromptReading =
+        sessionSettingsCommands.requestSystemPrompt(conversationId)
 
-    /**
-     * Set or clear [conversationId]'s system prompt over v2 `set_system_prompt` (#823) — the [rename]
-     * shape. [systemPrompt] is forwarded verbatim in its three states ([setSystemPromptPayload]); a value
-     * over [SystemPromptLimit.MAX_BYTES] UTF-8 bytes is refused with [IllegalArgumentException] **before
-     * any frame is sent**. The ack is the reused `conversation_updated` record, which carries no prompt;
-     * it is decoded through the #318 boundary and confirmed-upserted exactly as [rename]'s is.
-     *
-     * Not gated on `interactive`: the daemon answers this verb on any conn. Throws
-     * [IllegalArgumentException] for `conversation.not_found` ([RelayRequests.mapError]), [RelayErrorException] for
-     * any other server `error`, [IllegalStateException] when not connected, and the decode exception for
-     * a malformed ack — none of which mutate [ConversationListProjection]. The refusal message is static.
-     */
+    /** Set or clear a conversation's system prompt (#823); see [SessionSettingsCommands.setSystemPrompt]. */
     override suspend fun setSystemPrompt(
         conversationId: String,
         systemPrompt: String?,
-    ) {
-        require(systemPrompt == null || SystemPromptLimit.fits(systemPrompt)) { SYSTEM_PROMPT_TOO_LONG }
-        val request =
-            Envelope(
-                id = relayRequests.nextRequestId(),
-                type = TYPE_SET_SYSTEM_PROMPT,
-                ts = Clock.System.now().toString(),
-                payload = setSystemPromptPayload(conversationId, systemPrompt),
-            )
-        val reply = relayRequests.sendAndAwaitReply(request)
-        conversationListProjection.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation())
-    }
+    ): Unit = sessionSettingsCommands.setSystemPrompt(conversationId, systemPrompt)
 
     /** Send fire-and-forget `new_session` for a conversation (#539); see [ConversationCommands.startNewSession]. */
     override suspend fun startNewSession(
@@ -1332,183 +1109,23 @@ class RemoteConversationRepository(
         workspace: String?,
     ): Session = conversationCommands.startNewSession(conversationId, workspace)
 
-    /**
-     * Change conversation [conversationId]'s workspace to [workspace] over v2 `change_workspace`
-     * (#560, server #823). "Workspace" **is** the conversation's `cwd` — there is no separate
-     * workspace-id concept. A line-for-line mirror of [rename] with a `cwd` payload
-     * ([ChangeWorkspacePayloadDto]: `{conversation_id, cwd}`, both required) instead of `{…, name}`:
-     * encodes the request, sends it, and awaits its correlated `conversation_updated` reply — the same
-     * reply reuse rename relies on. Decodes the reply through the #318 [ConversationResponseDto]
-     * boundary, so a malformed reply throws before any state mutation, then **confirmed-upserts** the
-     * returned [Conversation] into [ConversationListProjection] — only after the reply decodes — so the new `cwd`
-     * becomes visible on the workspace chip / list (AC #2). The folded `cwd` is the
-     * **server-authoritative** reply value (the daemon's resolved realpath), not the request's.
-     *
-     * [workspace] is an **untrusted** path forwarded **verbatim** — no client-side validation,
-     * canonicalisation, or `$HOME` check, and the phone never touches the filesystem with it:
-     * confinement is the daemon's job (fail-closed, stores the resolved realpath), which re-validates
-     * and rejects out-of-`$HOME` / empty paths server-side (`protocol.malformed`), surfaced here as an
-     * ordinary [RelayErrorException]. Throws [IllegalArgumentException] for an unknown conversation
-     * (server `conversation.not_found`, as [rename]), [RelayErrorException] for any other server
-     * `error`, [IllegalStateException] when the session is not connected, and the #318 decode exception
-     * for a malformed reply — none of which mutate [ConversationListProjection] (AC #3).
-     *
-     * `change_workspace` performs **no session transition** — it updates the recorded `cwd` only; the
-     * new folder takes effect on the conversation's next fresh session spawn (#823 Out-of-Scope, AC
-     * #4). So there is no `session_transition` (#336) and no session-boundary delimiter. The interface
-     * forces a [Session] return, but there is no session identity to return: the returned placeholder's
-     * identity fields (`id`, `claudeSessionUuid`) are **explicitly unassigned** (empty strings, not a
-     * fabricated UUID — the [startNewSession] precedent); it is never persisted, never enters
-     * [ConversationListProjection], and the #560 `onWorkspacePicked` caller discards it.
-     */
+    /** Change a conversation's workspace over `change_workspace` (#560); see [WorkspaceCommands.changeWorkspace]. */
     override suspend fun changeWorkspace(
         conversationId: String,
         workspace: String,
-    ): Session {
-        val request =
-            Envelope(
-                id = relayRequests.nextRequestId(),
-                type = TYPE_CHANGE_WORKSPACE,
-                ts = Clock.System.now().toString(),
-                payload =
-                    MobileJson.encodeToJsonElement(
-                        ChangeWorkspacePayloadDto(conversationId = conversationId, cwd = workspace),
-                    ),
-            )
-        // Throws on a server `error` / not-Open session; the decode + confirmed upsert below are
-        // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
-        val reply = relayRequests.sendAndAwaitReply(request)
-        val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-        conversationListProjection.upsertConversation(conversation)
-        // Vestigial: change_workspace has no session transition (AC #4), so no session identity.
-        return Session(
-            id = "",
-            conversationId = conversationId,
-            claudeSessionUuid = "",
-            startedAt = Clock.System.now(),
-            endedAt = null,
-        )
-    }
+    ): Session = workspaceCommands.changeWorkspace(conversationId, workspace)
 
-    /**
-     * Create a new workspace folder named [name] under the fixed client root over v2
-     * `create_workspace_folder` (#564, server #887), returning the daemon's canonical created path.
-     * The leanest write-verb: it names no conversation, carries no `conversation_id`, touches **no**
-     * projection, and — unlike [rename] / [changeWorkspace] — its return value (the created path) is
-     * the sole effect (it flows to the Workspace Picker's `onPicked` and becomes the selected
-     * workspace). A direct analogue of [rename] (encode → [RelayRequests.sendAndAwaitReply] → typed-decode) **minus
-     * the state fold**, plus a client-side blank-name guard.
-     *
-     * The interface passes only [name]; the wire request carries a **parent path and a name**
-     * ([CreateWorkspaceFolderPayloadDto]). This sends `parent = `[WORKSPACE_FOLDER_PARENT]` (the fixed
-     * `~/pyry-workspace` root, tilde-anchored so the daemon resolves it against **its** `$HOME` — a
-     * relative `pyry-workspace` would resolve against the daemon's process cwd) and `name = name.trim()`.
-     * Both are **untrusted** path components forwarded verbatim — no client-side validation,
-     * canonicalisation, or `$HOME` check, and the phone never touches the filesystem with them:
-     * confinement is the daemon's job (fail-closed, symlink-resolved, before `MkdirAll`), which also
-     * rejects a `name` that is not a clean single element (empty / absolute / separator / `..`),
-     * surfaced here as an ordinary [RelayErrorException]. The returned `path` is the
-     * **server-authoritative** canonical realpath, not a client-derived join.
-     *
-     * Throws [IllegalArgumentException] for a blank/whitespace-only [name] (checked **before** any
-     * send — no request reaches the wire, mirroring the fake's contract), [IllegalStateException] when
-     * the session is not connected, [RelayErrorException] for any server `error` (create has **no**
-     * `conversation.not_found` path — every reject is `protocol.malformed`), and the #318 decode
-     * exception ([kotlinx.serialization.SerializationException] / [IllegalArgumentException]) for a
-     * malformed reply. No projection is folded on any path — a failure leaves no partial state.
-     */
-    override suspend fun createWorkspaceFolder(name: String): String {
-        require(name.isNotBlank()) { "name must not be blank" }
-        val request =
-            Envelope(
-                id = relayRequests.nextRequestId(),
-                type = TYPE_CREATE_WORKSPACE_FOLDER,
-                ts = Clock.System.now().toString(),
-                payload =
-                    MobileJson.encodeToJsonElement(
-                        CreateWorkspaceFolderPayloadDto(parent = WORKSPACE_FOLDER_PARENT, name = name.trim()),
-                    ),
-            )
-        // Throws on a server `error` / not-Open session before the decode below. The reply is the bare
-        // {path} object (#318 decodes it); a malformed reply throws here. No state is folded.
-        val reply = relayRequests.sendAndAwaitReply(request)
-        return MobileJson.decodeFromJsonElement<WorkspaceFolderCreatedPayloadDto>(reply).path
-    }
+    /** Create a workspace folder under the fixed client root (#564); see [WorkspaceCommands.createWorkspaceFolder]. */
+    override suspend fun createWorkspaceFolder(name: String): String = workspaceCommands.createWorkspaceFolder(name)
 
-    /**
-     * Set or clear the label this host stores for the workspace at [path] over v2 `rename_workspace`
-     * (#663). [path] and [label] go out verbatim ([RenameWorkspacePayloadDto]); the daemon validates the
-     * label. The [TYPE_WORKSPACE_UPDATED] arm of [onInbound] applies the correlated reply through
-     * [ConversationListProjection.applyWorkspaceLabel] **before** completing this waiter, so the rows are relabelled by the time
-     * this returns — there is nothing left to fold here.
-     *
-     * The reply is still re-decoded and must name [path]: a frame of another type correlated to this id
-     * (the shared arms complete any waiter with any payload), or a `workspace_updated` for a different
-     * path, would otherwise report success while [path] stayed unlabelled. That case, and a malformed
-     * reply, throw [RelayErrorException] with [ERROR_MALFORMED_REPLY]. Daemon refusals keep their code
-     * through [RelayRequests.mapError] (`workspace.not_found` stays a [RelayErrorException], never the
-     * unknown-conversation [IllegalArgumentException]); a not-`Open` pump or teardown mid-await throws
-     * [IllegalStateException]. Not gated on `interactive`. Logs nothing, and no exception message carries
-     * the path or the label.
-     */
+    /** Set or clear a workspace's label over `rename_workspace` (#663); see [WorkspaceCommands.renameWorkspace]. */
     override suspend fun renameWorkspace(
         path: String,
         label: String?,
-    ) {
-        val request =
-            Envelope(
-                id = relayRequests.nextRequestId(),
-                type = TYPE_RENAME_WORKSPACE,
-                ts = Clock.System.now().toString(),
-                payload = MobileJson.encodeToJsonElement(RenameWorkspacePayloadDto(path = path, label = label)),
-            )
-        val reply = relayRequests.sendAndAwaitReply(request)
-        val confirmedPath =
-            try {
-                MobileJson.decodeFromJsonElement<WorkspaceUpdatedPayloadDto>(reply).path
-            } catch (e: IllegalArgumentException) {
-                null
-            }
-        if (confirmedPath != path) throw malformedWorkspaceReply()
-    }
+    ): Unit = workspaceCommands.renameWorkspace(path, label)
 
-    /**
-     * Archive every active row at [path] on this host (#663) — the client-side fan-out desktop's
-     * `requestArchiveWorkspace` performs, since the wire has no workspace archive verb. Targets are a
-     * one-time snapshot of [ConversationListProjection.current]: rows whose `cwd` equals [path] by plain
-     * [String] equality (no trim, no normalization) and that are not already archived. Before the first
-     * snapshot there are no rows, so the
-     * call does not wait for a list, and no targets means no frame.
-     *
-     * Each target goes through [archive] **sequentially**, which confirmed-upserts its own row on its own
-     * reply, so rows leave the active tiers one by one. A failure is kept and the loop moves on; after the
-     * last row the first failure is rethrown unchanged. A torn-down connection surfaces as the
-     * [IllegalStateException] of [RelayRequests.failAllPending] and then of the not-connected check, so the rest fail
-     * fast. Caller cancellation is rethrown at once — checked before the general catch, because
-     * [CancellationException] is itself an [IllegalStateException]. Sends no rename or delete, so the
-     * stored label stays. Logs nothing: neither the path nor a row id reaches Logcat.
-     */
-    override suspend fun archiveWorkspace(path: String) {
-        val targets =
-            conversationListProjection
-                .current()
-                .filter { it.cwd == path && !it.archived }
-                .map { it.id }
-        var firstFailure: Exception? = null
-        for (conversationId in targets) {
-            try {
-                archive(conversationId)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                if (firstFailure == null) firstFailure = e
-            }
-        }
-        firstFailure?.let { throw it }
-    }
-
-    private fun malformedWorkspaceReply() =
-        RelayErrorException(code = ERROR_MALFORMED_REPLY, retryable = false, message = WORKSPACE_REPLY_MALFORMED)
+    /** Archive every active row at a workspace path (#663); see [WorkspaceCommands.archiveWorkspace]. */
+    override suspend fun archiveWorkspace(path: String): Unit = workspaceCommands.archiveWorkspace(path)
 
     /**
      * Widened from `private` to `internal` by #645 so [reduceHistoryPage] can dispatch a stored

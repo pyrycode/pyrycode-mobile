@@ -253,6 +253,14 @@ violation is only a warning. Read the final `BUILD SUCCESSFUL` or `BUILD FAILED`
 and the explicit violation list. Use `./gradlew spotlessCheck --rerun-tasks` when
 cached output makes the result unclear.
 
+Spotless's unused-import check is name-based, not usage-based. After moving code
+out of a file, an import can go unused while the file still calls a same-named
+member on an unrelated type — e.g. `kotlinx.coroutines.flow.map` staying imported
+after the only `Flow.map` call moved elsewhere, because `List.map` still appears
+in the file and the check cannot tell the two `map`s apart. `spotlessApply` will
+not remove it either. Check each import a move leaves behind for an actual caller
+of that specific symbol, not just any identically-spelled one (#916).
+
 ## Emulator and real evidence
 
 An instrumented test proves behavior in its fixture. It does not prove camera
