@@ -72,6 +72,9 @@
     <string name="thread_footer_change_effort">Change effort</string>
     <string name="thread_footer_change_permission">Change permission mode</string>
     <string name="thread_footer_pending">Applying</string>
+    <string name="thread_effort_note_selected_unavailable">Selected effort. The running effort is unavailable.</string>
+    <string name="thread_effort_note_default_unavailable">Claude\'s default applies. The running effort is unavailable.</string>
+    <string name="thread_effort_note_not_reported">Claude reports no effort parameter.</string>
     <string name="thread_options_not_listed">+%1$d not listed</string>
     <string name="cd_options_overlay_dismiss">Close options</string>
     <string name="thread_thinking_label">Thinking…</string>
