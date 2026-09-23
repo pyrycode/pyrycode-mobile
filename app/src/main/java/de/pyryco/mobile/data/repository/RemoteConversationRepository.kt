@@ -17,6 +17,7 @@ import de.pyryco.mobile.data.network.ArchiveConversationPayloadDto
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.AttachmentChunkPlan
 import de.pyryco.mobile.data.network.BackfillSincePayloadDto
+import de.pyryco.mobile.data.network.BannerPayloadDto
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.ChangeWorkspacePayloadDto
 import de.pyryco.mobile.data.network.ConversationDeletedPayloadDto
@@ -918,6 +919,19 @@ class RemoteConversationRepository(
                     }
                 }
             }
+            TYPE_BANNER -> {
+                // Text claude printed about the session (#873, pyrycode#2256). Same `interactive` gate as
+                // its thread-row siblings above (fail-closed, defence in depth). Decode-or-drop: a malformed
+                // payload or ts yields null → drop one envelope, the lone collector survives. Routes strictly
+                // by the payload's conversation_id. Exactly ONE write — appendBanner folds the row — and
+                // inert toward every neighbour: no liveSessionEvents emission, no turn opened, closed or
+                // altered, no stall or other status touched. That holds for `stops_turn: true` too: it is a
+                // report, and acting on it would hand claude a self-service turn abort. Nothing here logs
+                // any payload field: `text` is claude-authored prose.
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    decodeBanner(envelope)?.let { (conversationId, row) -> appendBanner(conversationId, row) }
+                }
+            }
             TYPE_MODAL_SHOWN, TYPE_MODAL_DISMISSED -> {
                 // A v2 modal lifecycle envelope (#437). Same `interactive` gate as the structured-stream,
                 // `stall`, and `resync` siblings — a non-interactive phone never decodes a spurious modal
@@ -1094,6 +1108,21 @@ class RemoteConversationRepository(
             dto
                 .toRow(id = "unrecognized-${unrecognizedRowId.incrementAndGet()}", occurredAt = Clock.System.now())
                 ?.let { dto.conversationId to it }
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+
+    /**
+     * Decode one v2 `banner` envelope (#873) to its routing conversation id and the mapped
+     * [ThreadItem.Banner], or **null** when it cannot be folded. The row's identity is the envelope's
+     * `ts`, the protocol's join key against a history page, so a malformed `ts` drops the frame exactly as
+     * a malformed payload does: both throw inside the one `try`. Mirrors [decodeUnrecognizedMessage]'s drop
+     * idiom, and like it logs nothing.
+     */
+    private fun decodeBanner(envelope: Envelope): Pair<String, ThreadItem.Banner>? =
+        try {
+            val dto = MobileJson.decodeFromJsonElement<BannerPayloadDto>(envelope.payload)
+            dto.conversationId to dto.toRow(occurredAt = Instant.parse(envelope.ts))
         } catch (e: IllegalArgumentException) {
             null
         }
@@ -1317,6 +1346,24 @@ class RemoteConversationRepository(
         row: ThreadItem.UnrecognizedMessage,
     ) {
         threadByConversation.update { it + (conversationId to (it[conversationId].orEmpty() + row)) }
+    }
+
+    /**
+     * End-append a [ThreadItem.Banner] to [conversationId]'s thread (#873), **unless the thread already
+     * holds one with its `ts`** ([holdsBanner]). Unlike [appendUnrecognizedMessage] this dedups, because a
+     * banner *has* an identity: the daemon stamps one `ts` per event and hands it to both lanes, so a
+     * repeat is the same banner arriving twice — a replay, or a history page that raced the live lane —
+     * not a second report. The check runs inside the one atomic [MutableStateFlow.update], so a
+     * concurrent merge cannot slip a twin in between check and write.
+     */
+    private fun appendBanner(
+        conversationId: String,
+        row: ThreadItem.Banner,
+    ) {
+        threadByConversation.update { threads ->
+            val thread = threads[conversationId].orEmpty()
+            if (thread.holdsBanner(row)) threads else threads + (conversationId to (thread + row))
+        }
     }
 
     /**
@@ -3269,6 +3316,15 @@ class RemoteConversationRepository(
          * wire or here — because the firing frequency *is* the signal.
          */
         const val TYPE_UNRECOGNIZED_MESSAGE = "unrecognized_message"
+
+        /**
+         * Capability-gated thread event: text claude printed about the session
+         * `{conversation_id, level, text, truncated, stops_turn}` (#873, pyrycode#2256) — folds a
+         * [ThreadItem.Banner] into the conversation thread (keyed by `conversation_id`) in arrival order.
+         * Conversation-scoped with no `turn_id`; `level` is an open set; `text` is claude's, capped at
+         * 4 KiB daemon-side and not sanitized; `stops_turn` is a report nothing here acts on.
+         */
+        const val TYPE_BANNER = "banner"
 
         /**
          * Outbound queue control: the phone's request to drop a not-yet-drained message

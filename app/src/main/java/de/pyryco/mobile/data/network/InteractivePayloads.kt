@@ -6,6 +6,7 @@ import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ToolDenial
 import de.pyryco.mobile.data.repository.ApiRetryStatus
+import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -739,6 +740,42 @@ internal fun UnrecognizedMessagePayloadDto.toRow(
             occurredAt = occurredAt,
         )
     }
+
+/**
+ * The `banner` thread event (#873, pyrycode#2256): text claude printed about the session
+ * `{conversation_id, level, text, truncated, stops_turn}`, folded into the conversation thread as a
+ * [ThreadItem.Banner]. Decode-only — the phone never sends one. Always decode through [MobileJson].
+ *
+ * Wire SSOT: pyrycode `internal/protocol/interactive.go` (`BannerPayload`) + `docs/protocol-mobile.md`
+ * § `banner`. All five fields are **strict-required** with no Kotlin default (the
+ * [UnrecognizedMessagePayloadDto] posture): the Go struct sets no `omitempty`, so an empty `level` and a
+ * `false` bool arrive present. A missing or wrong-typed field fails the decode and drops the one frame.
+ *
+ * [stopsTurn] is decoded so its shape is checked, and then deliberately dropped by [toRow]: it is a
+ * report, and the protocol forbids letting it end, cancel or change a turn.
+ */
+@Serializable
+internal data class BannerPayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    val level: String,
+    val text: String,
+    val truncated: Boolean,
+    @SerialName("stops_turn") val stopsTurn: Boolean,
+)
+
+/**
+ * Map a decoded [BannerPayloadDto] to a [ThreadItem.Banner]. **Total** — an unrecognised `level` is not a
+ * drop but a [BannerLevel.Notice], the protocol's "treat it as unknown" rule. [text] is copied verbatim;
+ * stripping is the renderer's. [occurredAt] is the caller's: the envelope `ts` on the live lane, the
+ * entry timestamp on replay, which is what lets the two lanes join on one identity.
+ */
+internal fun BannerPayloadDto.toRow(occurredAt: Instant): ThreadItem.Banner =
+    ThreadItem.Banner(
+        level = if (level == "warning") BannerLevel.Warning else BannerLevel.Notice,
+        text = text,
+        truncated = truncated,
+        occurredAt = occurredAt,
+    )
 
 private fun String.toUnrecognizedSite(): UnrecognizedSite? =
     when (this) {

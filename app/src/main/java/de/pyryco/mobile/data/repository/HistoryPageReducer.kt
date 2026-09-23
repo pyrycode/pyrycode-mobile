@@ -36,6 +36,7 @@ import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.model.ToolDenial
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
+import de.pyryco.mobile.data.network.BannerPayloadDto
 import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
@@ -52,6 +53,7 @@ import de.pyryco.mobile.data.network.toEvent
 import de.pyryco.mobile.data.network.toMessage
 import de.pyryco.mobile.data.network.toRow
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_ASSISTANT_DELTA
+import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_BANNER
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_MESSAGE
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_SEND_MESSAGE
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_SESSION_TRANSITION
@@ -290,7 +292,7 @@ internal fun List<ThreadItem>.withFinalizedTurn(event: LiveSessionEvent.TurnEnd)
  * is a property of one envelope decoded as a unit; here each entry's payload is an independent second
  * decode behind an already-successful page decode.
  *
- * [interactive] mirrors the live lane's `CAPABILITY_INTERACTIVE` gate arm-for-arm: the six structured
+ * [interactive] mirrors the live lane's `CAPABILITY_INTERACTIVE` gate arm-for-arm: the structured
  * types are gated exactly as their live twins are and `message` is ungated exactly as its twin is. The
  * daemon's `request_history` handler carries no such gate, so without this the client's fail-closed
  * posture would have a hole the live lane does not have.
@@ -386,6 +388,17 @@ private fun List<ThreadItem>.withHistoryEntry(
                         ?.let { row -> if (holdsUnrecognized(row.id)) this else this + row }
                         ?: this
                 }
+            // Stamped with the entry's own ts, which the daemon also handed the live envelope, so a banner
+            // on both lanes joins on one identity (#873). stops_turn is decoded and never acted on.
+            TYPE_BANNER ->
+                if (!interactive) {
+                    this
+                } else {
+                    MobileJson
+                        .decodeFromJsonElement<BannerPayloadDto>(entry.payload)
+                        .toRow(occurredAt = entry.timestamp)
+                        .let { row -> if (holdsBanner(row)) this else this + row }
+                }
             // Every other stored type — the state frames, the modal pair, the control verbs, and any
             // type a future daemon invents. See this function's KDoc: no row, no failure.
             else -> this
@@ -429,7 +442,7 @@ private fun historyRowId(entryId: Long): String = "history-$entryId"
  * currently correct. A page is older than the live lane, so putting its rows in front is both the right
  * order and the one that leaves every existing row's relative position untouched.
  *
- * **Three join keys, one per row kind** — and each is the key `ThreadScreen`'s `LazyColumn` keys that row
+ * **One join key per row kind** — and each is the key `ThreadScreen`'s `LazyColumn` keys that row
  * kind on, because a row the merge admits is a row the renderer must be able to key uniquely:
  *
  *  - a [ThreadItem.MessageItem] joins on `message_id` alone. One key serves all three sources: a
@@ -439,6 +452,7 @@ private fun historyRowId(entryId: Long): String = "history-$entryId"
  *  - a [ThreadItem.SessionBoundary] joins on its `(previousSessionId, newSessionId, occurredAt)` identity
  *    — see [holdsBoundary] for why that is neither the pair alone nor structural equality.
  *  - a [ThreadItem.UnrecognizedMessage] joins on its [historyRowId]-derived id.
+ *  - a [ThreadItem.Banner] joins on its `ts` — see [holdsBanner].
  *
  * A duplicate is **skipped, not merged in place.** The only overlap a walk can produce is the narrow
  * ask-versus-answer race the protocol names, and in that window the live lane owns the newer state and
@@ -458,6 +472,7 @@ private fun List<ThreadItem>.alreadyHolds(row: ThreadItem): Boolean =
         is ThreadItem.MessageItem -> any { it is ThreadItem.MessageItem && it.message.id == row.message.id }
         is ThreadItem.SessionBoundary -> holdsBoundary(row)
         is ThreadItem.UnrecognizedMessage -> holdsUnrecognized(row.id)
+        is ThreadItem.Banner -> holdsBanner(row)
     }
 
 /**
@@ -487,3 +502,15 @@ internal fun List<ThreadItem>.holdsBoundary(boundary: ThreadItem.SessionBoundary
     }
 
 private fun List<ThreadItem>.holdsUnrecognized(id: String): Boolean = any { it is ThreadItem.UnrecognizedMessage && it.id == id }
+
+/**
+ * Whether this thread already holds a banner stamped [banner]'s `ts` (#873) — the protocol's `(type, ts)`
+ * join key, with the type implied by [ThreadItem.Banner].
+ *
+ * **One identity, three readers:** this history merge, the live lane's `appendBanner`, and the list key
+ * `ThreadRow.listKey` gives a banner row, so two banners this predicate lets into one thread never share a
+ * key. Two *different* banners on one instant lose the second — the fail-safe direction against a hostile
+ * daemon, a missing notice rather than a crashed thread; the daemon's single emit path cannot produce one.
+ */
+internal fun List<ThreadItem>.holdsBanner(banner: ThreadItem.Banner): Boolean =
+    any { it is ThreadItem.Banner && it.occurredAt == banner.occurredAt }
