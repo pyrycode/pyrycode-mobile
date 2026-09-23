@@ -267,7 +267,8 @@ distinction from the tree's own blank at all — see the next section.
   `docs/specs/architecture/738-list-add-controls-retire-fab.md`,
   `docs/specs/architecture/744-host-row-edit-and-rename.md`,
   `docs/specs/architecture/745-unpair-host-from-edit-modal.md`,
-  `docs/specs/architecture/827-rename-chat-from-tree-row.md`
+  `docs/specs/architecture/827-rename-chat-from-tree-row.md`,
+  `docs/specs/architecture/878-tree-conversation-attention-dot.md`
 - Upstream: [ChannelListViewModel](./channel-list-viewmodel.md) (`hostState` producer — fold/selection state,
   `onHostRowTapped`, `onFoldToggled`, `createHostDiscussion`, `openHostWorkspacePicker`, since #744
   `openHostEditor`, `submitHostName`, `dismissHostEditor`, and since #745 `requestHostUnpair`,
@@ -287,10 +288,14 @@ distinction from the tree's own blank at all — see the next section.
   the compatibility `ChannelListUiState` placeholders #731 deliberately kept, and gave the list its own
   section-header and host-row add controls), #744 (done, split from #642 — the host row's edit control and
   the rename path this section describes), #745 (done, split from #642 — wires `Unpair host` behind a
-  confirmation, this section's own [Host row edit control](channel-list-screen-tree-and-controls.md#host-row-edit-control-744)), #676 (the live
-  emulator scenario for #744's rename flow, #745's removal and #715's two-host archive/restore case,
-  blocked by all three and still open), #668
-  (indicator-pair live accuracy, conversation-row unread/activity state), #665 (conversation-row edit
+  confirmation, this section's own [Host row edit control](channel-list-screen-tree-and-controls.md#host-row-edit-control-744)),
+  #878 (done, split from #668 — draws each row's `ConversationAttention` (#877) as the leading dot's fill
+  and content description, this section's own [Attention dot](channel-list-screen-tree-and-controls.md#attention-dot-878)),
+  #676 (the live
+  emulator scenario for #744's rename flow, #745's removal, #715's two-host archive/restore case and
+  #878's attention states, blocked by all four and still open), #668
+  (indicator-pair live accuracy, conversation-row unread/activity state — #878 split off drawing the
+  state; #668 remains open for the rest), #665 (conversation-row edit
   pencil), #664 (the workspace row's own add control and its modal content, beyond #738's reuse of
   the existing pairing scanner for the section header; calls the `renameWorkspace` / `archiveWorkspace`
   repository methods #663 added with no UI of its own), #675 (disconnected-host

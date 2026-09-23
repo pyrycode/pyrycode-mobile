@@ -1,8 +1,10 @@
 # Success color slot
 
 A green `success` ("up") semantic color slot exposed on `MaterialTheme.colorScheme` for positive
-connection/health states (today: the green dot on the [connection-status
-line](connection-status-line.md)'s "up" legs). Like [`warning`](warning-color.md), `success` is not
+connection/health and attention states: the green dot on the [connection-status
+line](connection-status-line.md)'s "up" legs, and, since #878, a conversation tree row's
+`Unread` [attention dot](channel-list-screen-tree-and-controls.md#attention-dot-878) fill.
+Like [`warning`](warning-color.md), `success` is not
 one of Material 3's fixed `ColorScheme` slots, so it is grafted on via the idiomatic Compose
 extension pattern rather than by extending the `final` `ColorScheme`.
 
@@ -73,14 +75,16 @@ val dot = when (category) {
 }
 ```
 
-The sole consumer today is the [connection-status line](connection-status-line.md)'s
-`ConnectionLegCategory.color()` resolver ([#397](../codebase/397.md)) — `Up → success`.
+Consumers: the [connection-status line](connection-status-line.md)'s `ConnectionLegCategory.color()`
+resolver ([#397](../codebase/397.md)) — `Up → success`; and, since #878, `ConversationStatusDot`'s
+`Unread` fill (see [Attention dot](channel-list-screen-tree-and-controls.md#attention-dot-878)).
 
 ## Related
 
 - Precedent (mirrored one-for-one): [Warning color](warning-color.md) ([#119](../codebase/119.md)) —
   the first custom color slot and the pattern for all future ones.
-- Sole consumer: [Connection status line](connection-status-line.md) ([#397](../codebase/397.md)).
+- Consumers: [Connection status line](connection-status-line.md) ([#397](../codebase/397.md));
+  [Attention dot](channel-list-screen-tree-and-controls.md#attention-dot-878) (#878).
 - Implementation notes: [`codebase/397.md`](../codebase/397.md).
 - Theme primitive: `app/src/main/java/de/pyryco/mobile/ui/theme/Theme.kt` — `PyrycodeMobileTheme`,
   the two `SuccessColors` instances. Palette: `…/ui/theme/Color.kt` — `successLight` / `successDark`.

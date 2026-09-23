@@ -232,3 +232,44 @@ modal itself is [`EditChatModal`](mobile-modal.md#callers), unchanged by this ti
 its first caller. Archive chat was wired in #828, the same placeholder-then-wire shape the host row's
 Unpair action carried between #744 and #745 — but unlike Unpair, Archive takes no confirmation step,
 since the host's own Archive screen restores the chat.
+
+## Attention dot (#878)
+
+`TreeConversationRow` gained `attention: ConversationAttention = ConversationAttention.Idle`
+(`di/ConversationAttention.kt`, #877) — the row's one state, declared after `onEditTapped` rather than
+directly after `modifier`; it is still a trailing defaulted parameter, so every existing positional call
+site still compiles. The row's leading slot, previously `IdleStatusDot` and always the design's plain
+ring, became `ConversationStatusDot(attention)`: the same 8dp box and 1dp `primary` ring on every state
+(`TreeDotSize`, `TreeDotRingWidth`), now filled by an exhaustive `when` — mirrors desktop's
+`ConversationStatusDot` (`pyrycode-desktop/src/renderer/src/screens/channels/ConversationStatusDot.tsx`)
+one-for-one except `Failed`, which has no desktop counterpart and takes `error`:
+
+| State | Fill | Content description |
+| --- | --- | --- |
+| `Idle` | none (`Color.Transparent`) | "Idle" |
+| `Running` | `colorScheme.tertiary`, blinking | "Running" |
+| `Unread` | `colorScheme.success` | "Unread" |
+| `WaitingForAnswer` | `colorScheme.warning` | "Waiting for your answer" |
+| `Failed` | `colorScheme.error` | "Failed" |
+
+**Blink stays off the row.** `Running`'s alpha comes from `rememberInfiniteTransition`, created only
+inside the `Running` branch — leaving that state drops the transition from composition — animating
+`1f → 0.3f` over a 1000ms `EaseInOut` half-period with `RepeatMode.Reverse` (desktop: opacity `1 → 0.3 → 1`
+over 2s ease-in-out; the two halves add up the same). The `State<Float>` is read inside
+`Modifier.graphicsLayer { alpha = … }`, not in the composable body, so each animation frame redraws only
+the dot's layer and never recomposes `TreeConversationRow` or its `Text`.
+
+**The state names itself.** `ConversationStatusDot` sets `Modifier.clearAndSetSemantics { contentDescription
+= … }` from an exhaustive `ConversationAttention` → string-resource map (`cd_conversation_attention_idle` /
+`_running` / `_unread` / `_waiting` / `_failed`, `strings.xml`) — the same self-describing-dot-in-a-merging-row
+shape `LegDot` already used. The row's own `selectable` merges that description with the conversation name,
+so TalkBack reads e.g. "Running, kitchenclaw refactor" — the meaning never rests on colour alone.
+
+**Wiring.** `treeSection` passes `attention = entry.attentionFor(row.conversation.id)` —
+[`HostChannelListEntry.attentionFor`](channel-list-viewmodel.md), Idle by default, joined from
+`hostSource.attention` (see [state projection § Attention
+join](channel-list-viewmodel-projection.md#attention-join-877)). This ticket only draws the state;
+deriving it — the five-state precedence, the turn-state/turn-end join — is #877's.
+
+**Scope.** The live run of these states on a real turn belongs to #676, which #878 adds to the set of
+tickets blocking it — see [ChannelListScreen § Related](channel-list-screen.md#related).

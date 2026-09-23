@@ -28,7 +28,8 @@ taps, never reconciled against an incoming snapshot (see
 [state projection](channel-list-viewmodel-projection.md)). Since #877 each entry also
 carries that host's non-Idle `ConversationAttention` states, read per row through
 `attentionFor` (see [state projection § Attention join](channel-list-viewmodel-projection.md#attention-join-877));
-drawing that state on a row is a separate, still-blocked ticket. Host row activation and
+drawn on the row's leading dot by #878, see [ChannelListScreen — conversation tree and
+controls § Attention dot](channel-list-screen-tree-and-controls.md#attention-dot-878). Host row activation and
 successful creation emit `HostConversationTarget(serverId, conversationId)` on
 `hostNavigationEvents` and record that target as `selected`. Creation retains its
 explicit host across preference reads and picker interaction. Since #738, creation and
