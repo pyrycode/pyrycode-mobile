@@ -2,7 +2,7 @@
 
 Stateless composable (#135) that renders a single [`ThreadItem.SessionBoundary`](./conversation-repository.md) marker as a horizontal-rule delimiter inside the thread `LazyColumn`. Surfaces the **reason** the session reset (`Clear` / `WorkspaceChange` / `IdleEvict`, defined in #3 and authored on the marker since #192) and an inline `Install` affordance pointing at the memory-plugin docs URL via `LocalUriHandler`. The boundary marker itself is produced by `ConversationRepository.observeMessages` whenever Claude's context resets mid-thread; this component is the rendering half.
 
-Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/SessionBoundaryDelimiter.kt`). Sibling of [`MessageBubble`](./message-bubble.md), [`ToolCallRow`](./tool-call-row.md), [`ConnectionBanner`](./connection-banner.md). Figma reference: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8)'s `Session reset` row (`119:3843`), a rule / label / rule arrangement, restyled here since #644. The explanation sentence and the `Install` button below it have no Figma node of their own and stay implemented per the textual spec — see [Rule / label / rule, explanation retained below (#644)](#rule--label--rule-explanation-retained-below-644).
+Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/SessionBoundaryDelimiter.kt`). Sibling of [`MessageBubble`](./message-bubble.md), [`ToolCallRow`](./tool-call-row.md), [`ConnectionBanner`](./connection-banner.md). Figma reference: [`16:8`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=16-8)'s `Session reset` row (`119:3843`), a rule / label / rule arrangement, restyled here since #644. The explanation sentence and the `Install` button below it have no Figma node of their own and stay implemented per the textual spec — see [Rule / label / rule, explanation retained below (#644)](#rule--label--rule-explanation-retained-below-644). The same file also hosts [`CompactionBoundaryDivider`](#compactionboundarydivider-874) (#874), a finished-compaction row that reuses this component's rule/label/rule layout but is not a session boundary.
 
 ## Shape
 
@@ -113,10 +113,69 @@ Fixtures use a fixed `Instant.parse("2026-05-17T14:32:00Z")` so previews are det
 - **No a11y review.** The `Install` button inherits `TextButton`'s default semantics (`role = Role.Button`); no `onClickLabel` is set on the `TextButton`. Same open thread as [`ConnectionBanner`](./connection-banner.md)'s retry affordance — tracked there.
 - **Unbounded `workspaceCwd` can still drive a layout-cost DoS — pre-existing, not addressed by #644.** The label interpolates `boundary.workspaceCwd` with no length bound on the inbound path; it renders into an unweighted `Text` in a `Row` since the restyle, which wraps identically to the pre-#644 centred `Text`. #644's security review named this rather than fixing it: the right home is a content-length bound in the decode layer, which would cover every render surface (this label and [`MessageBubble`](./message-bubble.md)'s `Message.content`) rather than each component defending itself.
 
+## CompactionBoundaryDivider (#874)
+
+A finished compaction, folded from the daemon's `compaction_boundary` frame (split from #654, landed the
+way [`Banner` landed](banner-notice-row.md): one ticket for the type, both decode lanes, and the row).
+Lives in this same file, beside `SessionBoundaryDelimiterContent`, because it draws the same Figma
+`Session reset` rule / label / rule row and the decoder and the renderer are each other's only consumer.
+
+```kotlin
+@Composable
+fun CompactionBoundaryDivider(item: ThreadItem.CompactionBoundary, modifier: Modifier = Modifier)
+```
+
+- **Shares the rule/label/rule layout via a private `RuleLabelRow(label, modifier)`**, extracted from
+  `SessionBoundaryDelimiterContent`'s own `Row` in the same change — `SessionBoundaryDelimiterContent` now
+  calls `RuleLabelRow(label)` too, and its rendering is otherwise unchanged; `SessionBoundaryDelimiterTest`
+  staying green unchanged is the proof the extraction didn't alter the session delimiter's shape. Unlike
+  `SessionBoundaryDelimiter`, this composable draws **no explanation line and no `Install` affordance** —
+  a compaction is not a session reset, so nothing here reads `LocalUriHandler` or offers a memory-plugin
+  install.
+- **Is not a session boundary.** It does not enter `ThreadScreen`'s `mostRecentSessionBoundaryIndex`
+  cutoff and changes no above-delimiter de-emphasis; the row inherits the same `Modifier.alpha(rowAlpha)`
+  wrapper as its neighbours purely because every `LazyColumn` item does.
+- **`internal fun compactionBoundaryLabel(item: ThreadItem.CompactionBoundary): String`** — desktop's
+  `compactionBoundaryTitle` without its failed branch (mobile decodes `compaction_boundary` only, never
+  `compact_result`/`compact_error`): `"Conversation compacted"`, then `", $pre → $post tokens"` **only**
+  when both `item.preTokens` and `item.postTokens` are non-null, then `" by you"` **only** when
+  `item.manual`. A missing, `null`, negative, or unsafe-large count claims no size — never `"→ 0"` — because
+  [`ThreadItem.CompactionBoundary`](conversation-repository.md)'s counts are already narrowed to a
+  validated `Long?` before this label ever sees them; an unrecognised or empty `trigger` never reaches
+  here at all, since `manual` is a `Boolean` already reduced from the open wire string at decode.
+- **`internal fun compactionTokenCount(value: Long): String`** — desktop's `tokenCount` for an
+  already-validated non-negative value: the plain number below 1000, otherwise tenths of a thousand
+  rounded half-up (`(value + 50) / 100`, integer arithmetic) with a trailing `.0` dropped and a `k` suffix
+  — `24000` → `"24k"`, `1250` → `"1.3k"`. **Integer arithmetic is load-bearing, not a style choice**: a
+  float formatter (`String.format`) would print `"1,3k"` on a German-locale phone, since the fraction
+  format is entirely avoidable arithmetic rather than a locale-aware render.
+- **Never cached** — excluded from `cacheableThreadRows` and throws from `FileConversationCache.toRecord`,
+  the [`Banner`](banner-notice-row.md) posture; see [Conversation
+  cache § The contract](conversation-cache.md#the-contract). History replay restores it, joined to a live
+  arrival of the same frame on the envelope's `ts` — see [Remote conversation repository § The
+  compaction-boundary decode+fold seam](remote-conversation-repository-live-stream-and-modals.md#the-compaction-boundary-decodefold-seam-874).
+- **Identity is `occurredAt`** (`ThreadItem.CompactionBoundary`'s field name for the protocol's `(type,
+  ts)` join key), read by `ThreadRow.listKey()` as `"compaction:$occurredAt"` and by
+  `HistoryPageReducer.holdsCompactionBoundary` / `RemoteConversationRepository.appendCompactionBoundary`,
+  the one shared predicate both writers dedup on — the same three-reader shape [`Banner`](banner-notice-row.md#the-thread-row-type)
+  documents, so a boundary received live and again in a history page never crashes the `LazyColumn` on a
+  duplicate key.
+
+### Testing
+
+- `CompactionBoundaryLabelTest` (JVM, new): sizes + manual, sizes only, manual only, neither, one count
+  `null`; `compactionTokenCount` below 1000, exact thousands, half-up rounding, and a large value.
+- `CompactionBoundaryDividerTest` (androidTest, new): the label renders; the row has no click action.
+- `SessionBoundaryDelimiterTest` (androidTest, pre-existing): unchanged and still green — the proof the
+  `RuleLabelRow` extraction preserved the session delimiter's own rendering.
+
 ## Related
 
-- Ticket notes: [`../codebase/135.md`](../codebase/135.md), [`../codebase/644.md`](../codebase/644.md)
-- Spec: `docs/specs/architecture/135-session-boundary-delimiter.md`, `docs/specs/architecture/644-message-bubbles-and-copy-actions.md`
+- Ticket notes: [`../codebase/135.md`](../codebase/135.md), [`../codebase/644.md`](../codebase/644.md).
+  #874 (`CompactionBoundaryDivider`) postdates the frozen codebase archive (closed 2026-09-05); its spec
+  is the only ticket-level record.
+- Spec: `docs/specs/architecture/135-session-boundary-delimiter.md`, `docs/specs/architecture/644-message-bubbles-and-copy-actions.md`,
+  `docs/specs/architecture/874-compaction-boundary-divider.md`
 - Upstream:
   - [`#3`](../codebase/3.md) — `ThreadItem` / `SessionBoundary` / `BoundaryReason` definitions; the input contract this component consumes.
   - [`#9`](../codebase/9.md) — `buildThreadItems` projection that emits `SessionBoundary` markers between session-id deltas (the **Fake** producer, derived from full in-memory history).
