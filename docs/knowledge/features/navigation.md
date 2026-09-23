@@ -10,7 +10,7 @@ both the owning `serverId` and the host-local `conversationId`.
 
 - **`welcome`** (start destination when no paired-server record exists) — renders `WelcomeScreen` (#7).
 - **`scanner`** — renders [ScannerScreen](scanner-screen.md) with its destination-scoped ViewModel, camera permission launcher and live preview. A decoded QR is parsed into an immutable fingerprint/record confirmation state without writing. Confirm saves, starts the controller and navigates to `channel_list`, popping the scanner inclusively; this camera path does not await encrypted readiness. Decline/Back from confirmation re-arms scanning. Paste actions navigate to `pair_code`; ordinary Back pops to the caller.
-- **`pair_code`** — renders [PairCodeScreen](paste-code-dialog.md) with a destination-scoped `PairCodeViewModel`. Its optional-name form, fingerprint confirmation and saved-target connection wait stay within one route. Cancel returns to the caller; success clears the previous graph entries and opens `channel_list` only after both target connection legs are ready.
+- **`pair_code`** — renders [PairCodeScreen](paste-code-dialog.md) with a destination-scoped `PairCodeViewModel`. Its optional-name form, fingerprint confirmation and saved-target connection wait stay within one route. Cancel returns to the caller; success clears the previous graph entries and opens `channel_list` only after both target connection legs are ready. Since #842 the destination pattern (`Routes.PAIR_CODE_ROUTE`) takes an optional `serverId` query argument, shaped like Settings' own below; when present, the flow is scoped to re-pair exactly that host instead of naming a new one — see [manual pairing entry and return](#manual-pairing-entry-and-return).
 - **`channel_list`** — renders [ChannelListScreen](channel-list-screen.md), fed entirely by host-qualified state since #738 retired the flat compatibility model and its `selectedServerId()` adapter for this screen. Its own section-header add control also opens `scanner` (`ChannelListEvent.PairHostTapped → navController.navigate(Routes.SCANNER)`, #738) — the first entry into pairing that does not require an unpaired phone, reusing the existing `scanner` destination above rather than adding a second flow; both of that destination's completions (camera confirm, and manual entry via `pair_code`) already land back here.
 - **`discussions`** — renders [DiscussionListScreen](discussion-list-screen.md). Unreachable since #731 retired the channel list's "see all" link that was its only entry point; the route, screen and its adapter (captures host-qualified row and promotion targets, consumes only `hostNavigationEvents`) stay in the graph regardless — removing them is out of scope for both #731 and #738.
 - **`conversation_thread/{serverId}/{conversationId}`** — renders [ThreadScreen](thread-screen.md#wiring) with a destination-scoped ViewModel and dependencies from the exact retained host. Back pops the stack; “Show the literal screen” passes the same target to `Routes.literal(target)`.
@@ -60,6 +60,16 @@ saving the pairing code in navigation arguments or saved instance state.
 The channel list's own section-header add control is a list entry point into this flow
 (`scanner`, then this route via Paste — #738); it is the first door into pairing reachable
 from an already-paired phone, where previously only the unpaired `welcome` screen had one.
+
+Since #842, a tree host row whose saved pairing was rejected (`RelayLinkStatus.PairingRejected`) is a
+third entry, scoped to that one host: `ChannelListEvent.TreeHostRePairTapped(serverId)` routes to
+`navController.navigate(Routes.pairCode(serverId))`. The destination pattern gains an optional query
+argument shaped like Settings' (`pair_code?serverId={serverId}`, `Routes.PAIR_CODE_ROUTE` +
+`Routes.pairCodeArguments()`); plain `Routes.PAIR_CODE` still navigates here with the empty default, so
+the scanner-paste and unrouted add-host entries above are unchanged. In target mode `PairCodeViewModel`
+refuses a code naming any other `serverId` (exact, case-sensitive) before the fingerprint gate opens,
+names the Host name field with that host's stored display name, and never overwrites it — see
+[pair-with-code target mode](paste-code-dialog.md#re-pairing-a-target-host-842).
 
 Pair validates the trimmed code and opens the existing fingerprint surface in
 the same destination. Confirm uses exactly the record displayed there. The host
