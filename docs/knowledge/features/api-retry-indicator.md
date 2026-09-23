@@ -107,6 +107,8 @@ for the gutter arithmetic):
 when {
     apiRetry != ApiRetryStatus.NotRetrying ->
         ApiRetryIndicator(status = apiRetry, modifier = Modifier.fillMaxWidth())
+    usageLimit != null ->
+        UsageLimitIndicator(reading = usageLimit, modifier = Modifier.fillMaxWidth())
     isCompacting ->
         CompactingIndicator(isCompacting = true, modifier = Modifier.fillMaxWidth())
     else ->
@@ -114,15 +116,18 @@ when {
 }
 ```
 
-**One status slot; retry wins whenever active, then compaction.** The `api_retry` signal is
-conversation-level and outlives the `thinking` turn phase, so it must show *regardless of what
-`turn_state` says* — including while `turn_state` is `idle` — and no two arms may ever render stacked
-(AC #1). The precedence decision lives here, in the screen, deliberately **not** in the ViewModel:
-`isThinking` stays defined purely as the `turn_state` phase (other tests assert it directly), so
+**One status slot; retry wins whenever active, then the usage-limit report, then compaction.** The
+`api_retry` signal is conversation-level and outlives the `thinking` turn phase, so it must show
+*regardless of what `turn_state` says* — including while `turn_state` is `idle` — and no two arms may ever
+render stacked (AC #1). The precedence decision lives here, in the screen, deliberately **not** in the
+ViewModel: `isThinking` stays defined purely as the `turn_state` phase (other tests assert it directly), so
 suppressing it at its source would make the `ThreadViewModel` contract lie. api-retry keeps the top arm
-over compaction because it is the "something is going wrong" signal while compaction is benign
-progress — the benign affordance must never mask the alarming one (the two have never been observed
-overlapping, so no AC is spent on the combination). The interrupt control — mounted directly below
+over the usage-limit arm and compaction because it is the "something is going wrong" signal while the
+other two are lower-urgency (a usage-limit report is informational, compaction is benign progress) — the
+benign affordance must never mask the alarming one (the arms have never been observed overlapping, so no
+AC is spent on the combination). See [Usage-limit indicator](usage-limit-indicator.md#placement-in-the-thread)
+([#804](https://github.com/pyrycode/pyrycode-mobile/issues/804)) for why that arm sits between this one and
+compaction. The interrupt control — mounted directly below
 this slot until [#643](../codebase/643.md), now the send button's stop variant in `ThreadInputBar`
 just below the status area (see [Interrupt affordance](interrupt-affordance.md#placement--wiring)) —
 is untouched by this arm: an in-flight turn stays interruptible while retrying or compacting.
@@ -222,16 +227,19 @@ both rendered branches are covered.
   `observeApiRetry`, the `api_retry` decode this component renders.
 - Host: [Thread screen](thread-screen.md) — threads `apiRetry` as another flat sibling parameter and
   arbitrates the status slot (the composer's `ThreadStatusArea` since [#643](../codebase/643.md);
-  the foot of the content `Column` before it), a three-way `when` across it,
-  [`CompactingIndicator`](compacting-indicator.md), and `ThinkingIndicator`.
+  the foot of the content `Column` before it), a four-way `when` across it,
+  [`UsageLimitIndicator`](usage-limit-indicator.md), [`CompactingIndicator`](compacting-indicator.md), and
+  `ThinkingIndicator`.
 - Idioms mirrored: [Thinking indicator](thinking-indicator.md) (the direct clone — early-return,
   sibling-`StateFlow`, defaulted-hoisted-parameter, merged-`semantics`, design-owed M3 default,
   light/dark previews, file-private spacing `val`s intentionally **not** shared/refactored across the
   two components), [Stall promotion banner](stall-promotion-banner.md) (the different-slot,
   independently-co-rendering counterpoint).
-- Sibling render slice: [Compacting indicator](compacting-indicator.md) ([#597](../codebase/597.md)) —
+- Sibling render slices: [Compacting indicator](compacting-indicator.md) ([#597](../codebase/597.md)) —
   joined this slot as the third arm, ordered below api-retry so the alarming signal is never masked by
-  the benign one.
+  the benign one; [Usage-limit indicator](usage-limit-indicator.md)
+  ([#804](https://github.com/pyrycode/pyrycode-mobile/issues/804)) — joined between api-retry and
+  compaction for the same reason.
 - Parent: split from [#582](https://github.com/pyrycode/pyrycode-mobile/issues/582); sibling data slice
   [#593](../codebase/593.md) (PR #595, `022c0b8`).
 - Known unrelated pre-existing failure discovered while verifying this ticket:

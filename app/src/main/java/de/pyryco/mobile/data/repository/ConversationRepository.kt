@@ -291,22 +291,26 @@ interface ConversationRepository {
      * passed back **verbatim**; it is the daemon's per-conversation `queued_msg_id` — a wire `uint64`,
      * so a [Long] (not a `String`; the pyrycode#720 trap), the same width [observeQueue] decodes.
      *
-     * **The backlog entry leaves only on the next snapshot; the sender's own echo leaves here (#781).**
-     * The daemon owns the backlog, so the queued row is still removed by a subsequent `queue_state` on
-     * [observeQueue] (#460) and never optimistically. The *thread* echo is different: the daemon never
-     * authored it — the sender posted it locally after its `send_message` ack, because interactive mode
-     * streams no user-message event back — so leaving it behind after a confirmed drop shows a message
-     * claude was never given. On a successful drop an implementation removes the one thread row it
-     * minted for the dropped item, correlating on [QueuedMessage.messageId] and **only** against ids it
-     * minted itself; an item carrying `""`, or one another device queued, correlates with nothing and
-     * its drop touches no thread row. Text never matches. A failed drop removes nothing, so there is
-     * still nothing to roll back.
+     * **Fire-and-forget: the daemon never replies (#859).** An implementation returns once the frame is
+     * sent. The daemon owns the backlog, so the queued row is removed only by a subsequent `queue_state`
+     * on [observeQueue] (#460) and never optimistically, and that snapshot is also the drop's only
+     * confirmation. A request the daemon cannot apply (unknown, already delivered or in-flight) is
+     * silent too.
      *
-     * Throws [IllegalArgumentException] for an unknown [conversationId] (the remote surfaces the
-     * server's `conversation.not_found` as that type). Throws on a server error
-     * ([de.pyryco.mobile.data.network.RelayErrorException]) — a stale / already-drained id surfaces
-     * generically there — or a not-connected session ([IllegalStateException]); the caller handles
-     * failure and leaves the backlog unchanged.
+     * **The sender's own echo leaves with the item (#781).** The daemon never authored the thread echo —
+     * the sender posted it locally after its `send_message` ack, because interactive mode streams no
+     * user-message event back — so leaving it behind after a drop shows a message claude was never
+     * given. When a `queue_state` for [conversationId] arrives without the dropped [queuedMessageId], an
+     * implementation removes the one thread row it minted for that item, correlating on
+     * [QueuedMessage.messageId] and **only** against ids it minted itself; an item carrying `""`, or one
+     * another device queued, correlates with nothing and its drop touches no thread row. Text never
+     * matches. Removal is keyed on the id this device asked to drop, never on the backlog shrinking, so
+     * an item that drains normally keeps its echo. The one ambiguity — the head item draining just
+     * before the dequeue lands, so the daemon ignores the dequeue and the next snapshot looks exactly
+     * like a drop — resolves as a drop.
+     *
+     * Throws [IllegalStateException] when the session is not connected; the drop was never sent, so the
+     * backlog and the echo stay unchanged and there is nothing to roll back.
      *
      * Default throws — implementations without an interactive wire (the fake, inline test doubles)
      * inherit it, so no test double needs to override it (the same cascade-avoidance as [delete] /

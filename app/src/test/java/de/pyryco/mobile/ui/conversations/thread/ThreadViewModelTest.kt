@@ -29,8 +29,10 @@ import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.SessionSettings
+import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.conversations.ThrowingConversationRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -46,12 +48,15 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.datetime.Instant
@@ -1419,6 +1424,75 @@ class ThreadViewModelTest {
 
             assertTrue(repo.observedIds.isNotEmpty())
             assertTrue(repo.observedIds.all { it == ACTIVE_CONV })
+            collector.cancel()
+        }
+
+    // ---- #804: usageLimit projection over repository.observeUsageLimit ---------------------------
+    // The re-read ticker is perpetual while subscribed, so these cases step with runCurrent/advanceTimeBy
+    // and never advanceUntilIdle, which would chase the ticker forever.
+
+    @Test
+    fun usageLimit_initialValue_isNullWithPlainFake() =
+        runTest {
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            // A plain fake inherits observeUsageLimit's flowOf(null) default — nothing to render.
+            val vm = makeVm(handle, FakeConversationRepository())
+            assertNull(vm.usageLimit.value)
+        }
+
+    @Test
+    fun usageLimit_reflectsReadingThenClear() =
+        runTest {
+            val repo = UsageLimitControllableRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.usageLimit.collect {} }
+            runCurrent()
+
+            repo.reading.value = WARNING_READING
+            runCurrent()
+            assertEquals(WARNING_READING, vm.usageLimit.value)
+
+            repo.reading.value = null // the benign frame's removal
+            runCurrent()
+            assertNull(vm.usageLimit.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun usageLimit_observesOnlyOwnConversationId() =
+        runTest {
+            val repo = UsageLimitControllableRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.usageLimit.collect {} }
+            runCurrent()
+
+            assertTrue(repo.observedIds.isNotEmpty())
+            assertTrue(repo.observedIds.all { it == ACTIVE_CONV })
+            collector.cancel()
+        }
+
+    // The projection applies expiry only when read and emits nothing at the deadline; the VM's fixed
+    // re-read cadence is what takes a displayed reading down without re-deriving the rule.
+    @Test
+    fun usageLimit_expiredReading_leavesOnTheNextReRead() =
+        runTest {
+            val repo = UsageLimitControllableRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.usageLimit.collect {} }
+            repo.reading.value = WARNING_READING
+            runCurrent()
+            assertEquals(WARNING_READING, vm.usageLimit.value)
+
+            repo.expired = true
+            runCurrent()
+            assertEquals(WARNING_READING, vm.usageLimit.value) // no upstream emission at the deadline
+
+            advanceTimeBy(USAGE_LIMIT_REREAD_MS)
+            runCurrent()
+            assertNull(vm.usageLimit.value)
             collector.cancel()
         }
 
@@ -3567,18 +3641,18 @@ class ThreadViewModelTest {
     @Test
     fun history_aNewConnection_restartsTheWalkFromTheNewestPage() =
         runTest {
-            // AC #4. The opening ask walks to c1; the connection drops and returns; the walk starts over.
-            val source = FakeConnectionStateSource()
+            // AC #4. The opening ask walks to c1; the repository goes away and returns; the walk starts over.
+            val available = MutableStateFlow(true)
             val repo = HistoryRepo { asked -> page(cursor = if (asked.isEmpty()) "c1" else "c2") }
-            makeVm(historyHandle(), repo, source = source)
+            makeVm(historyHandle(), repo, repositoryAvailable = available)
             advanceUntilIdle()
             assertEquals(listOf(""), repo.asks)
 
-            source.emit(ConnectionState.Offline)
+            available.value = false
             advanceUntilIdle()
             assertEquals("a disconnect is not a new connection", listOf(""), repo.asks)
 
-            source.emit(ConnectionState.Connected)
+            available.value = true
             advanceUntilIdle()
             // Restarted from the newest page; the cursor minted on the previous connection is not sent.
             assertEquals(listOf("", ""), repo.asks)
@@ -3587,17 +3661,17 @@ class ThreadViewModelTest {
     @Test
     fun history_theConnectionTheThreadOpenedOn_doesNotCountAsANewOne() =
         runTest {
-            // The named trap: ConnectionStateSource hands every collector its current value on
+            // The named trap: the availability flow hands every collector its current value on
             // subscription, so restarting on the first emission would restart the walk init just started
             // — a page of budget and a round trip on every single open.
-            val source = FakeConnectionStateSource()
+            val available = MutableStateFlow(true)
             val repo = HistoryRepo { page(cursor = "c1") }
-            makeVm(historyHandle(), repo, source = source)
+            makeVm(historyHandle(), repo, repositoryAvailable = available)
             advanceUntilIdle()
             assertEquals(listOf(""), repo.asks)
 
-            // Re-emitting the same connected state is not a new connection either.
-            source.emit(ConnectionState.Connected)
+            // Re-publishing the same availability is not a new connection either.
+            available.value = true
             advanceUntilIdle()
             assertEquals(listOf(""), repo.asks)
         }
@@ -3608,7 +3682,7 @@ class ThreadViewModelTest {
             // The race the walk generation exists for: the ask issued on the connection that just died is
             // still in flight, and its late settle would otherwise store that dead connection's cursor.
             val gate = CompletableDeferred<HistoryPage>()
-            val source = FakeConnectionStateSource()
+            val available = MutableStateFlow(true)
             var first = true
             val repo =
                 HistoryRepo {
@@ -3619,11 +3693,11 @@ class ThreadViewModelTest {
                         page(cursor = "fresh")
                     }
                 }
-            val vm = makeVm(historyHandle(), repo, source = source)
+            val vm = makeVm(historyHandle(), repo, repositoryAvailable = available)
             advanceUntilIdle()
 
-            source.emit(ConnectionState.Offline)
-            source.emit(ConnectionState.Connected)
+            available.value = false
+            available.value = true
             advanceUntilIdle()
             // Releasing the dead connection's page must not move the restarted walk.
             gate.complete(page(cursor = "stale"))
@@ -3639,14 +3713,14 @@ class ThreadViewModelTest {
         runTest {
             // AC #4's budget clause. Every restart carries pagesLoaded, so the total ask count across any
             // number of reconnects is still the client-side cap — not the cap times the flap count.
-            val source = FakeConnectionStateSource()
+            val available = MutableStateFlow(true)
             val repo = HistoryRepo { asked -> page(cursor = if (asked == "a") "b" else "a") }
-            val vm = makeVm(historyHandle(), repo, source = source)
+            val vm = makeVm(historyHandle(), repo, repositoryAvailable = available)
             advanceUntilIdle()
 
             repeat(MAX_HISTORY_PAGES * 3) {
-                source.emit(ConnectionState.Offline)
-                source.emit(ConnectionState.Connected)
+                available.value = false
+                available.value = true
                 advanceUntilIdle()
                 vm.onDemandOlderHistory()
                 advanceUntilIdle()
@@ -3655,12 +3729,73 @@ class ThreadViewModelTest {
         }
 
     @Test
+    fun history_aReconnectWhoseRepositoryLandsAfterTheSocket_reasksOnceOnTheLiveRepository() =
+        runTest {
+            // #861. For a relay host the socket reports Connected at transport-up, but the repository is
+            // published only after the Noise handshake. A re-ask keyed on the socket reached the null
+            // repository, settled as a permanent dead end, and nothing ever asked again.
+            val socket = FakeConnectionStateSource()
+            val live = HistoryRepo { page(cursor = "c1") }
+            val published = MutableStateFlow<ConversationRepository?>(live)
+            val vm =
+                makeVm(
+                    historyHandle(),
+                    StableConversationRepository(published),
+                    source = socket,
+                    repositoryAvailable = published.map { it != null },
+                )
+            val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals(listOf(""), live.asks)
+
+            socket.emit(ConnectionState.Offline)
+            published.value = null
+            advanceUntilIdle()
+
+            // Socket up, handshake still running: nothing may be asked of the absent repository.
+            socket.emit(ConnectionState.Connected)
+            advanceUntilIdle()
+            assertEquals(listOf(""), live.asks)
+            assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
+
+            published.value = live
+            advanceUntilIdle()
+            assertEquals(listOf("", ""), live.asks)
+            assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
+            collector.cancel()
+        }
+
+    @Test
+    fun history_aThreadOpenedBeforeItsRepositoryIsPublished_asksOnceWhenItArrives() =
+        runTest {
+            // #861's opening-ask shape: socket already up, handshake not yet done. The opening ask cannot
+            // reach the live repository, so the repository's arrival is what asks for the newest page.
+            val live = HistoryRepo { page(cursor = "c1") }
+            val published = MutableStateFlow<ConversationRepository?>(null)
+            val vm =
+                makeVm(
+                    historyHandle(),
+                    StableConversationRepository(published),
+                    repositoryAvailable = published.map { it != null },
+                )
+            val collector = backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals(emptyList<String>(), live.asks)
+
+            published.value = live
+            advanceUntilIdle()
+            assertEquals(listOf(""), live.asks)
+            assertEquals(ThreadHistoryTail.None, vm.state.value.historyTail)
+            collector.cancel()
+        }
+
+    @Test
     fun history_breadcrumbsNameTheBranchAndCarryNothingTheDaemonWrote() =
         runTest {
             // Every value a hostile daemon controls on these paths — the cursor it minted, the code it
             // chose, the message it wrote — must be absent from the log. The reason labels are LOCAL
             // literals chosen by which branch fired, not e.code, so an attacker cannot write a log line.
-            val source = FakeConnectionStateSource()
+            val available = MutableStateFlow(true)
             var asks = 0
             val repo =
                 HistoryRepo {
@@ -3670,12 +3805,12 @@ class ThreadViewModelTest {
                         else -> throw RelayErrorException("history.unavailable", true, "SERVER-PROSE")
                     }
                 }
-            val vm = makeVm(historyHandle(), repo, source = source)
+            val vm = makeVm(historyHandle(), repo, repositoryAvailable = available)
             advanceUntilIdle()
             vm.onDemandOlderHistory()
             advanceUntilIdle()
-            source.emit(ConnectionState.Offline)
-            source.emit(ConnectionState.Connected)
+            available.value = false
+            available.value = true
             advanceUntilIdle()
 
             assertTrue("$logs", logs.any { it == "event=history_walk_restart reason=invalid_cursor" })
@@ -3810,6 +3945,9 @@ class ThreadViewModelTest {
         answerModal: suspend (String, String) -> Unit = { _, _ -> },
         cancelModal: suspend (String) -> Unit = { _ -> },
         interrupt: suspend (String) -> Unit = { },
+        // #861: whether the host's live repository is published. Available from the start by default, as
+        // the demo path's fake is.
+        repositoryAvailable: Flow<Boolean> = flowOf(true),
     ): ThreadViewModel =
         ThreadViewModel(
             handle,
@@ -3821,6 +3959,7 @@ class ThreadViewModelTest {
             answerModal,
             cancelModal,
             interrupt,
+            repositoryAvailable = repositoryAvailable,
         )
 
     /** A VM whose active conversation is [ACTIVE_CONV], wired to a controllable live-event source. */
@@ -4090,6 +4229,24 @@ class ThreadViewModelTest {
     }
 
     /**
+     * [CompactingControllableRepo]'s shape for the #802 usage-limit reading (#804). [expired] emulates the
+     * projection's read-time expiry: flipping it emits nothing, and only a fresh subscription sees it.
+     */
+    private class UsageLimitControllableRepo(
+        private val delegate: FakeConversationRepository = FakeConversationRepository(),
+    ) : ConversationRepository by delegate {
+        val reading = MutableStateFlow<UsageLimitReading?>(null)
+        val observedIds = mutableListOf<String>()
+
+        @Volatile var expired = false
+
+        override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> {
+            observedIds += conversationId
+            return reading.map { it?.takeUnless { expired } }
+        }
+    }
+
+    /**
      * Delegates the whole [ConversationRepository] surface to a seeded [FakeConversationRepository]
      * (so the VM's `state` pipeline stays populated) and overrides [observeQueue] with a controllable
      * [MutableStateFlow] (#461) plus [dropQueuedMessage] to record each call and optionally run [onDrop]
@@ -4262,6 +4419,15 @@ class ThreadViewModelTest {
         const val RUN_CONFIG_CONV = "seed-channel-personal"
 
         const val ACTIVE_CONV = "thread-406-active"
+
+        val WARNING_READING =
+            UsageLimitReading(
+                status = "allowed_warning",
+                limitType = "seven_day",
+                resetsAt = 0L,
+                utilization = 0.94,
+                truncatedFields = null,
+            )
 
         /** #789: a conversation the seeded fake actually knows, so sends and resets reach it. */
         const val DRAFT_CONV = "seed-channel-personal"

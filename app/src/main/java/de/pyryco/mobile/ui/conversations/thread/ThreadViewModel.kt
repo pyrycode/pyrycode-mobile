@@ -24,10 +24,13 @@ import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -36,6 +39,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
@@ -354,6 +359,11 @@ class ThreadViewModel(
     questionBatch: (conversationId: String) -> Flow<QuestionBatch?> = { flowOf(null) },
     private val answerQuestionBatch: suspend (questionBatchId: String, answers: List<QuestionAnswer>) -> Unit = { _, _ -> },
     private val refuseQuestionBatch: suspend (questionBatchId: String) -> Unit = {},
+    // #861: whether this thread's host has a live repository published — for a relay host, the
+    // coordinator's `currentRepository` being non-null, which happens only after the Noise handshake,
+    // later than the socket-level `Connected` [connectionStateSource] reports. Keys the #778 walk
+    // restart. Defaulted to always-available, as the demo path's fake repository is.
+    private val repositoryAvailable: Flow<Boolean> = flowOf(true),
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
@@ -662,6 +672,29 @@ class ThreadViewModel(
             )
 
     /**
+     * What claude last reported about its usage-limit window for this conversation (#802) — drives the
+     * status area's usage-limit arm (#804). A sibling [StateFlow] beside [apiRetry] / [isCompacting] (not a
+     * [ThreadUiState] field). `null` covers no live connection, nothing reported, a benign clear, and a
+     * reading whose `resets_at` has passed.
+     *
+     * **Re-read on a fixed cadence, because the expiry is applied only when read.** `observeUsageLimit`
+     * compares `resets_at` against the clock on subscription and on each upstream change, and emits
+     * nothing at the deadline itself. Each [usageLimitRereads] tick re-subscribes, so a displayed reading
+     * leaves within [USAGE_LIMIT_REREAD_MS] of its reset without this layer re-deriving the rule — and
+     * with no delay ever computed from `resets_at`, claude's unvalidated number. `StateFlow` equality drops
+     * the identical re-reads, so ticks do not recompose the screen; the ticker runs only while subscribed.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val usageLimit: StateFlow<UsageLimitReading?> =
+        usageLimitRereads()
+            .flatMapLatest { repository.observeUsageLimit(conversationId) }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = null,
+            )
+
+    /**
      * How far this conversation's current reasoning has got (#801) — drives the token reading the
      * thinking arm carries instead of a bare indefinite spinner (#803). A sibling [StateFlow] beside
      * [connectionState] / [isThinking] / [isStalled] / [isCompacting] (not a [ThreadUiState] field): like
@@ -941,22 +974,21 @@ class ThreadViewModel(
         // connection-scoped, so a cursor minted on one connection is not valid on the next — the walk
         // restarts rather than resumes.
         //
-        // Two deliberate choices here. It collects the SOURCE rather than the [connectionState] StateFlow:
-        // that flow is WhileSubscribed and seeds Connected, so its first value is synthetic and its
-        // upstream depends on the screen being subscribed. And `drop(1)` after `distinctUntilChanged`
-        // drops exactly the connection the thread opened on — the source hands every collector its current
-        // value on subscription, so restarting on it would restart the walk this init has just started,
-        // spending a page of budget and a round trip on every open. Only a RETURN to connected counts.
-        // A first value of Offline correctly makes the following connect a restart: the opening ask on
-        // that connection already failed.
+        // #861: keyed on the repository becoming available, not on the socket. A relay host's supervisor
+        // reports Connected at socket-open, before the Noise handshake publishes the repository, so a
+        // restart keyed there asked a null repository and settled as a permanent dead end.
+        //
+        // `drop(1)` after `distinctUntilChanged` drops exactly the availability the thread opened on — the
+        // flow hands every collector its current value on subscription, so restarting on it would restart
+        // the walk this init has just started, spending a page of budget and a round trip on every open.
+        // Only a RETURN to available counts. A first value of unavailable correctly makes the repository's
+        // arrival a restart: the opening ask on the absent repository already failed.
         viewModelScope.launch {
-            connectionStateSource
-                .observe()
-                .map { it == ConnectionState.Connected }
+            repositoryAvailable
                 .distinctUntilChanged()
                 .drop(1)
-                .collect { connected ->
-                    if (connected) {
+                .collect { available ->
+                    if (available) {
                         RelayLog.d { "event=history_walk_restart reason=reconnect" }
                         restartHistoryWalk(fromWalk = historyDemand.value.walk)
                     }
@@ -1363,10 +1395,15 @@ class ThreadViewModel(
      * screen forwards only the row's [Long] queued-message id).
      *
      * **No optimistic removal** (AC #3): the row leaves only on the next `queue_state` ([observeQueue]),
-     * so this holds no state to roll back and a failed drop is inert (AC #4). The catch contract mirrors
-     * [sendInterrupt] exactly: the [CancellationException] rethrow **MUST precede** the typed catches
-     * (`j.u.c.CancellationException` extends `IllegalStateException` on the JVM) so structured cancellation
-     * is never swallowed; the server-error and not-connected throws are swallowed with no error surface.
+     * so this holds no state to roll back and a failed drop is inert (AC #4). The daemon never replies to
+     * the dequeue (#859), so the call returns once the frame is sent; the repository removes the drop's
+     * own echo from the thread when that snapshot arrives. The remote throws only when not connected;
+     * the [RelayErrorException] catch covers the interface contract's other implementations.
+     *
+     * The catch contract mirrors [sendInterrupt] exactly: the [CancellationException] rethrow **MUST
+     * precede** the typed catches (`j.u.c.CancellationException` extends `IllegalStateException` on the
+     * JVM) so structured cancellation is never swallowed; the server-error and not-connected throws are
+     * swallowed with no error surface.
      */
     fun onDropQueued(queuedMessageId: Long) {
         viewModelScope.launch {
@@ -1581,6 +1618,22 @@ class ThreadViewModel(
 
 // Phase 4 swap point: replace with a generator that synthesizes a title from
 // the first user message in the conversation.
+
+/**
+ * How often [ThreadViewModel.usageLimit] re-reads the usage-limit projection (#804), so a displayed reading
+ * leaves within this long of its `resets_at`. A fixed cadence: nothing is ever scheduled from `resets_at`.
+ */
+internal const val USAGE_LIMIT_REREAD_MS = 30_000L
+
+/** An immediate tick, then one every [USAGE_LIMIT_REREAD_MS]; cancelled with its collector. */
+private fun usageLimitRereads(): Flow<Unit> =
+    flow {
+        while (true) {
+            emit(Unit)
+            delay(USAGE_LIMIT_REREAD_MS)
+        }
+    }
+
 private const val AUTO_SUGGESTED_CHANNEL_NAME = "New channel"
 
 private fun resolveWorkspace(

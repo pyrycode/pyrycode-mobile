@@ -78,6 +78,12 @@
     <string name="cd_thread_api_retry_unknown">Claude is retrying, attempt count unknown</string>
     <string name="thread_compacting_label">Compacting conversation</string>
     <string name="cd_thread_compacting">Claude is compacting the conversation</string>
+    <!-- #804: claude's usage-limit report. Attributed reportage only: a rate_limited frame does not prove a
+         turn was blocked, so none of these may say "limited", "reached" or "lifted". -->
+    <string name="thread_usage_limit_label">Claude reports usage-limit status: %1$s</string>
+    <string name="thread_usage_limit_label_no_status">Claude reported a usage-limit update</string>
+    <string name="thread_usage_limit_spent">" · %1$d%% spent"</string>
+    <string name="thread_usage_limit_resets">" · resets %1$s"</string>
     <string name="thread_history_loading_label">Loading earlier messages</string>
     <string name="cd_thread_history_loading">Loading earlier messages in this conversation</string>
     <string name="thread_history_retry_label">Couldn\'t load earlier messages</string>

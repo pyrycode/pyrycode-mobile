@@ -271,6 +271,9 @@ internal class ThreadDestinationFactory(
             questionBatch = { id -> bundle?.coordinator?.observeQuestionBatch(id) ?: flowOf(null) },
             answerQuestionBatch = { batch, answers -> checkNotNull(bundle).coordinator.answerQuestionBatch(batch, answers) },
             refuseQuestionBatch = { batch -> checkNotNull(bundle).coordinator.refuseQuestionBatch(batch) },
+            // #861: the walk restart waits for the published repository, not the socket — the supervisor's
+            // Connected precedes the handshake that publishes it.
+            repositoryAvailable = bundle?.coordinator?.currentRepository?.map { it != null } ?: flowOf(false),
         )
     }
 

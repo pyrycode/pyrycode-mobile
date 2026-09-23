@@ -294,8 +294,8 @@ class RemoteConversationRepository(
     /**
      * `conversationId -> the message ids this device minted and echoed into the thread` (#781) — the
      * ledger that makes a queued item's [QueuedMessage.messageId] safe to act on. Written by
-     * [sendMessage] after its ack (beside the confirmed insert) and consumed by [dropQueuedMessage]
-     * after its ack; both writes are atomic [MutableStateFlow.update]s, the two-writer posture
+     * [sendMessage] after its ack (beside the confirmed insert) and consumed when a drop settles
+     * ([settleDrops], #859); both writes are atomic [MutableStateFlow.update]s, the two-writer posture
      * [appendMessages] already relies on. Observed by nothing, so it publishes no flow.
      *
      * **This exists because the thread projection is not a valid correlation store.** `queue_state`
@@ -313,6 +313,19 @@ class RemoteConversationRepository(
      * drop, and dies with the connection.
      */
     private val mintedMessageIds = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
+
+    /**
+     * `conversationId -> (queued_msg_id -> echo message id)` for every drop this device sent and the
+     * daemon has not yet confirmed (#859). The daemon never replies to `dequeue_message`; its only
+     * confirmation is the next `queue_state` for the conversation lacking the item, which [settleDrops]
+     * reads. Keyed on the `queued_msg_id` this device asked to drop, so an item that leaves the backlog
+     * without a request from here (a drain, another device's drop) has no entry and keeps its echo.
+     *
+     * Two writers — [dropQueuedMessage] and the inbound collector through [settleDrops] — both through
+     * atomic [MutableStateFlow.update]s. Connection-scoped and in-memory like [mintedMessageIds]: a drop
+     * whose confirmation never arrives before the connection closes leaves its echo, the safe side.
+     */
+    private val pendingDrops = MutableStateFlow<Map<String, Map<Long, String>>>(emptyMap())
 
     /**
      * `conversationId -> settings-read ordinal` (#590) — the **refresh trigger** for
@@ -691,6 +704,9 @@ class RemoteConversationRepository(
                 // Queued-backlog snapshot (#460): see [QueueProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     queueProjection.apply(envelope)
+                    // A snapshot is the daemon's only confirmation of a drop (#859). Settling a
+                    // conversation whose backlog did not change is a no-op, so settle every one pending.
+                    pendingDrops.value.keys.forEach(::settleDrops)
                 }
             }
             TYPE_MODEL_LIST -> {
@@ -2011,43 +2027,43 @@ class RemoteConversationRepository(
 
     /**
      * Drop a not-yet-drained message from [conversationId]'s queued backlog over v2 `dequeue_message`
-     * (#466, ADR 025): send `{conversation_id, queued_msg_id}` and await its correlated reply — an
-     * empty `ack` (the daemon removed the message) or an `error` (failure). [queuedMessageId] is the
-     * `QueuedMessage.id` the caller received from [observeQueue] (#460), echoed **verbatim** as the
-     * wire `queued_msg_id` (a `uint64` → [Long] JSON number, not a String — the pyrycode#720 trap);
-     * the daemon validates the `(conversation_id, queued_msg_id)` pair against its own per-conversation
-     * queue and stale-id rejects a mismatch — this method neither re-derives nor trusts it.
+     * (#466, ADR 025): send `{conversation_id, queued_msg_id}` and return once the frame is sent. The
+     * daemon **never replies** — not on success, and not when it cannot apply the request (an unknown,
+     * already-delivered or in-flight head id is silently ignored); `docs/protocol-mobile.md` § Queue
+     * (v2) lists no reply (#859). [queuedMessageId] is the `QueuedMessage.id` the caller received from
+     * [observeQueue] (#460), echoed **verbatim** as the wire `queued_msg_id` (a `uint64` → [Long] JSON
+     * number, not a String — the pyrycode#720 trap).
      *
-     * The backlog entry still leaves only on the next `queue_state` (#467's non-optimistic ruling, which
-     * the daemon owns), but a confirmed drop **also removes this device's own undelivered echo** for the
-     * message (#781) — the thread row [sendMessage] posted after its ack, which the daemon never authored
-     * and which otherwise stays behind reading as a message claude received. The correlation key is the
-     * item's `message_id` (pyrycode#2092), resolved from this connection's own snapshot rather than
-     * carried down from the UI: `queued_msg_id` already addresses the row, so no caller above needs to
-     * learn a second id. Never logs the payload or either id.
+     * The backlog entry leaves only on the next `queue_state` (#467's non-optimistic ruling, which the
+     * daemon owns), and that same snapshot is the drop's only confirmation. When it arrives without the
+     * dropped `queued_msg_id`, [settleDrops] also removes **this device's own undelivered echo** for the
+     * message (#781) — the thread row [sendMessage] posted after its ack, which the daemon never
+     * authored and which otherwise stays behind reading as a message claude received. The correlation
+     * key is the item's `message_id` (pyrycode#2092), resolved from this connection's own snapshot, so
+     * no caller above needs to learn a second id. Never logs the payload or either id.
      *
-     * Three properties of the sequence are load-bearing:
-     *  - **Resolved before the send.** A successful drop provokes a fresh `queue_state` that removes the
-     *    item, so reading the snapshot afterwards races the inbound collector and usually finds nothing.
-     *    Reading it early is safe because `queued_msg_id` is a per-conversation counter that is never
-     *    recycled — item *N* in a stale snapshot is still the same item *N*.
-     *  - **Removed only on the ack.** A throw skips the removal entirely, so a failed drop leaves the
-     *    entry and the echo in place: the daemon never heard it, the message will still run, and the
-     *    echo is still true. Showing a message the operator typed is optimism; hiding one the daemon
-     *    still holds would be a claim about the daemon.
+     * Load-bearing properties of the sequence:
+     *  - **Resolved before the send.** The confirming `queue_state` replaces the snapshot this reads
+     *    from. Reading it early is safe because `queued_msg_id` is a per-conversation counter that is
+     *    never recycled — item *N* in a stale snapshot is still the same item *N*.
+     *  - **Recorded before the send, withdrawn if it fails.** The request goes into [pendingDrops] first,
+     *    so a confirming snapshot can never land before there is a request to settle. A not-connected
+     *    send withdraws it and throws [IllegalStateException]: the daemon never heard the drop, the
+     *    message will still run, and the echo is still true.
+     *  - **Keyed on the requested `queued_msg_id`, never a backlog diff.** A backlog also shrinks when
+     *    the daemon *drains* it, so a diff-driven removal would delete the echo of every message that
+     *    ran normally. Only an item this device asked to drop settles.
      *  - **Removed only against [mintedMessageIds].** An item carrying `""`, one whose id this device
      *    never minted (another paired device's real queued message), or a `queuedMessageId` absent from
-     *    the snapshot all correlate with nothing: the send still goes and no thread row is touched.
-     *    Text is never compared.
+     *    the snapshot correlates with nothing: the send still goes and no thread row is touched. Text is
+     *    never compared.
      *
-     * Deliberately **not** driven by a backlog diff: a backlog also shrinks when the daemon *drains* it,
-     * so a diff-driven removal would delete the echo of every message that ran normally — a worse lie
-     * than the one being fixed.
-     *
-     * Throws [IllegalArgumentException] for an unknown conversation (server `conversation.not_found`),
-     * [RelayErrorException] for any other server `error` (a stale / already-drained id surfaces
-     * generically here), and [IllegalStateException] when the session is not connected
-     * ([SessionPump.send] returns `false`) — none of them mutates any state.
+     * **The drain/drop race is accepted, not defended.** The daemon pushes the same `queue_state` for a
+     * removal and for a drain. If the operator drops the head item just as the running turn ends, it can
+     * drain before the dequeue lands; the daemon then ignores the dequeue and the next snapshot lacks
+     * the item exactly as it would after a drop. The phone cannot tell the two apart and removes the
+     * echo of a message claude did receive. The daemon offers no signal to distinguish them, and the
+     * operator had asked for that message to go, so no defence is added.
      */
     override suspend fun dropQueuedMessage(
         conversationId: String,
@@ -2063,7 +2079,7 @@ class RemoteConversationRepository(
                         DequeueMessagePayloadDto(conversationId = conversationId, queuedMsgId = queuedMessageId),
                     ),
             )
-        // Resolved before the send: a successful drop replaces the snapshot this reads from. "" when the
+        // Resolved before the send: the confirming snapshot replaces the one this reads from. "" when the
         // id matches no current item — a correlation this connection cannot make, not an error.
         val echoId =
             queueProjection
@@ -2071,10 +2087,31 @@ class RemoteConversationRepository(
                 .firstOrNull { it.id == queuedMessageId }
                 ?.messageId
                 .orEmpty()
-        // Throws on a server `error` / not-Open session; the empty `{}` ack carries nothing to map, so
-        // the returned reply is ignored — but reaching the next line IS the drop's confirmation.
-        sendAndAwaitReply(request)
-        removeOwnEcho(conversationId, echoId)
+        if (echoId.isNotEmpty()) {
+            pendingDrops.update { it + (conversationId to (it[conversationId].orEmpty() + (queuedMessageId to echoId))) }
+        }
+        if (!pump.send(request)) {
+            pendingDrops.update { it + (conversationId to (it[conversationId].orEmpty() - queuedMessageId)) }
+            throw IllegalStateException("$TYPE_DEQUEUE_MESSAGE not sent: session not connected")
+        }
+    }
+
+    /**
+     * Settle every drop pending in [conversationId] whose `queued_msg_id` the current snapshot no longer
+     * holds (#859): claim the entries in one atomic [MutableStateFlow.update], so each settles at most
+     * once, then remove each claimed entry's echo through [removeOwnEcho]. Entries still in the snapshot
+     * stay pending.
+     */
+    private fun settleDrops(conversationId: String) {
+        val live = queueProjection.current(conversationId).mapTo(HashSet()) { it.id }
+        var settled: Collection<String> = emptyList()
+        pendingDrops.update { all ->
+            val pending = all[conversationId] ?: return@update all
+            val (gone, waiting) = pending.entries.partition { it.key !in live }
+            settled = gone.map { it.value }
+            if (waiting.isEmpty()) all - conversationId else all + (conversationId to waiting.associate { it.key to it.value })
+        }
+        settled.forEach { removeOwnEcho(conversationId, it) }
     }
 
     /**
@@ -2895,8 +2932,8 @@ class RemoteConversationRepository(
         /**
          * Outbound queue control: the phone's request to drop a not-yet-drained message
          * `{conversation_id, queued_msg_id}` from a conversation's backlog (#466, pyrycode#723, ADR
-         * 025) — the outbound peer of [TYPE_QUEUE_STATE]. Success is an empty `ack`; the backlog
-         * updates via the next `queue_state`, not a reply.
+         * 025) — the outbound peer of [TYPE_QUEUE_STATE]. The daemon never replies (#859); the backlog
+         * updates via the next `queue_state`, which is also the drop's only confirmation.
          */
         const val TYPE_DEQUEUE_MESSAGE = "dequeue_message"
 
