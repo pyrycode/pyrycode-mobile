@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -55,6 +56,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
@@ -115,6 +117,12 @@ private val ComposerBottomGap = 16.dp
 // foot-of-list mount they had until #643. Inset them by the remainder so their content lands on the
 // same 20dp gutter as the input field and the footer, with their own files untouched.
 private val ComposerStatusGutter = ComposerGutter - 16.dp
+
+// #843: Figma 354:7093's "Button small" and its gap from the status signal it sits beside.
+private val StatusActionGap = 8.dp
+private val RePairButtonRadius = 6.dp
+private val RePairButtonHorizontalPadding = 16.dp
+private val RePairButtonVerticalPadding = 8.dp
 
 // #777: the oldest-end loading row, sized to ThinkingIndicator's shipped spinner-and-label idiom and
 // inset on the same 20dp content gutter as the rest of the thread.
@@ -185,6 +193,11 @@ fun ThreadScreen(
     // bar owned its own text.
     draft: String = "",
     onDraftChange: (String) -> Unit = {},
+    // #843: this thread's host rejected the saved pairing (ThreadViewModel.rePairAvailable). Draws the
+    // status area's Re-pair action and withholds the connection banner, whose retry cannot succeed then.
+    // The tap is bound by MainActivity to the code-pair route keyed by the destination's own server id.
+    showRePair: Boolean = false,
+    onRePair: () -> Unit = {},
 ) {
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
@@ -281,6 +294,8 @@ fun ThreadScreen(
                         turnOutcome = turnOutcome,
                         isThinking = isThinking,
                         thinkingProgress = thinkingProgress,
+                        showRePair = showRePair,
+                        onRePair = onRePair,
                     )
                     ThreadInputBar(
                         text = draft,
@@ -313,7 +328,9 @@ fun ThreadScreen(
                         .padding(inner)
                         .fillMaxSize(),
             ) {
-                ConnectionBanner(state = connectionState, onRetry = onRetry)
+                // #843: a rejected pairing reads as Offline here, and its retry cannot succeed — the status
+                // area's Re-pair action replaces it. Network loss still gets the banner and its retry.
+                if (!showRePair) ConnectionBanner(state = connectionState, onRetry = onRetry)
                 StallPromotionBanner(isStalled = isStalled, onShowLiteralScreen = onShowLiteralScreen)
                 if (!state.isPromoted && !state.hasMessages) {
                     WorkspaceChip(
@@ -618,9 +635,10 @@ fun ThreadScreen(
  * compaction → turn outcome → thinking. Compaction is mid-turn and the outcome is post-turn, so the two
  * co-occurring has not been observed; the outcome clears when the next turn starts.
  *
- * The design's trailing contextual-action slot stays empty until #675 fills it, so nothing inert is
- * emitted beside the signal. When no signal is live every arm returns without emitting, so the band
- * contributes no node and the composer column's gap above the input field collapses with it.
+ * The design's trailing contextual-action slot holds the Re-pair action (#843) while [showRePair] does,
+ * and is otherwise absent, so nothing inert is emitted beside the signal. Without it, when no signal is
+ * live every arm returns without emitting, so the band contributes no node and the composer column's gap
+ * above the input field collapses with it.
  *
  * [thinkingProgress] (#803) adds **no arm**: it decorates the thinking arm's label and rides the `else`
  * branch, so retry and compaction pre-empt a live reading for free and the mutual exclusion above is
@@ -636,14 +654,56 @@ private fun ThreadStatusArea(
     turnOutcome: TurnOutcomeReport?,
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
+    showRePair: Boolean = false,
+    onRePair: () -> Unit = {},
 ) {
-    val slot = Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter)
-    when {
-        apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = slot)
-        usageLimit != null -> UsageLimitIndicator(reading = usageLimit, modifier = slot)
-        isCompacting -> CompactingIndicator(isCompacting = true, modifier = slot)
-        turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = slot)
-        else -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress)
+    val gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter)
+    val signal: @Composable (Modifier) -> Unit = { slot ->
+        when {
+            apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = slot)
+            usageLimit != null -> UsageLimitIndicator(reading = usageLimit, modifier = slot)
+            isCompacting -> CompactingIndicator(isCompacting = true, modifier = slot)
+            turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = slot)
+            else -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress)
+        }
+    }
+    if (!showRePair) {
+        signal(gutter)
+        return
+    }
+    // Figma 111:3525: the signal leading, the action trailing on the same row.
+    Row(
+        modifier = gutter,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(StatusActionGap),
+    ) {
+        Box(modifier = Modifier.weight(1f)) { signal(Modifier.fillMaxWidth()) }
+        RePairButton(onClick = onRePair)
+    }
+}
+
+/**
+ * Figma `354:7093`'s "Pairing error - Re-pair" small button (#843): a 6dp-radius container, 16/8 padding,
+ * a `bodySmall` label at medium weight (`M3/body/small-emphasized`).
+ *
+ * Deliberate deviation: the frame paints it `on-error` / `error`; this uses the theme's `errorContainer` /
+ * `onErrorContainer` pair instead, the family [ConnectionBanner]'s Offline arm and [HistoryRetryRow] already
+ * use for an error-plus-action affordance, as the ticket directs. The label is a local resource, never
+ * daemon text.
+ */
+@Composable
+private fun RePairButton(onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(RePairButtonRadius),
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+    ) {
+        Text(
+            text = stringResource(R.string.thread_re_pair),
+            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+            modifier = Modifier.padding(horizontal = RePairButtonHorizontalPadding, vertical = RePairButtonVerticalPadding),
+        )
     }
 }
 
@@ -1069,6 +1129,35 @@ private fun HistoryTailPreview(tail: ThreadHistoryTail) {
         )
     }
 }
+
+@Composable
+private fun ThreadScreenRePairPreview(darkTheme: Boolean) {
+    PyrycodeMobileTheme(darkTheme = darkTheme) {
+        ThreadScreen(
+            state =
+                ThreadUiState(
+                    conversationId = "seed-channel-personal",
+                    displayName = "kitchenclaw refactor",
+                    isPromoted = true,
+                    items = previewItems(),
+                ),
+            onBack = {},
+            onSendMessage = {},
+            connectionState = ConnectionState.Offline,
+            onRetry = {},
+            isThinking = true,
+            showRePair = true,
+        )
+    }
+}
+
+@Preview(name = "Thread — Re-pair, Light", showBackground = true, widthDp = 412)
+@Composable
+private fun ThreadScreenRePairLightPreview() = ThreadScreenRePairPreview(darkTheme = false)
+
+@Preview(name = "Thread — Re-pair, Dark", showBackground = true, widthDp = 412)
+@Composable
+private fun ThreadScreenRePairDarkPreview() = ThreadScreenRePairPreview(darkTheme = true)
 
 @Preview(name = "Thread — Light", showBackground = true, widthDp = 412)
 @Composable

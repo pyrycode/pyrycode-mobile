@@ -23,6 +23,8 @@ Three design points pinned in #201:
 
 `onRetry` binds to `vm::retry` at the destination — method reference, not a fresh lambda, so the binding is stable across recompositions (the lambda allocation only happens once per VM lifecycle, not per recomposition).
 
+**Withheld under a rejected pairing (#843).** `ConnectionBanner` is not drawn while `showRePair` holds: `if (!showRePair) ConnectionBanner(state = connectionState, onRetry = onRetry)`. A rejected pairing still derives to the legacy `ConnectionState.Offline` (see [Reconnect supervision § derivation table](relay-reconnect-supervisor.md#derivation-and-visual-tables)), so without this gate the banner would offer a retry that cannot succeed — the relay leg halts redial on a rejection and only a fresh pairing clears it. The [status area's Re-pair action](#thinking-indicator-placement-post-407-moved-in-643) replaces it in that state. Network loss (`Reconnecting`, `DaemonAbsent`, the 30s-cap `Offline`) is unaffected — `showRePair` is `false` for all of those, so the banner and its retry render exactly as before.
+
 ### Thinking-indicator placement (post-#407, moved in #643)
 
 [#407](../codebase/407.md) originally mounted the stateless [`ThinkingIndicator`](thinking-indicator.md) as the final child of the content `Column`, at the foot of the list above the `bottomBar`. [#643](../codebase/643.md) moved it — along with the retry and compaction arms it shares a slot with — into the composer itself, as the **`Status area`** band of the Figma `16:8` `Input area` (`533:1957`). It is now the first child of the `bottomBar` `Column`, rendered by a private `ThreadStatusArea` composable (`ThreadScreen.kt:471`) that exists purely so the `bottomBar` lambda stays readable:
@@ -30,7 +32,7 @@ Three design points pinned in #201:
 ```kotlin
 bottomBar = {
     Column(Modifier.fillMaxWidth().background(surface).imePadding().padding(top = 12.dp, bottom = 16.dp)) {
-        ThreadStatusArea(apiRetry = apiRetry, usageLimit = usageLimit, isCompacting = isCompacting, turnOutcome = turnOutcome, isThinking = isThinking, thinkingProgress = thinkingProgress)
+        ThreadStatusArea(apiRetry = apiRetry, usageLimit = usageLimit, isCompacting = isCompacting, turnOutcome = turnOutcome, isThinking = isThinking, thinkingProgress = thinkingProgress, showRePair = showRePair, onRePair = onRePair)
         ThreadInputBar(onSend = onSendMessage, isBusy = isBusy, onInterrupt = onInterrupt, …)
         ThreadComposerFooter(runConfig = state.runConfig, onOpen = { openControl = it }, onStatusClick = { sheetVisible = true }, onAnchorChanged = { control, bounds -> footerAnchors[control] = bounds }, …)
     }
@@ -44,19 +46,35 @@ private fun ThreadStatusArea(
     turnOutcome: TurnOutcomeReport?, // #805
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?, // #803
+    showRePair: Boolean = false, // #843
+    onRePair: () -> Unit = {}, // #843
 ) {
-    val slot = Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter) // 20dp gutter − the indicators' own 16dp
-    when {
-        apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = slot)
-        usageLimit != null -> UsageLimitIndicator(reading = usageLimit, modifier = slot)
-        isCompacting -> CompactingIndicator(isCompacting = true, modifier = slot)
-        turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = slot)
-        else -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress)
+    val gutter = Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter) // 20dp gutter − the indicators' own 16dp
+    val signal: @Composable (Modifier) -> Unit = { slot ->
+        when {
+            apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = slot)
+            usageLimit != null -> UsageLimitIndicator(reading = usageLimit, modifier = slot)
+            isCompacting -> CompactingIndicator(isCompacting = true, modifier = slot)
+            turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = slot)
+            else -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress)
+        }
+    }
+    if (!showRePair) {
+        signal(gutter)
+        return
+    }
+    // Figma 111:3525: the signal leading, the action trailing on the same row.
+    Row(modifier = gutter, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(modifier = Modifier.weight(1f)) { signal(Modifier.fillMaxWidth()) }
+        RePairButton(onClick = onRePair)
     }
 }
 ```
 
 The `bottomBar` column's third band was `ThreadStatusRow(model = …, effort = …, onExpandClick = { sheetVisible = true }, …)` through [#807](../codebase/807.md); [#808](../codebase/808.md) replaced it with [`ThreadComposerFooter`](thread-composer-footer.md), shown above, and wrapped the surrounding `Scaffold` in a `Box` so an [`OptionsOverlay`](options-overlay.md) can draw above it on selection — see [Thread composer footer](thread-composer-footer.md) for the full wiring. `ThreadStatusArea` itself (below) is unaffected by that change.
+
+- **The trailing contextual-action slot (#843).** The KDoc above `ThreadStatusArea` had reserved this slot since #643 ("stays empty until #675 fills it"); [#843](https://github.com/pyrycode/pyrycode-mobile/issues/843) fills it with a **Re-pair** button (Figma `354:7093`, a 6dp-radius `Surface` at 16dp/8dp padding, `bodySmall` + `FontWeight.Medium`) while `showRePair` holds — a private `RePairButton` composable beside the existing signal, which shrinks into a `weight(1f)` box so the row splits leading/trailing rather than stacking. `showRePair` comes from `ThreadViewModel.rePairAvailable`, `true` exactly when this thread's own host is in the rejected-pairing state (see below); `onRePair` is bound at `MainActivity` to `navController.navigate(Routes.pairCode(target.serverId))`. **Deliberate deviation from Figma:** the frame paints the button `on-error`/`error`; the shipped button uses the theme's `errorContainer`/`onErrorContainer` pair instead — the same family [`ConnectionBanner`](connection-banner.md)'s `Offline` arm and [`HistoryRetryRow`](thread-screen-how-it-works-list-and-status-row.md) already use for an error-plus-action affordance, per the ticket's Figma notes. The label is the local string resource `R.string.thread_re_pair` ("Pairing error - Re-pair"), never daemon-authored text.
+- **Sourced by `serverId` through the registry, not the captured connection bundle.** `ThreadDestinationFactory.thread` (`di/AppModule.kt`) builds `showRePair`'s upstream from a new top-level `pairingRejected(connections: Flow<List<HostConversationConnection>>, serverId: String): Flow<Boolean>` that finds the matching entry in `RelayConnectionRegistry.hostConnections` and `flatMapLatest`s onto *its* `status` — not off the `HostConversationConnection` bundle the factory captured when the destination opened. This is load-bearing: a successful re-pair changes the saved record, and `RelayConnectionRegistry.reconcile` closes the old bundle and publishes a **new** entry with its own `status` flow for the same `serverId`. Reading through the registry means the `flatMapLatest` picks up the replacement and the button clears; reading off the captured bundle would have kept observing the closed connection's now-frozen status and the action could never go away after a successful re-pair. `ThreadViewModel` exposes the result as a sibling `StateFlow<Boolean>` (`rePairAvailable`, `WhileSubscribed(5_000)`, defaulted to `flowOf(false)` so the demo destination is unaffected), matching the `connectionState` precedent rather than widening `ThreadUiState` — the `state` combine is already at its five-arity ceiling.
 
 - **Moved, not rewritten.** The three original arms, their flags and their precedence (api-retry first, then compaction, then thinking — see [API-retry indicator](api-retry-indicator.md#placement-in-the-thread)) are byte-identical to the pre-#643 `when`; only the mount point and the horizontal inset changed at #643. `ThinkingIndicator.kt`, `ApiRetryIndicator.kt` and `CompactingIndicator.kt` were not touched by that move.
 - **[#803](thinking-indicator.md) adds a sixth flat sibling, `thinkingProgress: ThinkingProgress?`, and no new arm.** It decorates the thinking arm's own `else` branch, so it rides the precedence above rather than adding to it — retry and compaction still pre-empt a live reading for free. Visibility stays `isThinking`'s alone; see [Thinking indicator § What it does](thinking-indicator.md#what-it-does).
