@@ -749,6 +749,28 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * The list's own archive entry reaches the Archived screen (#740). #737 put two entries on the channel
+     * list's bar; [interactiveTurn_archiveRestore_roundTripsListMembership] travels the settings one (list →
+     * Settings → Archived), and this travels the archive one, which otherwise is proven only at the event
+     * boundary (`ChannelListScreenTest.archiveEntry_emitsArchiveTapped`).
+     *
+     * The bar is drawn on every state of the list, so the scenario needs no connection wait, no seeded
+     * conversation, no prompt and no claude turn. The list draws no "Archived" text, so [ARCHIVED_TITLE] is
+     * asserted absent before the tap and the arrival after it is a genuine inversion.
+     */
+    @Test
+    fun interactiveTurn_listArchiveEntry_opensArchived() {
+        awaitChannelList()
+        composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).assertCountEquals(0)
+
+        composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).onFirst().assertIsDisplayed()
+    }
+
+    /**
      * Change-workspace twin of the create-workspace-folder scenario (#562, Layer 3): drive the real
      * "Change workspace…" overflow flow end to end against a real daemon, exercising the already-shipped
      * #560 `change_workspace` wire and #561 surfacing. Create a plain discussion, then via the **real**
@@ -1322,6 +1344,10 @@ class InteractiveStreamE2ETest {
         const val ARCHIVED_ROW = "Archived discussions"
         const val ARCHIVED_TITLE = "Archived"
         const val RESTORED_SNACKBAR = "Restored"
+
+        // #740 list-archive-entry scenario: the archive entry on the list's own bar (#737), the sibling of
+        // CD_OPEN_SETTINGS. Keep in sync with res/values/strings.xml: cd_open_archive = "Open archive".
+        const val CD_OPEN_ARCHIVE = "Open archive"
 
         // Runtime-unique rename target: "e2e551-" + System.currentTimeMillis(). Distinct from #554's
         // CONVERSATION_NAME_PREFIX (the shared companion forbids redeclaration). Unique so a substring match

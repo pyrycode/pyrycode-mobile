@@ -61,12 +61,17 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    conversation-scoped daemon round-trip (a pure registry op) with no session transition. This is the
    **backfill** of the one operator-facing flow that shipped before the real-stack definition-of-done rule
    (pyrycode-mobile-agents#9), and is **red on any daemon older than pyrycode/pyrycode#949**, which registered
-   the handler the verb had been answering `unsupported` without.
-   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581)**
-   runs a **curated octet** of scenarios (ping + create-workspace-folder + new-session + delete +
-   archive-restore + change-workspace + rename + save-as-channel, three ping turns plus a possible
-   reset wrap-up turn — delete,
-   archive-restore, change-workspace, rename, and save-as-channel spend none)
+   the handler the verb had been answering `unsupported` without; and a **list-archive-entry** scenario
+   (#740): arrive on the channel list, assert the Archived screen's title is absent, tap the list's own
+   archive entry (`CD_OPEN_ARCHIVE`, the sibling of the settings entry #737 put on the bar) and assert the
+   title appears — proving the entry #737 shipped reaches Archived on its own, independently of the
+   Settings route `interactiveTurn_archiveRestore_roundTripsListMembership` already covers; no claude turn,
+   no seeded conversation — the bar is drawn on every state of the list.
+   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740)**
+   runs a **curated set of nine scenarios** (ping + create-workspace-folder + new-session + delete +
+   archive-restore + change-workspace + rename + save-as-channel + list-archive-entry, three ping turns
+   plus a possible reset wrap-up turn — delete, archive-restore, change-workspace, rename, save-as-channel
+   and list-archive-entry spend none)
    against the **production relay** over `wss://`
    (TLS) — the pre-ship gate that catches the live-environment failure class a local relay cannot; see
    [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay). The ping, create-workspace-folder and
@@ -75,7 +80,7 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    New-session also reveals the delimiter after a potentially tall wrap-up reply.
    **Pending coverage:** #679 owns cross-device Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
-   ending B while A continues. The curated eight-scenario gate does not cover it.
+   ending B while A continues. The curated nine-scenario gate does not cover it.
 4. **Emulator + deterministic host** ← **shipped (#431).** The same real app + Noise/relay path, but
    claude is swapped for #642's scripted `fakeclaude` backend replaying raw stream-json fixture bytes.
    No real claude, **zero claude turns**; re-running back-to-back uses the same stream contract. Run it with
@@ -160,7 +165,7 @@ production-side KDoc and its relationship to the tier tags #731 minted the same 
 [Add controls](../knowledge/features/channel-list-screen-tree-and-controls.md#add-controls-738) for `treeHostAddTestTag`'s own
 clamping rule.
 
-Rung 3 covers eight scenarios on this one harness: the **ping** happy path (a constrained reply renders);
+Rung 3 covers nine scenarios on this one harness: the **ping** happy path (a constrained reply renders);
 a **tool-use** scenario (#481 — a constrained prompt makes real claude run a shell tool, asserting the
 tool step renders, keyed tolerantly on the verbatim tool name `"Bash"` in the tool-row header); a
 **thinking-spinner** scenario (#482 — a pure-reasoning prompt makes real claude think a beat, asserting
@@ -330,6 +335,29 @@ on the pre-filled+selected `"New channel"` — the #537 selector verbatim); and 
 `"Save as channel…"` (U+2026) is matched **exactly**, because the dialog title is the same literal without the
 ellipsis. Total real-claude cost: **zero** turns — create/promote are daemon round-trips, so no ping is sent.
 
+The **list-archive-entry** scenario (#740 — `interactiveTurn_listArchiveEntry_opensArchived`) is likewise
+**always-on** (not `@Ignore`d): the bar #737 drew on the channel list's `topBar` slot is a **durable** fact
+of every draw of the screen, so the scenario needs no host wait, no seeded conversation, no prompt and no
+claude turn — unlike every sibling above, it spends nothing even in daemon round-trips. It proves the
+list's **own** archive entry (`CD_OPEN_ARCHIVE = "Open archive"`, the sibling of `CD_OPEN_SETTINGS`, kept
+in sync with `cd_open_archive` in `strings.xml` by a comment on the constant) reaches the Archived screen,
+which until #740 was proven only at the event boundary
+(`ChannelListScreenTest.archiveEntry_emitsArchiveTapped`) and, on a device, only via the Settings route
+`interactiveTurn_archiveRestore_roundTripsListMembership` already covers. `awaitChannelList()` is followed
+by an absence check (`ARCHIVED_TITLE` has zero nodes — the list draws no "Archived" text) before the tap, so
+the arrival after it is a genuine inversion, not a match-everything.
+
+**Known gap, not yet hit:** the tap does nothing until `MainActivity`'s `ChannelListEvent.ArchiveTapped`
+branch has a selected host — `RelayConnectionRegistry.selection` is set asynchronously by `reconcile` on
+`Dispatchers.Default`, and `awaitChannelList()` waits only on `CHANNEL_LIST_TEST_TAG`, which is present on
+the blank placeholder draw too, before the registry has necessarily reconciled. In the curated `LIVE=1`
+list this scenario runs 6th of 9 in one shared process (JUnit's hash order), after five methods that
+already wait on the host control, so the registry is populated by the time it runs; the race has never
+been observed. It would surface in a single-method rerun — a builder reproducing a failure in isolation,
+or any reordering that puts this method first — as a `LIST_TIMEOUT_MS` timeout with no other symptom. The
+fix, if this is ever hit, is to call `awaitHostAddControl()` (with no click) between `awaitChannelList()`
+and the tap; it needs no claude turn (verifier review on PR #838, 2026-09-23).
+
 **Why the tier read needs a tag, not a `contentDescription` match** (the non-obvious fact a future sibling
 will want; mechanism changed by #731 — the paragraph below describes the read as it works today, not the
 pre-#731 drilldown). The assembled conversation tree **cannot** discriminate its two tiers with a tolerant
@@ -449,9 +477,9 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the eight curated `@Test` methods (ping + create-workspace-folder, #566;
+incantation to remember — the nine curated `@Test` methods (ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
-save-as-channel, #581) ride the wrapped mode.
+save-as-channel, #581; list-archive-entry, #740) ride the wrapped mode.
 
 These `InteractiveStreamE2ETest` cases preserve the ping and Reset-session
 regressions after host-owned routing. They do not prove two-host navigation,
@@ -464,14 +492,22 @@ reconnect or phone-reply continuity; that rung-3 coverage remains #673.
 - **when a daemon or relay change touching the mobile surface lands**, alongside the daemon's own
   `make e2e-realclaude` when that acceptance crosses repositories.
 
-**Cost:** three ping turns across eight curated methods (ping, create-workspace-folder,
+**Cost:** three ping turns across nine curated methods (ping, create-workspace-folder,
 and new-session), plus a reset wrap-up turn when handoff notes are enabled. Delete,
-archive-restore, change-workspace, rename and save-as-channel spend no Claude turns.
-Allow a few minutes of wall clock; the run is subscription-covered.
+archive-restore, change-workspace, rename, save-as-channel and list-archive-entry
+spend no Claude turns. Allow a few minutes of wall clock; the run is subscription-covered.
 
-The command must exit successfully and report eight executed passing tests, with no
-skips. Shell cleanup preserves the original result and retains failure artifacts;
-a clean XML report with a failing process status is not a passing gate.
+The command must exit successfully and report at least eight executed passing tests
+(nine when the full curated list runs), with no skips. The gate's floor is "at least
+eight" rather than "exactly nine" — `scripts/test_android_test_gate.py` replays an
+eight-case fixture (`fixtures/default-workspace-live/588.xml`), and raising the floor
+to nine would redden that suite for no coverage gain, since nine executed tests already
+clears an eight-test floor (plan `docs/specs/architecture/740-e2e-list-archive-entry.md`
+§ Revisions). A method silently dropped from the curated list is therefore a failure the
+floor does not catch on its own; the executed count must be read against the list's
+actual current size, not just the floor. Shell cleanup preserves the original result and
+retains failure artifacts; a clean XML report with a failing process status is not a
+passing gate.
 
 For the full mechanics — relay URLs, the isolated `e2e-live` instance, prerequisites, and first-run
 assumptions — see [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay). The workflow
@@ -480,7 +516,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated octet of rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of nine rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -504,18 +540,20 @@ device. The [recorded baseline](#verification-status) proves only managed
 `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
 version for now; API 35 is deferred.
 
-**What it runs.** Eight curated methods, passed as a comma-separated `class#method` list:
+**What it runs.** Nine curated methods, passed as a comma-separated `class#method` list:
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
 `InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566),
 `InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (#541),
 `InteractiveStreamE2ETest#interactiveTurn_deleteConversation_removesFromListAndClosesThread` (#554),
 `InteractiveStreamE2ETest#interactiveTurn_archiveRestore_roundTripsListMembership` (#551),
 `InteractiveStreamE2ETest#interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace` (#562),
-`InteractiveStreamE2ETest#interactiveTurn_renameConversation_relabelsTopBarAndListRow` (#537), and
-`InteractiveStreamE2ETest#interactiveTurn_saveAsChannel_promotesToChannelTier` (#581), so exactly
-**three real claude turns** are spent per run — the delete, archive-restore, change-workspace, rename, and
-save-as-channel scenarios each add a method, not a turn
-(create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips).
+`InteractiveStreamE2ETest#interactiveTurn_renameConversation_relabelsTopBarAndListRow` (#537),
+`InteractiveStreamE2ETest#interactiveTurn_saveAsChannel_promotesToChannelTier` (#581), and
+`InteractiveStreamE2ETest#interactiveTurn_listArchiveEntry_opensArchived` (#740), so exactly
+**three real claude turns** are spent per run — the delete, archive-restore, change-workspace, rename,
+save-as-channel and list-archive-entry scenarios each add a method, not a turn
+(create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips;
+list-archive-entry is pure navigation with no daemon round-trip at all).
 The full class also includes the
 #481 tool-use test, which
 stays excluded from LIVE (an extra turn, cost). `LIVE=1` is **mutually exclusive with `DETERMINISTIC=1`**
@@ -551,11 +589,11 @@ Prerequisites (on top of the "How to run" list):
 - The emulator needs outbound internet + DNS + a system-trusted TLS cert for the relay host. It reaches
   the public relay over its own NAT'd internet — **not** the `10.0.2.2` host alias, which is loopback-only.
 
-Cost: **three real claude turns per run across eight curated methods** (ping + create-workspace-folder, #566
+Cost: **three real claude turns per run across nine curated methods** (ping + create-workspace-folder, #566
 + new-session, #541; `/clear` spends none; delete, #554, archive-restore, #551, change-workspace, #562,
-rename, #537, and save-as-channel, #581, each spend none —
-create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips), a few minutes of wall
-clock, subscription-covered.
+rename, #537, save-as-channel, #581, and list-archive-entry, #740, each spend none —
+create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips, and list-archive-entry
+is pure navigation), a few minutes of wall clock, subscription-covered.
 
 Environment checks for a new host (the recorded API 33 run passed these paths):
 
@@ -837,6 +875,15 @@ handoff; this table does not claim a later execution.
 
 Earlier results and failure history:
 
+- **LIVE verified for #740 (2026-09-23):** the dispatcher's real-claude gate ran
+  `python3 scripts/android-test-gate.py live` against `feature/740` merged with `main`,
+  the [recorded run](https://github.com/pyrycode/pyrycode-mobile/issues/740#issuecomment-5786884038)
+  executed all nine curated scenarios — the curated list's first run with
+  `interactiveTurn_listArchiveEntry_opensArchived` on it — with nine passes, no
+  failures or skips, exit 0, wall clock 62.5s. The gate's floor stayed at 8 (see
+  [Pre-ship gate](#pre-ship-gate)); nine executed clears it. This run is the first
+  live evidence that the scenario's [known host-selection race](#what-rung-3-is-made-of)
+  does not fire in the curated ordering; it remains unverified in isolation.
 - **Verified on 2026-09-20:** all 238 non-E2E UI tests passed on the managed Android 13
   device after repairing six stale selectors. All seven stream-json scripted scenarios passed
   against daemon revision `dccd182` and relay revision `62f363f`. Unit tests, lint, formatting,
@@ -998,7 +1045,16 @@ The remaining checks here are specific to a real relay or real Claude execution:
   confirmed upsert, **not** a `conversation_updated` broadcast, so every assertion is on rendered UI) and folded
   into the pre-ship `LIVE=1` gate as the 8th curated method (spending **no** extra claude turn — create/promote
   are conversation-scoped daemon round-trips, promote being a pure registry op), taking the gate from a septet
-  to an octet at three ping turns plus an optional reset wrap-up; API-retry status (attempt N/M) — **rung 2 shipped (#594)**, the
+  to an octet at three ping turns plus an optional reset wrap-up; Layer-3 (real claude) list-archive-entry —
+  **shipped (#740)**, proving the list's own archive entry #737 put on the channel list's bar reaches the
+  Archived screen on its own, independently of the Settings route `interactiveTurn_archiveRestore_roundTripsListMembership`
+  already covers (previously proven only at the event boundary,
+  `ChannelListScreenTest.archiveEntry_emitsArchiveTapped`), always-on (the bar is a durable fact of every
+  draw of the list, so the scenario needs no host wait, no seeded conversation and no claude turn — the
+  only curated method that spends nothing at all, not even a daemon round-trip) and folded into the
+  pre-ship `LIVE=1` gate as the 9th curated method, taking the gate from an octet to a nonet at the same
+  three ping turns plus an optional reset wrap-up (the live gate's floor intentionally stayed at 8, not 9 —
+  see [Pre-ship gate](#pre-ship-gate)); API-retry status (attempt N/M) — **rung 2 shipped (#594)**, the
   `ScriptedApiRetryTest` scenarios driving `api_retry` edges through the real #593 repository projection
   into `ThreadViewModel.apiRetry` and `ApiRetryIndicator`, covering both edges (the rising edge, including
   a climbed counter that must re-render rather than dedup, and the clearing edge reverting to whatever the
@@ -1022,8 +1078,8 @@ explanation as a current limitation. Compaction status ("Compacting conversation
   that fails **any** scenario during which an `unrecognized_message` row (#609) reached the thread, naming
   the frame's `site` (as its wire token, the string an operator greps the daemon for) and a sanitized,
   length-capped `message_type` — never the payload body, never a conversation id. Every curated `LIVE=1`
-  method becomes a sentinel for free, and a ninth added tomorrow inherits the guard with **no** per-test
-  wiring. Red does **not** mean broken: it means claude gained a message kind and the daemon's measured
+  method becomes a sentinel for free; the ninth, list-archive-entry (#740), inherited the guard with **no**
+  per-test wiring when it landed. Red does **not** mean broken: it means claude gained a message kind and the daemon's measured
   ignore-list needs re-taking. Shape: the rule resets a process-global recorder before the body and checks
   it after, fed by an inert pass-through `TappingConversationRepository` installed in
   `E2eTestApplication`'s relay branch. Its `hostConversationModule` also supplies
@@ -1033,9 +1089,10 @@ explanation as a current limitation. Compaction status ("Compacting conversation
   opening its own, because `observeMessages` issues a full-history `backfill_since` on *every*
   subscription, so a guard with one collector per conversation would put that traffic on the live wire
   during a timing-sensitive real-claude turn (a sentinel that adds flakiness of its own is worse than no
-  sentinel). The recorder **accumulates** across the scenario, which is what covers the four curated
-  methods that deliberately finish on a list surface (delete, archive-restore, rename, save-as-channel):
-  an end-of-run look at the thread alone would be vacuous for half the octet. A red body keeps its own
+  sentinel). The recorder **accumulates** across the scenario, which is what covers the five curated
+  methods that deliberately finish outside the thread on a list surface (delete, archive-restore, rename,
+  save-as-channel, and list-archive-entry, which never enters the thread at all): an end-of-run look at
+  the thread alone would be vacuous for over half the nonet. A red body keeps its own
   cause — the finding is attached with `addSuppressed`, since the likeliest manifestation of a parser gap
   is the scenario's *own* assertion timing out because the reply never rendered. **The non-vacuity proof
   now covers rung 2 and rung 4** (`ScriptedUnrecognizedMessageTest`, above): the daemon emits

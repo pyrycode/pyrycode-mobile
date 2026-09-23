@@ -281,8 +281,9 @@ distinction from the tree's own blank at all — see the next section.
   (#729's workspace projection this screen iterates), [ConversationAvatar](./conversation-avatar.md),
   [WorkspacePicker](./workspace-picker.md), [Navigation](./navigation.md), [Dependency injection](./dependency-injection.md)
 - Downstream: #737 (done — draws the list's own settings + archive bar in the `topBar` slot this section
-  describes; #740 files the still-open follow-up, a rung-3 scenario reaching Archived through the list's own
-  archive entry rather than Settings'), #738 (done — the remaining half of #732's split; retired the FAB and
+  describes; #740, done, added the rung-3 scenario reaching Archived through the list's own archive entry
+  rather than Settings' — see [Interactive stream e2e](../../e2e-interactive-stream.md#what-rung-3-is-made-of)),
+  #738 (done — the remaining half of #732's split; retired the FAB and
   the compatibility `ChannelListUiState` placeholders #731 deliberately kept, and gave the list its own
   section-header and host-row add controls), #744 (done, split from #642 — the host row's edit control and
   the rename path this section describes), #745 (done, split from #642 — wires `Unpair host` behind a
