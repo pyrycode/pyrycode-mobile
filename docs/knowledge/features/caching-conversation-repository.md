@@ -202,8 +202,9 @@ decorateRepository(
 `E2eTestApplication` replaces `decorateRepository` with `::TappingConversationRepository` for its
 instrumented harness. Because the cache sits *underneath* that hook rather than inside it, the
 tapping decorator still observes the restored, merged thread — a cache wired the other way round
-would be invisible to exactly the harness [#673](https://github.com/pyrycode/pyrycode-mobile/issues/673)
-uses. The demo branch (`FakeConversationRepository`) never reaches this code path and gets no
+would be invisible to exactly the harness [#850](https://github.com/pyrycode/pyrycode-mobile/issues/850)
+uses to prove offline reading and reconnect reconciliation live. The demo branch
+(`FakeConversationRepository`) never reaches this code path and gets no
 cache. A blank `serverId` (a malformed route) also gets no cache, so restored rows are never filed
 under the empty id's namespace.
 
@@ -250,10 +251,12 @@ into a captured log line.
 
 No Compose UI test: restored rows draw through the same composables a live row does, below the
 existing [`ConnectionBanner`](connection-banner.md) in its offline state. Live continuity across
-a real reconnect is
-[#673](https://github.com/pyrycode/pyrycode-mobile/issues/673)'s; this wrapper's scripted coverage
-(`stream`, `reconnect`, `replay-order`) ran green with zero real turns, per the dispatcher gate on
-PR #837's re-review.
+a real reconnect — a loaded conversation staying readable while its host link is cut and
+reconciling a peer's turn once the link is restored — is proven live by
+[#850](https://github.com/pyrycode/pyrycode-mobile/issues/850)
+(`InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`); this
+wrapper's scripted coverage (`stream`, `reconnect`, `replay-order`) ran green with zero real turns,
+per the dispatcher gate on PR #837's re-review.
 
 ## Related
 
