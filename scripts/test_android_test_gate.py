@@ -4,6 +4,7 @@ import io
 import os
 from pathlib import Path
 import re
+import socket
 import subprocess
 import tempfile
 import time
@@ -174,8 +175,9 @@ class AndroidGateTest(unittest.TestCase):
                 self.assertTrue(gate.ui_suite_skippable(paths))
         e2e = "app/src/androidTest/java/de/pyryco/mobile/e2e/"
         for paths in ([], None, ["app/src/main/java/de/pyryco/mobile/MainActivity.kt"], [e2e + "E2eTestApplication.kt"],
-                      [e2e + "E2eInstrumentationRunner.kt"], [e2e + "UnrecognizedRowSentinel.kt"],
-                      ["app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SessionBoundaryAssertions.kt"],
+                      [e2e + "E2eInstrumentationRunner.kt"],
+                      ["app/src/sharedTest/java/de/pyryco/mobile/e2e/UnrecognizedRowSentinel.kt"],
+                      ["app/src/sharedTest/java/de/pyryco/mobile/ui/conversations/thread/SessionBoundaryAssertions.kt"],
                       ["app/build.gradle.kts"], ["gradle/libs.versions.toml"], ["docs/a.md", "app/src/main/X.kt"]):
             with self.subTest(paths=paths):
                 self.assertFalse(gate.ui_suite_skippable(paths))
@@ -200,6 +202,7 @@ class AndroidGateTest(unittest.TestCase):
         for changed, environment, runs in ((docs_only, {}, False), (docs_only, {"UI_GATE_FULL": "1"}, True),
                                            (app, {}, True), ([], {}, True), (None, {}, True)):
             with self.subTest(changed=changed, environment=environment), tempfile.TemporaryDirectory() as tmp:
+                self.device_test(Path(tmp), "de/pyryco/mobile/data/StoreTest.kt")
                 run = Mock(return_value=subprocess.CompletedProcess([], 0))
                 with patch.object(gate, "ROOT", Path(tmp)), patch.dict(os.environ, environment, clear=True), \
                         patch("sys.argv", ["android-test-gate.py", "ui"]), \
@@ -211,6 +214,92 @@ class AndroidGateTest(unittest.TestCase):
                     self.assertIn(":app:pixel2Api33AtdDebugAndroidTest", run.call_args.args[0])
                 else:
                     self.assertEqual(result, 0)
+
+    def device_test(self, root, relative, body="@Test fun ok() {}"):
+        path = root / "app/src/androidTest/java" / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body)
+
+    def ui_command(self, root, environment):
+        run = Mock(return_value=subprocess.CompletedProcess([], 0))
+        with patch.object(gate, "ROOT", root), patch.dict(os.environ, environment, clear=True), \
+                patch("sys.argv", ["android-test-gate.py", "ui"]), \
+                patch.object(gate, "changed_paths", return_value=["app/src/main/X.kt"]), \
+                patch.object(gate.subprocess, "run", run), contextlib.redirect_stderr(io.StringIO()):
+            result = gate.main()
+        return result, run.call_args.args[0] if run.called else None
+
+    def test_ui_gate_runs_only_device_only_classes_unless_asked_for_all(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.device_test(root, "de/pyryco/mobile/ui/KeyboardTest.kt")
+            self.device_test(root, "de/pyryco/mobile/data/StoreTest.kt")
+            self.device_test(root, "de/pyryco/mobile/ui/Helper.kt", "fun helper() {}")
+            self.device_test(root, "de/pyryco/mobile/e2e/LiveTest.kt")
+            with patch.object(gate, "ROOT", root):
+                self.assertEqual(gate.device_only_classes(),
+                                 ["de.pyryco.mobile.data.StoreTest", "de.pyryco.mobile.ui.KeyboardTest"])
+            _, command = self.ui_command(root, {})
+            self.assertIn("-Pandroid.testInstrumentationRunnerArguments.class="
+                          "de.pyryco.mobile.data.StoreTest,de.pyryco.mobile.ui.KeyboardTest", command)
+            self.assertIn("-Pandroid.experimental.androidTest.numManagedDeviceShards=1", command)
+            _, command = self.ui_command(root, {"UI_DEVICE_ALL": "1"})
+            self.assertFalse(any("testInstrumentationRunnerArguments.class=" in part for part in command))
+            self.assertIn("-Pandroid.experimental.androidTest.numManagedDeviceShards=2", command)
+
+    def test_ui_gate_refuses_an_empty_device_only_set(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result, command = self.ui_command(Path(tmp), {})
+            self.assertEqual(result, 1)
+            self.assertIsNone(command)
+
+    def test_managed_avd_is_found_only_for_the_managed_device(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "avd" / "gradle-managed"
+            home.mkdir(parents=True)
+            with patch.dict(os.environ, {"ANDROID_USER_HOME": tmp}):
+                self.assertIsNone(gate.managed_avd("pixel2Api33Atd"))
+                (home / "dev33_aosp_atd_arm64-v8a_Pixel_2.ini").write_text("")
+                self.assertEqual(gate.managed_avd("pixel2Api33Atd"), (home, "dev33_aosp_atd_arm64-v8a_Pixel_2"))
+                self.assertIsNone(gate.managed_avd("otherDevice"))
+
+    def test_free_emulator_port_skips_a_busy_pair(self):
+        port = gate.free_emulator_port()
+        self.assertEqual(port % 2, 0)
+        with socket.socket() as busy:
+            busy.bind(("127.0.0.1", port))
+            self.assertNotEqual(gate.free_emulator_port(), port)
+
+    def test_scripted_all_runs_every_scenario_and_names_the_failures(self):
+        # No AVD, so it falls back to the managed device per scenario; the report logic is the same.
+        expected = gate.E2E_PACKAGE + ".DeterministicInteractiveStreamE2ETest"
+        with tempfile.TemporaryDirectory() as tmp:
+            root, run_dir = Path(tmp), Path(tmp) / "run"
+            run_dir.mkdir()
+            reports = root / "app/build/outputs/androidTest-results/managedDevice/debug/pixel2Api33Atd"
+            reports.mkdir(parents=True)
+            seen = []
+
+            def run(command, **kwargs):
+                scenario = kwargs["env"]["SCENARIO"]
+                seen.append((scenario, kwargs["env"]["DETERMINISTIC"], kwargs["env"]["DEVICE"]))
+                failure = "<failure/>" if scenario == "reconnect" else ""
+                (reports / "TEST-result.xml").write_text(
+                    f'<testsuite tests="1" failures="{1 if failure else 0}">'
+                    f'<testcase classname="{expected}" name="{scenario}">{failure}</testcase></testsuite>')
+                return subprocess.CompletedProcess(command, 1 if failure else 0)
+
+            stderr, stdout = io.StringIO(), io.StringIO()
+            with patch.object(gate, "ROOT", root), patch.object(gate, "managed_avd", return_value=None), \
+                    patch.object(gate.subprocess, "run", run), patch.object(gate.signal, "signal"), \
+                    contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout):
+                result = gate.run_scripted_all({"ANDROID_HOME": "/sdk"}, run_dir, "pixel2Api33Atd")
+        self.assertEqual(result, 1)
+        self.assertEqual([s for s, _, _ in seen], list(gate.SCENARIOS))
+        self.assertTrue(all(d == "1" and device == "pixel2Api33Atd" for _, d, device in seen))
+        self.assertIn("scripted reconnect: FAIL", stderr.getvalue())
+        self.assertIn("failed: reconnect", stderr.getvalue())
+        self.assertEqual(stdout.getvalue().count("<testcase"), len(gate.SCENARIOS))
 
     def test_changed_paths_lists_branch_uncommitted_and_untracked_files(self):
         with tempfile.TemporaryDirectory() as tmp:

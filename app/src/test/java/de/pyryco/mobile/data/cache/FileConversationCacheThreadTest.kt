@@ -158,6 +158,24 @@ class FileConversationCacheThreadTest {
         }
 
     @Test
+    fun `model refusal rows are never stored`() =
+        runTest {
+            val settled = message("m1")
+            val refusal =
+                ThreadItem.ModelRefusal(
+                    originalModel = "claude-opus-5-5",
+                    fallbackModel = "claude-sonnet-5",
+                    banner = "refused and retried",
+                    bannerTruncated = false,
+                    occurredAt = Instant.parse("2026-09-05T10:00:00Z"),
+                )
+            cache().writeThread("server-a", "conv-1", listOf(settled, refusal)).getOrThrow()
+
+            assertEquals(listOf(settled), cache().readThread("server-a", "conv-1"))
+            assertTrue("refusal banner leaked into the document", !threadFiles().single().readText().contains("refused and retried"))
+        }
+
+    @Test
     fun `only the newest rows are kept`() =
         runTest {
             val rows = (1..MAX_CACHED_THREAD_ROWS + 5).map { message("m$it") }

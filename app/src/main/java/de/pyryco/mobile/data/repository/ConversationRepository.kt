@@ -718,6 +718,38 @@ sealed interface ThreadItem {
         val manual: Boolean,
         val occurredAt: Instant,
     ) : ThreadItem
+
+    /**
+     * claude refused a turn on one model and either retried it on another or did not (#875). Carried by the
+     * `model_refusal_fallback` / `model_refusal_no_fallback` frames, which are conversation-scoped with no
+     * `turn_id`, so the row drives no turn, no status indicator and no model state — `model_announced`
+     * stays the authority for which model runs. The wire cannot name the refused partial reply, so no other
+     * row is retracted or edited. The frames' `scope` and `refusal_category` drive nothing and are not
+     * carried; a field the daemon dropped for size simply arrives empty.
+     *
+     * **Every string here is claude-authored and unsanitized** — bounded daemon-side, never cleaned. Held
+     * verbatim; the render boundary owes the stripping (see `ModelRefusalRow`). Consumers must render them
+     * inert and attributed to claude, must not persist them, and must not log them.
+     *
+     * Identity: the frame type — `fallbackModel != null` — plus [occurredAt], the envelope's (or stored
+     * entry's) `ts`: the protocol's `(type, ts)` join key. Invariant: unique among a thread's refusal rows.
+     * The thread's `LazyColumn` keys the row on it, so a duplicate crashes the list; uniqueness is a producer
+     * obligation — both thread writers skip one the thread already holds (`holdsModelRefusal`) — documented
+     * here and asserted in tests, not enforced at construction (as [SessionBoundary]).
+     *
+     * @param originalModel The model claude says refused the turn; empty when claude named none.
+     * @param fallbackModel The model claude says it retried on — **non-null iff the frame was
+     *   `model_refusal_fallback`**, which is what makes it the row's type half.
+     * @param banner claude's display prose about the refusal; empty when it sent none.
+     * @param bannerTruncated Whether the daemon named `banner` in `truncated_fields` — its answer, never re-derived.
+     */
+    data class ModelRefusal(
+        val originalModel: String,
+        val fallbackModel: String?,
+        val banner: String,
+        val bannerTruncated: Boolean,
+        val occurredAt: Instant,
+    ) : ThreadItem
 }
 
 /**

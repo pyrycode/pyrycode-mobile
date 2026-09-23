@@ -19,7 +19,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
-class SessionBoundaryDelimiterTest {
+class SessionBoundaryDelimiterScreenTest {
     @get:Rule
     val composeTestRule = createComposeRule()
 
