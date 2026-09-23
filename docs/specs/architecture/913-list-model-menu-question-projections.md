@@ -114,3 +114,7 @@ Pending for the documentation stage:
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-23
+
+## Revisions
+
+- **2026-09-23 — two KDoc links outside the repository.** `ThinkingProgressProjection` and `UsageLimitProjection` each named `modelMenusByConversation` as a repository member in a comment. The ticket asks for doc links to follow the moved state, so both now name `ModelMenuProjection.modelMenusByConversation`. Comment-only; no code in either file changes. The wiring also passes `pump::send` directly, as planned, and `{ requestId.incrementAndGet() }` as a lambda for both projections.
