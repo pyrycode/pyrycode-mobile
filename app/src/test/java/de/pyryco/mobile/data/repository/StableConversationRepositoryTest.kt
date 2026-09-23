@@ -219,6 +219,24 @@ class StableConversationRepositoryTest {
 
     // #829: an upload with no live connection is a result, never a throw — and an oversized file says
     // not to retry even then, since reconnecting would not help.
+    // #830: the attachment-bearing send reaches the live host's repository with its ids untouched.
+    @Test
+    fun sendMessageWithAttachments_delegatesToTheLiveRepositoryOrThrowsWhileAbsent() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val sent = message("m-att")
+            repoA.sendMessageResult = sent
+            val current = MutableStateFlow<ConversationRepository?>(null)
+            val facade = StableConversationRepository(current)
+
+            assertTrue(runCatching { facade.sendMessage("c1", "hi", listOf("a")) }.exceptionOrNull() is IllegalStateException)
+
+            current.value = repoA
+            assertSame(sent, facade.sendMessage("c1", "hi", listOf("b", "a", "b")))
+            assertEquals(listOf(Triple("c1", "hi", listOf("b", "a", "b"))), repoA.sendWithAttachmentsCalls)
+            assertTrue("the two-argument send was not used", repoA.sendMessageCalls.isEmpty())
+        }
+
     @Test
     fun uploadAttachment_whileAbsent_isReconnectRequiredOrTooLarge() =
         runTest {
@@ -835,6 +853,17 @@ class StableConversationRepositoryTest {
             text: String,
         ): Message {
             sendMessageCalls += (conversationId to text)
+            return sendMessageResult
+        }
+
+        val sendWithAttachmentsCalls = mutableListOf<Triple<String, String, List<String>>>()
+
+        override suspend fun sendMessage(
+            conversationId: String,
+            text: String,
+            attachmentIds: List<String>,
+        ): Message {
+            sendWithAttachmentsCalls += Triple(conversationId, text, attachmentIds)
             return sendMessageResult
         }
 
