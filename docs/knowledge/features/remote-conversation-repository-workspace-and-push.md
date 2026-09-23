@@ -14,12 +14,12 @@ fold — and its reply is a **new** type (`workspace_folder_created`), not a reu
 override suspend fun createWorkspaceFolder(name: String): String {
     require(name.isNotBlank()) { "name must not be blank" }
     val request = Envelope(
-        id = requestId.incrementAndGet(), type = TYPE_CREATE_WORKSPACE_FOLDER, ts = Clock.System.now().toString(),
+        id = relayRequests.nextRequestId(), type = TYPE_CREATE_WORKSPACE_FOLDER, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(
             CreateWorkspaceFolderPayloadDto(parent = WORKSPACE_FOLDER_PARENT, name = name.trim()),
         ),
     )
-    val reply = sendAndAwaitReply(request)   // throws on server `error` / not-Open before any decode
+    val reply = relayRequests.sendAndAwaitReply(request)   // throws on server `error` / not-Open before any decode
     return MobileJson.decodeFromJsonElement<WorkspaceFolderCreatedPayloadDto>(reply).path
 }
 ```
@@ -44,7 +44,7 @@ override suspend fun createWorkspaceFolder(name: String): String {
   transition. The returned `path` is handed straight to the picker's `onPicked`; nothing is stored in
   `projection`/`threadByConversation`/`lastMessages`.
 - **No `conversation.not_found` path exists for this verb** (it names no conversation), so unlike every
-  other write-verb `mapError`'s `IllegalArgumentException` branch is never reached from the server here —
+  other write-verb `RelayRequests.mapError`'s `IllegalArgumentException` branch is never reached from the server here —
   every server reject (malformed / empty-parent / bad-name / rejected-target) is `protocol.malformed` →
   `RelayErrorException`. The only `IllegalArgumentException` on this path is the client-side blank-name
   guard, thrown **before** any send.
@@ -76,17 +76,19 @@ already the host targeting — one repository instance per host — so neither v
 in [`onInbound`](remote-conversation-repository-reads-and-thread-store.md#the-repository--one-projection-cold-fan-out)
 for unsolicited relabels. #721 shipped the apply with nothing to complete; this ticket adds the sender and
 the waiter together. The daemon has no `archive_workspace`: `archiveWorkspace` is a client-side fan-out of
-the existing per-conversation `archive` (`sendArchiveToggle`), one `archive_conversation` per active row on
+the existing per-conversation `archive` (since #914 `ConversationCommands.archive`, still built on the
+private `sendArchiveToggle` helper), one `archive_conversation` per active row on
 this host whose `cwd` equals `path`. It sends no rename and no delete, so the stored label survives an
-archive.
+archive. `renameWorkspace` was not moved by #914 — its request/reply plumbing runs through `RelayRequests`
+directly from the repository, the same as every other one-shot read/write in this class:
 
 ```kotlin
 override suspend fun renameWorkspace(path: String, label: String?) {
     val request = Envelope(
-        id = requestId.incrementAndGet(), type = TYPE_RENAME_WORKSPACE, ts = Clock.System.now().toString(),
+        id = relayRequests.nextRequestId(), type = TYPE_RENAME_WORKSPACE, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(RenameWorkspacePayloadDto(path = path, label = label)),
     )
-    val reply = sendAndAwaitReply(request)
+    val reply = relayRequests.sendAndAwaitReply(request)
     val confirmedPath = try {
         MobileJson.decodeFromJsonElement<WorkspaceUpdatedPayloadDto>(reply).path
     } catch (e: IllegalArgumentException) { null }
@@ -94,11 +96,11 @@ override suspend fun renameWorkspace(path: String, label: String?) {
 }
 
 override suspend fun archiveWorkspace(path: String) {
-    val targets = projection.value.orEmpty().filter { it.cwd == path && !it.archived }.map { it.id }
+    val targets = conversationListProjection.current().filter { it.cwd == path && !it.archived }.map { it.id }
     var firstFailure: Exception? = null
     for (conversationId in targets) {
         try {
-            archive(conversationId)
+            archive(conversationId)   // the repository's one-line hand-off to ConversationCommands.archive (#914)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -125,7 +127,7 @@ override suspend fun archiveWorkspace(path: String) {
 - **The reason a malformed correlated reply cannot be left to the generic decode-or-drop.** Every other
   `onInbound` arm's decode failure just drops the frame and leaves the collector alive — safe, because
   nothing is waiting on it. A `rename_workspace` reply is different: dropping it silently would leave
-  `renameWorkspace`'s caller suspended until teardown (`failAllPending`) instead of failing promptly. So the
+  `renameWorkspace`'s caller suspended until teardown (`RelayRequests.failAllPending`) instead of failing promptly. So the
   `TYPE_WORKSPACE_UPDATED` arm's decode `catch` calls `waiter?.completeExceptionally(malformedWorkspaceReply())`
   before returning — only when a waiter exists; an unsolicited malformed push still just drops. The
   kotlinx `SerializationException` itself is never forwarded, since its message can quote the payload (a
@@ -136,15 +138,18 @@ override suspend fun archiveWorkspace(path: String) {
   "apply-then-complete" from "complete-then-apply". `RemoteConversationRepositoryWorkspaceTest`'s caller
   coroutine runs on `UnconfinedTestDispatcher`, so `complete()` resumes it **inside** the inbound collector,
   immediately after the line that calls it — the only way the ordering assertion is load-bearing.
-- **`archiveWorkspace` targets a one-time snapshot of `projection.value`, never a fetched or awaited list.**
+- **`archiveWorkspace` targets a one-time snapshot of `ConversationListProjection.current()`, never a fetched
+  or awaited list.**
   A `null` projection (no `conversations` snapshot yet) yields no targets, matching the ticket's "does not
   wait for a list that has not arrived yet." A path with no matching active row sends nothing at all — no
   frame, no round trip. Archived rows at the same path are excluded (already inactive) but never touched
-  either way; `archive`'s own confirmed-upsert (unchanged from its existing per-conversation shape) is what
+  either way; `archive`'s own confirmed-upsert (on `ConversationCommands` since #914, unchanged from its
+  existing per-conversation shape) is what
   actually moves a row off the active list, one row at a time as its own reply lands.
 - **Sequential, not concurrent, and `CancellationException` is checked first because it is itself an
   `IllegalStateException`.** Archiving one row at a time keeps ordering deterministic and means a lost
-  connection (`sendAndAwaitReply`'s not-connected `check`, or `failAllPending` mid-await) fails every
+  connection (`RelayRequests.sendAndAwaitReply`'s not-connected `check`, or `RelayRequests.failAllPending`
+  mid-await) fails every
   remaining row immediately rather than after a full timeout each — "try the rest" costs nothing once the
   pump is dead. The per-row `catch` tests `CancellationException` before the general `Exception` catch and
   rethrows it at once; getting that order backwards would swallow a caller's own cancellation as an ordinary
@@ -177,14 +182,14 @@ reply **per collection**, not a flow over a `StateFlow` fed by the always-runnin
 ```kotlin
 override fun recentWorkspaces(): Flow<List<String>> =
     flow {
-        val reply = sendAndAwaitReply(recentWorkspacesRequest())
+        val reply = relayRequests.sendAndAwaitReply(recentWorkspacesRequest())
         val list = MobileJson.decodeFromJsonElement<RecentWorkspacesListPayloadDto>(reply)
         emit(list.workspaces.map { it.path }.filter { it.isNotBlank() && it != DEFAULT_SCRATCH_CWD })
     }.catch { emit(emptyList()) }
 
 private fun recentWorkspacesRequest(): Envelope =
     Envelope(
-        id = requestId.incrementAndGet(), type = TYPE_RECENT_WORKSPACES, ts = Clock.System.now().toString(),
+        id = relayRequests.nextRequestId(), type = TYPE_RECENT_WORKSPACES, ts = Clock.System.now().toString(),
         payload = JsonObject(emptyMap()),
     )
 ```
@@ -231,7 +236,9 @@ Registers the phone's FCM push token with the paired daemon over v2 `register_pu
 knows where to send a wake notification when the phone is backgrounded. [#359](../codebase/359.md)
 implements it as a **pure request/reply** that reuses #346's correlation primitive and `mapError`
 **verbatim** — it adds no `onInbound` branch (the `ack`/`error` arms already complete the pending
-deferred) and no new error mapping.
+deferred) and no new error mapping. The body now lives on `ConversationCommands` (#914,
+`data/repository/ConversationCommands.kt`); the repository's `suspend fun registerPushToken` is a one-line
+hand-off.
 
 **Two load-bearing departures from the three #314 mutations:**
 
@@ -253,24 +260,27 @@ deferred) and no new error mapping.
 The flow (the entire method, ≤ ~12 lines):
 
 ```kotlin
+// ConversationCommands
 suspend fun registerPushToken(token: String) {
     val request = Envelope(
-        id = requestId.incrementAndGet(),
-        type = "register_push_token", ts = Clock.System.now().toString(),
+        id = requests.nextRequestId(),
+        type = TYPE_REGISTER_PUSH_TOKEN, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(
-            RegisterPushTokenPayloadDto(platform = "fcm", token = token, deviceName = deviceName)),
+            RegisterPushTokenPayloadDto(platform = PLATFORM_FCM, token = token, deviceName = deviceName)),
     )
-    sendAndAwaitReply(request)   // throws on server `error` / not-Open; the empty {} ack carries nothing → ignored
+    requests.sendAndAwaitReply(request)   // throws on server `error` / not-Open; the empty {} ack carries nothing → ignored
 }
 ```
 
 - **`RegisterPushTokenPayloadDto`** is the fifth encode-only request DTO (`{platform, token, device_name}`,
   all required) — see the [wire-layer doc](mobile-protocol-v2-wire-layer-application-payloads.md#outbound-request-encoders--the-ackerror-correlated-reply-models-346).
-  `platform` is the constant `"fcm"`; `device_name` is the connection-level constructor `deviceName`.
-- **`sendAndAwaitReply` does all the work, unchanged:** it throws `IllegalStateException` when `pump.send`
+  `platform` is the constant `"fcm"`; `device_name` is the `deviceName` `ConversationCommands` is
+  constructed with — the repository's connection-level device name, unchanged by the #914 move.
+- **`RelayRequests.sendAndAwaitReply` does all the work, unchanged:** it throws `IllegalStateException` when
+  the pump send
   returns `false` (session not Open), suspends until the correlated reply lands, returns normally on the
   empty `ack`, and rethrows the collector's exceptional completion on `error` (a `RelayErrorException`
-  carrying `code`/`retryable` via the unchanged `mapError` — `server.binary_busy` retryable /
+  carrying `code`/`retryable` via the unchanged `RelayRequests.mapError` — `server.binary_busy` retryable /
   `auth.invalid_token` not, so a caller can branch on `retryable`). The returned `{}` ack payload is
   ignored — there is nothing to decode and no projection to fold.
 - **No client-side dedupe** — the server dedupes the `(platform, token, device_name)` triple, so this just

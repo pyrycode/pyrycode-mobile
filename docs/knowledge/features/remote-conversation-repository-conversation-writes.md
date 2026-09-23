@@ -17,13 +17,13 @@ override suspend fun setSessionSettings(
     sessionId: String, model: String?, effort: String?, yolo: Boolean?,
 ) {
     val request = Envelope(
-        id = requestId.incrementAndGet(),
+        id = relayRequests.nextRequestId(),
         type = TYPE_SET_SESSION_SETTINGS, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(
             SetSessionSettingsPayloadDto(sessionId = sessionId, model = model, effort = effort, yolo = yolo),
         ),
     )
-    val reply = sendAndAwaitReply(request)   // throws on server `error` / not-Open before any decode
+    val reply = relayRequests.sendAndAwaitReply(request)   // throws on server `error` / not-Open before any decode
     MobileJson.decodeFromJsonElement<SessionSettingsUpdatedPayloadDto>(reply)  // validation only, discarded
 }
 ```
@@ -46,11 +46,11 @@ override suspend fun setSessionSettings(
   `complete` is still idempotent; an unmatched `inReplyTo` is still a harmless no-op (the daemon never
   broadcasts this reply).
 - **No IAE-crash path — simpler error posture than `rename`.** The unhosted-session error code is
-  `session.not_found`, **not** `conversation.not_found`, so `mapError` routes it through the else-branch
-  to a swallowable `RelayErrorException` carrying `.code`, never `IllegalArgumentException`. Every server
+  `session.not_found`, **not** `conversation.not_found`, so `RelayRequests.mapError` routes it through the
+  else-branch to a swallowable `RelayErrorException` carrying `.code`, never `IllegalArgumentException`. Every server
   error this verb can produce (`session.not_found`, `protocol.malformed` for an invalid model/effort the
   daemon re-validates, `server.binary_offline`) is a `RelayErrorException`; not-connected is
-  `IllegalStateException` via `sendAndAwaitReply`, same as every sibling verb.
+  `IllegalStateException` via `RelayRequests.sendAndAwaitReply`, same as every sibling verb.
 - **`model` / `effort` vocabulary is the caller's concern, not this method's.** The strings are forwarded
   **verbatim** (as `rename` forwards the dialog's name); the daemon re-validates
   (`validModel`/`validEffort`) and rejects an invalid value with `protocol.malformed` before persisting.
@@ -100,7 +100,7 @@ override fun refreshSessionSettings(conversationId: String) = bumpSettingsRevisi
   no-op the caller has nothing to recover from (the next connection re-reads on subscription regardless).
 - **`flatMapLatest` is what makes a superseded reply harmless, not a correlation check.** A new trigger
   cancels the in-flight read before starting the next, so a reply that arrives late has no collector to
-  reach; `sendAndAwaitReply`'s `finally` has already deregistered its pending deferred, so the reply
+  reach; `RelayRequests.sendAndAwaitReply`'s `finally` has already deregistered its pending deferred, so the reply
   correlates with nothing and is dropped at the demux — the same idempotent-`complete`-on-no-match posture
   every correlated reply already has. `session_settings` carries **no `conversation_id` of its own**, so a
   reading is routed strictly by the id the caller asked with; a hostile or confused daemon cannot steer one
@@ -119,14 +119,14 @@ override fun refreshSessionSettings(conversationId: String) = bumpSettingsRevisi
   `request_session_settings` and nothing else" true even in the degenerate case: no claude child starts, no
   model turn begins, no `set_session_settings` rides along, and nothing is written to `AppPreferences`.
 - **`readSessionSettings` is the `requestHistory` body minus the fold** — encode
-  `RequestSessionSettingsPayloadDto(conversationId)`, `sendAndAwaitReply`, decode the reply through
+  `RequestSessionSettingsPayloadDto(conversationId)`, `relayRequests.sendAndAwaitReply`, decode the reply through
   [`toSessionSettings()`](mobile-protocol-v2-wire-layer-application-payloads.md#the-session-settings-read-exchange-590).
   It throws rather than converting to `null` itself — `sessionSettingsRead` owns that conversion — so every
   failure mode (pump not `Open`, a server `error`, a malformed reply) stays distinguishable at the seam that
   needs to distinguish them. The verb publishes **no reject codes of its own** (it always answers, even for
   an unhosted/unbound/dormant conversation — the all-zero reply is a successful read of "nothing resolved",
-  not a failure), so a server `error` here can only be a generic transport-level one the existing `mapError`
-  arm already handles.
+  not a failure), so a server `error` here can only be a generic transport-level one the existing
+  `RelayRequests.mapError` arm already handles.
 - **`effort` is the saved choice; `effectiveEffort` is the applied reading — neither substitutes for the
   other,** and `effectiveEffort` keeps `session_settings`' one optional wire key's three states apart:
   **key omitted** → `EffectiveEffort.Unavailable` (unsupported, or an older daemon that predates the field
@@ -172,32 +172,35 @@ override fun refreshSessionSettings(conversationId: String) = bumpSettingsRevisi
 
 Archives or restores an existing conversation over v2 `archive_conversation` / `unarchive_conversation`
 (server pyrycode#881), replacing the two `UnsupportedOperationException` throws these methods carried since
-\#312. Both overrides delegate to one private helper parameterized by wire type — the mobile mirror of the
+\#312. The body now lives on `ConversationCommands` (#914, `data/repository/ConversationCommands.kt`); the
+repository's `override suspend fun archive` / `unarchive` are one-line hand-offs. On `ConversationCommands`,
+both public commands delegate to one private helper parameterized by wire type — the mobile mirror of the
 server's single handler registered under both verbs:
 
 ```kotlin
-override suspend fun archive(conversationId: String): Unit = sendArchiveToggle(conversationId, TYPE_ARCHIVE_CONVERSATION)
-override suspend fun unarchive(conversationId: String): Unit = sendArchiveToggle(conversationId, TYPE_UNARCHIVE_CONVERSATION)
+// ConversationCommands
+suspend fun archive(conversationId: String): Unit = sendArchiveToggle(conversationId, TYPE_ARCHIVE_CONVERSATION)
+suspend fun unarchive(conversationId: String): Unit = sendArchiveToggle(conversationId, TYPE_UNARCHIVE_CONVERSATION)
 
 private suspend fun sendArchiveToggle(conversationId: String, type: String) {
     val request = Envelope(
-        id = requestId.incrementAndGet(), type = type, ts = Clock.System.now().toString(),
+        id = requests.nextRequestId(), type = type, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(ArchiveConversationPayloadDto(conversationId = conversationId)),
     )
-    val reply = sendAndAwaitReply(request)              // throws on server `error` / not-Open; the decode below is unreachable on failure
+    val reply = requests.sendAndAwaitReply(request)     // throws on server `error` / not-Open; the decode below is unreachable on failure
     val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-    upsertConversation(conversation)                    // confirmed-upsert — ONLY after a successful decode; no return value (interface is Unit)
+    conversationList.upsertConversation(conversation)   // confirmed-upsert — ONLY after a successful decode; no return value (interface is Unit)
 }
 ```
 
 - **One shared request DTO for both verbs.** `ArchiveConversationPayloadDto` carries only
   `conversation_id` — archive and restore are a symmetric toggle of one durable flag (same shape, same
   handler, same not-found/reply behaviour), so pyrycode#881 defined one payload server-side for the pair
-  and this mirrors that; the repository disambiguates by the `Envelope.type` string passed into
+  and this mirrors that; `ConversationCommands` disambiguates by the `Envelope.type` string passed into
   `sendArchiveToggle`, not by the payload shape.
 - **The reply is `conversation_updated`**, the same success arm `rename`/`promote` already use — no
   `onInbound` change needed. Decoded through the same #318 `ConversationResponseDto`, so a malformed reply
-  throws the decode exception before `upsertConversation` runs, same as every prior mutation.
+  throws the decode exception before `ConversationListProjection.upsertConversation` runs, same as every prior mutation.
 - **The load-bearing change is to the shared decode boundary, not these methods.** Before #549,
   `ConversationResponseDto` didn't decode any archived field and `toConversation()` hardcoded
   `archived = false` — every mutation reply, including this one, would have folded a permanently-unarchived
@@ -210,7 +213,7 @@ private suspend fun sendArchiveToggle(conversationId: String, type: String) {
   `rename` was silently dropping until this DTO change (undetectable before now — nothing could archive a
   conversation yet).
 - **Idempotent.** pyrycode#881 replies `conversation_updated` with the unchanged state on a
-  re-archive/re-unarchive; `upsertConversation` replaces the entry with an equal value — a benign re-emit,
+  re-archive/re-unarchive; `ConversationListProjection.upsertConversation` replaces the entry with an equal value — a benign re-emit,
   no special-casing needed.
 - **Contrast #549's `is_archived` with #720's `workspace_label`.** #549 needed a defaulted field because
   the server genuinely omits `is_archived` from some reply shapes (`conversation_created`/`promote`), so a
@@ -242,19 +245,22 @@ private suspend fun sendArchiveToggle(conversationId: String, type: String) {
 Permanently deletes an existing conversation over v2 `delete_conversation` (server pyrycode#822, PR #884),
 replacing the interface-default throw this method carried since #312. Diverges from every prior mutation
 in two ways: the reply is a **dedicated** ack (`conversation_deleted`, bare `{id}`), not a reused
-`conversation_updated`; and the fold **removes** rather than upserts.
+`conversation_updated`; and the fold **removes** rather than upserts. The body now lives on
+`ConversationCommands` (#914, `data/repository/ConversationCommands.kt`); the repository's `override
+suspend fun delete` is a one-line hand-off.
 
 ```kotlin
-override suspend fun delete(conversationId: String) {
+// ConversationCommands
+suspend fun delete(conversationId: String) {
     val request = Envelope(
-        id = requestId.incrementAndGet(), type = TYPE_DELETE_CONVERSATION, ts = Clock.System.now().toString(),
+        id = requests.nextRequestId(), type = TYPE_DELETE_CONVERSATION, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(DeleteConversationPayloadDto(conversationId = conversationId)),
     )
     val reply = try {
-        sendAndAwaitReply(request)
+        requests.sendAndAwaitReply(request)
     } catch (alreadyGone: IllegalArgumentException) {
-        // mapError maps conversation.not_found → IAE and nothing else — the delete contract is
-        // *tolerant* of unknown ids, so already-gone converges as success (the deliberate divergence
+        // RelayRequests.mapError maps conversation.not_found → IAE and nothing else — the delete contract
+        // is *tolerant* of unknown ids, so already-gone converges as success (the deliberate divergence
         // from rename/archive's IAE-crash-on-not-found). Catch is scoped to the await only.
         removeConversation(conversationId)
         return
@@ -269,26 +275,28 @@ override suspend fun delete(conversationId: String) {
   Delete's reply is genuinely new (`conversation_deleted`), so `onInbound`'s correlated-reply `when` arm
   (the same one `TYPE_ACK` / `TYPE_CONVERSATION_UPDATED` / `TYPE_SESSION_SETTINGS_UPDATED` share) had to
   add `TYPE_CONVERSATION_DELETED`. Skipping this would leave the ack unrouted (falls to the `else`
-  no-op arm), so the pending `CompletableDeferred` would never complete and `sendAndAwaitReply` would
+  no-op arm), so the pending waiter [`RelayRequests`](remote-conversation-repository-state-errors-and-handoff.md)
+  holds would never complete and `RelayRequests.sendAndAwaitReply` would
   suspend until connection teardown — a silent-forever no-op, not a crash.
 - **The ack carries `id`, not `conversation_id` — and its value is discarded.** `ConversationDeletedPayloadDto`
   decodes `{id}` purely to validate the reply shape (the `SessionSettingsUpdatedPayloadDto` posture); the
-  repository removes the id it *sent*, never the id the reply echoes, so a lying relay cannot redirect the
+  command removes the id it *sent*, never the id the reply echoes, so a lying relay cannot redirect the
   removal to a different conversation.
-- **REMOVE, not upsert — `removeConversation` clears all three projections.** The contrast to
-  `upsertConversation`: filters the id out of `projection` (the list), `threadByConversation`, and
-  `lastMessages`. The remote holds these as three separate `StateFlow`s (unlike the fake's unified
-  `state: Map<id, ConversationRecord>`, where removing one map entry empties list/messages/last-message at
-  once), so a list-only removal would leave `observeMessages`/`observeLastMessage` still serving a
-  hard-deleted conversation's rows — a contract violation of the interface's documented three-stream
-  post-condition. `List.filterNot` / `Map - missingKey` are element-equal on an absent id, so `StateFlow`
-  conflation makes a repeat or already-gone delete a no-op re-emit.
+- **REMOVE, not upsert — the private `removeConversation` helper clears both remaining projections.**
+  Since #913/#912 the list and last-message streams live on `ConversationListProjection` and the thread on
+  `ThreadProjection`; `removeConversation` (moved with `delete` as its only caller, #914) calls
+  `conversationList.remove(conversationId)` and `threadProjection.remove(conversationId)`. The remote holds
+  these as separate projections (unlike the fake's unified `state: Map<id, ConversationRecord>`, where
+  removing one map entry empties list/messages/last-message at once), so a list-only removal would leave
+  `observeMessages`/`observeLastMessage` still serving a hard-deleted conversation's rows — a contract
+  violation of the interface's documented three-stream post-condition. Both projections' removal is
+  idempotent on an absent id, so a repeat or already-gone delete re-emits nothing new.
 - **`conversation.not_found` converges as success — do not clone rename/archive's IAE-crash path.** The
   `ConversationRepository.delete` contract is explicitly tolerant of unknown ids (unlike archive/rename,
   which throw on unknown ids and rely on the [`#490`](../codebase/490.md) guard's deliberate
-  IAE-doesn't-catch crash posture). Delete catches the same `mapError`-produced `IllegalArgumentException`
+  IAE-doesn't-catch crash posture). Delete catches the same `RelayRequests.mapError`-produced `IllegalArgumentException`
   locally and converges by removing the id and returning normally — an already-deleted id is success, not
-  a bug signal. The catch is scoped to `sendAndAwaitReply` only (not the decode line below it), so a
+  a bug signal. The catch is scoped to `RelayRequests.sendAndAwaitReply` only (not the decode line below it), so a
   malformed-ack `SerializationException` (⊂ `IllegalArgumentException`) still propagates and is never
   mis-read as "already gone."
 - **No return value** — the `ConversationRepository` contract's `delete` is `Unit`, like archive/unarchive.
@@ -307,12 +315,12 @@ shape with a `cwd` payload instead of `name`:
 ```kotlin
 override suspend fun changeWorkspace(conversationId: String, workspace: String): Session {
     val request = Envelope(
-        id = requestId.incrementAndGet(), type = TYPE_CHANGE_WORKSPACE, ts = Clock.System.now().toString(),
+        id = relayRequests.nextRequestId(), type = TYPE_CHANGE_WORKSPACE, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(ChangeWorkspacePayloadDto(conversationId = conversationId, cwd = workspace)),
     )
-    val reply = sendAndAwaitReply(request)              // throws on server `error` / not-Open; the decode below is unreachable on failure
+    val reply = relayRequests.sendAndAwaitReply(request) // throws on server `error` / not-Open; the decode below is unreachable on failure
     val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-    upsertConversation(conversation)                    // confirmed-upsert — ONLY after a successful decode
+    conversationListProjection.upsertConversation(conversation) // confirmed-upsert — ONLY after a successful decode
     return Session(id = "", conversationId = conversationId, claudeSessionUuid = "",
         startedAt = Clock.System.now(), endedAt = null)
 }
@@ -329,7 +337,7 @@ override suspend fun changeWorkspace(conversationId: String, workspace: String):
   would be false assurance (the phone cannot know the daemon's `$HOME`).
 - **The folded `cwd` is server-authoritative** (the reply's value — the daemon's resolved realpath — not
   the request's), identical to `rename`'s "return the reply's name, not the input" discipline.
-- **`conversation.not_found` → `IllegalArgumentException`**, reusing `mapError` unchanged, same
+- **`conversation.not_found` → `IllegalArgumentException`**, reusing `RelayRequests.mapError` unchanged, same
   reachability profile as `rename`: the call site (`ThreadViewModel.onWorkspacePicked`) always passes the
   currently-open, hence server-known, `conversationId`, and the [`#490`](../codebase/490.md) guard
   deliberately does not catch IAE — unreachable-by-construction from the shipped UI, not silently
@@ -363,20 +371,20 @@ and, through it, the create-channel (#666) and edit-channel (#667) modals are th
 override suspend fun requestSystemPrompt(conversationId: String): SystemPromptReading {
     check(CAPABILITY_INTERACTIVE in negotiatedCapabilities()) { SYSTEM_PROMPT_READ_NOT_INTERACTIVE }
     val request = Envelope(
-        id = requestId.incrementAndGet(), type = TYPE_REQUEST_SYSTEM_PROMPT, ts = Clock.System.now().toString(),
+        id = relayRequests.nextRequestId(), type = TYPE_REQUEST_SYSTEM_PROMPT, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(RequestSystemPromptPayloadDto(conversationId = conversationId)),
     )
-    return sendAndAwaitReply(request).toSystemPromptReading()
+    return relayRequests.sendAndAwaitReply(request).toSystemPromptReading()
 }
 
 override suspend fun setSystemPrompt(conversationId: String, systemPrompt: String?) {
     require(systemPrompt == null || SystemPromptLimit.fits(systemPrompt)) { SYSTEM_PROMPT_TOO_LONG }
     val request = Envelope(
-        id = requestId.incrementAndGet(), type = TYPE_SET_SYSTEM_PROMPT, ts = Clock.System.now().toString(),
+        id = relayRequests.nextRequestId(), type = TYPE_SET_SYSTEM_PROMPT, ts = Clock.System.now().toString(),
         payload = setSystemPromptPayload(conversationId, systemPrompt),
     )
-    val reply = sendAndAwaitReply(request)
-    upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation())
+    val reply = relayRequests.sendAndAwaitReply(request)
+    conversationListProjection.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation())
 }
 ```
 
@@ -407,9 +415,9 @@ override suspend fun setSystemPrompt(conversationId: String, systemPrompt: Strin
   one of `matches` / `differs` / `no_session`; anything else fails the read alone, with no other state
   touched.
 - **`system_prompt` is registered in the shared success-reply arm of `onInbound`, next to
-  `TYPE_SESSION_SETTINGS`** — without that entry the read's `sendAndAwaitReply` would suspend forever,
+  `TYPE_SESSION_SETTINGS`** — without that entry the read's `RelayRequests.sendAndAwaitReply` would suspend forever,
   since nothing would ever complete its waiter. The reply carries **no `conversation_id`**, so it can only
-  complete the `pendingRequests` entry whose id it answers via `inReplyTo`; a stray, duplicate, or
+  complete the `RelayRequests.pendingRequests` entry whose id it answers via `inReplyTo`; a stray, duplicate, or
   unsolicited one has nowhere to land, the same routing posture `session_settings` already has.
 - **The write's ack reuses `conversation_updated`** — no new reply type, no `onInbound` change for the
   write half. Decoded through the same #318 `ConversationResponseDto` boundary every other mutation uses
@@ -423,11 +431,11 @@ override suspend fun setSystemPrompt(conversationId: String, systemPrompt: Strin
   recount. The boundary is inclusive and multi-byte-aware — exactly 8192 UTF-8 bytes of multi-byte text is
   sent, 8193 is refused — because the daemon counts bytes, not `String.length`.
 - **Errors:** `conversation.not_found` → `IllegalArgumentException` and any other server code →
-  `RelayErrorException`, both through the existing `mapError`, same as `rename`. A
+  `RelayErrorException`, both through the existing `RelayRequests.mapError`, same as `rename`. A
   `SerializationException` (⊂ `IllegalArgumentException`) from a malformed read reply shares that
   supertype with the not-found case — a caller that needs to tell an over-limit write apart from a
   not-found one checks `SystemPromptLimit.fits` itself rather than pattern-matching the exception. Not
-  connected is `IllegalStateException` via `sendAndAwaitReply`, same as every sibling verb. No branch of
+  connected is `IllegalStateException` via `RelayRequests.sendAndAwaitReply`, same as every sibling verb. No branch of
   either method logs anything: every message it can throw is a static literal.
 - **`StableConversationRepository`** delegates both verbatim to `live` — `IllegalStateException` when no
   connection is live, the plain snapshot-or-throw shape every other one-shot uses; no new delegation

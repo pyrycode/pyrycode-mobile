@@ -16,11 +16,11 @@ The flow (the entire method, ≤ ~12 lines):
 ```kotlin
 override suspend fun requestScreenSnapshot(conversationId: String): String {
     val request = Envelope(
-        id = requestId.incrementAndGet(),
+        id = relayRequests.nextRequestId(),
         type = TYPE_REQUEST_SNAPSHOT, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(RequestSnapshotPayloadDto(conversationId = conversationId)),
     )
-    val reply = sendAndAwaitReply(request)   // throws on server `error` / not-Open; decode below unreachable on failure
+    val reply = relayRequests.sendAndAwaitReply(request)   // throws on server `error` / not-Open; decode below unreachable on failure
     return MobileJson.decodeFromJsonElement<ScreenSnapshotPayloadDto>(reply).text
 }
 ```
@@ -29,12 +29,13 @@ override suspend fun requestScreenSnapshot(conversationId: String): String {
   correlated reply type, so `TYPE_SCREEN_SNAPSHOT` is added to the success-arm `when` (see the [demux
   table](remote-conversation-repository-reads-and-thread-store.md#the-repository--one-projection-cold-fan-out) — it was previously an `else -> Unit` no-op, so
   existing flows are behaviorally unchanged). Everything else is the existing pattern: same single `init`
-  collector, `pendingRequests`, `requestId`, `sendAndAwaitReply`. **No second pump subscription.**
+  collector, [`RelayRequests`](remote-conversation-repository-state-errors-and-handoff.md)'s `pendingRequests`, `nextRequestId` and
+  `sendAndAwaitReply` (#914). **No second pump subscription.**
 - **Reuses the #374 wire DTOs verbatim:** encodes `RequestSnapshotPayloadDto` (`{conversation_id}`),
   decodes `ScreenSnapshotPayloadDto` (`{conversation_id, text, ts}`), returns `.text` only. `ts` is **never
   read**; `text` is returned **verbatim** — never parsed, trimmed, or sanitized (decode fidelity is the
   whole point of the floor). All (de)serialization is through `MobileJson`, never a default `Json`.
-- **The decode runs caller-side, after `sendAndAwaitReply` returns**, so a malformed `screen_snapshot`
+- **The decode runs caller-side, after `RelayRequests.sendAndAwaitReply` returns**, so a malformed `screen_snapshot`
   (missing `text`) throws `SerializationException` (⊂ `IllegalArgumentException`) in the caller's coroutine
   and **never threatens the single inbound collector** — same posture as `createDiscussion` / `promote`.
 - **No local membership guard:** an unknown `conversationId` surfaces through the server's
@@ -43,7 +44,7 @@ override suspend fun requestScreenSnapshot(conversationId: String): String {
 - **`security-sensitive` → a logging discipline:** the snapshot `text` is server-originated screen content
   returned literally, so the method adds **zero** `Log.*` — the request, envelope, reply, `conversationId`,
   and `text` are all unlogged (the #346 "content may be sensitive" posture). No new error mapping;
-  `mapError` is reused unchanged. `TYPE_REQUEST_SNAPSHOT` / `TYPE_SCREEN_SNAPSHOT` join the full `TYPE_*`
+  `RelayRequests.mapError` is reused unchanged. `TYPE_REQUEST_SNAPSHOT` / `TYPE_SCREEN_SNAPSHOT` join the full `TYPE_*`
   companion registry (every wire type is a named constant here).
 
 ## `dropQueuedMessage(conversationId, queuedMessageId)` — the `dequeue_message` outbound send (#466)
@@ -62,7 +63,7 @@ entry](queued-backlog.md#dropping-a-queued-entry-dequeue_message-466).
 ```kotlin
 override suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long) {
     val request = Envelope(
-        id = requestId.incrementAndGet(),
+        id = relayRequests.nextRequestId(),
         type = TYPE_DEQUEUE_MESSAGE, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(
             DequeueMessagePayloadDto(conversationId = conversationId, queuedMsgId = queuedMessageId),
@@ -81,8 +82,8 @@ override suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: 
 }
 ```
 
-- **Fire-and-forget, not `sendAndAwaitReply` (#859).** The method sends through the raw `pump.send` (the
-  `interrupt` idiom) and returns once the frame is on the wire. It registers in no `pendingRequests` slot,
+- **Fire-and-forget, not `RelayRequests.sendAndAwaitReply` (#859).** The method sends through the raw `pump.send` (the
+  `interrupt` idiom) and returns once the frame is on the wire. It registers in no `RelayRequests.pendingRequests` slot,
   so it can now throw only `IllegalStateException` from a not-connected session (`pump.send` returns
   `false`) — never `RelayErrorException` or `IllegalArgumentException`.
 - **`pendingDrops: MutableStateFlow<Map<String, Map<Long, String>>>`** — `conversationId -> (queued_msg_id
@@ -127,20 +128,20 @@ override suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: 
 
 One backward step of a conversation's scroll-back over v2 `request_history` (server pyrycode#2113,
 answered by pyrycode#2116). The [`rename`](remote-conversation-repository-send-create-promote-rename.md#renameconversationid-name--the-fourth-mutation-530)
-shape — encode → `sendAndAwaitReply` → typed-decode — **minus the state fold**: a page is handed back
+shape — encode → `RelayRequests.sendAndAwaitReply` → typed-decode — **minus the state fold**: a page is handed back
 to the caller and folded into the timeline by #645, so this method touches no projection and caches
 nothing.
 
 ```kotlin
 override suspend fun requestHistory(conversationId: String, cursor: String, limit: Int): HistoryPage {
     val request = Envelope(
-        id = requestId.incrementAndGet(),
+        id = relayRequests.nextRequestId(),
         type = TYPE_REQUEST_HISTORY, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(
             RequestHistoryPayloadDto(conversationId = conversationId, cursor = cursor, limit = limit),
         ),
     )
-    val reply = sendAndAwaitReply(request)   // throws on server `error` / not-Open; decode below unreachable on failure
+    val reply = relayRequests.sendAndAwaitReply(request)   // throws on server `error` / not-Open; decode below unreachable on failure
     return MobileJson.decodeFromJsonElement<HistoryPagePayloadDto>(reply).toHistoryPage()
 }
 ```
@@ -155,7 +156,7 @@ override suspend fun requestHistory(conversationId: String, cursor: String, limi
 - **Deliberately no `.catch {}`**, unlike its one-shot sibling [`recentWorkspaces`](remote-conversation-repository-workspace-and-push.md#recentworkspaces--the-fourth-read-verb-leanest-of-the-family-no-fold-565),
   which fails closed to empty for a picker: every failure must reach the caller so a walk can tell the
   one **retryable** code (`history.unavailable`) from the three permanent ones
-  (`history.invalid_cursor` / `history.invalid_page_size` / `history.invalid_request`). `mapError`
+  (`history.invalid_cursor` / `history.invalid_page_size` / `history.invalid_request`). `RelayRequests.mapError`
   needs no new mapping — it is already generic over unrecognised codes, and it already turns the
   daemon's `conversation.not_found` into the `IllegalArgumentException` the `ConversationRepository`
   contract pins for an unknown conversation.
@@ -183,25 +184,31 @@ Stop sends the open thread's id as the sole payload field, `conversation_id`
 follow-active cursor, which another device can move. See the authoritative
 [Interrupt (v2) protocol](https://github.com/pyrycode/pyrycode/blob/main/docs/protocol-mobile.md#interrupt-v2).
 
+The body lives on `ConversationCommands` (#914, `data/repository/ConversationCommands.kt`); the
+repository's `suspend fun interrupt` is a one-line hand-off:
+
 ```kotlin
+// ConversationCommands
 suspend fun interrupt(conversationId: String) {
-    check(pump.send(interruptRequest(conversationId))) { "$TYPE_INTERRUPT not sent: session not connected" }
+    check(send(interruptRequest(conversationId))) { "$TYPE_INTERRUPT not sent: session not connected" }
 }
 private fun interruptRequest(conversationId: String): Envelope = Envelope(
-    id = requestId.incrementAndGet(), type = TYPE_INTERRUPT,
+    id = requests.nextRequestId(), type = TYPE_INTERRUPT,
     ts = Clock.System.now().toString(),
     payload = JsonObject(mapOf("conversation_id" to JsonPrimitive(conversationId))),
 )
 ```
 
-- **Fire-and-forget:** each invocation calls plain `pump.send` once. There is no
-  ack or error reply to await; `sendAndAwaitReply` would hang. A false send result
-  throws `IllegalStateException`, which `ThreadViewModel.sendInterrupt` swallows
-  without a log or UI error. Cancellation still propagates through the ViewModel.
+- **Fire-and-forget:** each invocation calls the repository's pump `send` once, passed into
+  `ConversationCommands`' constructor. There is no ack or error reply to await;
+  `RelayRequests.sendAndAwaitReply` would hang. A false send result throws `IllegalStateException`,
+  which `ThreadViewModel.sendInterrupt` swallows without a log or UI error. Cancellation still
+  propagates through the ViewModel.
 - **Inbound events own turn state:** this method changes no projection on success
   or failure. Sending does not prove that the turn stopped; the existing
   conversation-routed `turn_state`/`turn_end` events update the busy flag.
-- **Preserve the callback seam:** the concrete method is reached through the
+- **Preserve the callback seam:** the concrete method is reached through the repository's one-line
+  hand-off, then the
   [coordinator passthrough](relay-repository-coordinator-seams-and-passthroughs.md#outbound-interrupt-passthrough-458)
   and a defaulted `suspend (String) -> Unit` callback. A `conversation_id` payload
   does not require adding it to `ConversationRepository` or the facade.
@@ -229,7 +236,12 @@ conversation avoids that dependency. The daemon validates the id and enforces th
 `interactive` capability; the id itself is not authorization. `workspace` is not
 sent by this control operation.
 
-- **Fire-and-forget:** use plain `pump.send`, never `sendAndAwaitReply`. There is no
+The body lives on `ConversationCommands` (#914, `data/repository/ConversationCommands.kt`), beside
+[`interrupt`](#interruptconversationid--explicitly-targeted-v2-interrupt); the repository's
+`override suspend fun startNewSession` is a one-line hand-off.
+
+- **Fire-and-forget:** the send goes through the repository's pump `send`, never
+  `RelayRequests.sendAndAwaitReply`. There is no
   success ack to await. A false send result throws `IllegalStateException`, which
   the [thread action](thread-overflow-menu.md) surfaces using fixed local copy.
   Sending successfully does not establish that rotation completed.
