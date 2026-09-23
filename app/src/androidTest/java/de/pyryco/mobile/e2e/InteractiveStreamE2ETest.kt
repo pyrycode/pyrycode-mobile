@@ -1,13 +1,20 @@
 package de.pyryco.mobile.e2e
 
+import android.Manifest
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasAnySibling
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
@@ -16,16 +23,29 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.lifecycle.Lifecycle
+import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.cache.ConversationCache
+import de.pyryco.mobile.data.crypto.PairedServer
+import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ConnectionStateSource
+import de.pyryco.mobile.data.repository.ConversationFilter
+import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.di.RelayConnectionRegistry
+import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_RELAY_URL
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
+import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLIC_KEY
+import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
@@ -34,9 +54,13 @@ import de.pyryco.mobile.ui.conversations.thread.PING_PROMPT
 import de.pyryco.mobile.ui.conversations.thread.SESSION_BOUNDARY_EXPLANATION
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedPingReply
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedSessionBoundary
+import de.pyryco.mobile.ui.conversations.thread.pingReplyMatcher
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
@@ -96,6 +120,13 @@ class InteractiveStreamE2ETest {
             .getInstrumentation()
             .targetContext
             .getString(R.string.cd_thread_thinking)
+
+    // The queued row's state description and its drop control (#849), production strings from resources:
+    //   thread_queued_state_desc = "Waiting to send", cd_thread_queued_drop = "Drop this queued message".
+    private val queuedStateDescription: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_queued_state_desc)
+    private val queuedDropDescription: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_thread_queued_drop)
 
     @Test
     fun interactiveTurn_pingPrompt_streamsPingReplyIntoThread() {
@@ -749,6 +780,28 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * The list's own archive entry reaches the Archived screen (#740). #737 put two entries on the channel
+     * list's bar; [interactiveTurn_archiveRestore_roundTripsListMembership] travels the settings one (list →
+     * Settings → Archived), and this travels the archive one, which otherwise is proven only at the event
+     * boundary (`ChannelListScreenTest.archiveEntry_emitsArchiveTapped`).
+     *
+     * The bar is drawn on every state of the list, so the scenario needs no connection wait, no seeded
+     * conversation, no prompt and no claude turn. The list draws no "Archived" text, so [ARCHIVED_TITLE] is
+     * asserted absent before the tap and the arrival after it is a genuine inversion.
+     */
+    @Test
+    fun interactiveTurn_listArchiveEntry_opensArchived() {
+        awaitChannelList()
+        composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).assertCountEquals(0)
+
+        composeTestRule.onNode(hasContentDescription(CD_OPEN_ARCHIVE)).performClick()
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(ARCHIVED_TITLE).onFirst().assertIsDisplayed()
+    }
+
+    /**
      * Change-workspace twin of the create-workspace-folder scenario (#562, Layer 3): drive the real
      * "Change workspace…" overflow flow end to end against a real daemon, exercising the already-shipped
      * #560 `change_workspace` wire and #561 surfacing. Create a plain discussion, then via the **real**
@@ -1150,6 +1203,678 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * Two paired hosts whose conversations share one id stay separate (#847, rung 3). Daemon-minted ids
+     * never collide by chance, so `scripts/e2e-emulator.sh` seeds the collision: before either daemon
+     * starts it writes ONE promoted conversation under the same run-unique id into host A's instance and
+     * a second test daemon's instance, named [collisionNameA][ARG_COLLISION_NAME_A] and
+     * [collisionNameB][ARG_COLLISION_NAME_B]. Host A is pre-paired by [E2eTestApplication]; host B is
+     * paired here through the app's own paste-a-code flow, with the code the harness minted and
+     * re-pointed at the relay the phone dials.
+     *
+     * **What "separate" is read from.** Row, thread and cache are all keyed by `(serverId,
+     * conversationId)` (#731, #795–#798). A key that dropped the host would show one name twice, open
+     * one host's conversation from the other's row, or file a rename under both. Each check below keys
+     * on the two exact, run-unique names, so the two reads distinguish the hosts with no new test tag:
+     *  * **under its own host** — folding a host's Channels row hides its own conversation and leaves
+     *    the other host's ([assertEachUnderOwnHost]);
+     *  * **opens its own conversation** — a row's thread shows that row's name and never the other's
+     *    ([assertRowOpensOwnThread]).
+     * Both are re-read after a rename of host A's conversation, after each host's link is cut and
+     * restored, and after the object graph is rebuilt over the same on-device state — the restart an
+     * instrumented test can perform ([E2eTestApplication.rebuildGraph]; it cannot kill its own process).
+     *
+     * **Shared app state.** Every live method shares one Application and one Koin graph, and a newly
+     * saved host becomes the registry's selection, which the other scenarios' connection waits follow.
+     * Host B is therefore removed in `finally`, on whichever graph is current then.
+     *
+     * **Zero real-claude turns**: pairing, navigation, rename and link cycling are daemon round-trips.
+     */
+    @Test
+    fun interactiveTurn_twoHostsCollidingConversationId_stayPerHost() {
+        val serverIdA = twoHostArg(ARG_SERVER_ID)
+        val serverIdB = twoHostArg(ARG_SERVER_ID_B)
+        val collisionId = twoHostArg(ARG_COLLISION_CONVERSATION_ID)
+        val nameA = twoHostArg(ARG_COLLISION_NAME_A)
+        val nameB = twoHostArg(ARG_COLLISION_NAME_B)
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        var relaunched: ActivityScenario<MainActivity>? = null
+        try {
+            // 1. Host A's seeded conversation is on the list, and host A really holds it under the seeded id.
+            awaitChannelList()
+            awaitConnected()
+            awaitChannelRow(nameA)
+            assertHostHoldsConversation(serverIdA, collisionId, nameA)
+
+            // 2. Pair host B through the section header's add control → scanner → paste link → PairCodeScreen.
+            //    The scanner asks for CAMERA at runtime; granting it first keeps the system dialog off screen.
+            instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
+            pairHostByCode(twoHostArg(ARG_PAIR_CODE_B))
+            awaitChannelRow(nameB)
+            assertHostHoldsConversation(serverIdB, collisionId, nameB)
+
+            // 3. AC-1 + AC-2: each conversation sits under its own host and each row opens its own thread.
+            val labelA = hostLabel(serverIdA)
+            val labelB = hostLabel(serverIdB)
+            assertHostsStaySeparate(labelA to nameA, labelB to nameB)
+
+            // 4. AC-2: rename host A's conversation from its thread (#537's drive). The new name shows on
+            //    A's thread and A's row only; B's row and thread keep B's name.
+            val renamedA = RENAMED_NAME_PREFIX + System.currentTimeMillis()
+            openRow(nameA)
+            renameOpenThread(renamedA)
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitChannelList()
+            awaitChannelRow(renamedA)
+            composeTestRule.onAllNodes(channelRow(nameA)).assertCountEquals(0)
+            assertHostsStaySeparate(labelA to renamedA, labelB to nameB)
+
+            // 5. AC-3: cut and restore each host's link in turn, then re-read both.
+            cycleHostLink(serverIdA)
+            cycleHostLink(serverIdB)
+            awaitChannelRow(renamedA)
+            awaitChannelRow(nameB)
+            assertHostsStaySeparate(labelA to renamedA, labelB to nameB)
+
+            // 6. AC-3: restart. No activity may outlive the graph it resolved, so the rule's activity is
+            //    destroyed first (recreate() would retain its view models, which hold the old graph).
+            composeTestRule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)
+            instrumentation.runOnMainSync {
+                (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph()
+            }
+            relaunched = ActivityScenario.launch(MainActivity::class.java)
+            awaitChannelList()
+            awaitConnected()
+            awaitChannelRow(renamedA)
+            awaitChannelRow(nameB)
+            assertHostsStaySeparate(labelA to renamedA, labelB to nameB)
+        } finally {
+            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverIdB) }
+            relaunched?.close()
+        }
+    }
+
+    /**
+     * A turn started from another client continues on the phone (#848, rung 3). A [SecondClientPeer] —
+     * a second paired device on host A with its own token ([ARG_PEER_TOKEN]) and key, standing in for the
+     * desktop — sends the constrained ping prompt into a chat the phone has open.
+     *
+     * The daemon carries no live frame with another device's message text: the turn's stream frames fan
+     * out to every interactive connection, and the message text reaches the phone through history. So the
+     * checks are what the operator sees, however delivered:
+     *  * **while open** — claude's reply renders in the thread exactly once;
+     *  * **after leaving and reopening** — the peer's message and the reply each render exactly once.
+     *
+     * The chat is renamed to a run-unique name before any message is sent, so the daemon's first-message
+     * auto-naming never fires (a name set by rename is never overwritten) and the row can be found again.
+     * The prompt count is read inside the thread's scrollable list, where a delivered bubble and an inline
+     * queued row both live, so a message drawn once as each would count twice; the top bar is outside it.
+     *
+     * **One real-claude turn**: the peer's ping.
+     */
+    @Test
+    fun interactiveTurn_peerStartedTurn_continuesOnPhone() {
+        val args = InstrumentationRegistry.getArguments()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer =
+            SecondClientPeer(
+                PairedServer(
+                    serverId = serverId,
+                    token = twoHostArg(ARG_PEER_TOKEN),
+                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                    serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
+                ),
+            )
+        try {
+            // 1. The phone creates a chat and is in its thread; the new id is the one it did not hold before.
+            awaitChannelList()
+            awaitConnected()
+            val before = runBlocking { withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { true } } }
+            createChat()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+            }
+            val conversationId =
+                runBlocking {
+                    withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { ids -> (ids - before).isNotEmpty() } - before }
+                }.single()
+            val chatName = PEER_CHAT_NAME_PREFIX + System.currentTimeMillis()
+            renameOpenThread(chatName)
+
+            // 2. AC-1: the peer, as its own device, sends into that conversation and observes its frames.
+            runBlocking {
+                peer.open(CONNECT_TIMEOUT_MS)
+                peer.sendMessage(conversationId, PING_PROMPT, THREAD_TIMEOUT_MS)
+                peer.awaitFrame(conversationId, "turn_end", REPLY_TIMEOUT_MS)
+            }
+
+            // 3. AC-2: with the thread open, claude's reply renders there once.
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            composeTestRule.onAllNodes(pingReplyMatcher(), useUnmergedTree = true).assertCountEquals(1)
+
+            // 4. AC-3: leave, reopen, and read the message and the reply once each.
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitChannelList()
+            val chatRow = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(chatName, substring = true)
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) { runCatching { scrollListTo(chatRow) }.isSuccess }
+            composeTestRule.onAllNodes(chatRow).onFirst().performClick()
+            val peerMessage = hasText(PING_PROMPT) and hasAnyAncestor(hasScrollToNodeAction())
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(peerMessage, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            composeTestRule.waitForIdle()
+            composeTestRule.onAllNodes(peerMessage, useUnmergedTree = true).assertCountEquals(1)
+            composeTestRule.onAllNodes(pingReplyMatcher(), useUnmergedTree = true).assertCountEquals(1)
+        } finally {
+            peer.close()
+        }
+    }
+
+    /**
+     * Phone replies, queued sends and drops stay consistent with another client (#849, rung 3). In a
+     * conversation the [SecondClientPeer] starts, the peer's opening turn has claude run a shell command
+     * ([WAIT_PROMPT]) that needs permission. No device answers until the queue steps are done, so the
+     * pending prompt holds the turn open for them, with no timing involved:
+     *  * the phone's [PING_PROMPT] queues — a queued row on the phone and an item in the peer's snapshot;
+     *  * the phone queues and drops [DROP_PROMPT] — gone from both backlogs (its echo bubble stays, #859);
+     *  * the peer queues and drops [PEER_QUEUED_PROMPT] — a plain queued row on the phone until then.
+     * The peer, paired with `--allow-remote-permissions`, then allows the command once. The turn ends and
+     * the ping drains: claude's reply renders once on the phone, the prompt draws once,
+     * the peer sees that turn's `turn_end`, and both backlogs are empty — so neither dropped message can
+     * still reach claude, and neither one's reply token is ever drawn.
+     *
+     * Every backlog check on the peer reads the latest `queue_state`, which fans out to every interactive
+     * connection. The prompt counts use #848's list matcher, so a message drawn once as a bubble and once
+     * as a queued row counts twice.
+     *
+     * **Two real-claude turns**: the peer's wait turn and the drained ping.
+     */
+    @Test
+    fun interactiveTurn_peerQueue_staysConsistentAcrossClients() {
+        val args = InstrumentationRegistry.getArguments()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer =
+            SecondClientPeer(
+                PairedServer(
+                    serverId = serverId,
+                    token = twoHostArg(ARG_PEER_TOKEN),
+                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                    serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
+                ),
+            )
+        try {
+            // 1. The phone creates and renames a chat, as #848 does; the peer joins as its own device.
+            awaitChannelList()
+            awaitConnected()
+            val before = runBlocking { withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { true } } }
+            createChat()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+            }
+            val conversationId =
+                runBlocking {
+                    withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { ids -> (ids - before).isNotEmpty() } - before }
+                }.single()
+            renameOpenThread(QUEUE_CHAT_NAME_PREFIX + System.currentTimeMillis())
+
+            // 2. The peer starts the conversation with a turn that stops on a permission prompt. The prompt
+            //    stays outstanding until step 6, so every queue step runs while that turn is still open.
+            val permissionModalId =
+                runBlocking {
+                    peer.open(CONNECT_TIMEOUT_MS)
+                    peer.sendMessage(conversationId, WAIT_PROMPT, THREAD_TIMEOUT_MS)
+                    peer.awaitPermissionModal(conversationId, REPLY_TIMEOUT_MS)
+                }
+
+            // 3. AC-2: the phone's message queues behind it, on the phone and in the peer's snapshot.
+            sendFromPhone(PING_PROMPT)
+            awaitQueuedRow(PING_PROMPT)
+            runBlocking { peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.any { it.text == PING_PROMPT } } }
+
+            // 4. AC-3: a message the phone queues and drops leaves both backlogs; the ping stays queued. The
+            //    phone's own echo of it stays drawn as a bubble until #859 is fixed (the phone waits for a
+            //    dequeue ack the daemon never sends), so only its queued row is checked here. Once #859 lands,
+            //    check awaitGoneFromThread(DROP_PROMPT) here and a zero inThreadList(DROP_PROMPT) count in step 7.
+            sendFromPhone(DROP_PROMPT)
+            awaitQueuedRow(DROP_PROMPT)
+            runBlocking { peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.any { it.text == DROP_PROMPT } } }
+            val dropControl = hasContentDescription(queuedDropDescription) and hasAnyAncestor(queuedRow(DROP_PROMPT))
+            scrollListTo(dropControl)
+            composeTestRule.onNode(dropControl).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(queuedRow(DROP_PROMPT)).fetchSemanticsNodes().isEmpty()
+            }
+            runBlocking {
+                peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue ->
+                    queue.none { it.text == DROP_PROMPT } && queue.any { it.text == PING_PROMPT }
+                }
+            }
+
+            // 5. AC-3: a message the peer queues is a plain queued row on the phone until the peer drops it.
+            val peerItem =
+                runBlocking {
+                    peer.sendMessage(conversationId, PEER_QUEUED_PROMPT, THREAD_TIMEOUT_MS)
+                    peer
+                        .awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.any { it.text == PEER_QUEUED_PROMPT } }
+                        .first { it.text == PEER_QUEUED_PROMPT }
+                }
+            awaitQueuedRow(PEER_QUEUED_PROMPT)
+            peer.dequeueMessage(conversationId, peerItem.queuedMsgId)
+            awaitGoneFromThread(PEER_QUEUED_PROMPT)
+            runBlocking {
+                peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.none { it.text == PEER_QUEUED_PROMPT } }
+            }
+
+            // 6. AC-1 / AC-2: the peer allows the command, the turn ends, and the ping drains and runs; the
+            //    peer sees that turn end and an empty backlog, and the phone draws the reply and the prompt
+            //    once each, no longer queued.
+            runBlocking {
+                peer.allowOnce(permissionModalId, THREAD_TIMEOUT_MS)
+                peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS, occurrence = 2)
+                peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.isEmpty() }
+            }
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            composeTestRule.waitForIdle()
+            composeTestRule.onAllNodes(pingReplyMatcher(), useUnmergedTree = true).assertCountEquals(1)
+            composeTestRule.onAllNodes(inThreadList(PING_PROMPT), useUnmergedTree = true).assertCountEquals(1)
+            composeTestRule.onAllNodes(queuedRow(PING_PROMPT)).assertCountEquals(0)
+
+            // 7. AC-3: with the backlog empty nothing dropped can run, and no dropped reply was ever drawn.
+            composeTestRule.onAllNodes(queuedRow(DROP_PROMPT)).assertCountEquals(0)
+            composeTestRule.onAllNodes(inThreadList(PEER_QUEUED_PROMPT), useUnmergedTree = true).assertCountEquals(0)
+            composeTestRule.onAllNodes(hasText(DROP_REPLY), useUnmergedTree = true).assertCountEquals(0)
+            composeTestRule.onAllNodes(hasText(PEER_QUEUED_REPLY), useUnmergedTree = true).assertCountEquals(0)
+        } finally {
+            peer.close()
+        }
+    }
+
+    /**
+     * A loaded conversation stays readable offline and catches up on reconnect (#850, rung 3; the live
+     * proof #795–#798 deferred). The phone loads a chat's history with one ping turn, then cuts its own
+     * link to the host as [setHostLink] does. With the connection-scoped repository gone, readability can
+     * only come from retained content:
+     *  * **offline** — the open thread still draws the ping and its reply, the chat's row is still in the
+     *    list, and reopening the row draws both again (the on-disk thread restore, not the in-memory rows);
+     *  * **meanwhile** — the [SecondClientPeer] sends [OFFLINE_PROMPT] and its turn ends, and the phone
+     *    draws none of it, which is what shows it really was offline;
+     *  * **reconnected** — the open thread draws the peer's reply from the ring replay; reopened, it draws
+     *    that turn after the ping, and each of the four messages once. The prompt comes only from a history
+     *    page, and the open thread's reconnect re-ask is lost (#861), so the reopen's opening ask fetches it.
+     *
+     * The cut waits until the phone itself has settled the ping reply — its thread cache holds it, which
+     * the open thread's collector writes only after drawing the settled row. A disconnect keeps only settled
+     * rows, and the peer's copy of `turn_end` can arrive before the phone's, so waiting on the peer alone
+     * could cut while the phone's reply still streamed and drop it by design.
+     *
+     * **Two real-claude turns**: the phone's ping and the peer's offline turn.
+     */
+    @Test
+    fun interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect() {
+        val args = InstrumentationRegistry.getArguments()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer =
+            SecondClientPeer(
+                PairedServer(
+                    serverId = serverId,
+                    token = twoHostArg(ARG_PEER_TOKEN),
+                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                    serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
+                ),
+            )
+        try {
+            // 1. The peer records frames from here on; the phone creates and renames a chat, as #848 does.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val before = runBlocking { withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { true } } }
+            createChat()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+            }
+            val conversationId =
+                runBlocking {
+                    withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { ids -> (ids - before).isNotEmpty() } - before }
+                }.single()
+            val chatName = OFFLINE_CHAT_NAME_PREFIX + System.currentTimeMillis()
+            renameOpenThread(chatName)
+
+            // 2. Load history: the phone's ping turn renders and ends. The peer's turn_end keeps the later
+            //    occurrence count right; the phone's own cache is what shows its rows settled before the cut.
+            sendFromPhone(PING_PROMPT)
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            runBlocking { peer.awaitFrame(conversationId, "turn_end", REPLY_TIMEOUT_MS) }
+            awaitCachedAssistantReply(serverId, conversationId)
+
+            // 3. AC-1: cut the phone's link. The open thread keeps what it drew.
+            setHostLink(serverId, up = false)
+            composeTestRule.waitForIdle()
+            assertDrawnOnce(inThreadList(PING_PROMPT), pingReplyMatcher())
+
+            // 4. AC-1: the chat's row is still listed, and reopening it offline draws the history again.
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitChannelList()
+            val chatRow = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(chatName, substring = true)
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) { runCatching { scrollListTo(chatRow) }.isSuccess }
+            composeTestRule.onAllNodes(chatRow).onFirst().performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(inThreadList(PING_PROMPT), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.awaitDisplayedPingReply(THREAD_TIMEOUT_MS)
+            assertDrawnOnce(inThreadList(PING_PROMPT), pingReplyMatcher())
+
+            // 5. AC-2: while the phone is offline the peer's turn runs to its end; the phone draws none of it.
+            runBlocking {
+                peer.sendMessage(conversationId, OFFLINE_PROMPT, THREAD_TIMEOUT_MS)
+                peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS, occurrence = 2)
+            }
+            composeTestRule.waitForIdle()
+            composeTestRule.onAllNodes(inThreadList(OFFLINE_PROMPT), useUnmergedTree = true).assertCountEquals(0)
+            composeTestRule.onAllNodes(offlineReplyMatcher(), useUnmergedTree = true).assertCountEquals(0)
+
+            // 6. AC-2: reconnect with the thread open; the ring replay brings the peer's reply into it. No live
+            //    frame carries another device's message text, so the prompt comes only from a history page.
+            //    The open thread's reconnect re-ask fires on socket-up, before the repository is back, and
+            //    dies (#861), so reopen the thread: its opening ask runs on the live repository. Once #861
+            //    lands, drop the reopen and wait for the prompt in the still-open thread instead.
+            setHostLink(serverId, up = true)
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onNode(offlineReplyMatcher(), useUnmergedTree = true).isDisplayed()
+            }
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitChannelList()
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) { runCatching { scrollListTo(chatRow) }.isSuccess }
+            composeTestRule.onAllNodes(chatRow).onFirst().performClick()
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onNode(offlineReplyMatcher(), useUnmergedTree = true).isDisplayed() &&
+                    composeTestRule.onAllNodes(inThreadList(OFFLINE_PROMPT), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.waitForIdle()
+            assertDrawnOnce(inThreadList(PING_PROMPT), pingReplyMatcher(), inThreadList(OFFLINE_PROMPT), offlineReplyMatcher())
+            val tops =
+                listOf(pingReplyMatcher(), inThreadList(OFFLINE_PROMPT), offlineReplyMatcher()).map {
+                    composeTestRule
+                        .onNode(it, useUnmergedTree = true)
+                        .fetchSemanticsNode()
+                        .boundsInRoot.top
+                }
+            assertTrue("expected ping reply, offline prompt, offline reply top to bottom; tops $tops", tops == tops.sorted())
+            assertTrue("two of the messages share a row; tops $tops", tops.distinct().size == tops.size)
+        } finally {
+            peer.close()
+        }
+    }
+
+    /**
+     * Wait until the phone's thread cache for [conversationId] holds an assistant reply. The cache only
+     * ever holds settled rows, and the open thread's collector writes them after drawing them, so this is
+     * the phone's own proof that the reply settled — not another device's copy of `turn_end`.
+     */
+    private fun awaitCachedAssistantReply(
+        serverId: String,
+        conversationId: String,
+    ) {
+        val cache = GlobalContext.get().get<ConversationCache>()
+        runBlocking {
+            withTimeout(THREAD_TIMEOUT_MS) {
+                while (cache
+                        .readThread(
+                            serverId,
+                            conversationId,
+                        ).none { it is ThreadItem.MessageItem && it.message.role == Role.Assistant }
+                ) {
+                    delay(CACHE_POLL_MS)
+                }
+            }
+        }
+    }
+
+    /** Each of [matchers] matches exactly one node in the unmerged tree. */
+    private fun assertDrawnOnce(vararg matchers: SemanticsMatcher) {
+        matchers.forEach { composeTestRule.onAllNodes(it, useUnmergedTree = true).assertCountEquals(1) }
+    }
+
+    /** The peer's offline reply as a delivered bubble: exactly [OFFLINE_REPLY], as [pingReplyMatcher] anchors ping. */
+    private fun offlineReplyMatcher(): SemanticsMatcher =
+        hasText(OFFLINE_REPLY, ignoreCase = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+
+    /**
+     * Type [text] and send it from the open thread. While a turn runs the button is Stop until the composer
+     * holds text, so the tap waits for Send rather than interrupting the turn.
+     */
+    private fun sendFromPhone(text: String) {
+        composeTestRule.onNode(hasSetTextAction()).performTextInput(text)
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+    }
+
+    /** A node inside the thread's scrollable list with exactly [text]: a bubble or a queued row, not the top bar. */
+    private fun inThreadList(text: String): SemanticsMatcher = hasText(text) and hasAnyAncestor(hasScrollToNodeAction())
+
+    /** The queued row for [text]: its merged node carries the text and the "Waiting to send" state. */
+    private fun queuedRow(text: String): SemanticsMatcher =
+        hasText(text) and SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, queuedStateDescription)
+
+    /** Wait until [text] draws as a queued row in the open thread. */
+    private fun awaitQueuedRow(text: String) {
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(queuedRow(text)).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /** Wait until nothing in the open thread's list carries [text] — neither a queued row nor a bubble. */
+    private fun awaitGoneFromThread(text: String) {
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(inThreadList(text), useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    /** Wait until [serverId]'s repository holds a conversation-id set satisfying [ready], and return it. */
+    private suspend fun hostConversationIds(
+        serverId: String,
+        ready: (Set<String>) -> Boolean,
+    ): Set<String> {
+        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
+        val repository = checkNotNull(bundle.coordinator.currentRepository.first { it != null })
+        return repository
+            .observeConversations(ConversationFilter.All)
+            .first { rows -> ready(rows.mapTo(mutableSetOf()) { it.id }) }
+            .mapTo(mutableSetOf()) { it.id }
+    }
+
+    /** A two-host instrumentation argument (#847), failing with the script that passes it. */
+    private fun twoHostArg(key: String): String =
+        requireNotNull(InstrumentationRegistry.getArguments().getString(key)) {
+            "missing instrumentation arg '$key' — scripts/e2e-emulator.sh passes it on rung 3 and LIVE"
+        }
+
+    /** A conversation row in the Channels tier carrying exactly [name]. */
+    private fun channelRow(name: String): SemanticsMatcher = hasTestTag(TREE_CHANNEL_ROW_TEST_TAG) and hasText(name)
+
+    /** Scroll the tree until a node matching [matcher] is composed, so a long list cannot hide it. */
+    private fun scrollListTo(matcher: SemanticsMatcher) {
+        composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(matcher)
+    }
+
+    /** Wait until the Channels row named [name] is on screen. */
+    private fun awaitChannelRow(name: String) {
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            runCatching { scrollListTo(channelRow(name)) }.isSuccess
+        }
+        composeTestRule.onAllNodes(channelRow(name)).onFirst().assertIsDisplayed()
+    }
+
+    /**
+     * The seeded collision is real: [serverId]'s own repository holds [conversationId] under [name]. Without
+     * this a seed that wrote two different ids would pass every UI check below trivially.
+     */
+    private fun assertHostHoldsConversation(
+        serverId: String,
+        conversationId: String,
+        name: String,
+    ) {
+        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
+        val held =
+            runBlocking {
+                withTimeout(LIST_TIMEOUT_MS) {
+                    val repository = bundle.coordinator.currentRepository.first { it != null }
+                    checkNotNull(repository)
+                        .observeConversations(ConversationFilter.All)
+                        .first { rows -> rows.any { it.id == conversationId } }
+                        .first { it.id == conversationId }
+                }
+            }
+        assertEquals(name, held.name)
+    }
+
+    /** The host row's label as the tree draws it: the saved display name, else "Unnamed host". */
+    private fun hostLabel(serverId: String): String {
+        val saved = runBlocking { GlobalContext.get().get<PairedServerCollectionStore>().loadById(serverId) }
+        return saved?.displayName?.takeIf { it.isNotBlank() }
+            ?: InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.unnamed_host)
+    }
+
+    /**
+     * Pair a second host by pasting [pairCode]: the Channels header's add control opens the scanner, whose
+     * every state offers a paste link ([PASTE_CODE_LINK]), which opens `PairCodeScreen`. Pair → confirm the
+     * fingerprint → the screen waits for Connected and returns to the list.
+     */
+    private fun pairHostByCode(pairCode: String) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val pairControl =
+            context.getString(R.string.cd_tree_section_pair_host, context.getString(R.string.channels_section_header))
+        composeTestRule.onAllNodes(hasContentDescription(pairControl)).onFirst().performClick()
+        val pasteLink = hasText(PASTE_CODE_LINK, substring = true) and hasClickAction()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(pasteLink).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodes(pasteLink).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasSetTextAction() and hasText(PAIR_CODE_FIELD)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasSetTextAction() and hasText(HOST_NAME_FIELD)).performTextInput(HOST_B_NAME)
+        composeTestRule.onNode(hasSetTextAction() and hasText(PAIR_CODE_FIELD)).performTextInput(pairCode)
+        composeTestRule.onNode(hasText(PAIR_BUTTON) and hasClickAction()).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(CONFIRM_PAIRING).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithText(CONFIRM_PAIRING).performClick()
+        // Save, then up to the view model's 30 s connection wait, then the pop back to the list.
+        composeTestRule.waitUntil(PAIR_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /** Both halves of "separate", for both hosts: see [assertEachUnderOwnHost] and [assertRowOpensOwnThread]. */
+    private fun assertHostsStaySeparate(
+        hostA: Pair<String, String>,
+        hostB: Pair<String, String>,
+    ) {
+        assertEachUnderOwnHost(hostA, hostB)
+        assertEachUnderOwnHost(hostB, hostA)
+        assertRowOpensOwnThread(hostA.second, hostB.second)
+        assertRowOpensOwnThread(hostB.second, hostA.second)
+    }
+
+    /**
+     * Folding [host]'s Channels row (label to conversation name) hides its own conversation and leaves
+     * [other]'s: the row was drawn under that host. The first fold control of a label is the Channels
+     * section's, which the tree draws before the Chats section. The fold is undone before returning.
+     */
+    private fun assertEachUnderOwnHost(
+        host: Pair<String, String>,
+        other: Pair<String, String>,
+    ) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val collapse = hasContentDescription(context.getString(R.string.cd_tree_row_collapse, host.first))
+        val expand = hasContentDescription(context.getString(R.string.cd_tree_row_expand, host.first))
+        awaitChannelRow(host.second)
+        scrollListTo(collapse)
+        composeTestRule.onAllNodes(collapse).onFirst().performClick()
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(channelRow(host.second)).fetchSemanticsNodes().isEmpty()
+        }
+        awaitChannelRow(other.second)
+        scrollListTo(expand)
+        composeTestRule.onAllNodes(expand).onFirst().performClick()
+        awaitChannelRow(host.second)
+    }
+
+    /** [name]'s row opens a thread titled [name], never [other]; then back to the list. */
+    private fun assertRowOpensOwnThread(
+        name: String,
+        other: String,
+    ) {
+        openRow(name)
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(name).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(name).onFirst().assertIsDisplayed()
+        composeTestRule.onAllNodesWithText(other).assertCountEquals(0)
+        composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+        awaitChannelList()
+    }
+
+    /**
+     * Tap the Channels row named [name] and wait for its thread: the send button is drawn and the list has
+     * left composition, so no row still fading out of the transition can answer a thread-side name check.
+     */
+    private fun openRow(name: String) {
+        awaitChannelRow(name)
+        composeTestRule.onAllNodes(channelRow(name)).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty() &&
+                composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    /** Rename the open thread's conversation to [newName] and wait for its top bar to re-label (#537's drive). */
+    private fun renameOpenThread(newName: String) {
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(RENAME_ITEM).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(RENAME_ITEM).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasSetTextAction() and isFocused()).performTextReplacement(newName)
+        composeTestRule.onNodeWithText(RENAME_SAVE).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(newName).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /**
+     * Cut and restore one host's link, the per-host form of the rung-4 close / connect drive. Readiness is
+     * the coordinator's repository, not a `ConnectionState`: an idle `Connected` after `close()` would
+     * false-green a state check.
+     */
+    private fun cycleHostLink(serverId: String) {
+        setHostLink(serverId, up = false)
+        setHostLink(serverId, up = true)
+    }
+
+    /**
+     * Cut ([up] false) or restore one host's link, and wait until its coordinator's repository is gone or
+     * back. Cutting tears down the connection-scoped repository, so what the phone still draws is retained.
+     */
+    private fun setHostLink(
+        serverId: String,
+        up: Boolean,
+    ) {
+        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
+        runBlocking {
+            withTimeout(CONNECT_TIMEOUT_MS) {
+                if (up) bundle.supervisor.connect() else bundle.supervisor.close()
+                bundle.coordinator.currentRepository.first { (it != null) == up }
+            }
+        }
+    }
+
+    /**
      * Block until the channel list is on screen, keyed on the app-authored marker the list screen sets
      * ([CHANNEL_LIST_TEST_TAG], #736) rather than on anything drawn on it. Every scenario arrives through
      * here, including the two `@Ignore`d manual ones.
@@ -1323,6 +2048,10 @@ class InteractiveStreamE2ETest {
         const val ARCHIVED_TITLE = "Archived"
         const val RESTORED_SNACKBAR = "Restored"
 
+        // #740 list-archive-entry scenario: the archive entry on the list's own bar (#737), the sibling of
+        // CD_OPEN_SETTINGS. Keep in sync with res/values/strings.xml: cd_open_archive = "Open archive".
+        const val CD_OPEN_ARCHIVE = "Open archive"
+
         // Runtime-unique rename target: "e2e551-" + System.currentTimeMillis(). Distinct from #554's
         // CONVERSATION_NAME_PREFIX (the shared companion forbids redeclaration). Unique so a substring match
         // cannot pre-exist on screen — the presence check (step 5), its inversion after archive (step 8), and
@@ -1366,11 +2095,77 @@ class InteractiveStreamE2ETest {
         // with top-bar / list chrome the assertions also match.
         const val PROMOTE_NAME_PREFIX = "e2e581-"
 
+        // #847 two-host scenario. The five arguments scripts/e2e-emulator.sh passes on rung 3 and LIVE
+        // (host A's own four stay E2eTestApplication's). PAIR_CODE_B carries a pairing token: never log it.
+        const val ARG_SERVER_ID_B = "serverIdB"
+        const val ARG_PAIR_CODE_B = "pairCodeB"
+        const val ARG_COLLISION_CONVERSATION_ID = "collisionConversationId"
+        const val ARG_COLLISION_NAME_A = "collisionNameA"
+        const val ARG_COLLISION_NAME_B = "collisionNameB"
+
+        // #848 peer scenario. PEER_TOKEN is the second device's pairing token that scripts/e2e-emulator.sh
+        // mints on host A for the SecondClientPeer (rung 3 and LIVE): never log it. The chat's run-unique
+        // name shares no substring with PING_PROMPT, "ping" or the other scenarios' prefixes.
+        const val ARG_PEER_TOKEN = "peerToken"
+        const val PEER_CHAT_NAME_PREFIX = "e2e848-"
+
+        // #849 queue scenario. WAIT_PROMPT reuses #481's shell-tool lever to hold the peer's turn open for
+        // the queue steps. What holds it is the permission prompt the command raises, not the command's
+        // run time: a `python3` command is never auto-allowed, and the harness's devices answer nothing
+        // until the peer, paired with `--allow-remote-permissions`, allows it. The command itself is quick; a
+        // timed wait is not needed, and a bare `sleep` of 25 s or more is refused by claude's Bash tool. DROP_PROMPT and PEER_QUEUED_PROMPT ask for reply tokens no other prompt produces, so an exact-text node with either
+        // would mean a dropped message reached claude. None of the texts or the chat prefix contains the exact
+        // word "ping".
+        const val WAIT_PROMPT =
+            "Run this exact shell command with your tools in the foreground, not in the background, then reply " +
+                "with exactly: pyrywait. Command: python3 -c \"print(849)\""
+        const val DROP_PROMPT = "Reply with exactly: pyrydropped"
+        const val DROP_REPLY = "pyrydropped"
+        const val PEER_QUEUED_PROMPT = "Reply with exactly: pyrypeerdropped"
+        const val PEER_QUEUED_REPLY = "pyrypeerdropped"
+        const val QUEUE_CHAT_NAME_PREFIX = "e2e849-"
+
+        // The peer's turn while the phone is offline (#850). The reply is matched as exactly the token in a
+        // bubble, which the prompt's own text is not.
+        const val OFFLINE_PROMPT = "Reply with exactly: pyryoffline"
+        const val OFFLINE_REPLY = "pyryoffline"
+        const val OFFLINE_CHAT_NAME_PREFIX = "e2e850-"
+
+        // Pairing-flow production strings (hardcoded in the composables, no resources). PASTE_CODE_LINK is
+        // the common tail of all three scanner states' paste links — "Trouble scanning? Paste the pairing
+        // code instead", "Paste the pairing code instead", "Paste code instead" — matched as a substring so
+        // the camera state the emulator lands in does not matter, and only with a click action: the camera-error
+        // and denied states draw a plain message ending in the same words above their button, and tapping that
+        // message navigates nowhere. PAIR_BUTTON is matched exactly and with a
+        // click action, apart from the "Pairing" title and the "Pairing code" label.
+        const val PASTE_CODE_LINK = "code instead"
+        const val HOST_NAME_FIELD = "Host name"
+        const val PAIR_CODE_FIELD = "Pairing code"
+        const val PAIR_BUTTON = "Pair"
+        const val CONFIRM_PAIRING = "Confirm pairing"
+
+        // Host B's display name, typed on the pair-code screen. Shares no substring with the seeded
+        // "e2e847-a-" / "e2e847-b-" conversation names or RENAMED_NAME_PREFIX, so no exact match can
+        // confuse a host row with a conversation row.
+        const val HOST_B_NAME = "Second e2e host"
+
+        // Runtime-unique rename target for host A's seeded conversation, distinct from #537's prefix.
+        const val RENAMED_NAME_PREFIX = "e2e847-renamed-"
+
+        // The pair-code screen waits up to 30 s for the new host to connect before it returns to the list.
+        const val PAIR_TIMEOUT_MS = 60_000L
+
         const val LIST_TIMEOUT_MS = 30_000L
         const val CONNECT_TIMEOUT_MS = 30_000L
         const val THREAD_TIMEOUT_MS = 30_000L
 
+        // How often the #850 cut re-reads the thread cache while it waits for the settled reply.
+        const val CACHE_POLL_MS = 200L
+
         // Generous: a real claude turn over the relay can take many seconds end to end.
         const val REPLY_TIMEOUT_MS = 90_000L
+
+        // #849: two real claude turns back to back, the allowed wait turn and the drained ping.
+        const val WAIT_TURN_TIMEOUT_MS = 240_000L
     }
 }

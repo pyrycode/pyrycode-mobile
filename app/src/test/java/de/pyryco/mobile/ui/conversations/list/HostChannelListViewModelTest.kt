@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.preferencesOf
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.lifecycle.viewModelScope
+import de.pyryco.mobile.data.cache.FileConversationCache
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.crypto.PairedServerEntry
@@ -24,12 +25,14 @@ import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.StableConversationRepository
+import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.di.HostConversationConnection
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.KoinHostSources
 import de.pyryco.mobile.di.ObservablePairedServerStore
 import de.pyryco.mobile.di.appModule
 import de.pyryco.mobile.di.conversationRepositoryModule
+import de.pyryco.mobile.di.forgetRemovedHost
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
 import kotlinx.coroutines.CancellationException
@@ -64,12 +67,17 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import org.koin.core.KoinApplication
 import org.koin.dsl.module
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class HostChannelListViewModelTest {
+    @get:Rule
+    val tmp = TemporaryFolder()
+
     private val dispatcher = UnconfinedTestDispatcher()
     private val fixtures = mutableListOf<Fixture>()
     private val hostSources = KoinHostSources()
@@ -1016,6 +1024,49 @@ class HostChannelListViewModelTest {
         }
 
     @Test
+    fun confirmingUnpairRemovesThatHostsCachedContentAndOnlyAfterTheRemovalSucceeded() =
+        runTest(dispatcher) {
+            // #798 AC #1 and #4, driven from the gesture through the production removal hook.
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            val thread = listOf<ThreadItem>(ThreadItem.MessageItem(message("cached reply")))
+            // "Host" and "host" differ only in case and hold a conversation of the same id.
+            for (id in listOf("Host", "host")) {
+                f.cache.writeConversations(id, listOf(row("c1", promoted = true, label = "cached name")))
+                f.cache.writeThread(id, "c1", thread)
+            }
+
+            f.vm.openHostEditor("Host")
+            runCurrent()
+            f.vm.requestHostUnpair()
+            runCurrent()
+
+            // A failed removal leaves the host paired, so its content stays readable.
+            f.store.failRemove = true
+            f.vm.confirmHostUnpair()
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.hostEditor).unpairFailed)
+            assertEquals(listOf("c1"), f.cache.readConversations("Host").map { it.id })
+            assertEquals(thread, f.cache.readThread("Host", "c1"))
+
+            f.store.failRemove = false
+            f.vm.confirmHostUnpair()
+            runCurrent()
+
+            assertNull(f.store.loadById("Host"))
+            assertNull(f.vm.hostState.value.hostEditor)
+            assertEquals(emptyList<Conversation>(), f.cache.readConversations("Host"))
+            assertEquals(emptyList<ThreadItem>(), f.cache.readThread("Host", "c1"))
+            // Every other paired host keeps its content.
+            assertEquals(listOf("c1"), f.cache.readConversations("host").map { it.id })
+            assertEquals(thread, f.cache.readThread("host", "c1"))
+            assertTrue(
+                "no server id, conversation id or cached text may reach a log line: $logs",
+                logs.none { "Host" in it || "c1" in it || "cached" in it },
+            )
+        }
+
+    @Test
     fun aFailedUnpairStaysOnTheConfirmationAndChangesNothing() =
         runTest(dispatcher) {
             val f = fixture()
@@ -1095,6 +1146,386 @@ class HostChannelListViewModelTest {
         }
 
     /**
+     * Both hosts hold a chat with the same id and different names (#827). Globally unique ids would hide a
+     * rename sent to the wrong host, so every chat-editor test starts from this collision.
+     */
+    private fun Fixture.seedCollidingChats() {
+        a.repo.rows.value = listOf(row("same").copy(name = "A chat"), row("nameless"), row("A-channel", true).copy(name = "A channel"))
+        b.repo.rows.value = listOf(row("same").copy(name = "B chat"))
+    }
+
+    @Test
+    fun chatEditorOpensOnTheRowsOwnHostAndConversationWithoutSelectingOrNavigating() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChats()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            runCurrent()
+
+            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            assertEquals(ChatEditorState("Host", "same", "A chat"), f.vm.hostState.value.chatEditor)
+
+            f.vm.openChatEditor(HostConversationTarget("host", "same"))
+            runCurrent()
+            assertEquals(ChatEditorState("host", "same", "B chat"), f.vm.hostState.value.chatEditor)
+
+            // A chat with no name opens empty — never the list's placeholder text.
+            f.vm.openChatEditor(HostConversationTarget("Host", "nameless"))
+            runCurrent()
+            assertEquals(
+                "",
+                f.vm.hostState.value.chatEditor
+                    ?.initialName,
+            )
+
+            // Neither a chat on another host nor a channel is a Chats row this editor can open.
+            f.vm.dismissChatEditor()
+            for (target in listOf(HostConversationTarget("host", "nameless"), HostConversationTarget("Host", "A-channel"))) {
+                f.vm.openChatEditor(target)
+                runCurrent()
+                assertNull(f.vm.hostState.value.chatEditor)
+            }
+
+            assertNull(f.vm.hostState.value.selected)
+            assertTrue(f.nav.isEmpty())
+            assertTrue(
+                f.a.repo.renames
+                    .isEmpty() &&
+                    f.b.repo.renames
+                        .isEmpty(),
+            )
+        }
+
+    @Test
+    fun chatSubmitRenamesOnlyTheEditorsOwnHostWithTheTrimmedNameAndCloses() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChats()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+
+            // No open editor: nothing to rename.
+            f.vm.submitChatName("orphan")
+            runCurrent()
+            assertTrue(
+                f.a.repo.renames
+                    .isEmpty(),
+            )
+
+            f.vm.openChatEditor(HostConversationTarget("host", "same"))
+            runCurrent()
+            f.vm.submitChatName("  Renamed  ")
+            runCurrent()
+
+            assertEquals(listOf("same" to "Renamed"), f.b.repo.renames)
+            // The other host's chat with the same id is never touched.
+            assertTrue(
+                f.a.repo.renames
+                    .isEmpty(),
+            )
+            assertNull(f.vm.hostState.value.chatEditor)
+            val hosts = f.vm.hostState.value.hosts
+            assertEquals(
+                "Renamed",
+                hosts
+                    .single { it.host.serverId == "host" }
+                    .host.chats
+                    .single()
+                    .name,
+            )
+            assertEquals(
+                "A chat",
+                hosts
+                    .single { it.host.serverId == "Host" }
+                    .host.chats
+                    .first()
+                    .name,
+            )
+        }
+
+    @Test
+    fun chatEditorFollowsItsOwnHostsConnectionWithoutClosing() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChats()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            val open = f.vm.hostState.value.chatEditor
+            assertTrue(
+                f.vm.hostState.value
+                    .isHostConnected("Host"),
+            )
+
+            f.a.status.value = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
+            runCurrent()
+            assertFalse(
+                f.vm.hostState.value
+                    .isHostConnected("Host"),
+            )
+            // The other host's connection is its own.
+            assertTrue(
+                f.vm.hostState.value
+                    .isHostConnected("host"),
+            )
+            assertEquals(open, f.vm.hostState.value.chatEditor)
+
+            f.a.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Handshaking)
+            runCurrent()
+            assertFalse(
+                f.vm.hostState.value
+                    .isHostConnected("Host"),
+            )
+
+            f.a.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
+            runCurrent()
+            assertTrue(
+                f.vm.hostState.value
+                    .isHostConnected("Host"),
+            )
+            assertEquals(open, f.vm.hostState.value.chatEditor)
+
+            // Lost between the last status and the press: nothing is sent, and the modal says it failed.
+            f.a.available = false
+            f.vm.submitChatName("Renamed")
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.chatEditor).failed)
+            assertTrue(
+                f.a.repo.renames
+                    .isEmpty() &&
+                    f.b.repo.renames
+                        .isEmpty(),
+            )
+        }
+
+    @Test
+    fun failedChatRenameStaysOpenQuietlyAndALateCompletionCannotReopen() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChats()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+
+            f.a.repo.failure = RelayErrorException("server.error", false, "server-secret")
+            f.vm.submitChatName("Typed")
+            runCurrent()
+            val failed = requireNotNull(f.vm.hostState.value.chatEditor)
+            assertTrue(failed.failed)
+            assertFalse(failed.saving)
+            assertEquals("same", failed.conversationId)
+            assertEquals(
+                "A chat",
+                f.a.repo.rows.value!!
+                    .first()
+                    .name,
+            )
+            assertTrue(logs.any { "chat_rename_failed" in it })
+            assertTrue(
+                "no name, id or server message may reach a log line: $logs",
+                logs.none { "server-secret" in it || "Typed" in it || "A chat" in it || "same" in it || "Host" in it },
+            )
+
+            // Still actionable: a retry that succeeds closes.
+            f.a.repo.failure = null
+            f.vm.submitChatName("Typed")
+            runCurrent()
+            assertEquals(listOf("same" to "Typed"), f.a.repo.renames)
+            assertNull(f.vm.hostState.value.chatEditor)
+
+            // A write landing after a dismissal must not resurrect the modal, and a second OK mid-write is ignored.
+            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            val gate = CompletableDeferred<Unit>()
+            f.a.repo.renameGate = gate
+            f.vm.submitChatName("Later")
+            f.vm.submitChatName("Twice")
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.chatEditor).saving)
+            f.vm.dismissChatEditor()
+            gate.complete(Unit)
+            runCurrent()
+            assertNull(f.vm.hostState.value.chatEditor)
+            assertEquals(listOf("same" to "Typed", "same" to "Later"), f.a.repo.renames)
+        }
+
+    @Test
+    fun dismissingTheChatEditorSendsNothing() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChats()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            f.vm.dismissChatEditor()
+            runCurrent()
+            assertNull(f.vm.hostState.value.chatEditor)
+            assertTrue(
+                f.a.repo.renames
+                    .isEmpty() &&
+                    f.b.repo.renames
+                        .isEmpty(),
+            )
+            assertEquals(
+                "A chat",
+                f.a.repo.rows.value!!
+                    .first()
+                    .name,
+            )
+        }
+
+    @Test
+    fun chatArchiveArchivesOnlyTheEditorsOwnHostAndCloses() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChats()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+
+            // No open editor: nothing to archive.
+            f.vm.archiveChat()
+            runCurrent()
+            assertTrue(
+                f.a.repo.archives
+                    .isEmpty() &&
+                    f.b.repo.archives
+                        .isEmpty(),
+            )
+
+            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            f.vm.archiveChat()
+            runCurrent()
+
+            assertEquals(listOf("same"), f.a.repo.archives)
+            // The other host's chat with the same id is never archived, and nothing else is sent.
+            assertTrue(
+                f.b.repo.archives
+                    .isEmpty(),
+            )
+            assertTrue(
+                f.a.repo.renames
+                    .isEmpty() &&
+                    f.a.repo.others
+                        .isEmpty(),
+            )
+            assertNull(f.vm.hostState.value.chatEditor)
+            val hosts = f.vm.hostState.value.hosts
+            assertEquals(
+                listOf("nameless"),
+                hosts
+                    .single { it.host.serverId == "Host" }
+                    .host.chats
+                    .map { it.id },
+            )
+            assertEquals(
+                listOf("same"),
+                hosts
+                    .single { it.host.serverId == "host" }
+                    .host.chats
+                    .map { it.id },
+            )
+            // Where that host's Archive screen reads it from, and Restore returns it.
+            assertEquals(
+                listOf("same"),
+                f.a.repo
+                    .observeConversations(ConversationFilter.Archived)
+                    .first()
+                    .map { it.id },
+            )
+            assertTrue(logs.any { "chat_archived" in it })
+        }
+
+    @Test
+    fun chatArchiveOnAnUnavailableHostFailsWithoutSending() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChats()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+
+            f.a.available = false
+            f.vm.archiveChat()
+            runCurrent()
+
+            val editor = requireNotNull(f.vm.hostState.value.chatEditor)
+            assertTrue(editor.archiveFailed)
+            assertFalse(editor.failed)
+            assertFalse(editor.saving)
+            assertTrue(
+                f.a.repo.archives
+                    .isEmpty() &&
+                    f.b.repo.archives
+                        .isEmpty(),
+            )
+        }
+
+    @Test
+    fun failedChatArchiveStaysOpenQuietlyAndALateCompletionCannotReopen() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChats()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+
+            for (error in listOf(
+                RelayErrorException("server.error", false, "server-secret"),
+                IllegalStateException("not connected secret"),
+            )) {
+                f.a.repo.failure = error
+                f.vm.archiveChat()
+                runCurrent()
+                val failed = requireNotNull(f.vm.hostState.value.chatEditor)
+                assertTrue(failed.archiveFailed)
+                assertFalse(failed.failed)
+                assertFalse(failed.saving)
+                assertEquals("same", failed.conversationId)
+            }
+            // Still active on its host.
+            assertEquals(
+                false,
+                f.a.repo.rows.value!!
+                    .first()
+                    .archived,
+            )
+            assertTrue(logs.any { "chat_archive_failed" in it })
+            assertTrue(
+                "no name, id or server message may reach a log line: $logs",
+                logs.none { "secret" in it || "A chat" in it || "same" in it || "Host" in it },
+            )
+
+            // A rename after a failed archive shows only the rename's own outcome.
+            f.vm.submitChatName("Typed")
+            runCurrent()
+            assertFalse(requireNotNull(f.vm.hostState.value.chatEditor).archiveFailed)
+
+            // Still actionable: a retry that succeeds closes.
+            f.a.repo.failure = null
+            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            val gate = CompletableDeferred<Unit>()
+            f.a.repo.archiveGate = gate
+            f.vm.archiveChat()
+            // Mid-write, a second archive and a rename are both ignored.
+            f.vm.archiveChat()
+            f.vm.submitChatName("Twice")
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.chatEditor).saving)
+            f.vm.dismissChatEditor()
+            gate.complete(Unit)
+            runCurrent()
+            // Landing after the dismissal, it must not resurrect the modal.
+            assertNull(f.vm.hostState.value.chatEditor)
+            assertEquals(listOf("same"), f.a.repo.archives)
+            assertTrue(
+                f.a.repo.renames
+                    .isEmpty(),
+            )
+        }
+
+    /**
      * Reads the supplied snapshot until something writes, then the written value.
      *
      * The unpair path clears the removed host's cached workspace through `DataStore.edit`, which the
@@ -1143,6 +1574,10 @@ class HostChannelListViewModelTest {
 
         // #790: hoisted for the same reason, so a test can seed drafts and read back which survived.
         val drafts = ComposerDraftStore()
+
+        // #798: the real file cache, so a test can seed conversation content and read back which host's
+        // content survived an unpair. Bound through the production hook below, not a restatement of it.
+        val cache = FileConversationCache(tmp.newFolder(), dispatcher)
         val app =
             KoinApplication.init().modules(
                 appModule,
@@ -1154,7 +1589,7 @@ class HostChannelListViewModelTest {
                     // this fixture previously bypassed — the removal-driven draft eviction lives on it.
                     // Transparent to every other case here: delegation forwards the reads, and the
                     // revision it bumps has no observer in this file.
-                    single<PairedServerCollectionStore> { ObservablePairedServerStore(store, drafts::clearHost) }
+                    single<PairedServerCollectionStore> { ObservablePairedServerStore(store, forgetRemovedHost(drafts, lazyOf(cache))) }
                 },
             )
         val vm = app.koin.get<ChannelListViewModel>()
@@ -1250,6 +1685,42 @@ class HostChannelListViewModelTest {
             createGate?.await()
             return row("returned-id")
         }
+
+        // Records every rename and applies it to this repo's own rows, as the daemon's re-emitted list would.
+        override suspend fun rename(
+            conversationId: String,
+            name: String,
+        ): Conversation {
+            renameGate?.await()
+            failure?.let { throw it }
+            renames += conversationId to name
+            rows.value = rows.value?.map { if (it.id == conversationId) it.copy(name = name) else it }
+            return requireNotNull(rows.value).first { it.id == conversationId }
+        }
+
+        val renames = mutableListOf<Pair<String, String>>()
+        var renameGate: CompletableDeferred<Unit>? = null
+
+        // Records every archive and flips this repo's own row, as the daemon's re-emitted list would (#828).
+        override suspend fun archive(conversationId: String) {
+            archiveGate?.await()
+            failure?.let { throw it }
+            archives += conversationId
+            rows.value = rows.value?.map { if (it.id == conversationId) it.copy(archived = true) else it }
+        }
+
+        // Recorded only so a test can prove the archive path sends neither.
+        override suspend fun unarchive(conversationId: String) {
+            others += "unarchive"
+        }
+
+        override suspend fun delete(conversationId: String) {
+            others += "delete"
+        }
+
+        val archives = mutableListOf<String>()
+        val others = mutableListOf<String>()
+        var archiveGate: CompletableDeferred<Unit>? = null
     }
 
     companion object {

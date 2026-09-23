@@ -97,12 +97,26 @@ suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long): Un
 ```
 
 - **The backlog row still leaves only on the next `queue_state`** (#467's non-optimistic ruling, which the
-  daemon owns) — success is an empty `ack` and the method mutates no `queuedByConversation` entry itself.
+  daemon owns) — the method mutates no `queuedByConversation` entry itself.
   **The sender's own thread echo is different (#781).** `sendMessage` posts that row locally after its
   `send_message` ack, because interactive mode streams no user-message event back — the daemon never
   authored it, so a confirmed drop also removes it, or the thread keeps a row that reads as a message
   claude received when it never was. The removal targets exactly one `ThreadItem.MessageItem`, correlated
   on `QueuedMessage.messageId`, and is invisible to `observeQueue` / `observeLastMessage`.
+  **Known bug ([#859](https://github.com/pyrycode/pyrycode-mobile/issues/859), found live by #849's
+  second-client scenario): there is no `ack` to be "successful" on.** `handleDequeueMessage`
+  (pyrycode `internal/relay/v2session_modal.go`) sends **no reply and no broadcast** for
+  `dequeue_message` — `../pyrycode/docs/protocol-mobile.md` § Queue (v2) names none either;
+  convergence is the next `queue_state` alone. The `sendAndAwaitReply` this method calls (below)
+  therefore never completes against the real daemon — it is failed only by the connection-teardown
+  sweep — so `removeOwnEcho` never runs and the caller's coroutine stays suspended for the
+  connection's life. The backlog row still clears correctly (that projection updates from
+  `queue_state` alone, independent of this send), but the dropped message's own thread echo stays as
+  a delivered bubble until the connection tears down. Unit tests never caught this because the fake
+  transport answers the dequeue with an `ack` the real daemon does not send. The fix (unscheduled) is
+  to key the confirmation on the `queued_msg_id` leaving the next `queue_state` snapshot, not on a
+  reply that never arrives; every "empty `ack`" and "on the ack" reference below describes the
+  **intended**, not the **actual**, wire contract until that lands.
 - **The correlation is resolved and spent entirely inside `RemoteConversationRepository` — no UI,
   ViewModel or facade signature change.** `dropQueuedMessage(conversationId, queuedMessageId)` still takes
   only the `queued_msg_id` the caller already has; the repository looks up that item's `messageId` in its

@@ -17,7 +17,10 @@ see [dependency injection § Restore from the on-disk cache](dependency-injectio
 for how the source writes and seeds from it. [#797](../../specs/architecture/797-thread-row-cache.md)
 adds the thread-row family and the thread restore — see
 [Caching conversation repository](caching-conversation-repository.md) for the wrapper that reads and
-writes it. #798 wires the removal operations to unpair and to permanent deletion.
+writes it. [#798](../../specs/architecture/798-clear-cache-on-removal.md) wires `removeHost` and
+`removeConversation` to unpair and to permanent deletion — see
+[§ Removal on unpair](#removal-on-unpair--forgetremovedhost) below and
+[Caching conversation repository § delete](caching-conversation-repository.md#delete--removing-the-cache-alongside-the-daemon-798).
 
 ## The contract
 
@@ -176,10 +179,12 @@ both this) → `invalid_data`. Anything else, cancellation included, propagates 
 rejects, for the same reason: a document that would hand the thread's `LazyColumn` two rows under
 one key reads empty instead of drawing them.** Beyond the version check every family shares, a
 thread document is rejected (→ `invalid_data` → empty) when: a row carries both or neither of
-`message`/`boundary`; any two messages share an id; any two boundaries share their
-`(previousSessionId, newSessionId)` pair; or any tool carries `ToolCallStatus.Running` — a
-restored row is defined to always be settled, so a running status on disk is itself a corrupt
-document, not a row to filter.
+`message`/`boundary`; any two messages share an id; any two boundaries share their full
+`(previousSessionId, newSessionId, occurredAt)` identity (#775 — the pair alone is *not* rejected,
+since an idle-evicted session keeps its id and a session evicted twice legitimately sends the same
+pair twice with different instants); or any tool carries `ToolCallStatus.Running` — a restored row
+is defined to always be settled, so a running status on disk is itself a corrupt document, not a
+row to filter.
 
 Removing an unknown host or an unknown conversation is a **successful no-op**, matching
 `PairedServerCollectionStore.remove` — #798 does not need to check existence first.
@@ -220,6 +225,42 @@ directory already covers `threads/`, since the thread family is filed under it (
 `ConversationCache.removeConversation`'s KDoc records this as the rule any family added later must
 follow, so a permanently deleted conversation never leaves content behind under a family that
 forgot to extend the two removal operations.
+
+## Removal on unpair — `forgetRemovedHost`
+
+[#798](../../specs/architecture/798-clear-cache-on-removal.md) wires `removeHost` to the one place a
+pairing is actually removed: `internal fun forgetRemovedHost(drafts: ComposerDraftStore, cache:
+Lazy<ConversationCache>): suspend (String) -> Unit` in `di/ObservablePairedServerStore.kt` is the
+production `onHostRemoved` hook `ObservablePairedServerStore.remove` runs once `delegate.remove` and
+the revision bump have both succeeded — see [paired server store § Wiring &
+usage](paired-server-store.md#wiring--usage) for the hook's own contract. It clears the host's
+composer drafts first (`ComposerDraftStore.clearHost`, see [Thread screen § Composer draft
+ownership](thread-screen.md#composer-draft-ownership)), then calls `cache.value.removeHost(serverId)`
+inside `withContext(NonCancellable)` so a view model cleared mid-cleanup cannot strand the forgotten
+host's content on disk, and logs a static `event=host_cache_remove_failed` line on failure without
+surfacing it — the pairing is already gone by then, so reporting a failure would claim the host is
+still paired when it is not. Never logs the id.
+
+`cache` is `Lazy<ConversationCache>`, not `ConversationCache`, so resolving the paired-server store
+binding never constructs the cache: the cache's root is `Context.noBackupFilesDir` (see § Root and
+storage scope above), and the JVM tests that resolve `appModule`'s paired-server store without a
+`Context` would otherwise fail with `MissingAndroidContextException` the moment that binding runs. The
+Koin binding is `single { ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), lazy { get() })) }`.
+
+Named rather than written inline in `appModule`, for the same reason the #790 draft eviction was: a
+JVM test that restates the hook as its own lambda stays green if production forgets a step, while one
+that binds `forgetRemovedHost` itself cannot. `HostChannelListViewModelTest`'s fixture binds
+`forgetRemovedHost(drafts, lazyOf(cache))` over a real `FileConversationCache` on a `TemporaryFolder`
+for exactly this reason.
+
+Permanent deletion does not go through this hook — see [Caching conversation repository §
+delete](caching-conversation-repository.md#delete--removing-the-cache-alongside-the-daemon-798) for
+`removeConversation`'s call site, which is a `CachingConversationRepository` override, not a paired-
+server-store hook.
+
+Archive and unarchive call neither removal. Both stay plain `by delegate` forwarding on
+`CachingConversationRepository`, so an archived conversation's cached content is unreachable through
+either code path this section or the linked one describes.
 
 ## Concurrency
 
@@ -278,12 +319,14 @@ real rather than a convention.
 
 [`FileConversationCacheThreadTest.kt`](../../../app/src/test/java/de/pyryco/mobile/data/cache/FileConversationCacheThreadTest.kt)
 (#797) is a sibling file rather than an extension of the test above, with the same second-instance
-and log-capture discipline. 12 cases cover: a field-for-field round trip (message, a tool call in
+and log-capture discipline. 14 cases cover: a field-for-field round trip (message, a tool call in
 both a settled and a failed status, a boundary with and without `workspaceCwd`); that unrecognized,
 streaming and running-tool rows are dropped on write; the newest-200 bound; per-conversation and
-per-host isolation; whole-thread replace on a second write; every graceful-empty-read shape
-including a duplicate message id, a duplicate boundary pair and a running-status document (left on
-disk, unrepaired); `removeConversation` removing one thread and leaving siblings; removal still
+per-host isolation; whole-thread replace on a second write; that two boundaries sharing a session
+pair but differing in `occurredAt` read back rather than being rejected (#775, a double idle-evict
+of the same session); every graceful-empty-read shape including a duplicate message id, a duplicate
+boundary identity (the full triple, not the pair) and a running-status document (left on disk,
+unrepaired); `removeConversation` removing one thread and leaving siblings; removal still
 working against host metadata that was never written; `removeHost` removing every thread under it
 and no other host's; no conversation id in a path or a log line, success or failure; and a coded,
 causeless exception on a forced write failure.
@@ -295,9 +338,11 @@ Testing](dependency-injection.md#testing) for `HostConversationSourceTest`'s res
 cases and for why every other instrumented container built from `appModule` overrides this binding
 with a shared `InertConversationCache` fake rather than supplying a real `Context`. See [Caching
 conversation repository § Testing](caching-conversation-repository.md#testing) for the restore
-merge's own unit coverage. Live continuity across a real reconnect is
-[#673](https://github.com/pyrycode/pyrycode-mobile/issues/673)'s, not this cache's or the
-wrapper's.
+merge's own unit coverage. Live continuity across a real reconnect — a loaded conversation staying
+readable while its host link is cut and reconciling a peer's turn once the link is restored — is
+proven live by [#850](https://github.com/pyrycode/pyrycode-mobile/issues/850)
+(`InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`), not this
+cache's or the wrapper's own unit suite.
 
 ## Related
 
@@ -316,5 +361,8 @@ wrapper's.
   [#796](https://github.com/pyrycode/pyrycode-mobile/issues/796) (done — host list restore, see
   [dependency injection § Restore from the on-disk cache](dependency-injection.md#restore-from-the-on-disk-cache-796)),
   [#797](../../specs/architecture/797-thread-row-cache.md) (done — thread-row family + thread
-  restore), #798 (removal wiring — not yet wired to unpair or permanent deletion; this ticket only
-  made the cache operations cover the family)
+  restore), [#798](../../specs/architecture/798-clear-cache-on-removal.md) (done — `removeHost` wired
+  to unpair via [`forgetRemovedHost`](#removal-on-unpair--forgetremovedhost), `removeConversation`
+  wired to permanent deletion via
+  [`CachingConversationRepository.delete`](caching-conversation-repository.md#delete--removing-the-cache-alongside-the-daemon-798);
+  archive and unarchive call neither)

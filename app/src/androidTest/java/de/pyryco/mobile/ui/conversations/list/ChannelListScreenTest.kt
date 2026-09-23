@@ -8,6 +8,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextContains
@@ -32,16 +34,19 @@ import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.di.HostConversationSnapshot
+import de.pyryco.mobile.ui.components.EDIT_CHAT_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.conversations.components.LocalWorkspacePickerRepository
 import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
 import de.pyryco.mobile.ui.conversations.components.treeHostEditTestTag
+import de.pyryco.mobile.ui.conversations.components.treeHostReconnectTestTag
 import de.pyryco.mobile.ui.host.HostEditorState
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -74,13 +79,14 @@ class ChannelListScreenTest {
         displayName: String?,
         channels: List<Conversation> = emptyList(),
         chats: List<Conversation> = emptyList(),
+        relay: RelayLinkStatus = RelayLinkStatus.Connected,
     ): HostChannelListEntry =
         HostChannelListEntry(
             host =
                 HostConversationSnapshot(
                     serverId = serverId,
                     displayName = displayName,
-                    connectionStatus = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected),
+                    connectionStatus = ConnectionStatus(relay, PyrycodeLinkStatus.Connected),
                     channels = channels,
                     chats = chats,
                 ),
@@ -98,10 +104,11 @@ class ChannelListScreenTest {
         vararg hosts: HostChannelListEntry,
         selected: HostConversationTarget? = null,
         hostEditor: HostEditorState? = null,
+        chatEditor: ChatEditorState? = null,
     ) {
         composeTestRule.setContent {
             var hostState by remember {
-                mutableStateOf(HostChannelListState(hosts.toList(), selected = selected, hostEditor = hostEditor))
+                mutableStateOf(HostChannelListState(hosts.toList(), selected = selected, hostEditor = hostEditor, chatEditor = chatEditor))
             }
             PyrycodeMobileTheme {
                 ChannelListScreen(
@@ -442,6 +449,33 @@ class ChannelListScreenTest {
         assertEquals(listOf(ChannelListEvent.TreeHostEditTapped("macbook")), events)
     }
 
+    @Test
+    fun hostRowReconnectControl_targetsItsOwnHost_andLeavesEveryHostsRowsDrawn() {
+        setTree(
+            entry(
+                serverId = "pyrybox",
+                displayName = "Pyrybox",
+                channels = listOf(conversation("c1", "alpha channel", "/w/one", true)),
+                relay = RelayLinkStatus.Offline,
+            ),
+            entry(
+                serverId = "macbook",
+                displayName = "Macbook",
+                channels = listOf(conversation("c2", "beta channel", "/w/two", true)),
+                relay = RelayLinkStatus.DaemonAbsent,
+            ),
+        )
+
+        composeTestRule
+            .onAllNodes(hasTestTag(treeHostReconnectTestTag("macbook")))
+            .onFirst()
+            .performClick()
+
+        composeTestRule.onNode(hasText("alpha channel")).assertExists()
+        composeTestRule.onNode(hasText("beta channel")).assertExists()
+        assertEquals(listOf(ChannelListEvent.TreeHostReconnectTapped("macbook")), events)
+    }
+
     /** One open editor on `pyrybox`, whose flags each test sets to the state it is asserting. */
     private fun openEditor(
         saving: Boolean = false,
@@ -556,6 +590,147 @@ class ChannelListScreenTest {
 
         // Still actionable: OK retries the removal rather than saving a name.
         assertEquals(listOf(ChannelListEvent.HostUnpairConfirmed), events)
+    }
+
+    @Test
+    fun chatRowPencil_namesItsChat_opensItsOwnTarget_andChannelRowsDrawNone() {
+        setTree(
+            entry(
+                serverId = "pyrybox",
+                displayName = "Pyrybox",
+                channels = listOf(conversation("same", "alpha channel", "/w/one", true)),
+                chats = listOf(conversation("same", "bravo chat", "/w/two", false)),
+            ),
+            entry(
+                serverId = "macbook",
+                displayName = "Macbook",
+                chats = listOf(conversation("same", "charlie chat", "/w/three", false), conversation("d2", null, "/w/three", false)),
+            ),
+        )
+
+        // One pencil per chat, each naming its own chat; the channel draws none (#667 owns channels).
+        composeTestRule.onAllNodes(hasContentDescription(string(R.string.cd_tree_chat_edit, "bravo chat"))).assertCountEquals(1)
+        composeTestRule.onAllNodes(hasContentDescription(string(R.string.cd_tree_chat_edit, "alpha channel"))).assertCountEquals(0)
+        // Lower rows compose lazily, so the nameless chat's pencil is reached by scrolling to it.
+        val untitled = hasContentDescription(string(R.string.cd_tree_chat_edit, string(R.string.untitled_discussion)))
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(untitled)
+        composeTestRule.onAllNodes(untitled).assertCountEquals(1)
+
+        composeTestRule
+            .onNode(hasScrollAction())
+            .performScrollToNode(hasContentDescription(string(R.string.cd_tree_chat_edit, "charlie chat")))
+        composeTestRule.onNode(hasContentDescription(string(R.string.cd_tree_chat_edit, "charlie chat"))).performClick()
+
+        // The pencil's own node took the tap: it opens neither the thread nor the highlight.
+        assertEquals(listOf(ChannelListEvent.TreeChatEditTapped(HostConversationTarget("macbook", "same"))), events)
+        composeTestRule.onAllNodes(hasTestTag(TREE_CHAT_ROW_TEST_TAG)).onFirst().assertIsNotSelected()
+    }
+
+    private fun openChat(
+        saving: Boolean = false,
+        failed: Boolean = false,
+        archiveFailed: Boolean = false,
+    ) = ChatEditorState(
+        serverId = "pyrybox",
+        conversationId = "d1",
+        initialName = "bravo chat",
+        saving = saving,
+        failed = failed,
+        archiveFailed = archiveFailed,
+    )
+
+    private fun chatHost(pyrycode: PyrycodeLinkStatus = PyrycodeLinkStatus.Connected) =
+        entry(serverId = "pyrybox", displayName = "Pyrybox", chats = listOf(conversation("d1", "bravo chat", "/w/two", false)))
+            .let { it.copy(host = it.host.copy(connectionStatus = ConnectionStatus(RelayLinkStatus.Connected, pyrycode))) }
+
+    @Test
+    fun editChatModal_isPrefilled_reportsTheTrimmedNameAndDismissal() {
+        setTree(chatHost(), chatEditor = openChat())
+
+        composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).assertTextContains("bravo chat")
+        composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).performTextReplacement("  Renamed  ")
+        composeTestRule.onNode(hasText("OK")).performClick()
+        assertEquals(listOf(ChannelListEvent.ChatEditNameSubmitted("Renamed")), events)
+
+        events.clear()
+        composeTestRule.onNode(hasText("Cancel")).performClick()
+        assertEquals(listOf(ChannelListEvent.ChatEditDismissed), events)
+    }
+
+    @Test
+    fun editChatModal_afterAFailure_statesItGenericallyAndKeepsTheTypedName() {
+        setTree(chatHost(), chatEditor = openChat(failed = true))
+
+        val failure = string(R.string.edit_chat_save_failed)
+        composeTestRule.onNode(hasText(failure)).assertIsDisplayed()
+        assertFalse(failure.contains("bravo"))
+
+        composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).performTextReplacement("Retry")
+        composeTestRule.onNode(hasText("OK")).performClick()
+        assertEquals(listOf(ChannelListEvent.ChatEditNameSubmitted("Retry")), events)
+    }
+
+    @Test
+    fun editChatModal_okFollowsItsOwnHostsConnection_andKeepsTheTypedNameAcrossAReconnect() {
+        val state = mutableStateOf(HostChannelListState(listOf(chatHost()), chatEditor = openChat()))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
+        }
+        composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).performTextReplacement("Typed")
+
+        state.value = state.value.copy(hosts = listOf(chatHost(PyrycodeLinkStatus.Down)))
+        composeTestRule.onNode(hasText("OK")).assertIsNotEnabled()
+        composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).assertTextContains("Typed")
+
+        state.value = state.value.copy(hosts = listOf(chatHost()))
+        composeTestRule.onNode(hasText("OK")).assertIsEnabled()
+        composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).assertTextContains("Typed")
+        composeTestRule.onNode(hasText("OK")).performClick()
+        assertEquals(listOf(ChannelListEvent.ChatEditNameSubmitted("Typed")), events)
+    }
+
+    @Test
+    fun editChatModal_archiveReportsOnlyTheArchive_whateverTheNameFieldHolds() {
+        setTree(chatHost(), chatEditor = openChat())
+
+        composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).performTextReplacement("   ")
+        composeTestRule.onNode(hasText(string(R.string.edit_chat_archive))).performClick()
+
+        assertEquals(listOf(ChannelListEvent.ChatArchiveRequested), events)
+    }
+
+    @Test
+    fun editChatModal_afterAFailedArchive_statesItGenericallyAndKeepsTheTypedName() {
+        val state = mutableStateOf(HostChannelListState(listOf(chatHost()), chatEditor = openChat()))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
+        }
+        composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).performTextReplacement("Typed")
+
+        state.value = state.value.copy(chatEditor = openChat(archiveFailed = true))
+        val failure = string(R.string.archive_failed)
+        composeTestRule.onNode(hasText(failure)).assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText(string(R.string.edit_chat_save_failed))).assertCountEquals(0)
+        assertFalse(failure.contains("bravo"))
+        composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).assertTextContains("Typed")
+        composeTestRule.onNode(hasText(string(R.string.edit_chat_archive))).assertIsEnabled()
+    }
+
+    @Test
+    fun editChatModal_archiveIsDisabledWhileItsHostIsDownOrAWriteIsInFlight() {
+        val state = mutableStateOf(HostChannelListState(listOf(chatHost(PyrycodeLinkStatus.Down)), chatEditor = openChat()))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
+        }
+        val archive = hasText(string(R.string.edit_chat_archive))
+        composeTestRule.onNode(archive).assertIsNotEnabled()
+
+        state.value = HostChannelListState(listOf(chatHost()), chatEditor = openChat())
+        composeTestRule.onNode(archive).assertIsEnabled()
+
+        state.value = state.value.copy(chatEditor = openChat(saving = true))
+        composeTestRule.onNode(archive).assertIsNotEnabled()
+        assertTrue(events.isEmpty())
     }
 
     @Test

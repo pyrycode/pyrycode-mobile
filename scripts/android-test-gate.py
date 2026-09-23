@@ -19,6 +19,9 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 E2E_PACKAGE = "de.pyryco.mobile.e2e"
 SCENARIOS = ("ping", "stream", "spinner", "tool", "tool-failed", "reconnect", "replay-order")
+# The live gate's executed-test floor: the size of scripts/e2e-emulator.sh's LIVE curated list (#848),
+# so a method silently dropped from that list reddens the gate. Raise it with the list.
+LIVE_MINIMUM = 13
 
 
 def claude_authenticated(env):
@@ -133,10 +136,10 @@ def main():
             expected_class = E2E_PACKAGE + ".DeterministicInteractiveStreamE2ETest"
         else:
             env["LIVE"] = "1"
-            minimum = 8
+            minimum = LIVE_MINIMUM
             expected_class = E2E_PACKAGE + ".InteractiveStreamE2ETest"
     if args.mode == "live":
-        # Missing login is an environment failure, not eight product regressions.
+        # Missing login is an environment failure, not a suite of product regressions.
         if not claude_authenticated(env):
             print("Android gate: Claude authentication unavailable. Run through the dispatcher's 1Password environment or sign in to Claude.", file=sys.stderr)
             return 1

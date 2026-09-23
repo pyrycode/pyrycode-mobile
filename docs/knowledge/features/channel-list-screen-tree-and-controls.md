@@ -158,3 +158,69 @@ modal swaps its own content in place for a prompt naming the host, and the shell
 carries the decision. See [ChannelListViewModel](channel-list-viewmodel.md#wiring) for the removal's three
 methods, the ordering that keeps a failed store write from clearing the host's cached workspace, and the
 `saving` guard that stops a decline or a second request from racing an in-flight write.
+
+## Host row reconnect control (#840)
+
+`RelayLinkStatus.isDisconnected()` (`ConversationTreeRows.kt`, `internal`) classifies a host row's relay
+leg: an exhaustive `when` with no `else`, so a case added to `RelayLinkStatus` later has to be classified
+here rather than silently falling through. `Reconnecting`, `Offline`, `DaemonAbsent` and (#841)
+`PairingRejected` are disconnected; `Idle` (a deliberate background close, not an error), `Connecting`
+and `Connected` are not. `PairingRejected`'s reconnect control therefore reads and routes exactly like
+any other disconnected host's: `reconnectHost` → `retryHost` → the supervisor's `retry()`, which dials
+once and can be rejected again — the exhaustive `when` is what forced this case to be classified rather
+than silently falling through to "connected".
+
+`TreeHostRow` reads `connectionStatus.relay.isDisconnected()` and, when true, draws the design's
+disconnected treatment. `FoldableTreeRow` gained an optional `accent: Color? = null` (default `null` keeps
+today's `onSurfaceVariant`/`onSurface` tints); the host row passes `colorScheme.error` for both the glyph
+and the name when disconnected. A fourth `TreeRowControl` — `Icons.Filled.Power`, tinted `colorScheme.primary`
+like the other three — is drawn inboard of `ConnectionLegPair`, tagged `treeHostReconnectTestTag(serverId)`
+(shares `boundedTagId`'s clamp with the add and edit tags). Tap emits `TreeHostReconnectTapped(serverId)`
+(the route calls `vm.reconnectHost(serverId)`) — the row's own host, the same discipline the fold, tap,
+add and edit controls all use. There is no long-press path, same as the edit control.
+
+Its content description is `R.string.cd_tree_host_reconnect` ("Reconnect %1$s") formatted with the row's
+already-`boundedRowText`-clamped display name, for the same reason the other three controls' descriptions
+are. The row's fold chevron is unchanged and still present on a disconnected row — the whole row remains
+the fold control, and removing that affordance for one state was explicitly left out of scope.
+
+**Figma token deviation.** The frame binds the disconnected name to `Schemes/error-container`, which
+renders `#ffdad6` on the light scheme's near-white surface — legible against a dark background, illegible
+against light. The row uses `colorScheme.error` instead for both glyph and name, which reads as
+error-toned in both schemes; this satisfies the ticket's ask for the theme's existing error colors without
+adding a token. Check a Figma frame's bound color against both app themes before matching it literally —
+a token that reads correctly in the design tool's own (usually dark) preview can be the wrong choice for
+the light scheme.
+
+See [Dependency injection § Exact-host Retry and lifecycle](dependency-injection.md#exact-host-retry-and-lifecycle)
+for the `HostConversationSource.retryHost` seam this control drives, and
+[ChannelListViewModel](channel-list-viewmodel.md#wiring) for `reconnectHost`'s routing.
+
+## Chat row edit control (#827)
+
+`TreeConversationRow` gained an optional fourth parameter, `onEditTapped: (() -> Unit)? = null`. A
+non-null value draws a `TreeRowControl(Icons.Filled.Edit, …)` at the row's trailing edge — the design's
+hover pencil, drawn permanently for the same reason the host row's is (#744). The name `Text` takes
+`Modifier.weight(1f, fill = onEditTapped != null)` only while the control is present, which pushes the
+pencil to the trailing edge and ellipsizes a long name before it reaches it; a row with no callback is
+laid out exactly as before. `TreeRowControl` already stays its own semantics node with its own click
+inside a `FoldableTreeRow`'s merging `clickable` (established for the host row's controls, above), so a
+tap on the pencil never opens the row's thread or moves `selected`.
+
+The row's own `boundedRowText(conversationName)` clamp is computed once and reused for both the `Text`
+and the pencil's `R.string.cd_tree_chat_edit` content description — the same one-clamp-two-uses shape the
+host row's controls use, and for the same reason: two identical accessible names on the same screen would
+be indistinguishable to TalkBack.
+
+**Only Chats rows draw it.** `treeSection` in [ChannelListScreen](channel-list-screen.md) passes
+`onEditTapped` from an exhaustive `when (section)` — `null` for `ConversationTreeSection.Channels`,
+`{ onEvent(TreeChatEditTapped(target)) }` for `Chats` — rather than a parameter on the section itself, so
+a channel's own editor (#667) can be added later without touching this row. `target` is the row's own
+`HostConversationTarget`, resolved the same way `TreeRowTapped`'s already is, never the selected host.
+
+Opening the modal from that target, resolving which host renames it, and following that host's connection
+live are the view model's job — see [ChannelListViewModel](channel-list-viewmodel.md#wiring) — and the
+modal itself is [`EditChatModal`](mobile-modal.md#callers), unchanged by this ticket except for gaining
+its first caller. Archive chat was wired in #828, the same placeholder-then-wire shape the host row's
+Unpair action carried between #744 and #745 — but unlike Unpair, Archive takes no confirmation step,
+since the host's own Archive screen restores the chat.

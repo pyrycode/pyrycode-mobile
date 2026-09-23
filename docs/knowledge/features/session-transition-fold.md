@@ -123,16 +123,24 @@ TYPE_SESSION_TRANSITION -> {
   dto.conversationId to it } } catch (e: IllegalArgumentException) { null }`
   (`SerializationException ⊂ IllegalArgumentException`; a bad `occurred_at` throws here too). Returns the
   routing key + the mapped row, or `null` to drop the one envelope while the lone collector survives.
-- **`appendSessionBoundary`** pure-appends in arrival order, **no dedup**:
-  `threadByConversation.update { it + (conversationId to (it[conversationId].orEmpty() + boundary)) }`.
-  The wire carries no row id and the repo is connection-scoped (#351), so within a connection arrival
-  order is correct — the same posture as `applyAssistantDelta`'s arrival-order concatenation. This absence
-  of dedup is a live crash surface, found during [#645](../codebase/645.md)'s security review: `ThreadScreen`
-  keys a boundary row on `(previousSessionId, newSessionId)` alone, so a daemon sending two boundaries that
-  share that pair (differing only in `occurred_at`) gives the `LazyColumn` two rows with one key. #645
-  closed this for the [history-page merge](remote-conversation-repository-reads-and-thread-store.md#history-pages-fold-into-the-same-thread-645)
-  only, by deduping on that same session pair; the live-lane fix (editing `appendSessionBoundary` or the
-  renderer's key) is tracked as [#775](../codebase/775.md).
+- **`appendSessionBoundary`** appends in arrival order, **skipping a boundary the thread already
+  holds** (`holdsBoundary`, [#775](../codebase/775.md)):
+  `threadByConversation.update { current -> val thread = current[conversationId].orEmpty(); if
+  (thread.holdsBoundary(boundary)) current else current + (conversationId to (thread + boundary)) }`.
+  The wire carries no row id, so "already holds" reads the boundary's identity — its
+  `(previousSessionId, newSessionId, occurredAt)` triple, the same fields the thread's list key
+  encodes (`ThreadRow.listKey`, see [the list section](thread-screen-how-it-works-list-and-status-row.md))
+  — never the pair alone: `idle_evict` mirrors the evicted id into both wire fields and a reactivated
+  session keeps its id, so a session evicted twice legitimately sends the pair `A->A` twice with
+  different instants, and both are real delimiters. This closes a live crash surface found during
+  [#645](../codebase/645.md)'s security review, when `ThreadScreen` still keyed a boundary row on
+  `(previousSessionId, newSessionId)` alone: #645 closed the exposure for the
+  [history-page merge](remote-conversation-repository-reads-and-thread-store-history-paging.md#history-pages-fold-into-the-same-thread-645)
+  only; #775 gave the live lane, the history merge and the render key one shared identity, so all
+  three readers agree and a repeat cannot reach the `LazyColumn` as a second row with the first
+  one's key. The repo is connection-scoped (#351), so within a connection arrival order is correct
+  for the rows that do get admitted — the same posture as `applyAssistantDelta`'s arrival-order
+  concatenation.
 - **Routes strictly by the payload's `conversation_id`.** A boundary can only ever surface in
   `observeMessages(thatId)` — cross-routing is structurally impossible. A boundary for a conversation no
   collector observes simply sits unread in the map (exactly as a `message`/`queue_state` for an unknown

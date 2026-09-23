@@ -129,6 +129,10 @@ internal fun foldQueuedRows(
  * - The four namespaces are distinct string literals, so no arm can collide with another.
  * - `msg:` keys are unique because `withMessage` upserts by id, and because [foldQueuedRows] lets at
  *   most one row claim a given echo (rule 2) and never emits the claimed item a second time.
+ * - `boundary:` keys encode exactly the `(previousSessionId, newSessionId, occurredAt)` identity both
+ *   boundary writers dedup on (`holdsBoundary`, #775), so no two boundaries the thread holds share a key.
+ *   The two ids are daemon-supplied and length-prefixed, so an id containing a separator cannot make two
+ *   different triples spell the same key; `occurredAt` comes last and needs no prefix.
  * - An **unmatched** row keys on its position, deliberately **not** on `queued_msg_id`: that value is
  *   daemon-supplied and nothing on this client checks it for uniqueness, so a snapshot repeating one
  *   would mint two identical keys. Position is unique by construction.
@@ -142,7 +146,8 @@ internal fun ThreadRow.listKey(chronologicalIndex: Int): String =
 private fun ThreadItem.listKey(): String =
     when (this) {
         is ThreadItem.MessageItem -> "msg:${message.id}"
-        is ThreadItem.SessionBoundary -> "boundary:$previousSessionId->$newSessionId"
+        is ThreadItem.SessionBoundary ->
+            "boundary:${previousSessionId.length}:$previousSessionId${newSessionId.length}:$newSessionId@$occurredAt"
         // The frame carries neither a message id nor a turn_id, so the row brings its own
         // client-stamped identity (#608): a position key would shift under render()'s
         // synthetic-message append/drop, and a payload key would collide on two identical frames

@@ -330,6 +330,17 @@ disable its `retry()`/`connect()` path. Keep validation and the nonblocking call
 under one lifecycle boundary. Literal-screen Retry is a separate snapshot re-fetch;
 it retains the destination repository and existing snapshot error mapping.
 
+The tree's per-host reconnect control (#840) mirrors this same pairing rather
+than adding a second one. `HostConversationSource.relay(...)` gained a trailing
+`retry: (String) -> Unit` that resolves `{ id -> registry.connectionFor(id)?.let { registry.retryHost(id, it) } }`
+— identical to the destination factory's above — and a public `retryHost(serverId)`
+that reads `disposed` under its own monitor and calls `retry` **outside** it, so
+the source never holds its lock while taking the registry's; no lock order is
+introduced. `ChannelListViewModel.reconnectHost(serverId)` forwards to it
+directly. `demo(...)` keeps the no-op default, since the demo host is always
+connected. See [ChannelListScreen § Host row reconnect control](channel-list-screen-tree-and-controls.md#host-row-reconnect-control-840)
+for the row side.
+
 ### Demo binding
 
 With `useRelay = false`, the same source type exposes exactly one host:
@@ -489,6 +500,9 @@ removal and disposal. A cancellation-cooperative fake alone would pass while a
 missing identity guard still allowed late writes. Real Noise registry fixtures in
 `RelayConnectionFactoryTest` cover saved metadata, background/resume, credential
 rotation and both selectors' singleton identity and disposal.
+
+`HostConversationSourceTest` also covers #840's `retryHost`: it forwards the exact
+id once and makes no call once the source is disposed.
 
 `HostConversationSourceTest` also covers #796's cache: a seeded host with no live
 repository draws its cached rows filtered the same way as a live one while its

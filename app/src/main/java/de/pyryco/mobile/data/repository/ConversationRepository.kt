@@ -486,6 +486,15 @@ sealed interface ThreadItem {
      * [BoundaryReason.WorkspaceChange]. For [BoundaryReason.Clear] and
      * [BoundaryReason.IdleEvict] callers must observe `null`. Documented
      * here and asserted in tests; not enforced at construction.
+     *
+     * Identity: `(previousSessionId, newSessionId, occurredAt)`. Invariant:
+     * unique within a thread (#775). The thread's `LazyColumn` keys a
+     * boundary on exactly these fields, so a duplicate crashes it; the pair
+     * alone is not unique, since an idle-evicted session keeps its id and
+     * every eviction of it is `A->A`. Uniqueness is a producer obligation —
+     * both thread writers skip a boundary the thread already holds
+     * (`holdsBoundary`) — documented here and asserted in tests, not
+     * enforced at construction (as [UnrecognizedMessage.id]).
      */
     data class SessionBoundary(
         val previousSessionId: String,

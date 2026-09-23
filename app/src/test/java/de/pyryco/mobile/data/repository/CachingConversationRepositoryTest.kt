@@ -2,6 +2,7 @@ package de.pyryco.mobile.data.repository
 
 import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.cache.ConversationCacheException
+import de.pyryco.mobile.data.cache.FileConversationCache
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
@@ -13,6 +14,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import kotlinx.datetime.Instant
@@ -20,7 +22,9 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 /**
  * The thread restore (#797): cached rows merged under the live projection through [mergeHistoryRows],
@@ -28,6 +32,9 @@ import org.junit.Test
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class CachingConversationRepositoryTest {
+    @get:Rule
+    val tmp = TemporaryFolder()
+
     private val logs = mutableListOf<String>()
     private val oldSink = RelayLog.sink
     private val oldEnabled = RelayLog.enabled
@@ -46,13 +53,31 @@ class CachingConversationRepositoryTest {
 
     private val live = MutableStateFlow<List<ThreadItem>>(emptyList())
     private val stall = MutableStateFlow(true)
+    private var failDelete = false
+    private val archiveCalls = mutableListOf<String>()
 
-    /** The live side: a fake for everything, with the thread and stall projections under test control. */
+    /**
+     * The live side: a fake for everything, with the thread and stall projections under test control.
+     * Delete, archive and unarchive are recorded rather than applied to the fake's seed (#798), so the
+     * removal tests can name any conversation id and make the daemon refuse a delete.
+     */
     private val delegate =
         object : ConversationRepository by FakeConversationRepository() {
             override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> = live
 
             override fun observeStall(conversationId: String): Flow<Boolean> = stall
+
+            override suspend fun delete(conversationId: String) {
+                if (failDelete) throw IllegalStateException("daemon refused the delete")
+            }
+
+            override suspend fun archive(conversationId: String) {
+                archiveCalls += "archive $conversationId"
+            }
+
+            override suspend fun unarchive(conversationId: String) {
+                archiveCalls += "unarchive $conversationId"
+            }
         }
 
     private fun message(
@@ -208,12 +233,107 @@ class CachingConversationRepositoryTest {
             assertEquals(0, cache.reads)
         }
 
+    @Test
+    fun `a permanent delete removes that conversation's cached content and nothing else`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val cache = fileCache().also { it.seed() }
+
+            CachingConversationRepository(delegate, cache, "server-a").delete("conv-1")
+
+            assertEquals(listOf("conv-2"), cache.readConversations("server-a").map { it.id })
+            assertEquals(emptyList<ThreadItem>(), cache.readThread("server-a", "conv-1"))
+            assertEquals(listOf(message("m2")), cache.readThread("server-a", "conv-2"))
+            // Conversation ids are host-local: the other host's conversation of the same id is untouched.
+            assertEquals(listOf("conv-1"), cache.readConversations("server-b").map { it.id })
+            assertEquals(listOf(message("b1")), cache.readThread("server-b", "conv-1"))
+        }
+
+    @Test
+    fun `a delete the daemon refuses leaves the cached content and propagates`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val cache = fileCache().also { it.seed() }
+            failDelete = true
+
+            val result = runCatching { CachingConversationRepository(delegate, cache, "server-a").delete("conv-1") }
+
+            assertTrue(result.exceptionOrNull() is IllegalStateException)
+            assertEquals(listOf("conv-1", "conv-2"), cache.readConversations("server-a").map { it.id })
+            assertEquals(listOf(message("m1")), cache.readThread("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `archiving and restoring leave the cached content readable`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val cache = fileCache().also { it.seed() }
+            val repository = CachingConversationRepository(delegate, cache, "server-a")
+
+            repository.archive("conv-1")
+            repository.unarchive("conv-1")
+
+            assertEquals(listOf("archive conv-1", "unarchive conv-1"), archiveCalls)
+            assertEquals(listOf("conv-1", "conv-2"), cache.readConversations("server-a").map { it.id })
+            assertEquals(listOf(message("m1")), cache.readThread("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `the thread that issued the delete never writes its rows back`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val cache = fileCache().also { it.seed() }
+            val repository = CachingConversationRepository(delegate, cache, "server-a")
+            val job = launch { repository.observeMessages("conv-1").collect { } }
+            live.value = listOf(message("m1"), message("m3"))
+            assertEquals(listOf(message("m1"), message("m3")), cache.readThread("server-a", "conv-1"))
+
+            repository.delete("conv-1")
+            // A late row between the delete and the screen's PopBack must not resurrect the document.
+            live.value = listOf(message("m1"), message("m3"), message("m4"))
+
+            assertEquals(emptyList<ThreadItem>(), cache.readThread("server-a", "conv-1"))
+            job.cancel()
+        }
+
+    @Test
+    fun `a failed cache removal still completes the delete and logs a static event only`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val cache = RecordingCache(emptyList(), failRemovals = true)
+
+            CachingConversationRepository(delegate, cache, "server-SECRET").delete("conv-SECRET")
+
+            assertEquals(listOf("server-SECRET" to "conv-SECRET"), cache.removals)
+            assertTrue(logs.any { it.contains("event=conversation_cache_remove_failed") })
+            logs.forEach { assertTrue("log leaked an identifier: $it", !it.contains("SECRET")) }
+        }
+
+    private fun TestScope.fileCache() = FileConversationCache(tmp.newFolder(), UnconfinedTestDispatcher(testScheduler))
+
+    /** Two conversations under one host, and a conversation of the same id under another. */
+    private suspend fun ConversationCache.seed() {
+        writeConversations("server-a", listOf(conversation("conv-1"), conversation("conv-2")))
+        writeThread("server-a", "conv-1", listOf(message("m1")))
+        writeThread("server-a", "conv-2", listOf(message("m2")))
+        writeConversations("server-b", listOf(conversation("conv-1")))
+        writeThread("server-b", "conv-1", listOf(message("b1")))
+    }
+
+    private fun conversation(id: String) =
+        Conversation(
+            id = id,
+            name = "Channel $id",
+            cwd = "/home/pyry/projects/$id",
+            currentSessionId = "session-$id",
+            sessionHistory = listOf("session-$id"),
+            isPromoted = true,
+            lastUsedAt = Instant.parse("2026-09-22T10:00:00Z"),
+        )
+
     /** One conversation's thread, seeded; records every write it is handed. */
     private class RecordingCache(
         private val seed: List<ThreadItem>,
         var failWrites: Boolean = false,
+        var failRemovals: Boolean = false,
     ) : ConversationCache {
         val writes = mutableListOf<List<ThreadItem>>()
+        val removals = mutableListOf<Pair<String, String>>()
         var reads = 0
 
         override suspend fun readThread(
@@ -251,6 +371,13 @@ class CachingConversationRepositoryTest {
         override suspend fun removeConversation(
             serverId: String,
             conversationId: String,
-        ) = Result.success(Unit)
+        ): Result<Unit> {
+            removals += serverId to conversationId
+            return if (failRemovals) {
+                Result.failure(ConversationCacheException("conversation cache remove_conversation failed: io"))
+            } else {
+                Result.success(Unit)
+            }
+        }
     }
 }
