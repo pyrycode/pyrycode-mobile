@@ -15,6 +15,21 @@ gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
 
+def live_report(count):
+    """The recorded eight-case live report, padded with synthetic curated cases to [count] (#848).
+
+    The recorded fixture stays byte-for-byte; the padding stands in for the methods added to the curated
+    list after it was captured.
+    """
+    baseline = (Path(__file__).parent / "fixtures/default-workspace-live/588.xml").read_text()
+    root = ET.fromstring(baseline)
+    suite = root.find("testsuite")
+    for index in range(count - len(suite.findall("testcase"))):
+        ET.SubElement(suite, "testcase", {"classname": suite.get("name"), "name": f"interactiveTurn_padded{index}"})
+    suite.set("tests", str(len(suite.findall("testcase"))))
+    return ET.tostring(root, encoding="unicode")
+
+
 class AndroidGateTest(unittest.TestCase):
     def report(self, root, xml):
         path = root / "TEST-result.xml"
@@ -22,7 +37,7 @@ class AndroidGateTest(unittest.TestCase):
         return path
 
     def test_live_gate_collects_only_fresh_reports_from_selected_device_path(self):
-        baseline = (Path(__file__).parent / "fixtures/default-workspace-live/588.xml").read_text()
+        baseline = live_report(gate.LIVE_MINIMUM)
         for device in ("pixel2Api33Atd", "connected"):
             for result in ("pass", "process_failure", "missing", "stale", "test_failure"):
                 with self.subTest(device=device, result=result), tempfile.TemporaryDirectory() as tmp:
@@ -70,10 +85,21 @@ class AndroidGateTest(unittest.TestCase):
                         self.assertEqual(list(root.rglob("dispatcher.xml")), [])
                     else:
                         cases = ET.fromstring(stdout.getvalue()).findall(".//testcase")
-                        self.assertEqual(len(cases), 8)
+                        self.assertEqual(len(cases), gate.LIVE_MINIMUM)
                         self.assertTrue(all(case.get("name").startswith("interactiveTurn_") for case in cases))
                         self.assertNotIn("private failure", stdout.getvalue())
                         self.assertEqual(len(list(root.rglob("dispatcher.xml"))), 1)
+
+    def test_live_floor_matches_the_curated_list(self):
+        # #848: the floor is the curated list's size, so a method dropped from the list reddens the gate.
+        script = (Path(__file__).parent / "e2e-emulator.sh").read_text()
+        live = script[script.index('elif [ -n "${LIVE}" ]; then\n  # LIVE curates'):]
+        target = live[live.index('TEST_TARGET="'):].split("\n", 1)[0]
+        self.assertEqual(gate.LIVE_MINIMUM, target.count("#interactiveTurn_"))
+        with tempfile.TemporaryDirectory() as tmp:
+            short = self.report(Path(tmp), live_report(gate.LIVE_MINIMUM - 1))
+            with self.assertRaises(ValueError):
+                gate.combine_reports([short], gate.LIVE_MINIMUM)
 
     def test_auth_preflight_requires_a_successful_logged_in_status(self):
         for code, output, expected in [(0, '{"loggedIn":true}', True),

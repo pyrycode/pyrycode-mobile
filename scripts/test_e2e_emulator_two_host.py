@@ -107,6 +107,21 @@ class EmulatorTwoHostTest(unittest.TestCase):
             self.assertNotEqual(0, result.returncode)
             self.assertEqual("", result.stdout)
 
+    def test_pair_token_prints_only_the_peer_token(self):
+        # #848: the second-client peer needs its own token and nothing else from its `pyry pair`.
+        payload = {"server": "srv-a", "relay": "ws://127.0.0.1:1/v1/server", "token": "peer tok'en",
+                   "server_static_pubkey": "a2V5"}
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "pair-peer.out"
+            out.write_text("QR\n\n" + b64url(payload) + "\n")
+            result = self.run_function("pair_token", str(out))
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(["PEER_TOKEN=" + shlex.quote("peer tok'en")], result.stdout.splitlines())
+            out.write_text("error: no daemon\n")
+            result = self.run_function("pair_token", str(out))
+            self.assertNotEqual(0, result.returncode)
+            self.assertEqual("", result.stdout)
+
     def test_cleanup_tolerates_an_unset_second_daemon(self):
         cleanup = self.script[self.script.index("cleanup() {"):self.script.index("trap cleanup EXIT INT TERM")]
         with tempfile.TemporaryDirectory() as tmp:

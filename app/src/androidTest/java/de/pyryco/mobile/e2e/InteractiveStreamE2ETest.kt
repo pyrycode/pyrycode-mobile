@@ -5,6 +5,7 @@ import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasAnySibling
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
@@ -30,12 +31,15 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.di.RelayConnectionRegistry
+import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_RELAY_URL
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
+import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLIC_KEY
 import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
@@ -44,6 +48,7 @@ import de.pyryco.mobile.ui.conversations.thread.PING_PROMPT
 import de.pyryco.mobile.ui.conversations.thread.SESSION_BOUNDARY_EXPLANATION
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedPingReply
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedSessionBoundary
+import de.pyryco.mobile.ui.conversations.thread.pingReplyMatcher
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -1273,6 +1278,96 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /**
+     * A turn started from another client continues on the phone (#848, rung 3). A [SecondClientPeer] —
+     * a second paired device on host A with its own token ([ARG_PEER_TOKEN]) and key, standing in for the
+     * desktop — sends the constrained ping prompt into a chat the phone has open.
+     *
+     * The daemon carries no live frame with another device's message text: the turn's stream frames fan
+     * out to every interactive connection, and the message text reaches the phone through history. So the
+     * checks are what the operator sees, however delivered:
+     *  * **while open** — claude's reply renders in the thread exactly once;
+     *  * **after leaving and reopening** — the peer's message and the reply each render exactly once.
+     *
+     * The chat is renamed to a run-unique name before any message is sent, so the daemon's first-message
+     * auto-naming never fires (a name set by rename is never overwritten) and the row can be found again.
+     * The prompt count is read inside the thread's scrollable list, where a delivered bubble and an inline
+     * queued row both live, so a message drawn once as each would count twice; the top bar is outside it.
+     *
+     * **One real-claude turn**: the peer's ping.
+     */
+    @Test
+    fun interactiveTurn_peerStartedTurn_continuesOnPhone() {
+        val args = InstrumentationRegistry.getArguments()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer =
+            SecondClientPeer(
+                PairedServer(
+                    serverId = serverId,
+                    token = twoHostArg(ARG_PEER_TOKEN),
+                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                    serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
+                ),
+            )
+        try {
+            // 1. The phone creates a chat and is in its thread; the new id is the one it did not hold before.
+            awaitChannelList()
+            awaitConnected()
+            val before = runBlocking { withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { true } } }
+            createChat()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+            }
+            val conversationId =
+                runBlocking {
+                    withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { ids -> (ids - before).isNotEmpty() } - before }
+                }.single()
+            val chatName = PEER_CHAT_NAME_PREFIX + System.currentTimeMillis()
+            renameOpenThread(chatName)
+
+            // 2. AC-1: the peer, as its own device, sends into that conversation and observes its frames.
+            runBlocking {
+                peer.open(CONNECT_TIMEOUT_MS)
+                peer.sendMessage(conversationId, PING_PROMPT, THREAD_TIMEOUT_MS)
+                peer.awaitFrame(conversationId, "turn_end", REPLY_TIMEOUT_MS)
+            }
+
+            // 3. AC-2: with the thread open, claude's reply renders there once.
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            composeTestRule.onAllNodes(pingReplyMatcher(), useUnmergedTree = true).assertCountEquals(1)
+
+            // 4. AC-3: leave, reopen, and read the message and the reply once each.
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitChannelList()
+            val chatRow = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(chatName, substring = true)
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) { runCatching { scrollListTo(chatRow) }.isSuccess }
+            composeTestRule.onAllNodes(chatRow).onFirst().performClick()
+            val peerMessage = hasText(PING_PROMPT) and hasAnyAncestor(hasScrollToNodeAction())
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(peerMessage, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            composeTestRule.waitForIdle()
+            composeTestRule.onAllNodes(peerMessage, useUnmergedTree = true).assertCountEquals(1)
+            composeTestRule.onAllNodes(pingReplyMatcher(), useUnmergedTree = true).assertCountEquals(1)
+        } finally {
+            peer.close()
+        }
+    }
+
+    /** Wait until [serverId]'s repository holds a conversation-id set satisfying [ready], and return it. */
+    private suspend fun hostConversationIds(
+        serverId: String,
+        ready: (Set<String>) -> Boolean,
+    ): Set<String> {
+        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
+        val repository = checkNotNull(bundle.coordinator.currentRepository.first { it != null })
+        return repository
+            .observeConversations(ConversationFilter.All)
+            .first { rows -> ready(rows.mapTo(mutableSetOf()) { it.id }) }
+            .mapTo(mutableSetOf()) { it.id }
+    }
+
     /** A two-host instrumentation argument (#847), failing with the script that passes it. */
     private fun twoHostArg(key: String): String =
         requireNotNull(InstrumentationRegistry.getArguments().getString(key)) {
@@ -1683,6 +1778,12 @@ class InteractiveStreamE2ETest {
         const val ARG_COLLISION_CONVERSATION_ID = "collisionConversationId"
         const val ARG_COLLISION_NAME_A = "collisionNameA"
         const val ARG_COLLISION_NAME_B = "collisionNameB"
+
+        // #848 peer scenario. PEER_TOKEN is the second device's pairing token that scripts/e2e-emulator.sh
+        // mints on host A for the SecondClientPeer (rung 3 and LIVE): never log it. The chat's run-unique
+        // name shares no substring with PING_PROMPT, "ping" or the other scenarios' prefixes.
+        const val ARG_PEER_TOKEN = "peerToken"
+        const val PEER_CHAT_NAME_PREFIX = "e2e848-"
 
         // Pairing-flow production strings (hardcoded in the composables, no resources). PASTE_CODE_LINK is
         // the common tail of all three scanner states' paste links — "Trouble scanning? Paste the pairing

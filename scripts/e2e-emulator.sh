@@ -6,10 +6,8 @@
 #
 #   * rung 3 (default): the REAL app on a headless emulator → host pyry daemon → real claude →
 #     assert "ping" renders. Semi-deterministic; burns one real claude turn. A LIVE=1 variant runs a
-#     curated octet of rung-3 scenarios (ping + create-workspace-folder + new-session + delete +
-#     archive-restore + change-workspace + rename + save-as-channel, still 3 turns — delete,
-#     archive-restore, change-workspace, rename, and save-as-channel spend none) against the PRODUCTION relay
-#     over wss:// (TLS), so a pre-ship gate
+#     curated set of rung-3 scenarios (eleven methods, four real claude turns — listed at the LIVE
+#     TEST_TARGET below) against the PRODUCTION relay over wss:// (TLS), so a pre-ship gate
 #     catches the live-environment failure class a local relay cannot. See "LIVE mode" below.
 #   * rung 4 (DETERMINISTIC=1): the same real app + Noise/relay path, but claude is swapped for the
 #     scripted `fakeclaude` backend (pyrycode #642) that replays a fixed JSONL fixture. The daemon
@@ -165,6 +163,13 @@ DAEMON_B_LOG="${WORK_DIR}/daemon-b.log"
 PAIR_B_OUT="${WORK_DIR}/pair-b.out"
 SERVER_ID_B=""
 PAIR_CODE_B=""
+
+# Second-client peer (#848), rung 3 / LIVE only: a second paired DEVICE on the first test daemon, with its own
+# `pyry pair` token, standing in for the desktop. The test builds the peer itself from this token and a
+# throwaway key; the phone's own token and key are never shared with it.
+PAIR_NAME_PEER="${PAIR_NAME}-peer"
+PAIR_PEER_OUT="${WORK_DIR}/pair-peer.out"
+PEER_TOKEN=""
 
 log() { printf '\033[1;34m[e2e]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[e2e] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -325,6 +330,33 @@ payload["relay"] = sys.argv[2]
 code = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
 print("SERVER_ID_B=" + shlex.quote(payload["server"]))
 print("PAIR_CODE_B=" + shlex.quote(code))
+PY
+}
+
+# pair_token <pair-out> (#848)
+#   The second-client peer dials host A as its own device, so it needs only its own token: the server id,
+#   relay URL and server static key are host A's, already passed. Finds the payload line the first host's
+#   parse accepts and prints exactly one shell assignment and nothing else: the value is a pairing token.
+pair_token() {
+  python3 - "$@" <<'PY'
+import base64, json, shlex, sys
+
+def b64url(s):
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+with open(sys.argv[1]) as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(b64url(line))
+        except Exception:
+            continue
+        if isinstance(obj, dict) and {"server", "token", "server_static_pubkey"} <= obj.keys():
+            print("PEER_TOKEN=" + shlex.quote(obj["token"]))
+            sys.exit(0)
+sys.exit("could not find the base64url pairing payload line in the peer's `pyry pair` output")
 PY
 }
 
@@ -689,6 +721,16 @@ if [ -z "${DETERMINISTIC}" ]; then
   eval "${PARSED_B}"
   [ -n "${SERVER_ID_B}" ] && [ -n "${PAIR_CODE_B}" ] || die "empty second pairing fields"
   log "second host minted: serverId=${SERVER_ID_B} (the test pairs it by code)"
+
+  # The second-client peer's own device token on host A (#848). Never log PEER_TOKEN.
+  log "minting second-client peer token (name='${PAIR_NAME_PEER}', pyry-name='${PYRY_NAME}')…"
+  PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME}" --name="${PAIR_NAME_PEER}" \
+    >"${PAIR_PEER_OUT}" 2>&1 || die "peer pyry pair failed; see private log ${PAIR_PEER_OUT}"
+  PARSED_PEER="$(pair_token "${PAIR_PEER_OUT}")" \
+    || die "failed to parse the peer pairing payload; see private log ${PAIR_PEER_OUT}"
+  eval "${PARSED_PEER}"
+  [ -n "${PEER_TOKEN}" ] || die "empty peer pairing token"
+  log "second-client peer minted on serverId=${SERVER_ID}"
 fi
 
 # ---- 4b. release a held stream fragment after an explicit test action ---------
@@ -713,9 +755,9 @@ fi
 
 # ---- 4. run the managed-device instrumented test ----------------------------------------------
 # Deterministic mode runs exactly the scenario's one method (class#method); default rung 3 runs the whole
-# class; LIVE curates ten real-claude methods (ping + create-workspace-folder + new-session +
-# delete + archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host,
-# still 3 turns — delete/rename/archive/unarchive/change-workspace/promote are daemon round-trips, the
+# class; LIVE curates eleven real-claude methods (ping + create-workspace-folder + new-session +
+# delete + archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
+# the #848 peer-started turn, 4 turns — delete/rename/archive/unarchive/change-workspace/promote are daemon round-trips, the
 # list-archive-entry arrival is pure navigation, and the two-host scenario (#847) is pairing, navigation,
 # rename and link cycling, none of them claude turns) via a comma-separated class list — the full class' #481 tool-use test would spend an extra turn, so it stays
 # excluded.
@@ -723,12 +765,12 @@ if [ -n "${DETERMINISTIC}" ]; then
   TEST_TARGET="${TEST_CLASS}#${TEST_METHOD}"
 elif [ -n "${LIVE}" ]; then
   # LIVE curates its real-claude turns: ping + create-workspace-folder + new-session + delete +
-  # archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host (10
-  # methods, still 3 turns — delete, archive-restore, change-workspace, rename, save-as-channel,
-  # list-archive-entry and two-host spend none), passed as a comma-separated
+  # archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
+  # peer-started turn (11 methods, 4 turns — the #848 peer's ping is the fourth; delete, archive-restore,
+  # change-workspace, rename, save-as-channel, list-archive-entry and two-host spend none), passed as a comma-separated
   # class#method list. The class' #481 tool-use test stays excluded from LIVE for cost (it runs only in the
   # default whole-class rung-3 run).
-  TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_archiveRestore_roundTripsListMembership,${TEST_CLASS}#interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived,${TEST_CLASS}#interactiveTurn_twoHostsCollidingConversationId_stayPerHost"
+  TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_archiveRestore_roundTripsListMembership,${TEST_CLASS}#interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived,${TEST_CLASS}#interactiveTurn_twoHostsCollidingConversationId_stayPerHost,${TEST_CLASS}#interactiveTurn_peerStartedTurn_continuesOnPhone"
 else
   TEST_TARGET="${TEST_CLASS}"
 fi
@@ -746,6 +788,10 @@ if [ -n "${SERVER_ID_B:-}" ]; then
     -Pandroid.testInstrumentationRunnerArguments.collisionNameB="${COLLISION_NAME_B}"
   )
 fi
+# The second-client peer's token (#848), only on the paths that minted one.
+if [ -n "${PEER_TOKEN:-}" ]; then
+  GRADLE_TEST_ARGS+=(-Pandroid.testInstrumentationRunnerArguments.peerToken="${PEER_TOKEN}")
+fi
 "${GRADLEW}" -p "${REPO_ROOT}" "${DEVICE}DebugAndroidTest" \
   "${GRADLE_TEST_ARGS[@]}" \
   -Pandroid.testInstrumentationRunnerArguments.class="${TEST_TARGET}" \
@@ -758,7 +804,7 @@ fi
 if [ -n "${DETERMINISTIC}" ]; then
   log "PASS — scenario '${SCENARIO}' green: the emulator connected, sent the prompt, and the scripted reply rendered."
 elif [ -n "${LIVE}" ]; then
-  log "PASS — the headless emulator connected over the LIVE relay, sent the prompts, and the ping reply, the created-workspace flow, the new-session delimiter, the delete-conversation flow, the archive/restore round-trip, the change-workspace chip re-label, the rename top-bar/list re-label, the save-as-channel promote (top-bar re-label + channel tier), the list's archive entry reaching Archived, and two hosts sharing one conversation id staying separate all rendered."
+  log "PASS — the headless emulator connected over the LIVE relay, sent the prompts, and the ping reply, the created-workspace flow, the new-session delimiter, the delete-conversation flow, the archive/restore round-trip, the change-workspace chip re-label, the rename top-bar/list re-label, the save-as-channel promote (top-bar re-label + channel tier), the list's archive entry reaching Archived, two hosts sharing one conversation id staying separate, and a turn started from a second client continuing on the phone all rendered."
 else
   log "PASS — the headless emulator connected, sent the prompt, and 'ping' rendered in the thread."
 fi
