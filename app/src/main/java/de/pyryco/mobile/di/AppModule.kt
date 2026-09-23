@@ -38,7 +38,9 @@ import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
+import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
+import de.pyryco.mobile.ui.conversations.thread.ContentResolverAttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.LiteralScreenViewModel
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.onboarding.PairCodeViewModel
@@ -139,6 +141,8 @@ val appModule =
         // typed it. Holds no connection and no disk handle, so it is unaffected by reconnects and by
         // the lifecycle driver's background close.
         single { ComposerDraftStore() }
+        // #932: reads a pending attachment's bytes through its content URI when the thread sends it.
+        single<AttachmentReader> { ContentResolverAttachmentReader(androidContext().contentResolver, androidContext().packageName) }
         viewModel { ScannerViewModel() }
         viewModel {
             val registry = get<RelayConnectionRegistry>()
@@ -153,7 +157,7 @@ val appModule =
         viewModel { get<ThreadDestinationFactory>().archive(get()) }
         viewModel {
             val handle = get<SavedStateHandle>()
-            get<ThreadDestinationFactory>().thread(handle, get()).also { thread ->
+            get<ThreadDestinationFactory>().thread(handle, get(), get()).also { thread ->
                 // #877: the thread is what knows its conversation is being viewed. The view opens the
                 // conversation on its own host and holds it read until this view model is cleared.
                 val viewing =
@@ -276,13 +280,14 @@ internal class ThreadDestinationFactory(
         // the `AppPreferences` that used to sit beside it: the thread's model and effort come from the
         // daemon's session settings now, and no other thread state reads a device preference.
         draftStore: ComposerDraftStore,
+        attachmentReader: AttachmentReader,
     ): ThreadViewModel {
         val serverId = handle.get<String>("serverId").orEmpty()
         val bundle = if (useRelay) registry.connectionFor(serverId) else null
         val repository = repository(serverId, bundle)
         RelayLog.d { "event=thread_destination_bound" }
         if (!useRelay && serverId == HostConversationSource.DEMO_SERVER_ID) {
-            return ThreadViewModel(handle, repository, FakeConnectionStateSource(), draftStore)
+            return ThreadViewModel(handle, repository, FakeConnectionStateSource(), draftStore, attachmentReader = attachmentReader)
         }
         val connection =
             object : ConnectionStateSource {
@@ -311,6 +316,7 @@ internal class ThreadDestinationFactory(
             // #843: read through the registry by id, not off the captured bundle — a successful re-pair
             // replaces that bundle, and the thread must see the replacement to take the action away.
             pairingRejected = pairingRejected(registry.hostConnections, serverId),
+            attachmentReader = attachmentReader,
         )
     }
 

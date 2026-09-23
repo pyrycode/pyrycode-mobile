@@ -73,7 +73,7 @@ internal fun isForeignContentUri(scheme: String?, authority: String?, ownPackage
 class ContentResolverAttachmentReader(resolver: ContentResolver, ownPackage: String, io: CoroutineDispatcher = Dispatchers.IO) : AttachmentReader
 ```
 
-`readBounded` reads in fixed-size buffers and returns `null` as soon as the running total passes `maxBytes`, whatever size the provider reported. The Android implementation runs on `io`, opens `resolver.openInputStream(Uri.parse(uri))`, closes it with `use`, maps a `null` stream or any `Exception` (FileNotFound, Security, IO, IllegalArgument) to `Unreadable` and `readBounded == null` to `TooLarge`. `CancellationException` is rethrown. No path conversion, no permission request.
+`readBounded` reads in fixed-size buffers and returns `null` as soon as the running total passes `maxBytes`, whatever size the provider reported. The Android implementation runs on `io`, opens `resolver.openInputStream(uri.toUri())`, closes it with `use`, maps a `null` stream or any `Exception` (FileNotFound, Security, IO, IllegalArgument) to `Unreadable` and `readBounded == null` to `TooLarge`. `CancellationException` is rethrown. No path conversion, no permission request.
 
 Before opening, `isForeignContentUri` must hold, else `Unreadable` without touching the resolver: the scheme is exactly `content`, and the authority is non-empty and is neither `ownPackage` nor starts with `"$ownPackage."`. `ContentResolver.openInputStream` also opens `file://` and `android.resource://` URIs, and our own non-exported providers, with this app's identity. A URI handed back by another app's picker must not be able to make us upload our own private files.
 

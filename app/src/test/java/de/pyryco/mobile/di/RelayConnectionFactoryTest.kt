@@ -46,6 +46,8 @@ import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
+import de.pyryco.mobile.ui.conversations.thread.AttachmentRead
+import de.pyryco.mobile.ui.conversations.thread.AttachmentReader
 import de.pyryco.mobile.ui.conversations.thread.LiteralScreenEvent
 import de.pyryco.mobile.ui.conversations.thread.LiteralScreenUiState
 import de.pyryco.mobile.ui.conversations.thread.LiteralScreenViewModel
@@ -949,6 +951,8 @@ class RelayConnectionFactoryTest {
                         // The thread destination now wraps its repository in the thread cache (#797), whose
                         // real binding needs a Context this container does not have.
                         single<ConversationCache> { InertConversationCache }
+                        // #932: the thread's attachment reader needs a ContentResolver; nothing here reads a file.
+                        single<AttachmentReader> { AttachmentReader { AttachmentRead.Unreadable } }
                     },
                 )
             val vms = mutableListOf<androidx.lifecycle.ViewModel>()
@@ -1142,6 +1146,7 @@ class RelayConnectionFactoryTest {
                             single { registry }
                             single { f.store } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
                             single { prefs }
+                            single<AttachmentReader> { AttachmentReader { AttachmentRead.Unreadable } }
                         },
                     )
                 try {
@@ -1214,6 +1219,8 @@ class RelayConnectionFactoryTest {
                         // The thread destination now wraps its repository in the thread cache (#797), whose
                         // real binding needs a Context this container does not have.
                         single<ConversationCache> { InertConversationCache }
+                        // #932: the thread's attachment reader needs a ContentResolver; nothing here reads a file.
+                        single<AttachmentReader> { AttachmentReader { AttachmentRead.Unreadable } }
                     },
                 )
             val vms = mutableListOf<ThreadViewModel>()
@@ -1302,6 +1309,8 @@ class RelayConnectionFactoryTest {
                         // The thread destination now wraps its repository in the thread cache (#797), whose
                         // real binding needs a Context this container does not have.
                         single<ConversationCache> { InertConversationCache }
+                        // #932: the thread's attachment reader needs a ContentResolver; nothing here reads a file.
+                        single<AttachmentReader> { AttachmentReader { AttachmentRead.Unreadable } }
                     },
                 )
             var vm: ThreadViewModel? = null
