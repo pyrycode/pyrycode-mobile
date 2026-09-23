@@ -62,6 +62,7 @@ fun StatusSheet(
     enabled: Boolean,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    effortNote: String? = null,
     sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
 ) {
     ModalBottomSheet(
@@ -81,6 +82,7 @@ fun StatusSheet(
             pending = pending,
             enabled = enabled,
             onDismiss = onDismiss,
+            effortNote = effortNote,
         )
     }
 }
@@ -98,6 +100,7 @@ internal fun StatusSheetContent(
     pending: Boolean,
     enabled: Boolean,
     onDismiss: () -> Unit,
+    effortNote: String? = null,
 ) {
     // The menu length is the daemon's, and its producer cap is not a wire constant — so the body scrolls
     // rather than clipping the Context-window section below a long Model section. #650 moved the
@@ -126,6 +129,8 @@ internal fun StatusSheetContent(
             onEffortSelected = onEffortSelected,
             enabled = enabled && !pending,
         )
+        // #889: why the selection is not Claude's applied effort — client-owned text, never daemon text.
+        effortNote?.let { Caption(text = it) }
         SectionHeader(text = "Context window")
         ContextWindowSection()
         Spacer(modifier = Modifier.height(24.dp))

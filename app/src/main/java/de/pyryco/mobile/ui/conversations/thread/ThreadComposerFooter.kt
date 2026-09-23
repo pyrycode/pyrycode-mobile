@@ -1,5 +1,6 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -71,6 +72,15 @@ internal enum class PermissionModeOption(
  */
 internal fun permissionModeLabel(runConfig: ThreadRunConfig): String? =
     runConfig.permissionMode.takeIf { it.isNotEmpty() }?.let { PermissionModeOption.fromWire(it)?.label ?: it.inert() }
+
+/** The client-owned explanation for [EffortNote] (#889). Never daemon text. */
+@StringRes
+internal fun EffortNote.textRes(): Int =
+    when (this) {
+        EffortNote.SelectedRunningUnavailable -> R.string.thread_effort_note_selected_unavailable
+        EffortNote.DefaultRunningUnavailable -> R.string.thread_effort_note_default_unavailable
+        EffortNote.NotReported -> R.string.thread_effort_note_not_reported
+    }
 
 /**
  * What a footer control offers when its overlay opens. [notListed] is how many entries the list leaves
@@ -163,7 +173,8 @@ private const val PENDING_ALPHA = 0.55f
  * `Actions` (#655), `Cxt:` (#591) and attachment segments belong to other tickets.
  *
  * Stateless. The model and effort buttons show [ThreadRunConfig.modelLabel] / [ThreadRunConfig.effortLabel].
- * Those labels read the pending tap first and the confirmed reading after it. When the ViewModel clears a
+ * Those labels read the pending tap first and the confirmed reading after it; for effort that reading is
+ * Claude's applied value, with the saved choice only as an explained fallback (#889). When the ViewModel clears a
  * refused write, the button returns to its earlier value with no footer logic. The permission button
  * (#650) is different: it shows only [permissionModeLabel], the confirmed reading, and is absent when
  * there is none. Its outstanding write only dims it. A button with an outstanding tap is dimmed and says
@@ -206,6 +217,7 @@ fun ThreadComposerFooter(
             clickLabel = stringResource(R.string.thread_footer_change_effort),
             enabled = footerControlEnabled(FooterControl.Effort, runConfig),
             pending = runConfig.pendingEffort != null,
+            note = runConfig.effortNote?.let { stringResource(it.textRes()) },
             onClick = { onOpen(FooterControl.Effort) },
             onBounds = { onAnchorChanged(FooterControl.Effort, it) },
         )
@@ -228,7 +240,7 @@ fun ThreadComposerFooter(
 }
 
 /** Figma's `Input footer button`. A disabled button still shows its value, without the chevron that
- *  promises a menu. */
+ *  promises a menu. [note] explains the value in the state description when no write is pending (#889). */
 @Composable
 private fun FooterButton(
     label: String,
@@ -237,6 +249,7 @@ private fun FooterButton(
     pending: Boolean,
     onClick: () -> Unit,
     onBounds: (Rect) -> Unit,
+    note: String? = null,
 ) {
     val pendingDescription = stringResource(R.string.thread_footer_pending)
     val color = if (enabled || pending) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
@@ -247,7 +260,7 @@ private fun FooterButton(
                 .onGloballyPositioned { onBounds(it.boundsInWindow()) }
                 .clickable(enabled = enabled, onClickLabel = clickLabel, role = Role.Button, onClick = onClick)
                 .semantics(mergeDescendants = true) {
-                    if (pending) stateDescription = pendingDescription
+                    (if (pending) pendingDescription else note)?.let { stateDescription = it }
                 }.alpha(if (pending) PENDING_ALPHA else 1f),
         horizontalArrangement = Arrangement.spacedBy(FooterChevronGap),
         verticalAlignment = Alignment.CenterVertically,
