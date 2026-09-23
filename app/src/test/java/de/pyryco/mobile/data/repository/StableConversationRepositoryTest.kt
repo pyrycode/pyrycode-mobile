@@ -512,6 +512,54 @@ class StableConversationRepositoryTest {
             assertEquals(listOf(null, wrappingUp, null), readings)
         }
 
+    // ---- #890: observeAnnouncedModel / observeSessionFacts delegate and track connection churn -----
+
+    @Test
+    fun observeAnnouncedModelAndSessionFacts_whileAbsent_emitNull() =
+        runTest {
+            val current = MutableStateFlow<ConversationRepository?>(null)
+            val facade = StableConversationRepository(current)
+
+            val models = mutableListOf<AnnouncedModel?>()
+            val facts = mutableListOf<SessionFacts?>()
+            backgroundScope.launch { facade.observeAnnouncedModel("c1").collect { models += it } }
+            backgroundScope.launch { facade.observeSessionFacts("c1").collect { facts += it } }
+            runCurrent()
+
+            assertEquals(listOf<AnnouncedModel?>(null), models)
+            assertEquals(listOf<SessionFacts?>(null), facts)
+        }
+
+    // A reconnect and a host switch both publish a fresh connection-scoped repository, so the switch is
+    // what clears both readings: one connection's claude is never reported as the next one's.
+    @Test
+    fun observeAnnouncedModelAndSessionFacts_delegateToLiveRepo_andDoNotLeakAcrossSwitch() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            val models = mutableListOf<AnnouncedModel?>()
+            val facts = mutableListOf<SessionFacts?>()
+            backgroundScope.launch { facade.observeAnnouncedModel("c1").collect { models += it } }
+            backgroundScope.launch { facade.observeSessionFacts("c1").collect { facts += it } }
+            runCurrent()
+
+            val model = AnnouncedModel("claude-opus-5-5", truncated = false)
+            val sessionFacts = SessionFacts("2.1.259", "default", null)
+            repoA.pushAnnouncedModel(model)
+            repoA.pushSessionFacts(sessionFacts)
+            runCurrent()
+            assertEquals(listOf(null, model), models)
+            assertEquals(listOf(null, sessionFacts), facts)
+
+            current.value = repoB
+            runCurrent()
+            assertEquals(listOf(null, model, null), models)
+            assertEquals(listOf(null, sessionFacts, null), facts)
+        }
+
     // ---- #802: observeUsageLimit delegates and tracks connection churn ---------------------------
 
     @Test
@@ -804,6 +852,22 @@ class StableConversationRepositoryTest {
         }
 
         override fun observeResetting(conversationId: String): Flow<ResetStatus?> = resetting
+
+        private val announcedModel = MutableStateFlow<AnnouncedModel?>(null)
+
+        fun pushAnnouncedModel(value: AnnouncedModel?) {
+            announcedModel.value = value
+        }
+
+        override fun observeAnnouncedModel(conversationId: String): Flow<AnnouncedModel?> = announcedModel
+
+        private val sessionFacts = MutableStateFlow<SessionFacts?>(null)
+
+        fun pushSessionFacts(value: SessionFacts?) {
+            sessionFacts.value = value
+        }
+
+        override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = sessionFacts
 
         override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> = usageLimit
 
