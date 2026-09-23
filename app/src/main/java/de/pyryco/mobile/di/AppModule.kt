@@ -41,6 +41,7 @@ import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
 import de.pyryco.mobile.ui.conversations.thread.LiteralScreenViewModel
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
+import de.pyryco.mobile.ui.conversations.thread.asRememberedEffortStore
 import de.pyryco.mobile.ui.onboarding.PairCodeViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerViewModel
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
@@ -153,7 +154,7 @@ val appModule =
         viewModel { get<ThreadDestinationFactory>().archive(get()) }
         viewModel {
             val handle = get<SavedStateHandle>()
-            get<ThreadDestinationFactory>().thread(handle, get()).also { thread ->
+            get<ThreadDestinationFactory>().thread(handle, get(), get()).also { thread ->
                 // #877: the thread is what knows its conversation is being viewed. The view opens the
                 // conversation on its own host and holds it read until this view model is cleared.
                 val viewing =
@@ -276,6 +277,9 @@ internal class ThreadDestinationFactory(
         // the `AppPreferences` that used to sit beside it: the thread's model and effort come from the
         // daemon's session settings now, and no other thread state reads a device preference.
         draftStore: ComposerDraftStore,
+        // #686: the one exception — the remembered effort a successful write sets and an opening
+        // recalls. It never touches `defaultEffort`. The demo host stays inert.
+        preferences: AppPreferences,
     ): ThreadViewModel {
         val serverId = handle.get<String>("serverId").orEmpty()
         val bundle = if (useRelay) registry.connectionFor(serverId) else null
@@ -311,6 +315,7 @@ internal class ThreadDestinationFactory(
             // #843: read through the registry by id, not off the captured bundle — a successful re-pair
             // replaces that bundle, and the thread must see the replacement to take the action away.
             pairingRejected = pairingRejected(registry.hostConnections, serverId),
+            rememberedEffort = preferences.asRememberedEffortStore(),
         )
     }
 
