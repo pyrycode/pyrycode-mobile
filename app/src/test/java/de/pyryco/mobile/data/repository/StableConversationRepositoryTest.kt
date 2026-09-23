@@ -176,6 +176,26 @@ class StableConversationRepositoryTest {
             assertTrue(runCatching { facade.requestScreenSnapshot("c1") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.dropQueuedMessage("c1", 42L) }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.requestHistory("c1") }.exceptionOrNull() is IllegalStateException)
+            assertTrue(runCatching { facade.requestSystemPrompt("c1") }.exceptionOrNull() is IllegalStateException)
+            assertTrue(runCatching { facade.setSystemPrompt("c1", "x") }.exceptionOrNull() is IllegalStateException)
+        }
+
+    // #823: both system-prompt calls reach the live repo with the id and value untouched — null, "" and
+    // text are three different writes, so the facade must not coalesce them.
+    @Test
+    fun systemPrompt_whenLive_delegatesVerbatim() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(repoA))
+
+            val reading = facade.requestSystemPrompt("c3")
+            facade.setSystemPrompt("c3", null)
+            facade.setSystemPrompt("c3", "")
+            facade.setSystemPrompt("c3", "text")
+
+            assertSame(repoA.requestSystemPromptResult, reading)
+            assertEquals(listOf("c3"), repoA.requestSystemPromptCalls)
+            assertEquals(listOf<Pair<String, String?>>("c3" to null, "c3" to "", "c3" to "text"), repoA.setSystemPromptCalls)
         }
 
     // ---- AC #4: one-shots delegate verbatim to the live repo (args + return value) ---------------
@@ -622,6 +642,9 @@ class StableConversationRepositoryTest {
         var sendMessageResult: Message = message("sent")
         var requestScreenSnapshotResult: String = "snapshot-text"
         var requestHistoryResult: HistoryPage = HistoryPage(entries = emptyList(), cursor = "", atStart = true)
+        val requestSystemPromptResult = SystemPromptReading("stored", SessionPromptStatus.Matches)
+        val requestSystemPromptCalls = mutableListOf<String>()
+        val setSystemPromptCalls = mutableListOf<Pair<String, String?>>()
 
         fun pushConversations(value: List<Conversation>) {
             conversations.value = value
@@ -719,6 +742,18 @@ class StableConversationRepositoryTest {
         ): HistoryPage {
             requestHistoryCalls += Triple(conversationId, cursor, limit)
             return requestHistoryResult
+        }
+
+        override suspend fun requestSystemPrompt(conversationId: String): SystemPromptReading {
+            requestSystemPromptCalls += conversationId
+            return requestSystemPromptResult
+        }
+
+        override suspend fun setSystemPrompt(
+            conversationId: String,
+            systemPrompt: String?,
+        ) {
+            setSystemPromptCalls += conversationId to systemPrompt
         }
 
         override suspend fun requestScreenSnapshot(conversationId: String): String {

@@ -58,20 +58,25 @@ class StableConversationRepository(
 It overrides **all** interface members — the stream-shaped reads (`observeConversations`,
 `observeMessages`, `observeLastMessage`, `observeStall` (#395), `observeQueue` (#460),
 `observeApiRetry` (#593), `observeCompacting` (#596), `observeThinkingProgress` (#801),
-`observeUsageLimit` (#802), **and** `recentWorkspaces`), the 13
+`observeUsageLimit` (#802), **and** `recentWorkspaces`), the 15
 suspend one-shots (`createDiscussion`, `promote`, `archive`, `unarchive`, `delete`, `rename`,
 `startNewSession`, `changeWorkspace`, `sendMessage`, `createWorkspaceFolder`, `requestScreenSnapshot`,
 `setSessionSettings` ([#544](../codebase/544.md), the facade delegation [#543](../codebase/543.md)
-deliberately deferred), **and** `requestHistory` (#623)), **and** the one capability property
+deliberately deferred), `requestHistory` (#623), **and** `requestSystemPrompt`/`setSystemPrompt` (#823)),
+**and** the one capability property
 `mutationsSupported` (#507) — including every member that ships a default body on the interface
 (`recentWorkspaces`, `createWorkspaceFolder`, `delete`, `requestScreenSnapshot` (#375),
 `observeStall` (#395), `observeQueue` (#460), `observeApiRetry` (#593), `observeCompacting` (#596),
 `observeThinkingProgress` (#801), `observeUsageLimit` (#802),
-`setSessionSettings` (#543), `requestHistory` (#623), **and** `mutationsSupported` (#507)), so
-delegation is faithful and nothing silently falls back to a default. `setSessionSettings` and `requestHistory` both follow the
+`setSessionSettings` (#543), `requestHistory` (#623), `requestSystemPrompt`/`setSystemPrompt` (#823),
+**and** `mutationsSupported` (#507)), so
+delegation is faithful and nothing silently falls back to a default. `setSessionSettings`, `requestHistory`
+and `requestSystemPrompt`/`setSystemPrompt` all follow the
 plain one-shot snapshot-or-throw shape below, like every other mutator — neither introduces a new
 delegation posture; `requestHistory` forwards its `cursor`/`limit` verbatim, the same pass-through the
-shape already gives every other multi-arg one-shot.
+shape already gives every other multi-arg one-shot, and `setSystemPrompt` forwards its `systemPrompt`
+verbatim including a `null` clear — the facade neither pre-checks the 8192-byte limit nor short-circuits
+an over-limit value; that stays the live repository's `require(...)`.
 
 ## How it works
 
@@ -314,6 +319,11 @@ pass-through. The eight tests map to the ACs, the key one being
 - Delegated one-shot: `requestHistory` (#623) — the on-disk history page read, forwarded verbatim with
   the plain snapshot-or-throw shape; no new delegation posture. See [Remote conversation repository —
   screen snapshot, dequeue, interrupt and new session](remote-conversation-repository-control-sends.md#requesthistoryconversationid-cursor-limit--the-on-disk-history-page-read-623).
+- Delegated one-shots: `requestSystemPrompt` / `setSystemPrompt` (#823) — the conversation-scoped
+  system-prompt read and write, both forwarded verbatim with the plain snapshot-or-throw shape; the
+  facade performs no interactive gating and no byte-limit check of its own, both of which stay on the
+  live repository. See [Remote conversation repository — session settings, archive, delete and workspace
+  change](remote-conversation-repository-conversation-writes.md#requestsystempromptconversationid--setsystempromptconversationid-systemprompt--the-system-prompt-read-and-write-823).
 - Delegated one-shot: `setSessionSettings` ([#544](../codebase/544.md)) — the plain snapshot-or-throw
   delegation [#543](../codebase/543.md) deferred to this facade's first caller, the
   [Status sheet](status-sheet.md) run-configuration controls; a not-connected change surfaces as this

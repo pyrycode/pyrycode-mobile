@@ -250,6 +250,26 @@ class FakeConversationRepository(
     }
 
     /**
+     * Stored system prompts by conversation (#823), in memory for demo mode. A missing key is "no prompt
+     * stored"; a present value, `""` included, is the stored text — so the three states stay distinct.
+     */
+    private val systemPrompts = MutableStateFlow<Map<String, String>>(emptyMap())
+
+    // Any id reads, an unknown one like a hosted conversation holding nothing — the daemon's posture.
+    // Demo mode runs no session, so the verdict is always NoSession.
+    override suspend fun requestSystemPrompt(conversationId: String): SystemPromptReading =
+        SystemPromptReading(systemPrompts.value[conversationId], SessionPromptStatus.NoSession)
+
+    override suspend fun setSystemPrompt(
+        conversationId: String,
+        systemPrompt: String?,
+    ) {
+        require(systemPrompt == null || SystemPromptLimit.fits(systemPrompt)) { "system prompt exceeds the byte limit" }
+        if (conversationId !in state.value) throw unknown(conversationId)
+        systemPrompts.update { if (systemPrompt == null) it - conversationId else it + (conversationId to systemPrompt) }
+    }
+
+    /**
      * The [setSessionSettings] requests received, in call order — the observable seam #544's ViewModel
      * tests assert send-on-change against. The Fake models **no** per-session settings state (the data
      * model has none, and adding one is out of scope): it only records what was requested, reusing the

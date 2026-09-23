@@ -350,3 +350,94 @@ override suspend fun changeWorkspace(conversationId: String, workspace: String):
 - **`mutationsSupported` stays `false`, untouched** — same posture as archive/unarchive/delete; wiring
   the data path doesn't flip the coarse UI-gating flag. The operator-facing rung-3 e2e is
   [#562](https://github.com/pyrycode/pyrycode-mobile/issues/562) (Inbox, family-gated by #537).
+
+## `requestSystemPrompt(conversationId)` / `setSystemPrompt(conversationId, systemPrompt)` — the system-prompt read and write (#823)
+
+Reads and writes the system prompt a conversation stores over v2 `request_system_prompt` /
+`set_system_prompt` (server pyrycode#2152). Both name a **conversation**, never a session — the read
+works while nothing is running, and the write takes effect at the conversation's next session start;
+neither call restarts or resets a running one. No UI ships in this ticket; #824's shared editing state
+and, through it, the create-channel (#666) and edit-channel (#667) modals are the consumers.
+
+```kotlin
+override suspend fun requestSystemPrompt(conversationId: String): SystemPromptReading {
+    check(CAPABILITY_INTERACTIVE in negotiatedCapabilities()) { SYSTEM_PROMPT_READ_NOT_INTERACTIVE }
+    val request = Envelope(
+        id = requestId.incrementAndGet(), type = TYPE_REQUEST_SYSTEM_PROMPT, ts = Clock.System.now().toString(),
+        payload = MobileJson.encodeToJsonElement(RequestSystemPromptPayloadDto(conversationId = conversationId)),
+    )
+    return sendAndAwaitReply(request).toSystemPromptReading()
+}
+
+override suspend fun setSystemPrompt(conversationId: String, systemPrompt: String?) {
+    require(systemPrompt == null || SystemPromptLimit.fits(systemPrompt)) { SYSTEM_PROMPT_TOO_LONG }
+    val request = Envelope(
+        id = requestId.incrementAndGet(), type = TYPE_SET_SYSTEM_PROMPT, ts = Clock.System.now().toString(),
+        payload = setSystemPromptPayload(conversationId, systemPrompt),
+    )
+    val reply = sendAndAwaitReply(request)
+    upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation())
+}
+```
+
+- **The read is gated fail-closed on `interactive`, before any frame is built — the load-bearing
+  divergence from every other one-shot read in this class.** The daemon leaves a conn that never
+  negotiated `interactive` fully inert on `request_system_prompt` (no reply at all, not even a not-found),
+  so an ungated send would suspend until teardown; `check(...)` throws `IllegalStateException` first,
+  matching [`observeSessionSettings`](#observesessionsettingsconversationid--refreshsessionsettingsconversationid--the-settings-read-counterpart-to-setsessionsettings-590)'s
+  posture for the same daemon behaviour. **The write is not gated** — the daemon answers
+  `set_system_prompt` on any connection, interactive or not — so a UI that can write without being able to
+  read back is a real, documented asymmetry, not a bug to align away.
+- **The three stored states never collapse, in either direction.** `systemPrompt == null` reads and
+  writes as "no prompt stored" (wire: key absent on read, an **explicit** JSON `null` on write — see
+  [Mobile Protocol v2 wire layer](mobile-protocol-v2-wire-layer.md) for why `setSystemPromptPayload` is
+  built by hand with `buildJsonObject` rather than a `@Serializable` DTO: `MobileJson`'s
+  `explicitNulls = false` would silently drop a `null` property, turning an intended clear into an
+  omitted key the daemon reads as "leave unchanged"). `""` is an explicitly empty prompt, sent and read
+  back as itself. Any other string is forwarded and decoded **verbatim** — never trimmed or normalised.
+  Reading a value and writing it straight back must not change its state, and a test exercises exactly
+  that round trip.
+- **The reply is decoded by hand through `toSystemPromptReading()`, never through a DTO — a deliberate
+  divergence from every sibling verb in this class, and the one the plan's security review required.** A
+  kotlinx decode failure message can quote the offending input, and the input here is untrusted
+  operator-authored text; hand-decoding lets every thrown message be a static literal naming only the key
+  (`system_prompt` / `session_prompt_status`), never the value, its length, or the conversation id. An
+  explicit JSON `null` for `system_prompt` fails the read (the wire publishes "string or absent," so an
+  explicit `null` is neither) — the plan's one resolved Open Question. `session_prompt_status` must name
+  one of `matches` / `differs` / `no_session`; anything else fails the read alone, with no other state
+  touched.
+- **`system_prompt` is registered in the shared success-reply arm of `onInbound`, next to
+  `TYPE_SESSION_SETTINGS`** — without that entry the read's `sendAndAwaitReply` would suspend forever,
+  since nothing would ever complete its waiter. The reply carries **no `conversation_id`**, so it can only
+  complete the `pendingRequests` entry whose id it answers via `inReplyTo`; a stray, duplicate, or
+  unsolicited one has nowhere to land, the same routing posture `session_settings` already has.
+- **The write's ack reuses `conversation_updated`** — no new reply type, no `onInbound` change for the
+  write half. Decoded through the same #318 `ConversationResponseDto` boundary every other mutation uses
+  and confirmed-upserted exactly as [`rename`](remote-conversation-repository-send-create-promote-rename.md)'s
+  is; the ack itself carries no prompt, so nothing about the stored value is cached or projected here.
+- **The byte limit is checked client-side before any frame is sent, using the one shared helper.**
+  `SystemPromptLimit.fits` (co-located with `SystemPromptReading` on
+  [`ConversationRepository`](conversation-repository.md)) is the single place the 8192-UTF-8-byte cap and
+  its counting logic live; `setSystemPrompt`'s `require(...)` is its only production caller today, and
+  the editing state (#824) and channel modals are meant to call `fits`/`utf8Bytes` themselves rather than
+  recount. The boundary is inclusive and multi-byte-aware — exactly 8192 UTF-8 bytes of multi-byte text is
+  sent, 8193 is refused — because the daemon counts bytes, not `String.length`.
+- **Errors:** `conversation.not_found` → `IllegalArgumentException` and any other server code →
+  `RelayErrorException`, both through the existing `mapError`, same as `rename`. A
+  `SerializationException` (⊂ `IllegalArgumentException`) from a malformed read reply shares that
+  supertype with the not-found case — a caller that needs to tell an over-limit write apart from a
+  not-found one checks `SystemPromptLimit.fits` itself rather than pattern-matching the exception. Not
+  connected is `IllegalStateException` via `sendAndAwaitReply`, same as every sibling verb. No branch of
+  either method logs anything: every message it can throw is a static literal.
+- **`StableConversationRepository`** delegates both verbatim to `live` — `IllegalStateException` when no
+  connection is live, the plain snapshot-or-throw shape every other one-shot uses; no new delegation
+  posture. **`FakeConversationRepository`** holds a `MutableStateFlow<Map<String, String>>` of stored
+  prompts (a missing key is "no prompt stored," a present value — `""` included — is the stored text) and
+  always reports `SessionPromptStatus.NoSession` (demo mode runs no session to compare against); see
+  [ConversationRepository — Phase 1 fake implementation](conversation-repository-fake-implementation.md)
+  for the two-step, non-atomic write this needed once the conversation records and the stored prompts
+  turned out to live in two separate `StateFlow`s.
+- **No UI, no e2e.** Data-layer only; #824 (shared editing state) and, through it, #666/#667 (create/edit
+  channel) are the consumers that will render this text — as plain text only, per the plan's security
+  review, since it is operator-authored content that must not be trusted as markup or interpreted as
+  instructions.

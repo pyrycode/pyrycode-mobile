@@ -33,6 +33,25 @@ build mode. See [build commands](../../../README.md#build) and
   against. See [`../codebase/543.md`](../codebase/543.md).
 - **DI binding:** `appModule` registers the fake and the [`StableConversationRepository`](stable-conversation-repository.md) facade by concrete type. `conversationRepositoryModule(useRelay = BuildConfig.USE_RELAY_REPOSITORY)` alone binds the interface, resolving one of those existing singletons. Since #631 the generated flag defaults to `true` (facade); demo builds explicitly set `useRelayRepository=false`. Constructor-inject the interface so consumers stay unchanged across the selection. See [Dependency injection](dependency-injection.md).
 
+- **`requestSystemPrompt(conversationId)` / `setSystemPrompt(conversationId, systemPrompt)`** (#823) hold
+  the demo-mode system prompt in a private `MutableStateFlow<Map<String, String>>` — `systemPrompts`,
+  a sibling state-holder to `state`, not a field inside `ConversationRecord`. A missing key is "no prompt
+  stored" (mirrors the wire's absent-key reading), a present value (`""` included) is the stored text, so
+  the three states this ticket keeps apart stay apart here too. `requestSystemPrompt` returns
+  `SystemPromptReading(systemPrompts.value[id], SessionPromptStatus.NoSession)` for **any** id, known or
+  not — an unhosted-looking id reads exactly like a hosted one storing nothing, the same posture the real
+  daemon has, and demo mode never runs a session to compare against, so the status is always
+  `NoSession`. `setSystemPrompt` first `require`s the value fits `SystemPromptLimit` (the same helper and
+  the same `IllegalArgumentException` the remote throws before sending), then throws the shared
+  `unknown(conversationId)` for an id absent from `state`, then removes the key on a `null` clear or
+  stores the value otherwise. **This is a two-step check-then-act, not one atomic `state.update {}`** —
+  the plan and its security review assumed the unknown-conversation check and the write could share one
+  `MutableStateFlow.update` the way `archive`'s single-map flip does, but `state` (conversation records)
+  and `systemPrompts` (stored prompts) are two separate flows, so they can't. A concurrent delete between
+  the two steps can leave an orphaned `systemPrompts` entry; this is harmless in demo mode, because an
+  orphan is only ever read back for an id that no longer exists in `state`, and it can never reach the
+  wire — the remote implementation holds no copy of the prompt at all, so it has no equivalent window.
+  See the plan's Revisions section for the full record of this departure.
 - **`requestHistory(conversationId, cursor, limit)`** (#623) walks the conversation's own `record.messages`, sorted oldest-first with a 1-based position as `HistoryEntry.id` — the fake's log **is** the seeded messages, not a separate store. It reproduces the daemon's boundary rule exactly rather than approximating it: `pageSize = limit` when positive, else the fake's own `FAKE_HISTORY_PAGE_SIZE` (20); `remaining` = entries at or older than the cursor; `take = min(pageSize, remaining)`; `atStart = remaining < pageSize` — the fill **ran out**, not "the page happened to be short". A page that fills exactly at the first entry therefore reports `atStart` false with a usable cursor, and the next call returns no entries with `atStart` true — the boundary a naive "stop on an empty page" reader would get wrong. The outgoing cursor is the fake's own minting (the position of the next older entry as a decimal string), opaque to callers exactly as the daemon's is; an incoming cursor the fake never minted is coerced back into the log's bounds rather than thrown on. Each entry carries `type = "message"` and a hand-built JSON object payload (`conversation_id`, `message_id`, `role`, `text`); a `Role.Tool` seed message rides with `role = "tool"` inside that payload, which `MessagePayloadDto`'s closed `WireRole` enum (`user`/`assistant` only, #317) fails to decode — a payload decode failure, not an unrecognised-`type` carry-through, since the fake's `type` is always the literal `"message"`. The forward-compatibility rule AC #4 requires is about the entry's `type` field, which stays an open `String` at the DTO boundary regardless of what any binding puts in `payload`; #645, which re-reduces pages, has to plan for a payload that fails to decode as a distinct case from a `type` it does not recognise. Unknown `conversationId` throws the existing `unknown(id)` `IllegalArgumentException`. The fake deliberately does **not** model the daemon's negative-`limit` or bad-cursor rejects — a reject is a wire behaviour with no in-memory analogue, and inventing a second exception type for it would split one condition across two types for consumers; non-positive `limit` means "choose".
 
 Out of scope for the Phase 1 fake: persistence, `Dispatchers.IO` (everything is CPU-cheap map manipulation). Sort order moved into the repo with #5; ViewModels can rely on the emission being `lastUsedAt`-descending.
