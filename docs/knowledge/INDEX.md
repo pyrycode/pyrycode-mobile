@@ -28,7 +28,8 @@ broader document search. The frozen archive under `codebase/` is historical.
 - [Noise session](features/noise-ik-session.md): the encrypted phone-to-daemon session.
 - [Relay transport](features/relay-ws-transport.md): WebSocket framing and connection lifecycle.
 - [Reconnect supervision](features/relay-reconnect-supervisor.md): reconnect, retry and handoff behavior.
-- [Lifecycle driver](features/lifecycle-connection-driver.md): foreground and background connection ownership.
+- [Lifecycle driver](features/lifecycle-connection-driver.md): foreground and background connection ownership, and the push-wake background window.
+- [Push messaging service](features/push-messaging-service.md): FCM token capture and the push trust boundary; no server-side sender exists yet.
 - [Device key storage](features/device-static-keystore.md): Android Keystore wrapping and key continuity.
 
 ## Decisions
