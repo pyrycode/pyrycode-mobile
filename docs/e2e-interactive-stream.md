@@ -96,13 +96,14 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    repository to be published rather than firing on socket-up), with no reopen in between — each of the
    four messages renders exactly once, in order. Two claude turns — the phone's ping and the
    peer's offline turn.
-   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849 / #850)**
-   runs a **curated set of thirteen scenarios** (ping + create-workspace-folder + new-session + delete +
+   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849 / #850 / #891)**
+   runs a **curated set of fourteen scenarios** (ping + create-workspace-folder + new-session + delete +
    archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
-   peer-started-turn + peer-queue-consistency + offline-read-reconcile, eight real claude turns — five
-   pings (ping, create-workspace-folder, new-session, the peer-started turn's own ping, and the
-   offline-read-reconcile scenario's own ping), the peer-queue-consistency scenario's wait turn and its
-   drained ping, and the offline-read-reconcile scenario's peer offline turn, plus a possible reset
+   peer-started-turn + peer-queue-consistency + offline-read-reconcile + status-sheet-running-model, nine
+   real claude turns — five pings (ping, create-workspace-folder, new-session, the peer-started turn's own
+   ping, and the offline-read-reconcile scenario's own ping), the peer-queue-consistency scenario's wait
+   turn and its drained ping, the offline-read-reconcile scenario's peer offline turn, and the
+   status-sheet-running-model scenario's own ping, plus a possible reset
    wrap-up turn — delete, archive-restore,
    change-workspace, rename, save-as-channel, list-archive-entry and two-host spend none)
    against the **production relay** over `wss://`
@@ -113,7 +114,7 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    New-session also reveals the delimiter after a potentially tall wrap-up reply.
    **Pending coverage:** #679 owns cross-device Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
-   ending B while A continues. The curated thirteen-scenario gate does not cover it.
+   ending B while A continues. The curated fourteen-scenario gate does not cover it.
    An open thread recovering a peer's reconnect-window prompt on its own — the gap #850 found — is
    **shipped (#861)**: the still-open thread's reconnect history re-ask now waits for the repository to
    be published, so it reaches a live repository instead of a socket that is up but not yet handshaked.
@@ -201,7 +202,7 @@ production-side KDoc and its relationship to the tier tags #731 minted the same 
 [Add controls](../knowledge/features/channel-list-screen-tree-and-controls.md#add-controls-738) for `treeHostAddTestTag`'s own
 clamping rule.
 
-Rung 3 covers fourteen scenarios on this one harness: the **ping** happy path (a constrained reply renders);
+Rung 3 covers fifteen scenarios on this one harness: the **ping** happy path (a constrained reply renders);
 a **tool-use** scenario (#481 — a constrained prompt makes real claude run a shell tool, asserting the
 tool step renders, keyed tolerantly on the verbatim tool name `"Bash"` in the tool-row header); a
 **thinking-spinner** scenario (#482 — a pure-reasoning prompt makes real claude think a beat, asserting
@@ -265,7 +266,11 @@ navigation, rename and link cycling are all daemon round-trips); and a
 `SecondClientPeer` sends the ping prompt into a chat the phone has renamed and has open, asserting
 claude's reply renders exactly once while the thread stays open, then that the peer's message and the
 reply each render exactly once after the phone leaves and reopens the thread — proving a turn started
-from another client continues on the phone; **one** claude turn — the peer's ping). The tool-use
+from another client continues on the phone; **one** claude turn — the peer's ping); and a
+**status-sheet-running-model** scenario (#891 — `interactiveTurn_pingPrompt_statusSheetShowsRunningModel`:
+after the ping turn, open the Status sheet from the footer's status icon and assert the running-model row
+shows a non-empty value that is not the unavailable note, with no model name hard-coded — proving the #890
+`model_announced` reading reaches the sheet; **one** claude turn — the scenario's own ping). The tool-use
 test asserts the **durable** terminal signal — the tool name in the resolved row —
 not the transient running spinner: rung 3 has no scripted backend to hold the turn open, so racing the
 spinner over a real relay turn is the "never on timing" failure the [Constraints](#constraints) forbid
@@ -691,10 +696,11 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the thirteen curated `@Test` methods (ping + create-workspace-folder, #566;
+incantation to remember — the fourteen curated `@Test` methods (ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
 save-as-channel, #581; list-archive-entry, #740; two-host separation, #847; peer-started turn, #848;
-peer-queue-consistency, #849; offline-read-reconcile, #850) ride the wrapped mode.
+peer-queue-consistency, #849; offline-read-reconcile, #850; status-sheet running model, #891) ride the
+wrapped mode.
 
 These `InteractiveStreamE2ETest` cases preserve the ping and Reset-session
 regressions after host-owned routing, since #847 that two paired hosts whose
@@ -716,16 +722,17 @@ no reopen step.
 - **when a daemon or relay change touching the mobile surface lands**, alongside the daemon's own
   `make e2e-realclaude` when that acceptance crosses repositories.
 
-**Cost:** eight real claude turns across thirteen curated methods — five pings (ping,
+**Cost:** nine real claude turns across fourteen curated methods — five pings (ping,
 create-workspace-folder, new-session, the peer-started turn's own ping, #848, and the
 offline-read-reconcile scenario's own ping, #850), plus #849's peer wait turn and its drained
-ping and #850's peer offline turn — and a reset wrap-up turn when handoff notes are
+ping, #850's peer offline turn, and the status-sheet-running-model scenario's own ping, #891 —
+and a reset wrap-up turn when handoff notes are
 enabled. Delete, archive-restore, change-workspace, rename, save-as-channel,
 list-archive-entry and two-host separation spend no Claude turns. Allow a few minutes of
 wall clock; the run is subscription-covered.
 
 The command must exit successfully and report at least `LIVE_MINIMUM` executed passing
-tests, with no skips. `LIVE_MINIMUM` (`scripts/android-test-gate.py`) is 13 as of #850 —
+tests, with no skips. `LIVE_MINIMUM` (`scripts/android-test-gate.py`) is 14 as of #891 —
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
 `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` and asserts it equals `LIVE_MINIMUM`, so the
@@ -736,8 +743,9 @@ the then-ten-method list, specifically so raising it would not redden
 (`fixtures/default-workspace-live/588.xml` — plan `docs/specs/architecture/740-e2e-list-archive-entry.md`
 § Revisions, reaffirmed for #847). #848 resolved that tension instead of extending it: the
 fixture stays byte-for-byte, and the gate's own test pads a copy of it with synthetic
-curated-method cases up to `LIVE_MINIMUM`. #849 raised `LIVE_MINIMUM` from 11 to 12, and #850
-raised it again, from 12 to 13, on the same mechanism. Shell cleanup preserves the original
+curated-method cases up to `LIVE_MINIMUM`. #849 raised `LIVE_MINIMUM` from 11 to 12, #850
+raised it again, from 12 to 13, and #891 raised it once more, from 13 to 14, on the same
+mechanism. Shell cleanup preserves the original
 result and retains failure artifacts; a clean XML report with a failing process status is not
 a passing gate.
 
@@ -748,7 +756,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of thirteen rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of fourteen rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -772,7 +780,7 @@ device. The [recorded baseline](#verification-status) proves only managed
 `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
 version for now; API 35 is deferred.
 
-**What it runs.** Thirteen curated methods, passed as a comma-separated `class#method` list:
+**What it runs.** Fourteen curated methods, passed as a comma-separated `class#method` list:
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
 `InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566),
 `InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (#541),
@@ -784,11 +792,13 @@ version for now; API 35 is deferred.
 `InteractiveStreamE2ETest#interactiveTurn_listArchiveEntry_opensArchived` (#740),
 `InteractiveStreamE2ETest#interactiveTurn_twoHostsCollidingConversationId_stayPerHost` (#847),
 `InteractiveStreamE2ETest#interactiveTurn_peerStartedTurn_continuesOnPhone` (#848),
-`InteractiveStreamE2ETest#interactiveTurn_peerQueue_staysConsistentAcrossClients` (#849), and
-`InteractiveStreamE2ETest#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect` (#850), so exactly
-**eight real claude turns** are spent per run — five pings, from ping, create-workspace-folder,
+`InteractiveStreamE2ETest#interactiveTurn_peerQueue_staysConsistentAcrossClients` (#849),
+`InteractiveStreamE2ETest#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect` (#850), and
+`InteractiveStreamE2ETest#interactiveTurn_pingPrompt_statusSheetShowsRunningModel` (#891), so exactly
+**nine real claude turns** are spent per run — five pings, from ping, create-workspace-folder,
 new-session, the peer-started turn's own ping (#848), and the offline-read-reconcile scenario's own
-ping (#850), plus #849's peer wait turn and its drained ping and #850's peer offline turn; the delete,
+ping (#850), plus #849's peer wait turn and its drained ping, #850's peer offline turn, and #891's own
+ping; the delete,
 archive-restore, change-workspace, rename,
 save-as-channel, list-archive-entry and two-host scenarios each add a method, not a turn
 (create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips;
@@ -829,9 +839,10 @@ Prerequisites (on top of the "How to run" list):
 - The emulator needs outbound internet + DNS + a system-trusted TLS cert for the relay host. It reaches
   the public relay over its own NAT'd internet — **not** the `10.0.2.2` host alias, which is loopback-only.
 
-Cost: **eight real claude turns per run across thirteen curated methods** (ping + create-workspace-folder,
+Cost: **nine real claude turns per run across fourteen curated methods** (ping + create-workspace-folder,
 \#566 + new-session, #541 + the peer-started turn, #848 + the peer's wait turn and its drained ping,
-\#849 + the offline-read-reconcile scenario's own ping and its peer's offline turn, #850; `/clear` spends
+\#849 + the offline-read-reconcile scenario's own ping and its peer's offline turn, #850 + the
+status-sheet-running-model scenario's own ping, #891; `/clear` spends
 none; delete, #554,
 archive-restore, #551, change-workspace, #562, rename, #537, save-as-channel, #581, list-archive-entry,
 \#740, and two-host separation, #847, each spend none — create/rename/delete/archive/restore/
@@ -1119,6 +1130,16 @@ handoff; this table does not claim a later execution.
 
 Earlier results and failure history:
 
+- **LIVE verified for #891 (2026-09-23):** the dispatcher's real-claude gate ran
+  `python3 scripts/android-test-gate.py live` against `feature/891` at `21fc690f4b` merged with
+  `origin/main` at `3c771c7440` (6 commits behind before the merge), the
+  [recorded run](https://github.com/pyrycode/pyrycode-mobile/issues/891#issuecomment-5803305486)
+  executed all fourteen curated scenarios — the curated list's first run with
+  `interactiveTurn_pingPrompt_statusSheetShowsRunningModel` on it — with fourteen passes, no failures or
+  skips, exit 0, wall clock 101.7s. `LIVE_MINIMUM` rose from 13 to 14 with this ticket (see
+  [Pre-ship gate](#pre-ship-gate)); fourteen executed meets it exactly. This is the first live evidence
+  that the Status sheet's running-model row renders a non-empty, non-placeholder model string sourced
+  from #890's `model_announced` reading after a real turn.
 - **LIVE verified for #861 (2026-09-23):** the dispatcher's real-claude gate ran
   `python3 scripts/android-test-gate.py live` against `feature/861` at `24c9490d9a` merged with
   `origin/main` at `148b9f7225` (2 commits behind before the merge), executed all thirteen curated
@@ -1442,7 +1463,22 @@ The remaining checks here are specific to a real relay or real Claude execution:
   rather than fixed, as [#861](https://github.com/pyrycode/pyrycode-mobile/issues/861); the scenario's
   work-around at the time (reopening the thread after reconnect) is recorded in the plan's Revisions.
   #861 later fixed the re-ask and the scenario's step 6 dropped the reopen — see the #861 entry in
-  [Verification status](#verification-status); API-retry status (attempt N/M) — **rung 2 shipped (#594)**, the
+  [Verification status](#verification-status); Layer-3 (real claude) status-sheet running model —
+  **shipped (#891)**, proving that after one real turn the Status sheet's running-model row shows a
+  non-empty model string, distinct from the selected model and sourced from #890's `model_announced`
+  reading: the scenario sends the ping prompt, awaits the reply, opens the Status sheet from the footer's
+  status icon (`cd_thread_status_expand`), and asserts the running-model row's text is present and is not
+  the unavailable note (`status_sheet_running_model_unavailable`), with no model name hard-coded. Always-on
+  (the announced-model text is a durable post-turn fact, not a transient spinner) and folded into the
+  pre-ship `LIVE=1` gate as the 14th curated method, taking the gate from thirteen curated methods to
+  fourteen, the floor from `LIVE_MINIMUM = 13` to `14` on the same `test_live_floor_matches_the_curated_list`
+  mechanism, and the run's real-claude cost from eight turns to nine (the scenario's own ping, alongside
+  the existing eight) — a deliberate choice over reusing the ping scenario's turn, so each scenario stays
+  independently diagnosable (plan `docs/specs/architecture/891-status-sheet-running-model.md` §
+  Revisions). The live run that closed the ticket
+  (`python3 scripts/android-test-gate.py live`, 2026-09-23, branch `feature/891` at `21fc690f4b` merged
+  with `origin/main` at `3c771c7440`) executed all fourteen with no failures or skips; API-retry status
+  (attempt N/M) — **rung 2 shipped (#594)**, the
   `ScriptedApiRetryTest` scenarios driving `api_retry` edges through the real #593 repository projection
   into `ThreadViewModel.apiRetry` and `ApiRetryIndicator`, covering both edges (the rising edge, including
   a climbed counter that must re-render rather than dedup, and the clearing edge reverting to whatever the

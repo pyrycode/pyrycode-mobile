@@ -49,6 +49,30 @@ An applied value outside the selected model's published `effortChoices` still be
 
 **Session-reset staleness:** `ThreadRunConfig.forLiveSession(liveSessionId)` — the same private helper that blanks a stale `permissionMode` (#650) — also blanks `appliedEffort` to `Unavailable` when `liveSessionId` is non-empty and differs from `runConfig.sessionId`, so a late reply for a replaced session never shows the old session's applied effort; the display falls back to the saved choice with the "running effort unavailable" note. The saved model and effort are choices, not readings of the running child, so `forLiveSession` leaves them alone.
 
+### Running model (#891)
+
+`ThreadRunConfig.running: ThreadRunningModel` is a second, independent reading, not part of the five-arm
+`runConfig` `combine` above (already at Kotlin's typed ceiling): a private `runningModel: Flow<ThreadRunningModel>`
+combines [#890](https://github.com/pyrycode/pyrycode-mobile/issues/890)'s `observeAnnouncedModel` and
+`observeSessionFacts`, and `runConfigFlow` folds it in with one more
+`.combine(runningModel) { config, running -> config.copy(running = running) }` call. It is never derived
+from `savedModel` / `selectedModel` and nothing falls back to it — the
+[Status sheet](status-sheet.md#runningmodelsection) is its only consumer; the footer's own model button and
+layout are unchanged.
+
+`internal fun reportedText(raw: String, truncated: Boolean): ThreadReportedText?` is the value-level
+counterpart of [`inert()`](#sourcing) above: filters `isISOControl()` first and returns `null` when nothing
+printable survives (an all-control-character value is unavailable, not a blank row), otherwise
+`ThreadReportedText(raw.inert(), truncated || printable.length > MAX_RUN_CONFIG_LABEL_CHARS)` — the
+daemon's own `truncated` flag widened to also catch a cut the 128-character inert bound made, so a value is
+never shown as whole when either side cut it. `ThreadRunningModel.model` is
+`announced?.let { reportedText(it.model, it.truncated) }`; `.build` is
+`facts?.let { reportedText(it.claudeCodeVersion, "claude_code_version" in it.truncatedFields.orEmpty()) }`
+— `SessionFacts.permissionMode` is read nowhere in this flow, pinned by a
+`ThreadViewModelRunningModelTest` case. Both #890 readings are cleared by the repository on the
+conversation's own `session_transition` and start `null` before any announcement, so the combine needs no
+staleness handling of its own — `null` in is `null` (unavailable) out.
+
 ### Remembered effort recall (#686)
 
 The phone keeps **one remembered effort level app-wide**, across chats, channels and connected hosts, stored under `AppPreferences.rememberedEffort` (see [App preferences § Remembered effort key](app-preferences.md)) — not per-conversation, and unrelated to `defaultEffort`. It never appears on its own in the footer; it only ever reaches the screen by being sent through the normal effort write path and read back on the next settings reading, so `effortLabel` and `selectedEffort` above are unchanged by this feature.

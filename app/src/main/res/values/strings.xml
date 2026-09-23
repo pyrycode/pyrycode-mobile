@@ -72,6 +72,10 @@
     <string name="thread_footer_change_effort">Change effort</string>
     <string name="thread_footer_change_permission">Change permission mode</string>
     <string name="thread_footer_pending">Applying</string>
+    <string name="status_sheet_running_model">Running model</string>
+    <string name="status_sheet_running_model_unavailable">Not announced yet</string>
+    <string name="status_sheet_running_build">Claude Code %1$s</string>
+    <string name="status_sheet_running_truncated">" (truncated)"</string>
     <string name="thread_effort_note_selected_unavailable">Selected effort. The running effort is unavailable.</string>
     <string name="thread_effort_note_default_unavailable">Claude\'s default applies. The running effort is unavailable.</string>
     <string name="thread_effort_note_not_reported">Claude reports no effort parameter.</string>
