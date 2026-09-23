@@ -150,3 +150,8 @@ Pending for the documentation stage: the ticket names none explicitly. Candidate
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-24
+
+## Revisions
+
+- **2026-09-24, Phase B.** `AttachmentRetrievalTransfer.activity` also changes once when the transfer settles, not only per accepted chunk. Without it, a retrieval settled by an `error`, a refused send or teardown would sit in the stall wait until the 30 s deadline before returning. The stall contract is unchanged: a deadline with no change still fails `Unavailable`.
+- **Open question resolved as planned:** an `error` other than `attachment.not_found` (including a malformed one) is `Unavailable`. The transfer reads only the `code` string rather than decoding the full `ErrorPayload`, so a refusal missing `message` or `retryable` is still classified.
