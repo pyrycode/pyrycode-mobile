@@ -57,9 +57,10 @@ a destructive vocabulary and never inspects option-id semantics** — it keys th
 fun onModalOption(optionId: String) {
     val open = scopedModal() as? ModalUiState.Open ?: return   // #816: this thread's own modal, read synchronously
     when {
-        optionId == open.defaultOptionId -> sendAnswer(open.modalId, optionId)          // single tap
+        // #818: the session-grant flag is computed at the point of sending, not stored on the arm.
+        optionId == open.defaultOptionId -> sendAnswer(open.modalId, optionId, grantsAlwaysAllow(open, optionId))
         armedModalOption.value == ArmedModalOption(open.modalId, optionId) ->
-            sendAnswer(open.modalId, optionId)                                          // 2nd confirm
+            sendAnswer(open.modalId, optionId, grantsAlwaysAllow(open, optionId))        // 2nd confirm
         else -> armedModalOption.value = ArmedModalOption(open.modalId, optionId)       // (re-)arm, no send
     }
 }
@@ -115,6 +116,54 @@ val armedOptionId: StateFlow<String?> =
   the daemon resolves it, so the user may answer again after a failure (no auto-retry — first-answer-wins is
   server-side).
 
+## The always-allow session grant (#818)
+
+A permission prompt can offer "don't ask again this session" (daemon #2364's `modal_shown.always_allow`,
+decoded into [`ModalUiState.Open.alwaysAllowRules`](current-modal-state.md) and its derived
+`offersAlwaysAllow`). Accepting the offer is a **separate, sibling state** to the arm above — it never arms
+and never sends by itself; it only changes what `sendAnswer` carries on the answer that *does* send.
+
+```kotlin
+private val acceptedAlwaysAllow = MutableStateFlow<AcceptedAlwaysAllow?>(null)   // private data class(modalId, rules)
+
+val alwaysAllowAccepted: StateFlow<Boolean> =
+    combine(currentModal, acceptedAlwaysAllow) { modal, accepted ->
+        modal is ModalUiState.Open && modal.offersAlwaysAllow && accepted == modal.alwaysAllowKey()
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+fun onAlwaysAllowChanged(modalId: String, accepted: Boolean) {
+    val open = scopedModal() as? ModalUiState.Open ?: return
+    if (open.modalId != modalId || !open.offersAlwaysAllow) return
+    acceptedAlwaysAllow.value = if (accepted) open.alwaysAllowKey() else null
+}
+
+private fun grantsAlwaysAllow(open: ModalUiState.Open, optionId: String): Boolean =
+    optionId in ALWAYS_ALLOW_OPTION_IDS &&        // "allow_once" / "allow_always" only — never a deny
+        open.offersAlwaysAllow &&
+        acceptedAlwaysAllow.value == open.alwaysAllowKey()
+```
+
+- **Keyed on `(modalId, rules)`, not just `modalId`.** `alwaysAllowKey()` is `AcceptedAlwaysAllow(modalId,
+  alwaysAllowRules)`. A new prompt, a replaced prompt, or the *same* `modalId` re-shown with a different rule
+  list all read as unaccepted by construction — the same modalId-scoping discipline as `armedOptionId`, one
+  field wider.
+- **`onAlwaysAllowChanged`'s `modalId` argument is a guard, never a target.** It only stops a tap that lands
+  after the rendered prompt was replaced from silently accepting the replacement's offer — the toggle can
+  never accept a prompt other than the one currently open. This was a security-review MUST FIX on this
+  ticket (a tap racing a `Shown` that replaces the frame before the tap lands).
+- **A deny never carries the grant**, even with the offer accepted — `grantsAlwaysAllow` requires `optionId`
+  to be `allow_once` or `allow_always`. This matches the desktop's `confirmPrompt`, and the contract treats
+  `true` as a no-op on a deny anyway, so sending it there would carry no information.
+- **`onModalCancel` clears the acceptance** alongside the arm. **A send attempt does not** — `currentModal`
+  stays `Open` until the daemon resolves it, so a retry after a failed send still carries the same accepted
+  intent (mirrors the arm's own "clears on attempt, not on success" rule, just for a different field).
+- **Accepting never arms and never sends.** Ticking the checkbox only moves `acceptedAlwaysAllow`; it takes
+  effect the next time `onModalOption` decides to send. This keeps the existing arm-then-confirm gesture for
+  a non-default option completely unchanged — accepting the offer is not that second tap.
+- The flag itself never carries rule bytes — the phone sends only a boolean (`ModalAnswerPayloadDto
+  .alwaysAllow: Boolean?`, `null` on an ordinary answer, `true` set at all only when the answer is a grant);
+  the daemon decides what "the rules it retained for this modal" means and grants them, never the phone.
+
 ## The error signal — one-shot, payload-free
 
 A failed send (server `error`, including the ungranted-device reject pyrycode#702; or a not-connected
@@ -136,11 +185,11 @@ selection means no distinguishing behavior is built until the consuming behavior
 ### Catch order is load-bearing
 
 ```kotlin
-private fun sendAnswer(modalId: String, optionId: String) {
+private fun sendAnswer(modalId: String, optionId: String, alwaysAllow: Boolean) {
     armedModalOption.value = null
     viewModelScope.launch {
         try {
-            answerModal(modalId, optionId)
+            answerModal(modalId, optionId, alwaysAllow)
         } catch (e: CancellationException) {
             throw e // MUST be first: j.u.c.CancellationException extends IllegalStateException on the JVM
         } catch (e: RelayErrorException) {
@@ -168,11 +217,11 @@ rework defect; see [[catch-illegalstate-swallows-cancellation]]. A broad `catch 
 `activeRemoteRepo` mirror into it) — the outbound mirror of the inbound `modalEvents` seam:
 
 ```kotlin
-suspend fun answerModal(modalId: String, optionId: String) {
+suspend fun answerModal(modalId: String, optionId: String, alwaysAllow: Boolean = false) {
     val repo = activeConnection.value?.repo ?: throw IllegalStateException("no active connection")
-    repo.answerModal(modalId, optionId)
+    repo.answerModal(modalId, optionId, alwaysAllow)
 }
-// cancelModal is the same, minus optionId.
+// cancelModal is the same, minus optionId (and never took alwaysAllow — a cancel can't carry a grant).
 ```
 
 It needs **only the null-guard** — both not-connected paths funnel to `IllegalStateException`: when
@@ -181,6 +230,9 @@ pump is pre-`Open`, the concrete `answerModal` → `sendAndAwaitReply` → `pump
 `IllegalStateException` already (the #438 precedent). A redundant `Open` gate would be needless complexity. A
 server `error` propagates as `RelayErrorException` unchanged. **No log** — the `modalId`/`optionId` may name
 a sensitive command/path.
+
+`alwaysAllow` (#818) is a straight pass-through with a `= false` default, so `RelayConnectionRegistry
+.answerModal`, which has no production caller, compiles unchanged and needed no edit.
 
 ## Wiring
 
@@ -194,7 +246,8 @@ viewModel {
         get(), get(), get(), get(),
         coordinator.liveSessionEvents,
         coordinator.currentModal, // #492: the hoisted projection (was coordinator.modalEvents)
-        answerModal = coordinator::answerModal,
+        // #818: a lambda, not a bare method reference, since the VM's answerModal now takes the grant.
+        answerModal = { modal, option, grant -> coordinator.answerModal(modal, option, grant) },
         cancelModal = coordinator::cancelModal,
     )
 }
@@ -241,15 +294,28 @@ the scope, asserts no error fires). `RelayRepositoryCoordinatorTest` mirrors the
 quartet for the passthrough (delegate-over-active-connection + no-connection-throws), driven with
 `runCurrent()` ([[remote-repo-test-runcurrent-not-advanceuntilidle]]).
 
+`ThreadViewModelTest` (#818) extends the same recording-lambda pattern to a `Triple(modalId, optionId,
+alwaysAllow)`: accept-then-allow (default tap and the armed second confirm) sends `true`; allow without
+accepting, accept-then-reject, and accept-then-cancel all send `false`; a replaced `modalId` or the same
+`modalId` re-shown with different rules reads unaccepted; a toggle carrying a stale `modalId` is ignored; and
+accepting never arms or sends by itself. `RemoteConversationRepositoryTest` covers the decode
+(`toAlwaysAllowRules`, offered/malformed/oversized/over-count cases) and the encode (`alwaysAllow = true`
+adds the wire key; the default call stays exactly the three original keys).
+
 ## Related
 
 - [#451 implementation notes](../codebase/451.md) — files, line refs, the rework lesson.
+- [#818 architecture doc](../../specs/architecture/818-permission-always-allow.md) and
+  [PR #903](https://github.com/pyrycode/pyrycode-mobile/pull/903) — the always-allow session grant: the
+  `acceptedAlwaysAllow` state, the `onAlwaysAllowChanged` guard, and the security review that added it.
 - [Current-modal state](current-modal-state.md) ([#445](../codebase/445.md)) — the hoisted `currentModal` /
   `Open.defaultOptionId` this reads at tap time; the projection half.
 - [Permission-modal overlay](permission-modal-overlay.md) ([#446](../codebase/446.md) base + [#452](../codebase/452.md)
   live) — the render of the open overlay + dismiss snackbar; the render slice **#452** extended it with the
   armed affordance + Cancel button + send-error snackbar + tapjacking net and wired these VM hooks
-  (`vm::onModalOption` / `vm::onModalCancel`) + `armedOptionId` / `modalSendErrors` into the route host.
+  (`vm::onModalOption` / `vm::onModalCancel`) + `armedOptionId` / `modalSendErrors` into the route host;
+  [**#818**](permission-modal-overlay.md#the-always-allow-offer-818) added `AlwaysAllowOffer`, which reflects
+  this doc's `alwaysAllowAccepted` the same way the options reflect `armedOptionId`.
 - [Remote conversation repository § `answerModal` / `cancelModal`](remote-conversation-repository.md)
   ([#438](../codebase/438.md)) — the concrete outbound send methods the passthrough delegates to.
 - [Relay repository coordinator § Outbound modal-send passthrough](relay-repository-coordinator-seams-and-passthroughs.md#outbound-modal-send-passthrough-451)

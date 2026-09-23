@@ -97,10 +97,25 @@ coordinator can see it; `reduce` has no Android/UI dependency), **no logging** o
 
 `ModalUiState` is a `sealed interface { Hidden, Open, Dismissed }`. `Open` mirrors `ModalEvent.Shown`
 field-for-field (`modalId`, `modalClass`, `title`, `prompt`, `options: List<ModalOption>` in wire array
-order, `defaultOptionId`); `Dismissed` mirrors `ModalEvent.Dismissed` (`modalId`, `outcome`, `source`).
-Every field is carried **verbatim** — no parsing, enum-coercion, trimming, or reordering (preserves
-\#437's forward-compat posture). It reuses `data.model.ModalOption` (no parallel option type). `Hidden` is
-the initial / resolved-and-cleared state and does double duty as the inert default.
+order, `defaultOptionId`, and since [#818](#the-alwaysallowrules-field-818) `alwaysAllowRules`); `Dismissed`
+mirrors `ModalEvent.Dismissed` (`modalId`, `outcome`, `source`). Every field is carried **verbatim** — no
+parsing, enum-coercion, trimming, or reordering (preserves \#437's forward-compat posture). It reuses
+`data.model.ModalOption` (no parallel option type). `Hidden` is the initial / resolved-and-cleared state and
+does double duty as the inert default.
+
+### The `alwaysAllowRules` field (#818)
+
+`ModalEvent.Shown.alwaysAllowRules` decodes the daemon's `modal_shown.always_allow` offer (daemon #2364) —
+the whole rule list when `offered` is `true` and every rule fits the daemon's bounds (1 to 16 strings, each 1
+to 1024 UTF-8 bytes), or the empty list on any violation (never a truncated prefix). `reduce` copies it
+verbatim into `Open` like every other field above — **no special-casing in the fold**: an out-of-bounds or
+absent offer simply decodes to an empty list upstream, at [`ModalShownPayloadDto.toAlwaysAllowRules`](modal-events.md),
+not here. `Open` derives `val offersAlwaysAllow: Boolean = modalClass == "permission" && alwaysAllowRules
+.isNotEmpty()`, the single property the render and answer paths both gate on (see [Permission-modal overlay
+§ The always-allow offer](permission-modal-overlay.md#the-always-allow-offer-818) and [Modal answer flow §
+The always-allow session grant](modal-answer-flow.md#the-always-allow-session-grant-818)). A later `Shown`
+for the same `modalId` still **supersedes** the whole `Open` (the existing last-shown-wins rule above), so a
+re-offer with a different rule list replaces the old one rather than merging with it.
 
 `ThreadViewModel` takes the coordinator's already-folded projection as a **defaulted, private** `hostModal`
 ctor property (renamed from the public `currentModal` in #816) and derives its own scoped `currentModal`
