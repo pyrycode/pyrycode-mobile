@@ -261,7 +261,11 @@ identity-keyed buffer and content-free debug-log patterns. Its two actions read 
 of one guard, matching desktop: OK needs a non-blank trimmed name, an available host and no write
 in flight; Archive needs only the host and no write in flight, independent of the field's content,
 and takes no confirmation step, since an archived chat comes back through Archive's Restore.
-Nothing draws this modal yet — #827 wires OK to rename and #828 wires Archive.
+[ChannelListScreen](channel-list-screen.md) is its first caller (#827): each Chats row's pencil
+opens it on that row's own host and conversation, and OK renames through that host's
+`ConversationRepository.rename`, resolved at the press — see
+[ChannelListScreen § tree and controls](channel-list-screen-tree-and-controls.md#chat-row-edit-control-827)
+and [ChannelListViewModel](channel-list-viewmodel.md#wiring). Archive stays wired to `{}` until #828.
 
 A clamp on attacker-influenceable text must not split a UTF-16 surrogate pair when the clamped
 value can round-trip back into a write unedited. `EditChatModal` seeds its field with

@@ -195,3 +195,31 @@ the light scheme.
 See [Dependency injection § Exact-host Retry and lifecycle](dependency-injection.md#exact-host-retry-and-lifecycle)
 for the `HostConversationSource.retryHost` seam this control drives, and
 [ChannelListViewModel](channel-list-viewmodel.md#wiring) for `reconnectHost`'s routing.
+
+## Chat row edit control (#827)
+
+`TreeConversationRow` gained an optional fourth parameter, `onEditTapped: (() -> Unit)? = null`. A
+non-null value draws a `TreeRowControl(Icons.Filled.Edit, …)` at the row's trailing edge — the design's
+hover pencil, drawn permanently for the same reason the host row's is (#744). The name `Text` takes
+`Modifier.weight(1f, fill = onEditTapped != null)` only while the control is present, which pushes the
+pencil to the trailing edge and ellipsizes a long name before it reaches it; a row with no callback is
+laid out exactly as before. `TreeRowControl` already stays its own semantics node with its own click
+inside a `FoldableTreeRow`'s merging `clickable` (established for the host row's controls, above), so a
+tap on the pencil never opens the row's thread or moves `selected`.
+
+The row's own `boundedRowText(conversationName)` clamp is computed once and reused for both the `Text`
+and the pencil's `R.string.cd_tree_chat_edit` content description — the same one-clamp-two-uses shape the
+host row's controls use, and for the same reason: two identical accessible names on the same screen would
+be indistinguishable to TalkBack.
+
+**Only Chats rows draw it.** `treeSection` in [ChannelListScreen](channel-list-screen.md) passes
+`onEditTapped` from an exhaustive `when (section)` — `null` for `ConversationTreeSection.Channels`,
+`{ onEvent(TreeChatEditTapped(target)) }` for `Chats` — rather than a parameter on the section itself, so
+a channel's own editor (#667) can be added later without touching this row. `target` is the row's own
+`HostConversationTarget`, resolved the same way `TreeRowTapped`'s already is, never the selected host.
+
+Opening the modal from that target, resolving which host renames it, and following that host's connection
+live are the view model's job — see [ChannelListViewModel](channel-list-viewmodel.md#wiring) — and the
+modal itself is [`EditChatModal`](mobile-modal.md#callers), unchanged by this ticket except for gaining
+its first caller. Archive stays wired to an empty lambda here until #828, the same placeholder the host
+row's Unpair action carried between #744 and #745.
