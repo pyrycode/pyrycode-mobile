@@ -5,13 +5,18 @@ import de.pyryco.mobile.data.crypto.DeviceStaticKeyPair
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.network.DequeueMessagePayloadDto
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.ModalAnswerPayloadDto
+import de.pyryco.mobile.data.network.ModalShownPayloadDto
 import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.NoiseSessionFactory
 import de.pyryco.mobile.data.network.NoiseSessionPump
 import de.pyryco.mobile.data.network.OkHttpRelayTransport
 import de.pyryco.mobile.data.network.PumpState
+import de.pyryco.mobile.data.network.QueueStatePayloadDto
+import de.pyryco.mobile.data.network.QueuedMessageDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
 import de.pyryco.mobile.data.network.TransportEvent
 import kotlinx.coroutines.CoroutineScope
@@ -19,11 +24,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.datetime.Clock
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.encodeToJsonElement
@@ -84,36 +92,104 @@ class SecondClientPeer(
         conversationId: String,
         text: String,
         timeoutMs: Long,
+    ) = request(
+        "send_message",
+        MobileJson.encodeToJsonElement(
+            SendMessagePayloadDto(conversationId = conversationId, messageId = UUID.randomUUID().toString(), text = text),
+        ),
+        timeoutMs,
+    )
+
+    /**
+     * Drop [queuedMsgId] from [conversationId]'s backlog as this device (#849). Fire-and-forget: the daemon
+     * never replies to `dequeue_message`, and the removal shows only in the next `queue_state` ([awaitQueue]).
+     */
+    internal fun dequeueMessage(
+        conversationId: String,
+        queuedMsgId: Long,
     ) {
-        val id = requestId.incrementAndGet()
-        val request =
-            Envelope(
-                id = id,
-                type = "send_message",
-                ts = Clock.System.now().toString(),
-                payload =
-                    MobileJson.encodeToJsonElement(
-                        SendMessagePayloadDto(conversationId = conversationId, messageId = UUID.randomUUID().toString(), text = text),
-                    ),
-            )
-        check(pump.send(request)) { "peer session is not open" }
-        val reply =
-            withTimeout(timeoutMs) {
-                received.first { frames -> frames.any { it.inReplyTo == id } }.first { it.inReplyTo == id }
-            }
-        check(reply.type == "ack") { "peer send_message refused: ${reply.payloadField("code") ?: reply.type}" }
+        send(
+            "dequeue_message",
+            MobileJson.encodeToJsonElement(DequeueMessagePayloadDto(conversationId = conversationId, queuedMsgId = queuedMsgId)),
+        )
     }
 
-    /** The first recorded frame of [type] that names [conversationId], waiting up to [timeoutMs] for it. */
+    /**
+     * The id of the first permission modal claude raises in [conversationId] (#849), waiting up to
+     * [timeoutMs]. The prompt stays outstanding, and its turn open, until a privileged device answers it.
+     */
+    internal suspend fun awaitPermissionModal(
+        conversationId: String,
+        timeoutMs: Long,
+    ): String {
+        val shown =
+            MobileJson.decodeFromJsonElement(
+                ModalShownPayloadDto.serializer(),
+                awaitFrame(conversationId, "modal_shown", timeoutMs).payload,
+            )
+        check(shown.modalClass == PERMISSION_CLASS) { "peer awaited a permission modal: class ${shown.modalClass}" }
+        check(shown.options.any { it.id == ALLOW_ONCE }) { "permission modal offers no $ALLOW_ONCE" }
+        return shown.modalId
+    }
+
+    /**
+     * Allow [modalId] once as this device, and wait for the daemon's `modal_dismissed` for it (#849). The
+     * daemon sends no reply to `modal_answer`, and ignores one from a device paired without
+     * `--allow-remote-permissions`, so a missing dismissal times out rather than naming a code.
+     */
+    internal suspend fun allowOnce(
+        modalId: String,
+        timeoutMs: Long,
+    ) {
+        send(
+            "modal_answer",
+            MobileJson.encodeToJsonElement(
+                ModalAnswerPayloadDto(modalId = modalId, optionId = ALLOW_ONCE, answerToken = UUID.randomUUID().toString()),
+            ),
+        )
+        val dismissed =
+            withTimeout(timeoutMs) {
+                received
+                    .first { frames -> frames.any { it.isDismissalOf(modalId) } }
+                    .first { it.isDismissalOf(modalId) }
+            }
+        check(dismissed.payloadField("outcome") == ALLOW_ONCE && dismissed.payloadField("source") == REMOTE_SOURCE) {
+            "permission modal resolved otherwise: ${dismissed.payloadField("outcome")} from ${dismissed.payloadField("source")}"
+        }
+    }
+
+    /**
+     * The backlog the **latest** recorded `queue_state` for [conversationId] reports, once it satisfies
+     * [ready] (#849). Latest, not any: a snapshot is the whole backlog, so an older one describes a queue
+     * that has since changed.
+     */
+    internal suspend fun awaitQueue(
+        conversationId: String,
+        timeoutMs: Long,
+        ready: (List<QueuedMessageDto>) -> Boolean,
+    ): List<QueuedMessageDto> =
+        withTimeout(timeoutMs) {
+            received
+                .map { frames -> frames.lastOrNull { it.type == "queue_state" && it.payloadField("conversation_id") == conversationId } }
+                .filterNotNull()
+                .map { MobileJson.decodeFromJsonElement(QueueStatePayloadDto.serializer(), it.payload).queued.orEmpty() }
+                .first(ready)
+        }
+
+    /**
+     * The [occurrence]th recorded frame of [type] that names [conversationId] (the first by default),
+     * waiting up to [timeoutMs] for it.
+     */
     suspend fun awaitFrame(
         conversationId: String,
         type: String,
         timeoutMs: Long,
+        occurrence: Int = 1,
     ): Envelope =
         withTimeout(timeoutMs) {
             received
-                .first { frames -> frames.any { it.isFor(conversationId, type) } }
-                .first { it.isFor(conversationId, type) }
+                .first { frames -> frames.count { it.isFor(conversationId, type) } >= occurrence }
+                .filter { it.isFor(conversationId, type) }[occurrence - 1]
         }
 
     /** Tear down the session (wiping its keys), the socket and the recorder. Idempotent. */
@@ -123,10 +199,38 @@ class SecondClientPeer(
         scope.cancel()
     }
 
+    /** Send a [type] request carrying [payload], and wait for the reply correlated to it: `ack` or a thrown `code`. */
+    private suspend fun request(
+        type: String,
+        payload: JsonElement,
+        timeoutMs: Long,
+    ) {
+        val id = send(type, payload)
+        val reply =
+            withTimeout(timeoutMs) {
+                received.first { frames -> frames.any { it.inReplyTo == id } }.first { it.inReplyTo == id }
+            }
+        check(reply.type == "ack") { "peer $type refused: ${reply.payloadField("code") ?: reply.type}" }
+    }
+
+    /** Send a [type] frame carrying [payload] and return its envelope id. */
+    private fun send(
+        type: String,
+        payload: JsonElement,
+    ): Long {
+        val id = requestId.incrementAndGet()
+        check(pump.send(Envelope(id = id, type = type, ts = Clock.System.now().toString(), payload = payload))) {
+            "peer session is not open"
+        }
+        return id
+    }
+
     private fun Envelope.isFor(
         conversationId: String,
         type: String,
     ): Boolean = this.type == type && payloadField("conversation_id") == conversationId
+
+    private fun Envelope.isDismissalOf(modalId: String): Boolean = type == "modal_dismissed" && payloadField("modal_id") == modalId
 
     private fun Envelope.payloadField(name: String): String? = (payload as? JsonObject)?.get(name)?.jsonPrimitive?.contentOrNull
 
@@ -169,5 +273,8 @@ class SecondClientPeer(
         val CLIENT_INFO = NoiseClientInfo(deviceName = "e2e-peer", clientVersion = "e2e-peer")
         const val DH_NAME = "25519"
         const val KEY_LENGTH = 32
+        const val PERMISSION_CLASS = "permission"
+        const val ALLOW_ONCE = "allow_once"
+        const val REMOTE_SOURCE = "remote"
     }
 }

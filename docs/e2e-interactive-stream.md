@@ -78,11 +78,20 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    in-memory key and its own `pyry pair` token — sends the ping prompt into a chat the phone has renamed
    and has open, and asserts claude's reply renders exactly once while the thread stays open and that the
    peer's message and the reply each render exactly once after the phone leaves and reopens the thread;
-   one claude turn — the peer's ping.
-   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848)**
-   runs a **curated set of eleven scenarios** (ping + create-workspace-folder + new-session + delete +
+   one claude turn — the peer's ping; and a **peer-queue-consistency** scenario (#849 —
+   `interactiveTurn_peerQueue_staysConsistentAcrossClients`): the peer starts a turn that has claude run a
+   quick command it holds open behind a permission prompt (the peer allows it once), so the phone's ping
+   queues behind it. The phone's queued row and the peer's `queue_state` snapshot agree; the phone drops a
+   second queued message and the peer drops one of its own, and each disappears from the other device's
+   view; once the peer allows the held command, the wait turn ends, the queued ping drains, and the phone
+   shows claude's reply exactly once with no leftover queued row. Two claude turns — the peer's wait turn
+   and the drained ping.
+   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849)**
+   runs a **curated set of twelve scenarios** (ping + create-workspace-folder + new-session + delete +
    archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
-   peer-started-turn, four ping turns plus a possible reset wrap-up turn — delete, archive-restore,
+   peer-started-turn + peer-queue-consistency, six real claude turns — four pings (ping,
+   create-workspace-folder, new-session, and the peer-started turn's own ping), the peer's wait turn and
+   the drained ping, plus a possible reset wrap-up turn — delete, archive-restore,
    change-workspace, rename, save-as-channel, list-archive-entry and two-host spend none)
    against the **production relay** over `wss://`
    (TLS) — the pre-ship gate that catches the live-environment failure class a local relay cannot; see
@@ -92,7 +101,8 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    New-session also reveals the delimiter after a potentially tall wrap-up reply.
    **Pending coverage:** #679 owns cross-device Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
-   ending B while A continues. The curated eleven-scenario gate does not cover it.
+   ending B while A continues. The curated twelve-scenario gate does not cover it. Nor does it cover
+   offline reading or reconnect, which [#850](https://github.com/pyrycode/pyrycode-mobile/issues/850) owns.
 4. **Emulator + deterministic host** ← **shipped (#431).** The same real app + Noise/relay path, but
    claude is swapped for #642's scripted `fakeclaude` backend replaying raw stream-json fixture bytes.
    No real claude, **zero claude turns**; re-running back-to-back uses the same stream contract. Run it with
@@ -177,7 +187,7 @@ production-side KDoc and its relationship to the tier tags #731 minted the same 
 [Add controls](../knowledge/features/channel-list-screen-tree-and-controls.md#add-controls-738) for `treeHostAddTestTag`'s own
 clamping rule.
 
-Rung 3 covers thirteen scenarios on this one harness: the **ping** happy path (a constrained reply renders);
+Rung 3 covers fourteen scenarios on this one harness: the **ping** happy path (a constrained reply renders);
 a **tool-use** scenario (#481 — a constrained prompt makes real claude run a shell tool, asserting the
 tool step renders, keyed tolerantly on the verbatim tool name `"Bash"` in the tool-row header); a
 **thinking-spinner** scenario (#482 — a pure-reasoning prompt makes real claude think a beat, asserting
@@ -474,9 +484,50 @@ the protocol's multi-device rule can fold the same message into a delivered hist
 `queue_state` queued row — a message drawn once as each would count twice under a looser matcher, and the
 top bar is excluded the same way. Total real-claude cost: **one** turn — the peer's ping. Read a failure
 on either exactly-once count as a product finding about how the phone folds a turn it did not start, not
-as harness flakiness (builder Lessons learned, PR #857). The peer is shared infrastructure: the later live
-scenarios [#673](https://github.com/pyrycode/pyrycode-mobile/issues/673) still owns — phone replies and
-queueing, and offline reading and reconnect — are expected to ride the same fixture.
+as harness flakiness (builder Lessons learned, PR #857). The peer is shared infrastructure: #849's
+phone-reply, queue and drop scenario (below) rides it next; offline reading and reconnect remain
+[#850](https://github.com/pyrycode/pyrycode-mobile/issues/850)'s.
+
+The **peer-queue-consistency** scenario (#849 —
+`interactiveTurn_peerQueue_staysConsistentAcrossClients`) is likewise **always-on** (not `@Ignore`d): a
+displayed reply, a queued row's presence and its clearing are all **durable** post-conditions, so it
+belongs in the always-on gate alongside #848's exactly-once counts. It rides #848's `SecondClientPeer`, the
+phone creates a chat and renames it before any message is sent (the same #848 precondition, so the daemon's
+first-message auto-naming never fires), then the peer opens the conversation and starts a turn: claude runs
+a quick, deliberately unapproved command (`python3 -c "print(849)"` — not a bare `sleep`, see below) that
+raises a permission prompt the peer alone can answer (`scripts/e2e-emulator.sh` pairs only the peer with
+`--allow-remote-permissions`; the phone stays unprivileged, as every other scenario expects). The pending
+prompt, not the command's run time, is what holds the peer's turn open for the steps that follow:
+
+- **Phone queues (AC2).** The phone types and sends a ping prompt while the peer's turn is running. It
+  shows as a queued row on the phone (`stateDescription` "Waiting to send") and as an item in the peer's
+  latest `queue_state` snapshot.
+- **Phone drops (AC3).** The phone queues a second message and taps its row's drop control.
+  **Narrowed until [#859](https://github.com/pyrycode/pyrycode-mobile/issues/859):** the daemon never
+  replies to `dequeue_message` (see [Queued backlog § Dropping a queued
+  entry](../knowledge/features/queued-backlog.md#dropping-a-queued-entry-dequeue_message-466)), so the
+  phone's own echo of the dropped message stays in the thread as a delivered bubble instead of
+  disappearing. The step checks only that the phone's queued row is gone and that the peer's snapshot
+  drops it too; the assertion that the text itself is gone from the phone's thread — and the equivalent
+  peer-drop assertion below — are commented with #859 and restored once it lands.
+- **Peer queues and drops (AC3).** The peer queues a message of its own. The phone renders it as an
+  ordinary, unmatched queued row (`foldQueuedRows`'s tail case — the same fold #781/#782 gave another
+  device's item). The peer drops it (fire-and-forget, the same #859 gap); the phone's queued row for it
+  clears once the next `queue_state` says so.
+- **Drain (AC1 + AC2).** The peer allows the held permission prompt once (`modal_answer` with
+  `allow_once`, confirmed only by the matching `modal_dismissed` — the daemon sends no reply to
+  `modal_answer` itself). The wait turn ends, the queued ping runs, and the peer sees that turn's
+  `turn_end` with an empty backlog. The phone shows claude's ping reply exactly once, the ping prompt
+  exactly once, and no queued row for it. Neither dropped message reaches claude, so the phone carries no
+  node with either dropped message's exact text.
+
+Two real claude turns: the peer's wait turn and the drained ping. `WAIT_PROMPT` cannot be a bare `sleep`
+— Claude Code's Bash tool refuses a leading `sleep N` of 25 s or more unless it runs in the background,
+before permission checks even run, so a scenario that needs a long-running turn has to wait on a command
+that does not start with `sleep`; the constant's own comment records why. Folded into the pre-ship
+`LIVE=1` gate as the 12th curated method, taking `LIVE_MINIMUM` from 11 to 12 and the run's real-claude
+cost from four turns to six. The live run that closed the ticket
+(`python3 scripts/android-test-gate.py live`, 2026-09-23) executed all twelve with no failures or skips.
 
 The **thinking-spinner** scenario (#482) is the **flakiest** rung-3 scenario and ships **`@Ignore`-gated /
 manual**: the spinner has **no durable equivalent** of the tool name — once real claude emits its first
@@ -578,17 +629,19 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the eleven curated `@Test` methods (ping + create-workspace-folder, #566;
+incantation to remember — the twelve curated `@Test` methods (ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
-save-as-channel, #581; list-archive-entry, #740; two-host separation, #847; peer-started turn, #848)
-ride the wrapped mode.
+save-as-channel, #581; list-archive-entry, #740; two-host separation, #847; peer-started turn, #848;
+peer-queue-consistency, #849) ride the wrapped mode.
 
 These `InteractiveStreamE2ETest` cases preserve the ping and Reset-session
 regressions after host-owned routing, since #847 that two paired hosts whose
 conversations share an id stay separate through pairing, rename, link-cycling and a
-restart, and since #848 that a turn started from another paired device continues on the
-phone. They do not prove reconnect or the phone's own reply surviving a network drop;
-that rung-3 coverage remains #673.
+restart, since #848 that a turn started from another paired device continues on the
+phone, and since #849 that phone replies, queued sends and drops stay consistent with
+that same device's view of the backlog. They do not prove reconnect or the phone's own
+reply surviving a network drop; that rung-3 coverage belongs to
+[#850](https://github.com/pyrycode/pyrycode-mobile/issues/850).
 
 **When the dispatcher runs it:**
 
@@ -597,14 +650,15 @@ that rung-3 coverage remains #673.
 - **when a daemon or relay change touching the mobile surface lands**, alongside the daemon's own
   `make e2e-realclaude` when that acceptance crosses repositories.
 
-**Cost:** four ping turns across eleven curated methods (ping, create-workspace-folder,
-new-session, and the peer's ping, #848), plus a reset wrap-up turn when handoff notes are
+**Cost:** six real claude turns across twelve curated methods — four pings (ping,
+create-workspace-folder, new-session, and the peer-started turn's own ping, #848), plus
+\#849's peer wait turn and its drained ping — and a reset wrap-up turn when handoff notes are
 enabled. Delete, archive-restore, change-workspace, rename, save-as-channel,
 list-archive-entry and two-host separation spend no Claude turns. Allow a few minutes of
 wall clock; the run is subscription-covered.
 
 The command must exit successfully and report at least `LIVE_MINIMUM` executed passing
-tests, with no skips. `LIVE_MINIMUM` (`scripts/android-test-gate.py`) is 11 as of #848 —
+tests, with no skips. `LIVE_MINIMUM` (`scripts/android-test-gate.py`) is 12 as of #849 —
 the curated list's own size, not a looser bound. `test_live_floor_matches_the_curated_list`
 (`scripts/test_android_test_gate.py`) counts the `#interactiveTurn_` methods in
 `scripts/e2e-emulator.sh`'s LIVE `TEST_TARGET` and asserts it equals `LIVE_MINIMUM`, so the
@@ -614,8 +668,9 @@ the then-ten-method list, specifically so raising it would not redden
 `scripts/test_android_test_gate.py`'s recorded eight-case fixture
 (`fixtures/default-workspace-live/588.xml` — plan `docs/specs/architecture/740-e2e-list-archive-entry.md`
 § Revisions, reaffirmed for #847). #848 resolved that tension instead of extending it: the
-fixture stays byte-for-byte, and the gate's own test now pads a copy of it with synthetic
-curated-method cases up to `LIVE_MINIMUM`. Shell cleanup preserves the original result and
+fixture stays byte-for-byte, and the gate's own test pads a copy of it with synthetic
+curated-method cases up to `LIVE_MINIMUM`. #849 raised `LIVE_MINIMUM` again, from 11 to 12,
+on the same mechanism. Shell cleanup preserves the original result and
 retains failure artifacts; a clean XML report with a failing process status is not a
 passing gate.
 
@@ -626,7 +681,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of eleven rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of twelve rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -650,7 +705,7 @@ device. The [recorded baseline](#verification-status) proves only managed
 `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
 version for now; API 35 is deferred.
 
-**What it runs.** Eleven curated methods, passed as a comma-separated `class#method` list:
+**What it runs.** Twelve curated methods, passed as a comma-separated `class#method` list:
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
 `InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566),
 `InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (#541),
@@ -660,10 +715,12 @@ version for now; API 35 is deferred.
 `InteractiveStreamE2ETest#interactiveTurn_renameConversation_relabelsTopBarAndListRow` (#537),
 `InteractiveStreamE2ETest#interactiveTurn_saveAsChannel_promotesToChannelTier` (#581),
 `InteractiveStreamE2ETest#interactiveTurn_listArchiveEntry_opensArchived` (#740),
-`InteractiveStreamE2ETest#interactiveTurn_twoHostsCollidingConversationId_stayPerHost` (#847), and
-`InteractiveStreamE2ETest#interactiveTurn_peerStartedTurn_continuesOnPhone` (#848), so exactly
-**four real claude turns** are spent per run — three from ping, create-workspace-folder and new-session,
-and the fourth from the peer's own ping (#848); the delete, archive-restore, change-workspace, rename,
+`InteractiveStreamE2ETest#interactiveTurn_twoHostsCollidingConversationId_stayPerHost` (#847),
+`InteractiveStreamE2ETest#interactiveTurn_peerStartedTurn_continuesOnPhone` (#848), and
+`InteractiveStreamE2ETest#interactiveTurn_peerQueue_staysConsistentAcrossClients` (#849), so exactly
+**six real claude turns** are spent per run — four pings, from ping, create-workspace-folder,
+new-session and the peer-started turn's own ping (#848), plus #849's peer wait turn and its drained
+ping; the delete, archive-restore, change-workspace, rename,
 save-as-channel, list-archive-entry and two-host scenarios each add a method, not a turn
 (create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips;
 list-archive-entry is pure navigation with no daemon round-trip at all; two-host separation is pairing,
@@ -703,8 +760,9 @@ Prerequisites (on top of the "How to run" list):
 - The emulator needs outbound internet + DNS + a system-trusted TLS cert for the relay host. It reaches
   the public relay over its own NAT'd internet — **not** the `10.0.2.2` host alias, which is loopback-only.
 
-Cost: **four real claude turns per run across eleven curated methods** (ping + create-workspace-folder,
-\#566 + new-session, #541 + the peer-started turn, #848; `/clear` spends none; delete, #554,
+Cost: **six real claude turns per run across twelve curated methods** (ping + create-workspace-folder,
+\#566 + new-session, #541 + the peer-started turn, #848 + the peer's wait turn and its drained ping,
+\#849; `/clear` spends none; delete, #554,
 archive-restore, #551, change-workspace, #562, rename, #537, save-as-channel, #581, list-archive-entry,
 \#740, and two-host separation, #847, each spend none — create/rename/delete/archive/restore/
 change-workspace/promote are daemon round-trips, list-archive-entry is pure navigation, and two-host
@@ -991,6 +1049,23 @@ handoff; this table does not claim a later execution.
 
 Earlier results and failure history:
 
+- **LIVE verified for #849 (2026-09-23):** the dispatcher's real-claude gate ran
+  `python3 scripts/android-test-gate.py live` against `feature/849` at `9788df3e67` merged with `main`
+  at `e1e96d7139`, the
+  [recorded run](https://github.com/pyrycode/pyrycode-mobile/issues/849#issuecomment-5788459590)
+  executed all twelve curated scenarios — the curated list's first run with
+  `interactiveTurn_peerQueue_staysConsistentAcrossClients` on it — with twelve passes, no failures or
+  skips, exit 0, wall clock 90.6s. `LIVE_MINIMUM` rose from 11 to 12 with this ticket (see
+  [Pre-ship gate](#pre-ship-gate)); twelve executed meets it exactly. Two earlier attempts on this
+  branch failed first: a bare `sleep 90` cannot hold a peer's turn open (Claude Code's Bash tool
+  refuses a foreground `sleep` of 25 s or more), and, once that was fixed, an unanswered permission
+  prompt on the peer's replacement command held the turn open **forever** with no device able to
+  answer it, until the harness paired the peer alone with `--allow-remote-permissions`. This run is
+  also the first live evidence that `dequeue_message` gets no reply from the daemon: a phone-side drop
+  clears the queued row (proven here) but leaves the dropped message's echo in the thread as a
+  delivered bubble (filed as [#859](https://github.com/pyrycode/pyrycode-mobile/issues/859), out of
+  this ticket's scope), which is why the scenario's phone-drop assertions are narrowed to the queued
+  row until that lands.
 - **LIVE verified for #848 (2026-09-23):** the dispatcher's real-claude gate ran
   `python3 scripts/android-test-gate.py live` against `feature/848` merged with `main`,
   the [recorded run](https://github.com/pyrycode/pyrycode-mobile/issues/848#issuecomment-5787618646)
@@ -1091,20 +1166,24 @@ The remaining checks here are specific to a real relay or real Claude execution:
 
 ## Follow-ups to ticket
 
-- **Coverage — pending:** [#673](https://github.com/pyrycode/pyrycode-mobile/issues/673)
-  owns reconnect, phone-reply continuity, and history paging
+- **Coverage — pending:** [#673](https://github.com/pyrycode/pyrycode-mobile/issues/673) (closed, split)
+  used to own reconnect, phone-reply continuity, and history paging
   (scroll-back and reconnect-continuity) in the rung-3 `InteractiveStreamE2ETest`
-  harness. Two-host navigation is no longer part of its scope:
-  [#847](https://github.com/pyrycode/pyrycode-mobile/issues/847) shipped that piece as the
-  tenth curated `LIVE=1` method — two paired hosts whose conversations share an id stay
-  separate through pairing, rename, link-cycling and a restart.
+  harness. Three of those pieces are no longer pending here: two-host navigation shipped as
+  [#847](https://github.com/pyrycode/pyrycode-mobile/issues/847), the tenth curated `LIVE=1`
+  method — two paired hosts whose conversations share an id stay separate through pairing,
+  rename, link-cycling and a restart — and phone-reply continuity, queueing and drops shipped
+  as [#849](https://github.com/pyrycode/pyrycode-mobile/issues/849), the twelfth curated
+  `LIVE=1` method, riding #848's `SecondClientPeer`. Reconnect and history paging (offline
+  reading) remain pending, now owned by
+  [#850](https://github.com/pyrycode/pyrycode-mobile/issues/850).
   [#778](https://github.com/pyrycode/pyrycode-mobile/issues/778) shipped
   the history-page retry and the reconnect/refused-cursor walk restart with
   deterministic coverage only (`ThreadHistoryDemandTest`, `ThreadViewModelTest`,
   `ThreadScreenHistoryTest`) and carried no `needs-real-claude`; the live proof for
-  that behaviour still belongs here. The production-route Compose tests and
+  that behaviour still belongs to #850. The production-route Compose tests and
   two-peer DI tests for #636 establish deterministic ownership boundaries; passing
-  the existing eight-test live gate does not establish that future scenario.
+  the existing twelve-test live gate does not establish that future scenario.
 
 - **Coverage — pending:** [#679](https://github.com/pyrycode/pyrycode-mobile/issues/679)
   owns the cross-device Stop scenario in `InteractiveStreamE2ETest`: with real turns
@@ -1223,9 +1302,29 @@ The remaining checks here are specific to a real relay or real Claude execution:
   spend a fourth real-claude turn since the trio landed with #566/#541, taking the run from three ping
   turns to four (the peer's own ping) plus an optional reset wrap-up. The live run that closed the ticket
   (`python3 scripts/android-test-gate.py live`, 2026-09-23) executed all eleven with no failures or skips.
-  The peer is shared test infrastructure: the reconnect, phone-reply-continuity and history-paging
-  scenarios [#673](https://github.com/pyrycode/pyrycode-mobile/issues/673) still owns are expected to ride
-  it; API-retry status (attempt N/M) — **rung 2 shipped (#594)**, the
+  The peer is shared test infrastructure: reconnect and history-paging (offline reading) remain
+  [#850](https://github.com/pyrycode/pyrycode-mobile/issues/850)'s to ride it; Layer-3 (real claude)
+  peer-queue consistency — **shipped (#849)**, proving that phone replies, queued sends and drops
+  stay consistent with the peer's own view: the peer opens a chat the phone renamed and starts a turn
+  claude holds open behind a permission prompt only the peer can answer (a quick command, never a bare
+  `sleep` — Claude Code's Bash tool refuses a foreground `sleep` of 25 s or more before permission
+  checks even run), so the phone's ping queues behind it; the phone's queued row and the peer's
+  `queue_state` snapshot agree, a phone-side drop and a peer-side drop each clear from the other
+  device's view (narrowed on the phone-side "gone from the thread" half until
+  [#859](https://github.com/pyrycode/pyrycode-mobile/issues/859), a product bug this ticket found and
+  filed rather than fixed — the daemon never acks `dequeue_message`, so the phone's own echo of a
+  drop stays in the thread until that lands), and once the peer allows the held prompt the wait turn
+  ends, the queued ping drains, and the phone shows claude's reply exactly once with no leftover
+  queued row; always-on (every post-condition — a queued row's presence, its clearing, and the
+  displayed reply — is durable) and folded into the pre-ship `LIVE=1` gate as the 12th curated method,
+  taking the gate from eleven curated methods to twelve, the floor from `LIVE_MINIMUM = 11` to `12`
+  on the same `test_live_floor_matches_the_curated_list` mechanism, and the run's real-claude cost
+  from four turns to six (the peer's wait turn and its drained ping, alongside the existing four
+  pings). The live run that closed the ticket (`python3 scripts/android-test-gate.py live`,
+  2026-09-23) executed all twelve with no failures or skips; two earlier attempts on the same branch
+  failed first on the bare-`sleep` restriction, then on an unanswered permission prompt with no
+  device privileged to approve it, before the harness paired the peer alone with
+  `--allow-remote-permissions`; API-retry status (attempt N/M) — **rung 2 shipped (#594)**, the
   `ScriptedApiRetryTest` scenarios driving `api_retry` edges through the real #593 repository projection
   into `ThreadViewModel.apiRetry` and `ApiRetryIndicator`, covering both edges (the rising edge, including
   a climbed counter that must re-render rather than dedup, and the clearing edge reverting to whatever the
