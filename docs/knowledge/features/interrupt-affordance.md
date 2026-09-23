@@ -107,7 +107,7 @@ composer's `ThreadInputBar` call, instead of into a standalone `InterruptAfforda
 // ThreadScreen's bottomBar, post-#643 — the composer column, not the foot of the content Column
 ThreadStatusArea(apiRetry, isCompacting, isThinking)   // the old ThinkingIndicator slot, moved here too
 ThreadInputBar(onSend = onSendMessage, isBusy = isBusy, onInterrupt = onInterrupt, …)
-ThreadStatusRow(model = …, effort = …, …)
+ThreadStatusRow(model = …, effort = …, …)   // retired by #808 — see Thread composer footer
 ```
 
 The send/stop precedence in `ThreadInputBar` is explicit and text-first:

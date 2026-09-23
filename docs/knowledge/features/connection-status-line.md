@@ -103,7 +103,7 @@ internal fun ConnectionLegCategory.color(): Color = when (this) {
 This is the **only** colour-resolution site — every dot colour comes from an M3 semantic token, no
 hardcoded hex in the component (the green hex lives in [`Color.kt`](success-color.md), mirroring
 `warningLight`/`warningDark`). The split (category in pure code, token at one Compose site) mirrors
-[`ThreadStatusRow`](thread-status-row.md)'s `tokenPercentColor`.
+the retired `ThreadStatusRow`'s `tokenPercentColor` (deleted in [#602](../codebase/602.md); the row itself was retired by [#808](../codebase/808.md), see [Thread composer footer](thread-composer-footer.md)).
 
 ## The component
 
@@ -179,7 +179,7 @@ selects conversation data; it does not gate this status flow or connection estab
   extended by #841's `PairingRejected`) + `PyrycodeLinkStatus` (in [Connection status](connection-status.md)).
 - The green token: [Success color](success-color.md) ([#397](../codebase/397.md)).
 - Component idioms followed: [Connection banner](connection-banner.md) (stateless-over-a-sealed-type
-  + private preview-matrix), [Thread status row](thread-status-row.md) (category→token resolver).
+  + private preview-matrix), the retired `ThreadStatusRow` (category→token resolver; see [Thread composer footer](thread-composer-footer.md) for its [#808](../codebase/808.md) replacement).
 - Implementation notes: [`codebase/397.md`](../codebase/397.md) (build slice),
   [`codebase/398.md`](../codebase/398.md) (live wiring),
   [`codebase/499.md`](../codebase/499.md) (the `Idle → Down`/"Not connected" mapping — closes the false

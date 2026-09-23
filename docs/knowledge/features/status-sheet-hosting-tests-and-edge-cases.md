@@ -14,19 +14,24 @@ fun ThreadScreen(
     // ...existing params...
 ) {
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
-    Scaffold(
-        // ...
-        bottomBar = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                ThreadStatusRow(
-                    // ...
-                    onExpandClick = { sheetVisible = true },
-                    pending = state.runConfig.pending,   // #807
-                )
-                ThreadInputBar(onSend = onSendMessage)
-            }
-        },
-    ) { /* content */ }
+    Box(/* ... */) {                        // wraps the Scaffold since #808, for the options-overlay layer
+        Scaffold(
+            // ...
+            bottomBar = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    ThreadStatusArea(/* ... */)
+                    ThreadInputBar(onSend = onSendMessage)
+                    ThreadComposerFooter(
+                        runConfig = state.runConfig,
+                        onOpen = { openControl = it },
+                        onStatusClick = { sheetVisible = true },   // the sheet's opener since #808
+                        onAnchorChanged = { control, bounds -> footerAnchors[control] = bounds },
+                    )
+                }
+            },
+        ) { /* content */ }
+        /* openMenu?.let { … OptionsOverlay(...) … } — see Thread composer footer for the full block */
+    }
     WorkspacePicker(/* ... */)              // sibling host from #137
     if (sheetVisible) {
         StatusSheet(
@@ -54,7 +59,7 @@ fun ThreadScreen(
 }
 ```
 
-(`tokenPercent` / `tokensUsed` / `tokensTotal` args removed at this call site in [#601](../codebase/601.md); `onDismiss` is now the trailing argument. [#603](../codebase/603.md) has since deleted the fields from `ThreadUiState` entirely. **[#807](../codebase/807.md) deleted `selectedModel: Model` / `selectedEffort: Effort` sourced from `AppPreferences`** and replaced every model/effort argument with one read off `state.runConfig: ThreadRunConfig` — see [status-sheet.md § Shape](status-sheet.md#shape) and [thread-status-row.md § Sourcing](thread-status-row.md#sourcing).)
+(`tokenPercent` / `tokensUsed` / `tokensTotal` args removed at this call site in [#601](../codebase/601.md); `onDismiss` is now the trailing argument. [#603](../codebase/603.md) has since deleted the fields from `ThreadUiState` entirely. **[#807](../codebase/807.md) deleted `selectedModel: Model` / `selectedEffort: Effort` sourced from `AppPreferences`** and replaced every model/effort argument with one read off `state.runConfig: ThreadRunConfig` — see [status-sheet.md § Shape](status-sheet.md#shape) and [thread-composer-footer.md § Sourcing](thread-composer-footer.md#sourcing). **[#808](../codebase/808.md) retired `ThreadStatusRow`** and its `onExpandClick` in favour of [`ThreadComposerFooter`](thread-composer-footer.md)'s trailing `onStatusClick`; the `StatusSheet(...)` call itself (its arguments, above) is unchanged by #808 — only its opener moved.)
 
 Four things to notice:
 
@@ -77,7 +82,7 @@ ThreadScreen(
 
 All three are method references into [`ThreadViewModel`](thread-screen.md#viewmodel); no edit was needed at `MainActivity` for #807 — references re-adapt to the retyped VM functions automatically. Through [#229](../codebase/229.md)/[#253](../codebase/253.md) they were synchronous `MutableStateFlow.value` writes only — an operator's tap moved the control locally and nothing else happened. [#544](../codebase/544.md) wired all three to the daemon: each wrote its override flow first (optimistic move — `onModelSelected`/`onEffortSelected` updated the override layer over the matching `AppPreferences.default*` flow, `onYoloToggled` wrote the `yoloEnabled` flag directly with no preference layer), then sent only the changed field to `Conversation.currentSessionId` via `ConversationRepository.setSessionSettings` ([#543](../codebase/543.md)) and reverted the write on a daemon error or a not-connected `IllegalStateException`, surfacing the standard transient snackbar (`sessionSettingsErrors`, wired at [`ThreadScreen`](thread-screen.md) and `MainActivity`).
 
-**[#807](../codebase/807.md) kept #544's send/revert shape but replaced what it sends and where it sends to.** `onModelSelected(value: String)` / `onEffortSelected(level: String)` now mark a `pendingModel` / `pendingEffort` tap (no `AppPreferences` override layer at all — that sourcing is gone) and address the write to `SessionSettings.sessionId` from the current settings reading, never `Conversation.currentSessionId`. An empty session id means the daemon has no session to address, so the tap is dropped (logged content-free, no error surfaced — a read-only session is not a failure) rather than sent and refused server-side. `onYoloToggled` shares the same `sendSessionSettings` helper, so it now inherits the same session-id source and the same read-only gate — a deliberate scope-bleed the plan calls out explicitly, since the alternative was keeping `Conversation.currentSessionId` alive for one control. The daemon's ack still does not echo settings; on success the VM now calls `repository.refreshSessionSettings(conversationId)` and the pending tap survives **until that fresh reading lands**, not until the ack — an acknowledgement alone never becomes the confirmed reading. On failure the pending is cleared, which is what restores the previously confirmed value. See [`../codebase/544.md`](../codebase/544.md) for the original wiring detail and [thread-status-row.md § Sourcing](thread-status-row.md#sourcing) for the current one.
+**[#807](../codebase/807.md) kept #544's send/revert shape but replaced what it sends and where it sends to.** `onModelSelected(value: String)` / `onEffortSelected(level: String)` now mark a `pendingModel` / `pendingEffort` tap (no `AppPreferences` override layer at all — that sourcing is gone) and address the write to `SessionSettings.sessionId` from the current settings reading, never `Conversation.currentSessionId`. An empty session id means the daemon has no session to address, so the tap is dropped (logged content-free, no error surfaced — a read-only session is not a failure) rather than sent and refused server-side. `onYoloToggled` shares the same `sendSessionSettings` helper, so it now inherits the same session-id source and the same read-only gate — a deliberate scope-bleed the plan calls out explicitly, since the alternative was keeping `Conversation.currentSessionId` alive for one control. The daemon's ack still does not echo settings; on success the VM now calls `repository.refreshSessionSettings(conversationId)` and the pending tap survives **until that fresh reading lands**, not until the ack — an acknowledgement alone never becomes the confirmed reading. On failure the pending is cleared, which is what restores the previously confirmed value. See [`../codebase/544.md`](../codebase/544.md) for the original wiring detail and [thread-composer-footer.md § Sourcing](thread-composer-footer.md#sourcing) for the current one.
 
 ## Preview
 
@@ -129,13 +134,13 @@ Pending / read-only (new sections, #807):
 
 YOLO + close + Context window (largely unchanged from [#229](../codebase/229.md)/[#601](../codebase/601.md), retargeted at the new fixture helper): `tapping_close_icon_invokes_onDismiss`, `renders_yolo_section_with_title_and_supporting_text`, `tapping_yolo_row_when_off_invokes_onYoloToggled_with_true`, `tapping_yolo_row_when_on_invokes_onYoloToggled_with_false`, `renders_context_window_section_as_unavailable_with_header_and_caption` (still asserts no `ProgressBarRangeInfo` node exists anywhere in the tree). **None of these five assert anything about `enabled` or `pending` on the YOLO switch** — see [status-sheet.md § `YoloRow`](status-sheet.md#yolorow) for the known gap this leaves untested.
 
-No unit tests under `app/src/test/` for the sheet itself. The sheet is pure presentation; the underlying VM plumbing is pinned by `ThreadViewModelTest`'s `runConfig_*` / `on{Model,Effort,Yolo}Selected_*` / `sessionSettings_*` groups — see [thread-status-row.md § Testing](thread-status-row.md#testing) for representative names.
+No unit tests under `app/src/test/` for the sheet itself. The sheet is pure presentation; the underlying VM plumbing is pinned by `ThreadViewModelTest`'s `runConfig_*` / `on{Model,Effort,Yolo}Selected_*` / `sessionSettings_*` groups — see [thread-composer-footer.md § Testing](thread-composer-footer.md#testing) for representative names.
 
 ## Edge cases / limitations
 
 - **Asymmetric auto-close on selection.** Tapping a radio row (Model) or chip (Effort) fires the callback and immediately closes the sheet — even if the user picks the value that was already selected. Tapping the YOLO row (or its switch) fires `onYoloToggled(!previous)` and **leaves the sheet open**. The Context window section has no callback at all — it's read-only. The asymmetry is deliberate: a single-pick is a complete action (M3 modal-bottom-sheet convention), but a Switch is a state-change the user may want to immediately reverse, and a display panel has no action surface to begin with. Resolution to the [#254](../codebase/254.md) open question, extended in [#230](../codebase/230.md) — see [§ Hosting in `ThreadScreen`](#hosting-in-threadscreen).
 - **No section abstraction.** The sheet body renders all four sections directly inside the `StatusSheetContent` `Column`; there is no `Section` interface or `SectionList` helper. The [#229](../codebase/229.md) spec flagged [#230](../codebase/230.md) as the re-evaluation point; [#230](../codebase/230.md)'s call was "still not yet — four sections is the threshold but the body divergence is high (radio rows / chip row / toggle row / label+progress+caption block); wait for a fifth occurrence or a real shape divergence". The header + container shape is repeated; the body shape is not. Pre-introducing the abstraction would have multiplied the surface for three tickets of value.
-- **`progressColor` no longer exists in this file — deleted whole in [#601](../codebase/601.md).** It shared its `< 50 / < 95 / ≥ 95` boundaries with [`ThreadStatusRow.tokenPercentColor`](thread-status-row.md#tokenpercentcolor--threshold-helper) (still live, unaffected by #601) but never its colour slots — `progressColor` returned fill chroma (`primary` / `warning` / `error`), `tokenPercentColor` returns text emphasis (`onSurfaceVariant` / `warning` / `error`). That non-sharing decision is now moot for this file (nothing here needs a threshold colour), but `tokenPercentColor` on the always-visible row still carries the same `73%` stub — see [#602](https://github.com/pyrycode/pyrycode-mobile/issues/602), the sibling ticket that removes the row's fabricated segment.
+- **`progressColor` no longer exists in this file — deleted whole in [#601](../codebase/601.md).** It shared its `< 50 / < 95 / ≥ 95` boundaries with `ThreadStatusRow.tokenPercentColor` (unaffected by #601 at the time) but never its colour slots — `progressColor` returned fill chroma (`primary` / `warning` / `error`), `tokenPercentColor` returned text emphasis (`onSurfaceVariant` / `warning` / `error`). [#602](../codebase/602.md) went on to delete `tokenPercentColor` itself along with the row's fabricated segment, and [#808](../codebase/808.md) retired the row it lived on entirely — see [Thread composer footer](thread-composer-footer.md).
 - **No `strings.xml` extraction.** All inline strings (`"Run configuration"`, `"Model"` / `"Effort"` / `"YOLO mode"` / `"Context window"` headers, the [#807](../codebase/807.md) fallback copy `"Model list unavailable"` / `"This server published no models."` / `"No effort levels published for this model."`, the YOLO two-line label, the Context window caption, `"Close"`) are Kotlin literals. Same posture as [`WorkspacePickerSheet`](workspace-picker-sheet.md) and [`ChannelInfoSheet`](channel-info-sheet.md); first-localisation pass migrates everything together. The three Figma-derived Model-description literals this bullet used to name (`"best for complex work"` etc.) are gone with [#807](../codebase/807.md)'s deleted `Model.description()` table — see below.
 - **`Model.description()` is gone, deleted whole by [#807](../codebase/807.md).** It was a private file-local extension mapping the three `Model` entries to Figma-derived taglines; there is no fixed vocabulary left to map onto. `ThreadModelChoice.detail` (the ViewModel's inert `resolvedModel`) is the replacement, and it is not a per-sheet override of anything Settings could reuse — it comes from the daemon, per conversation, per row.
 - **`ModalBottomSheet` scrim and back-press both route to `onDismiss`** — provided by the M3 component; the host doesn't need to wire either separately. Drag-down-to-dismiss is supported by the M3 `SheetState` default behaviour.
