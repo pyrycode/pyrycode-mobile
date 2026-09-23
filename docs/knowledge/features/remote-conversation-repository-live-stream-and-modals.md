@@ -144,6 +144,61 @@ call in one frame) and `question_dismissed` (its retirement) — into `QuestionB
 fields and never used as a key (the two ids are daemon-asserted and are the only keys), never logged, and
 never placed in an exception message.
 
+## `backgroundTasks` — the v2 background-task decode+fold seam (#677)
+
+A **held `StateFlow<Map<String, BackgroundTaskRoster>>`** (`backgroundTaskProjection.rosters` /
+`backgroundTasks`), the [`questionBatches`](#questionbatches--the-v2-clarification-batch-decodefold-seam-822)
+shape rather than an event stream. Decodes the three `interactive`-gated **binary → phone** frames about
+work claude left running past its turn — `background_task_started`, `background_task_updated` and
+`background_task_roster` — into `BackgroundTask` (`data/model/BackgroundTask.kt`) via the DTOs in the new
+`data/network/BackgroundTaskPayloads.kt` and the fold in the new `data/repository/BackgroundTaskProjection.kt`.
+Daemon state, not turn content: no thread row is folded and no stall is cleared.
+
+- **Rides the same single existing `pump.inbound` collector.** A new grouped
+  `TYPE_BACKGROUND_TASK_STARTED, TYPE_BACKGROUND_TASK_UPDATED, TYPE_BACKGROUND_TASK_ROSTER` arm joins the
+  `onInbound` `when (envelope.type)` demux, gated on the same `CAPABILITY_INTERACTIVE in
+  negotiatedCapabilities()` check as the question arm. It calls `backgroundTaskProjection.apply(envelope)`,
+  which decodes inside one `try { … } catch (IllegalArgumentException) { }` per frame and folds into held
+  state through `mutableRosters.update {}` — a malformed frame is dropped, the single collector keeps
+  running, and nothing is logged (the exception can quote the JSON input).
+- **One task set per conversation, joined on `task_id` in whatever order the three frames arrive.** A
+  `started` or a `roster` row upserts a task directly. An `updated` frame for a task the conversation does
+  not hold yet — a terminal update racing ahead of its `started` frame, or a roster split across frames —
+  waits in a private `pending: conversationId -> taskId -> Slots` map, collector-confined like
+  `mutableRosters`; a roster for that conversation clears its entry, keeping it bounded. An `updated` frame
+  alone never creates a conversation's entry — that would read as an explicit empty roster, a fact the
+  daemon never stated for that conversation.
+- **A roster replaces the conversation's set wholesale**, including `dropped_tasks`; a task it omits is
+  dropped, not marked finished. A row repeating a `task_id` is deduplicated to its first occurrence so
+  every consumer can key a list by `taskId` — a daemon or relay bug that repeated a row would otherwise
+  hand a `LazyColumn` two rows sharing one key. A negative `dropped_tasks` is out of contract for the
+  wire and drops the whole frame rather than corrupting `BackgroundTaskRoster.liveCount`.
+- **The finished mark is the one piece of state a reconnect must not erase.** An `updated` frame with a
+  non-empty `status` (the wire's contract is `status != ""`, not a closed set of values) both fills the
+  task's `finish` slot on this connection and calls `FinishedBackgroundTasks.mark(conversationId, taskId)`
+  on the host-lifetime instance the coordinator owns — see
+  [Background-task roster](relay-repository-coordinator-seams-and-passthroughs.md#background-task-roster-677)
+  for why that instance, not this projection's held map, is what has to outlive the connection. A task's
+  `isFinished` is recomputed on every fold as `finish != null || finished.contains(conversationId,
+  taskId)`, so a roster that re-lists an already-finished task keeps it finished even though the roster
+  itself carries no `status`.
+- **Two disjoint update slots, not one.** `BackgroundTask.latestUpdate` holds the last mid-life (empty
+  `status`) update; `BackgroundTask.finish` holds the last terminal one. A terminal frame never erases the
+  held `patch`, and a later mid-life frame never erases a held `status`/`summary` — each keeps its own
+  frame's `truncatedFields`, following the same `truncated_fields` convention as the rest of
+  `InteractivePayloads.kt` (`List<String>?`, explicit `null` = nothing cut).
+- **On the concrete repo only, like `questionBatches`** — not on `ConversationRepository`. The Actions-menu
+  panel and live-task count that read this seam ([#678](https://github.com/pyrycode/pyrycode-mobile/issues/678))
+  reach it through
+  [`RelayRepositoryCoordinator.observeBackgroundTasks` / `observeLiveBackgroundTaskCount`](relay-repository-coordinator-seams-and-passthroughs.md#background-task-roster-677),
+  never the raw whole-host map, for the same one-conversation-inside-another risk `observeQuestionBatch`
+  guards against.
+
+`security-sensitive`, but plain orchestration: decode runs behind the authenticated Noise channel, and
+`description`, `patch`, `status` and `summary` are claude-authored and unsanitised — held as inert fields,
+never parsed (`patch` included), never evaluated or executed, never used as a key besides `taskId`/
+`conversationId`, and never logged.
+
 ## The model-list inbound arm — the connection-scoped retention (#791)
 
 A new `TYPE_MODEL_LIST = "model_list"` arm joins the `onInbound` `when (envelope.type)` demux, byte-for-
