@@ -3,11 +3,12 @@ import contextlib
 import io
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import xml.etree.ElementTree as ET
 
 spec = importlib.util.spec_from_file_location("gate", Path(__file__).with_name("android-test-gate.py"))
@@ -164,6 +165,81 @@ class AndroidGateTest(unittest.TestCase):
             fresh = root / "TEST-new.xml"
             fresh.write_text('<testsuite/>')
             self.assertEqual(gate.fresh_reports(root, start), [fresh])
+
+    def test_ui_skip_covers_only_paths_the_suite_cannot_see(self):
+        live, deterministic, peer = gate.E2E_ONLY_SOURCES
+        for paths in (["docs/knowledge/features/x.md"], ["README.md"], ["scripts/e2e-emulator.sh", live],
+                      ["scripts/android-test-gate.py", peer, deterministic]):
+            with self.subTest(paths=paths):
+                self.assertTrue(gate.ui_suite_skippable(paths))
+        e2e = "app/src/androidTest/java/de/pyryco/mobile/e2e/"
+        for paths in ([], None, ["app/src/main/java/de/pyryco/mobile/MainActivity.kt"], [e2e + "E2eTestApplication.kt"],
+                      [e2e + "E2eInstrumentationRunner.kt"], [e2e + "UnrecognizedRowSentinel.kt"],
+                      ["app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/SessionBoundaryAssertions.kt"],
+                      ["app/build.gradle.kts"], ["gradle/libs.versions.toml"], ["docs/a.md", "app/src/main/X.kt"]):
+            with self.subTest(paths=paths):
+                self.assertFalse(gate.ui_suite_skippable(paths))
+
+    def test_e2e_only_sources_stay_unused_by_the_ui_suite(self):
+        # A UI test or the runner reaching one of these would make the skip hide a real regression.
+        repo = Path(__file__).resolve().parents[1]
+        names = [Path(path).stem for path in gate.E2E_ONLY_SOURCES]
+        for path in gate.E2E_ONLY_SOURCES:
+            self.assertTrue((repo / path).is_file(), path)
+        pattern = re.compile(r"\b(" + "|".join(names) + r")\b")
+        sources = [repo / "app/build.gradle.kts", *(repo / "app/src").rglob("*.kt")]
+        for source in sources:
+            if str(source.relative_to(repo)) in gate.E2E_ONLY_SOURCES:
+                continue
+            code = re.sub(r"//[^\n]*", "", re.sub(r"/\*.*?\*/", "", source.read_text(), flags=re.S))
+            with self.subTest(source=source.name):
+                self.assertIsNone(pattern.search(code))
+
+    def test_ui_gate_skips_gradle_only_when_the_branch_cannot_affect_the_suite(self):
+        docs_only, app = ["docs/a.md"], ["app/src/main/X.kt"]
+        for changed, environment, runs in ((docs_only, {}, False), (docs_only, {"UI_GATE_FULL": "1"}, True),
+                                           (app, {}, True), ([], {}, True), (None, {}, True)):
+            with self.subTest(changed=changed, environment=environment), tempfile.TemporaryDirectory() as tmp:
+                run = Mock(return_value=subprocess.CompletedProcess([], 0))
+                with patch.object(gate, "ROOT", Path(tmp)), patch.dict(os.environ, environment, clear=True), \
+                        patch("sys.argv", ["android-test-gate.py", "ui"]), \
+                        patch.object(gate, "changed_paths", return_value=changed), \
+                        patch.object(gate.subprocess, "run", run), contextlib.redirect_stderr(io.StringIO()):
+                    result = gate.main()
+                self.assertEqual(run.called, runs)
+                if runs:
+                    self.assertIn(":app:pixel2Api33AtdDebugAndroidTest", run.call_args.args[0])
+                else:
+                    self.assertEqual(result, 0)
+
+    def test_changed_paths_lists_branch_uncommitted_and_untracked_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+                   "GIT_COMMITTER_EMAIL": "t@t"}
+
+            def git(*args):
+                subprocess.run(["git", *args], cwd=root, env=env, check=True, capture_output=True)
+            git("init", "-b", "main")
+            for name in ("kept.md", "edited.kt"):
+                (root / name).write_text("base\n")
+            git("add", ".")
+            git("commit", "-m", "base")
+            git("checkout", "-b", "feature")
+            (root / "docs").mkdir()
+            (root / "docs/new.md").write_text("branch\n")
+            git("add", ".")
+            git("commit", "-m", "branch")
+            git("checkout", "main")
+            (root / "later.md").write_text("main moved on\n")
+            git("add", ".")
+            git("commit", "-m", "main")
+            git("checkout", "feature")
+            (root / "edited.kt").write_text("uncommitted\n")
+            (root / "untracked.kt").write_text("new\n")
+            with patch.object(gate, "ROOT", root):
+                self.assertEqual(gate.changed_paths(), ["docs/new.md", "edited.kt", "untracked.kt"])
+                self.assertIsNone(gate.changed_paths("no-such-branch"))
 
     def test_live_floor_and_expected_class_are_enforced(self):
         with tempfile.TemporaryDirectory() as tmp:

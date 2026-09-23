@@ -30,7 +30,10 @@ fun workspaceDisplayName(
     label: String?,
 ): String {
     val chosen = label?.takeIf { it.isNotBlank() }
-    if (chosen != null) return chosen.take(MAX_WORKSPACE_LABEL_CHARS)
+    if (chosen != null) {
+        // A cut between the halves of a surrogate pair would leave a lone high surrogate: drop it.
+        return chosen.take(MAX_WORKSPACE_LABEL_CHARS).let { if (it.lastOrNull()?.isHighSurrogate() == true) it.dropLast(1) else it }
+    }
     return if (cwd.isEmpty() || cwd == DEFAULT_SCRATCH_CWD) {
         "scratch"
     } else {

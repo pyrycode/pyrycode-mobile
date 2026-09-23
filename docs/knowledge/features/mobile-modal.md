@@ -275,8 +275,13 @@ value can round-trip back into a write unedited. `EditChatModal` seeds its field
 `initialName.take(MAX_WORKSPACE_LABEL_CHARS)`, then drops a trailing lone high surrogate — a plain
 `take(N)` can land mid-pair, and OK sends the field back exactly as typed, so a split pair would
 reach `rename_conversation` as a malformed tail. `EditHostModal`'s `boundedText` and
-`workspaceDisplayName` clamp the same way without the surrogate-safe drop; that gap is out of this
-caller's scope and is filed as #851.
+`workspaceDisplayName` (`ui/workspace/WorkspaceDisplayName.kt`) now drop the same trailing high
+surrogate (#851), closing the round-trip gap for daemon-written host names and workspace labels.
+The `HostEditor.submitName` save clamp (`name.trim().take(MAX_WORKSPACE_LABEL_CHARS)`, see
+[host editor](host-editor.md)) still applies a plain `take` and can split a pair in an
+operator-*typed* name at the 128-char boundary; #851's security review flagged this, alongside
+`HostIdentityRow`'s `boundedRowText`, `ArchivedDiscussionsScreen` and `DebugBundleDownload`, as
+out of that ticket's scope and left for a follow-up.
 
 **`PermissionModalOverlay`** (`ui/conversations/thread/ThreadScreen.kt`, #815) is the first of
 [`MobileGateModal`](#the-hardened-gate-mobilegatemodal)'s two callers, and the only one using it rather than
