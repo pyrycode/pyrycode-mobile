@@ -29,7 +29,7 @@ slice is the **glue** from the screen hooks to those methods.
 ThreadScreen onModalOption(optionId) / onModalCancel()   ◀── route host wires them to the VM (#452)
         │  (UI passes only the tapped optionId — never a modalId)
         ▼
-ThreadViewModel.onModalOption / onModalCancel            ◀── reads modalId from its OWN currentModal.value
+ThreadViewModel.onModalOption / onModalCancel            ◀── reads modalId from scopedModal() (#816: hostModal filtered to this VM's own conversationId, read synchronously — not the collected currentModal)
         │  fail-safe-deny decision: default → answer ; non-default → arm → 2nd confirm → answer ; cancel
         ▼
 sendAnswer / sendCancel  ──▶  answerModal / cancelModal  (defaulted suspend lambdas)
@@ -55,7 +55,7 @@ a destructive vocabulary and never inspects option-id semantics** — it keys th
 
 ```kotlin
 fun onModalOption(optionId: String) {
-    val open = currentModal.value as? ModalUiState.Open ?: return   // the modalId is the VM's own state
+    val open = scopedModal() as? ModalUiState.Open ?: return   // #816: this thread's own modal, read synchronously
     when {
         optionId == open.defaultOptionId -> sendAnswer(open.modalId, optionId)          // single tap
         armedModalOption.value == ArmedModalOption(open.modalId, optionId) ->
@@ -65,10 +65,15 @@ fun onModalOption(optionId: String) {
 }
 
 fun onModalCancel() {
-    val open = currentModal.value as? ModalUiState.Open ?: return
+    val open = scopedModal() as? ModalUiState.Open ?: return
     armedModalOption.value = null
     sendCancel(open.modalId)
 }
+
+// #816: reads the host flow directly rather than the collected `currentModal`, so a modal raised by
+// another conversation can never be answered from this thread — not even in the instant before
+// `currentModal`'s own stateIn catches up.
+private fun scopedModal(): ModalUiState = hostModal.value.scopedTo(conversationId)
 ```
 
 | tap | result |
@@ -203,8 +208,9 @@ Taps on a VM with no open modal no-op via the `as? Open ?: return` guard.
 
 ## Edge cases / limitations
 
-- **No modal open** — `onModalOption` / `onModalCancel` are no-ops (the `currentModal.value as? Open ?:
-  return` guard), including tests that keep `currentModal` at `Hidden`.
+- **No modal open** — `onModalOption` / `onModalCancel` are no-ops (the `scopedModal() as? Open ?:
+  return` guard — since #816 reading the host flow through `ModalUiState.scopedTo`, not the collected
+  `currentModal`; see below), including tests that keep `currentModal` at `Hidden`.
 - **Send failure** — caught, emits one `modalSendErrors`; `currentModal` stays `Open` so the user can
   re-answer. No auto-retry, no error-code interpretation, no read-only degrade (that is #440/#452).
 - **VM teardown mid-send** — cancellation propagates cleanly (the rethrow); no spurious error signal.
@@ -212,8 +218,12 @@ Taps on a VM with no open modal no-op via the `as? Open ?: return` guard.
   so a stale `Open` can persist. Answering it is rejected server-side (stale `modalId`) and surfaces via the
   error signal, so a proactive stale-clear is a UX nicety, **not** a correctness requirement — **not built
   here** (no observed failure; the daemon validation is the deterministic backstop).
-- **App-level, not per-conversation** — inherited from #445; the modal carries no `conversation_id`, so
-  there is one outstanding answer flow across the app.
+- **Scoped to this thread's conversation (#816), not app-level.** The coordinator's fold still holds one
+  outstanding modal per host, but `onModalOption` / `onModalCancel` read it through a private
+  `scopedModal()` helper (`hostModal.value.scopedTo(conversationId)`) rather than through the collected
+  `currentModal`, so a tap in one thread can never answer a modal raised by another conversation on the
+  same host — not even in the instant before `currentModal`'s own `stateIn` catches up. See [Current-modal
+  state](current-modal-state.md).
 
 ## Testing
 

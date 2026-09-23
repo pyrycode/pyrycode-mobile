@@ -59,17 +59,20 @@ section records only how it attaches to the repository.
   `decodeModalEvent(envelope): ModalEvent?` helper (`:479`) and `tryEmit`s the result. Two `TYPE_*`
   constants join the companion (`:1146`+).
 - **Decode-and-emit only — two deliberate non-folds.** Unlike the `TYPE_TURN_STATE …` arm this arm does
-  **not** fold a thread row (modals are not rows and carry **no `conversation_id`**) and does **not** clear
-  a [stall](stall-state.md) — a `modal_shown` means `claude` is *waiting* for input, **not** turn
-  forward-progress (the inverse of every `LiveSessionEvent`, which clears a stall). It is the cleanest of
-  the interactive arms: one decode, one `tryEmit`, no side effects on `threadByConversation` /
-  `stalledConversations`.
-- **A separate flow + family, not a sixth `LiveSessionEvent`.** Forced by the wire: modal payloads carry
-  no `conversation_id` (`modalId` is the sole key), whereas every `LiveSessionEvent` subtype mandates
-  `conversationId` and the structured arm routes on it. Same `SharedFlow` shape (`replay = 0`,
-  `extraBufferCapacity = 64`, `DROP_OLDEST` → infallible non-blocking `tryEmit`); **concrete repo only**,
-  not the [`ConversationRepository`](conversation-repository.md) interface (the `liveSessionEvents` / #359
-  `registerPushToken` posture; the #439 render consumer's facade/coordinator reachability is downstream).
+  **not** fold a thread row (modals are not rows, and this seam never routes on `Shown.conversationId` —
+  #816 below) and does **not** clear a [stall](stall-state.md) — a `modal_shown` means `claude` is
+  *waiting* for input, **not** turn forward-progress (the inverse of every `LiveSessionEvent`, which clears
+  a stall). It is the cleanest of the interactive arms: one decode, one `tryEmit`, no side effects on
+  `threadByConversation` / `stalledConversations`.
+- **A separate flow + family, not a sixth `LiveSessionEvent`.** Forced by the wire: `modalId`, not
+  `conversation_id`, is modal events' correlation key, whereas every `LiveSessionEvent` subtype mandates a
+  non-null `conversationId` the structured arm routes on. `Shown.conversationId` (daemon #1065, decoded
+  since #816) is a defaulted, display-only scoping stamp — `""` means no thread, never every thread — that
+  this decode seam carries but never routes on; `Dismissed` carries no conversation at all. Same
+  `SharedFlow` shape (`replay = 0`, `extraBufferCapacity = 64`, `DROP_OLDEST` → infallible non-blocking
+  `tryEmit`); **concrete repo only**, not the [`ConversationRepository`](conversation-repository.md)
+  interface (the `liveSessionEvents` / #359 `registerPushToken` posture; the #439 render consumer's
+  facade/coordinator reachability is downstream).
 - **`decodeModalEvent`** copies the `decodeStall` / `decodeLiveSessionEvent` `try { when(type) … } catch
   (IllegalArgumentException) { null }` drop idiom — a malformed payload yields `null`, the one envelope is
   dropped, the lone collector survives. Both `toEvent()` mappers are **total** (`class`/`source`/`outcome`
