@@ -9,7 +9,9 @@ its FCM push token on **every** WS connect, so the daemon's wake target self-hea
 connection drops; the server de-duplicates the `(platform, token, device_name)` triple, so a repeat is a
 cheap (~100 B) no-op. [#365](../codebase/365.md) adds that connect-time orchestration here — the only
 Phase 4 FCM slice that touches the connection lifecycle — reusing [#359](../codebase/359.md)'s
-`RemoteConversationRepository.registerPushToken` sender unchanged.
+`RemoteConversationRepository.registerPushToken` sender unchanged. [#361](../codebase/361.md) then turned
+the one-shot send into a live collection so a token rotation reaches every already-open host without a
+reconnect — see [push messaging service](push-messaging-service.md) for the writer, `PushTokenSink`.
 
 After publishing the repo, `onConnection` launches `reregisterPushTokenOnOpen(pump, repo)` on the
 per-connection `childScope`. The hook:
@@ -18,30 +20,39 @@ per-connection `childScope`. The hook:
    `StateFlow.first {}` checks the current value first, so an already-`Open` pump fires with no missed-edge
    race.
 2. **Aborts on a pre-Open `Closed`** (handshake fault / transport down) — `return`, nothing to register.
-3. **Reads the token** — `val token = pushToken() ?: return`. A `null` token is a **no-op**: the capability
-   is **dormant** until a token is stored (Firebase #361 via [#364](../codebase/364.md)).
-4. **Sends once** — `repo.registerPushToken(token)`, swallowing failure.
+3. **Collects the token stream** — `pushTokens.filterNotNull().distinctUntilChanged().collect { token -> … }`.
+   A `null` (nothing stored yet) is filtered out — the capability stays **dormant** until a token exists —
+   and `distinctUntilChanged()` means only an actual rotation re-sends, not every replay of an unchanged
+   `StateFlow`-backed value.
+4. **Sends each distinct token** — `repo.registerPushToken(token)` per emission, swallowing failure per
+   token so one failed send does not end the collection (the next rotation, or the next connection, tries
+   again).
 
-It fires **exactly once per connection**, guaranteed *structurally*: each connection builds a fresh pump +
-child scope + hook, and the `PumpState` machine never revisits `Handshaking` (re-key stays `Open`). No
-client-side dedup — the server dedupes the triple.
+The hook **starts** exactly once per connection, guaranteed *structurally*: each connection builds a fresh
+pump + child scope + hook, and the `PumpState` machine never revisits `Handshaking` (re-key stays `Open`).
+Unlike the pre-#361 shape it does not **return** after its first send — it keeps collecting for as long as
+the connection's child scope lives, so a token stored while this host is already `Open` reaches the daemon
+without waiting for the next reconnect. A host that is offline when the token rotates gets it the ordinary
+way: its next connection's hook starts fresh and sends the then-current value as its first emission. No
+client-side dedup beyond `distinctUntilChanged()` — the server dedupes the triple.
 
 Three load-bearing constraints shape it:
 
 - **It uses the *concrete* `repo` handle, not `currentRepository`.** `registerPushToken` is **not** on the
   `ConversationRepository` interface (#359 — it is a device/connection concern), and `currentRepository` is
   interface-typed, so the hook calls it through the concrete `RemoteConversationRepository` captured at
-  construction. This is the **first live caller** of the method #359 shipped dormant. It does **not** add a
+  construction. This was the **first live caller** of the method #359 shipped dormant. It does **not** add a
   second `currentRepository` observer or a second connection-state subscription — it reuses the one
   `onConnection` collector + the pump's existing `state`.
-- **`onConnection` stays non-suspending.** `launch` schedules and returns; all suspending work runs on the
-  child scope, off the critical path — preserving the cancellation-atomicity / key-wipe invariant (below).
-  The hook is **never** awaited inline.
-- **Swallow, but propagate cancellation.** A narrow `catch` re-throws `CancellationException` (a drop
-  cancels `childScope` mid-call — absorbing it would break structured-concurrency teardown) and swallows any
-  other `Exception` **without logging** (the token is never logged; the daemon re-registers on the next
-  connect by contract). A server `error` (`RelayErrorException`) or not-Open `IllegalStateException` is
-  swallowed.
+- **`onConnection` stays non-suspending.** `launch` schedules and returns; all suspending work — including
+  the now-indefinite collection — runs on the child scope, off the critical path, preserving the
+  cancellation-atomicity / key-wipe invariant (below). The hook is **never** awaited inline.
+- **Swallow, but propagate cancellation.** A narrow `catch` inside the collector re-throws
+  `CancellationException` (a drop cancels `childScope` mid-collection — absorbing it would break
+  structured-concurrency teardown, and would also silently end the collection for every later token) and
+  swallows any other `Exception` **without logging** (the token is never logged; the daemon re-registers on
+  the next connect by contract, or the next rotation retries). A server `error` (`RelayErrorException`) or
+  not-Open `IllegalStateException` is swallowed per token; the collection continues for the next one.
 
 ### Closing #359's `device_name: ""` defer
 
