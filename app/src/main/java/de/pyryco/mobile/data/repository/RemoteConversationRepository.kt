@@ -215,7 +215,7 @@ class RemoteConversationRepository(
      * [appendMessages] / [appendSessionBoundary] / [MutableStateFlow.update] fold, so concurrent updates
      * retry-merge correctly. [observeMessages] fans out from it. Message rows are order-preserving: first
      * insertion fixes a message's position, a repeat `message_id` updates it in place (the dedup rule);
-     * boundaries pure-append in arrival order (they carry no id, so no dedup). The thread is
+     * boundaries append in arrival order, skipping one the thread already holds ([holdsBoundary]). The thread is
      * complete-on-first-emission once backfill arrives and live rows append after.
      */
     private val threadByConversation = MutableStateFlow<Map<String, List<ThreadItem>>>(emptyMap())
@@ -1161,10 +1161,16 @@ class RemoteConversationRepository(
     }
 
     /**
-     * Append [boundary] to [conversationId]'s thread in one atomic [MutableStateFlow.update] (#336): a
-     * pure end-append in arrival order, **no dedup** — a `session_transition` carries no row id and the
-     * repository is connection-scoped (#351), so within a connection arrival order is correct (the same
-     * posture as [applyAssistantDelta]'s arrival-order concatenation; cross-reconnect replay dedup is a
+     * Append [boundary] to [conversationId]'s thread in one atomic [MutableStateFlow.update] (#336): an
+     * end-append in arrival order that **skips a boundary the thread already holds** (#775). A
+     * `session_transition` carries no row id, so the identity is `(previousSessionId, newSessionId,
+     * occurredAt)` — the same [holdsBoundary] the history merge uses, and the fields the thread's list key
+     * reads, so a held duplicate cannot reach the `LazyColumn` as a second row with the first one's key.
+     * The pair alone would be wrong: a session idle-evicted twice sends `A->A` twice, and both are real.
+     * A skipped repeat returns the map unchanged, so nothing re-emits.
+     *
+     * The repository is connection-scoped (#351), so within a connection arrival order is correct (the
+     * same posture as [applyAssistantDelta]'s arrival-order concatenation; cross-reconnect replay is a
      * #402 concern, deferred). Routes strictly into [conversationId]'s slice, so a boundary can only ever
      * surface in `observeMessages(conversationId)` — never cross-routed (AC #1). The session ids /
      * `workspaceCwd` are carried inside the typed [boundary] and never logged here (Security review).
@@ -1173,7 +1179,10 @@ class RemoteConversationRepository(
         conversationId: String,
         boundary: ThreadItem.SessionBoundary,
     ) {
-        threadByConversation.update { it + (conversationId to (it[conversationId].orEmpty() + boundary)) }
+        threadByConversation.update { current ->
+            val thread = current[conversationId].orEmpty()
+            if (thread.holdsBoundary(boundary)) current else current + (conversationId to (thread + boundary))
+        }
     }
 
     /**
@@ -1185,16 +1194,17 @@ class RemoteConversationRepository(
      * here (Security review).
      *
      * **No dedup, and deliberately a separate function from [appendSessionBoundary] rather than a shared
-     * `appendThreadItem`.** The two share an implementation but not a contract, and the difference is
-     * exactly the rationale: [appendSessionBoundary] does not dedup because there is *nothing to dedup on*
-     * (the wire carries no row id), whereas this one does not dedup because **dedup would destroy the
-     * signal** — how often this frame fires is the number that tells someone to go fix something, so
-     * merging repeats hides it. The refusal is the point, not an oversight; the daemon does no dedup on the
-     * wire either. A shared helper would have to carry both rationales in one KDoc, and a later change to
-     * one contract would silently change the other.
+     * `appendThreadItem`.** The two differ in contract, and the difference is exactly the rationale:
+     * [appendSessionBoundary] skips a repeat because a boundary *has* an identity (its session pair and
+     * instant, #775) and a second row with it would collide on the list key, whereas this one does not
+     * dedup because **dedup would destroy the signal** — how often this frame fires is the number that
+     * tells someone to go fix something, so merging repeats hides it, and each row brings its own
+     * client-stamped id so repeats never collide. The refusal is the point, not an oversight; the daemon
+     * does no dedup on the wire either. A shared helper would have to carry both rationales in one KDoc,
+     * and a later change to one contract would silently change the other.
      *
      * This cuts against the two nearest folds — [appendMessages] dedups by `message_id` and [applyToolUse]
-     * is idempotent on a repeat id. [appendSessionBoundary]'s pure end-append is the one followed here.
+     * is idempotent on a repeat id. A pure end-append is the one followed here.
      */
     private fun appendUnrecognizedMessage(
         conversationId: String,
