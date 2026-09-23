@@ -71,6 +71,9 @@
     <string name="thread_footer_change_model">Change model</string>
     <string name="thread_footer_change_effort">Change effort</string>
     <string name="thread_footer_change_permission">Change permission mode</string>
+    <!-- #884: the composer footer's Actions button (Figma 110:3494) and its click label. -->
+    <string name="thread_footer_actions">Actions</string>
+    <string name="thread_footer_open_actions">Open actions</string>
     <string name="thread_footer_pending">Applying</string>
     <string name="status_sheet_running_model">Running model</string>
     <string name="status_sheet_running_model_unavailable">Not announced yet</string>
@@ -149,6 +152,8 @@
     <string name="cd_tool_failed">Tool call failed</string>
     <string name="cd_tool_done">Tool call done</string>
     <string name="cd_tool_denied">Tool call denied</string>
+    <!-- #896: a tool call a subagent made, and how many agent calls deep it sits. -->
+    <string name="cd_tool_subagent_step">Subagent step, level %1$d</string>
     <string name="tool_row_input">Input</string>
     <string name="tool_row_output">Output</string>
     <string name="tool_row_denial">Denied by claude</string>

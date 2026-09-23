@@ -87,8 +87,12 @@ class ThreadScreenChannelInfoTest {
     fun actions_section_is_hidden_when_mutations_unsupported() {
         setContent(mutableListOf(), state = channelInfoState().copy(mutationsSupported = false))
 
-        // The whole Actions section is gated out in relay mode (AC#2).
-        composeTestRule.onNodeWithText("Actions").assertDoesNotExist()
+        // The whole Actions section is gated out in relay mode (AC#2). The
+        // heading lookup is scoped to the sheet because the composer footer
+        // draws its own "Actions" button (#884); the "About" lookup proves the
+        // scope matches the sheet, so the absence check cannot pass vacuously.
+        composeTestRule.onNode(hasText("About") and hasAnyAncestor(isDialog())).assertIsDisplayed()
+        composeTestRule.onNode(hasText("Actions") and hasAnyAncestor(isDialog())).assertDoesNotExist()
         composeTestRule.onNodeWithText("Rename").assertDoesNotExist()
         composeTestRule.onNodeWithText("Change workspace").assertDoesNotExist()
         composeTestRule.onNodeWithText("Archive").assertDoesNotExist()

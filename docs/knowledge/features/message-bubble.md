@@ -10,7 +10,7 @@ Dispatches on `message.role` with a Kotlin `when`:
 
 - **`Role.User`** → `UserMessageBubble(message, modifier)` — right-aligned, filled from the `primaryContainer` pair, plain unparsed `Text(message.content)`.
 - **`Role.Assistant`** → `AssistantMessage(message, modifier)` — left-aligned, filled from the `secondaryContainer` pair, either the static [`MarkdownText`](./markdown-text.md) (finalized) or the private `StreamingAssistantBody` (while `message.isStreaming`).
-- **`Role.Tool`** → `message.toolCall?.let { ToolCallRow(toolCall = it, modifier = modifier.padding(horizontal = MessageContentGutter)) }` — routes the unwrapped [`ToolCall`](./data-model.md) payload to [`ToolCallRow`](./tool-call-row.md) since #131. Since #644 this arm also applies the thread's shared content gutter to the modifier it passes down, so the tool card sits on the same inset as the two bubble roles without [`ToolCallRow.kt`](./tool-call-row.md) itself changing — that file is owned by [#658](../codebase/658.md), and this is a caller-side `Modifier.padding`, not an edit to it. The null-safe `?.let` still absorbs the data-class invariant (`toolCall` non-null iff `role == Role.Tool`) silently — a `Role.Tool` message with `toolCall = null` (a data-layer bug) renders nothing.
+- **`Role.Tool`** → `message.toolCall?.let { ToolCallRow(toolCall = it, modifier = modifier.padding(start = MessageContentGutter + ToolNestingIndent * toolNestingDepth, end = MessageContentGutter), subagentDepth = toolNestingDepth) }` — routes the unwrapped [`ToolCall`](./data-model.md) payload to [`ToolCallRow`](./tool-call-row.md) since #131. Since #644 this arm also applies the thread's shared content gutter to the modifier it passes down, so the tool card sits on the same inset as the two bubble roles without [`ToolCallRow.kt`](./tool-call-row.md) itself changing — that file is owned by [#658](../codebase/658.md), and this is a caller-side `Modifier.padding`, not an edit to it. **Since #896** the arm also reads `toolNestingDepth` (see [Subagent nesting indent](#subagent-nesting-indent-since-896) below) and steps the start padding in by one `ToolNestingIndent` per level, on top of the gutter; `end` stays a plain `MessageContentGutter`. The null-safe `?.let` still absorbs the data-class invariant (`toolCall` non-null iff `role == Role.Tool`) silently — a `Role.Tool` message with `toolCall = null` (a data-layer bug) renders nothing.
 
 Both bubble roles route through one private `MessageContainer(message, alignment, bubbleColor, bubbleContentColor, body)` — the design's shared `Message` component (Figma `132:*`, inside `Message area` `533:1956`). It is the only place that knows the shape, the padding, the gutter/inset geometry and the meta row; the two role composables differ only in which alignment and which M3 container-pair they pass in. See [Shared `Message` container](#shared-message-container-since-644) below.
 
@@ -21,10 +21,13 @@ Both bubble roles route through one private `MessageContainer(message, alignment
 fun MessageBubble(
     message: Message,
     modifier: Modifier = Modifier,
+    toolNestingDepth: Int = 0,
 )
 ```
 
 Single `Message` parameter (not pre-split `(text, isUser)`). `ThreadScreen`'s `LazyColumn` already keys each row on `"msg:${item.message.id}"`; #644 did not need to touch that keying, and the meta row's copy control reads `Message.content` directly rather than anything derived from the list key.
+
+**`toolNestingDepth` (since #896)** is read only by the `Role.Tool` arm — see [Subagent nesting indent](#subagent-nesting-indent-since-896) below. The `Role.User` and `Role.Assistant` arms ignore it; the parameter defaults to `0` so every pre-#896 call site (previews, other tests) is unaffected.
 
 The composable is **pure rendering** — no `remember`, no `LaunchedEffect`, no coroutines, no state hoisting at the `MessageBubble` level. `Message` is a `data class` with all stable fields, so Compose's stability inference skips recompositions on identity-equal and `equals`-equal inputs without any `@Stable` / `@Immutable` annotation.
 
@@ -38,7 +41,14 @@ when (message.role) {
     Role.Assistant -> AssistantMessage(message, modifier)
     Role.Tool ->
         message.toolCall?.let {
-            ToolCallRow(toolCall = it, modifier = modifier.padding(horizontal = MessageContentGutter))
+            ToolCallRow(
+                toolCall = it,
+                modifier = modifier.padding(
+                    start = MessageContentGutter + ToolNestingIndent * toolNestingDepth,
+                    end = MessageContentGutter,
+                ),
+                subagentDepth = toolNestingDepth,
+            )
         }
 }
 ```
@@ -46,6 +56,12 @@ when (message.role) {
 Since #644 the assistant and user arms both take the full `Message` (not just `message.content`), because the shared `MessageContainer` reads `message.timestamp` for the meta row and `message.content` for both the body and the copy text.
 
 The absence of a default `else ->` arm is deliberate: it keeps the Kotlin compiler enforcing exhaustiveness against the `Role` enum, so a future fourth value (e.g. `Role.System`) is flagged at this site as a hard compile-time decision rather than silently absorbed into a fallback. Project-wide pattern for `when (role)` / `when (kind)` dispatchers in `ui/conversations/components/`.
+
+### Subagent nesting indent (since #896)
+
+`ThreadScreen` derives `toolNestingDepths: Map<String, Int>` once per `state.items` change (see [Thread screen § Subagent tool-row nesting](./thread-screen-how-it-works-list-and-status-row.md#subagent-tool-row-nesting-896)) and passes each tool row's own depth in as `toolNestingDepth`. The `Role.Tool` arm is the only reader: it adds `ToolNestingIndent * toolNestingDepth` to the row's **start** padding, on top of the existing `MessageContentGutter`; `end` stays a plain gutter, so nesting only steps the row's leading edge, never its trailing one. `ToolNestingIndent` is declared next to `MessageBubble`'s other spacing constants as `private val ToolNestingIndent = MessageAreaRowSpacing` — the Figma frame (`16:8`) has no subagent grouping of its own, so #896 reused the `Message area`'s existing 16dp inter-row gap as the per-level step rather than inventing a new token. The same `toolNestingDepth` value is forwarded to [`ToolCallRow`](./tool-call-row.md) as `subagentDepth`, which is where the row states its own nesting to a screen reader — see [`ToolCallRow` § Subagent step description](./tool-call-row.md#subagent-step-description-since-896).
+
+At `toolNestingDepth = 0` (every non-tool row, and a top-level or unmatched-parent tool row) this arm renders byte-for-byte what it rendered before #896 — the parameter is additive, not a behaviour change to the two bubble roles or to a depth-0 tool row.
 
 ### Shared `Message` container (since #644)
 
@@ -174,6 +190,8 @@ internal val MessageRoleInset = 100.dp         // the role's *opposite* edge, ca
 internal const val MESSAGE_BUBBLE_TEST_TAG = "message-bubble"
 ```
 
+`ToolNestingIndent` (since #896, `private val ToolNestingIndent = MessageAreaRowSpacing`) is declared just above this block rather than inside it — it aliases the existing row-spacing constant rather than being a new dp literal, so the two can't drift out of sync.
+
 **`UserBubbleShape` and `UserBubbleMaxWidth` are gone** — the pre-#644 asymmetric 20/20/6/20 "tail" corner radius and the 320dp cap are both superseded by the shared `BubbleShape` (uniform 6dp) and the `MessageRoleInset` mechanism above. There is no longer a separate max-width constant for either role: the inset *is* the mechanism, and 272dp is its value at the 412dp reference width.
 
 The streaming constants (`STREAMING_CARET_GLYPH`, `STREAMING_REVEAL_*`, `STREAMING_CARET_BLINK_PERIOD_MS`) are unchanged and stay file-private — nothing outside this file needs them.
@@ -207,7 +225,7 @@ Four `@Preview`s in `MessageBubble.kt`, all `widthDp = 412` except the narrow on
 
 **Pair two — markdown rendering** (added in #129; extended in #184 and #644). `MessageBubbleMarkdownLightPreview` / `MessageBubbleMarkdownDarkPreview` render a half-revealed streaming snapshot followed by the completed markdown fixture, both now routed through the real `MessageContainer` (previously a bare `Box` with its own ambient) — so the preview shows the caret and the meta row exactly where the shipped bubble puts them, at a pinned `PreviewTimestamp = 2026-01-13T12:55:00Z` (the design's own sample moment).
 
-No preview for the `Role.Tool` arm — preview coverage for the tool-call surface lives in [`ToolCallRow.kt`](./tool-call-row.md#previews).
+No preview for the `Role.Tool` arm at depth 0 — preview coverage for the tool-call surface itself lives in [`ToolCallRow.kt`](./tool-call-row.md#previews). **Since #896**, `MessageBubblePreviewSequence()` appends three `Role.Tool` messages at `toolNestingDepth = 0, 1, 2` (an `Agent` call, a `Task` call one level in, and a `Grep` call two levels in — `PreviewToolNesting`), so the pair-one previews also show the indent step at each level, light and dark.
 
 ## Testing
 
@@ -221,6 +239,8 @@ No preview for the `Role.Tool` arm — preview coverage for the tool-call surfac
 - `copy_onStreamingMessage_yieldsWhatHasArrived_andTheCaretStillRenders` — a streaming message's caret still renders inside the new container, and its copy control yields the full `content`, not the revealed prefix.
 
 `app/src/test/.../components/MessageMetaRowFormatTest.kt` (new, #644) pins `formatShortDateTime` locale-robustly, the way [`SessionBoundaryDelimiter`](session-boundary-delimiter.md)'s tests already do for `formatShortTime`: composition and order (`joinsLocalizedShortDateAndShortTimeInThatOrder`), the design's separator (`joinsTheTwoHalvesWithTheDesignsSeparator`), locale- and zone-sensitivity computed through the same `DateTimeFormatter.ofLocalized*` API rather than a literal (`followsTheSuppliedLocaleRatherThanAFixedPattern`, `followsTheSuppliedTimeZone`), and that the result never equals the Figma sample literal under an unrelated locale (`neverEmitsTheFigmaSampleLiteralForAnUnrelatedLocale`).
+
+**No dedicated `MessageBubbleTest` case for `toolNestingDepth` (#896).** The parameter is exercised through the real `ThreadScreen` fold instead — `ToolRowNestingTest` (`app/src/sharedTest/.../thread/`) mounts the screen with a matched child, a grandchild and an unmatched-parent tool row and asserts the rendered indent steps by level; see [Thread screen § Subagent tool-row nesting](./thread-screen-how-it-works-list-and-status-row.md#subagent-tool-row-nesting-896). A unit-level `ToolNestingDepthsTest` covers the depth derivation itself, independent of any composable.
 
 Two pre-existing suites were re-run rather than relaxed across #644's restyle, because both read this surface closely: `ScriptedThreadRenderTest` (the streaming caret glyph through the real fold) and `ScriptedSessionBoundaryTest` (tight text-node rects through the unmerged tree, which a container wrapped around assistant text changes the ownership of — a `Surface` + `Column` adds no semantics node, so the leaf text nodes it addresses survive). Both stayed green unchanged.
 
@@ -240,7 +260,7 @@ Two pre-existing suites were re-run rather than relaxed across #644's restyle, b
 ## Related
 
 - Ticket notes: [`../codebase/128.md`](../codebase/128.md), [`../codebase/129.md`](../codebase/129.md), [`../codebase/130.md`](../codebase/130.md), [`../codebase/131.md`](../codebase/131.md), [`../codebase/184.md`](../codebase/184.md), [`../codebase/644.md`](../codebase/644.md)
-- Specs: `docs/specs/architecture/128-message-bubble-user-assistant-variants.md`, `docs/specs/architecture/129-markdown-rendering-assistant-messages.md`, `docs/specs/architecture/130-code-block-rendering-syntax-highlighting.md`, `docs/specs/architecture/131-tool-call-collapsed-expanded-component.md`, `docs/specs/architecture/184-streaming-token-reveal-blinking-caret.md`, `docs/specs/architecture/644-message-bubbles-and-copy-actions.md`
+- Specs: `docs/specs/architecture/128-message-bubble-user-assistant-variants.md`, `docs/specs/architecture/129-markdown-rendering-assistant-messages.md`, `docs/specs/architecture/130-code-block-rendering-syntax-highlighting.md`, `docs/specs/architecture/131-tool-call-collapsed-expanded-component.md`, `docs/specs/architecture/184-streaming-token-reveal-blinking-caret.md`, `docs/specs/architecture/644-message-bubbles-and-copy-actions.md`, `docs/specs/architecture/896-nest-subagent-tool-rows.md`
 - Decisions: [ADR 0002 — markdown renderer library](../decisions/0002-markdown-renderer-library.md) (assistant-variant rendering pipeline), [ADR 0003 — syntax highlighter library](../decisions/0003-syntax-highlighter-library.md) (fenced-code styling)
 - Upstream: [data model](./data-model.md) (`Message`, `Role`, `isStreaming`), [Thread screen](./thread-screen.md) (the `LazyColumn(reverseLayout = true)` host, `"msg:${item.message.id}"` keying)
 - Component pipeline: [`MarkdownText`](./markdown-text.md) (consumed by the assistant variant since #129; the streaming caret in #184 and the meta row's ambient colour in #644 both ride through the same `Surface.contentColor`); [`ToolCallRow`](./tool-call-row.md) (consumed by the `Role.Tool` arm since #131, gutter applied at the dispatch site since #644); [`SessionBoundaryDelimiter`](./session-boundary-delimiter.md) (shares `MessageContentGutter` / `MessageAreaRowSpacing` and `formatShortTime` since #644); [`QueuedBacklog`](./queued-backlog-section.md) (consumes `BubbleShape` / `BubbleHorizontalPadding` / `BubbleVerticalPadding` / `MessageRoleInset` since #644 rather than copying them); [`UnrecognizedMessageRow`](./unrecognized-message-row.md) (applies `MessageContentGutter` at its own call site since #644)
@@ -252,3 +272,4 @@ Two pre-existing suites were re-run rather than relaxed across #644's restyle, b
   - [#672](../codebase/672.md) — the attachment `Slot` inside `Message`.
   - [#681](../codebase/681.md) — the remaining markdown element set.
   - #185 — auto-scroll behaviour that keeps the thread anchored to the bottom as the streaming message grows; consumes the same `Message.isStreaming` contract, no change required inside `MessageBubble`.
+  - **#896** — subagent tool-row nesting, split from #658: added `toolNestingDepth` to the `Role.Tool` arm only (see [Subagent nesting indent](#subagent-nesting-indent-since-896) above); the `Role.User` / `Role.Assistant` arms and every other behaviour in this file are unchanged.
