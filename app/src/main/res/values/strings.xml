@@ -71,6 +71,9 @@
     <string name="thread_footer_change_model">Change model</string>
     <string name="thread_footer_change_effort">Change effort</string>
     <string name="thread_footer_change_permission">Change permission mode</string>
+    <!-- #884: the composer footer's Actions button (Figma 110:3494) and its click label. -->
+    <string name="thread_footer_actions">Actions</string>
+    <string name="thread_footer_open_actions">Open actions</string>
     <string name="thread_footer_pending">Applying</string>
     <string name="status_sheet_running_model">Running model</string>
     <string name="status_sheet_running_model_unavailable">Not announced yet</string>
