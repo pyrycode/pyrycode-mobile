@@ -10,6 +10,7 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.model.ToolDenial
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.RelayErrorException
@@ -6520,6 +6521,116 @@ class RemoteConversationRepositoryTest {
             assertEquals(emptyList<String>(), messageIds(emissions.last()))
         }
 
+    // #811: a tool_denied marks its row denied, distinct from the failed state an is_error result gives.
+    @Test
+    fun toolDenied_thenErrorResult_retainsDeniedNotFailed() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "rm x"))
+            pump.push(toolUseEnvelope("c1", "t1", "tu2", "Bash", "ls"))
+            pump.push(toolDeniedEnvelope("c1", "tu1", message = "Permission denied", reasonType = "rule", truncated = """["message"]"""))
+            runCurrent()
+            assertEquals(ToolCallStatus.Denied, toolCallOf(emissions.last(), "tu1")?.status)
+
+            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = true, resultSummary = "refused"))
+            pump.push(toolResultEnvelope("c1", "t1", "tu2", isError = true, resultSummary = "exit 1"))
+            runCurrent()
+
+            val denied = toolCallOf(emissions.last(), "tu1")
+            assertEquals(ToolCallStatus.Denied, denied?.status)
+            assertEquals("refused", denied?.output)
+            assertEquals(
+                ToolDenial("Bash", "rule", "", "Permission denied", truncatedFields = listOf("message"), droppedFields = null),
+                denied?.denial,
+            )
+            assertEquals(ToolCallStatus.Failed, toolCallOf(emissions.last(), "tu2")?.status)
+            assertEquals(null, toolCallOf(emissions.last(), "tu2")?.denial)
+            assertEquals(listOf("tu1", "tu2"), messageIds(emissions.last()))
+        }
+
+    // #811: result-line recovery reports a denial after the result shipped — the row still ends denied.
+    @Test
+    fun toolDenied_afterResult_marksRowDenied() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "rm x"))
+            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = true, resultSummary = "refused"))
+            runCurrent()
+            pump.push(toolDeniedEnvelope("c1", "tu1"))
+            runCurrent()
+
+            assertEquals(ToolCallStatus.Denied, toolCallOf(emissions.last(), "tu1")?.status)
+            assertEquals("refused", toolCallOf(emissions.last(), "tu1")?.output)
+        }
+
+    // #811: a denial naming no known row adds none, and one conversation's denial never touches another's
+    // row even when the tool_use_id is the same.
+    @Test
+    fun toolDenied_unknownRowOrOtherConversation_changesNothing() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
+            runCurrent()
+            pump.push(toolDeniedEnvelope("c2", "tu1"))
+            pump.push(toolDeniedEnvelope("c1", "tuX"))
+            runCurrent()
+
+            assertEquals(listOf("tu1"), messageIds(emissions.last()))
+            assertEquals(ToolCallStatus.Running, toolCallOf(emissions.last(), "tu1")?.status)
+            assertEquals(null, toolCallOf(emissions.last(), "tu1")?.denial)
+        }
+
+    // #811: a malformed tool_denied drops that one envelope; the stream stays alive for the next frame.
+    @Test
+    fun toolDenied_malformed_droppedCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
+            // dropped_fields as a string, not an array or null → SerializationException → envelope dropped.
+            pump.push(toolDeniedEnvelope("c1", "tu1", dropped = "\"tool_name\""))
+            runCurrent()
+            assertEquals(ToolCallStatus.Running, toolCallOf(emissions.last(), "tu1")?.status)
+
+            pump.push(toolResultEnvelope("c1", "t1", "tu1", isError = true, resultSummary = "exit 1"))
+            runCurrent()
+            assertEquals(ToolCallStatus.Failed, toolCallOf(emissions.last(), "tu1")?.status)
+        }
+
+    // #811 (fail-closed): without `interactive` negotiated, a tool_denied is never decoded.
+    @Test
+    fun toolDenied_capabilityGateClosed_ignored() =
+        runTest {
+            val pump = FakeSessionPump()
+            var capabilities = setOf("interactive")
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { capabilities })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(toolUseEnvelope("c1", "t1", "tu1", "Bash", "ls"))
+            runCurrent()
+            capabilities = emptySet()
+            pump.push(toolDeniedEnvelope("c1", "tu1"))
+            runCurrent()
+
+            assertEquals(ToolCallStatus.Running, toolCallOf(emissions.last(), "tu1")?.status)
+        }
+
     // AC #5: a malformed tool_use folds nothing and does not tear down the collector — a later valid
     // tool_use still surfaces its row.
     @Test
@@ -9182,6 +9293,26 @@ class RemoteConversationRepositoryTest {
             payload =
                 MobileJson.parseToJsonElement(
                     """{"conversation_id":"$conversationId","turn_id":"$turnId","tool_use_id":"$toolUseId","is_error":$isError,"result_summary":"$resultSummary"}""",
+                ),
+        )
+
+    private fun toolDeniedEnvelope(
+        conversationId: String,
+        toolUseId: String,
+        message: String = "denied",
+        reasonType: String = "",
+        truncated: String = "null",
+        dropped: String = "null",
+    ): Envelope =
+        Envelope(
+            id = 1L,
+            type = "tool_denied",
+            ts = TS,
+            payload =
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"$conversationId","turn_id":"t1","tool_use_id":"$toolUseId","tool_name":"Bash",""" +
+                        """"decision_reason_type":"$reasonType","decision_reason":"","message":"$message",""" +
+                        """"truncated_fields":$truncated,"dropped_fields":$dropped}""",
                 ),
         )
 
