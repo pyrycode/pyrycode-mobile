@@ -16,7 +16,10 @@ owns [FCM push-token re-registration](#connect-time-fcm-push-token-re-registrati
 once per connection. Explicit [diagnostic archive requests](relay-debug-bundle-transfer.md)
 also enter through this owner so admission and teardown share a connection lifetime. It also
 switches the active connection's [held clarification-question batches](relay-repository-coordinator-seams-and-passthroughs.md#question-batch-projection-822)
-— unlike `currentModal`, that state resets on every reconnect instead of surviving it.
+— unlike `currentModal`, that state resets on every reconnect instead of surviving it. It holds the
+[background-task roster](relay-repository-coordinator-seams-and-passthroughs.md#background-task-roster-677)
+the same reset way, except for which task ids have finished, which it retains across every reconnect so a
+completed task cannot come back as live when the daemon re-sends its retained roster.
 
 Package: `de.pyryco.mobile.data.repository` (`RelayRepositoryCoordinator` + the `ManagedSessionPump`
 interface it drives, the latter appended to `SessionPump.kt`), co-located with the
@@ -71,6 +74,9 @@ class RelayRepositoryCoordinator(
     val currentModal: StateFlow<ModalUiState>                // (#492) the bundle-scoped "which modal is open" projection, folded here (Eagerly) off a now-PRIVATE #437 modal-event seam
     val questionBatches: StateFlow<List<QuestionBatch>>       // (#822) every clarification batch outstanding on this host, reset on reconnect
     fun observeQuestionBatch(conversationId: String): Flow<QuestionBatch?>  // (#822) the batch outstanding for one conversation, or null
+    val backgroundTasks: StateFlow<Map<String, BackgroundTaskRoster>>  // (#677) every conversation's background-task roster on this host, reset on reconnect except for which task ids finished
+    fun observeBackgroundTasks(conversationId: String): Flow<BackgroundTaskRoster?>  // (#677) one conversation's roster, or null when nothing reported
+    fun observeLiveBackgroundTaskCount(conversationId: String): Flow<Int>  // (#677) BackgroundTaskRoster.liveCount for one conversation, or 0
     suspend fun answerModal(modalId: String, optionId: String)  // (#451) outbound modal_answer passthrough — the inbound-modal mirror, but a call not a flow
     suspend fun cancelModal(modalId: String)                    // (#451) outbound modal_cancel passthrough
     suspend fun interrupt(conversationId: String)                // explicit conversation target; fire-and-forget
@@ -384,7 +390,14 @@ The existing key-wipe / single-use-pump / no-carryover tests pass **unmodified**
   [`answerQuestionBatch` / `refuseQuestionBatch`](relay-repository-coordinator-seams-and-passthroughs.md#outbound-question-answer--refuse-passthrough-825)
   passthrough (the `answerModal`/`interrupt` mirror): validates against the connection's held batches
   before sending, gets no ack, and clears nothing — only `question_dismissed` or a reconnect retires a
-  batch.
+  batch ·
+  [#677](https://github.com/pyrycode/pyrycode-mobile/issues/677) — the
+  [background-task roster](relay-repository-coordinator-seams-and-passthroughs.md#background-task-roster-677):
+  switches the concrete repository's
+  [`backgroundTasks`](remote-conversation-repository-live-stream-and-modals.md#backgroundtasks--the-v2-background-task-decodefold-seam-677)
+  the `questionBatches` way, but adds one host-lifetime `FinishedBackgroundTasks` instance (the
+  `replayCursor` shape) that the reset does not touch, so a task the daemon's reconnect roster re-lists
+  after it finished does not read as live again.
 - Two-part status: [Connection status](connection-status.md) (`ConnectionStatus` + `PyrycodeLinkStatus`,
   [#392](../codebase/392.md)) — derived/published here; relay leg from
   [`relayStatus`](relay-link-status.md) ([#391](../codebase/391.md)); consumed by the Settings status
