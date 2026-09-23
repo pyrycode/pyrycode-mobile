@@ -94,3 +94,7 @@ Pending for the documentation stage: the feature overviews that describe the req
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-23
+
+## Revisions
+
+- **2026-09-23 — `startNewSession`'s unused `workspace`.** On the repository it was an override, so the compiler accepted the unused parameter silently; on `ConversationCommands` it is a plain function and would warn. It keeps the parameter, to mirror the interface signature the hand-off forwards, under `@Suppress("UNUSED_PARAMETER")`. No behaviour change. `spotlessApply` removed the repository imports the move left unused.
