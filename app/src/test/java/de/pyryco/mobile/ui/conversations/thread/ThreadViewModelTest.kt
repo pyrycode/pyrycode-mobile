@@ -2439,7 +2439,8 @@ class ThreadViewModelTest {
             val config = vm.state.value.runConfig
             assertTrue(config.settingsAvailable)
             assertEquals(INHERITED_RUN_CONFIG_LABEL, config.modelLabel)
-            assertEquals(INHERITED_RUN_CONFIG_LABEL, config.effortLabel)
+            // #889: an empty saved effort with no applied reading names the control, never "default".
+            assertEquals(EFFORT_PLACEHOLDER_LABEL, config.effortLabel)
             collector.cancel()
         }
 

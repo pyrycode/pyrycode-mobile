@@ -65,6 +65,7 @@ class StatusSheetTest {
         pending: Boolean = false,
         enabled: Boolean = true,
         onDismiss: () -> Unit = {},
+        effortNote: String? = null,
     ) = setContent {
         PyrycodeMobileTheme {
             StatusSheetContent(
@@ -81,6 +82,7 @@ class StatusSheetTest {
                 pending = pending,
                 enabled = enabled,
                 onDismiss = onDismiss,
+                effortNote = effortNote,
             )
         }
     }
@@ -194,6 +196,15 @@ class StatusSheetTest {
         // Still selectable: an unset saved effort is not a reason to withhold the row's own levels.
         composeTestRule.onNode(hasText("low")).performClick()
         assertEquals(listOf("low"), picks)
+    }
+
+    // #889: the sheet says why the selection is not Claude's applied effort.
+    @Test
+    fun an_effort_note_renders_below_the_effort_chips() {
+        composeTestRule.setSheet(selectedEffort = "", effortNote = "Claude reports no effort parameter.")
+
+        composeTestRule.onNode(hasText("Claude reports no effort parameter.")).assertIsDisplayed()
+        composeTestRule.onNode(isSelectable() and hasText("high")).assertIsNotSelected()
     }
 
     @Test

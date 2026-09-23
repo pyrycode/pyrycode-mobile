@@ -544,6 +544,7 @@ fun ThreadScreen(
             // An empty session id means the daemon has no session to address, so the controls read only.
             enabled = state.runConfig.writable,
             onDismiss = { sheetVisible = false },
+            effortNote = state.runConfig.effortNote?.let { stringResource(it.textRes()) },
         )
     }
     if (state.channelInfoOpen) {
