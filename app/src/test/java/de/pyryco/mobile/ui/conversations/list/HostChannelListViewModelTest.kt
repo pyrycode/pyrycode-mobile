@@ -1375,6 +1375,156 @@ class HostChannelListViewModelTest {
             )
         }
 
+    @Test
+    fun chatArchiveArchivesOnlyTheEditorsOwnHostAndCloses() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChats()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+
+            // No open editor: nothing to archive.
+            f.vm.archiveChat()
+            runCurrent()
+            assertTrue(
+                f.a.repo.archives
+                    .isEmpty() &&
+                    f.b.repo.archives
+                        .isEmpty(),
+            )
+
+            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            f.vm.archiveChat()
+            runCurrent()
+
+            assertEquals(listOf("same"), f.a.repo.archives)
+            // The other host's chat with the same id is never archived, and nothing else is sent.
+            assertTrue(
+                f.b.repo.archives
+                    .isEmpty(),
+            )
+            assertTrue(
+                f.a.repo.renames
+                    .isEmpty() &&
+                    f.a.repo.others
+                        .isEmpty(),
+            )
+            assertNull(f.vm.hostState.value.chatEditor)
+            val hosts = f.vm.hostState.value.hosts
+            assertEquals(
+                listOf("nameless"),
+                hosts
+                    .single { it.host.serverId == "Host" }
+                    .host.chats
+                    .map { it.id },
+            )
+            assertEquals(
+                listOf("same"),
+                hosts
+                    .single { it.host.serverId == "host" }
+                    .host.chats
+                    .map { it.id },
+            )
+            // Where that host's Archive screen reads it from, and Restore returns it.
+            assertEquals(
+                listOf("same"),
+                f.a.repo
+                    .observeConversations(ConversationFilter.Archived)
+                    .first()
+                    .map { it.id },
+            )
+            assertTrue(logs.any { "chat_archived" in it })
+        }
+
+    @Test
+    fun chatArchiveOnAnUnavailableHostFailsWithoutSending() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChats()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+
+            f.a.available = false
+            f.vm.archiveChat()
+            runCurrent()
+
+            val editor = requireNotNull(f.vm.hostState.value.chatEditor)
+            assertTrue(editor.archiveFailed)
+            assertFalse(editor.failed)
+            assertFalse(editor.saving)
+            assertTrue(
+                f.a.repo.archives
+                    .isEmpty() &&
+                    f.b.repo.archives
+                        .isEmpty(),
+            )
+        }
+
+    @Test
+    fun failedChatArchiveStaysOpenQuietlyAndALateCompletionCannotReopen() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChats()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+
+            for (error in listOf(
+                RelayErrorException("server.error", false, "server-secret"),
+                IllegalStateException("not connected secret"),
+            )) {
+                f.a.repo.failure = error
+                f.vm.archiveChat()
+                runCurrent()
+                val failed = requireNotNull(f.vm.hostState.value.chatEditor)
+                assertTrue(failed.archiveFailed)
+                assertFalse(failed.failed)
+                assertFalse(failed.saving)
+                assertEquals("same", failed.conversationId)
+            }
+            // Still active on its host.
+            assertEquals(
+                false,
+                f.a.repo.rows.value!!
+                    .first()
+                    .archived,
+            )
+            assertTrue(logs.any { "chat_archive_failed" in it })
+            assertTrue(
+                "no name, id or server message may reach a log line: $logs",
+                logs.none { "secret" in it || "A chat" in it || "same" in it || "Host" in it },
+            )
+
+            // A rename after a failed archive shows only the rename's own outcome.
+            f.vm.submitChatName("Typed")
+            runCurrent()
+            assertFalse(requireNotNull(f.vm.hostState.value.chatEditor).archiveFailed)
+
+            // Still actionable: a retry that succeeds closes.
+            f.a.repo.failure = null
+            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            val gate = CompletableDeferred<Unit>()
+            f.a.repo.archiveGate = gate
+            f.vm.archiveChat()
+            // Mid-write, a second archive and a rename are both ignored.
+            f.vm.archiveChat()
+            f.vm.submitChatName("Twice")
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.chatEditor).saving)
+            f.vm.dismissChatEditor()
+            gate.complete(Unit)
+            runCurrent()
+            // Landing after the dismissal, it must not resurrect the modal.
+            assertNull(f.vm.hostState.value.chatEditor)
+            assertEquals(listOf("same"), f.a.repo.archives)
+            assertTrue(
+                f.a.repo.renames
+                    .isEmpty(),
+            )
+        }
+
     /**
      * Reads the supplied snapshot until something writes, then the written value.
      *
@@ -1550,6 +1700,27 @@ class HostChannelListViewModelTest {
 
         val renames = mutableListOf<Pair<String, String>>()
         var renameGate: CompletableDeferred<Unit>? = null
+
+        // Records every archive and flips this repo's own row, as the daemon's re-emitted list would (#828).
+        override suspend fun archive(conversationId: String) {
+            archiveGate?.await()
+            failure?.let { throw it }
+            archives += conversationId
+            rows.value = rows.value?.map { if (it.id == conversationId) it.copy(archived = true) else it }
+        }
+
+        // Recorded only so a test can prove the archive path sends neither.
+        override suspend fun unarchive(conversationId: String) {
+            others += "unarchive"
+        }
+
+        override suspend fun delete(conversationId: String) {
+            others += "delete"
+        }
+
+        val archives = mutableListOf<String>()
+        val others = mutableListOf<String>()
+        var archiveGate: CompletableDeferred<Unit>? = null
     }
 
     companion object {

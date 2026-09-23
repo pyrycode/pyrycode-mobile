@@ -362,6 +362,7 @@ internal fun PyryNavHost(
                             is ChannelListEvent.TreeChatEditTapped -> vm.openChatEditor(event.target)
                             is ChannelListEvent.ChatEditNameSubmitted -> vm.submitChatName(event.name)
                             ChannelListEvent.ChatEditDismissed -> vm.dismissChatEditor()
+                            ChannelListEvent.ChatArchiveRequested -> vm.archiveChat()
                             is ChannelListEvent.WorkspacePicked -> vm.pickHostWorkspace(event.workspace)
                             ChannelListEvent.WorkspacePickerDismissed -> vm.dismissHostWorkspacePicker()
                         }
