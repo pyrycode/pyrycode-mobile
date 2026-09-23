@@ -81,6 +81,9 @@ class StableConversationRepository(
 
     override fun observeCompacting(conversationId: String): Flow<Boolean> = switchToLive(false) { it.observeCompacting(conversationId) }
 
+    override fun observeResetting(conversationId: String): Flow<ResetStatus?> =
+        switchToLive<ResetStatus?>(null) { it.observeResetting(conversationId) }
+
     /**
      * The usage-limit reading for [conversationId] (#802), switched over the live connection like every
      * other cold read — and here the switch is the **account-isolation mechanism**, not just plumbing:
