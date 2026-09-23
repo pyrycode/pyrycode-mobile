@@ -30,7 +30,7 @@ fan-out. The five:
 | `assistant_delta` | `conversation_id`, `turn_id`, `seq`(int), `text` | incremental, coalesced assistant text |
 | `tool_use` | `conversation_id`, `turn_id`, `tool_use_id`, `name`, `input_summary`, plus `parent_tool_use_id` / `input` (lenient-defaulted, #810 — see below) | a tool invocation |
 | `tool_result` | `conversation_id`, `turn_id`, `tool_use_id`, `is_error`(bool), `result_summary`, plus `parent_tool_use_id` (lenient-defaulted, #810) | its result (matched to the call by `tool_use_id`) |
-| `turn_end` | `conversation_id`, `turn_id`, `stop_reason` | end of a turn |
+| `turn_end` | `conversation_id`, `turn_id`, `stop_reason`, plus `outcome`/`is_error`/`terminal_reason`/`error_category` (lenient-defaulted, #805 — see below) | end of a turn |
 
 Field shapes are the server SSOT (`pyrycode internal/protocol` interactive structs +
 `docs/protocol-mobile.md § Interactive events (v2, capability-gated)`). Code review verified every
@@ -74,6 +74,18 @@ dropping the row. `input` is decoded as a raw `JsonElement` and narrowed by a pr
 is skipped rather than rewritten. See [Live tool-call § `tool_use.input` fields and
 `parent_tool_use_id`](live-tool-call.md#tool_use-input-fields-and-parent_tool_use_id-810) for the full
 posture and the cross-frame precedence rule when the two disagree.
+
+`TurnEndPayloadDto`'s four trailing fields (#805) — `outcome`, `is_error`, `terminal_reason`,
+`error_category` — are lenient-defaulted the same way (`= ""` / `= false`), but for a different reason
+than #810's: the wire contract states all four are **optional and open-set on every daemon**, not just an
+older one, so an unrecognised token is not a legacy signal to reinterpret — it is simply text to carry.
+`LiveSessionEvent.TurnEnd` gained the identical four fields and `toEvent()` copies all seven verbatim,
+so the positional `TurnEnd(conversationId, turnId, stopReason)` construction the existing test fixtures
+use still compiles against the trailing defaults. The three new strings are claude's own account of the
+stop and cross this seam **unsanitized**, the same posture as `stopReason`/`text`/`inputSummary`/
+`resultSummary` below — the render trust boundary lives one layer up, in
+[`turnOutcomeReport`](turn-outcome-indicator.md#classification--sanitization), not here. See
+[Turn-outcome indicator](turn-outcome-indicator.md) for the consumer that classifies and renders them.
 
 ### 2. Event family — `data/model/LiveSessionEvent.kt` (public, portable)
 
@@ -299,6 +311,10 @@ is **not** one of the five render envelopes and does **not** flow through the de
   same gated arm. [#810](https://github.com/pyrycode/pyrycode-mobile/issues/810) added the two
   lenient-defaulted fields on these DTOs (`input`, `parent_tool_use_id`) — see that doc's
   [§ `tool_use.input` fields and `parent_tool_use_id`](live-tool-call.md#tool_use-input-fields-and-parent_tool_use_id-810).
+- [Turn-outcome indicator](turn-outcome-indicator.md) ([#805](https://github.com/pyrycode/pyrycode-mobile/issues/805))
+  — the **`TurnEnd` stop-shape consumer**: classifies and sanitizes the four fields this doc's § 1 widening
+  added (`outcome`, `is_error`, `terminal_reason`, `error_category`) and renders a non-clean stop as a new
+  thread status-area arm, directly above thinking.
 - [Relay repository coordinator](relay-repository-coordinator.md) — wires the capability supplier, and
   ([#406](../codebase/406.md)) surfaces the reconnection-surviving `liveSessionEvents` seam that brings
   these events to UI ViewModels.

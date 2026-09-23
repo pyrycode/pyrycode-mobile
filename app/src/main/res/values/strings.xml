@@ -84,6 +84,14 @@
     <string name="thread_usage_limit_label_no_status">Claude reported a usage-limit update</string>
     <string name="thread_usage_limit_spent">" · %1$d%% spent"</string>
     <string name="thread_usage_limit_resets">" · resets %1$s"</string>
+    <!-- #805: a turn that failed or was interrupted. Everything claude said about the stop follows
+         "Claude reports", so an account state such as billing_error never reads as the app's own finding. -->
+    <string name="thread_turn_outcome_interrupted">Turn interrupted</string>
+    <string name="thread_turn_outcome_failed">Turn failed</string>
+    <string name="thread_turn_outcome_stopped">Turn stopped early</string>
+    <string name="thread_turn_outcome_claude_reports">" · Claude reports %1$s"</string>
+    <string name="thread_turn_outcome_claude_reports_error">" · Claude reports an error"</string>
+    <string name="thread_turn_outcome_api_error">API error %1$s</string>
     <string name="thread_history_loading_label">Loading earlier messages</string>
     <string name="cd_thread_history_loading">Loading earlier messages in this conversation</string>
     <string name="thread_history_retry_label">Couldn\'t load earlier messages</string>

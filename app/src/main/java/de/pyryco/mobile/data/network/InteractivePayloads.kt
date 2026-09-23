@@ -81,11 +81,21 @@ internal data class ToolResultPayloadDto(
     @SerialName("parent_tool_use_id") val parentToolUseId: String = "",
 )
 
+/**
+ * `turn_end`. The four trailing fields (#805) are claude's own stop shape and are **optional and open-set**
+ * on the wire: an absent one — an older daemon — decodes to its empty value, the lenient-default posture
+ * [ToolUsePayloadDto.parentToolUseId] set, and an unrecognised token is just a string. The eight numeric
+ * fields on the same frame are not decoded.
+ */
 @Serializable
 internal data class TurnEndPayloadDto(
     @SerialName("conversation_id") val conversationId: String,
     @SerialName("turn_id") val turnId: String,
     @SerialName("stop_reason") val stopReason: String,
+    val outcome: String = "",
+    @SerialName("is_error") val isError: Boolean = false,
+    @SerialName("terminal_reason") val terminalReason: String = "",
+    @SerialName("error_category") val errorCategory: String = "",
 )
 
 /**
@@ -440,8 +450,9 @@ private fun JsonElement?.toInputFields(): Map<String, String> {
     }
 }
 
-/** Total field copy: [stopReason] passes through verbatim (consumers map the wire value). */
-internal fun TurnEndPayloadDto.toEvent(): LiveSessionEvent = LiveSessionEvent.TurnEnd(conversationId, turnId, stopReason)
+/** Total field copy: every string passes through verbatim (consumers map and sanitize the wire values). */
+internal fun TurnEndPayloadDto.toEvent(): LiveSessionEvent =
+    LiveSessionEvent.TurnEnd(conversationId, turnId, stopReason, outcome, isError, terminalReason, errorCategory)
 
 /**
  * The two v2 **modal** lifecycle payloads (#437, pyrycode#701/#703): `modal_shown` (a surfaced

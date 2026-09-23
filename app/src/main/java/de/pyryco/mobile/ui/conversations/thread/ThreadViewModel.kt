@@ -25,6 +25,8 @@ import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
+import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
+import de.pyryco.mobile.ui.conversations.components.turnOutcomeReport
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
 import kotlinx.coroutines.CancellationException
@@ -47,6 +49,7 @@ import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -611,6 +614,25 @@ class ThreadViewModel(
             )
 
     /**
+     * How this conversation's last turn ended, when it did not end cleanly (#805) — drives the status
+     * area's turn-outcome arm. A sibling [StateFlow] beside [isThinking] / [isBusy] over the same live
+     * events, with the same lifetime. `null` covers no event yet, a clean last turn, and a next turn that
+     * has started.
+     *
+     * A `turn_end` replaces the value outright (a clean one clears a stale report), and only `thinking` /
+     * `responding` clear it otherwise — never `idle`, which may arrive on either side of the `turn_end` it
+     * accompanies. [isThinking] and [isBusy] are untouched: they already turn off on any `turn_end`.
+     */
+    val turnOutcome: StateFlow<TurnOutcomeReport?> =
+        liveSessionEvents
+            .runningFold(null as TurnOutcomeReport?) { current, event -> nextTurnOutcome(current, event) }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = null,
+            )
+
+    /**
      * Whether this conversation is currently stalled (#395) — drives the prominent screen-snapshot CTA
      * (#396). A sibling [StateFlow] beside [connectionState] / [isThinking] (not a [ThreadUiState]
      * field): like them it is a transient, connection-scoped cross-cutting signal the stateless screen
@@ -962,6 +984,24 @@ class ThreadViewModel(
             is LiveSessionEvent.ToolResult,
             is LiveSessionEvent.ReplayGap,
             -> null
+        }
+    }
+
+    /** Folds one live event into [turnOutcome]; events for other conversations leave it unchanged. */
+    private fun nextTurnOutcome(
+        current: TurnOutcomeReport?,
+        event: LiveSessionEvent,
+    ): TurnOutcomeReport? {
+        if (event.conversationId != conversationId) return current
+        return when (event) {
+            is LiveSessionEvent.TurnEnd -> turnOutcomeReport(event)
+            is LiveSessionEvent.TurnState ->
+                if (event.phase == LiveSessionEvent.TurnState.Phase.Idle) current else null
+            is LiveSessionEvent.AssistantDelta,
+            is LiveSessionEvent.ToolUse,
+            is LiveSessionEvent.ToolResult,
+            is LiveSessionEvent.ReplayGap,
+            -> current
         }
     }
 
