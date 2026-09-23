@@ -149,3 +149,7 @@ Pending for the documentation stage: fold the turn-outcome arm into the status-a
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-23
+
+## Revisions
+
+- **2026-09-23 — open question resolved, no design change.** `feature/842` merged to main (PR #866) during the build; `git merge-tree --write-tree` of this branch against the updated `origin/main` reports no conflict.
