@@ -8,6 +8,8 @@ import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.network.DequeueMessagePayloadDto
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.ModalAnswerPayloadDto
+import de.pyryco.mobile.data.network.ModalShownPayloadDto
 import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.NoiseSessionFactory
 import de.pyryco.mobile.data.network.NoiseSessionPump
@@ -113,6 +115,50 @@ class SecondClientPeer(
     }
 
     /**
+     * The id of the first permission modal claude raises in [conversationId] (#849), waiting up to
+     * [timeoutMs]. The prompt stays outstanding, and its turn open, until a privileged device answers it.
+     */
+    internal suspend fun awaitPermissionModal(
+        conversationId: String,
+        timeoutMs: Long,
+    ): String {
+        val shown =
+            MobileJson.decodeFromJsonElement(
+                ModalShownPayloadDto.serializer(),
+                awaitFrame(conversationId, "modal_shown", timeoutMs).payload,
+            )
+        check(shown.modalClass == PERMISSION_CLASS) { "peer awaited a permission modal: class ${shown.modalClass}" }
+        check(shown.options.any { it.id == ALLOW_ONCE }) { "permission modal offers no $ALLOW_ONCE" }
+        return shown.modalId
+    }
+
+    /**
+     * Allow [modalId] once as this device, and wait for the daemon's `modal_dismissed` for it (#849). The
+     * daemon sends no reply to `modal_answer`, and ignores one from a device paired without
+     * `--allow-remote-permissions`, so a missing dismissal times out rather than naming a code.
+     */
+    internal suspend fun allowOnce(
+        modalId: String,
+        timeoutMs: Long,
+    ) {
+        send(
+            "modal_answer",
+            MobileJson.encodeToJsonElement(
+                ModalAnswerPayloadDto(modalId = modalId, optionId = ALLOW_ONCE, answerToken = UUID.randomUUID().toString()),
+            ),
+        )
+        val dismissed =
+            withTimeout(timeoutMs) {
+                received
+                    .first { frames -> frames.any { it.isDismissalOf(modalId) } }
+                    .first { it.isDismissalOf(modalId) }
+            }
+        check(dismissed.payloadField("outcome") == ALLOW_ONCE && dismissed.payloadField("source") == REMOTE_SOURCE) {
+            "permission modal resolved otherwise: ${dismissed.payloadField("outcome")} from ${dismissed.payloadField("source")}"
+        }
+    }
+
+    /**
      * The backlog the **latest** recorded `queue_state` for [conversationId] reports, once it satisfies
      * [ready] (#849). Latest, not any: a snapshot is the whole backlog, so an older one describes a queue
      * that has since changed.
@@ -184,6 +230,8 @@ class SecondClientPeer(
         type: String,
     ): Boolean = this.type == type && payloadField("conversation_id") == conversationId
 
+    private fun Envelope.isDismissalOf(modalId: String): Boolean = type == "modal_dismissed" && payloadField("modal_id") == modalId
+
     private fun Envelope.payloadField(name: String): String? = (payload as? JsonObject)?.get(name)?.jsonPrimitive?.contentOrNull
 
     /**
@@ -225,5 +273,8 @@ class SecondClientPeer(
         val CLIENT_INFO = NoiseClientInfo(deviceName = "e2e-peer", clientVersion = "e2e-peer")
         const val DH_NAME = "25519"
         const val KEY_LENGTH = 32
+        const val PERMISSION_CLASS = "permission"
+        const val ALLOW_ONCE = "allow_once"
+        const val REMOTE_SOURCE = "remote"
     }
 }

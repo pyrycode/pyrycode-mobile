@@ -166,7 +166,9 @@ PAIR_CODE_B=""
 
 # Second-client peer (#848), rung 3 / LIVE only: a second paired DEVICE on the first test daemon, with its own
 # `pyry pair` token, standing in for the desktop. The test builds the peer itself from this token and a
-# throwaway key; the phone's own token and key are never shared with it.
+# throwaway key; the phone's own token and key are never shared with it. It alone is paired with
+# --allow-remote-permissions, so the #849 scenario can hold a turn open on a permission prompt and then
+# allow it; the phone stays unprivileged, as every other scenario expects.
 PAIR_NAME_PEER="${PAIR_NAME}-peer"
 PAIR_PEER_OUT="${WORK_DIR}/pair-peer.out"
 PEER_TOKEN=""
@@ -724,7 +726,7 @@ if [ -z "${DETERMINISTIC}" ]; then
 
   # The second-client peer's own device token on host A (#848). Never log PEER_TOKEN.
   log "minting second-client peer token (name='${PAIR_NAME_PEER}', pyry-name='${PYRY_NAME}')…"
-  PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME}" --name="${PAIR_NAME_PEER}" \
+  PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME}" --name="${PAIR_NAME_PEER}" --allow-remote-permissions \
     >"${PAIR_PEER_OUT}" 2>&1 || die "peer pyry pair failed; see private log ${PAIR_PEER_OUT}"
   PARSED_PEER="$(pair_token "${PAIR_PEER_OUT}")" \
     || die "failed to parse the peer pairing payload; see private log ${PAIR_PEER_OUT}"

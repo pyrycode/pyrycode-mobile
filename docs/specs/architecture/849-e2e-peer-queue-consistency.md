@@ -96,3 +96,14 @@ New contract:
 - Step 4 waits until the phone has no queued row for `DROP_PROMPT`, instead of waiting until the thread list has no node with that text. Step 7 asserts a zero queued-row count for `DROP_PROMPT` instead of a zero `inThreadList` count. A comment in step 4 names #859 and the two assertions to restore once it lands. The phone-side "disappears" half of AC3 is therefore proven for the queued row only until #859 is fixed. Every other assertion is unchanged.
 
 The same run also failed `interactiveTurn_newSession_rendersSessionBoundaryDelimiter`. `awaitDisplayedSessionBoundary` resolved `onNode(hasScrollAction())` while the overflow menu's scrollable was still in the tree after its item was tapped, so it found two nodes. The helper now matches `hasScrollToNodeAction()`, which only the thread's lazy list carries. This is a one-line fix to a shared test helper, not a production change.
+
+### 2026-09-23 — a permission prompt holds the turn, and the peer allows it (live gate FAIL, e80b86a)
+
+The second live-gate run passed steps 3–5 and then timed out in step 6, waiting 240 s for the second `turn_end`. Claude's transcript shows the `python3` sleep's `tool_use` and no result until the daemon shut down, when the approval MCP resolved it as a deny. The command had raised a permission prompt. The harness pairs every device without `--allow-remote-permissions`, so no device could answer it, and the peer's turn never ended. The queue steps passed only because the pending prompt held the turn open.
+
+New contract:
+- The pending permission prompt is the hold, not the command's run time. `WAIT_PROMPT` asks for a quick `python3 -c "print(849)"`. A `python3` command is never auto-allowed, and the operator's claude settings carry no allow rule for it.
+- `scripts/e2e-emulator.sh` pairs the peer alone with `--allow-remote-permissions`. The phone stays unprivileged, as every other scenario expects. The token is still never logged.
+- `SecondClientPeer.awaitPermissionModal(conversationId, timeoutMs): String` decodes the conversation's first `modal_shown` with `ModalShownPayloadDto`, checks for class `permission` and an `allow_once` option, and returns the `modal_id`.
+- `SecondClientPeer.allowOnce(modalId, timeoutMs)` sends `modal_answer` with `ModalAnswerPayloadDto` (`allow_once`, a fresh UUID answer token) and waits for a `modal_dismissed` naming that id, which must carry outcome `allow_once` and source `remote`. The daemon sends no reply to `modal_answer` and silently ignores one from an unprivileged device, so the dismissal is the only confirmation.
+- Step 2 awaits the permission modal instead of `tool_use`. Step 6 starts with `allowOnce`, then waits for the second `turn_end` as before. Every other step and assertion is unchanged, and the scenario still spends two real Claude turns.
