@@ -65,7 +65,11 @@ bytes. It shares the sole inbound consumer and exposes a separate
 outside `ConversationRepository` and screen state. `AttachmentUploadTransfer` (#829) is its upload-leg
 sibling — also connection-owned, also routed first in `onInbound`, but **on** the
 `ConversationRepository` surface (`uploadAttachment`) rather than beside it, since the destination is a
-conversation, not the whole host. See [Attachment upload](attachment-upload.md).
+conversation, not the whole host. See [Attachment upload](attachment-upload.md). `AttachmentRetrievals`
+(#899) is the retrieval-leg driver, routed immediately after the upload leg in `onInbound` and ended
+beside it in the collector's `finally`; it correlates by the request's own envelope id rather than the
+chunk's, since every answering frame — chunk or `error` — names the request. See [Attachment
+retrieval](attachment-retrieval.md).
 
 ## Status projections: one file per status event
 
@@ -350,6 +354,11 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   **landed**) — `uploadAttachment`, the `AttachmentUploadTransfer` upload-leg sibling of
   `DebugBundleTransfer`, the 8 MB local socket-queue bound, and the `StableConversationRepository`
   snapshot-or-result delegation it needed instead of the usual snapshot-or-throw.
+- Sibling transfer: [Attachment retrieval](attachment-retrieval.md) ([#899](https://github.com/pyrycode/pyrycode-mobile/issues/899),
+  **landed**) — `fetchAttachment`, the `AttachmentRetrievals`/`AttachmentRetrievalTransfer` retrieval-leg
+  driver correlating by the request's own envelope id, one retrieval per connection, the
+  512-chunk/23,040,000-byte phone-side bound, and the host-keyed `AttachmentStore` layer above this
+  repository that keeps the verified bytes.
 - Sibling observable: `observeAttachmentOffers` (#898, **landed**, PR
   [#931](https://github.com/pyrycode/pyrycode-mobile/pull/931)) — the ninth status-family projection,
   `AttachmentOfferProjection`, decoding `attachment_offered` into `AttachmentOffer`; the one arm in the
