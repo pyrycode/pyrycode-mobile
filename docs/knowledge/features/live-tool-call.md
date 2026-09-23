@@ -15,7 +15,7 @@ it into the thread stream. It renders nothing; output-encoding the untrusted str
 ## The model — a status on the existing `ToolCall`
 
 ```kotlin
-enum class ToolCallStatus { Running, Done, Failed }
+enum class ToolCallStatus { Running, Done, Failed, Denied }         // Denied: #811
 
 data class ToolCall(
     val toolName: String,
@@ -24,6 +24,16 @@ data class ToolCall(
     val status: ToolCallStatus = ToolCallStatus.Done,   // #387
     val inputFields: Map<String, String> = emptyMap(),  // #810
     val parentToolUseId: String = "",                   // #810
+    val denial: ToolDenial? = null,                     // #811
+)
+
+data class ToolDenial(                                  // #811
+    val toolName: String,
+    val decisionReasonType: String,
+    val decisionReason: String,
+    val message: String,
+    val truncatedFields: List<String>?,
+    val droppedFields: List<String>?,
 )
 ```
 
@@ -40,13 +50,53 @@ new exported type in the slice. See [Data model](data-model.md).
 | Event | Fold | Effect |
 |---|---|---|
 | **`tool_use`** (start) | `applyToolUse` | append a `Running` `Role.Tool` row, `id = toolUseId`, `toolCall = ToolCall(name, inputSummary, output="", Running, inputFields, parentToolUseId)` — **if absent** |
-| **`tool_result`** (`isError == false`) | `applyToolResult` | update the matching row in place: `output = resultSummary`, `status = Done`, `parentToolUseId` per the [#810 precedence rule](#tool_use-input-fields-and-parent_tool_use_id-810) |
-| **`tool_result`** (`isError == true`) | `applyToolResult` | update the matching row in place: `output = resultSummary`, `status = Failed`, `parentToolUseId` per the [#810 precedence rule](#tool_use-input-fields-and-parent_tool_use_id-810) |
+| **`tool_result`** (`isError == false`) | `applyToolResult` | update the matching row in place: `output = resultSummary`, `status = Done` unless already `Denied`, `parentToolUseId` per the [#810 precedence rule](#tool_use-input-fields-and-parent_tool_use_id-810) |
+| **`tool_result`** (`isError == true`) | `applyToolResult` | update the matching row in place: `output = resultSummary`, `status = Failed` unless already `Denied`, `parentToolUseId` per the [#810 precedence rule](#tool_use-input-fields-and-parent_tool_use_id-810) |
+| **`tool_denied`** ([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811)) | `withToolDenied` | update the matching row in place: `status = Denied`, `denial = ToolDenial(...)` verbatim — **wins over whatever status the row held**, output/input/parent/position untouched; **no matching row → no-op**, a denial never adds a row |
 
-`failed ⟺ ToolResult.isError == true`; `done` otherwise. Correlation is by **`toolUseId`, not by
+`failed ⟺ ToolResult.isError == true`; `done` otherwise; a row already `Denied` stays `Denied`
+regardless of which `tool_result` arrives afterwards. Correlation is by **`toolUseId`, not by
 position** — and the match is namespaced `id == toolUseId && role == Role.Tool` so a server-supplied
 `toolUseId` can never collide with a real `message_id` and clobber a message. The `toolUseId` is the
 row's `Message.id`.
+
+### Denied ([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811))
+
+claude's refusal reaches mobile as a separate `tool_denied` frame — sent on a line *before* the
+`tool_result`, and also emitted by the daemon's result-line recovery for a call whose `tool_result`
+already shipped — rather than as fields on `tool_result`, because either arrival order must produce
+the same retained state. `withToolDenied` therefore **always wins**: whatever the row's prior status
+(`Running`, `Done`, `Failed`, or already `Denied`), a denial sets it to `Denied`. `withToolResult`'s
+one change is the mirror of that: when a row is already `Denied`, a `tool_result` for the same
+`toolUseId` still attaches `output`, but leaves `status` and `denial` alone — a refused call is never
+turned back into a merely failed one by the result claude writes after refusing.
+
+`ToolDenial` carries `toolName`, `decisionReasonType`, `decisionReason`, `message`, and the two report
+arrays `truncatedFields` / `droppedFields`, all copied **verbatim** from the wire frame — no trim,
+parse, sanitize or token interpretation. The two arrays are what keep three readings of a field
+decidable: named in neither array, claude sent it as-is (every captured denial has both reason fields
+empty, so this is the ordinary case); empty and named in `droppedFields`, the daemon emptied an
+over-cap value; present and named in `truncatedFields`, the daemon cut claude's text. The DTO shape
+(`ToolDeniedPayloadDto`) follows `RateLimitedPayloadDto.truncatedFields` — `List<String>? = null` —
+so a wire `null` and a wire `[]` decode to distinct values; `QueueStatePayloadDto.toQueue`'s
+coalescing mapper is the pattern **not** followed here. `message` and `decisionReason` are
+claude-authored prose that may quote a refused command line and name absolute host paths; `toolName`
+and `decisionReasonType` are open-set tokens. Rendering them — inert attributed text, control/escape
+stripping, switching the tokens against known values with an unknown fallback — is out of scope here
+and belongs to [#658](https://github.com/pyrycode/pyrycode-mobile/issues/658), which owns the denied
+row's visual design; that obligation travels with the type in `ToolDenial`'s KDoc.
+
+A denial is **not** a `LiveSessionEvent`: nothing on the live stream consumes it, so — like
+`unrecognized_message` — it folds into the thread store only and is never emitted on
+`liveSessionEvents`. That keeps it out of `ThreadViewModel`'s four exhaustive `when`s over
+`LiveSessionEvent`, which a new subtype would otherwise have forced to grow an arm for an event they
+don't need. `ToolCallStatusIcon` in `ToolCallRow.kt` — the one exhaustive `when` over
+`ToolCallStatus` — reuses the `Failed` presentation unchanged for `Denied`; #658 owns its real
+design.
+
+The disk cache (`FileConversationCache.CachedToolCall`) persists `status` by enum name, so a `Denied`
+row survives a cache round-trip; `denial` itself is not persisted (out of scope, the #810
+`inputFields` precedent), so a row restored from cache is `Denied` with `denial = null`.
 
 ## `tool_use.input` fields and `parent_tool_use_id` (#810)
 
@@ -94,6 +144,9 @@ crash, a duplicate row, or an orphan:
 | Duplicate `tool_use` (same id) | existing row left **untouched** — no second row, and a finished row is **not** reset to `Running` |
 | Duplicate `tool_result` (same id) | in-place update **re-applied** (idempotent / last-write-wins, one row) |
 | Malformed `tool_use`/`tool_result` payload | dropped at the existing `decodeLiveSessionEvent` `catch` (a missing/wrong-typed field fails the strict decode) → the fold never runs, the single inbound collector survives |
+| `tool_denied` naming no known row ([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811)) | `withToolDenied` finds no row → **no-op**, no row is added |
+| Malformed `tool_denied` payload ([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811)) | dropped at `applyToolDenied`'s own `catch (IllegalArgumentException)` (live lane) or the replay lane's existing `try` — that one envelope/entry is dropped, the collector survives |
+| `tool_denied` for a `conversation_id` mobile holds no rows for ([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811)) | `applyToolDenied` returns the map **unchanged** rather than minting an empty slice — a denial can never add a row, so it must not grow the map either (a hostile daemon sending random conversation ids would otherwise cause unbounded growth) |
 
 ## Chronological interleave (AC #4) — why it's free
 
@@ -110,7 +163,7 @@ re-emits and the status transition propagates.
 
 ## How it surfaces in the repository
 
-All of the behaviour lives in [`RemoteConversationRepository`](remote-conversation-repository-thread-observables.md#live-tool-call-rows--applytooluse--applytoolresult-387)
+All of the behaviour lives in [`RemoteConversationRepository`](remote-conversation-repository-thread-observables.md#live-tool-call-rows--applytooluse--applytoolresult--applytooldenied-387-811)
 on the **single existing** inbound collector — see that doc for the dispatch and the two folds. In
 short: the `tool_use`/`tool_result` dispatch is folded into the **existing** #385 live-session demux
 arm (alongside the unchanged #395 stall-clear and the #385 `tryEmit` — **no second subscription**), and
@@ -119,6 +172,18 @@ established locally-assembled-row clock (`sendMessage`); the `tool_result` updat
 original `tool_use` timestamp. Connection-scoped, in-memory: a fresh repo per connection (#351) starts
 empty, so live tool rows are re-derived from the live stream on reconnect — transient "right now"
 state, not durable.
+
+`tool_denied` ([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811)) is a **separate** verb
+(`TYPE_TOOL_DENIED`, beside `TYPE_TOOL_RESULT`), its own arm inside the same gated dispatch, and its
+own private fold (`applyToolDenied`), because it is not a `LiveSessionEvent` — the DTO is decoded and
+mapped to `ToolDenial` directly inside the fold, not through `decodeLiveSessionEvent`. It does not
+clear the stall projection and is not emitted on `liveSessionEvents`; it is a report, not forward
+progress the rest of the thread store needs to know about. **The daemon also replays `tool_denied`
+in conversation history** (it goes out through the same emit path as `tool_result`, appended to
+history beside the ring), so `HistoryPageReducer.withHistoryEntry` decodes and folds the identical
+frame through the identical `toDenial()` + `withToolDenied` on the replay lane — a history page
+carrying `tool_use`, `tool_denied` and `tool_result` for one call replays to a `Denied` row exactly
+like the live sequence does.
 
 ## Capability gate (fail-closed)
 
@@ -162,6 +227,19 @@ fabricated `toolUseId`s) is identical to the existing `message_id` path under th
 authenticated-paired-daemon threat model. UI-surface threats (screenshot/overlay/accessibility leakage
 of rendered tool input/output) belong to the [#388](../codebase/388.md) renderer.
 
+[#811](https://github.com/pyrycode/pyrycode-mobile/issues/811) (`tool_denied`, self-reviewed **PASS**,
+verifier **PASS**) copies `toolName`/`decisionReasonType`/`decisionReason`/`message` and the two report
+arrays into `ToolDenial` on the same verbatim, no-trim/parse/sanitize posture — `message` and
+`decisionReason` are claude prose that may quote a refused command line and name absolute host paths;
+render obligations belong to [#658](https://github.com/pyrycode/pyrycode-mobile/issues/658), named in
+`ToolDenial`'s own KDoc rather than only here. The frame can at worst **relabel a row it already
+opened** in the same conversation as `Denied` (its `Role.Tool`-namespaced match can't reach an
+assistant/message row, and a miss adds no row) — a hostile or buggy daemon gains no new capability
+beyond what a `tool_result` it fabricates already has. `applyToolDenied` never mints an empty
+conversation slice for an unseen `conversation_id` (the same unbounded-growth guard `applyToolResult`
+already needed, but a denial can *only* ever relabel, never add, so the guard here returns the map
+unchanged rather than an empty entry). `ToolDenial` is never persisted to the disk cache.
+
 ## Related
 
 - [#387 implementation notes](../codebase/387.md) — files, line refs, design choices, verification.
@@ -181,5 +259,9 @@ of rendered tool input/output) belong to the [#388](../codebase/388.md) renderer
   `parentToolUseId` (see [§ `tool_use.input` fields and `parent_tool_use_id`](#tool_use-input-fields-and-parent_tool_use_id-810)
   above). Rendering and the parent join are deferred to
   [#658](https://github.com/pyrycode/pyrycode-mobile/issues/658).
+- [#811](https://github.com/pyrycode/pyrycode-mobile/issues/811) — adds `ToolCallStatus.Denied` and
+  `ToolCall.denial: ToolDenial?` from the `tool_denied` frame (see [§ Denied](#denied-811) above),
+  folded on both the live lane (`applyToolDenied`) and the replay lane (`HistoryPageReducer`'s
+  `TYPE_TOOL_DENIED` arm). Rendering the denied row is [#658](https://github.com/pyrycode/pyrycode-mobile/issues/658).
 - Server SSOT: pyrycode#607 (wire types + capabilities), #616 (capability-gated fan-out), ADR 025
   § Phase 2 structured streaming, EPIC pyrycode#596.

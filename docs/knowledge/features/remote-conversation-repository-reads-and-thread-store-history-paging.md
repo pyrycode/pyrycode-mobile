@@ -32,6 +32,18 @@ that fails its per-entry decode drops that entry only, inside the same `catch (I
 idiom every `onInbound` arm uses, so one bad entry never fails the page. Nothing on this path logs `type`
 or `payload` on any branch, matching the live lane.
 
+**`tool_denied` ([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811)) gets its own gated arm,
+not a `decodeLiveEvent` case.** The daemon replays `tool_denied` in history through the same emit path as
+`tool_result`, so `withHistoryEntry` needed a sixth arm — but it is not a `LiveSessionEvent`, so it decodes
+`ToolDeniedPayloadDto` directly (the same DTO and `toDenial()` the live lane uses) rather than going
+through the four-type `decodeLiveEvent` dispatch, and calls the shared `withToolDenied` fold. Gated on
+`interactive` like its five siblings. A page carrying `tool_use`, `tool_denied` and `tool_result` for one
+call — in that order or with the result before the denial — folds to a single `Denied` row, because
+`withToolResult` (shared with the live lane, see [Live tool-call § Denied](live-tool-call.md#denied-811))
+never overwrites a `Denied` status. See [Live tool-call](live-tool-call.md) for the state machine and
+[Remote conversation repository § Live tool-call rows](remote-conversation-repository-thread-observables.md#live-tool-call-rows--applytooluse--applytoolresult--applytooldenied-387-811)
+for the live-lane twin, `applyToolDenied`.
+
 **The one behavioural difference from the live lane is the row clock, and it has to be hoisted, not
 copied.** Three of the five lifted folds (`withToolUse`, `withAssistantDelta`, and their live callers)
 stamped `Clock.System.now()` inline before the lift; sharing them with a replay path meant turning that
