@@ -6,6 +6,7 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.network.RelayLog
+import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UnrecognizedSite
@@ -127,6 +128,23 @@ class FileConversationCacheThreadTest {
             assertEquals(listOf(settled), cache().readThread("server-a", "conv-1"))
             val bytes = threadFiles().single().readText()
             assertTrue("unrecognized raw leaked into the document", !bytes.contains("mystery"))
+        }
+
+    @Test
+    fun `banner rows are never stored`() =
+        runTest {
+            val settled = message("m1")
+            val banner =
+                ThreadItem.Banner(
+                    BannerLevel.Warning,
+                    "hook said no",
+                    truncated = false,
+                    occurredAt = Instant.parse("2026-09-05T10:00:00Z"),
+                )
+            cache().writeThread("server-a", "conv-1", listOf(settled, banner)).getOrThrow()
+
+            assertEquals(listOf(settled), cache().readThread("server-a", "conv-1"))
+            assertTrue("banner text leaked into the document", !threadFiles().single().readText().contains("hook said no"))
         }
 
     @Test

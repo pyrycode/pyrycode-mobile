@@ -7625,6 +7625,166 @@ class RemoteConversationRepositoryTest {
             assertEquals(listOf("unrecognized:LineType"), threadShape(thread.last()))
         }
 
+    // ---- #873: fold banner into the thread as ThreadItem.Banner ---------------------------------
+
+    // AC #1: one row, text verbatim (sanitizing is the renderer's), identity from the envelope ts.
+    @Test
+    fun banner_foldsRowCarryingTextVerbatimStampedWithEnvelopeTs() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(bannerEnvelope("c1", "warning", text = "Blocked\u001b[31m by hook", truncated = true))
+            runCurrent()
+
+            val row = bannerRowsOf(emissions.last()).single()
+            assertEquals(BannerLevel.Warning, row.level)
+            assertEquals("Blocked\u001b[31m by hook", row.text)
+            assertTrue(row.truncated)
+            assertEquals(Instant.parse(TS), row.occurredAt)
+        }
+
+    // AC #1: warning reads as a warning; every other level, including empty and unknown, as a notice.
+    @Test
+    fun banner_everyLevelButWarning_mapsToNotice() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            listOf("warning", "info", "notice", "suggestion", "", "brand-new").forEachIndexed { i, level ->
+                pump.push(bannerEnvelope("c1", level, ts = "2026-05-31T00:00:0${i}Z", id = i + 1L))
+            }
+            runCurrent()
+
+            assertEquals(
+                listOf(BannerLevel.Warning) + List(5) { BannerLevel.Notice },
+                bannerRowsOf(emissions.last()).map { it.level },
+            )
+        }
+
+    // AC #1: the row interleaves with messages in arrival order and routes by its conversation_id.
+    @Test
+    fun banner_interleavesInArrivalOrderAndNeverCrossRoutes() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val c1 = collectMessages(repo, "c1")
+            val c2 = collectMessages(repo, "c2")
+            runCurrent()
+
+            pump.push(messageEnvelope("c1", "m1", "user", "first", "2026-05-31T10:00:00Z"))
+            pump.push(bannerEnvelope("c1", "warning", id = 2L))
+            pump.push(messageEnvelope("c1", "m2", "assistant", "second", "2026-05-31T10:01:00Z"))
+            runCurrent()
+
+            assertEquals(listOf("m1", "banner:Warning", "m2"), threadShape(c1.last()))
+            assertEquals(emptyList<String>(), threadShape(c2.last()))
+        }
+
+    // AC #2: (type, ts) is the join key, so a repeat of one ts is one row and a new ts is another.
+    @Test
+    fun banner_repeatOfOneTimestamp_foldsOnce_distinctTimestampsFoldTwice() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(bannerEnvelope("c1", "warning", ts = TS))
+            pump.push(bannerEnvelope("c1", "warning", ts = TS, id = 2L))
+            pump.push(bannerEnvelope("c1", "warning", ts = "2026-05-31T00:00:01Z", id = 3L))
+            runCurrent()
+
+            assertEquals(listOf("banner:Warning", "banner:Warning"), threadShape(emissions.last()))
+        }
+
+    // AC #3: stops_turn is a report — no live event, the stall stands, no status indicator moves.
+    @Test
+    fun banner_stopsTurn_changesNoTurnOrStatusState() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectLiveEvents(repo)
+            val stalls = collectStall(repo, "c1")
+            val apiRetry = collectApiRetry(repo, "c1")
+            val compacting = collectCompacting(repo, "c1")
+            val thread = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(stallEnvelope("c1"))
+            runCurrent()
+            pump.push(bannerEnvelope("c1", "warning", stopsTurn = true, id = 2L))
+            runCurrent()
+
+            assertEquals(listOf(false, true), stalls)
+            assertEquals(emptyList<LiveSessionEvent>(), events)
+            assertEquals(listOf(ApiRetryStatus.NotRetrying), apiRetry)
+            assertEquals(listOf(false), compacting)
+            assertEquals(listOf("banner:Warning"), threadShape(thread.last()))
+        }
+
+    // AC #3: a malformed payload or ts drops that one frame; the lone collector survives.
+    @Test
+    fun banner_malformedDropped_collectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            // Missing the required stops_turn.
+            pump.push(
+                Envelope(
+                    id = 1L,
+                    type = "banner",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement("""{"conversation_id":"c1","level":"warning","text":"x","truncated":false}"""),
+                ),
+            )
+            // An object where text declares a String.
+            pump.push(
+                Envelope(
+                    id = 2L,
+                    type = "banner",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"c1","level":"warning","text":{"n":1},"truncated":false,"stops_turn":false}""",
+                        ),
+                ),
+            )
+            // A ts that is no instant.
+            pump.push(bannerEnvelope("c1", "warning", ts = "yesterday", id = 3L))
+            runCurrent()
+            assertEquals(emptyList<String>(), threadShape(emissions.last()))
+
+            pump.push(bannerEnvelope("c1", "notice", id = 4L))
+            runCurrent()
+            assertEquals(listOf("banner:Notice"), threadShape(emissions.last()))
+        }
+
+    // AC #3 (fail-closed): nothing is decoded without the negotiated `interactive` capability.
+    @Test
+    fun banner_capabilityGateClosedOrUnrelated_foldsNothing() =
+        runTest {
+            for (capabilities in listOf(emptySet(), setOf("something_else"))) {
+                val pump = FakeSessionPump()
+                val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { capabilities })
+                val emissions = collectMessages(repo, "c1")
+                runCurrent()
+
+                pump.push(bannerEnvelope("c1", "warning"))
+                runCurrent()
+
+                assertEquals(emptyList<String>(), threadShape(emissions.last()))
+            }
+        }
+
     // ---- #412: replay-cursor recording on the inbound path --------------------------------------
 
     // AC #2: each interactive structured frame's event_id advances the high-water mark; an
@@ -9089,6 +9249,7 @@ class RemoteConversationRepositoryTest {
                 is ThreadItem.MessageItem -> it.message.id
                 is ThreadItem.SessionBoundary -> "boundary:${it.reason}"
                 is ThreadItem.UnrecognizedMessage -> "unrecognized:${it.site}"
+                is ThreadItem.Banner -> "banner:${it.level}"
             }
         }
 
@@ -9546,6 +9707,33 @@ class RemoteConversationRepositoryTest {
         id: Long,
         payload: String,
     ): Envelope = Envelope(id = id, type = "unrecognized_message", ts = TS, payload = MobileJson.parseToJsonElement(payload))
+
+    /** A `banner` envelope (#873); [ts] is the envelope timestamp the row takes as its identity. */
+    private fun bannerEnvelope(
+        conversationId: String,
+        level: String,
+        text: String = "Blocked by hook",
+        truncated: Boolean = false,
+        stopsTurn: Boolean = false,
+        ts: String = TS,
+        id: Long = 1L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "banner",
+            ts = ts,
+            payload =
+                buildJsonObject {
+                    put("conversation_id", conversationId)
+                    put("level", level)
+                    put("text", text)
+                    put("truncated", truncated)
+                    put("stops_turn", stopsTurn)
+                },
+        )
+
+    /** Every [ThreadItem.Banner] in [thread], in order (#873). */
+    private fun bannerRowsOf(thread: List<ThreadItem>): List<ThreadItem.Banner> = thread.filterIsInstance<ThreadItem.Banner>()
 
     /** Every [ThreadItem.UnrecognizedMessage] in [thread], in order (#609). */
     private fun unrecognizedRowsOf(thread: List<ThreadItem>): List<ThreadItem.UnrecognizedMessage> =

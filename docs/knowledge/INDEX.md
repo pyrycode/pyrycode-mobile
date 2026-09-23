@@ -11,6 +11,7 @@ broader document search. The frozen archive under `codebase/` is historical.
 - [Pairing](features/scanner-screen.md): camera scanner, [pair with code](features/paste-code-dialog.md), [fingerprint confirmation](features/pairing-confirm-gate.md), and [paired-server storage](features/paired-server-store.md).
 - [Channels and discussions](features/channel-list-screen.md): list surfaces, promotion and archive flows.
 - [Conversation thread](features/thread-screen.md): messages, live turns, status rows and thread actions.
+- [Banner notice row](features/banner-notice-row.md): claude's `banner` frame surfaced as an inert thread row, live and on history reload.
 - [Settings](features/settings-screen.md): settings UI, storage and diagnostics.
 - [Shared mobile modal](features/mobile-modal.md): caller-controlled editing shell, theme mapping, focus and IME behavior.
 - [Host editor](features/host-editor.md): the shared Edit host state machine (`ui/host/HostEditor.kt`) driving the modal from both the channel list and Settings.

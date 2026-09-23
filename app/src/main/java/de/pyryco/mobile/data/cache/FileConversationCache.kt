@@ -377,6 +377,7 @@ private fun ThreadItem.toRecord(): CachedThreadRow =
                 boundary = CachedBoundary(previousSessionId, newSessionId, reason, occurredAt.toString(), workspaceCwd),
             )
         is ThreadItem.UnrecognizedMessage -> throw IllegalStateException("unrecognized rows are never cached")
+        is ThreadItem.Banner -> throw IllegalStateException("banner rows are never cached")
     }
 
 private fun CachedThreadRow.toDomain(): ThreadItem {
