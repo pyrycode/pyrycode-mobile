@@ -60,7 +60,8 @@ It overrides **all** interface members — the stream-shaped reads (`observeConv
 `observeApiRetry` (#593), `observeCompacting` (#596), `observeThinkingProgress` (#801),
 `observeUsageLimit` (#802), **and** `recentWorkspaces`), the 15
 suspend one-shots (`createDiscussion`, `promote`, `archive`, `unarchive`, `delete`, `rename`,
-`startNewSession`, `changeWorkspace`, `sendMessage`, `createWorkspaceFolder`, `requestScreenSnapshot`,
+`startNewSession`, `changeWorkspace`, `sendMessage` (both overloads — the plain send and the
+attachment-naming one, #830 — follow the identical snapshot-or-throw shape below), `createWorkspaceFolder`, `requestScreenSnapshot`,
 `setSessionSettings` ([#544](../codebase/544.md), the facade delegation [#543](../codebase/543.md)
 deliberately deferred), `requestHistory` (#623), `requestSystemPrompt`/`setSystemPrompt` (#823), **and**
 `uploadAttachment` (#829, the one one-shot that does **not** follow the snapshot-or-throw shape below —

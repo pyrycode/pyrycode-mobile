@@ -38,6 +38,8 @@ interface ConversationRepository {
     suspend fun startNewSession(conversationId: String, workspace: String? = null): Session
     suspend fun changeWorkspace(conversationId: String, workspace: String): Session
     suspend fun sendMessage(conversationId: String, text: String): Message
+    suspend fun sendMessage(conversationId: String, text: String, attachmentIds: List<String>): Message =  // #830 — names uploaded attachment ids in caller order, deduped, capped by MessageAttachmentIds.MAX (32)
+        error("sendMessage with attachments is not implemented for this ConversationRepository")
 
     fun recentWorkspaces(): Flow<List<String>> = flowOf(emptyList())
     suspend fun createWorkspaceFolder(name: String): String =
