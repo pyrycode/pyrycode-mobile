@@ -3480,6 +3480,41 @@ class RemoteConversationRepositoryTest {
             assertTrue(answer().exceptionOrNull() is IllegalStateException)
         }
 
+    // #818: an accepted always-allow offer rides the answer as `always_allow: true`.
+    @Test
+    fun answerModal_withAlwaysAllow_sendsTheFlagSet() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+
+            startAnswerModal(repo, "mdl-7f3a", "allow_once", alwaysAllow = true)
+            runCurrent()
+
+            val payload =
+                pump.sent
+                    .single { it.type == "modal_answer" }
+                    .payload.jsonObject
+            assertEquals(setOf("modal_id", "option_id", "answer_token", "always_allow"), payload.keys)
+            assertEquals(JsonPrimitive(true), payload.getValue("always_allow"))
+        }
+
+    // #818: an unset flag is omitted rather than sent as `false`, so the ordinary answer's bytes are unchanged.
+    @Test
+    fun answerModal_withoutAlwaysAllow_omitsTheFlag() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, deviceName = "Pixel-8")
+
+            startAnswerModal(repo, "mdl-7f3a", "allow_once", alwaysAllow = false)
+            runCurrent()
+
+            val payload =
+                pump.sent
+                    .single { it.type == "modal_answer" }
+                    .payload.jsonObject
+            assertEquals(setOf("modal_id", "option_id", "answer_token"), payload.keys)
+        }
+
     // AC #3: the sent modal_cancel payload matches the single-key wire contract {modal_id}.
     @Test
     fun cancelModal_sendsModalCancelMatchingWireContract() =
@@ -8293,6 +8328,90 @@ class RemoteConversationRepositoryTest {
             assertEquals("x".repeat(2047), context.description)
         }
 
+    // ---- #818: modal_shown's always_allow offer ------------------------------------------------------
+
+    /** Pushes one `modal_shown` carrying [alwaysAllowJson] as its `always_allow` value (omitted when null). */
+    private fun TestScope.decodeAlwaysAllowRules(alwaysAllowJson: String?): List<String> {
+        val pump = FakeSessionPump()
+        val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+        val events = collectModalEvents(repo)
+        runCurrent()
+        val field = if (alwaysAllowJson == null) "" else ""","always_allow":$alwaysAllowJson"""
+        pump.push(
+            modalShownEnvelope(
+                """{"modal_id":"m1","class":"permission","title":"t","prompt":"p","options":[],""" +
+                    """"default_option_id":"d","conversation_id":"c1"$field}""",
+            ),
+        )
+        runCurrent()
+        return (events.single() as ModalEvent.Shown).alwaysAllowRules
+    }
+
+    private fun rulesJson(rules: List<String>): String = rules.joinToString(",", "[", "]") { JsonPrimitive(it).toString() }
+
+    @Test
+    fun modalShown_offeredAlwaysAllow_decodesItsRulesInOrder() =
+        runTest {
+            assertEquals(
+                listOf("Bash(npm test)", "Read", "Edit()"),
+                decodeAlwaysAllowRules("""{"offered":true,"rules":["Bash(npm test)","Read","Edit()"]}"""),
+            )
+        }
+
+    // Every unavailable or malformed shape is no offer, and the prompt it decorates still surfaces.
+    @Test
+    fun modalShown_unavailableOrMalformedAlwaysAllow_decodesAsNoOffer() =
+        runTest {
+            val cases =
+                listOf(
+                    null,
+                    "null",
+                    """{"offered":false,"rules":[]}""",
+                    """{"offered":false,"rules":["Read"]}""",
+                    """{"offered":true,"rules":[]}""",
+                    """{"offered":"true","rules":["Read"]}""",
+                    """{"offered":1,"rules":["Read"]}""",
+                    """{"rules":["Read"]}""",
+                    """{"offered":true}""",
+                    """{"offered":true,"rules":"Read"}""",
+                    """{"offered":true,"rules":["Read",7]}""",
+                    """{"offered":true,"rules":["Read",null]}""",
+                    """{"offered":true,"rules":["Read",""]}""",
+                    """{"offered":true,"rules":[["Read"]]}""",
+                    """"offered"""",
+                    """[true,["Read"]]""",
+                )
+            for (case in cases) {
+                assertEquals(case.toString(), emptyList<String>(), decodeAlwaysAllowRules(case))
+            }
+        }
+
+    // The daemon's 16-rule bound: at the bound the list decodes, one over it rejects the whole list.
+    @Test
+    fun modalShown_alwaysAllowRuleCount_isBoundedWithoutKeepingAPrefix() =
+        runTest {
+            val sixteen = List(16) { "Bash(cmd$it)" }
+            assertEquals(sixteen, decodeAlwaysAllowRules("""{"offered":true,"rules":${rulesJson(sixteen)}}"""))
+            val seventeen = List(17) { "Bash(cmd$it)" }
+            assertEquals(emptyList<String>(), decodeAlwaysAllowRules("""{"offered":true,"rules":${rulesJson(seventeen)}}"""))
+        }
+
+    // The 1024-byte bound counts UTF-8 bytes, not chars: 512 two-byte chars pass, 513 do not.
+    @Test
+    fun modalShown_alwaysAllowRuleLength_isBoundedInUtf8Bytes() =
+        runTest {
+            val atBound = "é".repeat(512)
+            assertEquals(
+                listOf("Read", atBound),
+                decodeAlwaysAllowRules("""{"offered":true,"rules":${rulesJson(listOf("Read", atBound))}}"""),
+            )
+            val overBound = "é".repeat(513)
+            assertEquals(
+                emptyList<String>(),
+                decodeAlwaysAllowRules("""{"offered":true,"rules":${rulesJson(listOf("Read", overBound))}}"""),
+            )
+        }
+
     // AC #2: modal_dismissed source `remote`, outcome = a selected option id.
     @Test
     fun modalDismissed_sourceRemote() =
@@ -9007,9 +9126,10 @@ class RemoteConversationRepositoryTest {
         repo: RemoteConversationRepository,
         modalId: String,
         optionId: String,
+        alwaysAllow: Boolean = false,
     ): () -> Result<Unit> {
         var outcome: Result<Unit>? = null
-        backgroundScope.launch { outcome = runCatching { repo.answerModal(modalId, optionId) } }
+        backgroundScope.launch { outcome = runCatching { repo.answerModal(modalId, optionId, alwaysAllow) } }
         return { requireNotNull(outcome) { "answerModal has not completed" } }
     }
 

@@ -47,8 +47,8 @@ two signals **verbatim — no UI-side re-derivation**:
 
 ## Where it lives
 
-`PermissionModalOverlay`, `ModalOptionButton` and `dismissReasonText` are private composables in
-`app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt`, inline per the
+`PermissionModalOverlay`, `ModalOptionButton`, `AlwaysAllowOffer` (#818) and `dismissReasonText` are private
+composables in `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreen.kt`, inline per the
 `DeleteConfirmationDialog` precedent — **not** a new file. Since #815, the overlay's
 dialog chrome and window hardening are no longer its own: `PermissionModalOverlay` draws its content inside
 [`MobileGateModal`](mobile-modal.md#the-hardened-gate-mobilegatemodal), the hardened entry point
@@ -65,27 +65,32 @@ Collected in the route host at
 ```
 ThreadViewModel.currentModal : StateFlow<ModalUiState>      ◀── #445 fold (host-level, modalId-keyed), scoped to this thread's own conversation since #816
 ThreadViewModel.armedOptionId : StateFlow<String?>          ◀── #451 arm projection (VM-scoped)
+ThreadViewModel.alwaysAllowAccepted : StateFlow<Boolean>    ◀── #818 offer-acceptance projection (VM-scoped)
 ThreadViewModel.modalSendErrors : Flow<Unit>                ◀── #451 payload-free one-shot
-        │  MainActivity: collectAsStateWithLifecycle(currentModal, armedOptionId) like isThinking/isStalled;
+        │  MainActivity: collectAsStateWithLifecycle(currentModal, armedOptionId, alwaysAllowAccepted) like isThinking/isStalled;
         │  modalSendErrors forwarded BY REFERENCE (single-consumer — collected in ThreadScreen, #452)
         ▼
 ThreadScreen(state, …, modalState = Hidden, armedOptionId = null, modalSendErrors = emptyFlow(),
-             onModalOption = vm::onModalOption, onModalCancel = vm::onModalCancel)   ◀── all live since #452
+             alwaysAllowAccepted = false, onAlwaysAllowChanged = { _, _ -> },
+             onModalOption = vm::onModalOption, onModalCancel = vm::onModalCancel)   ◀── all live since #452/#818
         │  LaunchedEffect(modalSendErrors){ collect → snackbar(modal_send_failed) }   (#452 error collect)
         │  when (modalState):
-        ├─ Open      → PermissionModalOverlay(open, armedOptionId, onOption, onCancel)  ── MobileGateModal (#815)
+        ├─ Open      → PermissionModalOverlay(open, armedOptionId, onOption, onCancel,
+        │                                      alwaysAllowAccepted, onAlwaysAllowChanged)  ── MobileGateModal (#815)
         ├─ Dismissed → LaunchedEffect(modalId) { snackbarHostState.showSnackbar(dismissReasonText(source)) }
         └─ Hidden    → Unit
 ```
 
-`modalState` / `armedOptionId` / `modalSendErrors` are all **defaulted** parameters (`= Hidden` / `= null` /
-`= emptyFlow()`), so every existing preview and androidTest call site stays inert — no call-site cascade. The
-route host collects `currentModal` + `armedOptionId` exactly like the `isThinking` / `isStalled`
-collect-and-forward and binds `onModalOption` / `onModalCancel` to the VM. [#451](modal-answer-flow.md) added
-the VM's decision methods (the answer/cancel + arm logic); the render slice [**#452**](../codebase/452.md)
-forwards those screen hooks to `vm::onModalOption` / `vm::onModalCancel` in the route host, threads
-`armedOptionId` into the overlay to draw the armed affordance, and collects `modalSendErrors` **inside
-`ThreadScreen`** (not the route host) because the snackbar — its effect — is a screen concern, while
+`modalState` / `armedOptionId` / `modalSendErrors` / `alwaysAllowAccepted` / `onAlwaysAllowChanged` are all
+**defaulted** parameters (`= Hidden` / `= null` / `= emptyFlow()` / `= false` / `= { _, _ -> }`), so every
+existing preview and androidTest call site stays inert — no call-site cascade. The
+route host collects `currentModal` + `armedOptionId` + `alwaysAllowAccepted` exactly like the `isThinking` /
+`isStalled` collect-and-forward and binds `onModalOption` / `onModalCancel` / `onAlwaysAllowChanged` to the
+VM. [#451](modal-answer-flow.md) added the VM's decision methods (the answer/cancel + arm logic); the render
+slice [**#452**](../codebase/452.md) forwards those screen hooks to `vm::onModalOption` /
+`vm::onModalCancel` in the route host, threads `armedOptionId` into the overlay to draw the armed affordance,
+and collects `modalSendErrors` **inside `ThreadScreen`** (not the route host) because the snackbar — its
+effect — is a screen concern, while
 `navigationEvents` stays in `MainActivity` because navigation is a host concern. `modalSendErrors` is a
 single-consumer `Channel.receiveAsFlow()`, so `MainActivity` only forwards the reference.
 
@@ -98,7 +103,8 @@ conversation raised the modal — never in a second open thread for another conv
 ## The overlay (`Open`)
 
 Since [#815](mobile-modal.md#the-hardened-gate-mobilegatemodal), `PermissionModalOverlay(open:
-ModalUiState.Open, armedOptionId, onOption, onCancel)` draws inside
+ModalUiState.Open, armedOptionId, onOption, onCancel, alwaysAllowAccepted, onAlwaysAllowChanged)` (the last
+two added by #818) draws inside
 [`MobileGateModal`](mobile-modal.md#the-hardened-gate-mobilegatemodal) — the shared mobile-modal shell's
 hardened decision-gate entry point — rather than its own `BasicAlertDialog`. The dialog chrome, the window
 hardening (`SecureOn`, the obscured-touch filter, disabled back/outside dismissal, no close glyph) and the
@@ -116,6 +122,8 @@ MobileGateModal(
 ) {
     Text(text = open.prompt, style = MaterialTheme.typography.bodyLarge)   // verbatim, plain Text
     if (!open.context.isEmpty) PermissionContext(open.context)             // #817, only when the frame carried any
+    if (open.offersAlwaysAllow)                                            // #818, only when the daemon offered it
+        AlwaysAllowOffer(open.alwaysAllowRules, alwaysAllowAccepted, onChanged = { onAlwaysAllowChanged(open.modalId, it) })
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         open.options.forEach { option ->          // wire array order = canonical display/selection order
             ModalOptionButton(option.label,
@@ -196,6 +204,42 @@ Allow"). The prefix and labels are local and visually distinct from the value (`
 the fail-safe-deny highlight (still driven solely by `option.id == open.defaultOptionId`), and the
 second-confirm gate ([#451](modal-answer-flow.md)) still guards any allow — the same residual the `prompt`
 field already carries.
+
+### The always-allow offer (#818)
+
+`open.offersAlwaysAllow` (`ModalUiState.Open`, [Current-modal state](current-modal-state.md)) gates a private
+`AlwaysAllowOffer(rules, accepted, onChanged)`, drawn between `PermissionContext` and the option `Column` —
+`permission` only, and only when the daemon's `modal_shown.always_allow` offer decoded to a non-empty rule
+list. Figma `533-2369` has no frame of its own for it; it reuses the container's "Input large" stacking (a
+label above body-medium values, 8 dp apart) the same way `ModalContextRow` does:
+
+```kotlin
+Row(
+    Modifier.fillMaxWidth().heightIn(min = 48.dp)
+        .toggleable(value = accepted, role = Role.Checkbox, onValueChange = onChanged),
+    verticalAlignment = Alignment.CenterVertically,
+) {
+    Checkbox(checked = accepted, onCheckedChange = null)           // the Row, not the box, is the tap target
+    Text(stringResource(R.string.modal_always_allow_label), style = labelLarge, fontWeight = SemiBold)
+}
+rules.forEach { rule -> Text(text = rule, style = MaterialTheme.typography.bodyMedium) }   // one per line, wire order
+```
+
+- **The whole row toggles**, via `Modifier.toggleable(role = Role.Checkbox)` on the `Row`, not just the
+  `Checkbox` — `Checkbox(onCheckedChange = null)` keeps the box a pure indicator so there is exactly one tap
+  target and one accessibility node.
+- **`onChanged` carries `open.modalId`**, forwarded to [`ThreadViewModel.onAlwaysAllowChanged`](modal-answer-flow.md#the-always-allow-session-grant-818)
+  — the render never decides acceptance itself, it only reports which prompt the tap landed on. This is the
+  same "render reflects, VM decides" posture as `isArmed` below, and it closes the security review's MUST
+  FIX: a tap that lands after a `Shown` replaces the frame carries the *old* `modalId`, so the VM's guard
+  rejects it instead of silently accepting the new prompt.
+- **The rules render as plain `Text`, one per line, in wire order** — no markdown, no `AnnotatedString` link
+  handling, no `SelectionContainer`, no saved state. They are claude-authored display text (the daemon's own
+  retained-rule strings), so they carry the same output-encoding obligation as `prompt` / option `label`s /
+  `PermissionContext` values (§ Security) — never a materially different sink.
+- **Toggling never arms, sends or answers.** The checkbox only feeds `alwaysAllowAccepted`; the phone still
+  sends nothing until an `allow_once` / `allow_always` tap, and that tap still needs its own single- or
+  second-confirm tap under the unchanged fail-safe-deny gate. Accepting the offer is not that confirmation.
 
 ## The dismissal (`Dismissed`)
 
@@ -280,6 +324,13 @@ the render-time output-encoding, the screen-capture hardening, the send-error co
 - **No persistence** — no modal-derived text reaches `rememberSaveable` / `SavedStateHandle` / DataStore;
   `modalState` / `armedOptionId` are hoisted params, the dialog holds no saved state, the snackbar shows a
   mapped local string. No server text survives process death.
+- **The always-allow offer ([#818](#the-always-allow-offer-818)) widens no grant on the render side** — the
+  offered rules are claude-authored display text under the same output-encoding rule as `prompt` / option
+  `label`s (plain `Text`, no markup), inherit the same `FLAG_SECURE` window (they draw inside
+  `MobileGateModal`, never a separate surface), and the checkbox row inherits the same
+  `filterTouchesWhenObscured` tapjacking net as the options. The render sends nothing itself — it only
+  reports acceptance to the VM, which computes and sends the one boolean (see [Modal answer
+  flow § The always-allow session grant](modal-answer-flow.md#the-always-allow-session-grant-818)).
 - **Accepted residuals (named, not skipped):** `FLAG_SECURE` blocks screen *capture*, not the accessibility
   node tree — a malicious accessibility service can read the verbatim text, but suppressing the a11y tree
   would break legitimate TalkBack users, so it is a platform-level tradeoff, not a regression here.
@@ -327,8 +378,12 @@ fallback, hidden) **extended by [#452](../codebase/452.md)** with the AC#4 inter
   labels and the `Reason type: <raw>` fallback for an unrecognised `reasonType` all render; a type-only
   reason (`reason == null`, `reasonType` set) shows the label alone; a non-string reason's stringified text
   (`"false"`) still displays; a context-free `Open` shows none of the context labels.
+- **always-allow offer** (#818) — a `permission` prompt with rules shows the label and each rule between the
+  context and the options; neither a `trust` prompt with rules nor a `permission` prompt without any renders
+  the offer; tapping the row calls `onAlwaysAllowChanged("m1", true)` and **not** `onModalOption`; with
+  `alwaysAllowAccepted = true` the checkbox renders checked.
 
-No unit test (pure UI; the fold logic is unit-tested in #445, the decision logic in #451, the decode in
+No unit test (pure UI; the fold logic is unit-tested in #445, the decision logic in #451/#818, the decode in
 [Modal events](modal-events.md#the-four-decision-context-fields-817)).
 `connectedAndroidTest` was **not** run in the build environment (no device — the project norm); the test
 compiles under the green `assembleDebug` / `check` / `compileDebugAndroidTestKotlin` gates ([[androidtest-not-compiled-by-mandatory-gates]]).
@@ -342,7 +397,8 @@ but content composed inside a Compose `Dialog` can capture `LocalView.current`, 
 `plain_shell_window_is_not_hardened` assert both flags in both directions (present on the gate, absent on
 the plain shell) using this seam, and `ThreadScreenModalTest.back_press_neither_answers_nor_cancels_and_no_close_glyph_is_offered`
 covers the same guarantee at the screen layer. Focused run: `MobileModalTest` (9), `ThreadScreenModalTest`
-(16), `EditHostModalTest` (6) — 31 tests, 0 failures, on the managed `pixel2Api33Atd` device.
+(26 as of #818, up from 16 at #452 — includes the 5 new offer cases), `EditHostModalTest` (6), 0 failures, on
+the managed `pixel2Api33Atd` device.
 
 > **Known test-strength NIT (code review, optional):** the send-error confidentiality test drives the error
 > over a `Hidden` modal, so the `prompt` (`rm -rf …`) is never composed and the `assertDoesNotExist("rm -rf")`
@@ -379,7 +435,11 @@ and the snackbar-vs-inline dismiss affordance remains design-owed.
   `ThreadScreen` rather than as an eighth `Scaffold` sibling inside it.
 - [Modal answer flow](modal-answer-flow.md) ([#451](../codebase/451.md)) — the behavior half whose
   `armedOptionId` / `modalSendErrors` signals this renders and whose `onModalOption` / `onModalCancel`
-  decision methods the route host wires.
+  decision methods the route host wires; since [#818](modal-answer-flow.md#the-always-allow-session-grant-818)
+  also `alwaysAllowAccepted` and `onAlwaysAllowChanged`, which `AlwaysAllowOffer` reflects the same way.
+- [#818 architecture doc](../../specs/architecture/818-permission-always-allow.md) and
+  [PR #903](https://github.com/pyrycode/pyrycode-mobile/pull/903) — the always-allow offer: design source,
+  the security review, the deliberate 10-file overage.
 - [Current-modal state](current-modal-state.md) ([#445](../codebase/445.md)) — the hoisted `currentModal`
   this renders; the projection/state half this consumes.
 - [Modal events](modal-events.md) ([#437](../codebase/437.md)) — the upstream decode seam; since #817 it

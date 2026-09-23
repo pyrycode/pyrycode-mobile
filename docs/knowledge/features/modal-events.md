@@ -141,6 +141,20 @@ deny-on-timeout.
   toward the deny choice; the mobile prompt already highlights the producer's `default_option_id`, which is
   always the deny option, so carrying the hint would change nothing a user can see.
 
+#### The always-allow offer field (#818)
+
+`ModalShownPayloadDto` also gains `always_allow` (daemon #2364) — unlike the four fields above it is
+**always present** on the wire, but decoded through the same tolerant `JsonElement?` posture: a missing or
+malformed value is no offer, never a dropped prompt. A private `JsonElement?.toAlwaysAllowRules(): List<String>`
+returns the offered rules, in wire order, only when the value is a `JsonObject` whose `offered` is the JSON
+boolean `true` (the quoted string `"true"` is rejected) and whose `rules` is a `JsonArray` of 1 to 16
+non-empty JSON strings each at most 1024 UTF-8 bytes — the daemon's own bounds, applied here and not
+widened. Any violation rejects the **whole** list, matching the daemon's own no-truncation rule. `toEvent()`
+copies the result into `ModalEvent.Shown.alwaysAllowRules`. The design, the accept/grant state and the
+render live in [Modal answer flow § The always-allow session grant](modal-answer-flow.md#the-always-allow-session-grant-818)
+and [Permission-modal overlay § The always-allow offer](permission-modal-overlay.md#the-always-allow-offer-818);
+this subsection covers only the decode.
+
 ### 2. Event family — `data/model/ModalEvent.kt` (new, public, portable)
 
 One `sealed interface ModalEvent` with a common `val modalId: String` and two `data class` subtypes named
@@ -159,6 +173,7 @@ sealed interface ModalEvent {
         val defaultOptionId: String,       // ∈ options[].id by producer invariant; carried, NOT enforced
         val conversationId: String = "",   // #816: outbound-only display-scoping stamp; "" = unscoped
         val context: ModalContext = ModalContext.None,   // #817: claude's optional decision context, display-only
+        val alwaysAllowRules: List<String> = emptyList(),  // #818: the session-grant offer; empty = none available
     ) : ModalEvent
 
     data class Dismissed(

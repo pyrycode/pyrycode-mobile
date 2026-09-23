@@ -27,6 +27,7 @@ sealed interface ModalUiState {
      * [options] preserves the wire array order (the canonical display/selection order), and
      * [defaultOptionId] is the producer's fail-safe-deny default (carried verbatim, never auto-applied).
      * [context] is the permission ask's decision context (#817), display-only like every other field.
+     * [alwaysAllowRules] is the session-grant offer (#818), empty when none is available.
      */
     data class Open(
         val modalId: String,
@@ -37,7 +38,15 @@ sealed interface ModalUiState {
         val defaultOptionId: String,
         val conversationId: String = "",
         val context: ModalContext = ModalContext.None,
-    ) : ModalUiState
+        val alwaysAllowRules: List<String> = emptyList(),
+    ) : ModalUiState {
+        /**
+         * Whether this prompt offers "don't ask again this session" (#818): only a `permission` ask whose
+         * offer the daemon marked available. The overlay and the answer path both gate on this one value.
+         */
+        val offersAlwaysAllow: Boolean
+            get() = modalClass == "permission" && alwaysAllowRules.isNotEmpty()
+    }
 
     /**
      * The currently-open modal resolved. Mirrors [ModalEvent.Dismissed]; [source] is the verbatim
@@ -80,6 +89,7 @@ internal fun ModalUiState.reduce(event: ModalEvent): ModalUiState =
                 defaultOptionId = event.defaultOptionId,
                 conversationId = event.conversationId,
                 context = event.context,
+                alwaysAllowRules = event.alwaysAllowRules,
             )
         is ModalEvent.Dismissed ->
             if (this is ModalUiState.Open && modalId == event.modalId) {

@@ -8,6 +8,8 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -73,6 +75,8 @@ class ThreadScreenModalTest {
         onModalOption: (String) -> Unit = {},
         onModalCancel: () -> Unit = {},
         modalSendErrors: Flow<Unit> = emptyFlow(),
+        alwaysAllowAccepted: Boolean = false,
+        onAlwaysAllowChanged: (String, Boolean) -> Unit = { _, _ -> },
     ) {
         composeTestRule.setContent {
             PyrycodeMobileTheme {
@@ -87,6 +91,8 @@ class ThreadScreenModalTest {
                     modalSendErrors = modalSendErrors,
                     onModalOption = onModalOption,
                     onModalCancel = onModalCancel,
+                    alwaysAllowAccepted = alwaysAllowAccepted,
+                    onAlwaysAllowChanged = onAlwaysAllowChanged,
                 )
             }
         }
@@ -246,6 +252,70 @@ class ThreadScreenModalTest {
             R.string.modal_context_description,
             R.string.modal_context_blocked_path,
         ).forEach { composeTestRule.onNodeWithText(string(it)).assertDoesNotExist() }
+    }
+
+    // ---- #818: the don't-ask-again offer ------------------------------------------------------------
+
+    private val offeredRules = listOf("Bash(npm test)", "Read")
+
+    @Test
+    fun offered_permission_prompt_shows_the_offer_and_its_rules_between_context_and_options() {
+        val modal = openModal().copy(context = ModalContext(reason = "Needs approval"), alwaysAllowRules = offeredRules)
+        setContent(modal)
+
+        val label = string(R.string.modal_always_allow_label)
+        composeTestRule.onNodeWithText(label).assertIsDisplayed()
+        offeredRules.forEach { composeTestRule.onNodeWithText(it).assertIsDisplayed() }
+
+        // prompt → context → offer label → rules in wire order → options, top to bottom.
+        val tops = listOf(modal.prompt, "Needs approval", label, "Bash(npm test)", "Read", "Allow once").map(::top)
+        assertTrue("the offer must sit between the context and the options", tops.zipWithNext().all { (a, b) -> a < b })
+    }
+
+    @Test
+    fun permission_prompt_without_an_offer_shows_no_offer() {
+        setContent(openModal())
+
+        composeTestRule.onNodeWithText(openModal().prompt).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.modal_always_allow_label)).assertDoesNotExist()
+    }
+
+    @Test
+    fun trust_prompt_carrying_rules_shows_no_offer() {
+        setContent(openModal().copy(modalClass = "trust", alwaysAllowRules = offeredRules))
+
+        composeTestRule.onNodeWithText(string(R.string.modal_always_allow_label)).assertDoesNotExist()
+        offeredRules.forEach { composeTestRule.onNodeWithText(it).assertDoesNotExist() }
+    }
+
+    @Test
+    fun tapping_the_offer_reports_its_prompt_and_never_answers() {
+        val changes = mutableListOf<Pair<String, Boolean>>()
+        val tapped = mutableListOf<String>()
+        setContent(
+            openModal().copy(alwaysAllowRules = offeredRules),
+            onModalOption = { tapped += it },
+            onAlwaysAllowChanged = { modalId, accepted -> changes += modalId to accepted },
+        )
+
+        composeTestRule
+            .onNode(
+                hasText(string(R.string.modal_always_allow_label)).and(SemanticsMatcher.keyIsDefined(SemanticsProperties.ToggleableState)),
+            ).assertIsOff()
+            .performClick()
+
+        assertEquals(listOf("m1" to true), changes)
+        assertTrue("accepting the offer must not answer the prompt", tapped.isEmpty())
+    }
+
+    @Test
+    fun accepted_offer_renders_checked() {
+        setContent(openModal().copy(alwaysAllowRules = offeredRules), alwaysAllowAccepted = true)
+
+        composeTestRule
+            .onNode(
+                hasText(string(R.string.modal_always_allow_label)).and(SemanticsMatcher.keyIsDefined(SemanticsProperties.ToggleableState)),
+            ).assertIsOn()
     }
 
     @Test

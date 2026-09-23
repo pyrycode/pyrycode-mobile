@@ -41,6 +41,9 @@ sealed interface ModalEvent {
      * [conversationId] is the conversation whose session raised the modal (#816), or `""` when the frame
      * omitted it — an unscoped modal that no thread displays. [context] is claude's optional decision
      * context for a permission ask (#817), [ModalContext.None] when the frame carried none.
+     * [alwaysAllowRules] are the rules the daemon offers to allow for the rest of the session (#818), in
+     * wire order, or empty when no offer is available. They are claude-authored display text: the phone
+     * answers the offer with a boolean and never sends them back.
      */
     data class Shown(
         override val modalId: String,
@@ -51,6 +54,7 @@ sealed interface ModalEvent {
         val defaultOptionId: String,
         val conversationId: String = "",
         val context: ModalContext = ModalContext.None,
+        val alwaysAllowRules: List<String> = emptyList(),
     ) : ModalEvent
 
     /**

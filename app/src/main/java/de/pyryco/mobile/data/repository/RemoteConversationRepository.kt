@@ -2429,6 +2429,8 @@ class RemoteConversationRepository(
      * never parsed or validated; the daemon validates [modalId] against its own outstanding modal
      * (first-answer-wins; a stale id is rejected) and maps [optionId] against its own option list.
      * The [answerToken] is minted here ([answerToken] helper) as a deterministic idempotency key.
+     * [alwaysAllow] (#818) adds `always_allow: true` to grant the modal's offered rules for the session;
+     * unset, the field is omitted. It does not take part in the token.
      *
      * A pure request/reply control call with **no** projection side effect — success is simply "the
      * call returned without throwing". The modal's eventual *resolution* arrives asynchronously as the
@@ -2443,6 +2445,7 @@ class RemoteConversationRepository(
     suspend fun answerModal(
         modalId: String,
         optionId: String,
+        alwaysAllow: Boolean = false,
     ) {
         val request =
             Envelope(
@@ -2455,6 +2458,7 @@ class RemoteConversationRepository(
                             modalId = modalId,
                             optionId = optionId,
                             answerToken = answerToken(modalId, optionId),
+                            alwaysAllow = if (alwaysAllow) true else null,
                         ),
                     ),
             )
