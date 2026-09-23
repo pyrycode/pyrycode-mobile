@@ -173,6 +173,12 @@ really advances virtual time. When adding a finite watchdog or timeout, drive on
 the intended deadline with `advanceTimeBy(...)` followed by `runCurrent()`;
 `advanceUntilIdle()` also advances newly armed watchdogs.
 
+A plain-Kotlin controller constructed with `runTest`'s `backgroundScope` as its owner scope (rather
+than the `TestScope` itself) never leaves its initial state under `advanceUntilIdle()` —
+`backgroundScope` coroutines are not what that call drains, so every assertion fails on the test's own
+setup, not on the code under test (#824). Pass the `TestScope` as the owner scope, or call
+`runCurrent()` after launching in `backgroundScope`.
+
 A JVM unit test that constructs or resolves a component backed by `Dispatchers.Default` — a Koin
 singleton reached without an injected test dispatcher, for example — must stop it before that test
 class's `Dispatchers.resetMain()`, not merely dispose it. The failure this produces attaches to
