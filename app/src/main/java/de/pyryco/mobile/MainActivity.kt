@@ -358,6 +358,10 @@ internal fun PyryNavHost(
                             ChannelListEvent.HostUnpairRequested -> vm.requestHostUnpair()
                             ChannelListEvent.HostUnpairConfirmed -> vm.confirmHostUnpair()
                             ChannelListEvent.HostUnpairDeclined -> vm.declineHostUnpair()
+                            // And for renaming a chat (#827): the pencil's own host and conversation.
+                            is ChannelListEvent.TreeChatEditTapped -> vm.openChatEditor(event.target)
+                            is ChannelListEvent.ChatEditNameSubmitted -> vm.submitChatName(event.name)
+                            ChannelListEvent.ChatEditDismissed -> vm.dismissChatEditor()
                             is ChannelListEvent.WorkspacePicked -> vm.pickHostWorkspace(event.workspace)
                             ChannelListEvent.WorkspacePickerDismissed -> vm.dismissHostWorkspacePicker()
                         }

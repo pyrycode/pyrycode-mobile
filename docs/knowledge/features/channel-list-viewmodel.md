@@ -4,9 +4,9 @@ Exposes ordered host-qualified channel/chat state and explicit host actions thro
 `HostConversationSource`, plus the fold and selection state
 [ChannelListScreen](channel-list-screen.md)'s assembled conversation tree needs (#731).
 Every action the screen can trigger — row taps, folds, (since #738) both add
-controls and (since #744) the host row's edit control — is host-qualified and
-resolved from this view model's own methods; `ChannelListScreen` carries no
-other state model. The flat compatibility
+controls, (since #744) the host row's edit control and (since #827) a Chats
+row's own edit control — is host-qualified and resolved from this view model's
+own methods; `ChannelListScreen` carries no other state model. The flat compatibility
 `ChannelListUiState` projection, its `ChannelListNavigation` one-shot channel and its
 `onEvent` reducer retired with the floating action button that was their only
 consumer (#738) — see [Configuration](#configuration) for what that removed from
@@ -51,6 +51,25 @@ data class HostChannelListState(
     val collapsed: Set<TreeFoldKey> = emptySet(),                    // #731 — collapsed, not expanded
     val selected: HostConversationTarget? = null,                    // #731 — last opened from this list
     val hostEditor: HostEditorState? = null,                         // #744 — open Edit host modal's target
+    val chatEditor: ChatEditorState? = null,                          // #827 — open Edit chat modal's target
+) {
+    /** True exactly when [serverId] has a snapshot and both connection legs are `Connected` (#827).
+     *  Derived from the same snapshot flow the rows draw from, so a disconnect or reconnect flips this
+     *  without publishing a new [chatEditor] — the modal and its typed name stay put. Both legs are
+     *  compared with `==`, not an exhaustive `when`, so a relay state added later reads as not
+     *  connected rather than needing a classification here. */
+    fun isHostConnected(serverId: String): Boolean =
+        hosts.any { it.host.serverId == serverId && it.host.connectionStatus.isLive() }
+}
+
+/** The Edit chat modal's target and flags (#827), shaped like [HostEditorState]: ids and display text
+ *  only. [initialName] is unclamped — `EditChatModal` clamps it at its own boundary, surrogate-safe. */
+data class ChatEditorState(
+    val serverId: String,
+    val conversationId: String,
+    val initialName: String,
+    val saving: Boolean = false,
+    val failed: Boolean = false,
 )
 
 enum class ConversationTreeSection { Channels, Chats }               // #731
@@ -140,6 +159,32 @@ target is already the open editor's: `HostUnpairRequested -> vm.requestHostUnpai
 `reconnectHost` is a one-line forward to the shared `HostConversationSource.retryHost(serverId)` — see
 [Dependency injection § Exact-host Retry and lifecycle](dependency-injection.md#exact-host-retry-and-lifecycle)
 — and touches no VM state: not `collapsedKeys`, not the snapshot, not the editor.
+
+**A Chats row's own edit control, host-resolved a fifth time (#827).** `TreeChatEditTapped(target) ->
+vm.openChatEditor(target)`, `ChatEditNameSubmitted(name) -> vm.submitChatName(name)` and
+`ChatEditDismissed -> vm.dismissChatEditor()`. `openChatEditor` looks the conversation up synchronously
+in `hostSource.snapshots.value`, matched by the target's own `serverId` then its own conversation id among
+that host's `chats`; an unknown id logs a content-free reject and publishes nothing, and the lookup never
+touches `lastOpenedTarget` or the navigation channel — the pencil edits the row, it does not open it.
+`submitChatName` resolves `hostSource.repositoryFor(target.serverId)` **at the press**, never from the
+selected host or `ThreadDestinationFactory`; with no live repository it publishes `failed = true` and
+sends nothing. Otherwise it publishes a `saving = true` state and launches one `viewModelScope.launch`
+that calls `rename(conversationId, trimmed)`; success does `chatEditor.compareAndSet(pending, null)`, and
+an `Exception` other than `CancellationException` does
+`chatEditor.compareAndSet(pending, pending.copy(saving = false, failed = true))` — the same
+`compareAndSet`-against-the-state-published-before-the-write discipline
+[`HostEditorController`](host-editor.md) established, so a write finishing after a dismissal can neither
+resurrect the modal nor overwrite a newer one. The renamed row's new name reaches the list through the
+repository's own conversation stream re-emitting; this method writes no local copy of it. `dismissChatEditor`
+publishes `null` unguarded, as `HostEditorController.dismiss` does. Unlike the host editor, this state is a
+private `MutableStateFlow<ChatEditorState?>` on the view model itself, not a shared controller —
+`ChannelListViewModel` is `chatEditor`'s only owner, so #744/#751's extraction has no counterpart here.
+
+**The five-flow limit.** `hostState`'s `combine` was already at `combine`'s five-argument typed overload
+before this ticket. `chatEditor` makes six, so `hostEditor.state` and `chatEditor` are paired first through
+an inner `combine(hostEditor.state, chatEditor, ::Pair)`, and the outer `combine`'s lambda destructures the
+pair back into `editor` and `chat`. Reach for this shape again if a seventh arm is ever needed, rather than
+the vararg `combine` overload, which loses per-argument typing.
 
 **The editor's six methods (#744/#745, delegated to a shared controller since #751).** `openHostEditor`,
 `submitHostName`, `requestHostUnpair`, `declineHostUnpair`, `confirmHostUnpair` and `dismissHostEditor`
@@ -243,6 +288,22 @@ removal: a decline and a second unpair request arriving mid-write are both ignor
 `compareAndSet` still closes the modal rather than stranding it on a step the store never took — and,
 separately, that a failure landing after a `dismissHostEditor()` call does not resurrect the modal either.
 
+**Chat editor coverage (#827, same `fixture()`).** Both fixture hosts, `"Host"` and `"host"`, get a chat
+sharing the same id, `"same"`, under different names — deliberately colliding rather than globally unique,
+because a conversation id is host-local and a rename sent to the wrong host would still pass a suite that
+gave every fixture chat its own id. Opening `("Host","same")` pre-fills Host's own name, opening
+`("host","same")` pre-fills host's, a nameless chat pre-fills `""`, an unknown id opens nothing, and
+opening changes neither `selected` nor the navigation channel. Submitting `"  New  "` renames only on
+`"Host"`'s repo with `"New"` and closes the editor; `"host"`'s same-id chat is asserted unrenamed, and the
+projected row picks up `"New"` once the repo's own stream re-emits. `isHostConnected` flips false when the
+target host's status goes disconnected — with the editor left open and the typed text intact — and true
+again on reconnect; submitting while `repositoryFor` returns null sets `failed` and sends nothing. A
+throwing `rename` leaves the editor open with `failed = true, saving = false`, the stored name unchanged,
+and asserts no captured log line carries the name, either id or the exception's message; a retry succeeds
+and closes. A gated write completing after `dismissChatEditor()` does not reopen the editor — the same
+`compareAndSet`-survives-a-dismissal proof the host editor's suite already established. Dismiss sends
+nothing.
+
 Unavailable-target coverage denies lookup even with cached rows and connected
 indicators. Failure tests inspect the action job's cancellation state as well as
 missing navigation: absence of navigation alone cannot prove cancellation was
@@ -289,7 +350,7 @@ class's own convention, not inherited from the retired sibling.
 
 - Host contract: [#705 design](../../specs/architecture/705-host-channel-list.md), [host source identity](dependency-injection.md#host-identity-and-snapshots) and [exact-host repository access](dependency-injection.md#exact-host-repository-access).
 - Ticket notes: [`../codebase/45.md`](../codebase/45.md), [`../codebase/22.md`](../codebase/22.md) (FAB → `onEvent` reducer + one-shot nav channel), [`../codebase/26.md`](../codebase/26.md) (`combine` of Channels + Discussions flows, widened `Loaded` / `Empty` to carry `recentDiscussionsCount`, `RecentDiscussionsTapped` event, `stubRepo` helper reshape), [`../codebase/69.md`](../codebase/69.md) (widened `Loaded` / `Empty` with `recentDiscussions: List<Conversation>`; collapsed the `.map { it.size }` projection into a single `combine` emission; two new tests pin `.take(3)` slicing and upstream-ordering contract), [`../codebase/161.md`](../codebase/161.md) (third combined input `lastMessagesFlow` derived via `flatMapLatest(distinctUntilChanged(recentIdsFlow))` + per-row `observeLastMessage` `combine`; `recentDiscussionLastMessages: Map<String, Message> = emptyMap()` default-arg affordance lets every existing construction site stay untouched), [`../codebase/221.md`](../codebase/221.md) (fourth combined input `pendingWorkspacePicker: MutableStateFlow<Boolean>` projects onto `workspacePickerVisible: Boolean = false` on `Loaded`/`Empty`; three new `onEvent` arms for `LongPressFab` / `WorkspacePicked(workspace)` / `WorkspacePickerDismissed`; `WorkspacePicked` clears the flag *synchronously before* the suspend launches — same shape as #78's `confirmPromotion`), [`../codebase/239.md`](../codebase/239.md) (pure test-infra refactor: lifts the `SettingsViewModelTest` `TemporaryFolder` + class-level `dispatcher` + `TestScope.newDataStore()` rig into `ChannelListViewModelTest` and introduces a `TestScope.makeVm(repository, prefs = AppPreferences(newDataStore()))` helper that routes all 18 VM construction sites; production code unchanged — the `prefs` default is the seam the next ticket changes one line of when it wires `AppPreferences.defaultWorkspace` into the FAB short-press), [`../codebase/240.md`](../codebase/240.md) (spends the #239 seam: VM gains `AppPreferences` as a second constructor parameter, `CreateDiscussionTapped` reads `appPreferences.defaultWorkspace.first()` inside the existing `viewModelScope.launch { … }` and passes it to `repository.createDiscussion(workspace = …)`; `WorkspacePicked` long-press path unchanged — explicit user pick still overrides the default; two new tests pin both behaviours; first consumer of [`AppPreferences.defaultWorkspace`](./app-preferences.md) since the #231 schema landed)
-- Specs: `docs/specs/architecture/45-channel-list-viewmodel-uistate-data-path.md`, `docs/specs/architecture/22-channel-list-fab-new-discussion.md`, `docs/specs/architecture/26-recent-discussions-pill.md`, `docs/specs/architecture/69-channel-list-recent-discussions-section.md`, `docs/specs/architecture/161-recent-discussion-last-message-uistate.md`, `docs/specs/architecture/221-channel-list-fab-long-press-workspace-picker.md`, `docs/specs/architecture/729-group-conversations-by-host-and-workspace.md` (`HostWorkspaceGroup.kt`'s `HostConversationRow` / `HostWorkspaceGroup` / `groupConversationsByWorkspace`, consumed by [ChannelListScreen](channel-list-screen.md)'s tree since #731), `docs/specs/architecture/731-assemble-conversation-tree.md`, `docs/specs/architecture/738-list-add-controls-retire-fab.md` (retires the flat compatibility contract this document describes above), `docs/specs/architecture/744-host-row-edit-and-rename.md` (the editor's target, its three methods and the `editorOpenJob` concurrency guard), `docs/specs/architecture/745-unpair-host-from-edit-modal.md` (the removal's three methods, its ordering and the `saving` guard against sibling transitions), `docs/specs/architecture/751-settings-host-edit-and-unpair.md` (extracts both into [`HostEditorController`](host-editor.md), Settings' second caller)
+- Specs: `docs/specs/architecture/45-channel-list-viewmodel-uistate-data-path.md`, `docs/specs/architecture/22-channel-list-fab-new-discussion.md`, `docs/specs/architecture/26-recent-discussions-pill.md`, `docs/specs/architecture/69-channel-list-recent-discussions-section.md`, `docs/specs/architecture/161-recent-discussion-last-message-uistate.md`, `docs/specs/architecture/221-channel-list-fab-long-press-workspace-picker.md`, `docs/specs/architecture/729-group-conversations-by-host-and-workspace.md` (`HostWorkspaceGroup.kt`'s `HostConversationRow` / `HostWorkspaceGroup` / `groupConversationsByWorkspace`, consumed by [ChannelListScreen](channel-list-screen.md)'s tree since #731), `docs/specs/architecture/731-assemble-conversation-tree.md`, `docs/specs/architecture/738-list-add-controls-retire-fab.md` (retires the flat compatibility contract this document describes above), `docs/specs/architecture/744-host-row-edit-and-rename.md` (the editor's target, its three methods and the `editorOpenJob` concurrency guard), `docs/specs/architecture/745-unpair-host-from-edit-modal.md` (the removal's three methods, its ordering and the `saving` guard against sibling transitions), `docs/specs/architecture/751-settings-host-edit-and-unpair.md` (extracts both into [`HostEditorController`](host-editor.md), Settings' second caller), `docs/specs/architecture/827-rename-chat-from-tree-row.md` (`openChatEditor`/`submitChatName`/`dismissChatEditor`, resolved from the target's own `serverId` at the press rather than the selected host, and the colliding-id test fixture that proves it)
 - Upstream: [Conversation repository](./conversation-repository.md) (data-layer seam — since #240 `createDiscussion(workspace = <appPreferences.defaultWorkspace.first()>)` is the call the `CreateDiscussionTapped` arm makes — never the no-arg form anymore; `createDiscussion(workspace = event.workspace)` is the #221 call from the `WorkspacePicked` arm; `observeConversations(Discussions)` is the second subscription added in #26 and the same emission #69 re-uses for both `recent` and `count`; `observeLastMessage(id)` from #161 is the per-row subscription the `flatMapLatest` derivation rides), [`AppPreferences`](./app-preferences.md) (since #240; the `defaultWorkspace: Flow<String>` schema landed in #231 and the FAB short-press is its first consumer — the read is `.first()`-shaped, one-shot per event), [Paired server store](./paired-server-store.md) (since #744 — `PairedServerCollectionStore.loadById` / `setDisplayName`, read and written only by the editor's three methods; since #745 — `remove`, called only by `confirmHostUnpair`), [data model](./data-model.md) (`Conversation` payload, `Message` payload for `recentDiscussionLastMessages`), [dependency injection](./dependency-injection.md) (Koin wiring)
 - Sibling combine-arm pattern: [DiscussionListViewModel](./discussion-list-viewmodel.md) `pendingPromotion` (#78) — the first instance of `combine(upstream, MutableStateFlow<…>)` visibility arm; the retired flat `pendingWorkspacePicker` (#221) was the second, retired with it in #738; `hostState`'s own combine over `pendingHostWorkspacePicker: MutableStateFlow<String?>` (#221, unaffected by #738) is the arm that survives, joined by `hostEditor.state` — a [`HostEditorController`](host-editor.md)'s own `StateFlow<HostEditorState?>` (#744; the `MutableStateFlow` itself moved inside that controller in #751, so this VM's combine input is now a read-only `StateFlow`, not a field it owns). The `SaveAsChannelDialog` visibility arm (#142) is a sibling instance in the codebase.
-- Downstream: [ChannelListScreen](channel-list-screen.md) (#46 — first UI consumer; introduced `ChannelListEvent` and `collectAsStateWithLifecycle()`; #22 added the FAB; #26 added the pill; #69 replaced the pill with the inline section — itself replaced by #731's assembled tree, which consumes `hostState.collapsed` / `hostState.selected` and dispatches `onHostRowTapped` / `onFoldToggled` directly, dropping the `selectedServerId()` adapter for row taps; #161 added the compatibility `recentDiscussionLastMessages` field, consumed by sibling #162; #221 added the FAB long-press → picker path; #738 retired the FAB, the flat `ChannelListUiState`/`ChannelListNavigation`/`onEvent`/`navigationEvents` contract #46/#22/#26/#69/#161/#221 built, and the `repository` constructor parameter that fed it, replacing the FAB's two paths with the section-header and host-row add controls both routed through this VM's existing host-qualified methods; #744 drives [`HostEditorModal`](host-editor.md) off `hostState.hostEditor` — an inline `EditHostModal` call until #751 replaced it with the shared binding, so Settings' second caller resolves the same presence rule and failure strings), [WorkspacePicker](./workspace-picker.md) (the host `hostState.workspacePickerServerId` drives, unaffected by #738), follow-up Retry ticket (an explicit retry affordance — no longer has an `Error` state to retry from since #738; would need its own design), Phase 4 (`ConversationRepositoryImpl` replaces `FakeConversationRepository` behind the same `bind ConversationRepository::class`; #490 already added the **crash-guard** around the host-qualified `createDiscussion` launches via [`launchGuardedRepoCall`](guarded-repo-launch.md), so what Phase 4 still owes is the **user-facing error surface**, not the try/catch), [Guarded repo launch](guarded-repo-launch.md) (the #490 one-shot-call guard the two create-discussion launches route through), #745 (done — wires `EditHostModal`'s `Unpair host` action behind a confirmation, described above under [Wiring](#wiring)), #676 (the live emulator scenario for #744's open/save/failure flow and #745's removal, blocked by both).
+- Downstream: [ChannelListScreen](channel-list-screen.md) (#46 — first UI consumer; introduced `ChannelListEvent` and `collectAsStateWithLifecycle()`; #22 added the FAB; #26 added the pill; #69 replaced the pill with the inline section — itself replaced by #731's assembled tree, which consumes `hostState.collapsed` / `hostState.selected` and dispatches `onHostRowTapped` / `onFoldToggled` directly, dropping the `selectedServerId()` adapter for row taps; #161 added the compatibility `recentDiscussionLastMessages` field, consumed by sibling #162; #221 added the FAB long-press → picker path; #738 retired the FAB, the flat `ChannelListUiState`/`ChannelListNavigation`/`onEvent`/`navigationEvents` contract #46/#22/#26/#69/#161/#221 built, and the `repository` constructor parameter that fed it, replacing the FAB's two paths with the section-header and host-row add controls both routed through this VM's existing host-qualified methods; #744 drives [`HostEditorModal`](host-editor.md) off `hostState.hostEditor` — an inline `EditHostModal` call until #751 replaced it with the shared binding, so Settings' second caller resolves the same presence rule and failure strings), [WorkspacePicker](./workspace-picker.md) (the host `hostState.workspacePickerServerId` drives, unaffected by #738), follow-up Retry ticket (an explicit retry affordance — no longer has an `Error` state to retry from since #738; would need its own design), Phase 4 (`ConversationRepositoryImpl` replaces `FakeConversationRepository` behind the same `bind ConversationRepository::class`; #490 already added the **crash-guard** around the host-qualified `createDiscussion` launches via [`launchGuardedRepoCall`](guarded-repo-launch.md), so what Phase 4 still owes is the **user-facing error surface**, not the try/catch), [Guarded repo launch](guarded-repo-launch.md) (the #490 one-shot-call guard the two create-discussion launches route through), #745 (done — wires `EditHostModal`'s `Unpair host` action behind a confirmation, described above under [Wiring](#wiring)), #827 (done — drives [`EditChatModal`](mobile-modal.md#callers) off `hostState.chatEditor`, a Chats row's own pencil, described above under [Wiring](#wiring); #828 wires that same modal's Archive action), #676 (the live emulator scenario for #744's open/save/failure flow and #745's removal, blocked by both).

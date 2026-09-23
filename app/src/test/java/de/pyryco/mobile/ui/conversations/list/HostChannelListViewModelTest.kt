@@ -1146,6 +1146,236 @@ class HostChannelListViewModelTest {
         }
 
     /**
+     * Both hosts hold a chat with the same id and different names (#827). Globally unique ids would hide a
+     * rename sent to the wrong host, so every chat-editor test starts from this collision.
+     */
+    private fun Fixture.seedCollidingChats() {
+        a.repo.rows.value = listOf(row("same").copy(name = "A chat"), row("nameless"), row("A-channel", true).copy(name = "A channel"))
+        b.repo.rows.value = listOf(row("same").copy(name = "B chat"))
+    }
+
+    @Test
+    fun chatEditorOpensOnTheRowsOwnHostAndConversationWithoutSelectingOrNavigating() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChats()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            runCurrent()
+
+            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            assertEquals(ChatEditorState("Host", "same", "A chat"), f.vm.hostState.value.chatEditor)
+
+            f.vm.openChatEditor(HostConversationTarget("host", "same"))
+            runCurrent()
+            assertEquals(ChatEditorState("host", "same", "B chat"), f.vm.hostState.value.chatEditor)
+
+            // A chat with no name opens empty — never the list's placeholder text.
+            f.vm.openChatEditor(HostConversationTarget("Host", "nameless"))
+            runCurrent()
+            assertEquals(
+                "",
+                f.vm.hostState.value.chatEditor
+                    ?.initialName,
+            )
+
+            // Neither a chat on another host nor a channel is a Chats row this editor can open.
+            f.vm.dismissChatEditor()
+            for (target in listOf(HostConversationTarget("host", "nameless"), HostConversationTarget("Host", "A-channel"))) {
+                f.vm.openChatEditor(target)
+                runCurrent()
+                assertNull(f.vm.hostState.value.chatEditor)
+            }
+
+            assertNull(f.vm.hostState.value.selected)
+            assertTrue(f.nav.isEmpty())
+            assertTrue(
+                f.a.repo.renames
+                    .isEmpty() &&
+                    f.b.repo.renames
+                        .isEmpty(),
+            )
+        }
+
+    @Test
+    fun chatSubmitRenamesOnlyTheEditorsOwnHostWithTheTrimmedNameAndCloses() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChats()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+
+            // No open editor: nothing to rename.
+            f.vm.submitChatName("orphan")
+            runCurrent()
+            assertTrue(
+                f.a.repo.renames
+                    .isEmpty(),
+            )
+
+            f.vm.openChatEditor(HostConversationTarget("host", "same"))
+            runCurrent()
+            f.vm.submitChatName("  Renamed  ")
+            runCurrent()
+
+            assertEquals(listOf("same" to "Renamed"), f.b.repo.renames)
+            // The other host's chat with the same id is never touched.
+            assertTrue(
+                f.a.repo.renames
+                    .isEmpty(),
+            )
+            assertNull(f.vm.hostState.value.chatEditor)
+            val hosts = f.vm.hostState.value.hosts
+            assertEquals(
+                "Renamed",
+                hosts
+                    .single { it.host.serverId == "host" }
+                    .host.chats
+                    .single()
+                    .name,
+            )
+            assertEquals(
+                "A chat",
+                hosts
+                    .single { it.host.serverId == "Host" }
+                    .host.chats
+                    .first()
+                    .name,
+            )
+        }
+
+    @Test
+    fun chatEditorFollowsItsOwnHostsConnectionWithoutClosing() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChats()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            val open = f.vm.hostState.value.chatEditor
+            assertTrue(
+                f.vm.hostState.value
+                    .isHostConnected("Host"),
+            )
+
+            f.a.status.value = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
+            runCurrent()
+            assertFalse(
+                f.vm.hostState.value
+                    .isHostConnected("Host"),
+            )
+            // The other host's connection is its own.
+            assertTrue(
+                f.vm.hostState.value
+                    .isHostConnected("host"),
+            )
+            assertEquals(open, f.vm.hostState.value.chatEditor)
+
+            f.a.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Handshaking)
+            runCurrent()
+            assertFalse(
+                f.vm.hostState.value
+                    .isHostConnected("Host"),
+            )
+
+            f.a.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
+            runCurrent()
+            assertTrue(
+                f.vm.hostState.value
+                    .isHostConnected("Host"),
+            )
+            assertEquals(open, f.vm.hostState.value.chatEditor)
+
+            // Lost between the last status and the press: nothing is sent, and the modal says it failed.
+            f.a.available = false
+            f.vm.submitChatName("Renamed")
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.chatEditor).failed)
+            assertTrue(
+                f.a.repo.renames
+                    .isEmpty() &&
+                    f.b.repo.renames
+                        .isEmpty(),
+            )
+        }
+
+    @Test
+    fun failedChatRenameStaysOpenQuietlyAndALateCompletionCannotReopen() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChats()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+
+            f.a.repo.failure = RelayErrorException("server.error", false, "server-secret")
+            f.vm.submitChatName("Typed")
+            runCurrent()
+            val failed = requireNotNull(f.vm.hostState.value.chatEditor)
+            assertTrue(failed.failed)
+            assertFalse(failed.saving)
+            assertEquals("same", failed.conversationId)
+            assertEquals(
+                "A chat",
+                f.a.repo.rows.value!!
+                    .first()
+                    .name,
+            )
+            assertTrue(logs.any { "chat_rename_failed" in it })
+            assertTrue(
+                "no name, id or server message may reach a log line: $logs",
+                logs.none { "server-secret" in it || "Typed" in it || "A chat" in it || "same" in it || "Host" in it },
+            )
+
+            // Still actionable: a retry that succeeds closes.
+            f.a.repo.failure = null
+            f.vm.submitChatName("Typed")
+            runCurrent()
+            assertEquals(listOf("same" to "Typed"), f.a.repo.renames)
+            assertNull(f.vm.hostState.value.chatEditor)
+
+            // A write landing after a dismissal must not resurrect the modal, and a second OK mid-write is ignored.
+            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            val gate = CompletableDeferred<Unit>()
+            f.a.repo.renameGate = gate
+            f.vm.submitChatName("Later")
+            f.vm.submitChatName("Twice")
+            runCurrent()
+            assertTrue(requireNotNull(f.vm.hostState.value.chatEditor).saving)
+            f.vm.dismissChatEditor()
+            gate.complete(Unit)
+            runCurrent()
+            assertNull(f.vm.hostState.value.chatEditor)
+            assertEquals(listOf("same" to "Typed", "same" to "Later"), f.a.repo.renames)
+        }
+
+    @Test
+    fun dismissingTheChatEditorSendsNothing() =
+        runTest(dispatcher) {
+            val f = fixture()
+            f.seedCollidingChats()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.vm.openChatEditor(HostConversationTarget("Host", "same"))
+            runCurrent()
+            f.vm.dismissChatEditor()
+            runCurrent()
+            assertNull(f.vm.hostState.value.chatEditor)
+            assertTrue(
+                f.a.repo.renames
+                    .isEmpty() &&
+                    f.b.repo.renames
+                        .isEmpty(),
+            )
+            assertEquals(
+                "A chat",
+                f.a.repo.rows.value!!
+                    .first()
+                    .name,
+            )
+        }
+
+    /**
      * Reads the supplied snapshot until something writes, then the written value.
      *
      * The unpair path clears the removed host's cached workspace through `DataStore.edit`, which the
@@ -1305,6 +1535,21 @@ class HostChannelListViewModelTest {
             createGate?.await()
             return row("returned-id")
         }
+
+        // Records every rename and applies it to this repo's own rows, as the daemon's re-emitted list would.
+        override suspend fun rename(
+            conversationId: String,
+            name: String,
+        ): Conversation {
+            renameGate?.await()
+            failure?.let { throw it }
+            renames += conversationId to name
+            rows.value = rows.value?.map { if (it.id == conversationId) it.copy(name = name) else it }
+            return requireNotNull(rows.value).first { it.id == conversationId }
+        }
+
+        val renames = mutableListOf<Pair<String, String>>()
+        var renameGate: CompletableDeferred<Unit>? = null
     }
 
     companion object {
