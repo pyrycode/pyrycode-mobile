@@ -6809,6 +6809,50 @@ class RemoteConversationRepositoryTest {
             assertEquals("ev", boundaries[1].newSessionId)
         }
 
+    // #775 AC #1: a session evicted, woken and evicted again keeps its id, so an honest daemon sends `A->A`
+    // twice with different occurred_at. Both are real delimiters and both land, in arrival order.
+    @Test
+    fun sessionTransition_repeatedEvictionOfOneSession_foldsOneBoundaryPerInstant() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(sessionTransitionEnvelope("c1", "A", "A", "idle_evict", occurredAt = "2026-06-23T12:00:00Z", id = 1L))
+            runCurrent()
+            pump.push(messageEnvelope("c1", "m1", "user", "wake up", "2026-06-23T12:30:00Z"))
+            runCurrent()
+            pump.push(sessionTransitionEnvelope("c1", "A", "A", "idle_evict", occurredAt = "2026-06-23T13:00:00Z", id = 2L))
+            runCurrent()
+
+            assertEquals(listOf("boundary:IdleEvict", "m1", "boundary:IdleEvict"), threadShape(emissions.last()))
+            assertEquals(
+                listOf(Instant.parse("2026-06-23T12:00:00Z"), Instant.parse("2026-06-23T13:00:00Z")),
+                boundariesOf(emissions.last()).map { it.occurredAt },
+            )
+        }
+
+    // #775 AC #2: a frame repeating a held boundary's pair AND occurred_at is the same boundary, and adds no
+    // second row — whatever arrived in between keeps its place.
+    @Test
+    fun sessionTransition_repeatOfAHeldBoundary_addsNoSecondRow() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear", occurredAt = "2026-06-23T12:00:00Z", id = 1L))
+            runCurrent()
+            pump.push(messageEnvelope("c1", "m1", "user", "hi", "2026-06-23T12:30:00Z"))
+            runCurrent()
+            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear", occurredAt = "2026-06-23T12:00:00Z", id = 2L))
+            runCurrent()
+
+            assertEquals(listOf("boundary:Clear", "m1"), threadShape(emissions.last()))
+        }
+
     // AC #4: occurred_at parses to the SessionBoundary.occurredAt Instant.
     @Test
     fun sessionTransition_occurredAtParsesToInstant() =

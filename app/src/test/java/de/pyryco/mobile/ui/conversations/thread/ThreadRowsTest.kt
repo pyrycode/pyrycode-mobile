@@ -63,13 +63,20 @@ class ThreadRowsTest {
             occurredAt = ts,
         )
 
-    private fun boundary(): ThreadItem.SessionBoundary =
+    private fun boundary(
+        previous: String = "s0",
+        new: String = "s1",
+        occurredAt: Instant = ts,
+        reason: BoundaryReason = BoundaryReason.Clear,
+    ): ThreadItem.SessionBoundary =
         ThreadItem.SessionBoundary(
-            previousSessionId = "s0",
-            newSessionId = "s1",
-            reason = BoundaryReason.Clear,
-            occurredAt = ts,
+            previousSessionId = previous,
+            newSessionId = new,
+            reason = reason,
+            occurredAt = occurredAt,
         )
+
+    private fun ThreadItem.key(): String = ThreadRow.Delivered(this).listKey(0)
 
     private fun queued(
         id: Long,
@@ -243,5 +250,33 @@ class ThreadRowsTest {
             }
         }
         assertNull(withBacklog.queuedRows().single { it.queuedMessageId == 2L }.echoId)
+    }
+
+    // #775 — an idle-evicted session keeps its id, so every eviction of it is `A->A`. Two of them share the
+    // pair and differ only in occurredAt, and each must key its own row or the LazyColumn throws.
+    @Test
+    fun `boundaries sharing a session pair but not an instant get distinct keys`() {
+        val first = boundary(previous = "A", new = "A", reason = BoundaryReason.IdleEvict)
+        val second = first.copy(occurredAt = Instant.parse("2026-09-22T11:00:00Z"))
+
+        assertNotEquals(first.key(), second.key())
+    }
+
+    // #775 — the ids are daemon-supplied, so a delimiter inside one must not let two different triples
+    // concatenate to one key.
+    @Test
+    fun `boundary ids that would concatenate identically still get distinct keys`() {
+        assertNotEquals(boundary(previous = "a->b", new = "c").key(), boundary(previous = "a", new = "b->c").key())
+        assertNotEquals(boundary(previous = "a1:", new = "b").key(), boundary(previous = "a", new = "1:b").key())
+    }
+
+    // #775 — the key reads exactly the triple the dedups compare: equal triples key equally whatever the
+    // reason, which is why the dedups must collapse them.
+    @Test
+    fun `a boundary's key reads its session pair and instant and nothing else`() {
+        assertEquals(boundary().key(), boundary().key())
+        assertEquals(boundary().key(), boundary(reason = BoundaryReason.IdleEvict).key())
+        assertNotEquals(boundary().key(), boundary(new = "s2").key())
+        assertNotEquals(boundary().key(), boundary(previous = "s9").key())
     }
 }
