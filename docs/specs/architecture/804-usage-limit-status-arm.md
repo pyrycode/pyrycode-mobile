@@ -123,3 +123,7 @@ Pending for the documentation stage: fold this render arm into `docs/knowledge/f
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-23
+
+## Revisions
+
+- **2026-09-23 — open question resolved, no design change.** `git merge-tree --write-tree` of this branch against `origin/feature/859` reports no conflict; the two edits to `ThreadViewModel.kt` are disjoint hunks.
