@@ -665,9 +665,20 @@ if [ -z "${DETERMINISTIC}" ]; then
   fi
   DAEMON_B_PID=$!
 fi
-sleep 3
-kill -0 "${DAEMON_PID}" 2>/dev/null || die "daemon exited early; see private log ${DAEMON_LOG}"
-[ -z "${DAEMON_B_PID}" ] || kill -0 "${DAEMON_B_PID}" 2>/dev/null || die "second daemon exited early; see private log ${DAEMON_B_LOG}"
+# Wait until each daemon's control socket answers `pyry status`, the readiness pyrycode's own e2e
+# harness polls for (internal/e2e/harness.go waitForReady), instead of the fixed three-second sleep this
+# replaced: that cost three seconds on every one of the seven scripted scenarios per verifier pass.
+if [ -n "${DETERMINISTIC}" ]; then DAEMON_HOME="${ISO_HOME}"; else DAEMON_HOME="${HOME}"; fi
+wait_daemon_ready() {
+  local name="$1" pid="$2" logfile="$3" label="$4" deadline=$((SECONDS + 15))
+  until env "HOME=${DAEMON_HOME}" "${PYRY_BIN}" status -pyry-name="${name}" >/dev/null 2>&1; do
+    kill -0 "${pid}" 2>/dev/null || die "${label} exited early; see private log ${logfile}"
+    [ "${SECONDS}" -lt "${deadline}" ] || die "${label} not ready within 15s; see private log ${logfile}"
+    sleep 0.1
+  done
+}
+wait_daemon_ready "${PYRY_NAME}" "${DAEMON_PID}" "${DAEMON_LOG}" "daemon"
+[ -z "${DAEMON_B_PID}" ] || wait_daemon_ready "${PYRY_NAME_B}" "${DAEMON_B_PID}" "${DAEMON_B_LOG}" "second daemon"
 log "daemon up (the test waits for the relay session to open before sending)."
 
 # ---- pair against the running test daemon ---------------

@@ -56,6 +56,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
@@ -558,6 +559,10 @@ class HostChannelListViewModelTest {
     @Test
     fun appModuleInjectsSharedDemoSourceAndCreatesThroughExistingFakeSingleton() =
         runTest(dispatcher) {
+            // The Koin source publishes from Dispatchers.Default. An unconfined Main would run the view
+            // model, and through it this body and its finally, on that worker (#892); dispatching Main
+            // queues them for this thread instead.
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
             val values = MutableStateFlow(emptyPreferences())
             val prefs =
                 AppPreferences(
