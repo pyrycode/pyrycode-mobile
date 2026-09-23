@@ -46,3 +46,7 @@ Unit tests, JVM only:
 ## Open questions
 
 None.
+
+## Revisions
+
+- **2026-09-24, during implementation.** The unpair test fixture also holds a second `AttachmentStore` over the same root on the test's unconfined dispatcher, used only to seed and read back files. Seeding through the queued store resumed the test body inside that dispatcher's task, where the view model's unconfined launches never started, so the editor never opened. Production design unchanged.

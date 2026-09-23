@@ -227,6 +227,62 @@ class AttachmentStoreTest {
             assertEquals(1, fetches)
         }
 
+    @Test
+    fun removeHost_deletesEveryFileKeptForThatHost_andLeavesOtherHostsReadable() =
+        runTest {
+            val store = store()
+            store.retrieve(SERVER_A, CONVERSATION_ID, ATTACHMENT_ID) { fetched(bytes) }
+            store.retrieve(SERVER_A, OTHER_CONVERSATION_ID, ATTACHMENT_ID) { fetched(bytes) }
+            store.retrieve(SERVER_B, CONVERSATION_ID, ATTACHMENT_ID) { fetched(bytes) }
+
+            assertTrue(store.removeHost(SERVER_A).isSuccess)
+
+            var fetches = 0
+            store.retrieve(SERVER_A, CONVERSATION_ID, ATTACHMENT_ID) {
+                fetches++
+                fetched(bytes)
+            }
+            assertEquals("the removed host's file is gone, so it is fetched again", 1, fetches)
+            val kept =
+                store.retrieve(
+                    SERVER_B,
+                    CONVERSATION_ID,
+                    ATTACHMENT_ID,
+                ) { error("must not fetch") } as AttachmentRetrievalResult.Retrieved
+            assertArrayEquals(bytes, kept.file.readBytes())
+            assertTrue(store.removeHost(SERVER_A).isSuccess)
+            assertEquals(1, root().listFiles()?.size)
+        }
+
+    @Test
+    fun removeHost_ofAnUnknownHost_isASuccessfulNoOp() =
+        runTest {
+            assertTrue(store().removeHost("server-unknown").isSuccess)
+            assertFalse(root().exists())
+        }
+
+    @Test
+    fun removeHost_thatCannotDelete_reportsFailure_withoutThrowing() =
+        runTest {
+            val store = store()
+            store.retrieve(SERVER_A, CONVERSATION_ID, ATTACHMENT_ID) { fetched(bytes) }
+            root().setWritable(false)
+            try {
+                val result = store.removeHost(SERVER_A)
+                assertTrue(result.isFailure)
+                assertFalse(
+                    "no id or path in the failure",
+                    result
+                        .exceptionOrNull()
+                        ?.message
+                        .orEmpty()
+                        .contains(folder.root.path),
+                )
+            } finally {
+                root().setWritable(true)
+            }
+        }
+
     private fun TestScope.store() = AttachmentStore(root(), StandardTestDispatcher(testScheduler))
 
     private fun root() = File(folder.root, "attachments")
@@ -237,6 +293,7 @@ class AttachmentStoreTest {
         const val SERVER_A = "server-a"
         const val SERVER_B = "server-b"
         const val CONVERSATION_ID = "9d4e7a21-8c05-4f3b-b6e2-1a7c9e30d5f4"
+        const val OTHER_CONVERSATION_ID = "2b8f0c64-1e97-4d2a-a5c3-7f60e4b91d28"
         const val ATTACHMENT_ID = "7c1d5e92-4a30-4b8f-9e21-6d4c3b0a8f55"
     }
 }
