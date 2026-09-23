@@ -66,3 +66,27 @@ This is pending for the documentation stage:
 ## Open questions
 
 - None. The `settleDrops` signature and the `observe` rename are decided above.
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] No findings. The daemon frame becomes a typed value at exactly one decoder per frame type, as before. `ThreadProjection`'s `decodeUnrecognizedMessage`, `decodeBanner` and `decodeCompactionBoundary` are private and reached only through `applyUnrecognizedMessage`, `applyBanner` and `applyCompactionBoundary`, and `applyToolDenied` / `applyToolProgress` keep their own decode. Each body is still one `try` / `catch (IllegalArgumentException)` that returns null or returns early, so a malformed payload or `ts` drops that one envelope and nothing propagates to the collector. No DTO escapes the class: callers pass an `Envelope` in and the store holds only `ThreadItem`s. Decoders whose output feeds more than the thread (`decodeLiveSessionEvent`, `decodeSessionTransition`, the `message` / `message_chunk` decodes) stay in the repository, so no frame is decoded twice or in two places. The render path is unchanged; the thread still reaches Compose only as `ThreadItem` text.
+- [Trust boundaries — capability gate] No findings. Every `CAPABILITY_INTERACTIVE in negotiatedCapabilities()` gate stays in the repository's `onInbound` arms, wrapping each hand-off. `mergeHistoryPage` now takes `interactive` as a parameter, and its only caller, `requestHistory`, computes it from `negotiatedCapabilities()` after the reply decodes, the same moment the old private function read it. `negotiatedCapabilities` defaults to `{ emptySet() }`, so an unwired repository still reduces no structured history entry: the merge still fails closed. The one difference is that the flag is now read even for an empty page, which is a pure read with no effect.
+- [Tokens, secrets, credentials] No findings. The move touches no token, key or pairing material. The minted-id ledger holds client-generated message ids, whose generation stays in `sendMessage` and is unchanged.
+- [File / storage] No findings. All moved state is in-memory `MutableStateFlow`s and an `AtomicLong`, connection-scoped exactly as before. Nothing is persisted.
+- [Inter-process / Android surface] No findings. No manifest, intent, deep link, WebView or push change. `ThreadProjection` is `internal` with no Android import.
+- [Cryptographic primitives] No findings. No crypto is touched. `unrecognizedRowId` is a local row counter, not a security value; its KDoc explaining why a monotonic counter suffices moved with it.
+- [Network & I/O] No findings. The frame cap, transport, timeouts and reconnect discipline live in `data/network/` and are untouched. `observeMessages` still sends `backfill_since` before reading the projection.
+- [Logs] No findings. `ThreadProjection` has no `Log`, `Timber` or `println` call on any branch, and the moved KDoc keeps the no-logging rule for payload fields (`raw`, `message_type`, `conversation_id`). The repository's existing arm-level logging is unchanged.
+- [Concurrency] No findings. The projection has no scope and launches nothing, so every inbound write still runs on the repository's single inbound collector. `threadProjection` is initialised in the repository's property list before `init` starts that collector. Every write is still one `MutableStateFlow.update` with the same lambda body. The #781 / #859 correlation rule is unchanged: `recordMinted`, `recordDrop` and `withdrawDrop` are the same single-line updates `sendMessage` and `dropQueuedMessage` made; `settleDrops` still claims the pending entries in one atomic update against `QueueProjection.current`, which is now passed in rather than read from the field; and `removeOwnEcho` still removes only an id in `mintedMessageIds` and spends it before removing the row. `removeOwnEcho`'s check of `mintedMessageIds.value` before its update is a pre-existing check-then-act carried over as is; a double settle removes an already-removed row, which is idempotent, so it is recorded here and not changed in a move ticket.
+- [Threat model] No findings. A hostile daemon frame is still decoded defensively and dropped on failure. A hostile relay can still only drop, delay or reorder frames, and the projection's folds are unchanged in how they handle each. No new threat is introduced, since behaviour is unchanged.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-09-23
+
+## Revisions
+
+- **2026-09-23 — security review added after the implementation commit.** The ticket carried the `security-sensitive` label when the builder was dispatched, but the first run committed this plan and the implementation without the § A6 pass. The verifier's review of PR #918 caught this. The pass above was run against the committed code as well as this plan, checking the points the verifier named: the moved decoders' drop idiom, no logging in `ThreadProjection`, single-collector and atomic writes, the #781 / #859 ledger, and the fail-closed `interactive` flag passed to `mergeHistoryPage`. It found nothing the code does not honour, so the design and the code are unchanged.
