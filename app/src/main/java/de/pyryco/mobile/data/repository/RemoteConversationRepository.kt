@@ -46,6 +46,7 @@ import de.pyryco.mobile.data.network.RecentWorkspacesListPayloadDto
 import de.pyryco.mobile.data.network.RegisterPushTokenPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RenameConversationPayloadDto
+import de.pyryco.mobile.data.network.RenameWorkspacePayloadDto
 import de.pyryco.mobile.data.network.ReplayCursor
 import de.pyryco.mobile.data.network.RequestHistoryPayloadDto
 import de.pyryco.mobile.data.network.RequestModelListPayloadDto
@@ -79,6 +80,7 @@ import de.pyryco.mobile.data.network.toMessage
 import de.pyryco.mobile.data.network.toRow
 import de.pyryco.mobile.data.network.toSessionSettings
 import de.pyryco.mobile.data.network.toSystemPromptReading
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -606,24 +608,30 @@ class RemoteConversationRepository(
                 // producer — the correlated reply to `rename_workspace` and the unsolicited push the
                 // daemon fans to every *other* interactive-capable conn — but unlike it the record is
                 // applied **unconditionally**, whether or not `in_reply_to` is set (AC #1): the payload
-                // is identical either way and nothing in this repository sends `rename_workspace` yet,
-                // so completing a waiter here would be plumbing for a request that has no sender (#663
-                // adds both together). Deliberately NOT capability-gated: the gate would break the
+                // is identical either way. A matching [renameWorkspace] waiter (#663) is completed only
+                // **after** the apply, so the caller resumes onto rows that already carry the label.
+                // Deliberately NOT capability-gated: the gate would break the
                 // correlated half and buys nothing, since a daemon ignoring the negotiated set could
                 // drive the same label change through an ungated `conversations` snapshot.
                 // Decode-or-drop is the single failure surface (a missing/ill-typed `path` →
                 // SerializationException ⊂ IllegalArgumentException), so a malformed frame leaves the
                 // projection intact and the lone inbound collector alive for the next valid one (AC #3).
+                // A malformed *correlated* one also fails its waiter with a static error, rather than
+                // leaving the rename suspended until teardown; the decode exception is not forwarded,
+                // since its message can quote the payload.
                 // Drop silently: `path` is a filesystem location on the daemon's host and `label` is
                 // operator-authored text — neither reaches a log on any branch, matching the daemon,
                 // which records only a conn id and an event name for this verb.
+                val waiter = envelope.inReplyTo?.let { id -> pendingRequests[id] }
                 val decoded =
                     try {
                         MobileJson.decodeFromJsonElement<WorkspaceUpdatedPayloadDto>(envelope.payload)
                     } catch (e: IllegalArgumentException) {
+                        waiter?.completeExceptionally(malformedWorkspaceReply())
                         return
                     }
                 applyWorkspaceLabel(decoded.path, decoded.label)
+                waiter?.complete(envelope.payload)
             }
             TYPE_ACK, TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_DELETED,
             TYPE_SCREEN_SNAPSHOT, TYPE_SESSION_SETTINGS_UPDATED, TYPE_WORKSPACE_FOLDER_CREATED,
@@ -2820,6 +2828,80 @@ class RemoteConversationRepository(
     }
 
     /**
+     * Set or clear the label this host stores for the workspace at [path] over v2 `rename_workspace`
+     * (#663). [path] and [label] go out verbatim ([RenameWorkspacePayloadDto]); the daemon validates the
+     * label. The [TYPE_WORKSPACE_UPDATED] arm of [onInbound] applies the correlated reply through
+     * [applyWorkspaceLabel] **before** completing this waiter, so the rows are relabelled by the time
+     * this returns — there is nothing left to fold here.
+     *
+     * The reply is still re-decoded and must name [path]: a frame of another type correlated to this id
+     * (the shared arms complete any waiter with any payload), or a `workspace_updated` for a different
+     * path, would otherwise report success while [path] stayed unlabelled. That case, and a malformed
+     * reply, throw [RelayErrorException] with [ERROR_MALFORMED_REPLY]. Daemon refusals keep their code
+     * through [mapError] (`workspace.not_found` stays a [RelayErrorException], never the
+     * unknown-conversation [IllegalArgumentException]); a not-`Open` pump or teardown mid-await throws
+     * [IllegalStateException]. Not gated on `interactive`. Logs nothing, and no exception message carries
+     * the path or the label.
+     */
+    override suspend fun renameWorkspace(
+        path: String,
+        label: String?,
+    ) {
+        val request =
+            Envelope(
+                id = requestId.incrementAndGet(),
+                type = TYPE_RENAME_WORKSPACE,
+                ts = Clock.System.now().toString(),
+                payload = MobileJson.encodeToJsonElement(RenameWorkspacePayloadDto(path = path, label = label)),
+            )
+        val reply = sendAndAwaitReply(request)
+        val confirmedPath =
+            try {
+                MobileJson.decodeFromJsonElement<WorkspaceUpdatedPayloadDto>(reply).path
+            } catch (e: IllegalArgumentException) {
+                null
+            }
+        if (confirmedPath != path) throw malformedWorkspaceReply()
+    }
+
+    /**
+     * Archive every active row at [path] on this host (#663) — the client-side fan-out desktop's
+     * `requestArchiveWorkspace` performs, since the wire has no workspace archive verb. Targets are a
+     * one-time snapshot of [projection]: rows whose `cwd` equals [path] by plain [String] equality (no
+     * trim, no normalization) and that are not already archived. A `null` projection has no rows, so the
+     * call does not wait for a list, and no targets means no frame.
+     *
+     * Each target goes through [archive] **sequentially**, which confirmed-upserts its own row on its own
+     * reply, so rows leave the active tiers one by one. A failure is kept and the loop moves on; after the
+     * last row the first failure is rethrown unchanged. A torn-down connection surfaces as the
+     * [IllegalStateException] of [failAllPending] and then of the not-connected check, so the rest fail
+     * fast. Caller cancellation is rethrown at once — checked before the general catch, because
+     * [CancellationException] is itself an [IllegalStateException]. Sends no rename or delete, so the
+     * stored label stays. Logs nothing: neither the path nor a row id reaches Logcat.
+     */
+    override suspend fun archiveWorkspace(path: String) {
+        val targets =
+            projection.value
+                .orEmpty()
+                .filter { it.cwd == path && !it.archived }
+                .map { it.id }
+        var firstFailure: Exception? = null
+        for (conversationId in targets) {
+            try {
+                archive(conversationId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (firstFailure == null) firstFailure = e
+            }
+        }
+        firstFailure?.let { throw it }
+    }
+
+    private fun malformedWorkspaceReply() =
+        RelayErrorException(code = ERROR_MALFORMED_REPLY, retryable = false, message = WORKSPACE_REPLY_MALFORMED)
+
+    /**
      * Widened from `private` to `internal` by #645 so [reduceHistoryPage] can dispatch a stored
      * [HistoryEntry.type] against the **same** wire-string declarations this class demuxes live frames
      * on, rather than re-spelling eight protocol strings in a second place. The constants are protocol
@@ -2961,6 +3043,9 @@ class RemoteConversationRepository(
          * client disconnected during a rename reads the label off its next [TYPE_CONVERSATIONS] snapshot.
          */
         const val TYPE_WORKSPACE_UPDATED = "workspace_updated"
+
+        /** Request: set or clear one workspace's label (#663). Reply is a correlated [TYPE_WORKSPACE_UPDATED]. */
+        const val TYPE_RENAME_WORKSPACE = "rename_workspace"
 
         /** Request: one-shot text snapshot of the current claude screen (#375, #617 `RequestSnapshot`). */
         const val TYPE_REQUEST_SNAPSHOT = "request_snapshot"
@@ -3210,6 +3295,9 @@ class RemoteConversationRepository(
         /** Static refusals for the system-prompt verbs (#823): never the value, its length or the id. */
         const val SYSTEM_PROMPT_READ_NOT_INTERACTIVE = "request_system_prompt not sent: interactive not negotiated"
         const val SYSTEM_PROMPT_TOO_LONG = "set_system_prompt not sent: value exceeds the byte limit"
+
+        /** Static failure for a `rename_workspace` reply that is malformed or does not confirm the path (#663). */
+        const val WORKSPACE_REPLY_MALFORMED = "workspace_updated reply did not confirm the workspace"
 
         /**
          * RFC-3339 epoch cursor for "all history on first load" — `backfill_since.since_ts` is a

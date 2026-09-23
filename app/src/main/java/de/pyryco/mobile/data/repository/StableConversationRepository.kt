@@ -191,6 +191,17 @@ class StableConversationRepository(
 
     override suspend fun createWorkspaceFolder(name: String): String = live.createWorkspaceFolder(name)
 
+    /**
+     * The workspace verbs (#663) go to this host's live repository with the path and label untouched,
+     * so the facade is the host targeting and adds no routing of its own.
+     */
+    override suspend fun renameWorkspace(
+        path: String,
+        label: String?,
+    ): Unit = live.renameWorkspace(path, label)
+
+    override suspend fun archiveWorkspace(path: String): Unit = live.archiveWorkspace(path)
+
     override suspend fun requestScreenSnapshot(conversationId: String): String = live.requestScreenSnapshot(conversationId)
 
     override suspend fun dropQueuedMessage(

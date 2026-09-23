@@ -178,6 +178,24 @@ class StableConversationRepositoryTest {
             assertTrue(runCatching { facade.requestHistory("c1") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.requestSystemPrompt("c1") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.setSystemPrompt("c1", "x") }.exceptionOrNull() is IllegalStateException)
+            assertTrue(runCatching { facade.renameWorkspace("/w", "x") }.exceptionOrNull() is IllegalStateException)
+            assertTrue(runCatching { facade.archiveWorkspace("/w") }.exceptionOrNull() is IllegalStateException)
+        }
+
+    // #663: the workspace verbs reach this host's live repo with the path and label untouched — the
+    // facade trims nothing, and a null label is the clear, not an omission.
+    @Test
+    fun workspaceVerbs_whenLive_delegateVerbatim() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(repoA))
+
+            facade.renameWorkspace("/w/alpha ", " Tax ")
+            facade.renameWorkspace("/w/alpha", null)
+            facade.archiveWorkspace("/w/alpha/")
+
+            assertEquals(listOf<Pair<String, String?>>("/w/alpha " to " Tax ", "/w/alpha" to null), repoA.renameWorkspaceCalls)
+            assertEquals(listOf("/w/alpha/"), repoA.archiveWorkspaceCalls)
         }
 
     // #823: both system-prompt calls reach the live repo with the id and value untouched — null, "" and
@@ -645,6 +663,8 @@ class StableConversationRepositoryTest {
         val requestSystemPromptResult = SystemPromptReading("stored", SessionPromptStatus.Matches)
         val requestSystemPromptCalls = mutableListOf<String>()
         val setSystemPromptCalls = mutableListOf<Pair<String, String?>>()
+        val renameWorkspaceCalls = mutableListOf<Pair<String, String?>>()
+        val archiveWorkspaceCalls = mutableListOf<String>()
 
         fun pushConversations(value: List<Conversation>) {
             conversations.value = value
@@ -754,6 +774,17 @@ class StableConversationRepositoryTest {
             systemPrompt: String?,
         ) {
             setSystemPromptCalls += conversationId to systemPrompt
+        }
+
+        override suspend fun renameWorkspace(
+            path: String,
+            label: String?,
+        ) {
+            renameWorkspaceCalls += path to label
+        }
+
+        override suspend fun archiveWorkspace(path: String) {
+            archiveWorkspaceCalls += path
         }
 
         override suspend fun requestScreenSnapshot(conversationId: String): String {
