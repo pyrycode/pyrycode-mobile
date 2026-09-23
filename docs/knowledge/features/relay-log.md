@@ -112,8 +112,12 @@ suspenders.
 
 ## Usage
 
-Not yet wired anywhere (adoption is a future ticket — see Scope above). When a diagnosis session
-adopts it:
+Adopted widely since #521 as the app's general debug-event logger, not only for connection diagnosis —
+`RelayLog.d` calls now live across the ViewModels, `di/`, and several `data/repository/` transfers,
+including [`DebugBundleTransfer`](relay-debug-bundle-transfer.md) and the [attachment
+upload](attachment-upload.md)'s `AttachmentUploadTransfer` (#829). The four relay-transport files this
+ticket named as future adoption targets (see Scope above) still emit no logs; that scope line is
+otherwise stale.
 
 ```kotlin
 RelayLog.i { "relay open ${RelayLog.redactConnId(connId)} caps=${caps.joinToString()}" }
@@ -159,5 +163,9 @@ them, so the `Log` class is never loaded.
   this facility is *ready to* instrument but does **not** touch in #521 (adoption is a future ticket)
 - [Paired server store](paired-server-store.md) — home of the `PairedServer.toString`
   never-log-secret comment this facility's contract generalizes
+- [Attachment upload](attachment-upload.md) ([#829](https://github.com/pyrycode/pyrycode-mobile/issues/829)) —
+  a `data/repository/` adopter whose unit tests needed the `sink` capturing seam this doc's Testing
+  section describes, because the upload's `RelayLog.d` calls run inside a `backgroundScope` coroutine
+  where the JVM `"not mocked"` throw silently kills the coroutine instead of failing the test
 - Ticket: [#521](../codebase/521.md) — implementation notes. Split from #500; sibling #522 (transport
   frame-reject tests)
