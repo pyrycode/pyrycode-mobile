@@ -128,8 +128,9 @@ user gets the level number, and neither depends on colour (the AC's requirement)
 ### Subject and elapsed text
 
 Both rules live in `ToolRowFormat.kt`, mirrored from desktop's `toolHeadline.ts` / `shortenPath.ts` /
-`ConversationScreen.tsx`'s `formatToolElapsed`, and are pure functions with no Compose import so a
-future ticket's composer status area can call `formatToolElapsed` directly:
+`ConversationScreen.tsx`'s `formatToolElapsed`, and are pure functions with no Compose import so the
+composer's status area ([`ThinkingIndicator`](thinking-indicator.md#the-running-tool-897), #897) can call
+`formatToolElapsed` directly:
 
 ```kotlin
 internal fun toolRowSubject(toolName: String, inputFields: Map<String, String>, input: String): String
@@ -360,8 +361,9 @@ rendering doesn't ripple into the data-layer fake.
   - **#896** — subagent tool-row nesting (split from #658): added `subagentDepth` and the "Subagent step,
     level N" description here; the caller ([`MessageBubble`](./message-bubble.md)) owns the indent. See
     [Subagent step description](#subagent-step-description-since-896) above.
+  - **#897** — naming the open tool in the composer's status area (split from #658): calls
+    `formatToolElapsed` directly from [`ThinkingIndicator`](thinking-indicator.md#the-running-tool-897);
+    nothing in this file changed for it.
 - Still open:
-  - Naming the open tool in the composer's status area, reusing `formatToolElapsed` from
-    `ToolRowFormat.kt` (split from #658, not #895 or #896)
   - Language inference from path extension for `Read`/`Edit` code blocks
   - `AnimatedVisibility` around the expanded body
