@@ -33,11 +33,14 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
+import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_RELAY_URL
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
@@ -52,6 +55,7 @@ import de.pyryco.mobile.ui.conversations.thread.SESSION_BOUNDARY_EXPLANATION
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedPingReply
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedSessionBoundary
 import de.pyryco.mobile.ui.conversations.thread.pingReplyMatcher
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -1496,8 +1500,10 @@ class InteractiveStreamE2ETest {
      *    draws none of it, which is what shows it really was offline;
      *  * **reconnected** — the thread draws that turn after the ping, and each of the four messages once.
      *
-     * The cut waits for the ping turn's `turn_end` as the peer sees it: a disconnect keeps only settled
-     * rows, so cutting while the reply still streamed would drop it by design.
+     * The cut waits until the phone itself has settled the ping reply — its thread cache holds it, which
+     * the open thread's collector writes only after drawing the settled row. A disconnect keeps only settled
+     * rows, and the peer's copy of `turn_end` can arrive before the phone's, so waiting on the peer alone
+     * could cut while the phone's reply still streamed and drop it by design.
      *
      * **Two real-claude turns**: the phone's ping and the peer's offline turn.
      */
@@ -1531,10 +1537,12 @@ class InteractiveStreamE2ETest {
             val chatName = OFFLINE_CHAT_NAME_PREFIX + System.currentTimeMillis()
             renameOpenThread(chatName)
 
-            // 2. Load history: the phone's ping turn renders and ends, so its rows are settled before the cut.
+            // 2. Load history: the phone's ping turn renders and ends. The peer's turn_end keeps the later
+            //    occurrence count right; the phone's own cache is what shows its rows settled before the cut.
             sendFromPhone(PING_PROMPT)
             composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
             runBlocking { peer.awaitFrame(conversationId, "turn_end", REPLY_TIMEOUT_MS) }
+            awaitCachedAssistantReply(serverId, conversationId)
 
             // 3. AC-1: cut the phone's link. The open thread keeps what it drew.
             setHostLink(serverId, up = false)
@@ -1579,6 +1587,30 @@ class InteractiveStreamE2ETest {
             assertTrue("two of the messages share a row; tops $tops", tops.distinct().size == tops.size)
         } finally {
             peer.close()
+        }
+    }
+
+    /**
+     * Wait until the phone's thread cache for [conversationId] holds an assistant reply. The cache only
+     * ever holds settled rows, and the open thread's collector writes them after drawing them, so this is
+     * the phone's own proof that the reply settled — not another device's copy of `turn_end`.
+     */
+    private fun awaitCachedAssistantReply(
+        serverId: String,
+        conversationId: String,
+    ) {
+        val cache = GlobalContext.get().get<ConversationCache>()
+        runBlocking {
+            withTimeout(THREAD_TIMEOUT_MS) {
+                while (cache
+                        .readThread(
+                            serverId,
+                            conversationId,
+                        ).none { it is ThreadItem.MessageItem && it.message.role == Role.Assistant }
+                ) {
+                    delay(CACHE_POLL_MS)
+                }
+            }
         }
     }
 
@@ -2111,6 +2143,9 @@ class InteractiveStreamE2ETest {
         const val LIST_TIMEOUT_MS = 30_000L
         const val CONNECT_TIMEOUT_MS = 30_000L
         const val THREAD_TIMEOUT_MS = 30_000L
+
+        // How often the #850 cut re-reads the thread cache while it waits for the settled reply.
+        const val CACHE_POLL_MS = 200L
 
         // Generous: a real claude turn over the relay can take many seconds end to end.
         const val REPLY_TIMEOUT_MS = 90_000L

@@ -65,3 +65,15 @@ This is the test. Compile via `./gradlew compileDebugAndroidTestKotlin`; `bash -
 ## Open questions
 
 - Does the thread screen stay composed across the cut, or does an offline banner displace the list? Resolved in Phase B by the checks themselves; record in Revisions if it changes the drive.
+
+## Revisions
+
+### 2026-09-23 — cut on the phone's own settled reply (verifier MUST FIX, PR #860)
+
+**Finding.** Step 2 waited only on the peer's `turn_end`. The daemon sends that frame to each interactive connection separately, so the peer's copy can arrive before the phone's; `HistoryPageReducer.withFinalizedTurn` settles the phone's row only on the phone's copy. A cut in between drops the still-streaming reply (`settledThreadRows`), and the offline reads find nothing.
+
+**New contract.** After the peer's `turn_end` (kept: step 5's `occurrence = 2` count depends on it), step 2 waits in a new `awaitCachedAssistantReply(serverId, conversationId)` until the phone's `ConversationCache.readThread` holds an assistant `ThreadItem.MessageItem`. The cache holds only settled rows, and `CachingConversationRepository.observeMessages` writes them only after it has recorded the drawn rows it rebases on at a disconnect, so this one signal covers both the in-memory offline read and the reopened thread's disk restore. The verifier suggested waiting on the host repository's `observeMessages` instead; the cache is chosen because the thread collector's `StateFlow` input is conflated, so a settled store value does not prove the thread's collector saw it before the cut's empty emission. Polls every `CACHE_POLL_MS` inside `THREAD_TIMEOUT_MS`.
+
+### Open question resolved
+
+The thread stays composed across the cut in the drive as written; the offline reads in steps 3–4 check it directly. The live run confirms it.
