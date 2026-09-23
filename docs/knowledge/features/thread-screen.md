@@ -44,7 +44,7 @@ It reads the exact `serverId` and binds a `StableConversationRepository` to that
 retained bundle's coordinator stream; `ThreadViewModel` continues to read the
 host-local `conversationId`. The bundle also supplies connection state, live
 session events, the current permission modal and its answer/cancel callbacks, and
-Stop. See [destination dependencies](dependency-injection.md#destination-ownership).
+Stop. See [destination dependencies](dependency-injection-host-conversation-source.md#destination-ownership).
 
 Messages, sessions, queue state, Send, Reset session, queue drop and existing
 repository-backed actions stay with that owner. Switching compatibility selection
@@ -53,7 +53,7 @@ Reconnect replaces the concrete repository beneath the same owner facade; an A
 outage leaves B usable. During disconnect/handshake, existing empty/default reads,
 unavailable actions and error handling remain in effect without using B as a
 fallback. Connection-banner Retry passes the captured bundle to the registry's
-[lifecycle-checked exact-host Retry](dependency-injection.md#exact-host-retry-and-lifecycle).
+[lifecycle-checked exact-host Retry](dependency-injection-host-conversation-source.md#exact-host-retry-and-lifecycle).
 
 With `useRelay = false`, the explicit `demo` destination uses the existing fake
 singleton, a connected fake connection source, empty live events, hidden modal
@@ -96,7 +96,7 @@ see [DI testing](dependency-injection.md#testing).
 
 ### Composer draft ownership
 
-Unsent composer text is owned by `ComposerDraftStore` ([#789](https://github.com/pyrycode/pyrycode-mobile/issues/789)) — an app-scoped Koin `single { ComposerDraftStore() }` in `di/AppModule.kt`, one process-wide instance reaching every thread destination, the same per-call shape `preferences` already used. Before this, the self-owning `ThreadInputBar` overload held its text in `rememberSaveable`, so a draft's lifetime was the thread destination's composition: navigating away lost it, and the next chat opened in that slot inherited whatever that composition state happened to hold. The store is keyed by the `(serverId, conversationId)` pair, never the conversation id alone — ids are host-local (see [Host identity and snapshots](dependency-injection.md#host-identity-and-snapshots)), so a bare-id key would leak one host's unsent text into another host's composer. In-memory only: nothing is written to disk or `SavedStateHandle`, so a draft does not survive process death, but it does survive navigation, configuration change, and the lifecycle driver's foreground/background connection cycling, since the store holds no connection and no disk handle.
+Unsent composer text is owned by `ComposerDraftStore` ([#789](https://github.com/pyrycode/pyrycode-mobile/issues/789)) — an app-scoped Koin `single { ComposerDraftStore() }` in `di/AppModule.kt`, one process-wide instance reaching every thread destination, the same per-call shape `preferences` already used. Before this, the self-owning `ThreadInputBar` overload held its text in `rememberSaveable`, so a draft's lifetime was the thread destination's composition: navigating away lost it, and the next chat opened in that slot inherited whatever that composition state happened to hold. The store is keyed by the `(serverId, conversationId)` pair, never the conversation id alone — ids are host-local (see [Host identity and snapshots](dependency-injection-host-conversation-source.md#host-identity-and-snapshots)), so a bare-id key would leak one host's unsent text into another host's composer. In-memory only: nothing is written to disk or `SavedStateHandle`, so a draft does not survive process death, but it does survive navigation, configuration change, and the lifecycle driver's foreground/background connection cycling, since the store holds no connection and no disk handle.
 
 **Created:** `ThreadDestinationFactory.thread` takes the store as a third constructor argument (`.thread(get(), get(), get())`) and passes it to `ThreadViewModel`, which also reads `serverId` off the same `SavedStateHandle` the factory reads it from, beside the existing `conversationId` read. **Restored:** `ThreadViewModel.draft: StateFlow<String>` maps `draftStore.drafts` down to this pair's entry, `stateIn`'d on `viewModelScope` with `SharingStarted.Eagerly` and seeded from `draftStore.draftFor(serverId, conversationId)` so the initial value and the first emission can never disagree — this is what makes returning to a chat show its exact prior text, whitespace included. `MainActivity`'s `PyryNavHost` collects it with `collectAsStateWithLifecycle()` alongside the destination's other flows and binds it to `ThreadScreen`'s `draft` parameter; `onDraftChange = vm::onDraftChange` closes the loop, calling `draftStore.setDraft(serverId, conversationId, text)` on every keystroke. Both `ThreadScreen` parameters default to `""` / `{}` so the ~30 existing `androidTest` call sites, none of which type into the composer, keep rendering an empty composer unchanged. The self-owning `ThreadInputBar` overload is deleted; the stateless overload (`text`, `onTextChange`, `onSend`) is the only one left, and `ThreadScreen`'s `bottomBar` mount now passes `text = draft`, `onTextChange = onDraftChange`, `onSend = { onSendMessage(draft) }`.
 

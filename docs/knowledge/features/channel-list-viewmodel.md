@@ -25,7 +25,10 @@ channels/chats grouped by workspace, and exposes the pending workspace picker's 
 `serverId`. Since #731 it also carries the assembled tree's **collapsed** fold keys and
 the **last-opened** selection target — both mutated only by the screen's fold and row
 taps, never reconciled against an incoming snapshot (see
-[state projection](channel-list-viewmodel-projection.md)). Host row activation and
+[state projection](channel-list-viewmodel-projection.md)). Since #877 each entry also
+carries that host's non-Idle `ConversationAttention` states, read per row through
+`attentionFor` (see [state projection § Attention join](channel-list-viewmodel-projection.md#attention-join-877));
+drawing that state on a row is a separate, still-blocked ticket. Host row activation and
 successful creation emit `HostConversationTarget(serverId, conversationId)` on
 `hostNavigationEvents` and record that target as `selected`. Creation retains its
 explicit host across preference reads and picker interaction. Since #738, creation and
@@ -43,7 +46,11 @@ data class HostChannelListEntry(
     val recentChatLastMessages: Map<String, Message> = emptyMap(),
     val channelGroups: List<HostWorkspaceGroup> = emptyList(),  // #729
     val chatGroups: List<HostWorkspaceGroup> = emptyList(),     // #729
-)
+    val attention: Map<String, ConversationAttention> = emptyMap(),  // #877 — non-Idle rows only
+) {
+    /** [host]'s one attention state for [conversationId]; every row has one, Idle by default (#877). */
+    fun attentionFor(conversationId: String): ConversationAttention = attention[conversationId] ?: ConversationAttention.Idle
+}
 
 data class HostChannelListState(
     val hosts: List<HostChannelListEntry> = emptyList(),
@@ -157,7 +164,7 @@ target is already the open editor's: `HostUnpairRequested -> vm.requestHostUnpai
 `HostUnpairConfirmed -> vm.confirmHostUnpair()` and `HostUnpairDeclined -> vm.declineHostUnpair()`.
 \#840 adds a fourth control on the same rule: `TreeHostReconnectTapped(serverId) -> vm.reconnectHost(serverId)`.
 `reconnectHost` is a one-line forward to the shared `HostConversationSource.retryHost(serverId)` — see
-[Dependency injection § Exact-host Retry and lifecycle](dependency-injection.md#exact-host-retry-and-lifecycle)
+[Dependency injection § Exact-host Retry and lifecycle](dependency-injection-host-conversation-source.md#exact-host-retry-and-lifecycle)
 — and touches no VM state: not `collapsedKeys`, not the snapshot, not the editor.
 
 **A Chats row's own edit control, host-resolved a fifth time (#827).** `TreeChatEditTapped(target) ->
@@ -379,7 +386,7 @@ class's own convention, not inherited from the retired sibling.
 
 ## Related
 
-- Host contract: [#705 design](../../specs/architecture/705-host-channel-list.md), [host source identity](dependency-injection.md#host-identity-and-snapshots) and [exact-host repository access](dependency-injection.md#exact-host-repository-access).
+- Host contract: [#705 design](../../specs/architecture/705-host-channel-list.md), [host source identity](dependency-injection-host-conversation-source.md#host-identity-and-snapshots) and [exact-host repository access](dependency-injection-host-conversation-source.md#exact-host-repository-access).
 - Ticket notes: [`../codebase/45.md`](../codebase/45.md), [`../codebase/22.md`](../codebase/22.md) (FAB → `onEvent` reducer + one-shot nav channel), [`../codebase/26.md`](../codebase/26.md) (`combine` of Channels + Discussions flows, widened `Loaded` / `Empty` to carry `recentDiscussionsCount`, `RecentDiscussionsTapped` event, `stubRepo` helper reshape), [`../codebase/69.md`](../codebase/69.md) (widened `Loaded` / `Empty` with `recentDiscussions: List<Conversation>`; collapsed the `.map { it.size }` projection into a single `combine` emission; two new tests pin `.take(3)` slicing and upstream-ordering contract), [`../codebase/161.md`](../codebase/161.md) (third combined input `lastMessagesFlow` derived via `flatMapLatest(distinctUntilChanged(recentIdsFlow))` + per-row `observeLastMessage` `combine`; `recentDiscussionLastMessages: Map<String, Message> = emptyMap()` default-arg affordance lets every existing construction site stay untouched), [`../codebase/221.md`](../codebase/221.md) (fourth combined input `pendingWorkspacePicker: MutableStateFlow<Boolean>` projects onto `workspacePickerVisible: Boolean = false` on `Loaded`/`Empty`; three new `onEvent` arms for `LongPressFab` / `WorkspacePicked(workspace)` / `WorkspacePickerDismissed`; `WorkspacePicked` clears the flag *synchronously before* the suspend launches — same shape as #78's `confirmPromotion`), [`../codebase/239.md`](../codebase/239.md) (pure test-infra refactor: lifts the `SettingsViewModelTest` `TemporaryFolder` + class-level `dispatcher` + `TestScope.newDataStore()` rig into `ChannelListViewModelTest` and introduces a `TestScope.makeVm(repository, prefs = AppPreferences(newDataStore()))` helper that routes all 18 VM construction sites; production code unchanged — the `prefs` default is the seam the next ticket changes one line of when it wires `AppPreferences.defaultWorkspace` into the FAB short-press), [`../codebase/240.md`](../codebase/240.md) (spends the #239 seam: VM gains `AppPreferences` as a second constructor parameter, `CreateDiscussionTapped` reads `appPreferences.defaultWorkspace.first()` inside the existing `viewModelScope.launch { … }` and passes it to `repository.createDiscussion(workspace = …)`; `WorkspacePicked` long-press path unchanged — explicit user pick still overrides the default; two new tests pin both behaviours; first consumer of [`AppPreferences.defaultWorkspace`](./app-preferences.md) since the #231 schema landed)
 - Specs: `docs/specs/architecture/45-channel-list-viewmodel-uistate-data-path.md`, `docs/specs/architecture/22-channel-list-fab-new-discussion.md`, `docs/specs/architecture/26-recent-discussions-pill.md`, `docs/specs/architecture/69-channel-list-recent-discussions-section.md`, `docs/specs/architecture/161-recent-discussion-last-message-uistate.md`, `docs/specs/architecture/221-channel-list-fab-long-press-workspace-picker.md`, `docs/specs/architecture/729-group-conversations-by-host-and-workspace.md` (`HostWorkspaceGroup.kt`'s `HostConversationRow` / `HostWorkspaceGroup` / `groupConversationsByWorkspace`, consumed by [ChannelListScreen](channel-list-screen.md)'s tree since #731), `docs/specs/architecture/731-assemble-conversation-tree.md`, `docs/specs/architecture/738-list-add-controls-retire-fab.md` (retires the flat compatibility contract this document describes above), `docs/specs/architecture/744-host-row-edit-and-rename.md` (the editor's target, its three methods and the `editorOpenJob` concurrency guard), `docs/specs/architecture/745-unpair-host-from-edit-modal.md` (the removal's three methods, its ordering and the `saving` guard against sibling transitions), `docs/specs/architecture/751-settings-host-edit-and-unpair.md` (extracts both into [`HostEditorController`](host-editor.md), Settings' second caller), `docs/specs/architecture/827-rename-chat-from-tree-row.md` (`openChatEditor`/`submitChatName`/`dismissChatEditor`, resolved from the target's own `serverId` at the press rather than the selected host, and the colliding-id test fixture that proves it)
 - Upstream: [Conversation repository](./conversation-repository.md) (data-layer seam — since #240 `createDiscussion(workspace = <appPreferences.defaultWorkspace.first()>)` is the call the `CreateDiscussionTapped` arm makes — never the no-arg form anymore; `createDiscussion(workspace = event.workspace)` is the #221 call from the `WorkspacePicked` arm; `observeConversations(Discussions)` is the second subscription added in #26 and the same emission #69 re-uses for both `recent` and `count`; `observeLastMessage(id)` from #161 is the per-row subscription the `flatMapLatest` derivation rides), [`AppPreferences`](./app-preferences.md) (since #240; the `defaultWorkspace: Flow<String>` schema landed in #231 and the FAB short-press is its first consumer — the read is `.first()`-shaped, one-shot per event), [Paired server store](./paired-server-store.md) (since #744 — `PairedServerCollectionStore.loadById` / `setDisplayName`, read and written only by the editor's three methods; since #745 — `remove`, called only by `confirmHostUnpair`), [data model](./data-model.md) (`Conversation` payload, `Message` payload for `recentDiscussionLastMessages`), [dependency injection](./dependency-injection.md) (Koin wiring)

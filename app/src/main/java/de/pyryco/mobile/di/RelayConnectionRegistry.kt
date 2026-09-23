@@ -136,7 +136,16 @@ class RelayConnectionRegistry(
         hosts.value =
             saved.mapNotNull { (record, displayName) ->
                 entries[record.serverId]?.second?.coordinator?.let { coordinator ->
-                    HostConversationConnection(record.serverId, displayName, coordinator.currentRepository, coordinator.connectionStatus)
+                    HostConversationConnection(
+                        record.serverId,
+                        displayName,
+                        coordinator.currentRepository,
+                        coordinator.connectionStatus,
+                        // #877: this host's own attention sources, never the selected host's.
+                        coordinator.liveSessionEvents,
+                        coordinator.currentModal,
+                        coordinator.questionBatches,
+                    )
                 }
             }
         selection.value =

@@ -74,6 +74,23 @@ interface ConversationCache {
     ): Result<Unit> = Result.success(Unit)
 
     /**
+     * This host's stored read positions (#877), keyed by conversation id. Graceful like
+     * [readConversations]: anything unreadable yields an empty map, which reads as "everything read".
+     *
+     * The default stores nothing, so a double that does not exercise read positions need not override it.
+     */
+    suspend fun readReadPositions(serverId: String): Map<String, ReadPosition> = emptyMap()
+
+    /**
+     * Replace this host's whole stored read-position set with [positions]. Reports failure like
+     * [writeConversations]; a failed write leaves the previous document intact.
+     */
+    suspend fun writeReadPositions(
+        serverId: String,
+        positions: Map<String, ReadPosition>,
+    ): Result<Unit> = Result.success(Unit)
+
+    /**
      * Remove every cached artefact belonging to [serverId], leaving every other host readable.
      *
      * An unknown host is a successful no-op, so a caller unpairing a host need not check first.
@@ -84,7 +101,7 @@ interface ConversationCache {
      * Remove every cached artefact keyed by [conversationId] under [serverId], leaving that host's
      * other conversations readable.
      *
-     * That is its metadata entry and its thread rows (#797). A family added later must extend this
+     * That is its metadata entry, its thread rows (#797) and its read position (#877). A family added later must extend this
      * operation too, or a permanently deleted conversation would leave its content behind.
      *
      * An unknown conversation is a successful no-op.
@@ -93,6 +110,21 @@ interface ConversationCache {
         serverId: String,
         conversationId: String,
     ): Result<Unit>
+}
+
+/**
+ * How far the operator has read one conversation on one host (#877): a client-side mark, since the daemon
+ * carries no read marker. [completedTurnId] is the latest turn this phone saw complete live, and
+ * [readTurnId] the one the operator had seen when they last opened the conversation, or null when they
+ * have not opened it since a turn completed. Both are daemon-authored ids used only for equality.
+ *
+ * A conversation with no stored position is read.
+ */
+data class ReadPosition(
+    val completedTurnId: String,
+    val readTurnId: String?,
+) {
+    val unread: Boolean get() = readTurnId != completedTurnId
 }
 
 /** How many of a thread's newest settled rows the cache keeps, so a long thread cannot grow without limit. */

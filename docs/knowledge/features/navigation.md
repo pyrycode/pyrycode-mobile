@@ -202,7 +202,7 @@ never where it lands) and by every route-level test, because all of them — inc
 through the Settings door alone. Neither door can pass a blank owner into `Routes.archive`: Settings
 draws its row inert on `null`, and the list's tap does nothing with no host selected.
 
-The ViewModel side of this ownership is [`ThreadDestinationFactory.archive`](dependency-injection.md#destination-ownership) — the exact-host
+The ViewModel side of this ownership is [`ThreadDestinationFactory.archive`](dependency-injection-host-conversation-source.md#destination-ownership) — the exact-host
 repository seam from #636, resolved once at construction rather than per restore tap, so a selection
 change, reconnect or unpair can move neither the rows nor a pending write. See
 [Archived Discussions screen § Settings row + nav graph](archived-discussions-screen-how-it-works.md#settings-row--nav-graph)
@@ -217,7 +217,7 @@ clearing the invalid entries above it; the rejection log contains only a static
 code. A disconnected or handshaking bundle remains a valid destination, with the
 existing unavailable-action behavior and no selection fallback.
 
-[ThreadDestinationFactory](dependency-injection.md#destination-ownership) binds
+[ThreadDestinationFactory](dependency-injection-host-conversation-source.md#destination-ownership) binds
 reads and actions to the retained owner. Reconnect switches its concrete repository
 without changing route ownership; changing compatibility selection cannot redirect
 the open thread, permission prompt, picker or literal Retry. Demo routes carry the
