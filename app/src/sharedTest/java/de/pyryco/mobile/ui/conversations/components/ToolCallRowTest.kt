@@ -149,7 +149,7 @@ class ToolCallRowTest {
     fun running_with_a_reading_shows_the_elapsed_time() {
         setContent(runningToolCall().copy(elapsedSeconds = 65))
 
-        composeTestRule.onNodeWithTag(TOOL_ELAPSED_TAG).assertIsDisplayed()
+        composeTestRule.onNodeWithTag(TOOL_ELAPSED_TAG, useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onNodeWithText("1m 05s").assertIsDisplayed()
         composeTestRule.onNodeWithContentDescription(runningDescription).assertIsDisplayed()
     }
@@ -158,14 +158,14 @@ class ToolCallRowTest {
     fun running_without_a_reading_shows_no_time() {
         setContent(runningToolCall())
 
-        composeTestRule.onNodeWithTag(TOOL_ELAPSED_TAG).assertDoesNotExist()
+        composeTestRule.onNodeWithTag(TOOL_ELAPSED_TAG, useUnmergedTree = true).assertDoesNotExist()
     }
 
     @Test
     fun a_resolved_row_shows_no_time_even_with_a_stale_reading() {
         setContent(doneToolCall().copy(elapsedSeconds = 12))
 
-        composeTestRule.onNodeWithTag(TOOL_ELAPSED_TAG).assertDoesNotExist()
+        composeTestRule.onNodeWithTag(TOOL_ELAPSED_TAG, useUnmergedTree = true).assertDoesNotExist()
         composeTestRule.onNodeWithText("12s").assertDoesNotExist()
     }
 
@@ -202,7 +202,7 @@ class ToolCallRowTest {
         composeTestRule.onNodeWithText("Input").assertIsDisplayed()
 
         toolCall = toolCall.copy(elapsedSeconds = 4)
-        composeTestRule.onNodeWithText("4s").assertIsDisplayed()
+        composeTestRule.onNodeWithText("4s", useUnmergedTree = true).assertIsDisplayed()
         composeTestRule.onNodeWithText("Input").assertIsDisplayed()
 
         toolCall = toolCall.copy(status = ToolCallStatus.Done, output = "built", elapsedSeconds = null)
