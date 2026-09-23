@@ -140,3 +140,11 @@ None named by the ticket. The documentation stage may fold the attention model i
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-23
+
+## Revisions
+
+### 2026-09-23: the viewing signal is its own `ConversationViewing` tracker
+
+- **What changed.** `HostConversationSource.viewConversation` is gone. The viewing multiset now lives in a small app-wide `ConversationViewing` class in `di/ConversationAttention.kt`, bound as its own `single` in `hostConversationModule`, and `view(serverId, conversationId): Closeable` is its entry point. The thread `viewModel { }` binding resolves only this tracker. `HostConversationSource` takes it as a constructor parameter, and `relay` and `demo` pass it through. The event fold reads `isViewing`. A per-host collector over `viewed` folds `opened` for that host's viewed conversations, so opening a thread still clears unread and failed on its own host only.
+- **Why.** The Phase B build showed that resolving `HostConversationSource` from the thread binding changes an existing graph's behaviour. `RelayConnectionFactoryTest.destinationRetryKeepsLifecycleLockThroughDialAndRejectsRetiredOwners` builds threads in a container that never resolved the source before. The source's list subscription then sent on a transport the test closes, and its fake throws on send-after-close. That test failed, and it passes again with the tracker. The thread's viewing signal should not construct the whole host projection anyway.
+- **What still holds.** The contract is unchanged: counted views, an idempotent close, a no-op handle for blank ids, and `markOpened` on the list's tap path. The production file count rises by no file, because the tracker shares the fold's file.

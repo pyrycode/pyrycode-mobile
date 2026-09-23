@@ -10,6 +10,7 @@ import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
@@ -46,7 +47,12 @@ data class HostChannelListEntry(
     val channelGroups: List<HostWorkspaceGroup> = emptyList(),
     /** Every active chat of [host], grouped by exact `cwd` — not the recent slice. */
     val chatGroups: List<HostWorkspaceGroup> = emptyList(),
-)
+    /** [host]'s non-Idle attention states by conversation id (#877); read a row through [attentionFor]. */
+    val attention: Map<String, ConversationAttention> = emptyMap(),
+) {
+    /** The one attention state of [host]'s row [conversationId]: every row has one, Idle by default. */
+    fun attentionFor(conversationId: String): ConversationAttention = attention[conversationId] ?: ConversationAttention.Idle
+}
 
 data class HostChannelListState(
     val hosts: List<HostChannelListEntry> = emptyList(),
@@ -151,11 +157,16 @@ class ChannelListViewModel(
     @OptIn(ExperimentalCoroutinesApi::class)
     val hostState: StateFlow<HostChannelListState> =
         combine(
-            hostSource.snapshots
-                .flatMapLatest { hosts ->
-                    RelayLog.d { "event=host_channel_list_projected count=${hosts.size}" }
-                    if (hosts.isEmpty()) flowOf(emptyList()) else combine(hosts.map(::observeHostEntry)) { it.toList() }
-                },
+            // #877: attention joins the projected entries here, outside the per-snapshot projection, so a
+            // turn starting or ending never re-subscribes a host's previews.
+            combine(
+                hostSource.snapshots
+                    .flatMapLatest { hosts ->
+                        RelayLog.d { "event=host_channel_list_projected count=${hosts.size}" }
+                        if (hosts.isEmpty()) flowOf(emptyList()) else combine(hosts.map(::observeHostEntry)) { it.toList() }
+                    },
+                hostSource.attention,
+            ) { entries, attention -> entries.map { it.copy(attention = attention[it.host.serverId].orEmpty()) } },
             pendingHostWorkspacePicker,
             collapsedKeys,
             lastOpenedTarget,
@@ -214,6 +225,9 @@ class ChannelListViewModel(
     fun onHostRowTapped(target: HostConversationTarget) {
         // Recorded before the send so the row highlights on the tap, not a dispatch later.
         lastOpenedTarget.value = target
+        // The list's open path clears that host's unread and failed marks at the tap (#877); the thread's
+        // viewing handle keeps it read while it is open.
+        hostSource.markOpened(target.serverId, target.conversationId)
         viewModelScope.launch { hostNavigationChannel.send(target) }
     }
 

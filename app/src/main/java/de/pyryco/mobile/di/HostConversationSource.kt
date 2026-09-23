@@ -1,9 +1,13 @@
 package de.pyryco.mobile.di
 
 import de.pyryco.mobile.data.cache.ConversationCache
+import de.pyryco.mobile.data.cache.ReadPosition
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
+import de.pyryco.mobile.data.model.LiveSessionEvent
+import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
+import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ConversationFilter
@@ -14,11 +18,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 
 /** Host identity surrounds unchanged, host-local conversation records. Contains no pairing secrets. */
@@ -30,12 +38,20 @@ data class HostConversationSnapshot(
     val chats: List<Conversation> = emptyList(),
 )
 
-/** Internal presentation and stream descriptor; repository-stream identity is the bundle generation. */
+/**
+ * Internal presentation and stream descriptor; repository-stream identity is the bundle generation.
+ *
+ * The last three are the host's own attention sources (#877): its coordinator's live events, its single
+ * permission prompt and its outstanding question batches. Defaulted inert for the demo host.
+ */
 internal data class HostConversationConnection(
     val serverId: String,
     val displayName: String?,
     val repositories: StateFlow<ConversationRepository?>,
     val status: StateFlow<ConnectionStatus>,
+    val liveSessionEvents: Flow<LiveSessionEvent> = emptyFlow(),
+    val modal: StateFlow<ModalUiState> = MutableStateFlow(ModalUiState.Hidden),
+    val questionBatches: StateFlow<List<QuestionBatch>> = MutableStateFlow(emptyList()),
 )
 
 /**
@@ -50,6 +66,11 @@ internal data class HostConversationConnection(
  *
  * [retry] redials exactly one host by its `serverId` (#840); the relay path routes it to the registry's
  * own per-host retry, which keeps its foreground and identity refusals.
+ *
+ * [attention] holds one [ConversationAttention] per conversation per host (#877), folded from each host's
+ * own sources and keyed by host first, because two hosts can hold the same conversation id. It is a
+ * separate flow from [snapshots] so an attention change never re-projects a host's rows. Read positions
+ * are restored from and written to [cache] per host, so unpairing a host drops them.
  */
 class HostConversationSource internal constructor(
     private val connections: StateFlow<List<HostConversationConnection>>,
@@ -57,11 +78,16 @@ class HostConversationSource internal constructor(
     dispatcher: CoroutineDispatcher = Dispatchers.Default,
     private val cache: ConversationCache? = null,
     private val retry: (String) -> Unit = {},
+    private val viewing: ConversationViewing = ConversationViewing(),
 ) {
     private val scope = CoroutineScope(SupervisorJob() + dispatcher)
     private val held = mutableMapOf<String, Held>()
     private val state = MutableStateFlow<List<HostConversationSnapshot>>(emptyList())
     val snapshots = state.asStateFlow()
+    private val attentionState = MutableStateFlow<Map<String, Map<String, ConversationAttention>>>(emptyMap())
+
+    /** Non-Idle states only, by `serverId` then conversation id; a conversation missing from it is Idle. */
+    val attention = attentionState.asStateFlow()
     private var disposed = false
 
     init {
@@ -82,6 +108,20 @@ class HostConversationSource internal constructor(
     fun retryHost(serverId: String) {
         if (synchronized(this) { disposed }) return
         retry(serverId)
+    }
+
+    /**
+     * The operator opened [conversationId] on [serverId]: its unread and failed states clear on that host
+     * only. A host that is not held yet has nothing to clear.
+     */
+    @Synchronized
+    fun markOpened(
+        serverId: String,
+        conversationId: String,
+    ) {
+        val entry = held[serverId] ?: return
+        updateAttention(entry) { attention = attention.opened(conversationId) }
+        RelayLog.d { "event=conversation_attention_opened" }
     }
 
     @Synchronized
@@ -112,6 +152,7 @@ class HostConversationSource internal constructor(
                         if (restored.isNotEmpty()) update(entry, restore = true) { it.withRows(restored) }
                     }
                 }
+                launchAttention(entry)
                 scope.launch(entry.job) {
                     connection.repositories.collectLatest { repository ->
                         repository
@@ -136,6 +177,79 @@ class HostConversationSource internal constructor(
         RelayLog.d { "event=host_snapshots_reconciled count=${held.size}" }
     }
 
+    /**
+     * The host's attention collectors (#877), all under the entry's job so a replaced bundle stops them.
+     * Events fold with the viewing state read under the same monitor; a repository going away is the host
+     * losing its connection, which ends every running turn on it.
+     */
+    private fun launchAttention(entry: Held) {
+        val connection = entry.connection
+        scope.launch(entry.job) {
+            connection.liveSessionEvents.collect { event ->
+                updateAttention(entry) {
+                    attention = attention.onEvent(event, viewing.isViewing(connection.serverId, event.conversationId))
+                }
+            }
+        }
+        scope.launch(entry.job) {
+            connection.repositories.collect { repository ->
+                if (repository == null) updateAttention(entry) { attention = attention.disconnected() }
+            }
+        }
+        scope.launch(entry.job) {
+            // Opening is idempotent, so every viewed conversation of this host is re-opened on each change.
+            viewing.viewed.collect { viewed ->
+                val opened = viewed.filter { it.first == connection.serverId }.map { it.second }
+                if (opened.isNotEmpty()) updateAttention(entry) { attention = opened.fold(attention) { state, id -> state.opened(id) } }
+            }
+        }
+        scope.launch(entry.job) {
+            combine(connection.modal, connection.questionBatches, ::Pair).collect { (modal, batches) ->
+                updateAttention(entry) {
+                    this.modal = modal
+                    this.batches = batches
+                }
+            }
+        }
+        val store = cache ?: return
+        scope.launch(entry.job) {
+            // Written only after the restore landed, so an empty map never overwrites stored positions.
+            var written = store.readReadPositions(connection.serverId)
+            updateAttention(entry) {
+                attention = attention.restored(written)
+                positions.value = attention.positions
+            }
+            entry.positions.filterNotNull().collect { positions ->
+                if (positions != written) {
+                    written = positions
+                    store
+                        .writeReadPositions(connection.serverId, positions)
+                        .onFailure { RelayLog.d { "event=conversation_attention_write_failed" } }
+                }
+            }
+        }
+    }
+
+    @Synchronized
+    private fun updateAttention(
+        entry: Held,
+        change: Held.() -> Unit,
+    ) {
+        if (!isCurrent(entry)) return
+        entry.change()
+        if (entry.positions.value != null) entry.positions.value = entry.attention.positions
+        entry.resolved = entry.attention.resolve(entry.modal, entry.batches)
+        publish()
+    }
+
+    /** Whether [entry] is still its host's live generation; a retired one may neither publish nor persist. */
+    private fun isCurrent(entry: Held): Boolean {
+        val connection = entry.connection
+        return !disposed &&
+            held[connection.serverId] === entry &&
+            connections.value.any { it.serverId == connection.serverId && it.repositories === connection.repositories }
+    }
+
     /** Reports whether the snapshot was actually transformed, so only an accepted list is cached. */
     @Synchronized
     private fun update(
@@ -145,9 +259,7 @@ class HostConversationSource internal constructor(
         transform: (HostConversationSnapshot) -> HostConversationSnapshot,
     ): Boolean {
         val connection = entry.connection
-        if (disposed ||
-            held[connection.serverId] !== entry ||
-            connections.value.none { it.serverId == connection.serverId && it.repositories === connection.repositories } ||
+        if (!isCurrent(entry) ||
             (repository != null && connection.repositories.value !== repository) ||
             // A slow restore that finishes after the daemon's list landed must not undo it. The cache
             // read suspends outside this monitor, so reading and setting `live` under it is atomic
@@ -171,6 +283,7 @@ class HostConversationSource internal constructor(
 
     private fun publish() {
         state.value = connections.value.mapNotNull { held[it.serverId]?.snapshot }
+        attentionState.value = connections.value.mapNotNull { host -> held[host.serverId]?.let { host.serverId to it.resolved } }.toMap()
     }
 
     @Synchronized
@@ -180,6 +293,7 @@ class HostConversationSource internal constructor(
         scope.cancel()
         held.clear()
         state.value = emptyList()
+        attentionState.value = emptyMap()
         RelayLog.d { "event=host_snapshots_disposed" }
     }
 
@@ -191,6 +305,14 @@ class HostConversationSource internal constructor(
 
         /** Set once a live list is accepted; a cache restore landing afterwards must not replace it. */
         var live = false
+
+        var attention = HostAttentionState()
+        var modal: ModalUiState = ModalUiState.Hidden
+        var batches: List<QuestionBatch> = emptyList()
+        var resolved: Map<String, ConversationAttention> = emptyMap()
+
+        /** The positions to persist; null until the stored ones were restored, and never set without a cache. */
+        val positions = MutableStateFlow<Map<String, ReadPosition>?>(null)
     }
 
     companion object {
@@ -201,6 +323,7 @@ class HostConversationSource internal constructor(
             registry: RelayConnectionRegistry,
             dispatcher: CoroutineDispatcher = Dispatchers.Default,
             cache: ConversationCache? = null,
+            viewing: ConversationViewing = ConversationViewing(),
         ) = HostConversationSource(
             registry.hostConnections,
             { serverId -> registry.connectionFor(serverId)?.coordinator?.liveRepository() },
@@ -209,11 +332,13 @@ class HostConversationSource internal constructor(
             // The thread banner's pairing: a bundle replaced between the two calls fails retryHost's
             // identity check and is refused rather than redialled.
             retry = { serverId -> registry.connectionFor(serverId)?.let { registry.retryHost(serverId, it) } },
+            viewing = viewing,
         )
 
         fun demo(
             repository: ConversationRepository,
             dispatcher: CoroutineDispatcher = Dispatchers.Default,
+            viewing: ConversationViewing = ConversationViewing(),
         ): HostConversationSource {
             val demo =
                 HostConversationConnection(
@@ -222,7 +347,12 @@ class HostConversationSource internal constructor(
                     MutableStateFlow(repository),
                     MutableStateFlow(ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)),
                 )
-            return HostConversationSource(MutableStateFlow(listOf(demo)), { if (it == DEMO_SERVER_ID) repository else null }, dispatcher)
+            return HostConversationSource(
+                MutableStateFlow(listOf(demo)),
+                { if (it == DEMO_SERVER_ID) repository else null },
+                dispatcher,
+                viewing = viewing,
+            )
         }
     }
 }
