@@ -317,6 +317,18 @@ or merge. Record the scenario, app/build version, daemon compatibility and execu
 test count. XML evidence is required; a zero exit code with every scenario skipped
 is not a passing proof.
 
+The dispatcher runs the seven scripted scenarios as one step,
+`python3 scripts/android-test-gate.py scripted-all`. It boots the managed
+device's AVD once, headless and read-only from its snapshot, on a free console
+port, and runs each scenario against it through the harness's `connected` device
+with `ANDROID_SERIAL` pinned, so parallel tickets never share an emulator. Each
+scenario still gets its own daemon, relay, pairing and app install. The step
+names each scenario's result on stderr and stops the emulator even when the
+dispatcher's time cap kills it. Before the ui gate has ever created the AVD it
+falls back to the managed device per scenario. Measured 2026-09-23: 61 seconds
+against 152 for seven separate runs. `scripted <scenario>` stays the focused
+command for one scenario.
+
 The current required profile is managed `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP
 ATD arm64; API 35 is deferred (2026-09-20 decision). See the
 [revision-linked live baseline](../../e2e-interactive-stream.md#verification-status).
