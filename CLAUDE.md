@@ -31,11 +31,15 @@ The data-model entity is **`Conversation`** with an `isPromoted: Boolean` flag, 
 ```bash
 ./gradlew assembleDebug              # build debug APK
 ./gradlew installDebug               # optional local install; dispatcher owns routine device execution
-./gradlew test                       # unit tests
+./gradlew test                       # unit tests, including the Robolectric screen tests in app/src/sharedTest
 ./gradlew connectedAndroidTest       # optional local run; dispatcher owns managed-device UI execution
+UI_DEVICE_ALL=1 python3 scripts/android-test-gate.py ui   # in-depth run: every screen test on the emulator
 ./gradlew lint                       # Android Lint
 ./gradlew clean                      # clean build outputs
 ```
+
+New Compose screen tests go in `app/src/sharedTest`, not `app/src/androidTest`. See
+[where a screen test goes](docs/knowledge/features/development-verification.md#where-a-screen-test-goes).
 
 ## Layout
 

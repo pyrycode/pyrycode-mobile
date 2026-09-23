@@ -30,7 +30,9 @@ handing off documentation:
 ```
 
 The aggregate `test`, lint and assemble tasks do not compile
-`app/src/androidTest`. When an instrumented test or its helpers change, also run:
+`app/src/androidTest`. `app/src/sharedTest` compiles into both sets, so a change
+there is covered by `test` and by the androidTest compile. When an instrumented
+test or its helpers change, also run:
 
 ```bash
 ./gradlew compileDebugAndroidTestKotlin
@@ -60,10 +62,53 @@ compile and both device gates, the next several verifier passes see no device
 evidence at all rather than a narrow one-file failure — run the guard and repair
 everything it reports before committing, not just the files touched this run.
 
+## Where a screen test goes
+
+Compose screen tests live in `app/src/sharedTest/java`. Gradle adds that folder to
+both the unit test set and the androidTest set, so every test there runs twice
+over: under Robolectric in `./gradlew test` on every verifier pass, and on the
+emulator in the in-depth run. Put a new screen test there by default and run it
+with `./gradlew testDebugUnitTest --tests 'fully.qualified.TestClass'`. No
+emulator is needed.
+
+Put a test in `app/src/androidTest` only when it needs something Robolectric
+cannot give it:
+
+- a real input method, device shell commands or `UiAutomation`, like
+  `MobileModalTest`;
+- real pixels saved as screenshots, like `ScannerFrameTest`;
+- the Android Keystore or real on-device storage, like the `data.crypto` tests;
+- the host daemon or relay, which is the e2e package;
+- work on a background dispatcher that Robolectric's paused main clock does not
+  drive, like `ScriptedUnrecognizedMessageTest`.
+
+A test in the wrong folder fails safe. A device-only test placed in `sharedTest`
+fails in `./gradlew test`. A Robolectric-capable test placed in `androidTest` still
+runs on every verifier pass, only slower.
+
+Robolectric's settings are in `app/src/test/resources/robolectric.properties`: the
+test Application with the fake repository, and the emulator's Pixel 2 height. The
+width stays at Robolectric's default 320dp on purpose. Any wider and a dialog
+holding a text field never settles, and the test fails after 60 seconds with
+`AppNotIdleException` ([robolectric#8460](https://github.com/robolectric/robolectric/issues/8460)).
+A test that needs the Pixel 2 width wraps its content in
+`DeviceConfigurationOverride.ForcedSize`. A test that measures text exactly, such as
+single-line truncation or overflow, adds `@GraphicsMode(GraphicsMode.Mode.NATIVE)`
+so Robolectric uses real fonts. The device ignores both.
+
+A shared test class needs `@RunWith(AndroidJUnit4::class)`. The device runner
+does not require it, but without it the JVM runs the class outside Robolectric and
+every test fails on a null `Build.FINGERPRINT`.
+
+## Device gate
+
 The dispatcher owns routine device execution through
 `python3 scripts/android-test-gate.py ui`, which uses the Gradle-managed Android
 13 device and does not require Android Studio to be open or an emulator to be
-booted manually. Report the command, XML evidence and executed count. A missing,
+booted manually. By default it runs only the test classes under
+`app/src/androidTest` outside the e2e package, on one emulator. The shared screen
+tests already ran in `./gradlew check`. `UI_DEVICE_ALL=1` runs every screen test
+on two emulators, the in-depth run to use every now and then or before a release. Report the command, XML evidence and executed count. A missing,
 zero-count or failed run is not device evidence. Agents author the tests and
 triage the supplied failure; a local `connectedAndroidTest` run is optional.
 

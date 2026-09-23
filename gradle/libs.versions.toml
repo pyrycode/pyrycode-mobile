@@ -24,6 +24,7 @@ koinBom = "4.0.4"
 ktlint = "1.5.0"
 snipmeHighlights = "1.1.0"
 spotless = "7.0.4"
+robolectric = "4.17"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -64,6 +65,8 @@ okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver",
 jetbrains-markdown = { group = "org.jetbrains", name = "markdown", version.ref = "jetbrainsMarkdown" }
 koin-bom = { group = "io.insert-koin", name = "koin-bom", version.ref = "koinBom" }
 koin-androidx-compose = { group = "io.insert-koin", name = "koin-androidx-compose" }
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+robolectric-annotations = { group = "org.robolectric", name = "annotations", version.ref = "robolectric" }
 snipme-highlights = { group = "dev.snipme", name = "highlights", version.ref = "snipmeHighlights" }
 
 [plugins]
