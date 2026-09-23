@@ -81,8 +81,11 @@ private fun ConnectionStatus.isLive(): Boolean = relay == RelayLinkStatus.Connec
  *
  * [initialName] is the chat's own name as its host's snapshot held it at open time — empty for a chat
  * with no name — and is carried unclamped: `EditChatModal` clamps it at its own boundary, surrogate-safe.
- * [saving] and [failed] are flags so the failure string resolves on screen and no daemon message can reach
- * the shell's live region. The typed name is the modal's own buffer, keyed on [conversationId].
+ * [saving], [failed] and [archiveFailed] are flags so the failure string resolves on screen and no daemon
+ * message can reach the shell's live region. [saving] covers either write in flight — a rename or an
+ * archive (#828) — since the modal's one loading flag gates both actions; [failed] is the rename's
+ * failure and [archiveFailed] the archive's, and each write clears both as it starts. The typed name is
+ * the modal's own buffer, keyed on [conversationId].
  */
 data class ChatEditorState(
     val serverId: String,
@@ -90,6 +93,7 @@ data class ChatEditorState(
     val initialName: String,
     val saving: Boolean = false,
     val failed: Boolean = false,
+    val archiveFailed: Boolean = false,
 )
 
 /** The tree's two tiers. The same host draws a row in each, and the two fold independently. */
@@ -309,10 +313,10 @@ class ChannelListViewModel(
         val live = hostSource.repositoryFor(target.serverId)
         if (live == null) {
             RelayLog.d { "event=chat_rename_rejected code=unavailable" }
-            chatEditor.value = target.copy(failed = true)
+            chatEditor.value = target.copy(failed = true, archiveFailed = false)
             return
         }
-        val pending = target.copy(saving = true, failed = false)
+        val pending = target.copy(saving = true, failed = false, archiveFailed = false)
         chatEditor.value = pending
         viewModelScope.launch {
             RelayLog.d { "event=chat_rename_started" }
@@ -328,6 +332,42 @@ class ChannelListViewModel(
             // The row picks the new name up from the host's own conversation stream; nothing is patched here.
             chatEditor.compareAndSet(pending, null)
             RelayLog.d { "event=chat_renamed" }
+        }
+    }
+
+    /**
+     * Archives the open editor's chat on the editor's own host, then closes the modal (#828).
+     *
+     * Whatever the name field holds is irrelevant, so this takes no name, and it asks no confirmation:
+     * the host's Archive screen restores the chat. The host and the terminal transitions follow
+     * [submitChatName] exactly — the repository is resolved from the editor's `serverId` at the press,
+     * and a result landing after a dismissal or a reopen cannot touch the modal. The chat leaves the
+     * list through the host's own conversation stream; nothing is patched here.
+     */
+    fun archiveChat() {
+        val target = chatEditor.value ?: return
+        if (target.saving) return
+        val live = hostSource.repositoryFor(target.serverId)
+        if (live == null) {
+            RelayLog.d { "event=chat_archive_rejected code=unavailable" }
+            chatEditor.value = target.copy(failed = false, archiveFailed = true)
+            return
+        }
+        val pending = target.copy(saving = true, failed = false, archiveFailed = false)
+        chatEditor.value = pending
+        viewModelScope.launch {
+            RelayLog.d { "event=chat_archive_started" }
+            try {
+                live.archive(target.conversationId)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                // Never log the ids or the server's message; the UI gets one static string.
+                RelayLog.d { "event=chat_archive_failed" }
+                chatEditor.compareAndSet(pending, pending.copy(saving = false, archiveFailed = true))
+                return@launch
+            }
+            chatEditor.compareAndSet(pending, null)
+            RelayLog.d { "event=chat_archived" }
         }
     }
 
