@@ -154,3 +154,56 @@ Add six dispatch lines to the existing `when`.
 ## Open questions
 
 - Should length feedback be shown always or only near the bound? Plan: always shown as supporting text, and marked as an error only past the bound.
+
+## Revisions
+
+### 2026-09-24 — rework after verifier FAIL on PR #952
+
+- **Security review added.** The ticket carries `security-sensitive`. The first run did not run the `builder/security-review.md` pass, and the verifier failed the plan for that reason alone. The section below is that pass, run against the committed design and the shipped diff.
+- **Clamped folder name clears the label.** The finding came from the security pass (Trust boundaries) and the verifier's second NIT. The modal clamps its seed to `MAX_WORKSPACE_LABEL_CHARS`. When a folder name is longer than that and has no label, the seed is a cut of the folder name, so an untouched OK used to send that cut as a new label instead of `null`. New contract:
+  - `internal fun clampWorkspaceText(text: String): String` in `WorkspaceDisplayName.kt` is the single surrogate-safe clamp. `workspaceDisplayName` and `EditWorkspaceModal` both call it.
+  - `workspaceLabelFor` also returns `null` when the trimmed input equals `clampWorkspaceText(folderName).trim()`.
+  - The new test in `WorkspaceDisplayNameTest` is `labelRule_theModalsClampedSeedOfAnOverlongFolderNameClearsTheLabel`.
+- **Length feedback wording.** This follows the verifier's first NIT. `edit_workspace_name_length` shipped as "UTF-8 bytes: %1$d/%2$d" instead of the plan's "%1$d/%2$d bytes". The shipped wording stays, because it names the daemon's unit, which a bare "bytes" does not. The strings comment records the reason.
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] No new inbound verb. Daemon-authored text reaches this UI through three values:
+  - **The row's shown name.** `TreeWorkspaceRow` clamps it with `boundedRowText` before drawing it and before using it in the pencil's content description.
+  - **The modal's seed and the confirmation prompt's name.** These are clamped once by `clampWorkspaceText` inside `EditWorkspaceModal` and rendered only as `Text` or as a `stringResource` format argument. They never reach a URL, a filename, a cache key or a log line.
+  - **`cwd`.** It is a `remember` key and a write target only. The modal never draws it. `folderName` is used only to compare against, and the text that gets rendered is the clamped `boundedName`.
+- [Trust boundaries] SHOULD FIX, now fixed: an untouched OK on an overlong folder seed stored the clamped cut as a label. See Revisions. `workspaceLabelFor` now recognises the cut.
+- [Host and path targeting] No findings.
+  - Writes go only to `WorkspaceEditorState.serverId` and `cwd`. Those come from `TreeWorkspaceEditTapped(group.serverId, group.cwd)`, never from `displayName`.
+  - `openWorkspaceEditor` refuses a (`serverId`, `cwd`) pair that the named host's own snapshot does not hold.
+  - `submitWorkspaceName` and `confirmWorkspaceArchive` resolve `hostSource.repositoryFor(target.serverId)` at the press. A host that went away gets a failure flag and no write, never another host's repository.
+  - `HostChannelListViewModelTest` gives both hosts rows at the same `cwd` and asserts that the other host records no call.
+  - The phone sends back the exact `cwd` it received and never builds or concatenates a path.
+- [Destructive archive] No findings.
+  - Archive needs two presses: Archive workspace, then the shell's OK on the in-place prompt. The prompt names the workspace and says every active chat and channel there moves to Archive.
+  - `confirmWorkspaceArchive` refuses unless `confirmingArchive` is set and no write is in flight. `declineWorkspaceArchive` refuses mid-write, so Cancel or Back cannot race the close.
+  - Partial success is covered by `archiveWorkspace`'s contract: confirmed rows stay archived and a retry archives only the rows still active. A row created at that `cwd` between the failure and the retry is archived by the retry, which matches what the prompt says.
+  - Archive is reversible through Archive, and nothing is deleted or renamed.
+- [Label bound] No findings. `isWorkspaceLabelTooLong` measures UTF-8 bytes against `MAX_WORKSPACE_LABEL_BYTES`, which is 128. It is checked in two places: in the modal, where OK is disabled and the field shows an error, and again in `submitWorkspaceName`, which rejects the call before any write. The daemon refuses over-bound labels anyway, so the client-side bound is a UX guard and not the security property.
+- [Tokens / secrets] Not applicable. The change reads, stores and logs no token or key. It rides the existing Noise session through `ConversationRepository`.
+- [File / storage] Not applicable. Nothing is persisted: the editor state is an in-memory `MutableStateFlow`, and the typed name lives in a `remember` buffer. There is no local file I/O and no path is built from input.
+- [Inter-process] Not applicable. There is no new Activity, intent filter, deep link, pending intent or WebView.
+- [Crypto] Not applicable. There is no new primitive, randomness or comparison against a secret.
+- [Network & I/O] Not applicable. There is no new frame. `renameWorkspace` and `archiveWorkspace` (#663) use the existing supervisor, codec and timeouts.
+- [Errors and logs] No findings.
+  - Failures publish the `failed` and `archiveFailed` flags. The screen resolves them to the static `edit_workspace_save_failed` and `edit_workspace_archive_failed`, so no daemon message reaches the shell's live region.
+  - `RelayLog` lines carry an event name, a static code and at most `cleared=<boolean>`. They never carry the label, `cwd`, server id or exception text.
+  - `RelayLog` is gated by its `enabled` flag, and the modal's single `Log.d` is behind `BuildConfig.DEBUG`.
+- [Concurrency] No findings.
+  - Both writes are launched in `viewModelScope` and cancelled with the VM. `CancellationException` is rethrown.
+  - Terminal transitions use `compareAndSet(pending, …)`, so a late result after Cancel or a reopen on another workspace cannot close, reopen or flag the wrong editor.
+  - `saving` blocks a second submit or confirm.
+  - Accepted, and matching the chat editor: dismissing the editor during a rename closes the modal while the rename already sent still completes on the daemon.
+- [Threat model] OUT OF SCOPE: whether the daemon itself validates `renameWorkspace` and `archiveWorkspace` targets (it must refuse unknown paths and over-bound labels) is daemon-side (#663's contract). The live round trip is #676.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-09-24

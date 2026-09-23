@@ -35,7 +35,7 @@ import de.pyryco.mobile.BuildConfig
 import de.pyryco.mobile.R
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_BYTES
-import de.pyryco.mobile.ui.workspace.MAX_WORKSPACE_LABEL_CHARS
+import de.pyryco.mobile.ui.workspace.clampWorkspaceText
 import de.pyryco.mobile.ui.workspace.isWorkspaceLabelTooLong
 import de.pyryco.mobile.ui.workspace.workspaceLabelByteCount
 import de.pyryco.mobile.ui.workspace.workspaceLabelFor
@@ -93,9 +93,8 @@ internal fun EditWorkspaceModal(
     error: String? = null,
     confirmingArchive: Boolean = false,
 ) {
-    // A cut between the halves of a surrogate pair would leave a lone high surrogate that OK sends back.
-    val boundedName =
-        initialName.take(MAX_WORKSPACE_LABEL_CHARS).let { if (it.lastOrNull()?.isHighSurrogate() == true) it.dropLast(1) else it }
+    // The label rule recognises this same cut of the folder's own name, so an untouched OK still clears.
+    val boundedName = clampWorkspaceText(initialName)
     var fieldValue by remember(serverId, cwd) {
         mutableStateOf(TextFieldValue(text = boundedName, selection = TextRange(boundedName.length)))
     }

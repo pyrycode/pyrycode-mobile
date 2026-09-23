@@ -89,6 +89,18 @@ class WorkspaceDisplayNameTest {
     }
 
     @Test
+    fun labelRule_theModalsClampedSeedOfAnOverlongFolderNameClearsTheLabel() {
+        // The modal seeds a folder name past the clamp cut short; an untouched OK must not store that cut.
+        val folder = "n".repeat(MAX_WORKSPACE_LABEL_CHARS - 1) + "😀" + "w".repeat(40)
+        val seed = clampWorkspaceText(folder)
+        assertEquals("n".repeat(MAX_WORKSPACE_LABEL_CHARS - 1), seed)
+        assertNull(workspaceLabelFor(seed, folderName = folder))
+        assertNull(workspaceLabelFor(folder, folderName = folder))
+        // A shorter prefix is still a label the operator typed.
+        assertEquals("nnn", workspaceLabelFor("nnn", folderName = folder))
+    }
+
+    @Test
     fun labelRule_anythingElseIsSentTrimmed() {
         assertEquals("Design system", workspaceLabelFor("  Design system \n", folderName = "my-app"))
         assertEquals("Työ 🛠", workspaceLabelFor("Työ 🛠", folderName = "my-app"))
