@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
+import de.pyryco.mobile.data.network.RelayLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -15,6 +16,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -27,9 +29,12 @@ class AppPreferencesTest {
     private lateinit var scope: CoroutineScope
     private lateinit var dataStore: DataStore<Preferences>
     private lateinit var prefs: AppPreferences
+    private val oldSink = RelayLog.sink
+    private val logs = mutableListOf<String>()
 
     @Before
     fun setUp() {
+        RelayLog.sink = { _, _, message -> synchronized(logs) { logs += message } }
         scope = CoroutineScope(Dispatchers.IO + Job())
         dataStore =
             PreferenceDataStoreFactory.create(
@@ -42,6 +47,7 @@ class AppPreferencesTest {
     @After
     fun tearDown() {
         scope.cancel()
+        RelayLog.sink = oldSink
     }
 
     @Test
@@ -209,6 +215,56 @@ class AppPreferencesTest {
             val store2 =
                 PreferenceDataStoreFactory.create(scope = scope2, produceFile = { file })
             assertEquals("tok-A", AppPreferences(store2).pushToken.first())
+            scope2.cancel()
+        }
+
+    @Test
+    fun rememberedEffort_isAbsentOnAFreshInstall() =
+        runBlocking {
+            assertNull(prefs.rememberedEffort.first())
+        }
+
+    @Test
+    fun setRememberedEffort_roundTripsThePublishedLevelVerbatim() =
+        runBlocking {
+            assertTrue(prefs.setRememberedEffort("xhigh").isSuccess)
+            assertEquals("xhigh", prefs.rememberedEffort.first())
+            assertTrue("the level is never logged", synchronized(logs) { logs.none { "xhigh" in it } })
+        }
+
+    @Test
+    fun rememberedEffort_andTheSettingsDefaultEffort_areIndependent() =
+        runBlocking {
+            prefs.setRememberedEffort("xhigh")
+            assertEquals(Effort.HIGH, prefs.defaultEffort.first())
+
+            prefs.setDefaultEffort(Effort.LOW)
+            assertEquals("xhigh", prefs.rememberedEffort.first())
+        }
+
+    @Test
+    fun rememberedEffort_isNotCreatedBySettingTheDefaultEffort() =
+        runBlocking {
+            prefs.setDefaultEffort(Effort.MAX)
+            assertNull(prefs.rememberedEffort.first())
+        }
+
+    @Test
+    fun rememberedEffort_survivesProcessDeath() =
+        runBlocking {
+            val file = tmp.newFile("remembered_effort_persist.preferences_pb")
+
+            val job1 = Job()
+            val scope1 = CoroutineScope(Dispatchers.IO + job1)
+            AppPreferences(PreferenceDataStoreFactory.create(scope = scope1, produceFile = { file }))
+                .setRememberedEffort("max")
+            scope1.cancel()
+            job1.join()
+
+            val job2 = Job()
+            val scope2 = CoroutineScope(Dispatchers.IO + job2)
+            val store2 = PreferenceDataStoreFactory.create(scope = scope2, produceFile = { file })
+            assertEquals("max", AppPreferences(store2).rememberedEffort.first())
             scope2.cancel()
         }
 }

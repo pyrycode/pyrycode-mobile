@@ -142,6 +142,8 @@ data class ThreadEffortChoice(
  *   marks the button pending and blocks a second write; it never changes the label.
  * @param appliedEffort Claude's **applied** effort (#889), verbatim from the reading. Display-only: it
  *   outranks [savedEffort] on screen and is never sent back.
+ * @param running What claude says it runs (#891), for the Status sheet only. Independent of the selection:
+ *   it is never derived from [savedModel] or [pendingModel], and nothing falls back to them.
  */
 data class ThreadRunConfig(
     val choices: List<ThreadModelChoice> = emptyList(),
@@ -157,6 +159,7 @@ data class ThreadRunConfig(
     val permissionMode: String = "",
     val pendingPermission: String? = null,
     val appliedEffort: EffectiveEffort = EffectiveEffort.Unavailable,
+    val running: ThreadRunningModel = ThreadRunningModel(),
 ) {
     /** What the surfaces show: a pending tap while one is outstanding, the confirmed reading otherwise. */
     val selectedModel: String get() = pendingModel ?: savedModel
@@ -247,3 +250,22 @@ enum class EffortNote {
     /** Claude reports no effort parameter. */
     NotReported,
 }
+
+/**
+ * One claude-reported value (#891), already made inert by the ViewModel. [truncated] says characters are
+ * missing, whether the daemon cut them or the client's inert bound did, so the value is never shown as whole.
+ */
+data class ThreadReportedText(
+    val text: String,
+    val truncated: Boolean,
+)
+
+/**
+ * What claude says it runs for this conversation (#891): the model it announced for the latest turn and its
+ * own build. [model] `null` is the explicit unavailable state (nothing announced yet, or the reading was
+ * cleared); [build] `null` means claude reported none, and the line is left out.
+ */
+data class ThreadRunningModel(
+    val model: ThreadReportedText? = null,
+    val build: ThreadReportedText? = null,
+)

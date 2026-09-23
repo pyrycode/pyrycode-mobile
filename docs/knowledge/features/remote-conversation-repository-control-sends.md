@@ -347,7 +347,7 @@ fun answer(questionBatchId: String, answers: List<QuestionAnswer>) {
 
 Not documented in this file: the ask lives beside the retention it feeds, not beside this file's bare
 fire-and-forget sends. See [Live stream, modal seams and the replay cursor § The on-demand ask —
-`request_model_list`](remote-conversation-repository-live-stream-and-modals.md#the-on-demand-ask--request_model_list-792)
+`request_model_list`](remote-conversation-repository-model-and-slash-command-menus.md#the-on-demand-ask--request_model_list-792)
 for the trigger, the one-shot ledger, the split success/refusal reply paths and the no-retry rule. It
 differs from `interrupt` / `startNewSession` above in one load-bearing way: those two have no reply to
 await, while this verb's success (a `model_list` frame #791's own arm applies) and refusal (a correlated

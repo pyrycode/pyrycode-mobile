@@ -130,15 +130,20 @@ What the repository still owns, after #916:
   and calls `workspaceCommands.malformedWorkspaceReply()` on a decode failure.
 - **Every status projection** the thread reads from: `ConversationListProjection`, `ThreadProjection`,
   `StallProjection`, `QueueProjection`, `ApiRetryProjection`, `CompactingProjection`, `UsageLimitProjection`,
-  `ThinkingProgressProjection`, `ResettingProjection`, `ModelMenuProjection`, `QuestionBatchProjection`,
+  `ThinkingProgressProjection`, `ResettingProjection`, `ModelMenuProjection`, `SlashCommandMenuProjection`,
+  `QuestionBatchProjection`,
   `BackgroundTaskProjection`, `AnnouncedModelProjection` and `SessionFactsProjection` — each its own small
   class, constructed once per repository instance, per the split described above in § Status projections.
+  `SlashCommandMenuProjection` (#882) is the one member with no send and no capabilities supplier of its
+  own — the frame it retains declares no inbound verb, so it takes the `ApiRetryProjection` minimal shape,
+  not `ModelMenuProjection`'s (which also owns the `request_model_list` ask).
 - **`RelayRequests`** — the one request-id counter and reply-waiter table every command class, and the
   repository's own remaining reads, share.
 - **The reads that fan out directly to a projection, with no command-class indirection**:
   `observeConversations`, `observeMessages`, `observeLastMessage`, `observeStall`, `observeQueue`,
   `observeApiRetry`, `observeCompacting`, `observeResetting`, `observeUsageLimit`,
-  `observeThinkingProgress`, `observeModelMenu`, `observeAnnouncedModel` and `observeSessionFacts`.
+  `observeThinkingProgress`, `observeModelMenu`, `observeSlashCommandMenu`, `observeAnnouncedModel` and
+  `observeSessionFacts`.
 - **`requestHistory`** — the on-disk history page read; kept here because it folds its page straight into
   `ThreadProjection`, and #916 explicitly left it in place.
 - **The v2 structured-stream and modal decode seams** — `liveSessionEvents`, `modalEvents`,

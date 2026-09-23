@@ -112,6 +112,9 @@ class ThreadViewModel(
     // which [connectionStateSource]'s legacy four cases fold into Offline. Defaulted to never, as the
     // demo path's fake host is never rejected.
     pairingRejected: Flow<Boolean> = flowOf(false),
+    // #686: the phone's one remembered effort level, recalled once per opening by [effortRecall].
+    // Defaulted to a store that remembers nothing, so the demo path and existing tests stay inert.
+    rememberedEffort: RememberedEffortStore = RememberedEffortStore.None,
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
@@ -179,6 +182,9 @@ class ThreadViewModel(
     /** The [pendingModel] twin for effort (#807). */
     private val pendingEffort = MutableStateFlow<String?>(null)
 
+    /** This opening's recall of the remembered effort (#686); its write is [startEffortRecall]. */
+    private val effortRecall = EffortRecall(viewModelScope, rememberedEffort, ::startEffortRecall)
+
     /**
      * This conversation's saved run configuration (#590), the authority for the displayed model and
      * effort and for the session id a write addresses (#807).
@@ -220,9 +226,28 @@ class ThreadViewModel(
     private val settingsReadings = MutableStateFlow(SettingsReading(0L, null))
 
     /**
+     * What claude says it runs (#891): the announced model and its build, each made inert here. Both #890
+     * readings are per conversation and cleared by the repository on a session transition, so nothing
+     * here tracks staleness. `SessionFacts.permissionMode` is claude's claim and is deliberately not read.
+     */
+    private val runningModel: Flow<ThreadRunningModel> =
+        combine(
+            repository.observeAnnouncedModel(conversationId),
+            repository.observeSessionFacts(conversationId),
+        ) { announced, facts ->
+            ThreadRunningModel(
+                model = announced?.let { reportedText(it.model, it.truncated) },
+                build =
+                    facts?.let {
+                        reportedText(it.claudeCodeVersion, CLAUDE_CODE_VERSION_FIELD in it.truncatedFields.orEmpty())
+                    },
+            )
+        }
+
+    /**
      * The run-configuration arm of [state] (#807). Five inputs, which is exactly Kotlin's typed `combine`
      * ceiling — the reason this stays one arm of the five-arm `state` combine instead of needing a sixth
-     * or the sibling-[StateFlow] shape [draft] uses.
+     * or the sibling-[StateFlow] shape [draft] uses. [runningModel] joins by a second, two-arm combine.
      */
     private val runConfigFlow: Flow<ThreadRunConfig> =
         combine(
@@ -233,7 +258,7 @@ class ThreadViewModel(
             pendingPermission,
         ) { settings, menu, model, effort, permission ->
             runConfig(settings, menu, model, effort, permission)
-        }
+        }.combine(runningModel) { config, running -> config.copy(running = running) }
 
     private val transientDialogs: Flow<TransientDialogs> =
         combine(
@@ -306,6 +331,10 @@ class ThreadViewModel(
             runConfigFlow,
         ) { conversations, content, pickerVisible, dialogs, runConfig ->
             val conv = conversations.firstOrNull { it.id == conversationId }
+            // #686: the one place that sees the settings reading and the live session together without a
+            // second `observeSessionSettings` subscription, which would send another settings request.
+            // The recall decides at most once, so a re-emission or a WhileSubscribed restart is harmless.
+            effortRecall.offer(runConfig, conv?.currentSessionId.orEmpty())
             ThreadUiState(
                 conversationId = conversationId,
                 displayName = conv?.displayName() ?: conversationId,
@@ -1020,6 +1049,8 @@ class ThreadViewModel(
     fun sendMessage(text: String) {
         if (text.isBlank()) return
         launchGuardedRepoCall {
+            // #686: a message sent while this opening's recall write is outstanding follows it.
+            effortRecall.awaitWrite()
             repository.sendMessage(state.value.conversationId, text)
             if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
         }
@@ -1344,11 +1375,21 @@ class ThreadViewModel(
      *  the selected row, forwarded verbatim — never `Effort.name.lowercase()`, whose five entries are this
      *  device's guess at a vocabulary the row itself publishes. */
     fun onEffortSelected(level: String) {
+        effortRecall.cancel()
         val config = state.value.runConfig
         if (config.pending || level == config.selectedEffort) return
         if (!skipUnlessWritable(config)) return
         pendingEffort.value = level
         sendSessionSettings(config.sessionId, effort = level) { pendingEffort.value = null }
+    }
+
+    /** The recall write (#686): a tap's write path with the remembered level, reverted the same way. */
+    private fun startEffortRecall(
+        sessionId: String,
+        level: String,
+    ): Job {
+        pendingEffort.value = level
+        return sendSessionSettings(sessionId, effort = level) { pendingEffort.value = null }
     }
 
     /**
@@ -1490,10 +1531,12 @@ class ThreadViewModel(
         model: String? = null,
         effort: String? = null,
         revert: () -> Unit,
-    ) {
+    ): Job =
         viewModelScope.launch {
             try {
                 repository.setSessionSettings(sessionId, model, effort)
+                // #686: an acknowledged effort write is the only thing that sets the remembered level.
+                if (effort != null) effortRecall.remember(effort)
                 // #807: the ack echoes only the input session id and confirms no value, so a settled write
                 // asks for a fresh reading rather than promoting the optimistic one. The pending survives
                 // until that reading lands (see [sessionSettings]); only the failure paths below clear it.
@@ -1508,7 +1551,6 @@ class ThreadViewModel(
                 sessionSettingsErrorChannel.trySend(Unit)
             }
         }
-    }
 
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
@@ -1674,6 +1716,23 @@ private fun String.toChannelSlug(): String =
 internal fun String.inert(): String = filterNot { it.isISOControl() }.take(MAX_RUN_CONFIG_LABEL_CHARS)
 
 private const val MAX_RUN_CONFIG_LABEL_CHARS = 128
+
+/**
+ * One claude-reported value (#891) through the [inert] path, or `null` when nothing printable is left —
+ * an all-control-character value is unavailable, not a blank row. [truncated] is the daemon's own flag,
+ * widened to also say when the inert bound cut characters, so cut text is never presented as whole.
+ */
+internal fun reportedText(
+    raw: String,
+    truncated: Boolean,
+): ThreadReportedText? {
+    val printable = raw.filterNot { it.isISOControl() }
+    if (printable.isEmpty()) return null
+    return ThreadReportedText(raw.inert(), truncated || printable.length > MAX_RUN_CONFIG_LABEL_CHARS)
+}
+
+/** The `session_facts.truncated_fields` entry that names the build (pyrycode `docs/protocol-mobile.md`). */
+private const val CLAUDE_CODE_VERSION_FIELD = "claude_code_version"
 
 /**
  * The most published models this client will lay out. `ModelMenu.rows` is bounded by the producer, but
