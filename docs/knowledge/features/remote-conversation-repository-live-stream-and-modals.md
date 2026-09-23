@@ -133,6 +133,22 @@ compaction, folded into the thread as a `ThreadItem.CompactionBoundary` divider 
 `security-sensitive`, the same posture as the sibling arms above: decode runs behind the authenticated
 Noise channel, and a malformed frame drops only itself — the lone collector survives.
 
+## The model-refusal decode+fold seam (#875)
+
+`TYPE_MODEL_REFUSAL_FALLBACK` (`"model_refusal_fallback"`) and `TYPE_MODEL_REFUSAL_NO_FALLBACK`
+(`"model_refusal_no_fallback"`) join the `onInbound` `when (envelope.type)` demux as one shared arm, gated
+on `CAPABILITY_INTERACTIVE in negotiatedCapabilities()` — claude refused a turn on one model and either
+retried it on another or did not, folded into the thread as a `ThreadItem.ModelRefusal` rather than
+emitted on [`liveSessionEvents`](#livesessionevents--the-v2-structured-stream-decode-seam-385). Since the
+\#912–#916 repository split moved thread writes into `ThreadProjection`, this arm is a one-line delegate —
+`threadProjection.applyModelRefusal(envelope)` — with the decode, the dedup fold, the row and its cache
+exclusion documented at [Model refusal row](model-refusal-row.md); this section records only the routing
+arm and its two type constants. Exactly one write, and nothing here logs any field but the routing
+`conversation_id` — every other field is claude's.
+
+`security-sensitive`, the same posture as the sibling arms above: decode runs behind the authenticated
+Noise channel, and a malformed frame drops only itself.
+
 ## `model_announced` / `session_facts` — the announced-model and session-facts readings (#890)
 
 Two per-turn status readings, each its own held `StateFlow<Map<String, T>>` in its own file —

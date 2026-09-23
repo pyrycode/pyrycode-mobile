@@ -82,18 +82,19 @@ cache (enforced on write) and [`CachingConversationRepository`](caching-conversa
 
 - **`settledThreadRows(rows)`** drops only the in-flight rows — a `Message` with `isStreaming` or
   whose `toolCall?.status == ToolCallStatus.Running` — leaving `UnrecognizedMessage`,
-  [`Banner`](banner-notice-row.md) and [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874)
-  rows and the row count untouched. This is what a thread may keep **drawing** once its connection is
-  gone, not what the cache may **hold**: it is also the caching repository's merge-base rebase on a
-  disconnect (see that doc), where the bound would otherwise shrink a long thread on screen the moment
-  it goes offline.
+  [`Banner`](banner-notice-row.md), [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874)
+  and [`ModelRefusal`](model-refusal-row.md) rows and the row count untouched. This is what a thread may
+  keep **drawing** once its connection is gone, not what the cache may **hold**: it is also the caching
+  repository's merge-base rebase on a disconnect (see that doc), where the bound would otherwise shrink a
+  long thread on screen the moment it goes offline.
 - **`cacheableThreadRows(rows)`** is `settledThreadRows(rows)` with `UnrecognizedMessage` rows
   (unbounded, model-adjacent JSON; its KDoc forbids persisting it), [`Banner`](banner-notice-row.md)
-  rows (claude-authored prose; restored by history replay instead, #873) and
+  rows (claude-authored prose; restored by history replay instead, #873),
   [`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874) rows (never
-  cached; restored by history replay instead, #874) additionally dropped, and the result bounded to the
-  newest `MAX_CACHED_THREAD_ROWS` (200) via `takeLast` — the thread is in arrival order, so "newest" is
-  the tail. This is what may reach disk.
+  cached; restored by history replay instead, #874) and [`ModelRefusal`](model-refusal-row.md) rows
+  (claude-authored model names and prose; restored by history replay instead, #875) additionally
+  dropped, and the result bounded to the newest `MAX_CACHED_THREAD_ROWS` (200) via `takeLast` — the
+  thread is in arrival order, so "newest" is the tail. This is what may reach disk.
 
 **Identity is exact, case-sensitive string equality** on `serverId` and on `Conversation.id` —
 the same rule [`PairedServerCollectionStore`](paired-server-store.md#the-contract) states for
@@ -143,10 +144,11 @@ The thread document is the same shape, file-private to `FileConversationCache.kt
 `CachedThread(version: Int, rows: List<CachedThreadRow>)`, `CachedThreadRow(message:
 CachedMessage? = null, boundary: CachedBoundary? = null)` — exactly one of the two is set, mapping
 `ThreadItem.MessageItem` / `ThreadItem.SessionBoundary` (never `UnrecognizedMessage`,
-[`Banner`](banner-notice-row.md) or
-[`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874), which
+[`Banner`](banner-notice-row.md),
+[`CompactionBoundary`](session-boundary-delimiter.md#compactionboundarydivider-874) or
+[`ModelRefusal`](model-refusal-row.md), which
 `cacheableThreadRows` drops before a `CachedThreadRow` is ever built; `ThreadItem.toRecord()` throws
-if any of the three ever reaches it).
+if any of the four ever reaches it).
 `CachedMessage(id, sessionId, role, content, timestamp, tool: CachedToolCall? = null)` carries no
 `isStreaming` field — a restored row is always settled, so the field would have nothing to encode.
 `CachedToolCall(toolName, input, output, status)` and `CachedBoundary(previousSessionId,
