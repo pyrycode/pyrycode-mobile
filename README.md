@@ -32,6 +32,15 @@ Gradle property without editing tracked source.
 
 Requires a recent Android Studio (Hedgehog or later).
 
+### Firebase
+
+`app/google-services.json` is committed client configuration for the Firebase project
+`pyrycode-mobile` (sender ID `989241581793`, Android app ID
+`1:989241581793:android:90475142351ecb860f17a0` for `de.pyryco.mobile`). It carries no
+server credentials — those stay in the password manager. The Google Services Gradle
+plugin applies only when the file is present, so builds without it (CI, fresh worktrees)
+still succeed, with push disabled.
+
 ## Pre-ship gate
 
 For a ticket labelled `needs-real-claude`, the dispatcher runs the live real-Claude end-to-end gate after verifier and before documentation or merge — the mobile parallel of the daemon's `make e2e-realclaude`:
