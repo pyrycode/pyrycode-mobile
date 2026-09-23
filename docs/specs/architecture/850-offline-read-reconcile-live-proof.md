@@ -89,3 +89,9 @@ Not resolved by a run yet: the drive assumes the thread stays composed across th
 ### Open question resolved (2026-09-23, first live run)
 
 The thread stays composed across the cut. The first live run passed steps 3–5 (open-thread read, list row, reopened thread from the disk restore, offline negative), so the drive holds as written.
+
+### 2026-09-23 — reopen the thread after reconnect; the open thread's re-ask is lost (live gate FAIL again, 13 executed / 1 failed; bug #861)
+
+**Finding.** The second live run failed the same step after waiting the full `REPLY_TIMEOUT_MS`. The run's `daemon.log` shows the phone's new handshake at 07:27:58.5 and then no `v2.history.served` for the scenario's conversation before the next test at 07:29:30. So the previous revision's reading, that the re-ask was merely slow, was wrong: the re-ask never reaches the daemon. `ThreadViewModel` restarts its history walk when the supervisor's `ConnectionState` returns to `Connected`, which means socket-open. `RelayRepositoryCoordinator.currentRepository` returns only at `PumpState.Open`, after the handshake. The restart's `requestHistory` therefore reaches `StableConversationRepository.live` while it is still `null`, throws `IllegalStateException`, and `launchHistoryAsk` stops the walk with a permanent failure. That is a production bug outside this ticket, filed as #861.
+
+**New contract.** Step 6 reconnects with the thread open and waits for the peer's reply there, which comes from the ring replay. It then goes back to the list, reopens the chat's row, and waits until both the reply and `OFFLINE_PROMPT` are drawn. The fresh ViewModel's opening ask runs on the live repository. The exact-once counts and the order check are unchanged, and they run on the reopened thread. When #861 lands, its ticket drops the reopen and checks the prompt in the still-open thread.

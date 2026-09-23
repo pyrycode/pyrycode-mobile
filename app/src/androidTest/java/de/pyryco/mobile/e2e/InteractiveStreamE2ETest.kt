@@ -1498,9 +1498,9 @@ class InteractiveStreamE2ETest {
      *    list, and reopening the row draws both again (the on-disk thread restore, not the in-memory rows);
      *  * **meanwhile** — the [SecondClientPeer] sends [OFFLINE_PROMPT] and its turn ends, and the phone
      *    draws none of it, which is what shows it really was offline;
-     *  * **reconnected** — the thread draws that turn after the ping, and each of the four messages once.
-     *    The reply comes back through the ring replay and the prompt only through the history ask the
-     *    reconnect restarts, so the counts wait until both are drawn.
+     *  * **reconnected** — the open thread draws the peer's reply from the ring replay; reopened, it draws
+     *    that turn after the ping, and each of the four messages once. The prompt comes only from a history
+     *    page, and the open thread's reconnect re-ask is lost (#861), so the reopen's opening ask fetches it.
      *
      * The cut waits until the phone itself has settled the ping reply — its thread cache holds it, which
      * the open thread's collector writes only after drawing the settled row. A disconnect keeps only settled
@@ -1572,14 +1572,21 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(inThreadList(OFFLINE_PROMPT), useUnmergedTree = true).assertCountEquals(0)
             composeTestRule.onAllNodes(offlineReplyMatcher(), useUnmergedTree = true).assertCountEquals(0)
 
-            // 6. AC-2: reconnect with the thread open. The peer's turn follows the ping, and nothing draws twice.
-            //    The reply and the prompt arrive by different paths: the ring replay carries the reply, but
-            //    no live frame carries another device's message text, so the prompt waits for the thread's
-            //    history ask that the reconnect restarts. Count only once both are drawn.
+            // 6. AC-2: reconnect with the thread open; the ring replay brings the peer's reply into it. No live
+            //    frame carries another device's message text, so the prompt comes only from a history page.
+            //    The open thread's reconnect re-ask fires on socket-up, before the repository is back, and
+            //    dies (#861), so reopen the thread: its opening ask runs on the live repository. Once #861
+            //    lands, drop the reopen and wait for the prompt in the still-open thread instead.
             setHostLink(serverId, up = true)
-            val offlineReply = composeTestRule.onNode(offlineReplyMatcher(), useUnmergedTree = true)
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-                offlineReply.isDisplayed() &&
+                composeTestRule.onNode(offlineReplyMatcher(), useUnmergedTree = true).isDisplayed()
+            }
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitChannelList()
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) { runCatching { scrollListTo(chatRow) }.isSuccess }
+            composeTestRule.onAllNodes(chatRow).onFirst().performClick()
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onNode(offlineReplyMatcher(), useUnmergedTree = true).isDisplayed() &&
                     composeTestRule.onAllNodes(inThreadList(OFFLINE_PROMPT), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
             }
             composeTestRule.waitForIdle()
