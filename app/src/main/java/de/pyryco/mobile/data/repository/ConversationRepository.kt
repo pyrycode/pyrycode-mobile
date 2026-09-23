@@ -575,6 +575,28 @@ interface ConversationRepository {
     fun observeModelMenu(conversationId: String): Flow<ModelMenu?> = flowOf(null)
 
     /**
+     * Emits the slash-command menu the daemon published for [conversationId] (#882) — the commands this
+     * conversation's session, in its working directory, will accept, for the composer to offer. Cold flow;
+     * re-emits on every change.
+     *
+     * **`null` means no frame heard**, which is distinct from a present menu with no rows. It covers no live
+     * connection, a connection without the `interactive` capability, a conversation this connection heard no
+     * frame for, and the window before the first frame lands. The wire's delivery is best-effort, so a
+     * consumer never blocks on it: it renders a usable UI without a menu and lets the next connect fill it.
+     *
+     * **Issues no request** — the frame has no inbound verb. It arrives once per claude child spawn on the
+     * live lane and per conversation on every (re)connect. Each frame replaces that conversation's menu
+     * wholesale, routed by the frame's own conversation id.
+     *
+     * **The menu is per host and per connection.** Each connection has its own repository, so a reconnect
+     * or host switch starts empty and the connect-time snapshot fills it again.
+     *
+     * Default emits `null` forever — the cascade-avoidance [observeModelMenu] uses, so inline test doubles
+     * need no override.
+     */
+    fun observeSlashCommandMenu(conversationId: String): Flow<SlashCommandMenu?> = flowOf(null)
+
+    /**
      * Ask for a fresh [observeSessionSettings] reading of [conversationId] (#590) — the caller-driven
      * fourth trigger, for the moment a settings write has settled and the retained reading is known to
      * be stale. The new value arrives on the flow the caller already collects; there is no second read
@@ -1009,6 +1031,58 @@ data class ModelMenuRow(
     val displayName: String,
     val effortLevels: List<String>,
     val supportsAutoMode: Boolean,
+    val truncatedFields: List<String>?,
+)
+
+/**
+ * The slash commands a server published for one conversation (#882) — the return of
+ * [ConversationRepository.observeSlashCommandMenu]. Wire SSOT: pyrycode `docs/protocol-mobile.md`
+ * § `slash_command_list`. A type rather than a bare list for [ModelMenu]'s reasons: [droppedCommands] must
+ * survive beside the rows, and an empty menu must stay distinct from the absent `null` one.
+ *
+ * `data` is load-bearing: structural equality is what makes the repository's `distinctUntilChanged` skip a
+ * value-identical re-snapshot on every reconnect.
+ *
+ * @param rows The published commands in **claude's own order**. Empty is a positive statement that claude
+ *   offered nothing.
+ * @param droppedCommands How many entries the producer cut that [rows] does **not** carry; `0` when nothing
+ *   was dropped. `rows.size + droppedCommands` is the menu's true size. Read as reported and **never
+ *   recomputed**: two daemon-side cuts feed it, so a non-zero count can sit beside any number of rows and a
+ *   short list is not evidence of a complete one. Never hardcode or infer a cap.
+ */
+data class SlashCommandMenu(
+    val rows: List<SlashCommandMenuRow>,
+    val droppedCommands: Int,
+)
+
+/**
+ * One published slash command in a [SlashCommandMenu] (#882). Every field is retained **exactly as the
+ * daemon reported it** — no trim, no case fold, no line fold, no validation.
+ *
+ * **SECURITY — these strings are workspace-authored.** [name], [argumentHint], [description] and every
+ * element of [aliases] were written by whoever wrote the repository the session runs in, a lower-trust origin
+ * than claude, and crossed the subprocess trust boundary. The daemon bounds them but **does not sanitize
+ * them**: newlines occur in real descriptions and nothing strips control characters or terminal escapes, so
+ * the render boundary owes the sanitization. They are safe to render as **inert text** only and must never be
+ * fed to a WebView, an HTML sink, an attribute, a URL, a filename, a cache key or a log line. Nothing keys off
+ * them — a retained menu is keyed by conversation id alone.
+ *
+ * @param name The command name **without** the leading `/`. Not an identifier: one real name is
+ *   `__remote-workflow`, so assume no character set.
+ * @param argumentHint What the command expects after it (`[name]`, `key=value`, `<model>`). Empty is the
+ *   ordinary case, not missing data.
+ * @param description The command's summary, which may span several lines.
+ * @param aliases Other names that invoke this command, in wire order. Empty covers both "none" and "cut to
+ *   nothing"; only [truncatedFields] naming `aliases` tells them apart, and then the aliases are unknown.
+ * @param truncatedFields The wire names of **this row's** cut fields (`name`, `argument_hint`,
+ *   `description`, `aliases`), or `null` when nothing was cut. A consumer must not present cut text as
+ *   complete.
+ */
+data class SlashCommandMenuRow(
+    val name: String,
+    val argumentHint: String,
+    val description: String,
+    val aliases: List<String>,
     val truncatedFields: List<String>?,
 )
 
