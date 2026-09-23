@@ -72,6 +72,7 @@ import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.QueuedMessage
+import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
@@ -87,6 +88,7 @@ import de.pyryco.mobile.ui.conversations.components.MessageBubble
 import de.pyryco.mobile.ui.conversations.components.OptionsOverlay
 import de.pyryco.mobile.ui.conversations.components.QueuedMessageRow
 import de.pyryco.mobile.ui.conversations.components.RenameDialog
+import de.pyryco.mobile.ui.conversations.components.ResettingIndicator
 import de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog
 import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
 import de.pyryco.mobile.ui.conversations.components.StallPromotionBanner
@@ -158,6 +160,7 @@ fun ThreadScreen(
     isStalled: Boolean = false,
     apiRetry: ApiRetryStatus = ApiRetryStatus.NotRetrying, // #594: claude's API-retry status, replaces the spinner
     usageLimit: UsageLimitReading? = null, // #804: claude's usage-limit report, below api-retry in the slot
+    resetting: ResetStatus? = null, // #872: Reset session's phase, below usage limit and above compaction
     isCompacting: Boolean = false, // #597: claude is auto-compacting its context, replaces the spinner
     turnOutcome: TurnOutcomeReport? = null, // #805: how the last turn failed or was interrupted, above thinking
     thinkingProgress: ThinkingProgress? = null, // #803: claude's live token reading, decorates the thinking arm
@@ -300,6 +303,7 @@ fun ThreadScreen(
                     ThreadStatusArea(
                         apiRetry = apiRetry,
                         usageLimit = usageLimit,
+                        resetting = resetting,
                         isCompacting = isCompacting,
                         turnOutcome = turnOutcome,
                         isThinking = isThinking,
@@ -647,6 +651,14 @@ fun ThreadScreen(
  * compaction → turn outcome → thinking. Compaction is mid-turn and the outcome is post-turn, so the two
  * co-occurring has not been observed; the outcome clears when the next turn starts.
  *
+ * A running Reset session's phase (#872) sits between usage limit and compaction — the full ladder, top
+ * wins: api-retry → usage limit → resetting → compaction → turn outcome → thinking. It stays below the two
+ * "something may be wrong" signals so it never hides them. It sits above compaction and thinking because
+ * the wrap-up is itself a claude turn — without this ordering the reset the user started would read as
+ * generic thinking, or as a compaction inside it — and above a turn outcome lingering from before the
+ * reset. A phase change replaces the reading in this one arm; the falling edge and the session transition
+ * clear it upstream.
+ *
  * The design's trailing contextual-action slot holds the Re-pair action (#843) while [showRePair] does,
  * and is otherwise absent, so nothing inert is emitted beside the signal. Without it, when no signal is
  * live every arm returns without emitting, so the band contributes no node and the composer column's gap
@@ -662,6 +674,7 @@ fun ThreadScreen(
 private fun ThreadStatusArea(
     apiRetry: ApiRetryStatus,
     usageLimit: UsageLimitReading?,
+    resetting: ResetStatus?,
     isCompacting: Boolean,
     turnOutcome: TurnOutcomeReport?,
     isThinking: Boolean,
@@ -674,6 +687,7 @@ private fun ThreadStatusArea(
         when {
             apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = slot)
             usageLimit != null -> UsageLimitIndicator(reading = usageLimit, modifier = slot)
+            resetting != null -> ResettingIndicator(status = resetting, modifier = slot)
             isCompacting -> CompactingIndicator(isCompacting = true, modifier = slot)
             turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = slot)
             else -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress)

@@ -84,6 +84,12 @@
     <string name="cd_thread_api_retry_unknown">Claude is retrying, attempt count unknown</string>
     <string name="thread_compacting_label">Compacting conversation</string>
     <string name="cd_thread_compacting">Claude is compacting the conversation</string>
+    <!-- #872: Reset session's phase in the thread status area. Each is both the visible label and the
+         row's merged content description; chosen by closed-set enum, never daemon text. -->
+    <string name="thread_resetting_wrapping_up">Claude is writing a handoff note for the next session</string>
+    <string name="thread_resetting_restarting_written">Restarting · handoff note saved</string>
+    <string name="thread_resetting_restarting_skipped">Restarting without a handoff note</string>
+    <string name="thread_resetting_restarting">Restarting</string>
     <!-- #804: claude's usage-limit report. Attributed reportage only: a rate_limited frame does not prove a
          turn was blocked, so none of these may say "limited", "reached" or "lifted". -->
     <string name="thread_usage_limit_label">Claude reports usage-limit status: %1$s</string>
