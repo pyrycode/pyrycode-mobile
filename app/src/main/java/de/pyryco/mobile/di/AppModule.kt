@@ -151,7 +151,19 @@ val appModule =
         viewModel { DiscussionListViewModel(get(), get()) }
         viewModel { get<ThreadDestinationFactory>().settings(get(), get()) }
         viewModel { get<ThreadDestinationFactory>().archive(get()) }
-        viewModel { get<ThreadDestinationFactory>().thread(get(), get()) }
+        viewModel {
+            val handle = get<SavedStateHandle>()
+            get<ThreadDestinationFactory>().thread(handle, get()).also { thread ->
+                // #877: the thread is what knows its conversation is being viewed. The view opens the
+                // conversation on its own host and holds it read until this view model is cleared.
+                val viewing =
+                    get<ConversationViewing>().view(
+                        handle.get<String>("serverId").orEmpty(),
+                        handle.get<String>("conversationId").orEmpty(),
+                    )
+                thread.addCloseable(viewing)
+            }
+        }
         viewModel { get<ThreadDestinationFactory>().literal(get()) }
     }
 
@@ -184,12 +196,14 @@ fun hostConversationModule(
     module {
         // #797: the demo branch resolves no cache, as HostConversationSource's does below.
         single { ThreadDestinationFactory(useRelay, get(), get(), get(), decorateRepository, cache = if (useRelay) get() else null) }
+        // #877: one viewing tracker per app, shared by the thread destinations and the host source.
+        single { ConversationViewing() }
         single {
             // The demo branch resolves no cache: there is nothing persisted for a fake host to restore.
             if (useRelay) {
-                HostConversationSource.relay(get(), cache = get())
+                HostConversationSource.relay(get(), cache = get(), viewing = get())
             } else {
-                HostConversationSource.demo(get<FakeConversationRepository>())
+                HostConversationSource.demo(get<FakeConversationRepository>(), viewing = get())
             }
         } onClose { it?.dispose() }
     }

@@ -417,6 +417,7 @@ internal fun PyryNavHost(
                 val isStalled by vm.isStalled.collectAsStateWithLifecycle()
                 val apiRetry by vm.apiRetry.collectAsStateWithLifecycle()
                 val usageLimit by vm.usageLimit.collectAsStateWithLifecycle()
+                val resetting by vm.resetting.collectAsStateWithLifecycle()
                 val isCompacting by vm.isCompacting.collectAsStateWithLifecycle()
                 val turnOutcome by vm.turnOutcome.collectAsStateWithLifecycle()
                 val thinkingProgress by vm.thinkingProgress.collectAsStateWithLifecycle()
@@ -443,6 +444,7 @@ internal fun PyryNavHost(
                     isStalled = isStalled,
                     apiRetry = apiRetry,
                     usageLimit = usageLimit,
+                    resetting = resetting,
                     isCompacting = isCompacting,
                     turnOutcome = turnOutcome,
                     thinkingProgress = thinkingProgress,

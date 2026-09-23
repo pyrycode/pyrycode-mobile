@@ -152,7 +152,7 @@ under the teardown lock, requiring an active owner, transport identity with
 `currentRepository` cache can still hold an old repository when a replacement
 transport arrives, even if the old pump says `Open`. Exact-host lookup therefore
 uses `liveRepository()`; compatibility streams retain their existing behavior.
-See [host access and its reconnect regression](dependency-injection.md#exact-host-repository-access).
+See [host access and its reconnect regression](dependency-injection-host-conversation-source.md#exact-host-repository-access).
 
 ### Scope ownership (three distinct scopes)
 
@@ -238,7 +238,7 @@ projections together without redialing unaffected bundles.
 An empty selection yields no repository/events, hidden modal, relay `Idle` /
 pyrycode `Down` and a hidden legacy banner. Modal/interrupt calls without a
 selection throw `IllegalStateException`; retry is a no-op while empty, backgrounded
-or disposed. Threads use [exact-host dependencies and Retry](dependency-injection.md#destination-ownership);
+or disposed. Threads use [exact-host dependencies and Retry](dependency-injection-host-conversation-source.md#destination-ownership);
 Settings/archive migration remains #637.
 
 Compatibility state must read through the current selection. An independently
@@ -264,7 +264,7 @@ bundle and cancels revision observation. Never reuse a disposed bundle.
 The factory does not bind `ConversationRepository`: the existing selector chooses
 the stable facade by default or the [fake](conversation-repository.md) with
 `-PuseRelayRepository=false`. Both modes retain registry connection ownership.
-In relay mode, the [host source](dependency-injection.md#snapshot-lifetime), once resolved,
+In relay mode, the [host source](dependency-injection-host-conversation-source.md#snapshot-lifetime), once resolved,
 owns per-host list subscriptions without screen subscribers. Backfill still waits
 for thread subscribers.
 

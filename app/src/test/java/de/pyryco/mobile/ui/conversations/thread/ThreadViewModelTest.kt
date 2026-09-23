@@ -24,6 +24,7 @@ import de.pyryco.mobile.data.repository.HistoryPage
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
+import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThinkingProgress
@@ -1795,6 +1796,57 @@ class ThreadViewModelTest {
             val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
             val vm = makeVm(handle, repo)
             val collector = launch { vm.isCompacting.collect {} }
+            advanceUntilIdle()
+
+            assertTrue(repo.observedIds.isNotEmpty())
+            assertTrue(repo.observedIds.all { it == ACTIVE_CONV })
+            collector.cancel()
+        }
+
+    // ---- #872: resetting projection over repository.observeResetting ----------------------------
+
+    @Test
+    fun resetting_initialValue_isNullWithPlainFake() =
+        runTest {
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            // A plain fake inherits observeResetting's flowOf(null) default — no reset, no arm.
+            val vm = makeVm(handle, FakeConversationRepository())
+            assertNull(vm.resetting.value)
+        }
+
+    @Test
+    fun resetting_reflectsPhaseChangeThenClear() =
+        runTest {
+            val repo = ResettingControllableRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.resetting.collect {} }
+            advanceUntilIdle()
+
+            // Each push is drained on its own, so the phase change is observed rather than conflated.
+            val wrappingUp = ResetStatus(ResetStatus.Phase.WrappingUp, ResetStatus.Handoff.Pending)
+            repo.resetting.value = wrappingUp
+            advanceUntilIdle()
+            assertEquals(wrappingUp, vm.resetting.value)
+
+            val restarting = ResetStatus(ResetStatus.Phase.Restarting, ResetStatus.Handoff.Written)
+            repo.resetting.value = restarting
+            advanceUntilIdle()
+            assertEquals(restarting, vm.resetting.value) // the phase change replaces the reading
+
+            repo.resetting.value = null
+            advanceUntilIdle()
+            assertNull(vm.resetting.value) // the falling edge clears it; nothing sticks
+            collector.cancel()
+        }
+
+    @Test
+    fun resetting_observesOnlyOwnConversationId() =
+        runTest {
+            val repo = ResettingControllableRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.resetting.collect {} }
             advanceUntilIdle()
 
             assertTrue(repo.observedIds.isNotEmpty())
@@ -4537,6 +4589,19 @@ class ThreadViewModelTest {
         override fun observeCompacting(conversationId: String): Flow<Boolean> {
             observedIds += conversationId
             return compacting
+        }
+    }
+
+    /** [CompactingControllableRepo]'s shape for the #871 reset-phase reading (#872); `null` is no reset. */
+    private class ResettingControllableRepo(
+        private val delegate: FakeConversationRepository = FakeConversationRepository(),
+    ) : ConversationRepository by delegate {
+        val resetting = MutableStateFlow<ResetStatus?>(null)
+        val observedIds = mutableListOf<String>()
+
+        override fun observeResetting(conversationId: String): Flow<ResetStatus?> {
+            observedIds += conversationId
+            return resetting
         }
     }
 
