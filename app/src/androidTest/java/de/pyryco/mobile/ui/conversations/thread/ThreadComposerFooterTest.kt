@@ -66,6 +66,7 @@ class ThreadComposerFooterTest {
     private var shown by mutableStateOf(true)
     private val modelSelections = mutableListOf<String>()
     private val effortSelections = mutableListOf<String>()
+    private val permissionSelections = mutableListOf<String>()
 
     private fun state(
         conversationId: String = "c1",
@@ -91,6 +92,7 @@ class ThreadComposerFooterTest {
                         onRetry = {},
                         onModelSelected = { modelSelections += it },
                         onEffortSelected = { effortSelections += it },
+                        onPermissionModeSelected = { permissionSelections += it },
                     )
                 }
             }
@@ -104,8 +106,8 @@ class ThreadComposerFooterTest {
     private val pendingState =
         SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Applying")
 
-    // AC#1: both buttons show the thread state's current values, and the Status sheet (the YOLO
-    // toggle's only home) is one tap away.
+    // AC#1: both buttons show the thread state's current values, and the Status sheet is one tap away.
+    // #650 moved the permission control into the footer, so the sheet no longer carries a YOLO switch.
     @Test
     fun footer_showsCurrentValues_andKeepsTheStatusSheetOneTapAway() {
         setThread()
@@ -114,7 +116,47 @@ class ThreadComposerFooterTest {
         footerButton("high").assertIsDisplayed()
 
         composeTestRule.onNodeWithContentDescription(string(R.string.cd_thread_status_expand)).performClick()
-        composeTestRule.onNodeWithText("YOLO mode").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Run configuration").assertIsDisplayed()
+        composeTestRule.onNodeWithText("YOLO mode").assertDoesNotExist()
+    }
+
+    // #650: the permission button labels the confirmed mode and offers the modes the wire accepts, with
+    // Auto approval left out for a row that does not support it. A choice hands back the wire value.
+    @Test
+    fun permissionButton_labelsTheConfirmedMode_andChoosingBypassDispatchesItsWireValue() {
+        setThread(baseConfig.copy(permissionMode = "plan"))
+
+        footerButton("Plan").performClick()
+        overlay().assertExists()
+        listOf("Manual approval", "Auto-approve edits", "Plan", "Approved actions only", "Bypass approvals").forEach {
+            composeTestRule.onNode(hasText(it) and isSelectable()).assertIsDisplayed()
+        }
+        composeTestRule.onNode(hasText("Auto approval") and isSelectable()).assertDoesNotExist()
+
+        composeTestRule.onNode(hasText("Bypass approvals") and isSelectable()).performClick()
+
+        assertEquals(listOf("bypassPermissions"), permissionSelections)
+        assertTrue(modelSelections.isEmpty())
+        overlay().assertDoesNotExist()
+    }
+
+    // #650: no confirmed mode, no button — "" beside a live session id proves nothing.
+    @Test
+    fun permissionButton_isAbsentWithoutAConfirmedMode() {
+        setThread(baseConfig.copy(permissionMode = ""))
+
+        composeTestRule.onNodeWithText("Manual approval").assertDoesNotExist()
+        composeTestRule.onNodeWithText("Bypass approvals").assertDoesNotExist()
+        footerButton("Opus 4.7").assertIsDisplayed()
+    }
+
+    // #650: an outstanding write keeps the confirmed label, marks it pending and opens nothing.
+    @Test
+    fun permissionButton_whilePending_keepsTheConfirmedLabel() {
+        setThread(baseConfig.copy(permissionMode = "plan", pendingPermission = "default"))
+
+        composeTestRule.onNode(hasText("Plan") and pendingState).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Manual approval").assertDoesNotExist()
     }
 
     // AC#2 + AC#3: the model overlay lists the published models and nothing else. Choosing one hands the

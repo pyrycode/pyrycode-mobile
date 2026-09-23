@@ -461,7 +461,7 @@ internal fun PyryNavHost(
                     onShowLiteralScreen = { navController.navigate(Routes.literal(target)) },
                     onModelSelected = vm::onModelSelected,
                     onEffortSelected = vm::onEffortSelected,
-                    onYoloToggled = vm::onYoloToggled,
+                    onPermissionModeSelected = vm::onPermissionModeSelected,
                     onWorkspaceChipTapped = vm::onWorkspaceChipTapped,
                     onWorkspacePicked = vm::onWorkspacePicked,
                     onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
