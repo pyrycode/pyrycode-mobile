@@ -152,6 +152,8 @@
     <string name="cd_tool_failed">Tool call failed</string>
     <string name="cd_tool_done">Tool call done</string>
     <string name="cd_tool_denied">Tool call denied</string>
+    <!-- #896: a tool call a subagent made, and how many agent calls deep it sits. -->
+    <string name="cd_tool_subagent_step">Subagent step, level %1$d</string>
     <string name="tool_row_input">Input</string>
     <string name="tool_row_output">Output</string>
     <string name="tool_row_denial">Denied by claude</string>

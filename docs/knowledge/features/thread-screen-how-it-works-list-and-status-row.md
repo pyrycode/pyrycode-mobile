@@ -43,6 +43,56 @@ unmatched arm's key is deliberately position-derived, the one namespace where po
 
 **Above-delimiter opacity (since [#136](../codebase/136.md)).** Each row is wrapped in `Box(Modifier.alpha(rowAlpha))` around the existing `when (row)` dispatch. `rowAlpha` is computed inline: a `chronologicalIndex` is reconstructed from the reversed-list index (`rows.size - 1 - reversedIndex`, since #782 — pre-#782 this read `state.items.size`), then compared strict-`<` against a `cutoffChronologicalIndex = remember(state.items) { mostRecentSessionBoundaryIndex(state.items) }` — **this cutoff itself still reads `state.items`, unchanged by #782**, because `rows` shares a prefix with `items` index-for-index and only ever appends unmatched queued rows after them, so the two index spaces agree wherever a boundary can land. Rows above the cutoff render at the file-private `ABOVE_DELIMITER_ALPHA = 0.55f` constant; rows at or after the cutoff (including the boundary itself) render at `1f`. `mostRecentSessionBoundaryIndex` is an `internal` top-level helper at the bottom of the file (`items.indexOfLast { it is ThreadItem.SessionBoundary }`); its `-1` return for the no-boundary case combines with the strict `<` to give AC3 ("zero boundaries → all rows full opacity") for free. The wrap inherits to every row variant — user/assistant `MessageBubble`, `ToolCallRow`, nested `SessionBoundaryDelimiter`, and since #782 `QueuedMessageRow` — because `Modifier.alpha(...)` is a render-only `graphicsLayer` effect and none of the row composables hold internal opacity state. **Interaction is not gated** — `ToolCallRow`'s `clickable` `Surface` stays expandable above the cutoff (alpha runs in the draw layer, after pointer input). That matches the user-story intent ("still legible, can scroll up and re-read"); if a future ticket gates above-cutoff interaction, it adds the gate at the inner `Surface`'s `enabled =` (not by stripping the alpha modifier).
 
+### Subagent tool-row nesting (#896)
+
+Beside `cutoffChronologicalIndex`, the same `else` arm computes `val toolDepths = remember(state.items) {
+toolNestingDepths(state.items) }` and the `ThreadItem.MessageItem` dispatch arm passes
+`toolNestingDepth = toolDepths[item.message.id] ?: 0` into `MessageBubble` — the only change #896 made to
+this file; the fold, the keys, the alpha wrap and every other arm are untouched. `toolNestingDepths` itself
+is `internal fun toolNestingDepths(items: List<ThreadItem>): Map<String, Int>`, declared in `ThreadRow.kt`
+beside `foldQueuedRows` (a pure derivation next to a pure derivation), not inside the screen.
+
+**What it computes.** A tool row's [`Message.id`](data-model.md) is its own `tool_use_id`; its
+[`ToolCall.parentToolUseId`](data-model.md) (#810) names the `Agent`/`Task` call whose subagent made it,
+or `""` for the main thread. A row's depth is `0` when `parentToolUseId` is empty or names no *tool* row
+loaded in the thread (an older page not yet fetched, an id belonging to some other kind of row, or —
+because the disk cache doesn't persist the field — any cache-restored row), otherwise `1 +` its parent's
+depth. The map holds only rows with depth `> 0`; a row absent from it renders at top level, which is what
+`?: 0` above falls back to.
+
+**Matching is independent of list order.** Candidates are collected into a `parentOf: Map<String, String>`
+first (one pass over `items`), then each row's depth is found by walking up its parent chain in that map,
+memoising every id the walk passes through `depthOf` so no id is walked twice — O(tool rows) total however
+deep the nesting goes, and correct whether a row's parent appears earlier or later in the list.
+
+**Cycle rule.** `parentToolUseId` is a grouping *hint*, not a capability (`protocol-mobile.md` §
+`tool_use`) — the daemon is never expected to send a loop, but the derivation still has to terminate if one
+somehow arrives (a corrupt cache row parented to itself, for instance). The walk tracks the ids on its
+current path in an `onPath` set and stops the moment it would revisit one; that row counts as top level,
+and every row walked before it on the path counts up from there. Deterministic for a given list, and it
+never loops, regardless of how the cycle is shaped (a two-row A→B→A pair and a one-row self-parent both
+terminate the same way).
+
+**Rejected alternative: a single forward pass.** A simpler shape — walk `items` once, looking up each row's
+already-computed depth by its `parentToolUseId` as it goes — is *not* what's shipped, because it silently
+leaves a row flat whenever its parent appears *later* in the list: the parent's depth isn't known yet at
+the point the child is visited, forward-only. The two-map walk above (`parentOf` built first, `depthOf`
+filled by a per-row backward walk) matches "a tool row loaded anywhere in the thread" as the AC requires,
+at the same O(tool rows) cost, and the cycle guard above is the price of allowing that backward walk to
+happen at all.
+
+Tested independently of any composable in `ToolNestingDepthsTest` (`app/src/test/.../thread/`): main-thread
+row absent from the map, matched child = 1, grandchild = 2, unmatched parent absent, empty-id row ignored,
+a parent id that matches a *user* message (not a tool row) does not nest, a parent listed after its child
+still nests, and both cycle shapes (a two-row loop, a self-parent) terminate per the rule above. The
+Compose-level assertion — that the indent and the "Subagent step, level N" description actually reach the
+rendered row — lives in `ToolRowNestingTest` (`app/src/sharedTest/.../thread/`), which mounts the real
+`ThreadScreen`; see [`MessageBubble` § Subagent nesting
+indent](message-bubble.md#subagent-nesting-indent-since-896) and [`ToolCallRow` § Subagent step
+description](tool-call-row.md#subagent-step-description-since-896) for what each level actually renders.
+No rung-3 scenario: this is a layout change over rows that already stream, and the live data path is
+unchanged.
+
 Post-#201 the `LazyColumn` is nested inside a `Column` wrapper alongside the `ConnectionBanner` (see [Connection-banner wiring](thread-screen-how-it-works-overlays-and-app-bar.md#connection-banner-wiring) below). The list carries `Modifier.fillMaxWidth().weight(1f)` rather than `.fillMaxSize()` — inside a `Column`, `fillMaxSize` ignores `weight` semantics and over-claims vertical space, fighting with siblings. The `reverseLayout = true` semantics are unchanged: the list scrolls upward from the bottom of its weight-allocated region, with the banner pinned above it.
 
 **Streaming auto-scroll (since [#185](../codebase/185.md)).** While any `ThreadItem.MessageItem` in `state.items` carries `message.isStreaming = true`, the `LazyColumn` keeps the streaming bubble's growing bottom edge anchored at the viewport bottom. Six composition-scoped pieces of state hoisted at the top of the `else` block — adjacent to the existing `reversedItems` / `cutoffChronologicalIndex` lines — implement it: `val listState = rememberLazyListState()` (threaded as `state =` on the `LazyColumn`); `val hasStreamingMessage by remember(state.items) { derivedStateOf { state.items.any { it is ThreadItem.MessageItem && it.message.isStreaming } } }` (the gate on the auto-pin coroutine, scan re-runs only when the list reference changes); `var userScrolledAway by remember { mutableStateOf(false) }` (yield flag); `val autoScrollNestedScroll = remember { object : NestedScrollConnection { ... } }` (sets `userScrolledAway = true` iff `source == NestedScrollSource.UserInput && available.y != 0f`, attached via `Modifier.nestedScroll(autoScrollNestedScroll)` on the column); `LaunchedEffect(listState) { snapshotFlow { firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0 }.collect { atBottom -> if (atBottom) userScrolledAway = false } }` (resumes auto-follow when the user manually returns to the bottom); and `LaunchedEffect(hasStreamingMessage, listState) { if (!hasStreamingMessage) return@LaunchedEffect; snapshotFlow { layoutInfo.visibleItemsInfo.firstOrNull { it.index == 0 }?.size ?: 0 }.distinctUntilChanged().collect { if (!userScrolledAway) listState.scrollToItem(0) } }` (the auto-pin loop — re-anchors on every layout-pass size change of item 0). `scrollToItem(0)` (not `animateScrollToItem`) is the right primitive: instant, O(1) when already pinned, and it does **not** dispatch through `NestedScrollSource.UserInput` so it cannot recursively trip its own yield flag. Reverse-layout's bottom anchor is `firstVisibleItemIndex == 0 && firstVisibleItemScrollOffset == 0`; both effects rely on that. The auto-pin `LaunchedEffect` is gated by `hasStreamingMessage`, so non-streaming threads start no collector (AC4); when `isStreaming` flips `false` the effect re-launches with the new key and the early-return cancels the collector (AC3). The Phase-0 seed never flips `isStreaming = false` (the static seed stays streaming forever) — AC3's cancel path is verifiable only by code-review or a local seed flip + re-install; Phase 4's WS feed will exercise it naturally. The companion concern from [#184](../codebase/184.md) — `StreamingAssistantBody` losing its `revealedLength` when the bubble scrolls off-screen — is sidestepped (not solved) in the auto-pin happy path: keeping the bubble in the viewport prevents disposal. If the user yields by scrolling away during streaming, the bubble can still off-screen and re-reset on return; the Phase-4 hoist-into-VM fix from [#184](../codebase/184.md) is the proper remedy.
