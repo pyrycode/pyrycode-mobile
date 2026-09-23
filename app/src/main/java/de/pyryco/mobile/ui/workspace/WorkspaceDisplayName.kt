@@ -57,14 +57,17 @@ internal const val MAX_WORKSPACE_LABEL_BYTES: Int = 128
  * no label, `workspaceDisplayName(cwd, label = null)` — is `null`, which clears the stored label rather
  * than storing the folder's own name as one. So is [folderName] as the Edit workspace modal seeds it,
  * cut by [clampWorkspaceText]: an untouched OK on a folder name past the clamp must clear, not store the
- * cut as a label. Anything else is sent trimmed. The comparisons are exact.
+ * cut as a label. That second comparison applies only when the clamp cut something, and it trims the cut
+ * because the input is trimmed; an uncut [folderName] is compared exactly, untrimmed. Anything else is
+ * sent trimmed.
  */
 fun workspaceLabelFor(
     name: String,
     folderName: String,
 ): String? {
     val trimmed = name.trim()
-    val ownName = trimmed == folderName || trimmed == clampWorkspaceText(folderName).trim()
+    val seed = clampWorkspaceText(folderName)
+    val ownName = trimmed == folderName || (seed != folderName && trimmed == seed.trim())
     return if (trimmed.isEmpty() || ownName) null else trimmed
 }
 

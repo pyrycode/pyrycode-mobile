@@ -166,6 +166,13 @@ Add six dispatch lines to the existing `when`.
   - The new test in `WorkspaceDisplayNameTest` is `labelRule_theModalsClampedSeedOfAnOverlongFolderNameClearsTheLabel`.
 - **Length feedback wording.** This follows the verifier's first NIT. `edit_workspace_name_length` shipped as "UTF-8 bytes: %1$d/%2$d" instead of the plan's "%1$d/%2$d bytes". The shipped wording stays, because it names the daemon's unit, which a bare "bytes" does not. The strings comment records the reason.
 
+### 2026-09-24 — rework after the gate regression on PR #952
+
+- **The clamped-seed comparison applies only to a cut folder name.** The verifier's gate found that the previous entry's rule trimmed every folder name, so a typed `"Path"` cleared the label of folder `"Path "` and `workspaceSubmitRenamesOnlyTheEditorsHostAndCwdByTheLabelRuleAndCloses` failed. New contract for `workspaceLabelFor`:
+  - It returns `null` when the trimmed input is blank or equals `folderName` exactly.
+  - It also returns `null` when `clampWorkspaceText(folderName) != folderName` and the trimmed input equals that cut, trimmed. The cut is trimmed because the input is.
+  - `WorkspaceDisplayNameTest` pins both halves: `"Path"` stays a label for folder `"Path "`, and a cut ending in a space still clears.
+
 ## Security review
 
 **Verdict:** PASS

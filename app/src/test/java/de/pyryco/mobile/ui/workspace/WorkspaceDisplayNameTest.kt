@@ -86,6 +86,8 @@ class WorkspaceDisplayNameTest {
         assertNull(workspaceLabelFor("scratch", folderName = workspaceDisplayName(DEFAULT_SCRATCH_CWD, label = null)))
         // Compared exactly: a case variant is a real label.
         assertEquals("My-App", workspaceLabelFor("My-App", folderName = "my-app"))
+        // An uncut folder name is not trimmed for the comparison: "Path" is a label for folder "Path ".
+        assertEquals("Path", workspaceLabelFor("Path", folderName = "Path "))
     }
 
     @Test
@@ -98,6 +100,9 @@ class WorkspaceDisplayNameTest {
         assertNull(workspaceLabelFor(folder, folderName = folder))
         // A shorter prefix is still a label the operator typed.
         assertEquals("nnn", workspaceLabelFor("nnn", folderName = folder))
+        // A cut that ends in a space still clears, although the typed text is trimmed.
+        val spaced = "n".repeat(MAX_WORKSPACE_LABEL_CHARS - 1) + " " + "w".repeat(40)
+        assertNull(workspaceLabelFor(clampWorkspaceText(spaced), folderName = spaced))
     }
 
     @Test
