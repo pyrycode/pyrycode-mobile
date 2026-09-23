@@ -69,6 +69,35 @@ The [collection's identity contract](paired-server-store.md#the-contract) applie
   host keeps its name. Clearing the form field does not clear a saved name.
 - Other hosts retain their credentials, names and connection bundles.
 
+## Re-pairing a target host (#842)
+
+The channel list's rejected-pairing plug control (see
+[reconnect control](channel-list-screen-tree-and-controls.md#host-row-reconnect-control-840)) opens this
+same screen scoped to one host via `Routes.pairCode(serverId)` → `pair_code?serverId=…`. `PairCodeViewModel`
+takes an optional `target: String? = null`, sourced from `SavedStateHandle` in `AppModule`; a blank or
+absent argument (the unrouted add-host entry, and every existing `Routes.PAIR_CODE` navigation) leaves
+`target` null and the flow behaves exactly as above.
+
+In target mode:
+
+- `PairCodeState.targetName` is set to `target` immediately, then updated in the background to that host's
+  stored display name if `store.loadById(target)` returns one — a store failure or missing record leaves
+  the `serverId` label. The Host name field renders this name read-only; `PairCodeEvent.Name` is ignored.
+- `PairCodeEvent.Pair` compares the parsed code's `serverId` to `target` with exact, case-sensitive `==`
+  before the fingerprint gate opens. A mismatch fails with `WRONG_HOST_ERROR` ("This code is for a
+  different host") and saves nothing. This reuses the same field-error slot `INVALID_CODE_ERROR` already
+  occupied; `PairCodeField`'s `error` parameter changed from a `Boolean` to the error string itself so the
+  screen can key both messages off the same slot instead of duplicating the field.
+- `persist` skips `store.setDisplayName` entirely, so a same-id save keeps the stored name (the store
+  already preserves it across a same-id save; see [paired-server store](paired-server-store.md)). Every
+  other step — `confirmPairingAndConnect`, the connection wait, and its existing `PairingRejected` early
+  exit below — is unchanged, so pasting a code identical to the rejected one still fails without waiting
+  out the 30 s deadline, and a newly rejected credential is read the same way.
+
+Cancel, a failed save or a second rejection in target mode leave every other saved host's record and
+connection untouched: the only write in target mode is `store.save` of a record whose `serverId` equals
+the target, which `RelayConnectionRegistry.reconcile` diffs per host.
+
 ## Target readiness and retry
 
 Saving and calling `connect()` do not prove readiness. The ViewModel observes
@@ -137,6 +166,11 @@ retained retry, blank-name preservation, deadline and cancellation, and (#841) a
 `PairingRejected` status after save ending the wait immediately with the existing
 "Pairing saved. Host unavailable." feedback rather than after the 30 s deadline.
 Its case-sensitive peer fixture keeps `b` intact when pairing `B` with the same name.
+(#842) target mode adds: a wrong-host code (including a case variant) refused before
+confirmation with zero saves; replacing only the target host's record while a peer host
+is left equal and its stored name is kept (`setDisplayName` never called); cancel and a
+failed save leaving the store unchanged; and a rejection while connecting failing well
+before the 30 s deadline.
 
 `RelayConnectionFactoryTest.pairingStatusWaitsForExactCredentialsAndKeepsConnectedPeer`
 uses real Noise peers to pair/re-pair B while A stays connected, with equal names
@@ -151,6 +185,19 @@ test IME before Activity launch and uses the app's edge-to-edge/Scaffold shape.
 It asserts visible IME insets, scrolls to both fields and clear controls, and
 checks action bounds above the keyboard. Focus or text input alone can pass with
 no keyboard; see [Compose evidence](development-verification.md#compose-evidence).
+Two (#842) additions: `targetedRouteNamesItsHostAndBackReturnsWithoutSaving` navigates through
+`Routes.PAIR_CODE_ROUTE` with a `serverId` argument via a real `NavHostController`, asserts the
+disabled Host name field shows the target's name, and Back returns to `Routes.WELCOME` without a
+save — proving the `SavedStateHandle` → `target` wiring through `PyryNavHost` itself, not just the
+ViewModel in isolation. `targetModeNamesTheHostReadOnlyAndShowsWrongHostOnTheCode` asserts the disabled
+Host name field and its disabled clear control, and that `WRONG_HOST_ERROR` renders under the code field
+while the action button still reads "Pair" (a field error, not the "Retry" case).
+
+`ChannelListScreenTest.hostRowPlugControl_onARejectedPairing_opensRePairingForItsOwnHost` (#842) asserts a
+`PairingRejected` host's plug control emits `TreeHostRePairTapped(serverId)` while a sibling `Offline`
+host's plug still emits `TreeHostReconnectTapped(serverId)` — the existing
+`hostRowReconnectControl_targetsItsOwnHost_andLeavesEveryHostsRowsDrawn` (#840) test is unchanged and
+keeps proving the retry event for its own (non-rejected) fixtures.
 
 Existing `InteractiveStreamE2ETest` regressions and the
 [live gate](../../e2e-interactive-stream.md#pre-ship-gate) remain unchanged. They do
@@ -169,3 +216,6 @@ remains intact. That real-daemon/live-relay scenario belongs to
   [Relay reconnect supervisor](relay-reconnect-supervisor.md) § Halt on a rejected pairing — the source
   of the `PairingRejected` status this screen's terminal predicate now checks (#841, spec:
   `docs/specs/architecture/841-rejected-pairing-relay-state.md`).
+- [Channel list tree and controls](channel-list-screen-tree-and-controls.md#host-row-reconnect-control-840)
+  § the plug control's `PairingRejected` branch, the caller into target mode (#842, spec:
+  `docs/specs/architecture/842-repair-rejected-host-from-tree-row.md`).

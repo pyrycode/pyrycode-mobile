@@ -20,6 +20,7 @@ import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasAnyDescendant
@@ -166,6 +167,23 @@ class PairCodeScreenTest {
         assertEquals(before, runBlocking { store.list() })
     }
 
+    @Test fun targetedRouteNamesItsHostAndBackReturnsWithoutSaving() {
+        val store = GlobalContext.get().get<PairedServerCollectionStore>()
+        val before = runBlocking { store.list() }
+        lateinit var nav: NavHostController
+        rule.setContent {
+            PyrycodeMobileTheme {
+                nav = rememberNavController()
+                PyryNavHost(Routes.WELCOME, navController = nav)
+            }
+        }
+        rule.runOnIdle { nav.navigate(Routes.pairCode("unsaved/host id")) }
+        rule.onNodeWithText("Host name").assertTextContains("unsaved/host id").assertIsNotEnabled()
+        Espresso.pressBack()
+        rule.waitUntil(5_000) { nav.currentDestination?.route == Routes.WELCOME }
+        assertEquals(before, runBlocking { store.list() })
+    }
+
     @Test fun scannerPasteReturnsFromEveryRecoveryStateWithoutSaving() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
@@ -209,6 +227,17 @@ class PairCodeScreenTest {
         capture("pair-code-dark")
         rule.runOnIdle { dark = false }
         capture("pair-code-light")
+    }
+
+    @Test fun targetModeNamesTheHostReadOnlyAndShowsWrongHostOnTheCode() {
+        state = PairCodeState(targetName = "Pyrybox", code = "draft")
+        show()
+        rule.onNodeWithText("Host name").assertTextContains("Pyrybox").assertIsNotEnabled()
+        rule.onNodeWithContentDescription("Clear host name").assertIsNotEnabled()
+        rule.runOnIdle { state = state.copy(error = WRONG_HOST_ERROR) }
+        rule.onNodeWithText(WRONG_HOST_ERROR).assertIsDisplayed()
+        rule.onNodeWithText("Pair").assertIsDisplayed()
+        capture("pair-code-target")
     }
 
     @Test fun clearControlsErrorsAndConfirmationBack() {

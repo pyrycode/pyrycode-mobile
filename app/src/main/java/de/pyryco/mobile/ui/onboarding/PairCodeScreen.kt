@@ -70,6 +70,7 @@ internal fun PairCodeScreen(
         val saving = state.phase == PairCodePhase.Saving
         val colors = MaterialTheme.colorScheme
         val uriHandler = LocalUriHandler.current
+        val codeError = state.error?.takeIf { it == INVALID_CODE_ERROR || it == WRONG_HOST_ERROR }
         Column(Modifier.fillMaxSize().background(colors.surface).imePadding()) {
             Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 20.dp, top = 18.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { onEvent(PairCodeEvent.Back) }, enabled = !saving) {
@@ -106,18 +107,25 @@ internal fun PairCodeScreen(
                         Modifier.weight(1f).heightIn(min = 200.dp).fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(64.dp, Alignment.CenterVertically),
                     ) {
-                        PairCodeField("Host name", state.name, editing, { onEvent(PairCodeEvent.Name(it)) }, "Clear host name")
+                        // Re-pairing (#842) names its host and keeps the stored name, so the field shows
+                        // that name read-only; the name is daemon-authored and rendered as text only.
+                        val targetName = state.targetName
+                        if (targetName != null) {
+                            PairCodeField("Host name", targetName, false, {}, "Clear host name")
+                        } else {
+                            PairCodeField("Host name", state.name, editing, { onEvent(PairCodeEvent.Name(it)) }, "Clear host name")
+                        }
                         PairCodeField(
                             "Pairing code",
                             state.code,
                             editing,
                             { onEvent(PairCodeEvent.Code(it)) },
                             "Clear pairing code",
-                            error = state.error == "Invalid pairing code",
+                            error = codeError,
                         )
                     }
                     Column(Modifier.fillMaxWidth().padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        state.error?.takeUnless { it == "Invalid pairing code" }?.let {
+                        state.error?.takeUnless { it == codeError }?.let {
                             Text(it, color = colors.error, style = MaterialTheme.typography.bodySmall)
                         }
                         Button(
@@ -129,7 +137,7 @@ internal fun PairCodeScreen(
                                 when {
                                     saving -> "Saving…"
                                     state.phase == PairCodePhase.Connecting -> "Connecting…"
-                                    state.error != null && state.error != "Invalid pairing code" -> "Retry"
+                                    state.error != null && codeError == null -> "Retry"
                                     else -> "Pair"
                                 },
                             )
@@ -167,7 +175,7 @@ private fun PairCodeField(
     enabled: Boolean,
     onChange: (String) -> Unit,
     clearLabel: String,
-    error: Boolean = false,
+    error: String? = null,
 ) {
     // Keep M3's native empty-label placement; labels float when focused or populated.
     // The Figma input-text variant shows the floated label even with an empty draft.
@@ -178,13 +186,8 @@ private fun PairCodeField(
         enabled = enabled,
         singleLine = true,
         label = { Text(label) },
-        isError = error,
-        supportingText =
-            if (error) {
-                { Text("Invalid pairing code") }
-            } else {
-                null
-            },
+        isError = error != null,
+        supportingText = error?.let { { Text(it) } },
         colors =
             TextFieldDefaults.colors(
                 focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest.copy(alpha = 0.8f),
@@ -205,3 +208,8 @@ private fun PairCodeDarkPreview() = PyrycodeMobileTheme(darkTheme = true) { Pair
 @Preview(name = "Pair code light", widthDp = 412, heightDp = 892)
 @Composable
 private fun PairCodeLightPreview() = PyrycodeMobileTheme(darkTheme = false) { PairCodeScreen(PairCodeState(), {}) }
+
+@Preview(name = "Re-pair host dark", widthDp = 412, heightDp = 892)
+@Composable
+private fun PairCodeTargetPreview() =
+    PyrycodeMobileTheme(darkTheme = true) { PairCodeScreen(PairCodeState(targetName = "Pyrybox", error = WRONG_HOST_ERROR), {}) }

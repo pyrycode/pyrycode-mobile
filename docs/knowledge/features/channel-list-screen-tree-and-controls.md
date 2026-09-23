@@ -165,10 +165,18 @@ methods, the ordering that keeps a failed store write from clearing the host's c
 leg: an exhaustive `when` with no `else`, so a case added to `RelayLinkStatus` later has to be classified
 here rather than silently falling through. `Reconnecting`, `Offline`, `DaemonAbsent` and (#841)
 `PairingRejected` are disconnected; `Idle` (a deliberate background close, not an error), `Connecting`
-and `Connected` are not. `PairingRejected`'s reconnect control therefore reads and routes exactly like
-any other disconnected host's: `reconnectHost` → `retryHost` → the supervisor's `retry()`, which dials
-once and can be rejected again — the exhaustive `when` is what forced this case to be classified rather
+and `Connected` are not. The exhaustive `when` is what forced `PairingRejected` to be classified rather
 than silently falling through to "connected".
+
+**The plug control's target diverges by state (#842).** `Reconnecting`, `Offline` and `DaemonAbsent` still
+read and route through the original path: `TreeHostReconnectTapped(serverId)` → `vm.reconnectHost(serverId)`
+→ `retryHost` → the supervisor's `retry()`, which dials once and can be rejected again. `PairingRejected` is
+different — a retry cannot recover a rejected credential — so `ChannelListScreen`'s `TreeHostRow` call
+branches on `host.connectionStatus.relay == RelayLinkStatus.PairingRejected` and emits
+`ChannelListEvent.TreeHostRePairTapped(serverId)` instead; `PyryNavHost` routes that event to
+`navController.navigate(Routes.pairCode(serverId))`, opening the code-pair flow scoped to that host rather
+than retrying. The row's visual treatment and classification are unchanged — only the tap target differs.
+See [pair-with-code target mode](paste-code-dialog.md#re-pairing-a-target-host-842).
 
 `TreeHostRow` reads `connectionStatus.relay.isDisconnected()` and, when true, draws the design's
 disconnected treatment. `FoldableTreeRow` gained an optional `accent: Color? = null` (default `null` keeps
