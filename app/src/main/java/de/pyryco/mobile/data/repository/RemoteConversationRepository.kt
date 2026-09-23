@@ -155,6 +155,9 @@ class RemoteConversationRepository(
     private val announcedModelProjection = AnnouncedModelProjection()
     private val sessionFactsProjection = SessionFactsProjection()
 
+    /** The files the daemon offered in each conversation on this connection (#898). */
+    private val attachmentOfferProjection = AttachmentOfferProjection()
+
     /**
      * The thread of every conversation (#912): the thread store, the minted-id ledger and the pending drops,
      * with every write that folds a thread row. [onInbound] hands it the thread frames behind the
@@ -751,6 +754,12 @@ class RemoteConversationRepository(
                     questionBatchProjection.apply(envelope)
                 }
             }
+            TYPE_ATTACHMENT_OFFERED ->
+                // A file claude produced (#898): see [AttachmentOfferProjection.apply]. Deliberately NOT behind
+                // the `interactive` gate: the daemon delivers it to every attached client, outside the
+                // interactive family, like the upload leg's `attachment_stored`. The daemon routes nothing, so
+                // the projection filters on the payload's conversation_id. Not a thread row, no stall touched.
+                attachmentOfferProjection.apply(envelope)
             TYPE_BACKGROUND_TASK_STARTED, TYPE_BACKGROUND_TASK_UPDATED, TYPE_BACKGROUND_TASK_ROSTER -> {
                 // Background work claude left running past its turn (#677): see [BackgroundTaskProjection.apply].
                 // Same `interactive` gate as the question arm. Daemon state, not turn content: no thread row, and
@@ -1019,6 +1028,9 @@ class RemoteConversationRepository(
     override fun observeAnnouncedModel(conversationId: String): Flow<AnnouncedModel?> = announcedModelProjection.observe(conversationId)
 
     override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = sessionFactsProjection.observe(conversationId)
+
+    override fun observeAttachmentOffers(conversationId: String): Flow<List<AttachmentOffer>> =
+        attachmentOfferProjection.observe(conversationId)
 
     override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> = usageLimitProjection.observe(conversationId)
 
@@ -1615,6 +1627,12 @@ class RemoteConversationRepository(
         /** Correlated failure reply (`{code, message, retryable}`) to a request (#346, #272). */
         const val TYPE_ERROR = "error"
         const val TYPE_ATTACHMENT_CHUNK = "attachment_chunk"
+
+        /**
+         * Outbound push naming a file claude produced (#898): `{conversation_id, attachment_id, filename}`, no
+         * bytes, delivered to every attached client and live-only. See [AttachmentOfferProjection].
+         */
+        const val TYPE_ATTACHMENT_OFFERED = "attachment_offered"
 
         /** Server `error.code` for an unknown conversation → [IllegalArgumentException] (#346, AC #3). */
         const val ERROR_CONVERSATION_NOT_FOUND = "conversation.not_found"
