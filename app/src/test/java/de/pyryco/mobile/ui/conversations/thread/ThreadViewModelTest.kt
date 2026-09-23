@@ -32,6 +32,7 @@ import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.conversations.ThrowingConversationRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -52,8 +53,10 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.datetime.Instant
@@ -1421,6 +1424,75 @@ class ThreadViewModelTest {
 
             assertTrue(repo.observedIds.isNotEmpty())
             assertTrue(repo.observedIds.all { it == ACTIVE_CONV })
+            collector.cancel()
+        }
+
+    // ---- #804: usageLimit projection over repository.observeUsageLimit ---------------------------
+    // The re-read ticker is perpetual while subscribed, so these cases step with runCurrent/advanceTimeBy
+    // and never advanceUntilIdle, which would chase the ticker forever.
+
+    @Test
+    fun usageLimit_initialValue_isNullWithPlainFake() =
+        runTest {
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            // A plain fake inherits observeUsageLimit's flowOf(null) default — nothing to render.
+            val vm = makeVm(handle, FakeConversationRepository())
+            assertNull(vm.usageLimit.value)
+        }
+
+    @Test
+    fun usageLimit_reflectsReadingThenClear() =
+        runTest {
+            val repo = UsageLimitControllableRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.usageLimit.collect {} }
+            runCurrent()
+
+            repo.reading.value = WARNING_READING
+            runCurrent()
+            assertEquals(WARNING_READING, vm.usageLimit.value)
+
+            repo.reading.value = null // the benign frame's removal
+            runCurrent()
+            assertNull(vm.usageLimit.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun usageLimit_observesOnlyOwnConversationId() =
+        runTest {
+            val repo = UsageLimitControllableRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.usageLimit.collect {} }
+            runCurrent()
+
+            assertTrue(repo.observedIds.isNotEmpty())
+            assertTrue(repo.observedIds.all { it == ACTIVE_CONV })
+            collector.cancel()
+        }
+
+    // The projection applies expiry only when read and emits nothing at the deadline; the VM's fixed
+    // re-read cadence is what takes a displayed reading down without re-deriving the rule.
+    @Test
+    fun usageLimit_expiredReading_leavesOnTheNextReRead() =
+        runTest {
+            val repo = UsageLimitControllableRepo()
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, repo)
+            val collector = launch { vm.usageLimit.collect {} }
+            repo.reading.value = WARNING_READING
+            runCurrent()
+            assertEquals(WARNING_READING, vm.usageLimit.value)
+
+            repo.expired = true
+            runCurrent()
+            assertEquals(WARNING_READING, vm.usageLimit.value) // no upstream emission at the deadline
+
+            advanceTimeBy(USAGE_LIMIT_REREAD_MS)
+            runCurrent()
+            assertNull(vm.usageLimit.value)
             collector.cancel()
         }
 
@@ -4157,6 +4229,24 @@ class ThreadViewModelTest {
     }
 
     /**
+     * [CompactingControllableRepo]'s shape for the #802 usage-limit reading (#804). [expired] emulates the
+     * projection's read-time expiry: flipping it emits nothing, and only a fresh subscription sees it.
+     */
+    private class UsageLimitControllableRepo(
+        private val delegate: FakeConversationRepository = FakeConversationRepository(),
+    ) : ConversationRepository by delegate {
+        val reading = MutableStateFlow<UsageLimitReading?>(null)
+        val observedIds = mutableListOf<String>()
+
+        @Volatile var expired = false
+
+        override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> {
+            observedIds += conversationId
+            return reading.map { it?.takeUnless { expired } }
+        }
+    }
+
+    /**
      * Delegates the whole [ConversationRepository] surface to a seeded [FakeConversationRepository]
      * (so the VM's `state` pipeline stays populated) and overrides [observeQueue] with a controllable
      * [MutableStateFlow] (#461) plus [dropQueuedMessage] to record each call and optionally run [onDrop]
@@ -4329,6 +4419,15 @@ class ThreadViewModelTest {
         const val RUN_CONFIG_CONV = "seed-channel-personal"
 
         const val ACTIVE_CONV = "thread-406-active"
+
+        val WARNING_READING =
+            UsageLimitReading(
+                status = "allowed_warning",
+                limitType = "seven_day",
+                resetsAt = 0L,
+                utilization = 0.94,
+                truncatedFields = null,
+            )
 
         /** #789: a conversation the seeded fake actually knows, so sends and resets reach it. */
         const val DRAFT_CONV = "seed-channel-personal"

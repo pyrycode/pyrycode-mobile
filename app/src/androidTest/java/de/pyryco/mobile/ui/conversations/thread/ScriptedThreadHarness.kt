@@ -19,8 +19,11 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 
 /**
  * Layer 1a component-level harness (#432): drives a scripted sequence of structured live-session
@@ -106,6 +109,7 @@ class ScriptedThreadHarness(
                     onRetry = {},
                     isThinking = vm.isThinking.collectAsState().value,
                     apiRetry = vm.apiRetry.collectAsState().value,
+                    usageLimit = vm.usageLimit.collectAsState().value,
                     isCompacting = vm.isCompacting.collectAsState().value,
                     thinkingProgress = vm.thinkingProgress.collectAsState().value,
                     // #459: subscribe isBusy in the same composition pass as state/isThinking so its
@@ -156,6 +160,21 @@ class ScriptedThreadHarness(
      * subscribe-before-push hazard — pushed after [start] anyway, for uniformity.
      */
     fun pushCompacting(active: Boolean) = pump.push(compactingEnvelope(conversationId, active))
+
+    /**
+     * Script one `rate_limited` reading (#802/#804). A non-`allowed` [status] raises or replaces the
+     * reading; `"allowed"` is the benign frame that clears it. Every field stays freely settable — out-of-range
+     * [resetsAt] / [utilization] included — because the render path's range checks are what the scenarios
+     * prove. Like [pushCompacting] it projects a retained `MutableStateFlow`, so it has no
+     * subscribe-before-push hazard.
+     */
+    fun pushRateLimited(
+        status: String,
+        limitType: String = "seven_day",
+        resetsAt: Long = 0L,
+        utilization: Double? = null,
+        truncatedFields: List<String>? = null,
+    ) = pump.push(rateLimitedEnvelope(conversationId, status, limitType, resetsAt, utilization, truncatedFields))
 
     /**
      * Script one `thinking_progress` reading (#801). There is **no edge to script**: the frame only ever
@@ -368,6 +387,37 @@ private fun compactingEnvelope(
         type = "compacting",
         ts = TS,
         payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId","active":$active}"""),
+    )
+
+/**
+ * A `rate_limited` envelope (#802), built through `kotlinx.serialization` so a null [utilization] and a
+ * null [truncatedFields] cross as the literal `null`s the daemon always emits.
+ */
+private fun rateLimitedEnvelope(
+    conversationId: String,
+    status: String,
+    limitType: String,
+    resetsAt: Long,
+    utilization: Double?,
+    truncatedFields: List<String>?,
+): Envelope =
+    Envelope(
+        id = 1L,
+        type = "rate_limited",
+        ts = TS,
+        payload =
+            buildJsonObject {
+                put("conversation_id", conversationId)
+                put("status", status)
+                put("limit_type", limitType)
+                put("resets_at", resetsAt)
+                put("utilization", utilization)
+                if (truncatedFields == null) {
+                    put("truncated_fields", JsonNull)
+                } else {
+                    putJsonArray("truncated_fields") { truncatedFields.forEach { add(it) } }
+                }
+            },
     )
 
 /**
