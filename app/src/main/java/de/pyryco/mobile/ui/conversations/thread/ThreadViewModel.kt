@@ -367,6 +367,10 @@ class ThreadViewModel(
     // later than the socket-level `Connected` [connectionStateSource] reports. Keys the #778 walk
     // restart. Defaulted to always-available, as the demo path's fake repository is.
     private val repositoryAvailable: Flow<Boolean> = flowOf(true),
+    // #843: whether this thread's own host rejected the saved pairing — the relay leg's distinct state,
+    // which [connectionStateSource]'s legacy four cases fold into Offline. Defaulted to never, as the
+    // demo path's fake host is never rejected.
+    pairingRejected: Flow<Boolean> = flowOf(false),
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
@@ -571,6 +575,21 @@ class ThreadViewModel(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
                 initialValue = ConnectionState.Connected,
+            )
+
+    /**
+     * Whether the thread offers Re-pair (#843): this thread's own host is in the rejected-pairing state,
+     * so the connection banner's retry cannot succeed. A sibling [StateFlow] beside [connectionState]; the
+     * screen draws the action and emits the tap, and the route it opens is keyed by the destination's own
+     * server id.
+     */
+    val rePairAvailable: StateFlow<Boolean> =
+        pairingRejected
+            .onEach { if (it) RelayLog.d { "event=thread_repair_offered" } }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = false,
             )
 
     /**

@@ -46,10 +46,13 @@ import de.pyryco.mobile.ui.onboarding.ScannerViewModel
 import de.pyryco.mobile.ui.settings.ArchivedDiscussionsViewModel
 import de.pyryco.mobile.ui.settings.SettingsHost
 import de.pyryco.mobile.ui.settings.SettingsViewModel
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import okhttp3.WebSocket
@@ -191,6 +194,23 @@ fun hostConversationModule(
         } onClose { it?.dispose() }
     }
 
+/**
+ * Whether the saved host [serverId] names is in the rejected-pairing state (#843), for the thread's
+ * Re-pair action. Matched by exact id, so another host's rejection never raises it, and a host that is
+ * not saved reads `false`. Follows [connections] rather than one entry's status, because a successful
+ * re-pair changes the saved record and the registry replaces that host's entry.
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+internal fun pairingRejected(
+    connections: Flow<List<HostConversationConnection>>,
+    serverId: String,
+): Flow<Boolean> =
+    connections
+        .map { hosts -> hosts.firstOrNull { it.serverId == serverId } }
+        .distinctUntilChanged()
+        .flatMapLatest { host -> host?.status?.map { it.relay == RelayLinkStatus.PairingRejected } ?: flowOf(false) }
+        .distinctUntilChanged()
+
 /** Destination ownership is captured once; compatibility selection is only a flat-list adapter. */
 internal class ThreadDestinationFactory(
     private val useRelay: Boolean,
@@ -274,6 +294,9 @@ internal class ThreadDestinationFactory(
             // #861: the walk restart waits for the published repository, not the socket — the supervisor's
             // Connected precedes the handshake that publishes it.
             repositoryAvailable = bundle?.coordinator?.currentRepository?.map { it != null } ?: flowOf(false),
+            // #843: read through the registry by id, not off the captured bundle — a successful re-pair
+            // replaces that bundle, and the thread must see the replacement to take the action away.
+            pairingRejected = pairingRejected(registry.hostConnections, serverId),
         )
     }
 
