@@ -243,7 +243,8 @@ class RemoteConversationRepository(
 
     /**
      * The per-conversation status readings, one small projection per wire event: stall (#395), queue
-     * (#460), API retry (#593), compaction (#596), usage limit (#802) and thinking progress (#801). Each
+     * (#460), API retry (#593), compaction (#596), usage limit (#802), thinking progress (#801) and reset
+     * phase (#871). Each
      * owns its state, its decoder and its read. [onInbound] hands each its own envelope type behind the
      * `interactive` gate, and the clears one event causes in another stay in the arm that causes them.
      */
@@ -253,6 +254,7 @@ class RemoteConversationRepository(
     private val compactingProjection = CompactingProjection()
     private val usageLimitProjection = UsageLimitProjection(now)
     private val thinkingProgressProjection = ThinkingProgressProjection()
+    private val resettingProjection = ResettingProjection()
 
     /**
      * `conversationId -> the model menu this connection heard for it` (#791) — the identifiers, labels,
@@ -853,6 +855,12 @@ class RemoteConversationRepository(
                     thinkingProgressProjection.apply(envelope)
                 }
             }
+            TYPE_RESETTING -> {
+                // Where this conversation's Reset is (#871): see [ResettingProjection.apply].
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    resettingProjection.apply(envelope)
+                }
+            }
             TYPE_SESSION_TRANSITION -> {
                 // A session boundary (#336, pyrycode#656/#657/#740). Same `interactive` gate as the
                 // live-session / `stall` / `queue_state` siblings: a non-interactive phone never decodes a
@@ -887,6 +895,10 @@ class RemoteConversationRepository(
                         // transition cannot clear another conversation's reading; removing an absent key
                         // is an inert no-op.
                         thinkingProgressProjection.clear(conversationId)
+                        // Fifth write since #871: a reset ends in a session transition, and the daemon emits
+                        // `restarting` before it respawns claude, so no rising edge can follow this one. Routed
+                        // by the same decoded conversation_id, so it cannot clear another conversation's reading.
+                        resettingProjection.clear(conversationId)
                     }
                 }
             }
@@ -1855,6 +1867,8 @@ class RemoteConversationRepository(
     override fun observeApiRetry(conversationId: String): Flow<ApiRetryStatus> = apiRetryProjection.observe(conversationId)
 
     override fun observeCompacting(conversationId: String): Flow<Boolean> = compactingProjection.observe(conversationId)
+
+    override fun observeResetting(conversationId: String): Flow<ResetStatus?> = resettingProjection.observe(conversationId)
 
     override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> = usageLimitProjection.observe(conversationId)
 
@@ -3247,6 +3261,16 @@ class RemoteConversationRepository(
          * boundary), and **absence proves nothing** — the PTY surface emits none at all.
          */
         const val TYPE_THINKING_PROGRESS = "thinking_progress"
+
+        /**
+         * Capability-gated status event: where a conversation's Reset is `{conversation_id, active, phase,
+         * handoff}` (#871, pyrycode#2478) — pyrycode `docs/protocol-mobile.md` § `resetting`. Unlike
+         * [TYPE_COMPACTING]'s strict edge pair, one reset sends **two** rising edges (`wrapping_up`, then
+         * `restarting`) before one falling edge, so a second rising edge replaces the reading rather than
+         * starting another reset. `phase` and `handoff` are closed sets while `active` is true; nothing on
+         * the frame is claude-authored. Opens, closes and alters no turn.
+         */
+        const val TYPE_RESETTING = "resetting"
 
         /**
          * Capability-gated thread event: a session transition `{conversation_id, previous_session_id,

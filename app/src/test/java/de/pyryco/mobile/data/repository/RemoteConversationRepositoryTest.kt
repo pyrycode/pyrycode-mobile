@@ -5203,6 +5203,216 @@ class RemoteConversationRepositoryTest {
             assertEquals(listOf(false, true), compacting)
         }
 
+    // ---- #871: decode `resetting` as a thread-observable per-conversation reset-phase reading ------
+
+    // AC #1: nothing is readable until a frame lands; the first rising edge surfaces its phase and handoff.
+    @Test
+    fun resetting_risingEdge_surfacesPhaseAndHandoff() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val readings = collectResetting(repo, "c1")
+            runCurrent()
+            assertEquals(listOf<ResetStatus?>(null), readings)
+
+            pump.push(resettingEnvelope("c1", active = true, phase = "wrapping_up", handoff = "pending"))
+            runCurrent()
+            assertEquals(listOf(null, ResetStatus(ResetStatus.Phase.WrappingUp, ResetStatus.Handoff.Pending)), readings)
+        }
+
+    // AC #1 + #2: the documented sequence — two rising edges, then one falling edge. The second rising edge
+    // REPLACES the reading (a phase change, not a second reset), and the falling edge clears it.
+    @Test
+    fun resetting_fullSequence_replacesThenClears() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val readings = collectResetting(repo, "c1")
+            runCurrent()
+
+            pump.push(resettingEnvelope("c1", active = true, phase = "wrapping_up", handoff = "pending", id = 1L))
+            runCurrent()
+            pump.push(resettingEnvelope("c1", active = true, phase = "restarting", handoff = "written", id = 2L))
+            runCurrent()
+            pump.push(resettingEnvelope("c1", active = false, phase = "", handoff = "", id = 3L))
+            runCurrent()
+            assertEquals(
+                listOf(
+                    null,
+                    ResetStatus(ResetStatus.Phase.WrappingUp, ResetStatus.Handoff.Pending),
+                    ResetStatus(ResetStatus.Phase.Restarting, ResetStatus.Handoff.Written),
+                    null,
+                ),
+                readings,
+            )
+        }
+
+    // `skipped` is a reported outcome, not a missing value — it surfaces like `written`.
+    @Test
+    fun resetting_skippedHandoff_isAReportedOutcome() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val readings = collectResetting(repo, "c1")
+            runCurrent()
+
+            pump.push(resettingEnvelope("c1", active = true, phase = "restarting", handoff = "skipped"))
+            runCurrent()
+            assertEquals(listOf(null, ResetStatus(ResetStatus.Phase.Restarting, ResetStatus.Handoff.Skipped)), readings)
+        }
+
+    // AC #2: the falling edge clears that conversation only; another conversation's reading stands.
+    @Test
+    fun resetting_fallingEdge_clearsOnlyItsConversation() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val c1 = collectResetting(repo, "c1")
+            val c2 = collectResetting(repo, "c2")
+            runCurrent()
+
+            pump.push(resettingEnvelope("c1", active = true, phase = "wrapping_up", handoff = "pending", id = 1L))
+            pump.push(resettingEnvelope("c2", active = true, phase = "restarting", handoff = "skipped", id = 2L))
+            runCurrent()
+            pump.push(resettingEnvelope("c1", active = false, phase = "", handoff = "", id = 3L))
+            runCurrent()
+
+            assertEquals(listOf(null, ResetStatus(ResetStatus.Phase.WrappingUp, ResetStatus.Handoff.Pending), null), c1)
+            assertEquals(listOf(null, ResetStatus(ResetStatus.Phase.Restarting, ResetStatus.Handoff.Skipped)), c2)
+        }
+
+    // AC #2: a falling edge with no prior rising edge does nothing — no emission, no state.
+    @Test
+    fun resetting_fallingEdgeWithNoPriorRisingEdge_doesNothing() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val readings = collectResetting(repo, "c1")
+            runCurrent()
+
+            pump.push(resettingEnvelope("c1", active = false, phase = "", handoff = ""))
+            runCurrent()
+            assertEquals(listOf<ResetStatus?>(null), readings)
+        }
+
+    // The falling edge's strings are meaningless, so it clears even when they are not the documented
+    // empty strings — the clear must not hang on validating fields the contract says nothing about.
+    @Test
+    fun resetting_fallingEdgeWithNonEmptyStrings_stillClears() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val readings = collectResetting(repo, "c1")
+            runCurrent()
+
+            pump.push(resettingEnvelope("c1", active = true, phase = "restarting", handoff = "written", id = 1L))
+            runCurrent()
+            pump.push(resettingEnvelope("c1", active = false, phase = "restarting", handoff = "bogus", id = 2L))
+            runCurrent()
+            assertEquals(listOf(null, ResetStatus(ResetStatus.Phase.Restarting, ResetStatus.Handoff.Written), null), readings)
+        }
+
+    // AC #1: a malformed payload, or a rising edge whose `phase` / `handoff` is outside its closed set, is
+    // dropped — the prior reading stands, and a later valid frame still lands, proving the collector survived.
+    @Test
+    fun resetting_malformedOrOutOfSet_droppedCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val readings = collectResetting(repo, "c1")
+            runCurrent()
+
+            pump.push(resettingEnvelope("c1", active = true, phase = "wrapping_up", handoff = "pending", id = 1L))
+            runCurrent()
+
+            // Missing the required `conversation_id`.
+            pump.push(resettingProbe(2L, """{"active":false,"phase":"","handoff":""}"""))
+            // Wrong-typed `conversation_id` (number, not string).
+            pump.push(resettingProbe(3L, """{"conversation_id":1,"active":false,"phase":"","handoff":""}"""))
+            // Missing `handoff` — no field is defaulted.
+            pump.push(resettingProbe(4L, """{"conversation_id":"c1","active":false,"phase":""}"""))
+            // Genuinely wrong-shaped values. A *quoted* primitive would not do: kotlinx's tree decoder
+            // accepts `"active":"false"` even with `isLenient = false` (see the ApiRetryPayloadDto KDoc).
+            pump.push(resettingProbe(5L, """{"conversation_id":"c1","active":{},"phase":"","handoff":""}"""))
+            pump.push(resettingProbe(6L, """{"conversation_id":"c1","active":true,"phase":["restarting"],"handoff":"written"}"""))
+            // Well-formed, but a rising edge carrying a token outside the closed sets — including the
+            // falling edge's empty strings, which are not members while `active` is true.
+            pump.push(resettingEnvelope("c1", active = true, phase = "exploding", handoff = "written", id = 7L))
+            pump.push(resettingEnvelope("c1", active = true, phase = "restarting", handoff = "lost", id = 8L))
+            pump.push(resettingEnvelope("c1", active = true, phase = "", handoff = "", id = 9L))
+            pump.push(resettingEnvelope("c1", active = true, phase = "Restarting", handoff = "written", id = 10L))
+            runCurrent()
+            assertEquals(listOf(null, ResetStatus(ResetStatus.Phase.WrappingUp, ResetStatus.Handoff.Pending)), readings)
+
+            pump.push(resettingEnvelope("c1", active = true, phase = "restarting", handoff = "written", id = 11L))
+            runCurrent()
+            assertEquals(ResetStatus(ResetStatus.Phase.Restarting, ResetStatus.Handoff.Written), readings.last())
+        }
+
+    // AC #1 (fail-closed): a phone that did not negotiate `interactive` decodes none.
+    @Test
+    fun resetting_capabilityGateClosed_blocksDecode() =
+        runTest {
+            for (capabilities in listOf(emptySet(), setOf("something_else"))) {
+                val pump = FakeSessionPump()
+                val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { capabilities })
+                val readings = collectResetting(repo, "c1")
+                runCurrent()
+
+                pump.push(resettingEnvelope("c1", active = true, phase = "wrapping_up", handoff = "pending"))
+                runCurrent()
+                assertEquals("gate closed for $capabilities", listOf<ResetStatus?>(null), readings)
+            }
+        }
+
+    // AC #2: that conversation's `session_transition` clears the reading — the daemon emits `restarting`
+    // before it respawns claude, so no rising edge can follow the transition — and no other conversation's.
+    @Test
+    fun resetting_sessionTransitionClearsOnlyItsConversation() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val c1 = collectResetting(repo, "c1")
+            val c2 = collectResetting(repo, "c2")
+            runCurrent()
+
+            pump.push(resettingEnvelope("c1", active = true, phase = "restarting", handoff = "written", id = 1L))
+            pump.push(resettingEnvelope("c2", active = true, phase = "wrapping_up", handoff = "pending", id = 2L))
+            runCurrent()
+            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear", id = 3L))
+            runCurrent()
+
+            assertEquals(listOf(null, ResetStatus(ResetStatus.Phase.Restarting, ResetStatus.Handoff.Written), null), c1)
+            assertEquals(listOf(null, ResetStatus(ResetStatus.Phase.WrappingUp, ResetStatus.Handoff.Pending)), c2)
+        }
+
+    // AC #3: a `resetting` frame neither raises nor clears a stall — on c1 an existing stall survives both
+    // edges, and on c2 no stall appears. Clearing here would hand a daemon a lever to suppress the stall
+    // indicator; raising one would draw a stall where the daemon is doing its own reset work.
+    @Test
+    fun resetting_neitherRaisesNorClearsAStall() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val c1Stall = collectStall(repo, "c1")
+            val c2Stall = collectStall(repo, "c2")
+            val thread = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(stallEnvelope("c1"))
+            runCurrent()
+            assertEquals(listOf(false, true), c1Stall)
+
+            pump.push(resettingEnvelope("c1", active = true, phase = "wrapping_up", handoff = "pending", id = 2L))
+            pump.push(resettingEnvelope("c1", active = false, phase = "", handoff = "", id = 3L))
+            pump.push(resettingEnvelope("c2", active = true, phase = "wrapping_up", handoff = "pending", id = 4L))
+            pump.push(resettingEnvelope("c2", active = false, phase = "", handoff = "", id = 5L))
+            runCurrent()
+            assertEquals("a reset is not forward progress — the stall stands", listOf(false, true), c1Stall)
+            assertEquals("a reset raises no stall", listOf(false), c2Stall)
+            assertEquals("no thread row folded", listOf(emptyList<ThreadItem>()), thread)
+        }
+
     // ---- #802: decode `rate_limited` as a conversation-observable usage-limit reading ------------
     // Decode-only. The falling edge, the two unvalidated numbers and the expiry are what separate this
     // arm from its `compacting` sibling, so those carry the load here.
@@ -9074,6 +9284,42 @@ class RemoteConversationRepositoryTest {
         id: Long,
         payload: String,
     ): Envelope = Envelope(id = id, type = "compacting", ts = TS, payload = MobileJson.parseToJsonElement(payload))
+
+    /**
+     * A `resetting` control envelope `{conversation_id, active, phase, handoff}` (#871). All four keys are
+     * always on the wire (no `omitempty`); a falling edge carries both strings as `""`.
+     */
+    private fun resettingEnvelope(
+        conversationId: String,
+        active: Boolean,
+        phase: String,
+        handoff: String,
+        id: Long = 1L,
+    ): Envelope =
+        Envelope(
+            id = id,
+            type = "resetting",
+            ts = TS,
+            payload =
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"$conversationId","active":$active,"phase":"$phase","handoff":"$handoff"}""",
+                ),
+        )
+
+    /** A raw `resetting` envelope carrying [payload] verbatim — for the malformed-payload probes. */
+    private fun resettingProbe(
+        id: Long,
+        payload: String,
+    ): Envelope = Envelope(id = id, type = "resetting", ts = TS, payload = MobileJson.parseToJsonElement(payload))
+
+    private fun TestScope.collectResetting(
+        repo: RemoteConversationRepository,
+        conversationId: String,
+    ): MutableList<ResetStatus?> {
+        val emissions = mutableListOf<ResetStatus?>()
+        backgroundScope.launch { repo.observeResetting(conversationId).collect { emissions += it } }
+        return emissions
+    }
 
     /**
      * An `interactive`-capable repository (#802), optionally on a caller-supplied clock. The clock is
