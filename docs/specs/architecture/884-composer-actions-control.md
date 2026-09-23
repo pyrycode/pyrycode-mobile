@@ -129,3 +129,25 @@ The ticket names no documentation requirement. The documentation stage should fo
 ## Open questions
 
 - Whether the Robolectric 320dp width fits the fourth footer button. If an existing footer test loses a button at that width, the fix belongs in the test host's width (`DeviceConfigurationOverride.ForcedSize`), not in the footer layout.
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] No findings. The only untrusted input is the workspace-authored `SlashCommandMenu` (#882), and it crosses into the client at exactly one place: `absentComposerActions`. There, `name`, `aliases` and `truncatedFields` are compared against client constants, and the function returns a `Set<ComposerAction>`. No published string is stored on `ThreadUiState`, rendered, logged or sent. Labels, row values and commands are `ComposerAction` constants. The screen hands the ViewModel a `ComposerAction`, never a string. `ThreadScreen` resolves the overlay's `value` through `ComposerAction.fromValue`, which ignores anything unknown. So the most a hostile menu can do is grey out Compact or Knowledge capture. It cannot enable anything, rename anything or change what is sent.
+- [Trust boundaries] No findings. The proof is fail-open by construction. `droppedCommands` must be exactly `0`, so a negative or malformed count proves nothing. A truncated `name` or `aliases` anywhere proves nothing. Matching is exact string equality against `command.removePrefix("/")`, so a Unicode lookalike can only make a command read as absent, never make a different command send.
+- [Trust boundaries] SHOULD FIX (Phase B). `onComposerCommand` must re-check `action in state.value.absentActions` and refuse. A greyed row must be inert even if a stale overlay composition delivers a tap. The plan already specifies this. The verifier should confirm it landed and is tested.
+- [Tokens / secrets] No findings. No token, key or credential is created, read or stored. The command send rides the existing Noise session through `repository.sendMessage`.
+- [File / storage] No findings. Nothing is persisted. `absentActions` is derived in memory per emission. The draft and pending attachments are left untouched, not written.
+- [Android attack surface] No findings. There is no new intent, deep link, pending intent, provider or WebView. The overlay draws in the screen's own window, as it did before.
+- [Crypto] No findings. No primitive is touched.
+- [Network & I/O] No findings. The menu arrives on the existing `slash_command_list` frame, whose size is bounded by the transport's frame handling. The absence scan is linear in rows × aliases of one already-decoded frame, per emission. The send is the existing `send_message` request with its existing reply wait.
+- [Logs] No findings. `event=composer_action action=<ComposerAction.value> outcome=sent|absent` carries client constants only. There is no conversation id, command output or menu content, and `RelayLog` is debug-gated.
+- [Concurrency] No findings. Each tap runs one `launchGuardedRepoCall` on `viewModelScope`, cancelled with the ViewModel. Repeated taps send repeated commands, exactly as repeated composer sends would. This is not deduplicated, deliberately, to match the composer. `absentActions` is cold and shares `state`'s `WhileSubscribed`.
+- [Threat model] OUT OF SCOPE. What `/knowledge-capture` or `/compact` does once received belongs to claude's and the workspace's own trust domain. The phone sends the same fixed text a user could type into the composer. A workspace that defines a hostile `knowledge-capture` command is no more reachable here than by typing it. Live behaviour is #679's.
+- [Threat model] No findings. For UI leakage, only fixed client labels are drawn. Reset session keeps the overflow item's `mutationsSupported` gate, and the existing `ThreadEvent.NewSession` path is reused unchanged.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-09-24
