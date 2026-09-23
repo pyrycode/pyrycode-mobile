@@ -15,6 +15,7 @@ import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isDisplayed
+import androidx.compose.ui.test.isEnabled
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
@@ -359,9 +360,9 @@ class InteractiveStreamE2ETest {
     /**
      * Create-workspace-folder twin of the ping happy path (#566, Layer 3): drive the real
      * create-a-workspace-folder flow end to end against real claude, exercising the already-shipped
-     * #564 create wire and #565 recents wire. Long-press the channel-list FAB → Workspace Picker →
-     * "Create new folder…" → type a folder name → land in a fresh discussion whose workspace **is**
-     * the created folder → send the constrained ping to prove it is a usable live-session workspace →
+     * #564 create wire and #565 recents wire. Long-press the host row's add control → Add workspace
+     * (#904) → "Create new folder…" → type a folder name → the folder is selected → OK → land in a fresh
+     * discussion whose workspace **is** the created folder → send the constrained ping to prove it is a usable live-session workspace →
      * re-open the picker and confirm the folder shows in "Recent".
      *
      * **Reachability (the material difference from #537).** The create affordance is **ungated** — it
@@ -409,6 +410,14 @@ class InteractiveStreamE2ETest {
         }
         composeTestRule.onNode(hasSetTextAction()).performTextInput(folderName)
         composeTestRule.onAllNodesWithText(CREATE_BUTTON).onFirst().performClick()
+
+        // 3b. Add workspace (#904): the created folder becomes the modal's selection and starts nothing.
+        //     OK enables once the folder is selected and the host reads connected; OK starts the chat.
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasText(OK_BUTTON) and isEnabled()).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(folderName, substring = true).onFirst().assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText(OK_BUTTON) and isEnabled()).onFirst().performClick()
 
         // 4. AC-1: creating the folder navigates into a fresh discussion whose cwd is the created folder.
         //    The send button marks the thread; the workspace chip reflects the folder's basename verbatim
@@ -1930,8 +1939,8 @@ class InteractiveStreamE2ETest {
     }
 
     /**
-     * Long-press the same control to open the Workspace Picker — a *tap* would create a scratch chat
-     * instead (the long press routes to `ChannelListEvent.TreeHostAddLongPressed`,
+     * Long-press the same control to open that host's Add workspace modal (#904) — a *tap* would create
+     * a scratch chat instead (the long press routes to `ChannelListEvent.TreeHostAddLongPressed`,
      * `combinedClickable.onLongClick`).
      */
     private fun openWorkspacePicker() {
@@ -2012,6 +2021,9 @@ class InteractiveStreamE2ETest {
         const val CREATE_FOLDER_ROW = "Create new folder under pyry-workspace"
         const val CREATE_BUTTON = "Create"
         const val RECENT_SECTION = "Recent"
+
+        // #904: Add workspace's submit — MobileModal's fixed footer label.
+        const val OK_BUTTON = "OK"
 
         // Collision-resistant folder-name prefix: a clean single path element (lowercase alphanumerics +
         // dash — the daemon rejects empty / absolute / separator-bearing / ".." names). Suffixed with

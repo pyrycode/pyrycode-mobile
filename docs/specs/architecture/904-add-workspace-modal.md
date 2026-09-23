@@ -133,3 +133,7 @@ All jobs in `viewModelScope`. `addWorkspace` is a `MutableStateFlow`; terminal t
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-23
+
+## Revisions
+
+- **2026-09-23 (implementation): Open question resolved, no design change.** The rung-3 scenario and the relay-backed `flatListWorkspacePickerKeepsCapturedOwnerAcrossSelectionChanges` both wait for an enabled `OK` node (`hasText("OK") and isEnabled()`) before pressing it. The device test also asserts that no `create_conversation` went out between the folder's creation and the OK press.

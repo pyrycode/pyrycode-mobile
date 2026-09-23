@@ -426,35 +426,193 @@ class HostChannelListViewModelTest {
         }
 
     @Test
-    fun pickerCapturesHostOverridesPreferenceClearsSynchronouslyAndDismissesWithoutCreating() =
+    fun addWorkspaceReadsAndWritesOnlyItsOwnHostAndStartsInTheCreatedFolder() =
         runTest(dispatcher) {
             val f = fixture(flow { error("preference must not be read") })
             backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
             backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
-            f.vm.openHostWorkspacePicker("Host")
-            runCurrent()
-            assertEquals("Host", f.vm.hostState.value.workspacePickerServerId)
+            f.a.repo.recents.value = listOf("/a/recent")
+            f.b.repo.recents.value = listOf("/b/recent")
+            // The selected adapter points at the other host: nothing below may follow it.
             f.selected.value = f.b.repo
-            val completion = CompletableDeferred<Unit>()
-            f.a.repo.createGate = completion
-            f.vm.pickHostWorkspace("explicit")
-            f.vm.pickHostWorkspace("duplicate")
+
+            f.vm.openAddWorkspace("Host")
             runCurrent()
-            assertNull(f.vm.hostState.value.workspacePickerServerId)
-            assertEquals(listOf("explicit"), f.a.repo.workspaces)
-            assertTrue(f.nav.isEmpty())
-            completion.complete(Unit)
+            assertEquals(AddWorkspaceState("Host"), f.vm.hostState.value.addWorkspace)
+            assertEquals(listOf("/a/recent"), f.vm.hostState.value.addWorkspaceRecent)
+
+            // A created folder becomes the selection and starts nothing.
+            f.vm.createAddWorkspaceFolder("  fresh  ")
             runCurrent()
-            assertEquals(listOf(HostConversationTarget("Host", "returned-id")), f.nav)
-            f.vm.openHostWorkspacePicker("host")
-            f.vm.dismissHostWorkspacePicker()
-            f.vm.pickHostWorkspace("dismissed")
-            runCurrent()
-            assertNull(f.vm.hostState.value.workspacePickerServerId)
+            assertEquals(listOf("fresh"), f.a.repo.createdFolders)
+            assertEquals(AddWorkspaceState("Host", selected = "/Host/fresh"), f.vm.hostState.value.addWorkspace)
             assertTrue(
-                f.b.repo.workspaces
+                f.a.repo.workspaces
                     .isEmpty(),
             )
+            assertTrue(f.nav.isEmpty())
+
+            // OK starts exactly that folder on that host, closes and opens the thread.
+            f.vm.submitAddWorkspace()
+            runCurrent()
+            assertEquals(listOf<String?>("/Host/fresh"), f.a.repo.workspaces)
+            assertNull(f.vm.hostState.value.addWorkspace)
+            assertEquals(listOf(HostConversationTarget("Host", "returned-id")), f.nav)
+            assertEquals(HostConversationTarget("Host", "returned-id"), f.vm.hostState.value.selected)
+
+            // A recent folder of the second host, opened on the second host, goes to the second host.
+            f.vm.openAddWorkspace("host")
+            runCurrent()
+            assertEquals(listOf("/b/recent"), f.vm.hostState.value.addWorkspaceRecent)
+            f.vm.selectAddWorkspaceFolder("/b/recent")
+            f.vm.submitAddWorkspace()
+            runCurrent()
+            assertEquals(listOf<String?>("/b/recent"), f.b.repo.workspaces)
+            assertEquals(listOf<String?>("/Host/fresh"), f.a.repo.workspaces)
+            assertTrue(
+                f.b.repo.createdFolders
+                    .isEmpty(),
+            )
+        }
+
+    @Test
+    fun addWorkspaceRecentsNeverShowAnotherHostsListAndAreCapped() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.a.repo.recents.value = (1..80).map { "/a/$it" }
+            f.b.repo.recents.value = listOf("/b/only")
+            f.vm.openAddWorkspace("Host")
+            runCurrent()
+            assertEquals((1..50).map { "/a/$it" }, f.vm.hostState.value.addWorkspaceRecent)
+
+            // Retargeted without closing: the first host's list is never published with the second's state.
+            val seen = mutableListOf<HostChannelListState>()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect { seen += it } }
+            f.vm.openAddWorkspace("host")
+            runCurrent()
+            assertTrue(seen.none { it.addWorkspace?.serverId == "host" && it.addWorkspaceRecent.any { path -> path.startsWith("/a/") } })
+            assertEquals(listOf("/b/only"), f.vm.hostState.value.addWorkspaceRecent)
+
+            // Closed: no list.
+            f.vm.dismissAddWorkspace()
+            runCurrent()
+            assertTrue(
+                f.vm.hostState.value.addWorkspaceRecent
+                    .isEmpty(),
+            )
+
+            // An unknown host opens nothing.
+            f.vm.openAddWorkspace("HOST")
+            runCurrent()
+            assertNull(f.vm.hostState.value.addWorkspace)
+        }
+
+    @Test
+    fun addWorkspaceFailuresStayOpenWithSelectionAndStaticFlags() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+            f.a.repo.recents.value = listOf("/a/secret-path")
+            f.vm.openAddWorkspace("Host")
+            f.vm.selectAddWorkspaceFolder("/a/secret-path")
+            runCurrent()
+
+            f.a.repo.failure = RelayErrorException("server.error", false, "server-secret")
+            f.vm.createAddWorkspaceFolder("typed-secret")
+            runCurrent()
+            assertEquals(
+                AddWorkspaceState("Host", selected = "/a/secret-path", createFailed = true),
+                f.vm.hostState.value.addWorkspace,
+            )
+
+            f.vm.submitAddWorkspace()
+            runCurrent()
+            assertEquals(
+                AddWorkspaceState("Host", selected = "/a/secret-path", startFailed = true),
+                f.vm.hostState.value.addWorkspace,
+            )
+            assertTrue(f.nav.isEmpty())
+            assertTrue(logs.any { "add_workspace_create_failed" in it } && logs.any { "add_workspace_start_failed" in it })
+            assertTrue(
+                "no server message, path, name or id may reach a log line: $logs",
+                logs.none { "server-secret" in it || "secret-path" in it || "typed-secret" in it || "Host" in it },
+            )
+
+            // A new selection clears the failure; a retry that succeeds closes and navigates.
+            f.a.repo.failure = null
+            f.vm.selectAddWorkspaceFolder("/a/secret-path")
+            assertEquals(AddWorkspaceState("Host", selected = "/a/secret-path"), f.vm.hostState.value.addWorkspace)
+            f.vm.submitAddWorkspace()
+            runCurrent()
+            assertNull(f.vm.hostState.value.addWorkspace)
+            assertEquals(listOf(HostConversationTarget("Host", "returned-id")), f.nav)
+        }
+
+    @Test
+    fun addWorkspaceIgnoresPressesWhileBusyAndALateResultCannotReopenOrNavigate() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            backgroundScope.launch(dispatcher) { f.vm.hostNavigationEvents.collect { f.nav += it } }
+
+            // Nothing is open, or nothing is selected: nothing is sent.
+            f.vm.submitAddWorkspace()
+            f.vm.createAddWorkspaceFolder("orphan")
+            f.vm.openAddWorkspace("Host")
+            f.vm.submitAddWorkspace()
+            f.vm.createAddWorkspaceFolder("   ")
+            runCurrent()
+            assertTrue(
+                f.a.repo.workspaces
+                    .isEmpty() &&
+                    f.a.repo.createdFolders
+                        .isEmpty(),
+            )
+
+            f.vm.selectAddWorkspaceFolder("/first")
+            val gate = CompletableDeferred<Unit>()
+            f.a.repo.createGate = gate
+            f.vm.submitAddWorkspace()
+            f.vm.submitAddWorkspace()
+            f.vm.createAddWorkspaceFolder("mid-flight")
+            f.vm.selectAddWorkspaceFolder("/second")
+            runCurrent()
+            val busy = requireNotNull(f.vm.hostState.value.addWorkspace)
+            assertTrue(busy.busy)
+            assertEquals("/first", busy.selected)
+            assertEquals(listOf<String?>("/first"), f.a.repo.workspaces)
+            assertTrue(
+                f.a.repo.createdFolders
+                    .isEmpty(),
+            )
+
+            // Cancel while in flight: the late result neither reopens nor navigates.
+            f.vm.dismissAddWorkspace()
+            gate.complete(Unit)
+            runCurrent()
+            assertNull(f.vm.hostState.value.addWorkspace)
+            assertTrue(f.nav.isEmpty())
+
+            // A folder created after a dismissal and reopen cannot overwrite the new state.
+            f.a.repo.createGate = null
+            val folderGate = CompletableDeferred<Unit>()
+            f.a.repo.folderGate = folderGate
+            f.vm.openAddWorkspace("Host")
+            f.vm.createAddWorkspaceFolder("late")
+            runCurrent()
+            f.vm.dismissAddWorkspace()
+            f.vm.openAddWorkspace("Host")
+            folderGate.complete(Unit)
+            runCurrent()
+            assertEquals(AddWorkspaceState("Host"), f.vm.hostState.value.addWorkspace)
+
+            // Dismissing sends nothing.
+            f.vm.selectAddWorkspaceFolder("/third")
+            f.vm.dismissAddWorkspace()
+            runCurrent()
+            assertEquals(listOf<String?>("/first"), f.a.repo.workspaces)
         }
 
     @Test
@@ -470,14 +628,20 @@ class HostChannelListViewModelTest {
                 f.a.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
                 val target = if (reason == "unknown") "HOST" else "Host"
                 f.vm.createHostDiscussion(target)
-                f.vm.openHostWorkspacePicker(target)
+                f.vm.openAddWorkspace(target)
+                f.vm.selectAddWorkspaceFolder("explicit")
                 f.a.available = false
                 if (reason == "removed") f.hosts.value = listOf(f.b.entry)
                 if (reason == "disconnected") f.a.status.value = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down)
                 if (reason == "handshaking") f.a.status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Handshaking)
                 preferences.emit(emptyPreferences())
-                f.vm.pickHostWorkspace("explicit")
+                f.vm.createAddWorkspaceFolder("folder")
+                f.vm.submitAddWorkspace()
                 runCurrent()
+                // A known host that is unavailable at the press fails it and stays open.
+                f.vm.hostState.value.addWorkspace
+                    ?.let { assertTrue(it.startFailed) }
+                f.vm.dismissAddWorkspace()
             }
             assertTrue(
                 f.a.repo.workspaces
@@ -513,9 +677,11 @@ class HostChannelListViewModelTest {
                         f.a.repo.actionJob!!
                             .isCancelled,
                     )
-                    f.vm.openHostWorkspacePicker("Host")
-                    f.vm.pickHostWorkspace("explicit")
+                    f.vm.openAddWorkspace("Host")
+                    f.vm.selectAddWorkspaceFolder("explicit")
+                    f.vm.submitAddWorkspace()
                     runCurrent()
+                    f.vm.dismissAddWorkspace()
                     assertEquals(
                         failure is CancellationException,
                         f.a.repo.actionJob!!
@@ -1642,7 +1808,7 @@ class HostChannelListViewModelTest {
     private class Host(
         id: String,
     ) {
-        val repo = Repo()
+        val repo = Repo(id)
         var available = true
         val live = MutableStateFlow<ConversationRepository?>(repo)
         val status = MutableStateFlow(ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected))
@@ -1700,13 +1866,27 @@ class HostChannelListViewModelTest {
         }
     }
 
-    private class Repo : ConversationRepository by FakeConversationRepository() {
+    private class Repo(
+        val hostId: String = "replacement",
+    ) : ConversationRepository by FakeConversationRepository() {
         val rows = MutableStateFlow<List<Conversation>?>(null)
         val previews = mutableMapOf<String, Flow<Message?>>()
         val workspaces = mutableListOf<String?>()
         var failure: Throwable? = null
         var actionJob: Job? = null
         var createGate: CompletableDeferred<Unit>? = null
+        val recents = MutableStateFlow<List<String>>(emptyList())
+        val createdFolders = mutableListOf<String>()
+        var folderGate: CompletableDeferred<Unit>? = null
+
+        override fun recentWorkspaces(): Flow<List<String>> = recents
+
+        override suspend fun createWorkspaceFolder(name: String): String {
+            folderGate?.await()
+            failure?.let { throw it }
+            createdFolders += name
+            return "/$hostId/$name"
+        }
 
         override fun observeConversations(filter: ConversationFilter) =
             rows.filterNotNull().map { rows ->
