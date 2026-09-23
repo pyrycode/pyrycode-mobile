@@ -3,6 +3,7 @@ package de.pyryco.mobile.data.network
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.ModalOption
+import de.pyryco.mobile.data.model.ToolDenial
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.QueuedMessage
@@ -80,6 +81,42 @@ internal data class ToolResultPayloadDto(
     @SerialName("result_summary") val resultSummary: String,
     @SerialName("parent_tool_use_id") val parentToolUseId: String = "",
 )
+
+/**
+ * `tool_denied` (#811, pyrycode#2233): claude refused the call [toolUseId] names. The seven strings are
+ * strict-required, the [UnrecognizedMessagePayloadDto] posture — a missing or wrong-typed one fails the
+ * decode and the one envelope is dropped. The two report arrays take [RateLimitedPayloadDto.truncatedFields]'
+ * shape, so `null` and `[]` decode apart; do not coalesce them as [QueueStatePayloadDto.toQueue] does.
+ *
+ * Not a [LiveSessionEvent]: nothing on the live stream consumes a denial, so it folds into the thread
+ * store only. Both lanes decode it through this type and [toDenial].
+ */
+@Serializable
+internal data class ToolDeniedPayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    @SerialName("turn_id") val turnId: String,
+    @SerialName("tool_use_id") val toolUseId: String,
+    @SerialName("tool_name") val toolName: String,
+    @SerialName("decision_reason_type") val decisionReasonType: String,
+    @SerialName("decision_reason") val decisionReason: String,
+    val message: String,
+    @SerialName("truncated_fields") val truncatedFields: List<String>? = null,
+    @SerialName("dropped_fields") val droppedFields: List<String>? = null,
+)
+
+/**
+ * Total verbatim copy of a [ToolDeniedPayloadDto] into the retained [ToolDenial]. The routing keys —
+ * `conversation_id`, `tool_use_id`, `turn_id` — stay on the DTO for the caller; no token is interpreted.
+ */
+internal fun ToolDeniedPayloadDto.toDenial(): ToolDenial =
+    ToolDenial(
+        toolName = toolName,
+        decisionReasonType = decisionReasonType,
+        decisionReason = decisionReason,
+        message = message,
+        truncatedFields = truncatedFields,
+        droppedFields = droppedFields,
+    )
 
 /**
  * `turn_end`. The four trailing fields (#805) are claude's own stop shape and are **optional and open-set**

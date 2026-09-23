@@ -57,6 +57,7 @@ import de.pyryco.mobile.data.network.SendMessagePayloadDto
 import de.pyryco.mobile.data.network.SessionSettingsUpdatedPayloadDto
 import de.pyryco.mobile.data.network.SessionTransitionPayloadDto
 import de.pyryco.mobile.data.network.SetSessionSettingsPayloadDto
+import de.pyryco.mobile.data.network.ToolDeniedPayloadDto
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
 import de.pyryco.mobile.data.network.ToolUsePayloadDto
 import de.pyryco.mobile.data.network.TurnEndPayloadDto
@@ -69,6 +70,7 @@ import de.pyryco.mobile.data.network.toBatch
 import de.pyryco.mobile.data.network.toBoundary
 import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.network.toConversations
+import de.pyryco.mobile.data.network.toDenial
 import de.pyryco.mobile.data.network.toEvent
 import de.pyryco.mobile.data.network.toHistoryPage
 import de.pyryco.mobile.data.network.toMenu
@@ -716,6 +718,13 @@ class RemoteConversationRepository(
                     }
                 }
             }
+            TYPE_TOOL_DENIED -> {
+                // A refused tool call (#811): see [applyToolDenied]. Same `interactive` gate as the
+                // structured-stream arm above, but no live event — it folds into the thread store only.
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    applyToolDenied(envelope)
+                }
+            }
             TYPE_STALL -> {
                 // Stall onset (#395): see [StallProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
@@ -1321,6 +1330,26 @@ class RemoteConversationRepository(
     private fun applyToolResult(event: LiveSessionEvent.ToolResult) {
         threadByConversation.update { current ->
             current + (event.conversationId to current[event.conversationId].orEmpty().withToolResult(event))
+        }
+    }
+
+    /**
+     * Mark a live tool-call row denied for a `tool_denied` (#811) through [withToolDenied], writing only
+     * the frame's own conversation. A malformed payload drops this one envelope and the collector lives
+     * on; the caught exception is discarded because its message can quote claude's prose. A conversation
+     * with no retained rows is left without an entry rather than given an empty one, since a denial can
+     * never add a row. Nothing here logs.
+     */
+    private fun applyToolDenied(envelope: Envelope) {
+        val dto =
+            try {
+                MobileJson.decodeFromJsonElement<ToolDeniedPayloadDto>(envelope.payload)
+            } catch (e: IllegalArgumentException) {
+                return
+            }
+        threadByConversation.update { current ->
+            val rows = current[dto.conversationId] ?: return@update current
+            current + (dto.conversationId to rows.withToolDenied(dto.toolUseId, dto.toDenial()))
         }
     }
 
@@ -2916,6 +2945,9 @@ class RemoteConversationRepository(
 
         /** Structured-stream event: a tool result `{…, tool_use_id, is_error, result_summary}` (#385, #607). */
         const val TYPE_TOOL_RESULT = "tool_result"
+
+        /** Thread-store event: claude refused a tool call `{…, tool_use_id, tool_name, message, …}` (#811). */
+        const val TYPE_TOOL_DENIED = "tool_denied"
 
         /** Structured-stream event: end of a turn `{…, turn_id, stop_reason}` (#385, #607). */
         const val TYPE_TURN_END = "turn_end"

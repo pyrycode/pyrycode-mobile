@@ -1,8 +1,10 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.model.ToolDenial
 import de.pyryco.mobile.data.network.MobileJson
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
@@ -426,6 +428,185 @@ class HistoryPageReducerTest {
         assertEquals(listOf("live-1"), existing.mergeHistoryRows(emptyList()).messageIds())
     }
 
+    // ---- #811: a refused call replays as denied, never as failed -----------------------------------
+
+    @Test
+    fun reduce_useDeniedResult_foldToOneDeniedRowCarryingTheDenialVerbatim() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(3, "tool_result", toolResultPayload("t1", isError = true, summary = "refused")),
+                    entry(
+                        2,
+                        "tool_denied",
+                        toolDeniedPayload(
+                            "t1",
+                            toolName = "Bash",
+                            reasonType = "rule",
+                            reason = "not allowed",
+                            message = "Permission to use Bash denied in /home/op/project",
+                        ),
+                    ),
+                    entry(1, "tool_use", toolUsePayload("t1", name = "Bash", input = "rm -rf x")),
+                ),
+                interactive = true,
+            )
+
+        assertEquals(listOf("t1"), rows.messageIds())
+        val toolCall = rows.messageRow("t1")?.toolCall
+        assertEquals(ToolCallStatus.Denied, toolCall?.status)
+        assertEquals("refused", toolCall?.output)
+        assertEquals(
+            ToolDenial(
+                toolName = "Bash",
+                decisionReasonType = "rule",
+                decisionReason = "not allowed",
+                message = "Permission to use Bash denied in /home/op/project",
+                truncatedFields = null,
+                droppedFields = null,
+            ),
+            toolCall?.denial,
+        )
+    }
+
+    @Test
+    fun reduce_resultBeforeDenial_stillDenied() {
+        // The daemon's result-line recovery reports a denial for a call whose result already shipped.
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(3, "tool_denied", toolDeniedPayload("t1")),
+                    entry(2, "tool_result", toolResultPayload("t1", isError = true, summary = "refused")),
+                    entry(1, "tool_use", toolUsePayload("t1", name = "Bash", input = "ls")),
+                ),
+                interactive = true,
+            )
+
+        val toolCall = rows.messageRow("t1")?.toolCall
+        assertEquals(ToolCallStatus.Denied, toolCall?.status)
+        assertEquals("refused", toolCall?.output)
+    }
+
+    @Test
+    fun reduce_errorResultWithoutDenial_staysFailed() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(2, "tool_result", toolResultPayload("t1", isError = true, summary = "exit 1")),
+                    entry(1, "tool_use", toolUsePayload("t1", name = "Bash", input = "ls")),
+                ),
+                interactive = true,
+            )
+
+        assertEquals(ToolCallStatus.Failed, rows.messageRow("t1")?.toolCall?.status)
+        assertEquals(null, rows.messageRow("t1")?.toolCall?.denial)
+    }
+
+    @Test
+    fun reduce_denialNamingNoRow_addsNoRow() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(2, "tool_denied", toolDeniedPayload("tX")),
+                    entry(1, "tool_use", toolUsePayload("t1", name = "Bash", input = "ls")),
+                ),
+                interactive = true,
+            )
+
+        assertEquals(listOf("t1"), rows.messageIds())
+        assertEquals(ToolCallStatus.Running, rows.messageRow("t1")?.toolCall?.status)
+    }
+
+    @Test
+    fun reduce_denialReportArrays_keepNullEmptyAndNamedFieldsApart() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    // Nothing cut or dropped: both reports null, empty reasons mean claude sent nothing.
+                    entry(6, "tool_denied", toolDeniedPayload("t3", reason = "", truncated = "[]", dropped = "null")),
+                    // The daemon emptied an over-cap tool name.
+                    entry(5, "tool_denied", toolDeniedPayload("t2", toolName = "", dropped = """["tool_name"]""")),
+                    // The daemon cut the message to fit.
+                    entry(4, "tool_denied", toolDeniedPayload("t1", message = "cut…", truncated = """["message"]""")),
+                    entry(3, "tool_use", toolUsePayload("t3", name = "Bash", input = "c")),
+                    entry(2, "tool_use", toolUsePayload("t2", name = "Bash", input = "b")),
+                    entry(1, "tool_use", toolUsePayload("t1", name = "Bash", input = "a")),
+                ),
+                interactive = true,
+            )
+
+        val cut = rows.messageRow("t1")?.toolCall?.denial
+        assertEquals("cut…", cut?.message)
+        assertEquals(listOf("message"), cut?.truncatedFields)
+        assertEquals(null, cut?.droppedFields)
+
+        val emptied = rows.messageRow("t2")?.toolCall?.denial
+        assertEquals("", emptied?.toolName)
+        assertEquals(listOf("tool_name"), emptied?.droppedFields)
+        assertEquals(null, emptied?.truncatedFields)
+
+        val unsent = rows.messageRow("t3")?.toolCall?.denial
+        assertEquals("", unsent?.decisionReason)
+        assertEquals(emptyList<String>(), unsent?.truncatedFields)
+        assertEquals(null, unsent?.droppedFields)
+    }
+
+    @Test
+    fun reduce_malformedDenial_dropsOnlyThatEntry() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(3, "tool_result", toolResultPayload("t1", isError = true, summary = "refused")),
+                    // `message` missing: the strict-required shape fails the decode.
+                    entry(
+                        2,
+                        "tool_denied",
+                        """{"conversation_id":"$CONVERSATION","turn_id":"turn-1","tool_use_id":"t1","tool_name":"Bash",""" +
+                            """"decision_reason_type":"","decision_reason":"","truncated_fields":null,"dropped_fields":null}""",
+                    ),
+                    entry(1, "tool_use", toolUsePayload("t1", name = "Bash", input = "ls")),
+                ),
+                interactive = true,
+            )
+
+        assertEquals(listOf("t1"), rows.messageIds())
+        assertEquals(ToolCallStatus.Failed, rows.messageRow("t1")?.toolCall?.status)
+        assertEquals("refused", rows.messageRow("t1")?.toolCall?.output)
+    }
+
+    @Test
+    fun reduce_denialWithoutInteractive_isIgnored() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(2, "tool_denied", toolDeniedPayload("t1")),
+                    entry(1, "tool_use", toolUsePayload("t1", name = "Bash", input = "ls")),
+                ),
+                interactive = false,
+            )
+
+        assertEquals(emptyList<String>(), rows.messageIds())
+    }
+
+    @Test
+    fun withToolResult_onDeniedRow_keepsDeniedAndAttachesOutput() {
+        val denial = ToolDenial("Bash", "", "", "no", truncatedFields = null, droppedFields = null)
+        val denied =
+            listOf<ThreadItem>()
+                .withToolUse(LiveSessionEvent.ToolUse(CONVERSATION, "turn-1", "t1", "Bash", "ls"), TS_INSTANT)
+                .withToolDenied("t1", denial)
+
+        val folded =
+            denied.withToolResult(
+                LiveSessionEvent.ToolResult(CONVERSATION, "turn-1", "t1", isError = false, resultSummary = "late"),
+            )
+
+        val toolCall = folded.messageRow("t1")?.toolCall
+        assertEquals(ToolCallStatus.Denied, toolCall?.status)
+        assertEquals(denial, toolCall?.denial)
+        assertEquals("late", toolCall?.output)
+    }
+
     // ---- Fixtures ---------------------------------------------------------------------------------
 
     private fun entry(
@@ -469,6 +650,19 @@ class HistoryPageReducerTest {
     ): String =
         """{"conversation_id":"$CONVERSATION","turn_id":"turn-1","tool_use_id":"$toolUseId",""" +
             """"is_error":$isError,"result_summary":"$summary"""" + extraFields(extra) + "}"
+
+    private fun toolDeniedPayload(
+        toolUseId: String,
+        toolName: String = "Bash",
+        reasonType: String = "",
+        reason: String = "",
+        message: String = "denied",
+        truncated: String = "null",
+        dropped: String = "null",
+    ): String =
+        """{"conversation_id":"$CONVERSATION","turn_id":"turn-1","tool_use_id":"$toolUseId","tool_name":"$toolName",""" +
+            """"decision_reason_type":"$reasonType","decision_reason":"$reason","message":"$message",""" +
+            """"truncated_fields":$truncated,"dropped_fields":$dropped}"""
 
     /** An optional `"key":value` fragment appended to a payload; empty leaves the payload as it was. */
     private fun extraFields(extra: String): String = if (extra.isEmpty()) "" else ",$extra"
