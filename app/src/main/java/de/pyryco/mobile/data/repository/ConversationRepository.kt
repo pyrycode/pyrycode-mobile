@@ -131,6 +131,19 @@ interface ConversationRepository {
     fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = flowOf(null)
 
     /**
+     * Emits the files the daemon has offered in [conversationId] on this connection (#898), in arrival order
+     * with one entry per attachment id, or an empty list until one arrives. Cold flow; re-emits when an offer
+     * for this conversation lands. The offer is **live-only** on the wire (no replay, no list verb), so this
+     * is the set of offers the connection happened to receive, never the set of files the conversation
+     * holds, and it starts empty on every new connection. Pass [AttachmentOffer.attachmentId] back to fetch
+     * the bytes.
+     *
+     * Default `flowOf(emptyList())` — implementations without a live wire (the fake, inline test doubles)
+     * inherit "nothing offered" and need no override, the same cascade-avoidance as [observeCompacting].
+     */
+    fun observeAttachmentOffers(conversationId: String): Flow<List<AttachmentOffer>> = flowOf(emptyList())
+
+    /**
      * Emits the usage-limit reading claude last reported for [conversationId], or **`null` when there
      * is none to read** (#802). `null` until the wire says otherwise; a [UsageLimitReading] once a
      * non-benign frame lands; back to `null` on the benign clearing edge or once the reading's
@@ -1219,6 +1232,27 @@ data class SessionFacts(
     val permissionMode: String,
     val truncatedFields: List<String>?,
 )
+
+/**
+ * A file the daemon offered in a conversation (#898, pyrycode#2082/#2166) — the element type of
+ * [ConversationRepository.observeAttachmentOffers]. Wire SSOT: pyrycode `docs/protocol-mobile.md`
+ * § Attachments → `attachment_offered`.
+ *
+ * [attachmentId] is a validated lowercase UUIDv4, the id to pass back when fetching the file. It is not a
+ * capability: the daemon re-validates it on every fetch. [displayName] is the announced file name with every
+ * ISO control character, Unicode format character (bidi overrides included), line and paragraph separator
+ * and unpaired surrogate removed, cut to 255 UTF-8 bytes. It may be empty.
+ *
+ * **SECURITY.** [displayName] is claude-authored text even after cleaning. Render it as **inert text only**:
+ * never as a path or any part of one, never as a cache key or a log line, and never choose a viewer or
+ * handler from its extension, which is not evidence of what the bytes are. [toString] leaves it out.
+ */
+data class AttachmentOffer(
+    val attachmentId: String,
+    val displayName: String,
+) {
+    override fun toString(): String = "AttachmentOffer(attachmentId=$attachmentId)"
+}
 
 /**
  * The usage-limit reading claude last reported for one conversation (#802, pyrycode#1405/#1410) — the

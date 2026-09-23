@@ -97,6 +97,14 @@ class StableConversationRepository(
         switchToLive<SessionFacts?>(null) { it.observeSessionFacts(conversationId) }
 
     /**
+     * The files offered in [conversationId] on the owner host's live connection (#898). The switch is what
+     * makes offers live-only across connections: a reconnect or a host switch drops the previous
+     * connection's offers rather than carrying one host's files over to the next.
+     */
+    override fun observeAttachmentOffers(conversationId: String): Flow<List<AttachmentOffer>> =
+        switchToLive(emptyList()) { it.observeAttachmentOffers(conversationId) }
+
+    /**
      * The usage-limit reading for [conversationId] (#802), switched over the live connection like every
      * other cold read — and here the switch is the **account-isolation mechanism**, not just plumbing:
      * a usage-limit window belongs to an account rather than to a conversation, so [flatMapLatest]

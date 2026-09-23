@@ -560,6 +560,45 @@ class StableConversationRepositoryTest {
             assertEquals(listOf(null, sessionFacts, null), facts)
         }
 
+    // ---- #898: observeAttachmentOffers delegates and tracks connection churn ---------------------
+
+    @Test
+    fun observeAttachmentOffers_whileAbsent_emitsEmpty() =
+        runTest {
+            val current = MutableStateFlow<ConversationRepository?>(null)
+            val facade = StableConversationRepository(current)
+
+            val offers = mutableListOf<List<AttachmentOffer>>()
+            backgroundScope.launch { facade.observeAttachmentOffers("c1").collect { offers += it } }
+            runCurrent()
+
+            assertEquals(listOf(emptyList<AttachmentOffer>()), offers)
+        }
+
+    // Offers are live-only: a reconnect or a host switch publishes a fresh repository, and the switch drops
+    // the previous connection's offers, so one host's file is never offered as the next one's.
+    @Test
+    fun observeAttachmentOffers_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            val offers = mutableListOf<List<AttachmentOffer>>()
+            backgroundScope.launch { facade.observeAttachmentOffers("c1").collect { offers += it } }
+            runCurrent()
+
+            val offer = AttachmentOffer("b8e0c374-2f61-4a95-8d0e-5c37a91b6e28", "report.png")
+            repoA.pushAttachmentOffers(listOf(offer))
+            runCurrent()
+            assertEquals(listOf(emptyList(), listOf(offer)), offers)
+
+            current.value = repoB
+            runCurrent()
+            assertEquals(listOf(emptyList(), listOf(offer), emptyList()), offers)
+        }
+
     // ---- #802: observeUsageLimit delegates and tracks connection churn ---------------------------
 
     @Test
@@ -905,6 +944,14 @@ class StableConversationRepositoryTest {
         }
 
         override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = sessionFacts
+
+        private val attachmentOffers = MutableStateFlow<List<AttachmentOffer>>(emptyList())
+
+        fun pushAttachmentOffers(value: List<AttachmentOffer>) {
+            attachmentOffers.value = value
+        }
+
+        override fun observeAttachmentOffers(conversationId: String): Flow<List<AttachmentOffer>> = attachmentOffers
 
         override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> = usageLimit
 

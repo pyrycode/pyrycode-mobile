@@ -73,6 +73,64 @@ class AttachmentChunkPlan(
 }
 
 /**
+ * Mobile Protocol v2 `attachment_offered` payload (#898): the daemon announces a file `claude` produced, with
+ * no bytes. Wire SSOT: `../pyrycode/docs/protocol-mobile.md` § Attachments → `attachment_offered`. All three
+ * keys are always present, so a missing one fails the decode. Nothing here is trusted as sent: both ids must
+ * pass [isAttachmentIdShape] and [filename] is `claude`-authored, so it reaches a reader only through
+ * [attachmentDisplayName]. [toString] leaves [filename] out.
+ */
+@Serializable
+data class AttachmentOfferedPayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    @SerialName("attachment_id") val attachmentId: String,
+    val filename: String,
+) {
+    override fun toString(): String = "AttachmentOfferedPayloadDto(attachmentId=$attachmentId)"
+}
+
+/**
+ * Whether [value] is the published `attachment_id` shape (`protocol-mobile.md` § The `attachment_id` shape),
+ * which conversation ids share: a lowercase UUIDv4, 36 bytes, `-` at 8, 13, 18 and 23, `4` at 14, one of
+ * `8`, `9`, `a`, `b` at 19, and lowercase hex everywhere else. The alphabet is what keeps the id from
+ * spelling any path component but itself, so it is checked character by character, never with a
+ * locale-aware digit test.
+ */
+internal fun isAttachmentIdShape(value: String): Boolean {
+    if (value.length != 36) return false
+    return value.withIndex().all { (i, c) ->
+        when (i) {
+            8, 13, 18, 23 -> c == '-'
+            14 -> c == '4'
+            19 -> c in "89ab"
+            else -> c in '0'..'9' || c in 'a'..'f'
+        }
+    }
+}
+
+/**
+ * The `claude`-authored [raw] file name made safe to display (#898): every code point that is an ISO control
+ * character, a Unicode format character (bidi overrides and isolates, zero-width characters, tag
+ * characters), a line or paragraph separator, or an unpaired surrogate is dropped, then the rest is cut to
+ * [ATTACHMENT_TEXT_MAX_BYTES] UTF-8 bytes between code points. The walk is by code point because a
+ * supplementary-plane format character is two surrogate `Char`s, neither of which reads as a format
+ * character on its own. The result may be empty. It is still attacker-chosen text: display it, never use
+ * it as a path.
+ */
+internal fun attachmentDisplayName(raw: String): String {
+    val kept = StringBuilder(raw.length)
+    raw.codePoints().forEach { codePoint ->
+        val dropped =
+            Character.isISOControl(codePoint) ||
+                when (Character.getType(codePoint).toByte()) {
+                    Character.FORMAT, Character.LINE_SEPARATOR, Character.PARAGRAPH_SEPARATOR, Character.SURROGATE -> true
+                    else -> false
+                }
+        if (!dropped) kept.appendCodePoint(codePoint)
+    }
+    return truncateUtf8(kept.toString(), ATTACHMENT_TEXT_MAX_BYTES)
+}
+
+/**
  * [value] cut to at most [maxBytes] UTF-8 bytes, only ever between code points, so the result is still
  * valid UTF-8. A value that already fits is returned unchanged.
  */
