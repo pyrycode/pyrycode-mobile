@@ -1,6 +1,6 @@
 # Options overlay
 
-Compact popup of option rows that opens above the control that anchors it. Landed in [#808](../codebase/808.md) as the selection surface for the [thread composer footer](thread-composer-footer.md)'s model and effort buttons; built to be reused by future footer controls (permission mode, #650; Actions, #655).
+Compact popup of option rows that opens above the control that anchors it. Landed in [#808](../codebase/808.md) as the selection surface for the [thread composer footer](thread-composer-footer.md)'s model and effort buttons, built to be reused by future footer controls. **[#650](https://github.com/pyrycode/pyrycode-mobile/issues/650) is the first of those** — the permission button's six-mode menu renders through this same component, unchanged; the Actions control (#655) remains a future third anchor.
 
 Package: `de.pyryco.mobile.ui.conversations.components` (`app/src/main/java/de/pyryco/mobile/ui/conversations/components/OptionsOverlay.kt`). Figma reference: [`533:1958`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=533-1958), the `Options overlay` frame nested under the thread frame's `Input area` (`533:1957`).
 
@@ -83,6 +83,8 @@ Rows use `OptionVerticalPadding = 10.dp` rather than the design's 6dp, making ea
 
 Every `OptionsOverlayOption.label` may be daemon-authored (a model's `displayName`, an effort level string). The caller is responsible for making the text inert before it reaches this component — see [`ThreadRunConfig`'s `inert()` fold](thread-composer-footer.md#sourcing) — but this component adds its own floor: labels render through plain `Text` only, `maxLines = 1`, ellipsized, never interpolated into a content description, a semantics key, a log line, or `rememberSaveable`. `value` is passed back to `onSelect` verbatim and is never rendered at all, so a hostile `value` string (as opposed to `label`) cannot reach the screen through this component regardless.
 
+**Permission mode's own menu ([#650](https://github.com/pyrycode/pyrycode-mobile/issues/650)) is the one caller whose labels are *not* daemon-authored.** `footerMenu(FooterControl.Permission, …)` builds every `OptionsOverlayOption` from the client-owned `PermissionModeOption` table — six fixed `(wire, label)` pairs — never from `SessionSettings.permissionMode` directly; an unrecognised reading is never offered as an option at all (see [thread-composer-footer.md § Sourcing — Permission mode](thread-composer-footer.md#permission-mode-650)). So this component's trust-boundary floor is defense in depth for that menu, not the only thing keeping a hostile daemon string off the overlay's option rows the way it is for Model and Effort.
+
 ## State + concurrency
 
 No internal state beyond the `rememberScrollState()` the column's own scroll position needs and the `rememberUpdatedState(onDismiss)` wrapper. No coroutines are launched beyond what `detectTapGestures` and `verticalScroll` already run internally. The component reacts to `anchor`, `options`, `selectedValue` and `notListed` changing on every recomposition — it holds no memory of a previous selection or a previous anchor.
@@ -97,7 +99,7 @@ Two `@Preview`s, `OptionsOverlayDarkPreview` / `OptionsOverlayLightPreview`, bot
 
 ## Related
 
-- [Thread composer footer](thread-composer-footer.md) — the current caller; `footerMenu` builds the `List<OptionsOverlayOption>` this component renders, and `ThreadScreen` owns the anchor-tracking and layer-origin state this component depends on.
-- [Status sheet](status-sheet.md) — the retained, non-overlay selection surface for the same model/effort choices (plus YOLO), reachable from the footer's trailing icon. The two surfaces read the same `ThreadRunConfig` and so cannot disagree.
-- Spec: `docs/specs/architecture/808-composer-footer-model-effort-buttons.md`.
+- [Thread composer footer](thread-composer-footer.md) — the current caller; `footerMenu` builds the `List<OptionsOverlayOption>` this component renders (for Model, Effort, and, since [#650](https://github.com/pyrycode/pyrycode-mobile/issues/650), Permission), and `ThreadScreen` owns the anchor-tracking and layer-origin state this component depends on.
+- [Status sheet](status-sheet.md) — the retained, non-overlay selection surface for the model/effort choices, reachable from the footer's trailing icon. The two surfaces read the same `ThreadRunConfig` and so cannot disagree. Its former YOLO toggle was retired outright by [#650](https://github.com/pyrycode/pyrycode-mobile/issues/650), not moved to this component — the permission menu is a new caller, not a relocation.
+- Specs: `docs/specs/architecture/808-composer-footer-model-effort-buttons.md`, `docs/specs/architecture/650-composer-permission-mode.md`.
 - Figma: [`533:1958`](https://www.figma.com/design/g2HIq2UyPhslEoHRokQmHG?node-id=533-1958).
