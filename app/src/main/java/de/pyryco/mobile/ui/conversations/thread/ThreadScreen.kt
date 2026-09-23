@@ -65,6 +65,7 @@ import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.components.MobileGateModal
 import de.pyryco.mobile.ui.conversations.components.ApiRetryIndicator
 import de.pyryco.mobile.ui.conversations.components.ChannelInfoSheet
@@ -81,6 +82,7 @@ import de.pyryco.mobile.ui.conversations.components.StallPromotionBanner
 import de.pyryco.mobile.ui.conversations.components.StatusSheet
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
 import de.pyryco.mobile.ui.conversations.components.UnrecognizedMessageRow
+import de.pyryco.mobile.ui.conversations.components.UsageLimitIndicator
 import de.pyryco.mobile.ui.conversations.components.WorkspaceChip
 import de.pyryco.mobile.ui.conversations.components.WorkspacePicker
 import de.pyryco.mobile.ui.conversations.components.formatRelativeTime
@@ -135,6 +137,7 @@ fun ThreadScreen(
     isThinking: Boolean = false,
     isStalled: Boolean = false,
     apiRetry: ApiRetryStatus = ApiRetryStatus.NotRetrying, // #594: claude's API-retry status, replaces the spinner
+    usageLimit: UsageLimitReading? = null, // #804: claude's usage-limit report, below api-retry in the slot
     isCompacting: Boolean = false, // #597: claude is auto-compacting its context, replaces the spinner
     thinkingProgress: ThinkingProgress? = null, // #803: claude's live token reading, decorates the thinking arm
     isBusy: Boolean = false, // #459: a turn is in flight (thinking OR responding) → show the interrupt affordance
@@ -248,6 +251,7 @@ fun ThreadScreen(
             ) {
                 ThreadStatusArea(
                     apiRetry = apiRetry,
+                    usageLimit = usageLimit,
                     isCompacting = isCompacting,
                     isThinking = isThinking,
                     thinkingProgress = thinkingProgress,
@@ -557,6 +561,11 @@ fun ThreadScreen(
  * arm because it is the "something is going wrong" signal while compaction is benign progress, so the
  * benign affordance must never mask the alarming one; the two overlapping has never been observed.
  *
+ * claude's usage-limit report (#804) sits between them — api-retry → usage limit → compaction → thinking —
+ * for the same reason: compaction is benign and must never mask a report that something may be going
+ * wrong. The arm is raised by a non-`null` reading alone; the expiry and the benign clear are already
+ * applied upstream, so nothing here re-reads its fields.
+ *
  * The design's trailing contextual-action slot stays empty until #675 fills it, so nothing inert is
  * emitted beside the signal. When no signal is live every arm returns without emitting, so the band
  * contributes no node and the composer column's gap above the input field collapses with it.
@@ -570,6 +579,7 @@ fun ThreadScreen(
 @Composable
 private fun ThreadStatusArea(
     apiRetry: ApiRetryStatus,
+    usageLimit: UsageLimitReading?,
     isCompacting: Boolean,
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
@@ -577,6 +587,7 @@ private fun ThreadStatusArea(
     val slot = Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter)
     when {
         apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = slot)
+        usageLimit != null -> UsageLimitIndicator(reading = usageLimit, modifier = slot)
         isCompacting -> CompactingIndicator(isCompacting = true, modifier = slot)
         else -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress)
     }

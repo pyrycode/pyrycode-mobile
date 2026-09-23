@@ -144,14 +144,19 @@ private val SpinnerLabelGap = 8.dp
 ## Placement in the thread
 
 **Moved in [#643](../codebase/643.md).** [`ThreadScreen`](thread-screen.md) arbitrates this status slot
-as a **three-way `when`** (extended from #594's two-way `if` by #597) inside a private `ThreadStatusArea`
-composable (`ThreadScreen.kt:471`), the first child of the composer's `bottomBar` column — through #642
-the same `when` lived at the foot of the content `Column`, above the composer rather than inside it:
+— a three-way `when` at #597 (extended from #594's two-way `if`), a **four-way `when`** since
+[#804](https://github.com/pyrycode/pyrycode-mobile/issues/804) inserted
+[`UsageLimitIndicator`](usage-limit-indicator.md) between api-retry and compaction — inside a private
+`ThreadStatusArea` composable (`ThreadScreen.kt:471`), the first child of the composer's `bottomBar`
+column — through #642 the same `when` lived at the foot of the content `Column`, above the composer
+rather than inside it:
 
 ```kotlin
 when {
     apiRetry != ApiRetryStatus.NotRetrying ->
         ApiRetryIndicator(status = apiRetry, modifier = Modifier.fillMaxWidth())
+    usageLimit != null ->
+        UsageLimitIndicator(reading = usageLimit, modifier = Modifier.fillMaxWidth())
     isCompacting ->
         CompactingIndicator(isCompacting = true, modifier = Modifier.fillMaxWidth())
     else ->
@@ -160,11 +165,12 @@ when {
 ```
 
 **Exactly one affordance renders; the arms never stack.** api-retry keeps the top arm ("something is
-going wrong" over benign progress), then compaction, then this arm — see
-[Compacting indicator § Placement](compacting-indicator.md#placement-in-the-thread) for the full
+going wrong" over lower-urgency signals), then the usage-limit report, then compaction, then this arm —
+see [Compacting indicator § Placement](compacting-indicator.md#placement-in-the-thread) and
+[Usage-limit indicator § Placement](usage-limit-indicator.md#placement-in-the-thread) for the full
 precedence rationale, unchanged by #803. `#803`'s reading rides this arm's own `else` branch, so it adds
-**no new arm**: retry and compaction pre-empt a live reading for free, and mutual exclusion holds
-structurally rather than by an added check.
+**no new arm**: retry, the usage-limit report and compaction all pre-empt a live reading for free, and
+mutual exclusion holds structurally rather than by an added check.
 
 See [Thread screen — overlays and app bar](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643)
 for the gutter arithmetic of the composer's status band.
@@ -293,7 +299,9 @@ label variants are reviewable.
 - Host: [Thread screen](thread-screen.md) — threads `isThinking` and (#803) `thinkingProgress` as flat
   sibling parameters and arbitrates the status slot (the composer's `ThreadStatusArea` since
   [#643](../codebase/643.md); the foot of the content `Column` before it) across this component,
-  [`ApiRetryIndicator`](api-retry-indicator.md), and [`CompactingIndicator`](compacting-indicator.md).
+  [`ApiRetryIndicator`](api-retry-indicator.md), [`UsageLimitIndicator`](usage-limit-indicator.md)
+  ([#804](https://github.com/pyrycode/pyrycode-mobile/issues/804)), and
+  [`CompactingIndicator`](compacting-indicator.md).
 - Foot-of-list sibling (shipped): [Interrupt affordance](interrupt-affordance.md)
   ([#459](../codebase/459.md)) — the "Stop the running turn" control, since #643 the send button's stop
   variant in `ThreadInputBar` just below the status area, gated on the broader
