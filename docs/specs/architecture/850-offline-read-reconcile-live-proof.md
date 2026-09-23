@@ -76,4 +76,4 @@ This is the test. Compile via `./gradlew compileDebugAndroidTestKotlin`; `bash -
 
 ### Open question resolved
 
-The thread stays composed across the cut in the drive as written; the offline reads in steps 3–4 check it directly. The live run confirms it.
+Not resolved by a run yet: the drive assumes the thread stays composed across the cut, and the offline reads in steps 3–4 fail directly if it does not. The post-verifier live run is the first to answer it.
