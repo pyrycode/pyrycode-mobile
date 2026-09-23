@@ -5,11 +5,11 @@ package de.pyryco.mobile.data.model
  * outstanding across the app. Folded from the `replay = 0` [ModalEvent] stream (#437); because that
  * stream holds no current state, *this* slice owns the "which modal is open" accumulation (see [reduce]).
  *
- * Modal events carry **no `conversation_id`** ([ModalEvent] keys solely on `modalId`), so this state is
- * **app-level** — a single active modal across the app, **not** scoped per conversation. It is exposed as
- * a hoisted observable on the thread ViewModel ([ThreadViewModel.currentModal]), a sibling to the other
- * transient thread signals (`isThinking` #406 / `isStalled` #395), consumed by the stateless render slice
- * (#446).
+ * The fold holds a **single** modal per host, keyed on `modalId`. [Open] and [Dismissed] carry the
+ * conversation that raised the modal (#816), and each thread shows the host's modal only through
+ * [scopedTo] its own conversation. The thread ViewModel exposes that scoped value
+ * ([ThreadViewModel.currentModal]) as a sibling to the other transient thread signals (`isThinking` #406
+ * / `isStalled` #395), and the stateless render slice (#446) consumes it.
  *
  * Every field is carried **verbatim** from the source event — no parsing, enum-coercion, trimming, or
  * reordering (preserves #437's forward-compat decode posture). The free-form strings ([Open.title],
@@ -34,16 +34,20 @@ sealed interface ModalUiState {
         val prompt: String,
         val options: List<ModalOption>,
         val defaultOptionId: String,
+        val conversationId: String = "",
     ) : ModalUiState
 
     /**
      * The currently-open modal resolved. Mirrors [ModalEvent.Dismissed]; [source] is the verbatim
      * resolution reason (`remote` | `local` | `timeout`, or any forward-compat value unchanged).
+     * [conversationId] is the resolved modal's own (#816): the wire dismiss carries none, so [reduce]
+     * copies it from the [Open] modal it resolves.
      */
     data class Dismissed(
         val modalId: String,
         val outcome: String,
         val source: String,
+        val conversationId: String = "",
     ) : ModalUiState
 }
 
@@ -55,7 +59,8 @@ sealed interface ModalUiState {
  * - [ModalEvent.Shown] → [ModalUiState.Open] carrying the event verbatim, **unconditionally** — a later
  *   `Shown` supersedes any currently-open modal (last-shown wins; AC #3).
  * - [ModalEvent.Dismissed] whose `modalId` matches the currently-[ModalUiState.Open] modal →
- *   [ModalUiState.Dismissed] carrying the verbatim resolution reason (AC #2).
+ *   [ModalUiState.Dismissed] carrying the verbatim resolution reason (AC #2) and the open modal's
+ *   conversation (#816).
  * - [ModalEvent.Dismissed] in any other case (receiver [ModalUiState.Hidden], receiver already
  *   [ModalUiState.Dismissed], or [ModalUiState.Open] with a non-matching `modalId`) → receiver unchanged.
  *   The exact-`modalId` match is the spoofed-dismiss safety property: an out-of-band dismiss cannot
@@ -71,6 +76,7 @@ internal fun ModalUiState.reduce(event: ModalEvent): ModalUiState =
                 prompt = event.prompt,
                 options = event.options,
                 defaultOptionId = event.defaultOptionId,
+                conversationId = event.conversationId,
             )
         is ModalEvent.Dismissed ->
             if (this is ModalUiState.Open && modalId == event.modalId) {
@@ -78,8 +84,26 @@ internal fun ModalUiState.reduce(event: ModalEvent): ModalUiState =
                     modalId = event.modalId,
                     outcome = event.outcome,
                     source = event.source,
+                    conversationId = conversationId,
                 )
             } else {
                 this
             }
     }
+
+/**
+ * The host's modal as one thread with [conversationId] sees it (#816): the receiver when it is
+ * [ModalUiState.Open] or [ModalUiState.Dismissed] and its conversation is non-blank and equal to
+ * [conversationId], else [ModalUiState.Hidden]. A blank conversation on either side matches nothing, so
+ * an unscoped modal renders in no thread rather than in every thread. Pure, and like [reduce] it never
+ * logs a modal field.
+ */
+fun ModalUiState.scopedTo(conversationId: String): ModalUiState {
+    val owner =
+        when (this) {
+            is ModalUiState.Open -> this.conversationId
+            is ModalUiState.Dismissed -> this.conversationId
+            ModalUiState.Hidden -> return this
+        }
+    return if (owner.isNotBlank() && owner == conversationId) this else ModalUiState.Hidden
+}

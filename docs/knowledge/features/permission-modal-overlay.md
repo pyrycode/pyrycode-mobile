@@ -63,7 +63,7 @@ Collected in the route host at
 ## The render path
 
 ```
-ThreadViewModel.currentModal : StateFlow<ModalUiState>      ◀── #445 fold (app-level, modalId-keyed)
+ThreadViewModel.currentModal : StateFlow<ModalUiState>      ◀── #445 fold (host-level, modalId-keyed), scoped to this thread's own conversation since #816
 ThreadViewModel.armedOptionId : StateFlow<String?>          ◀── #451 arm projection (VM-scoped)
 ThreadViewModel.modalSendErrors : Flow<Unit>                ◀── #451 payload-free one-shot
         │  MainActivity: collectAsStateWithLifecycle(currentModal, armedOptionId) like isThinking/isStalled;
@@ -89,9 +89,11 @@ forwards those screen hooks to `vm::onModalOption` / `vm::onModalCancel` in the 
 `navigationEvents` stays in `MainActivity` because navigation is a host concern. `modalSendErrors` is a
 single-consumer `Channel.receiveAsFlow()`, so `MainActivity` only forwards the reference.
 
-App-level by construction: modal events carry **no `conversation_id`** ([Modal events](modal-events.md)),
-so there is **one** `currentModal` across the app and the overlay shows over **whichever thread is active**
-— not scoped per conversation.
+Host-level by construction: the coordinator's fold holds **one** modal per host, keyed on `modalId`, not a
+per-conversation map. Since [#816](current-modal-state.md), `ThreadViewModel` filters that single modal
+down to its own conversation (`ModalUiState.scopedTo`, driven by `Shown.conversationId` — see [Modal
+events](modal-events.md)) before this overlay ever sees it, so the overlay only draws in the thread whose
+conversation raised the modal — never in a second open thread for another conversation on the same host.
 
 ## The overlay (`Open`)
 

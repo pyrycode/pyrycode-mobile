@@ -590,9 +590,9 @@ fun ThreadScreen(
             onDismiss = { onOverflowEvent(ThreadEvent.DeleteDismiss) },
         )
     }
-    // App-level permission/choice modal overlay (#446). Hoisted single source = ThreadViewModel.currentModal
-    // (#445), forwarded verbatim. Open → separate-surface overlay; Dismissed → surface the resolution reason
-    // once and remove the overlay. Modal events carry no conversation_id, so this is not scoped per thread.
+    // Permission/choice modal overlay (#446). Hoisted single source = ThreadViewModel.currentModal (#445),
+    // already scoped to this thread's conversation (#816): another conversation's modal arrives as Hidden.
+    // Open → separate-surface overlay; Dismissed → surface the resolution reason once and remove the overlay.
     when (modalState) {
         is ModalUiState.Open ->
             PermissionModalOverlay(
