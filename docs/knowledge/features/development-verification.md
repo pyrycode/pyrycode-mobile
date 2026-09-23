@@ -243,6 +243,31 @@ test's own `finally`, and each class's `@After` calls `assertAllClosed()` before
 `Dispatchers.resetMain()` runs (#726). A `JUnit4` `TestRule` cannot enforce that ordering: a rule's
 `after`-block runs after every `@After` method, which is the wrong side of the reset.
 
+The #726 proof holds only when it runs on the thread that later calls `resetMain()` — #892 found a
+case where it does not. With an `UnconfinedTestDispatcher` installed as `Main`, a resumption resumes
+in place on whichever thread wakes it: the `Dispatchers.Default` worker's `StateFlow` publish resumes
+the ViewModel's collector in place, and the ViewModel resumes the test body's `first {}` the same way.
+From there the rest of the test body — including its `finally` and `closeAndAssertStopped()` — runs on
+the publishing worker, nested inside the very `publish` it is meant to fence. `dispose()` is
+`@Synchronized` on that same monitor, so the reentrant call from the worker passes trivially and the
+proof is vacuous, while the cancelled ViewModel coroutines underneath still have to unwind into `Main`
+after the test thread calls `resetMain()`. This surfaced as `dismissingTheChatEditorSendsNothing`
+failing in `HostChannelListViewModelTest`: the leaking test
+(`appModuleInjectsSharedDemoSourceAndCreatesThroughExistingFakeSingleton`) runs immediately before it
+in JUnit's method order, and kotlinx-coroutines-test reports an exception raised between tests at the
+*next* `runTest`, not the one that leaked it — check the test immediately before the failing one in the
+XML report's order before trusting which test caused a flake like this. The migration from test thread
+to worker was frequent (up to ~97% of iterations in a stress loop) but the resulting crash was rare,
+since it also needed the worker's unwind to race the test thread's teardown — a window that a stress
+loop alone did not reliably open, but a loaded machine (a full `check` run, lint running alongside) did.
+A test that pairs a Koin-built `HostConversationSource` with a ViewModel must install a *dispatching*
+`StandardTestDispatcher(testScheduler)` as `Main` (not an `UnconfinedTestDispatcher`) before resolving
+the ViewModel, so a worker's resumption is queued for the test thread instead of running in place; both
+`HostChannelListViewModelTest` and `HostDiscussionListViewModelTest` do this now. `KoinHostSources`
+also records the thread that constructs it and asserts `closeAndAssertStopped()` runs on that same
+thread, failing before closing anything on a mismatch — so a regression fails the test that caused it
+instead of a later, unrelated one.
+
 Gradle gates do not exercise shell scripts. For a change under `scripts/`, extract
 the changed function into a scratch file, add strict shell options and test it with
 stubbed helpers. Exercise preflight guards with nonexistent `PYRY_BIN` and relay
