@@ -4,6 +4,7 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -196,6 +197,41 @@ class StableConversationRepositoryTest {
             assertSame(repoA.requestSystemPromptResult, reading)
             assertEquals(listOf("c3"), repoA.requestSystemPromptCalls)
             assertEquals(listOf<Pair<String, String?>>("c3" to null, "c3" to "", "c3" to "text"), repoA.setSystemPromptCalls)
+        }
+
+    // #829: an upload with no live connection is a result, never a throw — and an oversized file says
+    // not to retry even then, since reconnecting would not help.
+    @Test
+    fun uploadAttachment_whileAbsent_isReconnectRequiredOrTooLarge() =
+        runTest {
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(null))
+
+            assertEquals(AttachmentUploadResult.ReconnectRequired, facade.uploadAttachment("c1", ByteArray(1), "a", "b"))
+            assertEquals(
+                AttachmentUploadResult.TooLarge,
+                facade.uploadAttachment("c1", ByteArray(AttachmentUploadLimit.MAX_BYTES + 1), "a", "b"),
+            )
+        }
+
+    // #829: the upload runs on the connection live at entry; a later change of connection does not move it.
+    @Test
+    fun uploadAttachment_staysOnTheRepositoryLiveAtEntry() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            var result: AttachmentUploadResult? = null
+            launch { result = facade.uploadAttachment("c1", ByteArray(3), "notes.txt", "text/plain") }
+            runCurrent()
+            current.value = repoB
+            repoA.uploadResult.complete(AttachmentUploadResult.Stored("id-a"))
+            runCurrent()
+
+            assertEquals(AttachmentUploadResult.Stored("id-a"), result)
+            assertEquals(listOf("c1"), repoA.uploadCalls)
+            assertTrue(repoB.uploadCalls.isEmpty())
         }
 
     // ---- AC #4: one-shots delegate verbatim to the live repo (args + return value) ---------------
@@ -747,6 +783,19 @@ class StableConversationRepositoryTest {
         override suspend fun requestSystemPrompt(conversationId: String): SystemPromptReading {
             requestSystemPromptCalls += conversationId
             return requestSystemPromptResult
+        }
+
+        val uploadCalls = mutableListOf<String>()
+        val uploadResult = CompletableDeferred<AttachmentUploadResult>()
+
+        override suspend fun uploadAttachment(
+            conversationId: String,
+            bytes: ByteArray,
+            filename: String,
+            mimeType: String,
+        ): AttachmentUploadResult {
+            uploadCalls += conversationId
+            return uploadResult.await()
         }
 
         override suspend fun setSystemPrompt(

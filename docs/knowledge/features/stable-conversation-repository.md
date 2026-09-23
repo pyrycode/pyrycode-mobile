@@ -62,8 +62,9 @@ It overrides **all** interface members — the stream-shaped reads (`observeConv
 suspend one-shots (`createDiscussion`, `promote`, `archive`, `unarchive`, `delete`, `rename`,
 `startNewSession`, `changeWorkspace`, `sendMessage`, `createWorkspaceFolder`, `requestScreenSnapshot`,
 `setSessionSettings` ([#544](../codebase/544.md), the facade delegation [#543](../codebase/543.md)
-deliberately deferred), `requestHistory` (#623), **and** `requestSystemPrompt`/`setSystemPrompt` (#823)),
-**and** the one capability property
+deliberately deferred), `requestHistory` (#623), `requestSystemPrompt`/`setSystemPrompt` (#823), **and**
+`uploadAttachment` (#829, the one one-shot that does **not** follow the snapshot-or-throw shape below —
+see [Uploads — snapshot-or-result](#uploads--snapshot-or-result-829))), **and** the one capability property
 `mutationsSupported` (#507) — including every member that ships a default body on the interface
 (`recentWorkspaces`, `createWorkspaceFolder`, `delete`, `requestScreenSnapshot` (#375),
 `observeStall` (#395), `observeQueue` (#460), `observeApiRetry` (#593), `observeCompacting` (#596),
@@ -162,6 +163,26 @@ a throwing stub (`archive`/`unarchive`/`rename`/`startNewSession`/`changeWorkspa
 `UnsupportedOperationException` on the remote repo), and a wired error (`RelayErrorException`,
 `IllegalArgumentException`) all propagate **verbatim** — the facade adds, suppresses, and translates
 nothing.
+
+### Uploads — snapshot-or-result (#829)
+
+`uploadAttachment` is a **third one-shot posture**, distinct from the plain snapshot-or-throw shape
+above. With a live repository it snapshots and delegates exactly like every other one-shot, so a
+connection change mid-upload never moves it. But with **no** live repository it does not throw — it
+returns a value, the same `AttachmentUploadResult` type the connected path can also produce:
+
+```kotlin
+override suspend fun uploadAttachment(conversationId: String, bytes: ByteArray, filename: String, mimeType: String): AttachmentUploadResult =
+    currentRepository.value?.uploadAttachment(conversationId, bytes, filename, mimeType)
+        ?: if (AttachmentUploadLimit.fits(bytes.size)) AttachmentUploadResult.ReconnectRequired else AttachmentUploadResult.TooLarge
+```
+
+The acceptance criteria make "no live connection" one of an upload's ordinary failure outcomes, on the
+same footing as a mid-upload drop or a refused chunk — every one of those settles as a value the caller
+already has to branch on, so the facade's not-connected case has to be a value in that same set rather
+than an `IllegalStateException` a caller would need a second catch clause for. An oversized file still
+reports `TooLarge`, not `ReconnectRequired`, even with nothing live — the local bound is checked before
+connection state, matching the live repository's own order. See [Attachment upload](attachment-upload.md).
 
 ### Capability reads — answer `false`, never throw (`mutationsSupported`, #507)
 
@@ -328,4 +349,7 @@ pass-through. The eight tests map to the ACs, the key one being
   delegation [#543](../codebase/543.md) deferred to this facade's first caller, the
   [Status sheet](status-sheet.md) run-configuration controls; a not-connected change surfaces as this
   facade's `IllegalStateException`, which the ViewModel catches to revert + snackbar.
+- Delegated one-shot: `uploadAttachment` ([#829](https://github.com/pyrycode/pyrycode-mobile/issues/829)) —
+  the sole one-shot with a **snapshot-or-result**, not snapshot-or-throw, no-connection case. See
+  [Attachment upload](attachment-upload.md).
 - DI: [Dependency injection](dependency-injection.md).
