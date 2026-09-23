@@ -170,7 +170,9 @@ class FileConversationCache(
     /**
      * Decodes a thread document, rejecting what would mislead or crash the thread: a row that is neither
      * a message nor a boundary, a running tool (a permanent spinner), and a repeated message id or
-     * boundary pair (two `LazyColumn` rows with one key). A writer never produces any of these.
+     * boundary identity (two `LazyColumn` rows with one key). A writer never produces any of these.
+     * A boundary's identity is its session pair and instant, the triple its list key encodes (#775):
+     * an idle-evicted session keeps its id, so two evictions legitimately share a pair.
      */
     private fun decodeThread(document: File): List<ThreadItem> {
         if (!document.isFile) return emptyList()
@@ -181,7 +183,7 @@ class FileConversationCache(
         require(messages.none { it.toolCall?.status == ToolCallStatus.Running }) { "running tool in thread cache" }
         require(messages.distinctBy { it.id }.size == messages.size) { "duplicate thread cache message identity" }
         val boundaries = rows.filterIsInstance<ThreadItem.SessionBoundary>()
-        require(boundaries.distinctBy { it.previousSessionId to it.newSessionId }.size == boundaries.size) {
+        require(boundaries.distinctBy { Triple(it.previousSessionId, it.newSessionId, it.occurredAt) }.size == boundaries.size) {
             "duplicate thread cache boundary identity"
         }
         return rows

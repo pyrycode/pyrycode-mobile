@@ -81,7 +81,8 @@ class FileConversationCacheThreadTest {
         next: String = "session-2",
         reason: BoundaryReason = BoundaryReason.Clear,
         cwd: String? = null,
-    ) = ThreadItem.SessionBoundary(previous, next, reason, Instant.parse("2026-09-22T11:00:00Z"), cwd)
+        at: String = "2026-09-22T11:00:00Z",
+    ) = ThreadItem.SessionBoundary(previous, next, reason, Instant.parse(at), cwd)
 
     private fun unrecognized(id: String) =
         ThreadItem.UnrecognizedMessage(
@@ -200,6 +201,7 @@ class FileConversationCacheThreadTest {
             val tampered =
                 listOf(
                     healthy.replace("\"toolu_1\"", "\"m1\""),
+                    // Both boundaries share an instant, so this repeats the whole identity triple.
                     healthy.replace("\"session-3\"", "\"session-1\"").replace("\"session-4\"", "\"session-2\""),
                     healthy.replace("\"Done\"", "\"Running\""),
                 )
@@ -208,6 +210,38 @@ class FileConversationCacheThreadTest {
                 document.writeText(text)
                 assertEquals(text, emptyList<ThreadItem>(), cache().readThread("server-a", "conv-1"))
             }
+        }
+
+    @Test
+    fun `boundaries sharing a session pair but not an instant read back`() =
+        runTest {
+            // A session idle-evicted twice keeps its id, so both evictions carry the pair A->A (#775).
+            val rows =
+                listOf(
+                    boundary("session-1", "session-1", BoundaryReason.IdleEvict, at = "2026-09-22T11:00:00Z"),
+                    message("m1").copy(message = message("m1").message.copy(sessionId = "session-1")),
+                    boundary("session-1", "session-1", BoundaryReason.IdleEvict, at = "2026-09-22T12:00:00Z"),
+                )
+            cache().writeThread("server-a", "conv-1", rows).getOrThrow()
+
+            assertEquals(rows, cache().readThread("server-a", "conv-1"))
+        }
+
+    @Test
+    fun `a boundary repeating a held session pair and instant reads empty`() =
+        runTest {
+            val rows =
+                listOf(
+                    boundary("session-1", "session-1", BoundaryReason.IdleEvict, at = "2026-09-22T11:00:00Z"),
+                    boundary("session-1", "session-1", BoundaryReason.IdleEvict, at = "2026-09-22T12:00:00Z"),
+                )
+            cache().writeThread("server-a", "conv-1", rows).getOrThrow()
+            val document = threadFiles().single()
+            val tampered = document.readText().replace("2026-09-22T12:00:00Z", "2026-09-22T11:00:00Z")
+            assertTrue("tamper did not apply", tampered != document.readText())
+            document.writeText(tampered)
+
+            assertEquals(emptyList<ThreadItem>(), cache().readThread("server-a", "conv-1"))
         }
 
     @Test

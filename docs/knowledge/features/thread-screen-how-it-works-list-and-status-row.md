@@ -22,7 +22,12 @@ function is `ThreadRow.listKey(chronologicalIndex)`, defined beside the fold in 
 than inline in the screen, so the fold and its key-uniqueness argument sit together. `ThreadRow.Delivered`
 re-derives the pre-#782 per-`ThreadItem` keys: `MessageItem` → `"msg:${message.id}"` (the canonical row
 identity assigned at message creation, surviving all state transitions), `SessionBoundary` →
-`"boundary:${previousSessionId}->${newSessionId}"` (each transition unique by construction), `UnrecognizedMessage`
+`"boundary:${previousSessionId.length}:$previousSessionId${newSessionId.length}:$newSessionId@$occurredAt"`
+— the boundary's full `(previousSessionId, newSessionId, occurredAt)` identity, length-prefixing the
+two daemon-supplied ids so an id containing a separator character cannot make two distinct triples
+spell the same key ([#775](../codebase/775.md); the pair alone is *not* unique — an idle-evicted
+session keeps its id, so a session evicted twice sends the same pair twice with different instants,
+and both are real rows), `UnrecognizedMessage`
 → `"unrecognized:$id"`. `ThreadRow.Queued` adds a fourth namespace, and it is the one place the pre-#782
 one-to-one mapping between "row" and "key namespace" breaks on purpose: a **matched** `Queued` row (a
 send the daemon still reports parked) takes `echoId?.let { "msg:$it" }` — **the same key its `Delivered`

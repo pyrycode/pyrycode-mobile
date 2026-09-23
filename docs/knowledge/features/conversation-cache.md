@@ -179,10 +179,12 @@ both this) → `invalid_data`. Anything else, cancellation included, propagates 
 rejects, for the same reason: a document that would hand the thread's `LazyColumn` two rows under
 one key reads empty instead of drawing them.** Beyond the version check every family shares, a
 thread document is rejected (→ `invalid_data` → empty) when: a row carries both or neither of
-`message`/`boundary`; any two messages share an id; any two boundaries share their
-`(previousSessionId, newSessionId)` pair; or any tool carries `ToolCallStatus.Running` — a
-restored row is defined to always be settled, so a running status on disk is itself a corrupt
-document, not a row to filter.
+`message`/`boundary`; any two messages share an id; any two boundaries share their full
+`(previousSessionId, newSessionId, occurredAt)` identity (#775 — the pair alone is *not* rejected,
+since an idle-evicted session keeps its id and a session evicted twice legitimately sends the same
+pair twice with different instants); or any tool carries `ToolCallStatus.Running` — a restored row
+is defined to always be settled, so a running status on disk is itself a corrupt document, not a
+row to filter.
 
 Removing an unknown host or an unknown conversation is a **successful no-op**, matching
 `PairedServerCollectionStore.remove` — #798 does not need to check existence first.
@@ -317,12 +319,14 @@ real rather than a convention.
 
 [`FileConversationCacheThreadTest.kt`](../../../app/src/test/java/de/pyryco/mobile/data/cache/FileConversationCacheThreadTest.kt)
 (#797) is a sibling file rather than an extension of the test above, with the same second-instance
-and log-capture discipline. 12 cases cover: a field-for-field round trip (message, a tool call in
+and log-capture discipline. 14 cases cover: a field-for-field round trip (message, a tool call in
 both a settled and a failed status, a boundary with and without `workspaceCwd`); that unrecognized,
 streaming and running-tool rows are dropped on write; the newest-200 bound; per-conversation and
-per-host isolation; whole-thread replace on a second write; every graceful-empty-read shape
-including a duplicate message id, a duplicate boundary pair and a running-status document (left on
-disk, unrepaired); `removeConversation` removing one thread and leaving siblings; removal still
+per-host isolation; whole-thread replace on a second write; that two boundaries sharing a session
+pair but differing in `occurredAt` read back rather than being rejected (#775, a double idle-evict
+of the same session); every graceful-empty-read shape including a duplicate message id, a duplicate
+boundary identity (the full triple, not the pair) and a running-status document (left on disk,
+unrepaired); `removeConversation` removing one thread and leaving siblings; removal still
 working against host metadata that was never written; `removeHost` removing every thread under it
 and no other host's; no conversation id in a path or a log line, success or failure; and a coded,
 causeless exception on a forced write failure.
