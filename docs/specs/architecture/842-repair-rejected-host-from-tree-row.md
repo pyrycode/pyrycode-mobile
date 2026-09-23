@@ -109,3 +109,7 @@ None named by the ticket. Pending for the documentation stage: the pair-code ove
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-23
+
+## Revisions
+
+- 2026-09-23 — Open question resolved: `git merge-tree` of this branch against `origin/feature/804` and `origin/feature/861` both merge cleanly. The design is unchanged. One device test was added beyond the plan, `PairCodeScreenTest.targetedRouteNamesItsHostAndBackReturnsWithoutSaving`, to prove the `SavedStateHandle` → `target` wiring through `PyryNavHost`.
