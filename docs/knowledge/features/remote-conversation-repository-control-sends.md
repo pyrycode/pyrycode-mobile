@@ -49,10 +49,16 @@ override suspend fun requestScreenSnapshot(conversationId: String): String {
 ## `dropQueuedMessage(conversationId, queuedMessageId)` — the `dequeue_message` outbound send (#466)
 
 The **outbound peer** of the inbound `queue_state` decode ([`observeQueue`](remote-conversation-repository-thread-observables.md#observequeueconversationid--the-thread-observable-queued-backlog-460), #460): sends a
-`dequeue_message` frame so the daemon removes a not-yet-drained message from a conversation's backlog. A
-request/reply on the **reused** `sendAndAwaitReply` (#346) primitive — the `requestScreenSnapshot`
-send-template minus the reply decode (the ack is empty) ([#466](../codebase/466.md)). Since #781, a
-confirmed ack also removes the sender's own undelivered thread echo — see below.
+`dequeue_message` frame so the daemon removes a not-yet-drained message from a conversation's backlog. The
+method calls the **reused** `sendAndAwaitReply` (#346) primitive — the `requestScreenSnapshot`
+send-template minus the reply decode, on the assumption of an empty ack ([#466](../codebase/466.md)) —
+but that assumption is wrong: the real daemon sends **no reply at all** to `dequeue_message`, a known bug
+([#859](https://github.com/pyrycode/pyrycode-mobile/issues/859), found live by #849's second-client
+scenario) explained in full at [Queued backlog § Dropping a queued
+entry](queued-backlog.md#dropping-a-queued-entry-dequeue_message-466) — the awaited deferred never
+completes against production, so the ack-gated echo removal described below (#781) never runs, and the
+caller's coroutine stays suspended for the connection's life. What follows describes the code's
+**intended** request/reply shape, not its actual behavior against the real daemon, until #859 lands.
 
 ```kotlin
 override suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long) {
