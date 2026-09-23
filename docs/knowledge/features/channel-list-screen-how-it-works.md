@@ -102,7 +102,11 @@ ChannelListEvent.TreeHostEditTapped -> vm.openHostEditor(event.serverId)`,
 `serverId` because the target is the open editor's, held in the view model:
 `ChannelListEvent.HostUnpairRequested -> vm.requestHostUnpair()`,
 `ChannelListEvent.HostUnpairConfirmed -> vm.confirmHostUnpair()` and
-`ChannelListEvent.HostUnpairDeclined -> vm.declineHostUnpair()`. `ChannelListEvent.SettingsTapped` still
+`ChannelListEvent.HostUnpairDeclined -> vm.declineHostUnpair()`. #827 carries the same discipline into a
+Chats row's own pencil, resolving from the row's own target rather than the selected host a fourth time:
+`is ChannelListEvent.TreeChatEditTapped -> vm.openChatEditor(event.target)`,
+`is ChannelListEvent.ChatEditNameSubmitted -> vm.submitChatName(event.name)` and
+`ChannelListEvent.ChatEditDismissed -> vm.dismissChatEditor()`. `ChannelListEvent.SettingsTapped` still
 navigates to `Routes.SETTINGS`;
 `ChannelListEvent.ArchiveTapped` reads the current selection and navigates to that host's archive since
 \#715 (`destinations.selectedServerId()?.let { navController.navigate(Routes.archive(it)) }`; a null
@@ -146,6 +150,21 @@ the removal itself (`confirmHostUnpair`) — see [ChannelListViewModel](channel-
 editor state's shape, its concurrency guard against two rows' pencils racing on the same publish, and the
 removal's ordering and `saving` guard.
 
+**A Chats row's own pencil follows that chat's own host, live (#827).** `ChannelListScreen` composes a
+private `ChatEditorModal(hostState, onEvent)` as a third `Scaffold` sibling, after `HostEditorModal`,
+drawn only while `hostState.chatEditor != null`. It passes
+[`EditChatModal`](mobile-modal.md#callers) `conversationId`, `initialName`, `saving` and `failed` straight
+off that state, and `hostAvailable = hostState.isHostConnected(editor.serverId)` — read fresh on every
+draw from the same host-snapshot flow the rows themselves render from, so a disconnect disables OK and a
+reconnect re-enables it without the modal leaving composition or losing the typed name; the error slot
+resolves the one generic string, `R.string.edit_chat_save_failed`, the same way the host editor's does.
+`onArchiveRequested = {}` stays unwired until #828. `ChannelListViewModel` owns the open
+(`openChatEditor`, reading the name from the target host's own snapshot, never from row text or another
+host's list), the write (`submitChatName`, resolving `ConversationRepository.rename` from the target's
+own `serverId` at the press, never the selected host) and the close (`dismissChatEditor`) — see
+[ChannelListViewModel](channel-list-viewmodel.md#wiring) for the state's shape and its
+`compareAndSet` terminal-transition discipline against a write finishing after a dismissal.
+
 ## Configuration
 
 - **Dependencies:** `androidx.lifecycle:lifecycle-runtime-compose` (catalog: `androidx-lifecycle-runtime-compose`) for `collectAsStateWithLifecycle`. **Koin compose:** `org.koin.androidx.compose.koinViewModel`. **Icons:** `androidx.compose.material:material-icons-core` — `Icons.Default.Settings` / `Icons.Default.Add` / `Icons.Default.Archive` (#737, matched to the design's `box-archive-solid` FontAwesome glyph rather than vendoring a drawable, the same precedent the tree rows set); don't reach for `material-icons-extended` for single-glyph needs.
@@ -173,5 +192,10 @@ removal's ordering and `saving` guard.
   ("Couldn't save the host name. Try again.") lives beside `EditHostModal`'s own strings in
   `res/values/strings.xml` and is deliberately generic — it names neither the server identity nor the relay
   address, since the shell renders it verbatim into a live region.
+- **Strings added in #827:** `R.string.cd_tree_chat_edit` ("Edit chat %1$s") — a Chats row's edit control's
+  content description, formatted the same way the host row's is. `R.string.edit_chat_save_failed`
+  ("Couldn't rename the chat. Try again.") lives beside `EditChatModal`'s own strings and, like
+  `edit_host_save_failed`, is deliberately generic — it names neither the chat nor the server's own
+  message, since the shell renders it verbatim into a live region.
 - **Drawables:** `R.drawable.ic_pyry_logo` (since #68) — no longer used on this screen since #737 retired the
   logo along with the old bar; its only remaining consumer is [`WelcomeScreen`](welcome-screen.md).

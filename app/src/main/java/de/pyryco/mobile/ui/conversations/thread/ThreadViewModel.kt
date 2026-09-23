@@ -8,6 +8,9 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.ModalUiState
+import de.pyryco.mobile.data.model.Question
+import de.pyryco.mobile.data.model.QuestionAnswer
+import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
@@ -32,6 +35,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
@@ -236,6 +240,87 @@ internal const val UNKNOWN_RUN_CONFIG_LABEL = "unknown"
 
 internal const val INHERITED_RUN_CONFIG_LABEL = "default"
 
+/**
+ * The operator's picks for one question of a held [QuestionBatch] (#661). An option is named by its
+ * index, never its claude-authored label. [otherText] is operator-authored, held independently of
+ * [otherTicked] (desktop's `questionPicksStore`), and never logged.
+ */
+data class QuestionSelection(
+    val optionIndices: Set<Int> = emptySet(),
+    val otherTicked: Boolean = false,
+    val otherText: String = "",
+) {
+    fun withOption(
+        optionIndex: Int,
+        multiSelect: Boolean,
+    ): QuestionSelection =
+        when {
+            !multiSelect -> copy(optionIndices = setOf(optionIndex), otherTicked = false)
+            optionIndex in optionIndices -> copy(optionIndices = optionIndices - optionIndex)
+            else -> copy(optionIndices = optionIndices + optionIndex)
+        }
+
+    /** Ticking Other on a single-choice question clears its option pick: radio semantics. */
+    fun withOtherTicked(
+        ticked: Boolean,
+        multiSelect: Boolean,
+    ): QuestionSelection = copy(otherTicked = ticked, optionIndices = if (ticked && !multiSelect) emptySet() else optionIndices)
+
+    /** The values sent for this question: option labels in option order, then Other text verbatim. */
+    fun values(question: Question): List<String> =
+        question.options.indices
+            .filter { it in optionIndices }
+            .map { question.options[it].label } +
+            listOfNotNull(otherText.takeIf { otherTicked && it.isNotBlank() })
+}
+
+/** Where the one answer-or-refusal send of a question batch stands (#661). */
+enum class QuestionSendPhase { Idle, Sending, Sent, Failed }
+
+/**
+ * The question modal for the open conversation's held batch (#661). [selections] is index-aligned with
+ * [QuestionBatch.questions]. Once a send is in flight or has succeeded the modal is [locked] until the
+ * daemon's `question_dismissed` removes the batch.
+ */
+data class QuestionModalState(
+    val batch: QuestionBatch,
+    val selections: List<QuestionSelection> = List(batch.questions.size) { QuestionSelection() },
+    val phase: QuestionSendPhase = QuestionSendPhase.Idle,
+) {
+    val locked: Boolean get() = phase == QuestionSendPhase.Sending || phase == QuestionSendPhase.Sent
+
+    /** One answer covering every question, or null while any question has no value. */
+    fun answers(): List<QuestionAnswer>? =
+        batch.questions.mapIndexed { index, question ->
+            val values = selections[index].values(question)
+            if (values.isEmpty()) return null
+            QuestionAnswer(index, values)
+        }
+
+    val canContinue: Boolean get() = !locked && answers() != null
+}
+
+sealed interface QuestionModalEvent {
+    data class OptionToggled(
+        val questionIndex: Int,
+        val optionIndex: Int,
+    ) : QuestionModalEvent
+
+    data class OtherToggled(
+        val questionIndex: Int,
+    ) : QuestionModalEvent
+
+    /** Typing ticks Other, with the single-choice clear. */
+    data class OtherTextChanged(
+        val questionIndex: Int,
+        val text: String,
+    ) : QuestionModalEvent
+
+    data object Continue : QuestionModalEvent
+
+    data object Cancel : QuestionModalEvent
+}
+
 class ThreadViewModel(
     savedStateHandle: SavedStateHandle,
     private val repository: ConversationRepository,
@@ -263,6 +348,11 @@ class ThreadViewModel(
     // .interrupt). Defaulted no-op so the fake-backed Koin graph + existing tests stay inert. The VM holds
     // only this suspend lambda, never the coordinator/concrete repo — same posture as answerModal/cancelModal.
     private val interrupt: suspend (conversationId: String) -> Unit = {},
+    // #661: the coordinator's per-conversation question batch and its two sends (#822/#825). Defaulted
+    // inert like answerModal/cancelModal; the question path never touches those two.
+    questionBatch: (conversationId: String) -> Flow<QuestionBatch?> = { flowOf(null) },
+    private val answerQuestionBatch: suspend (questionBatchId: String, answers: List<QuestionAnswer>) -> Unit = { _, _ -> },
+    private val refuseQuestionBatch: suspend (questionBatchId: String) -> Unit = {},
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
@@ -602,6 +692,112 @@ class ThreadViewModel(
      * ungranted-device reject pyrycode#702; [IllegalStateException] from a not-connected session).
      */
     val modalSendErrors: Flow<Unit> = modalSendErrorChannel.receiveAsFlow()
+
+    private val mutableQuestionModal = MutableStateFlow<QuestionModalState?>(null)
+
+    /**
+     * The clarification batch held for this conversation with the operator's picks (#661), or null. The
+     * picks belong to one batch: a dismissal (null) discards them, and any batch other than the one held
+     * — a replacement, or the same id re-sent after a reconnect's empty reconcile — starts fresh.
+     */
+    val questionModal: StateFlow<QuestionModalState?> = mutableQuestionModal
+
+    init {
+        viewModelScope.launch {
+            questionBatch(conversationId).collect { batch ->
+                val own = batch?.takeIf { it.conversationId == conversationId }
+                mutableQuestionModal.update { held ->
+                    when {
+                        own == null -> null
+                        held?.batch == own -> held
+                        else -> QuestionModalState(own)
+                    }
+                }
+            }
+        }
+    }
+
+    fun onQuestionEvent(event: QuestionModalEvent) {
+        val held = mutableQuestionModal.value ?: return
+        when (event) {
+            is QuestionModalEvent.OptionToggled ->
+                editSelection(event.questionIndex) { selection, question ->
+                    if (event.optionIndex in
+                        question.options.indices
+                    ) {
+                        selection.withOption(event.optionIndex, question.multiSelect)
+                    } else {
+                        selection
+                    }
+                }
+            is QuestionModalEvent.OtherToggled ->
+                editSelection(event.questionIndex) { selection, question ->
+                    selection.withOtherTicked(!selection.otherTicked, question.multiSelect)
+                }
+            is QuestionModalEvent.OtherTextChanged ->
+                editSelection(event.questionIndex) { selection, question ->
+                    selection.copy(otherText = event.text).withOtherTicked(true, question.multiSelect)
+                }
+            QuestionModalEvent.Continue -> {
+                val answers = held.answers()
+                if (!held.locked && answers != null) {
+                    sendQuestion(held.batch.questionBatchId, "answer") { answerQuestionBatch(it, answers) }
+                }
+            }
+            QuestionModalEvent.Cancel ->
+                if (!held.locked) sendQuestion(held.batch.questionBatchId, "refuse") { refuseQuestionBatch(it) }
+        }
+    }
+
+    private fun editSelection(
+        questionIndex: Int,
+        edit: (QuestionSelection, Question) -> QuestionSelection,
+    ) {
+        mutableQuestionModal.update { held ->
+            if (held == null || held.locked || questionIndex !in held.selections.indices) return@update held
+            val question = held.batch.questions[questionIndex]
+            held.copy(selections = held.selections.toMutableList().also { it[questionIndex] = edit(it[questionIndex], question) })
+        }
+    }
+
+    /**
+     * The single question send (#661): locks the modal before launching, so a second Continue or Cancel
+     * is a no-op, and applies the outcome only while [questionBatchId] is still the held batch. Catches
+     * only the documented throws; logs static codes only, never an id, label or value.
+     */
+    private fun sendQuestion(
+        questionBatchId: String,
+        kind: String,
+        send: suspend (questionBatchId: String) -> Unit,
+    ) {
+        setQuestionPhase(questionBatchId, QuestionSendPhase.Sending)
+        viewModelScope.launch {
+            val outcome =
+                try {
+                    send(questionBatchId)
+                    QuestionSendPhase.Sent
+                } catch (e: CancellationException) {
+                    throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
+                } catch (e: RelayErrorException) {
+                    QuestionSendPhase.Failed
+                } catch (e: IllegalStateException) {
+                    QuestionSendPhase.Failed
+                } catch (e: IllegalArgumentException) {
+                    QuestionSendPhase.Failed
+                }
+            RelayLog.d { "event=question_send kind=$kind outcome=${if (outcome == QuestionSendPhase.Sent) "sent" else "failed"}" }
+            setQuestionPhase(questionBatchId, outcome)
+        }
+    }
+
+    private fun setQuestionPhase(
+        questionBatchId: String,
+        phase: QuestionSendPhase,
+    ) {
+        mutableQuestionModal.update { held ->
+            if (held?.batch?.questionBatchId == questionBatchId) held.copy(phase = phase) else held
+        }
+    }
 
     private val newSessionErrorChannel = Channel<Unit>(capacity = Channel.BUFFERED)
 

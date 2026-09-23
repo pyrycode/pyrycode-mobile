@@ -3,6 +3,8 @@ package de.pyryco.mobile.ui.components
 import android.os.ParcelFileDescriptor
 import android.provider.Settings
 import android.view.View
+import android.view.Window
+import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -56,12 +58,15 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.espresso.Espresso
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -173,6 +178,48 @@ class MobileModalTest {
             assertEquals(0, submissions)
         }
     }
+
+    @Test
+    fun plain_shell_window_is_not_hardened() {
+        show()
+        rule.runOnIdle {
+            val window = dialogWindow()
+            assertEquals(0, window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
+            assertFalse(window.decorView.filterTouchesWhenObscured)
+        }
+    }
+
+    @Test
+    fun gate_window_is_secure_filters_obscured_touches_and_only_cancel_dismisses() {
+        rule.setContent {
+            PyrycodeMobileTheme {
+                MobileGateModal(title = "Gate title", cancelLabel = "Cancel", onCancel = { dismissals++ }) {
+                    dialogView = LocalView.current
+                    Text("Gate content")
+                }
+            }
+        }
+        rule.runOnIdle {
+            val window = dialogWindow()
+            assertNotEquals(0, window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE)
+            assertTrue(window.decorView.filterTouchesWhenObscured)
+        }
+        rule.onNodeWithContentDescription("Close").assertDoesNotExist()
+        rule.onNodeWithText("OK").assertDoesNotExist()
+
+        Espresso.pressBack()
+        rule.runOnIdle { assertEquals(0, dismissals) }
+        rule.onNodeWithText("Gate content").assertIsDisplayed()
+
+        rule
+            .onNodeWithText("Cancel")
+            .assertHeightIsAtLeast(48.dp)
+            .performClick()
+        rule.runOnIdle { assertEquals(1, dismissals) }
+    }
+
+    private fun dialogWindow(): Window =
+        checkNotNull((dialogView.parent as? DialogWindowProvider)?.window) { "modal content is not hosted in a dialog window" }
 
     @Test
     fun disabled_and_loading_block_submission_but_keep_dismissal_available() {

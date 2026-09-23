@@ -16,12 +16,15 @@
     <!--
       Both add controls repeat down the screen — a section header per section, a host row per host in each of
       them — so each names the section or host it acts on, the way the fold labels above name their row. %1$s
-      is the section title for the first and the host's (clamped) name for the other two.
+      is the section title for the first and the host's (clamped) name for the rest.
     -->
     <string name="cd_tree_section_pair_host">Pair another host, %1$s</string>
     <string name="cd_tree_host_edit">Edit host %1$s</string>
     <string name="cd_tree_host_new_chat">New chat on %1$s</string>
     <string name="cd_tree_host_pick_workspace">Pick a workspace for the new chat on %1$s</string>
+    <string name="cd_tree_host_reconnect">Reconnect %1$s</string>
+    <!-- A Chats row's pencil (#827); %1$s is the chat's (clamped) name or the untitled fallback. -->
+    <string name="cd_tree_chat_edit">Edit chat %1$s</string>
     <string name="untitled_discussion">Untitled discussion</string>
     <string name="channels_section_header">Channels</string>
     <string name="chats_section_header">Chats</string>
@@ -85,6 +88,7 @@
     <string name="thread_interrupt_label">Stop</string>
     <string name="cd_thread_interrupt">Stop the running turn</string>
     <string name="cd_thread_copy_message">Copy this message</string>
+    <string name="cd_thread_copy_code">Copy this code block</string>
     <string name="thread_queued_state_desc">Waiting to send</string>
     <string name="cd_thread_queued_drop">Drop this queued message</string>
     <string name="thread_unrecognized_label">Unrecognized message</string>
@@ -130,6 +134,11 @@
     <string name="modal_armed_option_desc">Tap again to confirm</string>
     <string name="modal_cancel">Cancel</string>
     <string name="modal_send_failed">Couldn\'t send your answer. Try again.</string>
+    <string name="question_modal_title">Claude has questions</string>
+    <string name="question_other">Other</string>
+    <string name="question_other_placeholder">Type your answer</string>
+    <string name="question_continue">Continue</string>
+    <string name="question_send_failed">Couldn\'t send. Try again.</string>
     <string name="new_session_failed">Couldn\'t reset the session. Check your connection.</string>
     <string name="archive_failed">Couldn\'t archive this conversation. Try again.</string>
     <string name="change_workspace_failed">Couldn\'t change the workspace. Try again.</string>
@@ -159,6 +168,15 @@
     <string name="edit_host_unpair_confirm_body">%1$s will be removed from this phone: its pairing, its connection and its saved workspace. Pairing it again needs its QR code.</string>
     <!-- Generic for the same reason edit_host_save_failed is, and it names the failed operation. -->
     <string name="edit_host_unpair_failed">Couldn\'t unpair the host. Try again.</string>
+    <!--
+      The Edit chat modal (#826), in desktop's EditChatDialogView copy: sentence-case title against the
+      frame's "Edit Chat", and the frame's "Channel name:" label for every chat, promoted or not.
+    -->
+    <string name="edit_chat_title">Edit chat</string>
+    <string name="edit_chat_name_label">Channel name:</string>
+    <string name="edit_chat_archive">Archive chat</string>
+    <!-- Generic for the same reason edit_host_save_failed is: the shell announces it aloud (#827). -->
+    <string name="edit_chat_save_failed">Couldn\'t rename the chat. Try again.</string>
     <!--
       The Log data entry and its modal (#683). The row headline joins the Storage section in
       Clear cache\'s language; the title repeats it so the modal names what it was opened from.

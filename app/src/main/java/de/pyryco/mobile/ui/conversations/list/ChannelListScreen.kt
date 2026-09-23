@@ -37,6 +37,7 @@ import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.di.HostConversationSnapshot
+import de.pyryco.mobile.ui.components.EditChatModal
 import de.pyryco.mobile.ui.conversations.components.TreeConversationRow
 import de.pyryco.mobile.ui.conversations.components.TreeHostRow
 import de.pyryco.mobile.ui.conversations.components.TreeSectionHeader
@@ -155,6 +156,14 @@ sealed interface ChannelListEvent {
     ) : ChannelListEvent
 
     /**
+     * A disconnected host row's plug control: redial **that** row's host and no other (#840). Carries the
+     * `serverId` only — never the displayed name, which the daemon authors.
+     */
+    data class TreeHostReconnectTapped(
+        val serverId: String,
+    ) : ChannelListEvent
+
+    /**
      * The open modal's OK, carrying the entered name already trimmed by the component.
      *
      * No `serverId`, deliberately: the target is the open editor's, held in the view model, and a second
@@ -186,6 +195,25 @@ sealed interface ChannelListEvent {
      * decline returns to the editor with the typed name still in its field.
      */
     data object HostUnpairDeclined : ChannelListEvent
+
+    /**
+     * A Chats row's pencil: open the Edit chat modal on **that** row's own host and conversation (#827).
+     * Ids only — the view model reads the name from that host's own snapshot.
+     */
+    data class TreeChatEditTapped(
+        val target: HostConversationTarget,
+    ) : ChannelListEvent
+
+    /**
+     * The Edit chat modal's OK, carrying the entered name already trimmed by the component. No ids, for
+     * the reason [HostEditNameSubmitted] carries none: the target is the open editor's.
+     */
+    data class ChatEditNameSubmitted(
+        val name: String,
+    ) : ChannelListEvent
+
+    /** The Edit chat modal's Cancel, Close and Back. */
+    data object ChatEditDismissed : ChannelListEvent
 
     data class WorkspacePicked(
         val workspace: String,
@@ -239,6 +267,34 @@ fun ChannelListScreen(
         onUnpairConfirmed = { onEvent(ChannelListEvent.HostUnpairConfirmed) },
         onUnpairDeclined = { onEvent(ChannelListEvent.HostUnpairDeclined) },
         onDismissRequest = { onEvent(ChannelListEvent.HostEditDismissed) },
+    )
+    ChatEditorModal(hostState = hostState, onEvent = onEvent)
+}
+
+/**
+ * [EditChatModal] bound to the open [ChatEditorState] (#827), present exactly while there is one.
+ *
+ * OK follows the chat's **own** host: availability is read from that host's snapshot on every draw, so a
+ * disconnect disables OK and a reconnect re-enables it without the modal leaving composition — the typed
+ * name lives in the component's buffer and survives both. The failure string is resolved here and is
+ * generic by design: the shell announces it aloud, and the daemon's message never reaches this screen.
+ * Archive stays unwired until #828.
+ */
+@Composable
+private fun ChatEditorModal(
+    hostState: HostChannelListState,
+    onEvent: (ChannelListEvent) -> Unit,
+) {
+    val editor = hostState.chatEditor ?: return
+    EditChatModal(
+        conversationId = editor.conversationId,
+        initialName = editor.initialName,
+        onDismissRequest = { onEvent(ChannelListEvent.ChatEditDismissed) },
+        onSubmit = { name -> onEvent(ChannelListEvent.ChatEditNameSubmitted(name)) },
+        onArchiveRequested = {},
+        hostAvailable = hostState.isHostConnected(editor.serverId),
+        loading = editor.saving,
+        error = if (editor.failed) stringResource(R.string.edit_chat_save_failed) else null,
     )
 }
 
@@ -365,6 +421,7 @@ private fun LazyListScope.treeSection(
                 onAddTapped = { onEvent(ChannelListEvent.TreeHostAddTapped(host.serverId)) },
                 onAddLongPressed = { onEvent(ChannelListEvent.TreeHostAddLongPressed(host.serverId)) },
                 modifier = Modifier.padding(top = if (index == 0) TreeFirstHostGap else TreeHostGap),
+                onReconnectTapped = { onEvent(ChannelListEvent.TreeHostReconnectTapped(host.serverId)) },
             )
         }
         if (hostKey in hostState.collapsed) return@forEachIndexed
@@ -395,6 +452,14 @@ private fun LazyListScope.treeSection(
                     selected = target == hostState.selected,
                     onClick = { onEvent(ChannelListEvent.TreeRowTapped(target)) },
                     modifier = Modifier.testTag(section.rowTestTag),
+                    // The row's own target, as for its tap. Only chats: editing a channel is #667.
+                    onEditTapped =
+                        when (section) {
+                            ConversationTreeSection.Channels -> null
+                            ConversationTreeSection.Chats -> {
+                                { onEvent(ChannelListEvent.TreeChatEditTapped(target)) }
+                            }
+                        },
                 )
             }
         }

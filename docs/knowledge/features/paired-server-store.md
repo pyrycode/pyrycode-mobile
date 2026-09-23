@@ -165,7 +165,7 @@ Both store interfaces resolve one observable decorator in `appModule`:
 
 ```kotlin
 single {
-    ObservablePairedServerStore(KeystorePairedServerStore(get()), get<ComposerDraftStore>()::clearHost)
+    ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), lazy { get() }))
 } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
 ```
 
@@ -179,26 +179,32 @@ notify this decorator's observers.
 
 **`remove` also runs a required host-removal hook, after the revision bump
 ([#790](https://github.com/pyrycode/pyrycode-mobile/issues/790)).** The constructor
-takes a second, required `onHostRemoved: (String) -> Unit` parameter, called with the
-removed `serverId` once `delegate.remove` and the revision bump have both completed.
-This is the seam this store's own "app mutations go through the shared instance" rule
-exists to make unbypassable: "this host's pairing no longer exists" is a store-level
-fact, and the hook is where that fact fans out to other host-keyed app state, the same
-shape of consequence as the revision bump `RelayConnectionRegistry` reconciles into
-closing the removed id's connection bundle. The production binding is
-`ComposerDraftStore::clearHost` — see
-[Thread screen § Composer draft ownership](thread-screen.md#composer-draft-ownership)
-— dropping every composer draft held for that host, since a `serverId` is stable
-across a re-pair and would otherwise resurface text typed before the unpair. The
-parameter is required rather than defaulted, for the same reason `ThreadViewModel`'s
+takes a second, required `onHostRemoved: suspend (String) -> Unit` parameter, called
+with the removed `serverId` once `delegate.remove` and the revision bump have both
+completed, and **awaited** inside `remove` ([#798](https://github.com/pyrycode/pyrycode-mobile/issues/798)):
+`remove` does not return until the hook finishes, so a caller that closes on a
+successful `remove` (`HostEditorController.confirmUnpair`) only closes once the
+removed host's app state is actually gone. This is the seam this store's own "app
+mutations go through the shared instance" rule exists to make unbypassable: "this
+host's pairing no longer exists" is a store-level fact, and the hook is where that
+fact fans out to other host-keyed app state, the same shape of consequence as the
+revision bump `RelayConnectionRegistry` reconciles into closing the removed id's
+connection bundle. The production binding is
+[`forgetRemovedHost`](conversation-cache.md#removal-on-unpair--forgetremovedhost),
+defined beside `ObservablePairedServerStore` in `di/ObservablePairedServerStore.kt`: it
+clears every composer draft held for the host — see
+[Thread screen § Composer draft ownership](thread-screen.md#composer-draft-ownership) —
+then removes the host's cached conversation content, since a `serverId` is stable
+across a re-pair and both would otherwise resurface content from before the unpair.
+The parameter is required rather than defaulted, for the same reason `ThreadViewModel`'s
 `draftStore` is: a forgotten binding is the one failure that leaves every test green
 while production drops nothing; a caller with nothing to clean up passes `{}`
-explicitly. **The hook must not throw and must not block.** It runs after the removal
-has already succeeded, so a throw would surface at `HostEditorController.confirmUnpair`
-as a failed unpair on a removal that in fact succeeded, and a blocking call would stall
-the store on whatever dispatcher `delegate.remove` completed on. `save` and
-`setDisplayName` deliberately do not call it: re-pairing the same id and renaming a
-host both keep their drafts.
+explicitly. **The hook must not throw, and must suspend rather than block.** It runs
+after the removal has already succeeded, so a throw would surface at
+`HostEditorController.confirmUnpair` as a failed unpair on a removal that in fact
+succeeded, and a blocking call would stall the store on whatever dispatcher
+`delegate.remove` completed on. `save` and `setDisplayName` deliberately do not call
+it: re-pairing the same id and renaming a host both keep their drafts and content.
 
 `RelayConnectionRegistry` observes the initial revision and subsequent revisions,
 serializes `list()` reads and reconciles one bundle per exact server id. Saves and
@@ -275,6 +281,16 @@ assert a failed removal drops no draft, a successful one drops the removed host'
 whole bucket, a same-conversation-id draft on another host survives, and no draft
 text reaches a captured log line. See
 [Thread screen § Composer draft ownership](thread-screen.md#composer-draft-ownership).
+The sibling case for the same gesture's other half,
+`confirmingUnpairRemovesThatHostsCachedContentAndOnlyAfterTheRemovalSucceeded` (#798),
+binds `forgetRemovedHost` over a real `FileConversationCache` on a `TemporaryFolder`
+instead of a lambda restatement, so a forgotten step in production would leave the
+test red: it asserts a failed removal (`store.failRemove`) leaves the host's cached
+conversations and thread readable and the editor showing `unpairFailed`, a successful
+one empties exactly that host's cache while a second host sharing a case-differing id
+and a same-id conversation keeps its content, and no server id, conversation id or
+cached text reaches a log line. See
+[Conversation cache § Removal on unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost).
 
 [`KeystorePairedServerStoreTest`](../../../app/src/androidTest/java/de/pyryco/mobile/data/crypto/KeystorePairedServerStoreTest.kt)
 uses real Android Keystore on a device/emulator. Its 17 tests cover byte-faithful
@@ -327,6 +343,9 @@ against the same DataStore before checking both records after reopening.
 - [Draft eviction on unpair (#790)](../../specs/architecture/790-drop-drafts-on-host-or-conversation-removal.md) —
   the `onHostRemoved` hook on `remove`; see [Wiring & usage](#wiring--usage) here and
   [Thread screen § Composer draft ownership](thread-screen.md#composer-draft-ownership)
+- [Clear cached content on removal (#798)](../../specs/architecture/798-clear-cache-on-removal.md) —
+  made `onHostRemoved` suspend and awaited, and gave it `forgetRemovedHost` as its production
+  binding; see [Conversation cache § Removal on unpair](conversation-cache.md#removal-on-unpair--forgetremovedhost)
 - [ADR 0006 — Keystore wrap-at-rest](../decisions/0006-keystore-wrap-at-rest-device-static-key.md)
 - [Device static keystore](device-static-keystore.md): separate key custody and
   throw-on-decrypt-failure contract

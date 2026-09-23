@@ -37,7 +37,7 @@ internal data class ConnectionLegVisual(
     val contentDescription: String, // leg + state for TalkBack, e.g. "Relay: connected"
 )
 
-internal fun RelayLinkStatus.toLegVisual(): ConnectionLegVisual      // 6 cases
+internal fun RelayLinkStatus.toLegVisual(): ConnectionLegVisual      // 7 cases
 internal fun PyrycodeLinkStatus.toLegVisual(): ConnectionLegVisual   // 3 cases
 ```
 
@@ -57,6 +57,7 @@ Relay leg ([`RelayLinkStatus`](relay-link-status.md)):
 | `Connecting` | `InProgress` (amber) | `"Connecting…"` | `"Relay: connecting"` |
 | `Reconnecting(s)` | `InProgress` (amber) | `"Reconnecting"` | `"Relay: reconnecting"` |
 | **`DaemonAbsent`** | **`Up` (green)** | `"Reachable"` | `"Relay: reachable, no daemon"` |
+| **`PairingRejected`** | **`Down` (red)** | `"Pairing rejected"` | `"Relay: pairing rejected"` |
 | `Offline` | `Down` (red) | `"Offline"` | `"Relay: offline"` |
 
 Pyrycode leg (`PyrycodeLinkStatus`):
@@ -80,6 +81,13 @@ but a distinct label — the exact "share the category, diverge on the text" pat
 "Connected" while unpaired. See [Relay link status](relay-link-status.md) § `Idle`. The `Reconnecting(secondsRemaining)` countdown is **not** surfaced in the label (design-owed
 placement); fold `s` into both label and cd together if it is ever adopted, so the per-case test
 stays deterministic.
+
+**`PairingRejected → Down`, its own label ([#841](relay-link-status.md#pairingrejected--a-rejected-credential-halts-redial-841)):**
+reuses the `Down` category and the existing "down" visual — same red dot as `Offline` — but a distinct
+`"Pairing rejected"` label/cd, the same "share the category, diverge on the text" pattern `Connected`
+and `DaemonAbsent` use to share `Up`. No new visual asset; only a new row in the pure mapper. The
+host-row and composer treatments for this state are follow-up tickets (split from #675) — this ticket's
+only visible surface is this label.
 
 ### Category → token (the one colour site)
 
@@ -135,11 +143,13 @@ Light + Dark `@Preview` pair at `widthDp = 412` (the `ConnectionBanner` idiom):
 
 Unit-only (`./gradlew test`, JVM, no device), `ConnectionStatusLineTest.kt` — plain `org.junit` +
 `assertEquals`, the [`ThreadScreenMapperTest`](thread-screen.md) idiom. One `@Test` per sealed case
-(all 9 — the 6 relay cases incl. #499's `Idle`, plus the 3 pyrycode cases), each asserting the **full
-triple** so a copy change is caught and moved deliberately; the AC#2 invariant is its own named test
-(`relayDaemonAbsent_mapsToUp_neverDown`), and #499's is `relayIdle_mapsToDown_notConnected`. The trivial
-category→token resolver and the layout are **preview-verified**, not instrumented — matching
-`ConnectionBanner` (no unit test there either). The pure mapper carries the test weight.
+(all 10 — the 7 relay cases incl. #499's `Idle` and #841's `PairingRejected`, plus the 3 pyrycode
+cases), each asserting the **full triple** so a copy change is caught and moved deliberately; the AC#2
+invariant is its own named test (`relayDaemonAbsent_mapsToUp_neverDown`), #499's is
+`relayIdle_mapsToDown_notConnected`, and #841's is the direct `PairingRejected` case test asserting
+`Down`/"Pairing rejected"/"Relay: pairing rejected". The trivial category→token resolver and the layout
+are **preview-verified**, not instrumented — matching `ConnectionBanner` (no unit test there either).
+The pure mapper carries the test weight.
 
 ## Live wiring (#398)
 
@@ -165,8 +175,8 @@ selects conversation data; it does not gate this status flow or connection estab
 
 - The model it renders (verbatim): [Connection status](connection-status.md)
   (`ConnectionStatus {relay, pyrycode}`, [#392](../codebase/392.md)).
-- Legs: [Relay link status](relay-link-status.md) (`RelayLinkStatus`, [#391](../codebase/391.md)) +
-  `PyrycodeLinkStatus` (in [Connection status](connection-status.md)).
+- Legs: [Relay link status](relay-link-status.md) (`RelayLinkStatus`, [#391](../codebase/391.md),
+  extended by #841's `PairingRejected`) + `PyrycodeLinkStatus` (in [Connection status](connection-status.md)).
 - The green token: [Success color](success-color.md) ([#397](../codebase/397.md)).
 - Component idioms followed: [Connection banner](connection-banner.md) (stateless-over-a-sealed-type
   + private preview-matrix), [Thread status row](thread-status-row.md) (category→token resolver).

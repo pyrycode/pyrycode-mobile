@@ -30,6 +30,11 @@ sealed class RelayLinkStatus {
     /** Relay reachable but no daemon is registered behind it (the `4404` close). */
     data object DaemonAbsent : RelayLinkStatus()
 
+    /** The host refused this pairing's credential (the `4401` invalid-token or `4426` handshake-failed
+     *  close). Only a re-pair recovers, so the supervisor has stopped redialling; an explicit retry or
+     *  the next foreground dials once more. Static: carries no relay- or daemon-supplied data (#841). */
+    data object PairingRejected : RelayLinkStatus()
+
     /** Unreachable / sustained unavailability. */
     data object Offline : RelayLinkStatus()
 }

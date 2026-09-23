@@ -6,6 +6,7 @@ import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
+import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.Envelope
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -855,6 +857,166 @@ class RelayRepositoryCoordinatorTest {
             env.coordinator.close()
         }
 
+    // #822: the question fold lives on the connection's repository and the coordinator projects it
+    // Eagerly, so a batch that arrives before any thread screen subscribes is still held.
+    @Test
+    fun questionBatches_holdBatchShownBeforeAnySubscriber() =
+        runTest {
+            val env = newEnv()
+            val pump = openInteractiveConnection(env)
+
+            pump.push(questionShownEnvelope("conv-1", "qb-1"))
+            pump.push(questionShownEnvelope("conv-2", "qb-2"))
+            runCurrent()
+
+            assertEquals(
+                listOf("qb-1", "qb-2"),
+                env.coordinator.questionBatches.value
+                    .map { it.questionBatchId },
+            )
+
+            env.coordinator.close()
+        }
+
+    @Test
+    fun observeQuestionBatch_returnsOnlyThatConversationsBatch() =
+        runTest {
+            val env = newEnv()
+            val pump = openInteractiveConnection(env)
+            pump.push(questionShownEnvelope("conv-1", "qb-1"))
+            pump.push(questionShownEnvelope("conv-2", "qb-2"))
+            runCurrent()
+
+            assertEquals(
+                "qb-2",
+                env.coordinator
+                    .observeQuestionBatch("conv-2")
+                    .first()
+                    ?.questionBatchId,
+            )
+            assertNull(env.coordinator.observeQuestionBatch("conv-3").first())
+
+            env.coordinator.close()
+        }
+
+    // Unlike currentModal, question state resets on reconnect: the daemon's connect-time reconcile re-sends
+    // every outstanding batch under its original id, and one resolved while mobile was away is absent.
+    @Test
+    fun questionBatches_resetOnReconnectAndHoldReconciledBatchOnce() =
+        runTest {
+            val env = newEnv()
+            val first = openInteractiveConnection(env)
+            first.push(questionShownEnvelope("conv-1", "qb-kept"))
+            first.push(questionShownEnvelope("conv-2", "qb-resolved-while-away"))
+            runCurrent()
+            assertEquals(2, env.coordinator.questionBatches.value.size)
+
+            val second = openInteractiveConnection(env)
+            assertTrue(
+                env.coordinator.questionBatches.value
+                    .isEmpty(),
+            )
+
+            second.push(questionShownEnvelope("conv-1", "qb-kept"))
+            second.push(questionShownEnvelope("conv-1", "qb-kept"))
+            runCurrent()
+
+            assertEquals(
+                listOf("qb-kept"),
+                env.coordinator.questionBatches.value
+                    .map { it.questionBatchId },
+            )
+            assertNull(env.coordinator.observeQuestionBatch("conv-2").first())
+
+            env.coordinator.close()
+        }
+
+    @Test
+    fun questionBatches_areHeldPerHost() =
+        runTest {
+            val hostA = newEnv()
+            val hostB = newEnv()
+            val pumpA = openInteractiveConnection(hostA)
+            openInteractiveConnection(hostB)
+
+            pumpA.push(questionShownEnvelope("conv-1", "qb-1"))
+            runCurrent()
+
+            assertEquals(
+                "qb-1",
+                hostA.coordinator
+                    .observeQuestionBatch("conv-1")
+                    .first()
+                    ?.questionBatchId,
+            )
+            assertNull(hostB.coordinator.observeQuestionBatch("conv-1").first())
+            assertTrue(
+                hostB.coordinator.questionBatches.value
+                    .isEmpty(),
+            )
+
+            hostA.coordinator.close()
+            hostB.coordinator.close()
+        }
+
+    // #825: a send goes only to the host holding the batch, even when another host holds an equal id.
+    @Test
+    fun questionSends_reachOnlyTheHostTheyAreMadeOn() =
+        runTest {
+            val hostA = newEnv()
+            val hostB = newEnv()
+            val pumpA = openInteractiveConnection(hostA)
+            val pumpB = openInteractiveConnection(hostB)
+            pumpA.push(questionShownEnvelope("conv-1", "qb-1"))
+            pumpB.push(questionShownEnvelope("conv-1", "qb-1"))
+            runCurrent()
+            val sentByB = pumpB.sent.size
+
+            hostA.coordinator.answerQuestionBatch("qb-1", listOf(QuestionAnswer(0, listOf("A"))))
+            hostA.coordinator.refuseQuestionBatch("qb-1")
+
+            assertEquals(listOf("question_answer", "question_refused"), pumpA.sent.map { it.type }.filter { it.startsWith("question_") })
+            assertEquals(sentByB, pumpB.sent.size)
+
+            hostA.coordinator.close()
+            hostB.coordinator.close()
+        }
+
+    // A reconnect drops the prior connection's batches, so answering one fails before any frame leaves.
+    @Test
+    fun questionSends_failForABatchDroppedByReconnect() =
+        runTest {
+            val env = newEnv()
+            val first = openInteractiveConnection(env)
+            first.push(questionShownEnvelope("conv-1", "qb-1"))
+            runCurrent()
+
+            val second = openInteractiveConnection(env)
+            val answer = runCatching { env.coordinator.answerQuestionBatch("qb-1", listOf(QuestionAnswer(0, listOf("A")))) }
+            val refusal = runCatching { env.coordinator.refuseQuestionBatch("qb-1") }
+
+            assertTrue(answer.exceptionOrNull() is IllegalStateException)
+            assertTrue(refusal.exceptionOrNull() is IllegalStateException)
+            assertTrue(second.sent.none { it.type.startsWith("question_") })
+
+            env.coordinator.close()
+        }
+
+    @Test
+    fun questionSends_withNoActiveConnection_throwIllegalState() =
+        runTest {
+            val env = newEnv()
+            runCurrent()
+
+            val answer = runCatching { env.coordinator.answerQuestionBatch("qb-1", listOf(QuestionAnswer(0, listOf("A")))) }
+            val refusal = runCatching { env.coordinator.refuseQuestionBatch("qb-1") }
+
+            assertTrue(answer.exceptionOrNull() is IllegalStateException)
+            assertTrue(refusal.exceptionOrNull() is IllegalStateException)
+
+            env.coordinator.close()
+        }
+
     // #412 AC #4: the replay cursor is coordinator-scoped, so it survives connection churn — a fresh
     // per-connection repo keeps recording into the same high-water mark the prior connection advanced.
     @Test
@@ -1115,6 +1277,30 @@ class RelayRepositoryCoordinatorTest {
                 ),
         )
     }
+
+    /** Publishes a new connection, drives its pump to Open with `interactive`, and returns the pump. */
+    private fun TestScope.openInteractiveConnection(env: Env): FakeManagedPump {
+        env.connections.value = StubRelayTransport()
+        runCurrent()
+        val pump = env.pumps.last()
+        pump.open(capabilities = setOf(CAPABILITY_INTERACTIVE))
+        runCurrent()
+        return pump
+    }
+
+    private fun questionShownEnvelope(
+        conversationId: String,
+        batchId: String,
+    ): Envelope =
+        Envelope(
+            id = 1L,
+            type = "question_shown",
+            ts = TS,
+            payload =
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"$conversationId","question_batch_id":"$batchId","questions":[{"question":"Q?","header":"H","options":[{"label":"A","description":"a"},{"label":"B","description":"b"}],"multi_select":false}]}""",
+                ),
+        )
 
     /** Empty-`ack` reply correlated to [inReplyTo] — the register_push_token success signal. */
     private fun ackEnvelope(inReplyTo: Long): Envelope =
