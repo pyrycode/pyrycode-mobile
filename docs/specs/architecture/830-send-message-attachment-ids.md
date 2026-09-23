@@ -75,3 +75,23 @@ None named by the ticket. The feature overview for attachments / the conversatio
 ## Open questions
 
 - None.
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] No findings. This is an outbound field; nothing daemon-authored enters the phone. The ids a caller passes come from `AttachmentUploadResult.Stored`, which `AttachmentUploadTransfer` builds from its own client-minted id, not from reply text. The daemon is the authority on resolution: it resolves an id only under the message's own conversation and refuses a malformed or unknown one. Mobile deliberately does not re-validate the UUIDv4 shape; a caller that passed a foreign string gets `protocol.malformed` / `attachment.not_found` back through the ordinary error path, and nothing on the phone uses the id as a path, key or URL.
+- [Cross-conversation / cross-host naming] No findings. The ids ride the same `send_message` as the `conversation_id` and go through the repository the send already targets (`StableConversationRepository.sendMessage` → `live` at entry). An id minted under another conversation or host fails to resolve daemon-side; the phone does not widen the scope.
+- [Tokens, secrets, credentials] No findings. Attachment ids are identifiers, not bearer secrets (resolution is scoped by the authenticated Noise session and conversation). They are minted with `UUID.randomUUID` (`SecureRandom`-backed) by #829.
+- [File / storage] Not applicable — the send touches no file or storage; the attachment bytes were stored by #829.
+- [Android attack surface] Not applicable — no intent, deep link, push or WebView.
+- [Crypto] Not applicable — the frame is sealed by the existing `NoiseIkSession` path unchanged.
+- [Network & I/O] No findings. The bound (`MessageAttachmentIds.MAX` = 32 after repeats are dropped) caps the field at ~1.3 KB, under 2% of the envelope cap, and is enforced before any frame is built, so a buggy caller cannot make the daemon do unbounded resolution work or trip `protocol.malformed` on the count. Oversized `text` against the envelope cap is pre-existing behaviour, untouched.
+- [Logs] No findings as designed: the new `RelayLog` lines carry only a count. The ids and text are never logged. `attachment.not_found` does not say which id failed, and the phone does not guess.
+- [Concurrency] Not applicable — no new scope, job or shared state; the confirmed insert remains after the `ack` only, so a refused send leaves no phantom row.
+- [Threat model] A hostile relay can drop or delay the send; the outcome is the existing `sendAndAwaitReply` failure/teardown path, with nothing inserted. `/clear` with ids: the daemon drops the ids unresolved; no phone-side effect.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-09-23
