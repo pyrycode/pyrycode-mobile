@@ -220,9 +220,28 @@ class ThreadViewModel(
     private val settingsReadings = MutableStateFlow(SettingsReading(0L, null))
 
     /**
+     * What claude says it runs (#891): the announced model and its build, each made inert here. Both #890
+     * readings are per conversation and cleared by the repository on a session transition, so nothing
+     * here tracks staleness. `SessionFacts.permissionMode` is claude's claim and is deliberately not read.
+     */
+    private val runningModel: Flow<ThreadRunningModel> =
+        combine(
+            repository.observeAnnouncedModel(conversationId),
+            repository.observeSessionFacts(conversationId),
+        ) { announced, facts ->
+            ThreadRunningModel(
+                model = announced?.let { reportedText(it.model, it.truncated) },
+                build =
+                    facts?.let {
+                        reportedText(it.claudeCodeVersion, CLAUDE_CODE_VERSION_FIELD in it.truncatedFields.orEmpty())
+                    },
+            )
+        }
+
+    /**
      * The run-configuration arm of [state] (#807). Five inputs, which is exactly Kotlin's typed `combine`
      * ceiling — the reason this stays one arm of the five-arm `state` combine instead of needing a sixth
-     * or the sibling-[StateFlow] shape [draft] uses.
+     * or the sibling-[StateFlow] shape [draft] uses. [runningModel] joins by a second, two-arm combine.
      */
     private val runConfigFlow: Flow<ThreadRunConfig> =
         combine(
@@ -233,7 +252,7 @@ class ThreadViewModel(
             pendingPermission,
         ) { settings, menu, model, effort, permission ->
             runConfig(settings, menu, model, effort, permission)
-        }
+        }.combine(runningModel) { config, running -> config.copy(running = running) }
 
     private val transientDialogs: Flow<TransientDialogs> =
         combine(
@@ -1674,6 +1693,23 @@ private fun String.toChannelSlug(): String =
 internal fun String.inert(): String = filterNot { it.isISOControl() }.take(MAX_RUN_CONFIG_LABEL_CHARS)
 
 private const val MAX_RUN_CONFIG_LABEL_CHARS = 128
+
+/**
+ * One claude-reported value (#891) through the [inert] path, or `null` when nothing printable is left —
+ * an all-control-character value is unavailable, not a blank row. [truncated] is the daemon's own flag,
+ * widened to also say when the inert bound cut characters, so cut text is never presented as whole.
+ */
+internal fun reportedText(
+    raw: String,
+    truncated: Boolean,
+): ThreadReportedText? {
+    val printable = raw.filterNot { it.isISOControl() }
+    if (printable.isEmpty()) return null
+    return ThreadReportedText(raw.inert(), truncated || printable.length > MAX_RUN_CONFIG_LABEL_CHARS)
+}
+
+/** The `session_facts.truncated_fields` entry that names the build (pyrycode `docs/protocol-mobile.md`). */
+private const val CLAUDE_CODE_VERSION_FIELD = "claude_code_version"
 
 /**
  * The most published models this client will lay out. `ModelMenu.rows` is bounded by the producer, but

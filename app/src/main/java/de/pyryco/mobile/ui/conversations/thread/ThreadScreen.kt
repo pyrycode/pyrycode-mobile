@@ -543,6 +543,7 @@ fun ThreadScreen(
             enabled = state.runConfig.writable,
             onDismiss = { sheetVisible = false },
             effortNote = state.runConfig.effortNote?.let { stringResource(it.textRes()) },
+            running = state.runConfig.running,
         )
     }
     if (state.channelInfoOpen) {
