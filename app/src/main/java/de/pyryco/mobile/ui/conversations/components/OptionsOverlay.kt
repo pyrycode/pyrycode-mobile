@@ -42,11 +42,13 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlin.math.roundToInt
 
 /** One row of an [OptionsOverlay]: [value] is handed back verbatim on selection and never rendered;
- *  [label] is the only text drawn. A row that is not [enabled] is greyed out and inert (#884). */
+ *  [label] is the row's one-line text. A row that is not [enabled] is greyed out and inert (#884).
+ *  [detail], when present, is drawn under the label in at most [DETAIL_MAX_LINES] lines (#885). */
 data class OptionsOverlayOption(
     val value: String,
     val label: String,
     val enabled: Boolean = true,
+    val detail: String? = null,
 )
 
 // Figma 533:1958's `Options overlay`: a 6dp-rounded column with 2dp of vertical padding, its rows inset
@@ -67,6 +69,9 @@ private val OverlayEdgeMargin = 8.dp
 // Material 3's content alpha for a disabled control.
 private const val DISABLED_ALPHA = 0.38f
 
+// A row's secondary line is bounded in height, whatever its source text holds (#885).
+private const val DETAIL_MAX_LINES = 2
+
 /**
  * Figma `533:1958`'s `Options overlay` (#808): a compact popup of options that opens above the control
  * that anchors it.
@@ -84,8 +89,8 @@ private const val DISABLED_ALPHA = 0.38f
  * dark theme, like the design's fill. The selected row is `primaryContainer`, so it stays the lighter row
  * in both themes. A small shadow separates the surface from the light-theme background.
  *
- * Every [OptionsOverlayOption.label] may be daemon-authored. Labels are drawn through [Text] only, one
- * line, ellipsized. [notListed] > 0 adds a caption that marks the list as a subset, so a cut menu never
+ * Every [OptionsOverlayOption.label] and [OptionsOverlayOption.detail] may be daemon-authored. They are
+ * drawn through [Text] only: the label in one line, the detail in at most two, both ellipsized. [notListed] > 0 adds a caption that marks the list as a subset, so a cut menu never
  * reads as complete.
  *
  * [actions] draws the rows as buttons rather than a radio group (#884): a menu of actions has no
@@ -183,34 +188,53 @@ private fun OptionsColumn(
             options.forEach { option ->
                 val selected = !actions && option.value == selectedValue
                 val onClick = { onSelect(option.value) }
-                Text(
-                    text = option.label,
-                    style = MaterialTheme.typography.bodySmall,
-                    color =
-                        if (option.enabled) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurface.copy(alpha = DISABLED_ALPHA)
-                        },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .background(if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-                            .then(
-                                if (actions) {
-                                    Modifier.clickable(enabled = option.enabled, role = Role.Button, onClick = onClick)
+                val rowModifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .background(if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+                        .then(
+                            if (actions) {
+                                Modifier.clickable(enabled = option.enabled, role = Role.Button, onClick = onClick)
+                            } else {
+                                Modifier.selectable(
+                                    selected = selected,
+                                    enabled = option.enabled,
+                                    role = Role.RadioButton,
+                                    onClick = onClick,
+                                )
+                            },
+                        ).padding(horizontal = OptionHorizontalPadding, vertical = OptionVerticalPadding)
+                val label =
+                    @Composable { labelModifier: Modifier ->
+                        Text(
+                            text = option.label,
+                            style = MaterialTheme.typography.bodySmall,
+                            color =
+                                if (option.enabled) {
+                                    MaterialTheme.colorScheme.primary
                                 } else {
-                                    Modifier.selectable(
-                                        selected = selected,
-                                        enabled = option.enabled,
-                                        role = Role.RadioButton,
-                                        onClick = onClick,
-                                    )
+                                    MaterialTheme.colorScheme.onSurface.copy(alpha = DISABLED_ALPHA)
                                 },
-                            ).padding(horizontal = OptionHorizontalPadding, vertical = OptionVerticalPadding),
-                )
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = labelModifier,
+                        )
+                    }
+                val detail = option.detail
+                if (detail == null) {
+                    label(rowModifier)
+                } else {
+                    Column(modifier = rowModifier) {
+                        label(Modifier)
+                        Text(
+                            text = detail,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = DETAIL_MAX_LINES,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
             }
             if (notListed > 0) {
                 Text(
