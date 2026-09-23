@@ -200,7 +200,7 @@ adding a token. Check a Figma frame's bound color against both app themes before
 a token that reads correctly in the design tool's own (usually dark) preview can be the wrong choice for
 the light scheme.
 
-See [Dependency injection § Exact-host Retry and lifecycle](dependency-injection.md#exact-host-retry-and-lifecycle)
+See [Dependency injection § Exact-host Retry and lifecycle](dependency-injection-host-conversation-source.md#exact-host-retry-and-lifecycle)
 for the `HostConversationSource.retryHost` seam this control drives, and
 [ChannelListViewModel](channel-list-viewmodel.md#wiring) for `reconnectHost`'s routing.
 

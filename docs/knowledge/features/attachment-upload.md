@@ -136,7 +136,7 @@ Each live connection gets its own `RemoteConversationRepository` and its own inb
 ([`RelayRepositoryCoordinator`](relay-repository-coordinator.md)). A reply arriving on host B's
 connection is only ever offered to host B's `onInbound`, so it can physically never reach host A's
 `AttachmentUploadTransfer` — there is no id-based cross-host check to get wrong, because the two
-transfers never share an inbound stream. See [Destination ownership](dependency-injection.md#destination-ownership)
+transfers never share an inbound stream. See [Destination ownership](dependency-injection-host-conversation-source.md#destination-ownership)
 for how `StableConversationRepository` reaches the thread's own host with no new DI.
 
 ## Logging
@@ -182,5 +182,5 @@ it live.
   posture, snapshot-or-result.
 - [Relay diagnostic log](relay-log.md) — the `RelayLog.d` calls this upload makes, and the JVM
   capturing-sink test requirement.
-- DI: [Dependency injection](dependency-injection.md#destination-ownership) — why the upload stays on
+- DI: [Dependency injection](dependency-injection-host-conversation-source.md#destination-ownership) — why the upload stays on
   the thread's own host with no new wiring.

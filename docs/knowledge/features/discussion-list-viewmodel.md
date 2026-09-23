@@ -19,7 +19,7 @@ the source's `channels`). Conversation records, ids and workspace paths remain
 verbatim. Equal ids or paths on different hosts remain distinct. Empty hosts
 awaiting a reply and disconnected hosts with cached rows stay present; no source
 hosts produces an empty list. The VM adds no list cache or message subscription;
-see [source ownership](dependency-injection.md#snapshot-lifetime).
+see [source ownership](dependency-injection-host-conversation-source.md#snapshot-lifetime).
 
 The compatibility `state` observes the discussion slice of the injected repository
 combined with a private `MutableStateFlow<PendingPromotion?>`. It projects
@@ -206,7 +206,7 @@ PendingHostPromotion?`, containing the exact
   confirmation/cancellation consume only their own pending state.
 
 Cached rows can supply a request's name but cannot authorize a send. A missing
-chat or a null [exact-host live lookup](dependency-injection.md#exact-host-repository-access)
+chat or a null [exact-host live lookup](dependency-injection-host-conversation-source.md#exact-host-repository-access)
 rejects confirmation; unknown, removed, disconnected and handshaking hosts send
 nothing even if cached indicators say connected. Membership and lookup occur
 without an intervening suspension. A disconnect after lookup can still fail in

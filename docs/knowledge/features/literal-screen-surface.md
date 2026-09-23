@@ -152,7 +152,7 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 
 `appModule` registers `viewModel { get<ThreadDestinationFactory>().literal(get()) }`.
 The factory reads the entry's `serverId` from `SavedStateHandle` and supplies an
-[exact-host reconnecting repository](dependency-injection.md#destination-ownership),
+[exact-host reconnecting repository](dependency-injection-host-conversation-source.md#destination-ownership),
 or the existing fake singleton for a demo destination. The ViewModel reads the
 unchanged host-local `conversationId`; Request and Retry retain the same target across
 compatibility selection changes and reconnect.
