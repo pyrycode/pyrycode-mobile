@@ -140,3 +140,9 @@ Pending for the documentation stage: `docs/knowledge/features/permission-modal-o
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-23
+
+## Revisions
+
+### 2026-09-23 — `reason` decodes as a non-null `JsonElement`, not through a custom serializer
+
+The Open question resolved against the plan. With a custom `KSerializer<JsonElement?>` on a nullable property, kotlinx still short-circuits the JSON `null` token to Kotlin `null` before the serializer runs, so `"reason": null` vanished (caught by `modalShown_nonStringReason_decodesAsItsJsonText`). The daemon can send it: `permbridge` carries `decision_reason` as a `json.RawMessage`, which keeps a literal `null` through `omitempty`. New contract: `ModalShownPayloadDto.reason` is a non-null `JsonElement` defaulting to `JsonPrimitive("")`. An explicit `null` decodes as `JsonNull` and renders as `"null"`. An absent key takes the empty string, which the wire and the mapper already treat as absent. No custom serializer. The other three fields stay `JsonElement? = null` as planned.
