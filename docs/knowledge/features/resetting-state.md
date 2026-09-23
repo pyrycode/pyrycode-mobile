@@ -3,8 +3,9 @@
 A per-conversation `ResetStatus?` the thread layer observes to learn which phase a daemon-driven
 **Reset** is in: the wrap-up turn writing a handoff note, or the respawn of claude under a new
 session. Landed in [#871](https://github.com/pyrycode/pyrycode-mobile/issues/871) (split from #630),
-following the `compacting` decode (#596). Decode-only — rendering the phase in the thread status area
-is a separate, not-yet-filed ticket that consumes this state.
+following the `compacting` decode (#596). Decode-only — rendering the phase in the thread status area is
+the sibling ticket [#872](https://github.com/pyrycode/pyrycode-mobile/issues/872), shipped, folded into
+[Resetting indicator](resetting-indicator.md).
 
 This doc covers the **data layer only**: decode the inbound `resetting` envelope into observable
 state. It renders nothing itself.
@@ -154,6 +155,6 @@ a family-wide fix, if ever warranted, is its own ticket, not this one's.
 - [ConversationRepository](conversation-repository.md) — the interface the defaulted
   `observeResetting` joins; [`StableConversationRepository`](stable-conversation-repository.md) — the
   facade that makes it reach the thread ViewModel.
-- Consumer: not yet filed — rendering the phase in the thread status area is a separate ticket that
-  consumes this state.
+- Consumer: [Resetting indicator](resetting-indicator.md) (#872) — renders the phase in the thread
+  status area, between usage limit and compaction in the status-slot ladder.
 - Server SSOT: pyrycode#2478, `docs/protocol-mobile.md § resetting`.

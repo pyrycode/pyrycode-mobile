@@ -52,9 +52,11 @@ Pure function of `isCompacting`: no `ViewModel` reference, no flow collection, n
 slot — a **three-way `when`** at the time of #597 (extended from #594's two-way `if`), a **four-way
 `when`** since [#804](https://github.com/pyrycode/pyrycode-mobile/issues/804) added
 [`UsageLimitIndicator`](usage-limit-indicator.md) between
-api-retry and this arm, and a **five-way `when`** since
+api-retry and this arm, a **five-way `when`** since
 [#805](https://github.com/pyrycode/pyrycode-mobile/issues/805) added
-[`TurnOutcomeIndicator`](turn-outcome-indicator.md) directly below this arm — inside a private
+[`TurnOutcomeIndicator`](turn-outcome-indicator.md) directly below this arm, and a **six-way `when`**
+since [#872](https://github.com/pyrycode/pyrycode-mobile/issues/872) inserted
+[`ResettingIndicator`](resetting-indicator.md) directly above this arm — inside a private
 `ThreadStatusArea` composable (`ThreadScreen.kt:471`), the
 first child of the composer's `bottomBar` column — through \#642 the same `when` lived at the foot of the
 content `Column`, above the composer rather than inside it. The arms, flags and precedence below api-retry
@@ -68,6 +70,8 @@ when {
         ApiRetryIndicator(status = apiRetry, modifier = Modifier.fillMaxWidth())
     usageLimit != null ->
         UsageLimitIndicator(reading = usageLimit, modifier = Modifier.fillMaxWidth())
+    resetting != null ->
+        ResettingIndicator(status = resetting, modifier = Modifier.fillMaxWidth())
     isCompacting ->
         CompactingIndicator(isCompacting = true, modifier = Modifier.fillMaxWidth())
     turnOutcome != null ->
@@ -208,8 +212,10 @@ case).
   light/dark previews), [API-retry indicator](api-retry-indicator.md) (the immediately-preceding render
   slice — same slot, same precedence discipline, but carries a display sanity gate this one correctly
   does not clone), [Usage-limit indicator](usage-limit-indicator.md)
-  ([#804](https://github.com/pyrycode/pyrycode-mobile/issues/804), immediately above this arm in the
-  ladder), [Turn-outcome indicator](turn-outcome-indicator.md)
+  ([#804](https://github.com/pyrycode/pyrycode-mobile/issues/804), above this arm in the
+  ladder), [Resetting indicator](resetting-indicator.md)
+  ([#872](https://github.com/pyrycode/pyrycode-mobile/issues/872), immediately above this arm in the
+  ladder — the direct clone of this component's `Row` shape), [Turn-outcome indicator](turn-outcome-indicator.md)
   ([#805](https://github.com/pyrycode/pyrycode-mobile/issues/805), immediately below this arm in the
   ladder), [Stall promotion banner](stall-promotion-banner.md) (the different-slot,
   independently-co-rendering counterpoint, untouched by this ticket).

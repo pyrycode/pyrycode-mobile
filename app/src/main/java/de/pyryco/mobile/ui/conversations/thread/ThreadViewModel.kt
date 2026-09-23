@@ -20,6 +20,7 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
+import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -477,6 +478,22 @@ class ThreadViewModel(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
                 initialValue = false,
+            )
+
+    /**
+     * Where this conversation's running Reset session is (#871) — drives the status area's resetting arm
+     * (#872). A sibling [StateFlow] beside [isCompacting] (not a [ThreadUiState] field). `null` covers no
+     * live connection and no reset running; the falling edge and the conversation's session transition
+     * both clear it upstream in the projection. `observeResetting` already dedups, and a phase change is a
+     * different [ResetStatus], so it reaches the screen without an extra operator.
+     */
+    val resetting: StateFlow<ResetStatus?> =
+        repository
+            .observeResetting(conversationId)
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = null,
             )
 
     /**
