@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.LiveSessionEvent
@@ -178,6 +179,13 @@ class RemoteConversationRepository(
      * harness) compiles unchanged; only a test supplies its own.
      */
     private val now: () -> Instant = Clock.System::now,
+    /**
+     * Which background tasks this host has finished (#677), the one piece of background-task state that
+     * outlives a connection. [RelayRepositoryCoordinator] owns the host-lifetime instance and threads it into
+     * each repository, the [replayCursor] shape. **Defaulted to a throwaway instance** so existing
+     * constructions compile unchanged.
+     */
+    private val finishedBackgroundTasks: FinishedBackgroundTasks = FinishedBackgroundTasks(),
 ) : ConversationRepository {
     /**
      * The demuxed list projection: `null` until the first `conversations` snapshot loads, then the
@@ -479,6 +487,15 @@ class RemoteConversationRepository(
      */
     private val mutableQuestionBatches = MutableStateFlow<List<QuestionBatch>>(emptyList())
     val questionBatches: StateFlow<List<QuestionBatch>> = mutableQuestionBatches.asStateFlow()
+
+    /**
+     * The background tasks each conversation holds on **this connection** (#677), keyed by conversation id; a
+     * missing key means nothing has been reported. Folded by [BackgroundTaskProjection] from the three
+     * `background_task_*` frames; only the finished marks in [finishedBackgroundTasks] predate this
+     * connection. On the concrete repository only, like [questionBatches].
+     */
+    private val backgroundTaskProjection = BackgroundTaskProjection(finishedBackgroundTasks)
+    val backgroundTasks: StateFlow<Map<String, BackgroundTaskRoster>> = backgroundTaskProjection.rosters
 
     init {
         // The single consumer of the hot, single-consumer inbound stream. Cancelled by its owner
@@ -861,6 +878,14 @@ class RemoteConversationRepository(
                 // clears no stall. Drop silently: the claude-authored strings and the nonce are never logged.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     foldQuestionFrame(envelope)
+                }
+            }
+            TYPE_BACKGROUND_TASK_STARTED, TYPE_BACKGROUND_TASK_UPDATED, TYPE_BACKGROUND_TASK_ROSTER -> {
+                // Background work claude left running past its turn (#677): see [BackgroundTaskProjection.apply].
+                // Same `interactive` gate as the question arm. Daemon state, not turn content: no thread row, and
+                // it clears no stall. Drop silently: the command lines and summaries are never logged.
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    backgroundTaskProjection.apply(envelope)
                 }
             }
             TYPE_RESYNC -> {
@@ -3027,6 +3052,21 @@ class RemoteConversationRepository(
 
         /** Capability-gated retirement of a question batch `{question_batch_id, outcome, source}` (#822). */
         const val TYPE_QUESTION_DISMISSED = "question_dismissed"
+
+        /**
+         * Capability-gated background task claude started past its turn
+         * `{conversation_id, task_id, tool_call_id, description, task_type, truncated_fields}` (#677).
+         */
+        const val TYPE_BACKGROUND_TASK_STARTED = "background_task_started"
+
+        /**
+         * Capability-gated change to a background task
+         * `{conversation_id, task_id, patch, status, summary, truncated_fields}` (#677); `status != ""` ends it.
+         */
+        const val TYPE_BACKGROUND_TASK_UPDATED = "background_task_updated"
+
+        /** Capability-gated snapshot of a conversation's background tasks `{conversation_id, tasks, dropped_tasks}` (#677). */
+        const val TYPE_BACKGROUND_TASK_ROSTER = "background_task_roster"
 
         /** Outbound answer to a held question batch `{question_batch_id, answer_token, answers}` (#825); no reply. */
         const val TYPE_QUESTION_ANSWER = "question_answer"
