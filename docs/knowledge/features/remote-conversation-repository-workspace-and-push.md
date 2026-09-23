@@ -8,18 +8,22 @@ Creates a new workspace folder on the daemon over v2 `create_workspace_folder` (
 overriding the interface's throwing default (`error(...)`) this method inherited unchanged since #312.
 Unlike every prior mutation it **names no conversation** — no `conversation_id` field, no projection
 fold — and its reply is a **new** type (`workspace_folder_created`), not a reuse of
-`conversation_updated`. Its return value (the created path) is the sole effect:
+`conversation_updated`. Its return value (the created path) is the sole effect. The body now lives on
+`WorkspaceCommands` (#916, `data/repository/WorkspaceCommands.kt`, the same class `renameWorkspace` /
+`archiveWorkspace` / `recentWorkspaces` below moved into); the repository's `override suspend fun
+createWorkspaceFolder` is a one-line hand-off:
 
 ```kotlin
-override suspend fun createWorkspaceFolder(name: String): String {
+// WorkspaceCommands
+suspend fun createWorkspaceFolder(name: String): String {
     require(name.isNotBlank()) { "name must not be blank" }
     val request = Envelope(
-        id = relayRequests.nextRequestId(), type = TYPE_CREATE_WORKSPACE_FOLDER, ts = Clock.System.now().toString(),
+        id = requests.nextRequestId(), type = TYPE_CREATE_WORKSPACE_FOLDER, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(
             CreateWorkspaceFolderPayloadDto(parent = WORKSPACE_FOLDER_PARENT, name = name.trim()),
         ),
     )
-    val reply = relayRequests.sendAndAwaitReply(request)   // throws on server `error` / not-Open before any decode
+    val reply = requests.sendAndAwaitReply(request)   // throws on server `error` / not-Open before any decode
     return MobileJson.decodeFromJsonElement<WorkspaceFolderCreatedPayloadDto>(reply).path
 }
 ```
@@ -79,28 +83,34 @@ the waiter together. The daemon has no `archive_workspace`: `archiveWorkspace` i
 the existing per-conversation `archive` (since #914 `ConversationCommands.archive`, still built on the
 private `sendArchiveToggle` helper), one `archive_conversation` per active row on
 this host whose `cwd` equals `path`. It sends no rename and no delete, so the stored label survives an
-archive. `renameWorkspace` was not moved by #914 — its request/reply plumbing runs through `RelayRequests`
-directly from the repository, the same as every other one-shot read/write in this class:
+archive. `renameWorkspace` was not moved by #914 (which only moved `ConversationCommands`), but both
+`renameWorkspace` and `archiveWorkspace` were moved by #916 onto `WorkspaceCommands`
+(`data/repository/WorkspaceCommands.kt`, the same class `createWorkspaceFolder` above and
+`recentWorkspaces` below live on); the repository's `override suspend fun renameWorkspace` /
+`archiveWorkspace` are one-line hand-offs, and `onInbound`'s `TYPE_WORKSPACE_UPDATED` arm now calls
+`workspaceCommands.malformedWorkspaceReply()` (was a private repository function, now public on the new
+class so the repository can still reach it):
 
 ```kotlin
-override suspend fun renameWorkspace(path: String, label: String?) {
+// WorkspaceCommands
+suspend fun renameWorkspace(path: String, label: String?) {
     val request = Envelope(
-        id = relayRequests.nextRequestId(), type = TYPE_RENAME_WORKSPACE, ts = Clock.System.now().toString(),
+        id = requests.nextRequestId(), type = TYPE_RENAME_WORKSPACE, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(RenameWorkspacePayloadDto(path = path, label = label)),
     )
-    val reply = relayRequests.sendAndAwaitReply(request)
+    val reply = requests.sendAndAwaitReply(request)
     val confirmedPath = try {
         MobileJson.decodeFromJsonElement<WorkspaceUpdatedPayloadDto>(reply).path
     } catch (e: IllegalArgumentException) { null }
     if (confirmedPath != path) throw malformedWorkspaceReply()
 }
 
-override suspend fun archiveWorkspace(path: String) {
-    val targets = conversationListProjection.current().filter { it.cwd == path && !it.archived }.map { it.id }
+suspend fun archiveWorkspace(path: String) {
+    val targets = conversationList.current().filter { it.cwd == path && !it.archived }.map { it.id }
     var firstFailure: Exception? = null
     for (conversationId in targets) {
         try {
-            archive(conversationId)   // the repository's one-line hand-off to ConversationCommands.archive (#914)
+            conversationCommands.archive(conversationId)   // ConversationCommands.archive (#914), called directly
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -177,19 +187,23 @@ half of the #825 split whose create half is [#564](../codebase/564.md)), overrid
 `flowOf(emptyList())` default this method inherited unchanged since #312. Unlike `observeConversations`
 / `observeLastMessage` / `observeMessages` there is **no push projection to subscribe to** — #888 is a
 **one-shot** request/reply, so this is a cold flow that issues one request and awaits one correlated
-reply **per collection**, not a flow over a `StateFlow` fed by the always-running inbound collector:
+reply **per collection**, not a flow over a `StateFlow` fed by the always-running inbound collector. The
+body now lives on `WorkspaceCommands` (#916, `data/repository/WorkspaceCommands.kt`, the same class
+`createWorkspaceFolder`/`renameWorkspace`/`archiveWorkspace` above live on); the repository's `override
+fun recentWorkspaces` is a one-line hand-off:
 
 ```kotlin
-override fun recentWorkspaces(): Flow<List<String>> =
+// WorkspaceCommands
+fun recentWorkspaces(): Flow<List<String>> =
     flow {
-        val reply = relayRequests.sendAndAwaitReply(recentWorkspacesRequest())
+        val reply = requests.sendAndAwaitReply(recentWorkspacesRequest())
         val list = MobileJson.decodeFromJsonElement<RecentWorkspacesListPayloadDto>(reply)
         emit(list.workspaces.map { it.path }.filter { it.isNotBlank() && it != DEFAULT_SCRATCH_CWD })
     }.catch { emit(emptyList()) }
 
 private fun recentWorkspacesRequest(): Envelope =
     Envelope(
-        id = relayRequests.nextRequestId(), type = TYPE_RECENT_WORKSPACES, ts = Clock.System.now().toString(),
+        id = requests.nextRequestId(), type = TYPE_RECENT_WORKSPACES, ts = Clock.System.now().toString(),
         payload = JsonObject(emptyMap()),
     )
 ```
