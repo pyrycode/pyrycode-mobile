@@ -92,11 +92,22 @@ used, for the same reason: an M3 `IconButton` composes its own inner `clickable`
   [Navigation](navigation.md#manual-pairing-entry-and-return).
 - **`TreeHostRow`** gained `serverId: String`, `onAddTapped: () -> Unit` and `onAddLongPressed: () -> Unit`.
   Tap emits `TreeHostAddTapped(serverId)` (the route calls `vm.createHostDiscussion(serverId)`); long-press
-  emits `TreeHostAddLongPressed(serverId)` (`vm.openHostWorkspacePicker(serverId)`) — the row's **own** host,
-  the same discipline `TreeRowTapped` already used for taps, never `ThreadDestinationFactory.selectedServerId()`.
-  Its two content descriptions (`cd_tree_host_new_chat` / `cd_tree_host_pick_workspace`) are formatted with
-  the row's already-`boundedRowText`-clamped display name — computed once and passed down, so no path formats
-  an unbounded daemon-authored name into a description.
+  emits `TreeHostAddLongPressed(serverId)` — the row's **own** host, the same discipline `TreeRowTapped`
+  already used for taps, never `ThreadDestinationFactory.selectedServerId()`. Its two content descriptions
+  (`cd_tree_host_new_chat` / `cd_tree_host_pick_workspace`) are formatted with the row's already-
+  `boundedRowText`-clamped display name — computed once and passed down, so no path formats an unbounded
+  daemon-authored name into a description.
+
+**Long-press opens Add workspace, not a sheet (#904).** `TreeHostAddLongPressed(serverId)` now maps to
+`vm.openAddWorkspace(serverId)`, which opens [`AddWorkspaceModal`](mobile-modal.md#callers) — the shared
+`MobileModal` shell — on that row's own host rather than the bottom-sheet `WorkspacePicker` the control
+opened before. Picking a recent folder or creating one there, then OK, starts an unpromoted chat in exactly
+that folder on that host and opens its thread; a failure keeps the modal open instead of surfacing after a
+sheet that has already closed. The control itself, its content description, its long-press affordance and
+`treeHostAddTestTag(serverId)` are unchanged — only what the long-press opens moved. See
+[`ChannelListViewModel`](channel-list-viewmodel.md#wiring) for `AddWorkspaceState` and its five transitions,
+and [`WorkspacePicker`](workspace-picker.md#consumers) for why the thread's and Settings' pickers, reached
+through other controls, are unaffected.
 
 **Naming rule.** Both controls repeat down the screen — one section header per section, one host row per
 host — so each has to say which section or host it acts on, the way the fold controls already name their

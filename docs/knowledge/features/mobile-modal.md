@@ -11,9 +11,13 @@ row — both through the shared [`HostEditorModal`](host-editor.md) binding. Sin
 the Storage section's Log data download draws `DebugBundleModal` (#683) directly on
 this shell, its second direct caller. Since #826 [`EditChatModal`](#callers) draws this shell
 directly as its third caller — desktop's `EditChatDialogView` on the phone, a name field plus an
-outlined archive action, not yet drawn by any screen. Existing dialogs such as
-[CreateFolderDialog](create-folder-dialog.md) remain separate; consumer tickets own
-their migration and operation-specific acceptance.
+outlined archive action, not yet drawn by any screen. Since #904
+[`AddWorkspaceModal`](#callers) draws this shell directly as its fourth caller — desktop's
+host-row Add workspace dialog on the phone, a folder list in place of a typed path, replacing
+the host row's own long-press into [`WorkspacePicker`](workspace-picker.md). Existing dialogs
+such as [CreateFolderDialog](create-folder-dialog.md) remain separate; consumer tickets own
+their migration and operation-specific acceptance — `CreateFolderDialog` itself is now reused
+unchanged as a second window stacked over `AddWorkspaceModal`, described below.
 
 Since [#815](#the-hardened-gate-mobilegatemodal), the same file also exposes
 [`MobileGateModal`](#the-hardened-gate-mobilegatemodal), a hardened decision-gate entry point sharing this
@@ -282,6 +286,41 @@ The `HostEditor.submitName` save clamp (`name.trim().take(MAX_WORKSPACE_LABEL_CH
 operator-*typed* name at the 128-char boundary; #851's security review flagged this, alongside
 `HostIdentityRow`'s `boundedRowText`, `ArchivedDiscussionsScreen` and `DebugBundleDownload`, as
 out of that ticket's scope and left for a follow-up.
+
+[`AddWorkspaceModal`](../../../app/src/main/java/de/pyryco/mobile/ui/components/AddWorkspaceModal.kt)
+(#904) is the shell's fourth direct caller — like `DebugBundleModal` and `EditChatModal`, it draws
+`MobileModal` itself. It is desktop's host-row Add workspace dialog on the phone: a list of that
+host's recent folders as `selectable(role = RadioButton)` rows (a `labelLarge` SemiBold "Recent"
+section label, paths in `bodyMedium` monospace, following `EditHostModal`'s field-label styling)
+plus an outlined "Create new folder under pyry-workspace…" action styled like `EditChatModal`'s
+Archive action, which opens the existing [`CreateFolderDialog`](create-folder-dialog.md) stacked
+as a second window over the shell. OK needs a selected folder and an available host; `MobileModal`
+also disables it while `loading`. It replaces the host row's long-press into the bottom-sheet
+[`WorkspacePicker`](workspace-picker.md#consumers), which stays for the thread and Settings
+pickers — see [ChannelListScreen § Add controls](channel-list-screen-tree-and-controls.md#add-controls-738)
+and [ChannelListViewModel](channel-list-viewmodel.md#wiring) for the host-resolved state machine
+this caller is bound to.
+
+A created folder becomes the caller's `selected` value without starting anything — creating and
+submitting are two separate transitions, so a folder made in the stacked dialog does not fire OK
+on its own. `selected` and `recent` are daemon-authored paths: rendered only as `Text`, clamped to
+`MAX_PATH_DISPLAY_CHARS` (512) without splitting a surrogate pair — the same round-trip-safe clamp
+`EditChatModal`'s field uses, load-bearing here too since the raw (unclamped) path is what
+`onSelect` reports back and what the caller eventually sends to `createDiscussion` — and the
+caller caps the recents list itself (`MAX_ADD_WORKSPACE_RECENTS = 50` in `ChannelListViewModel`)
+since this shell's content column is not lazy. A selection absent from `recent` (the just-created
+folder) draws in its own "New folder" section, so the current selection is always visible even
+before the next reopen re-fetches recents.
+
+**A caller-scoped recents list is a `combine` pairing hazard, not just a fetch.** The first draft
+paired an untagged `flatMapLatest`-derived recents flow with the open modal's target in one
+`combine`, so for one emission after retargeting to a different host the new target's state could
+still carry the previous target's daemon-authored folder list — the security review's one MUST
+FIX on this ticket. The fix tags each emission with the host it was fetched for and publishes it
+only when that tag matches the currently open target; see
+[ChannelListViewModel § the tagged recents combine](channel-list-viewmodel.md#wiring) for the
+mechanism. Worth checking for any future caller that derives a host-scoped list alongside a
+host-scoped open/close flag through the same `combine`.
 
 **`PermissionModalOverlay`** (`ui/conversations/thread/ThreadPermissionModal.kt`, #815) is the first of
 [`MobileGateModal`](#the-hardened-gate-mobilegatemodal)'s two callers, and the only one using it rather than

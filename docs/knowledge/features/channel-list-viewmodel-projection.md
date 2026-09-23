@@ -65,8 +65,10 @@ rows. Snapshot changes cancel obsolete preview collections through `flatMapLates
 A host awaiting its first list reply is present with empty rows, and no source
 hosts produces `hosts = emptyList()`. Disconnected hosts keep source-owned cached
 rows; the ViewModel adds no list cache. See [snapshot lifetime](dependency-injection-host-conversation-source.md#snapshot-lifetime).
-The nullable `workspacePickerServerId` is combined from VM-owned picker state — see
-[`hostState` via `stateIn`](#hoststate-via-statein) above for the sharing config.
+The nullable `addWorkspace` and its `addWorkspaceRecent` list (#904, replacing the flat
+`workspacePickerServerId`) are combined from VM-owned Add workspace state — see
+[`hostState` via `stateIn`](#hoststate-via-statein) above for the sharing config and
+[ChannelListViewModel § Wiring](channel-list-viewmodel.md#wiring) for the tagged-recents pairing.
 
 ### Fold and selection (#731)
 
@@ -136,11 +138,15 @@ snapshot. Creation uses explicit targets:
   exact, case-sensitive id and passes the value verbatim. An unset host default
   yields `DEFAULT_SCRATCH_CWD` (`~/.pyrycode/scratch`); it never falls back to the
   legacy owner's path or the currently selected host's default.
-- `openHostWorkspacePicker(serverId)` stores the chosen host, exposed as
-  `hostState.workspacePickerServerId`. `pickHostWorkspace(workspace)` captures and
-  synchronously clears that target before launching creation. The explicit path
-  bypasses the preference read. A second completion without a pending target does
-  nothing. `dismissHostWorkspacePicker()` clears the target and creates nothing.
+- `openAddWorkspace(serverId)` (#904, replacing `openHostWorkspacePicker`) stores the chosen
+  host, exposed as `hostState.addWorkspace`. `submitAddWorkspace()` sends the modal's own
+  `selected` path — a recent folder picked via `selectAddWorkspaceFolder`, or one just made via
+  `createAddWorkspaceFolder` — through `createDiscussion(selected)`, and only records the
+  navigation target if `compareAndSet(pending, null)` still finds the state it published, so a
+  send that completes after `dismissAddWorkspace()` neither navigates nor reopens the modal. The
+  explicit path bypasses the preference read `createHostDiscussion` makes. See
+  [ChannelListViewModel § Wiring](channel-list-viewmodel.md#wiring) for all five methods and the
+  `compareAndSet` discipline shared with `submitChatName`.
 
 Both creation paths resolve `hostSource.repositoryFor(capturedServerId)` immediately
 before sending. Compatibility selection changes cannot redirect them, and a
@@ -163,14 +169,17 @@ route builder directly from the destination's `when (event)` — since #738 reti
 fed, there is no reducer left for the host-qualified events to be distinguished
 from; every `ChannelListEvent` variant the VM needs to act on now maps to one of
 its explicit methods (`onHostRowTapped`, `onFoldToggled`, `createHostDiscussion`,
-`openHostWorkspacePicker`, `pickHostWorkspace`, `dismissHostWorkspacePicker`)
-straight from `PyryNavHost`. Action coroutines and preview collection are
-cancelled when the ViewModel is cleared.
+`openAddWorkspace`, `selectAddWorkspaceFolder`, `createAddWorkspaceFolder`,
+`submitAddWorkspace`, `dismissAddWorkspace`) straight from `PyryNavHost`. Action
+coroutines and preview collection are cancelled when the ViewModel is cleared.
 
-`pickHostWorkspace` reads `pendingHostWorkspacePicker.value` and clears it without
-`getAndUpdate` — a non-atomic read-then-clear that predates #738 and is unchanged
-by it (the ticket's own security review flagged it as **out of scope**: two picks
-landing in the same frame could both resolve the same host and create two chats,
-the same shape the retired button's two paths already had). Fixing it is a small,
-separate change; it belongs with whichever ticket next touches that method, not
-folded into an unrelated diff. No such failure has been observed.
+**The non-atomic read-then-clear this section used to describe is gone with `pickHostWorkspace`
+itself.** That method read `pendingHostWorkspacePicker.value` and cleared it without
+`getAndUpdate`, so two picks landing in the same frame could both resolve the same host and
+create two chats — flagged out of scope by #738's own security review and left unfixed through
+several tickets. #904 replaced the whole method with `submitAddWorkspace`'s `compareAndSet`
+terminal transition against a `busy`-guarded pending state (see
+[ChannelListViewModel § Wiring](channel-list-viewmodel.md#wiring)), which closes this gap as a
+side effect of the host-resolved-write shape rather than as a targeted fix — every entry point
+into the Add workspace machine refuses while `busy`, so two submits cannot both resolve the same
+pending state.
