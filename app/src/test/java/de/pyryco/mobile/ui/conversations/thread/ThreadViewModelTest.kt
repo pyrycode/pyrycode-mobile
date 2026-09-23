@@ -1,8 +1,5 @@
 package de.pyryco.mobile.ui.conversations.thread
 
-import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.PreferenceDataStoreFactory
-import androidx.datastore.preferences.core.Preferences
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import de.pyryco.mobile.data.model.ConnectionState
@@ -16,7 +13,6 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
-import de.pyryco.mobile.data.preferences.AppPreferences
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
@@ -69,16 +65,10 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
-import org.junit.Rule
 import org.junit.Test
-import org.junit.rules.TemporaryFolder
-import java.util.UUID
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ThreadViewModelTest {
-    @get:Rule
-    val tmp = TemporaryFolder()
-
     /**
      * The history walk's breadcrumbs (#778), captured rather than printed. Required, not optional:
      * `RelayLog`'s default sink is `android.util.Log.println`, which throws on plain JVM, and the walk
@@ -102,12 +92,6 @@ class ThreadViewModelTest {
         RelayLog.sink = oldSink
         RelayLog.enabled = oldEnabled
     }
-
-    private fun TestScope.newDataStore(): DataStore<Preferences> =
-        PreferenceDataStoreFactory.create(
-            scope = backgroundScope,
-            produceFile = { tmp.newFile("prefs_${UUID.randomUUID()}.preferences_pb") },
-        )
 
     @Test
     fun state_initialValue_isConversationIdPlaceholderBeforeSubscription() =
@@ -2121,7 +2105,6 @@ class ThreadViewModelTest {
             assertFalse(config.settingsAvailable)
             assertFalse(config.menuAvailable)
             assertEquals("", config.sessionId)
-            assertFalse(vm.state.value.yoloEnabled)
         }
 
     @Test
@@ -2374,61 +2357,6 @@ class ThreadViewModelTest {
             collectors.forEach { it.cancel() }
         }
 
-    @Test
-    fun yoloEnabled_initialValueIsFalseRegardlessOfAppPreferencesDefault() =
-        runTest {
-            val prefs = AppPreferences(newDataStore())
-            // The dormant defaultYolo preference is set to true; the VM must ignore it.
-            prefs.setDefaultYolo(true)
-            assertTrue(prefs.defaultYolo.first())
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, FakeConversationRepository())
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-            assertFalse(vm.state.value.yoloEnabled)
-            collector.cancel()
-        }
-
-    @Test
-    fun onYoloToggled_flipsStateAndDoesNotMutatePreferences() =
-        runTest {
-            val prefs = AppPreferences(newDataStore())
-            assertFalse(prefs.defaultYolo.first())
-            // #807: the toggle now needs an addressable session, because it shares the send path whose
-            // routing key became the settings reading's. Without a reading there is nothing to address and
-            // the tap is dropped — which is the read-only case, covered by its own test below.
-            val repo = FakeConversationRepository()
-            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings())
-            val vm = makeVm(runConfigHandle(), repo)
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-            assertFalse(vm.state.value.yoloEnabled)
-            vm.onYoloToggled(true)
-            advanceUntilIdle()
-            assertTrue(vm.state.value.yoloEnabled)
-            // AC verification: Settings default is unchanged by the per-conversation toggle.
-            assertFalse(prefs.defaultYolo.first())
-            vm.onYoloToggled(false)
-            advanceUntilIdle()
-            assertFalse(vm.state.value.yoloEnabled)
-            collector.cancel()
-        }
-
-    @Test
-    fun yoloEnabled_remainsFalseWhenAppPreferencesDefaultYoloChanges() =
-        runTest {
-            val prefs = AppPreferences(newDataStore())
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, FakeConversationRepository())
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-            assertFalse(vm.state.value.yoloEnabled)
-            prefs.setDefaultYolo(true)
-            advanceUntilIdle()
-            assertFalse(vm.state.value.yoloEnabled)
-            collector.cancel()
-        }
-
     // ---- #544/#807: send on change, addressed to the settings reading's session; revert on failure ---
 
     @Test
@@ -2480,30 +2408,6 @@ class ThreadViewModelTest {
         }
 
     @Test
-    fun onYoloToggled_whenConnected_sendsOnlyYoloFieldToTheSettingsReportedSession() =
-        runTest {
-            val repo = FakeConversationRepository()
-            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(sessionId = "settings-s9"))
-            val vm = makeVm(runConfigHandle(), repo)
-            val collector = launch { vm.state.collect {} }
-            advanceUntilIdle()
-            assertFalse(vm.state.value.yoloEnabled)
-
-            vm.onYoloToggled(true)
-            advanceUntilIdle()
-
-            val call = repo.setSessionSettingsCalls.single()
-            assertEquals(true, call.yolo) // a non-null Boolean is sent — distinct from an omitted field
-            assertNull(call.model)
-            assertNull(call.effort)
-            // #807 re-routed YOLO along with the other two: sendSessionSettings is shared, and the
-            // authoritative key is the settings reading's for every control that uses it.
-            assertEquals("settings-s9", call.sessionId)
-            assertTrue(vm.state.value.yoloEnabled)
-            collector.cancel()
-        }
-
-    @Test
     fun onModelSelected_sameAsCurrentValue_doesNotSend() =
         runTest {
             val repo = FakeConversationRepository()
@@ -2539,7 +2443,6 @@ class ThreadViewModelTest {
 
             vm.onModelSelected("haiku")
             vm.onEffortSelected("high")
-            vm.onYoloToggled(true)
             advanceUntilIdle()
 
             assertTrue("nothing is sent to an unaddressable session", repo.setSessionSettingsCalls.isEmpty())
@@ -2625,6 +2528,7 @@ class ThreadViewModelTest {
                             model: String?,
                             effort: String?,
                             yolo: Boolean?,
+                            permissionMode: String?,
                         ): Unit = throw RelayErrorException(code = "protocol.malformed", retryable = false, message = "secret")
                     }
                 val vm = makeVm(runConfigHandle(), repo)
@@ -2641,47 +2545,6 @@ class ThreadViewModelTest {
                 assertFalse("and is no longer pending", vm.state.value.runConfig.pending)
                 assertEquals("a server error surfaces exactly one signal", 1, errors.size)
                 assertTrue("the server-error throw must be caught, not propagated: $uncaught", uncaught.isEmpty())
-                errorCollector.cancel()
-                stateCollector.cancel()
-            } finally {
-                Thread.setDefaultUncaughtExceptionHandler(previousHandler)
-            }
-        }
-
-    @Test
-    fun onYoloToggled_whenDisconnected_revertsYoloAndSurfacesError() =
-        runTest {
-            // AC #3: a change while disconnected throws IllegalStateException (the facade `live` getter) —
-            // caught, reverted, one signal. Covers the ISE path over YOLO (the RelayErrorException path is
-            // covered over model), so both failure modes are exercised across the shared send path.
-            val uncaught = mutableListOf<Throwable>()
-            val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
-            Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
-            try {
-                val backing = FakeConversationRepository()
-                backing.setSessionSettingsReading(RUN_CONFIG_CONV, settings(sessionId = "settings-s9"))
-                val repo =
-                    object : ConversationRepository by backing {
-                        override suspend fun setSessionSettings(
-                            sessionId: String,
-                            model: String?,
-                            effort: String?,
-                            yolo: Boolean?,
-                        ): Unit = throw IllegalStateException("not connected")
-                    }
-                val vm = makeVm(runConfigHandle(), repo)
-                val errors = mutableListOf<Unit>()
-                val errorCollector = launch { vm.sessionSettingsErrors.collect { errors += it } }
-                val stateCollector = launch { vm.state.collect {} }
-                advanceUntilIdle()
-                assertFalse(vm.state.value.yoloEnabled)
-
-                vm.onYoloToggled(true)
-                advanceUntilIdle()
-
-                assertFalse("the toggle reverts to its prior value", vm.state.value.yoloEnabled)
-                assertEquals("disconnected surfaces exactly one signal", 1, errors.size)
-                assertTrue("the not-connected throw must be caught, not propagated: $uncaught", uncaught.isEmpty())
                 errorCollector.cancel()
                 stateCollector.cancel()
             } finally {
@@ -2708,6 +2571,7 @@ class ThreadViewModelTest {
                         model: String?,
                         effort: String?,
                         yolo: Boolean?,
+                        permissionMode: String?,
                     ) {
                         entered.complete(Unit)
                         gate.await()

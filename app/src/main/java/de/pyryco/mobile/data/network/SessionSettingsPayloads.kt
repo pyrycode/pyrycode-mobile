@@ -39,7 +39,17 @@ data class SetSessionSettingsPayloadDto(
     val model: String? = null,
     val effort: String? = null,
     val yolo: Boolean? = null,
-)
+    /**
+     * #650 (daemon #1687): one of `default` / `acceptEdits` / `plan` / `auto` / `dontAsk`, under the same
+     * presence contract. `bypassPermissions` is reachable only as `yolo = true`, and the daemon rejects a
+     * frame carrying both fields, so the `init` guard makes one unconstructible.
+     */
+    @SerialName("permission_mode") val permissionMode: String? = null,
+) {
+    init {
+        require(yolo == null || permissionMode == null) { "set_session_settings carries yolo or permission_mode, never both" }
+    }
+}
 
 /**
  * Mobile Protocol v2 `session_settings_updated` reply payload (#543): the daemon's correlated ack that

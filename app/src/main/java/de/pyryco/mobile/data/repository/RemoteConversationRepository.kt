@@ -2575,6 +2575,7 @@ class RemoteConversationRepository(
         model: String?,
         effort: String?,
         yolo: Boolean?,
+        permissionMode: String?,
     ) {
         val request =
             Envelope(
@@ -2583,7 +2584,13 @@ class RemoteConversationRepository(
                 ts = Clock.System.now().toString(),
                 payload =
                     MobileJson.encodeToJsonElement(
-                        SetSessionSettingsPayloadDto(sessionId = sessionId, model = model, effort = effort, yolo = yolo),
+                        SetSessionSettingsPayloadDto(
+                            sessionId = sessionId,
+                            model = model,
+                            effort = effort,
+                            yolo = yolo,
+                            permissionMode = permissionMode,
+                        ),
                     ),
             )
         // Throws on a server `error` / not-Open session before the decode below. The reply is the bare

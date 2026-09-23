@@ -64,8 +64,6 @@ class StatusSheetTest {
         onEffortSelected: (String) -> Unit = {},
         pending: Boolean = false,
         enabled: Boolean = true,
-        yoloEnabled: Boolean = false,
-        onYoloToggled: (Boolean) -> Unit = {},
         onDismiss: () -> Unit = {},
     ) = setContent {
         PyrycodeMobileTheme {
@@ -82,8 +80,6 @@ class StatusSheetTest {
                 onEffortSelected = onEffortSelected,
                 pending = pending,
                 enabled = enabled,
-                yoloEnabled = yoloEnabled,
-                onYoloToggled = onYoloToggled,
                 onDismiss = onDismiss,
             )
         }
@@ -243,35 +239,13 @@ class StatusSheetTest {
         assertEquals(1, invoked)
     }
 
+    // #650: the permission control moved to the composer footer, where it reads the confirmed mode.
     @Test
-    fun renders_yolo_section_with_title_and_supporting_text() {
+    fun has_no_yolo_switch() {
         composeTestRule.setSheet()
 
-        composeTestRule.onNode(hasText("YOLO mode")).assertIsDisplayed()
-        composeTestRule.onNode(hasText("Auto-accept tool calls")).assertIsDisplayed()
-        composeTestRule
-            .onNode(hasText("Claude runs commands without asking for confirmation. Use carefully."))
-            .assertIsDisplayed()
-    }
-
-    @Test
-    fun tapping_yolo_row_when_off_invokes_onYoloToggled_with_true() {
-        val toggles = mutableListOf<Boolean>()
-        composeTestRule.setSheet(onYoloToggled = toggles::add)
-
-        composeTestRule.onNode(hasText("Auto-accept tool calls")).performClick()
-
-        assertEquals(listOf(true), toggles)
-    }
-
-    @Test
-    fun tapping_yolo_row_when_on_invokes_onYoloToggled_with_false() {
-        val toggles = mutableListOf<Boolean>()
-        composeTestRule.setSheet(yoloEnabled = true, onYoloToggled = toggles::add)
-
-        composeTestRule.onNode(hasText("Auto-accept tool calls")).performClick()
-
-        assertEquals(listOf(false), toggles)
+        composeTestRule.onNode(hasText("YOLO mode")).assertDoesNotExist()
+        composeTestRule.onNode(hasText("Auto-accept tool calls")).assertDoesNotExist()
     }
 
     @Test

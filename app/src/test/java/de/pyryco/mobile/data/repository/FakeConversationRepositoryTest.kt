@@ -957,9 +957,13 @@ class FakeConversationRepositoryTest {
             val repo = FakeConversationRepository()
 
             repo.setSessionSettings("s1", model = "opus", effort = null, yolo = true)
+            repo.setSessionSettings("s1", permissionMode = "acceptEdits")
 
             assertEquals(
-                listOf(SetSessionSettingsPayloadDto("s1", model = "opus", effort = null, yolo = true)),
+                listOf(
+                    SetSessionSettingsPayloadDto("s1", model = "opus", effort = null, yolo = true),
+                    SetSessionSettingsPayloadDto("s1", permissionMode = "acceptEdits"),
+                ),
                 repo.setSessionSettingsCalls,
             )
         }
