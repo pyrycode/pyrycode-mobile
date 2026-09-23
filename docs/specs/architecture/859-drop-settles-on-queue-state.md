@@ -1,0 +1,80 @@
+# #859 — A phone drop settles on the next `queue_state`, not on an ack the daemon never sends
+
+## Files read
+
+- `app/src/main/java/de/pyryco/mobile/data/repository/RemoteConversationRepository.kt` → `dropQueuedMessage`, `removeOwnEcho`, `mintedMessageIds`, `sendAndAwaitReply`, `interrupt` (the fire-and-forget `check(pump.send(…))` idiom), the `TYPE_QUEUE_STATE` arm of the inbound router, `TYPE_DEQUEUE_MESSAGE`'s KDoc — the whole change lives here.
+- `app/src/main/java/de/pyryco/mobile/data/repository/QueueProjection.kt` → `QueueProjection.apply` / `current` — the snapshot the drop resolves against and the settle step reads. Unchanged.
+- `app/src/main/java/de/pyryco/mobile/data/repository/ConversationRepository.kt` → `dropQueuedMessage` KDoc — states the ack contract; rewritten.
+- `app/src/main/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModel.kt` → `onDropQueued` KDoc — describes the awaited send; rewritten. The catches stay.
+- `app/src/test/java/de/pyryco/mobile/data/repository/RemoteConversationRepositoryTest.kt` → the `dropQueuedMessage_*` tests and `startDropQueuedMessage` — they push an `ack`/`error` for the dequeue the real daemon never sends; rewritten.
+- `app/src/androidTest/java/de/pyryco/mobile/e2e/InteractiveStreamE2ETest.kt` → `interactiveTurn_peerQueue_staysConsistentAcrossClients` step 4 / step 7 — the #859 comment marks where the thread assertions come back.
+- `../pyrycode/docs/protocol-mobile.md` § Queue (v2) → `dequeue_message` has no reply; `queue_state` is pushed on every backlog change (enqueue, drain, dequeue). Cited, not restated.
+
+## Design source
+
+N/A — no visual change (per the ticket's `## Figma` section). An existing bubble stops being drawn after a drop.
+
+## Context
+
+`dropQueuedMessage` awaits a correlated reply to `dequeue_message`; the daemon sends none, so `removeOwnEcho` only ever runs if the teardown sweep fails the deferred (it does not — it throws), and the dropped echo stays reading as a delivered message. The only confirmation the daemon gives is the next `queue_state` for that conversation lacking the item.
+
+File-overlap check (§ A2): open PRs #820 (`feature/803`, `ThreadViewModel.kt`) and #834 (`feature/823`, `ConversationRepository.kt`, `RemoteConversationRepository.kt`) touch the same files, but their hunks are in disjoint regions (session-settings / system-prompt additions, a thinking-token flow) — none within 35 lines of the regions this ticket edits. Proceeding without a block; git merges disjoint hunks cleanly.
+
+## Design
+
+**Fire-and-forget send.** `dropQueuedMessage` sends the envelope with `check(pump.send(request)) { … }` (the `interrupt` idiom) and returns. It no longer registers in `pendingRequests`, so it neither awaits nor can throw `RelayErrorException` / `IllegalArgumentException`. A not-connected session still throws `IllegalStateException`, and nothing is recorded.
+
+**New ledger: `pendingDrops: MutableStateFlow<Map<String, Map<Long, String>>>`** — `conversationId -> (queued_msg_id -> echo message id)`. Connection-scoped and in-memory like `mintedMessageIds`.
+
+Sequence in `dropQueuedMessage`:
+1. Resolve `echoId` from `queueProjection.current(conversationId)` before the send (unchanged).
+2. Send; throw on not-connected.
+3. If `echoId` is non-empty, record `queuedMessageId -> echoId` in `pendingDrops`, then `settleDrops(conversationId)` immediately — a `queue_state` may already have landed between the send and the record.
+
+`private fun settleDrops(conversationId: String)` — reads the current snapshot's `queued_msg_id` set, atomically removes from `pendingDrops[conversationId]` every entry whose id is absent, then calls `removeOwnEcho(conversationId, echoId)` for each removed entry. The atomic claim means an entry settles at most once even when the inbound collector and the drop call settle concurrently.
+
+**Inbound arm.** After `queueProjection.apply(envelope)` in the `TYPE_QUEUE_STATE` arm, settle every conversation with a pending drop (`pendingDrops.value.keys`). Settling a conversation whose snapshot did not change is a no-op, so this avoids widening `QueueProjection.apply`'s signature for the conversation id. Stays behind the same `interactive` gate.
+
+`removeOwnEcho` is unchanged: the `mintedMessageIds` membership check still enforces #781's multi-device rule (`""` and foreign ids remove nothing).
+
+**Why this is not the ruled-out backlog diff.** Removal is keyed on a `queued_msg_id` this device asked to drop. An item that leaves the snapshot without a drop request from this device has no `pendingDrops` entry, so a normal drain keeps its echo.
+
+**The drain/drop race (Technical Notes).** If the dropped item is the head and the running turn ends before the dequeue lands, the item drains, the daemon silently ignores the dequeue, and the next `queue_state` lacks the item exactly as a successful drop would. The phone cannot tell the two apart and removes the echo. This is accepted and documented in the KDoc: the operator asked for that message to go, and the daemon gives no signal to distinguish the cases, so no defence is added. The same applies to an item that drained between the phone reading the snapshot and sending the dequeue.
+
+A drop whose confirming `queue_state` never arrives before the connection closes leaves the echo (the ledger dies with the repository), the safe side.
+
+## State + concurrency model
+
+- `pendingDrops` has two writers: the caller's coroutine (record + settle) and the single inbound collector (settle). Every write is an atomic `MutableStateFlow.update`, the posture `mintedMessageIds` and `appendMessages` already use.
+- No new jobs or scopes. `dropQueuedMessage` stays `suspend` (the interface is unchanged) but no longer suspends in practice.
+- `ThreadViewModel.onDropQueued`'s coroutine now completes as soon as the frame is sent.
+
+## Error handling
+
+- Not connected → `IllegalStateException` from `check`, nothing recorded, echo stays; `onDropQueued` swallows it.
+- A dequeue the daemon cannot apply (unknown / delivered / in-flight id) is silent on the wire; the pending entry stays until a snapshot lacks the id or the connection closes. Unbounded growth is not a concern: one entry per operator tap, connection-scoped.
+- `onDropQueued` keeps its `RelayErrorException` catch because the interface contract permits other implementations; KDoc notes the remote no longer throws it.
+- Nothing logs a payload, id or text (unchanged).
+
+## Testing strategy
+
+Unit tests in `RemoteConversationRepositoryTest` (rewritten `dropQueuedMessage_*` section; no test pushes an `ack` or `error` for the dequeue):
+- wire contract and large-id encoding (kept, without the ack push); the call completes once the frame is sent, with no reply.
+- not connected → `IllegalStateException`, echo stays even after a later `queue_state` without the item.
+- own minted item dropped, then `queue_state` without it → echo removed, every other row keeps its order.
+- own minted item dropped, before any new `queue_state` → echo still present.
+- `queue_state` still containing the dropped id (e.g. a snapshot for an enqueue) → echo stays.
+- a second own item that leaves the snapshot with no drop request (drain) → its echo stays while the dropped one's goes.
+- `""` message id, foreign message id, `queued_msg_id` absent from the snapshot → no thread row removed after the following `queue_state`.
+- a `queue_state` for another conversation settles nothing.
+- the snapshot already lacking the item when the drop is recorded settles immediately.
+
+E2E: restore `awaitGoneFromThread(DROP_PROMPT)` after the drop in step 4 and `inThreadList(DROP_PROMPT)` count 0 in step 7 of `interactiveTurn_peerQueue_staysConsistentAcrossClients`; delete the #859 comment and update the scenario KDoc bullet. Compiled locally (`compileDebugAndroidTestKotlin`); the live run is the dispatcher's `needs-real-claude` gate after verifier.
+
+## Documentation handoff
+
+None named by the ticket. Pending for the documentation stage: the feature overview covering the queue / thread echo (#781) should record that a drop settles on the next `queue_state`, not an ack, and the drain/drop race outcome.
+
+## Open questions
+
+- None blocking. `settleDrops` iterating every pending conversation per `queue_state` vs. threading the conversation id out of `QueueProjection.apply` — chose iteration to keep `QueueProjection` untouched.
