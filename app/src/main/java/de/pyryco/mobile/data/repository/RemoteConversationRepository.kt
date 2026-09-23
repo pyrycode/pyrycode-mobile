@@ -140,8 +140,8 @@ class RemoteConversationRepository(
 
     /**
      * The per-conversation status readings, one small projection per wire event: stall (#395), queue
-     * (#460), API retry (#593), compaction (#596), usage limit (#802), thinking progress (#801) and reset
-     * phase (#871). Each
+     * (#460), API retry (#593), compaction (#596), usage limit (#802), thinking progress (#801), reset
+     * phase (#871), and the announced model and session facts (#890). Each
      * owns its state, its decoder and its read. [onInbound] hands each its own envelope type behind the
      * `interactive` gate, and the clears one event causes in another stay in the arm that causes them.
      */
@@ -152,6 +152,8 @@ class RemoteConversationRepository(
     private val usageLimitProjection = UsageLimitProjection(now)
     private val thinkingProgressProjection = ThinkingProgressProjection()
     private val resettingProjection = ResettingProjection()
+    private val announcedModelProjection = AnnouncedModelProjection()
+    private val sessionFactsProjection = SessionFactsProjection()
 
     /**
      * The thread of every conversation (#912): the thread store, the minted-id ledger and the pending drops,
@@ -594,6 +596,18 @@ class RemoteConversationRepository(
                     resettingProjection.apply(envelope)
                 }
             }
+            TYPE_MODEL_ANNOUNCED -> {
+                // The model claude announced for this conversation's turn (#890): see [AnnouncedModelProjection.apply].
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    announcedModelProjection.apply(envelope)
+                }
+            }
+            TYPE_SESSION_FACTS -> {
+                // What claude reported about its own run (#890): see [SessionFactsProjection.apply].
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    sessionFactsProjection.apply(envelope)
+                }
+            }
             TYPE_SESSION_TRANSITION -> {
                 // A session boundary (#336, pyrycode#656/#657/#740). Same `interactive` gate as the
                 // live-session / `stall` / `queue_state` siblings: a non-interactive phone never decodes a
@@ -632,6 +646,11 @@ class RemoteConversationRepository(
                         // `restarting` before it respawns claude, so no rising edge can follow this one. Routed
                         // by the same decoded conversation_id, so it cannot clear another conversation's reading.
                         resettingProjection.clear(conversationId)
+                        // Sixth and seventh writes since #890: both readings describe the replaced session's
+                        // run, and the new one reports its own on its first turn. Same routing, same no-op on
+                        // an absent key.
+                        announcedModelProjection.clear(conversationId)
+                        sessionFactsProjection.clear(conversationId)
                     }
                 }
             }
@@ -683,6 +702,18 @@ class RemoteConversationRepository(
                 // state, emits no liveSessionEvents, and opens, closes or alters no turn. Nothing logged.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     threadProjection.applyCompactionBoundary(envelope)
+                }
+            }
+            TYPE_MODEL_REFUSAL_FALLBACK, TYPE_MODEL_REFUSAL_NO_FALLBACK -> {
+                // claude refused a turn on one model, and retried on another or did not (#875,
+                // pyrycode#2265/#2266). Same `interactive` gate as its thread-row siblings (fail-closed).
+                // Decode-or-drop by envelope type: a malformed payload or ts drops one envelope, the lone
+                // collector survives. Routes strictly by the payload's conversation_id. Exactly ONE write —
+                // the refusal row — and inert toward every neighbour: no liveSessionEvents emission, no turn
+                // opened, closed or altered, no status touched, and no model state, which `model_announced`
+                // alone owns. Nothing here logs any payload field: all of them but the id are claude's.
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    threadProjection.applyModelRefusal(envelope)
                 }
             }
             TYPE_MODAL_SHOWN, TYPE_MODAL_DISMISSED -> {
@@ -971,6 +1002,10 @@ class RemoteConversationRepository(
     override fun observeCompacting(conversationId: String): Flow<Boolean> = compactingProjection.observe(conversationId)
 
     override fun observeResetting(conversationId: String): Flow<ResetStatus?> = resettingProjection.observe(conversationId)
+
+    override fun observeAnnouncedModel(conversationId: String): Flow<AnnouncedModel?> = announcedModelProjection.observe(conversationId)
+
+    override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = sessionFactsProjection.observe(conversationId)
 
     override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> = usageLimitProjection.observe(conversationId)
 
@@ -1391,6 +1426,22 @@ class RemoteConversationRepository(
         const val TYPE_RESETTING = "resetting"
 
         /**
+         * Capability-gated status event: the model claude announced for a turn `{conversation_id, model,
+         * truncated}` (#890, pyrycode#1638) — pyrycode `docs/protocol-mobile.md` § `model_announced`. Sent once
+         * per turn and not deduplicated, so the latest one wins. Not the saved per-session override. `model`
+         * is claude-authored. Opens, closes and alters no turn.
+         */
+        const val TYPE_MODEL_ANNOUNCED = "model_announced"
+
+        /**
+         * Capability-gated status event: claude's own build and claimed permission posture
+         * `{conversation_id, claude_code_version, permission_mode, truncated_fields}` (#890, pyrycode#2254) —
+         * pyrycode `docs/protocol-mobile.md` § `session_facts`. The sibling of [TYPE_MODEL_ANNOUNCED] from the
+         * same `system/init` line; both strings are claude-authored. Opens, closes and alters no turn.
+         */
+        const val TYPE_SESSION_FACTS = "session_facts"
+
+        /**
          * Capability-gated thread event: a session transition `{conversation_id, previous_session_id,
          * new_session_id, reason, occurred_at, workspace_cwd}` (#336, pyrycode#656/#657/#740) — folds a
          * [ThreadItem.SessionBoundary] into the conversation thread (keyed by `conversation_id`) in
@@ -1429,6 +1480,22 @@ class RemoteConversationRepository(
          * count is an integer or `null`, neither clamped nor ordered.
          */
         const val TYPE_COMPACTION_BOUNDARY = "compaction_boundary"
+
+        /**
+         * Capability-gated thread event: claude refused a turn on one model and retried it on another
+         * `{conversation_id, original_model, fallback_model, scope, refusal_category, banner, truncated_fields,
+         * dropped_fields}` (#875, pyrycode#2265) — folds a [ThreadItem.ModelRefusal] into the conversation
+         * thread in arrival order. Conversation-scoped with no `turn_id`; every value but the id is claude's,
+         * bounded and unsanitized; `scope` and `refusal_category` are open and drive nothing.
+         */
+        const val TYPE_MODEL_REFUSAL_FALLBACK = "model_refusal_fallback"
+
+        /**
+         * Capability-gated thread event: the no-retry sibling of [TYPE_MODEL_REFUSAL_FALLBACK]
+         * `{conversation_id, original_model, refusal_category, banner, truncated_fields, dropped_fields}`
+         * (#875, pyrycode#2266), told apart by this envelope type alone.
+         */
+        const val TYPE_MODEL_REFUSAL_NO_FALLBACK = "model_refusal_no_fallback"
 
         /**
          * Outbound queue control: the phone's request to drop a not-yet-drained message

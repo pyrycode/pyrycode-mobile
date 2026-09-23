@@ -104,6 +104,33 @@ interface ConversationRepository {
     fun observeResetting(conversationId: String): Flow<ResetStatus?> = flowOf(null)
 
     /**
+     * Emits the model claude last announced for [conversationId]'s turn (#890), or **`null` until an
+     * announcement arrives**. Cold flow; re-emits on every change. Each `model_announced` frame replaces the
+     * reading, because claude announces on every turn and a `/model` turn still names the old model: a
+     * consumer that latched the first one would show a stale value. Cleared by the conversation's session
+     * transition, and by a reconnect or host switch through the fresh connection-scoped repository.
+     *
+     * **Not the saved override.** [SessionSettings.model] is the per-session override, ordinarily `""`, while
+     * this is what claude says it runs. Keep the two separate values; nothing here writes the other.
+     *
+     * Default `flowOf(null)` — implementations without an interactive wire (the fake, inline test doubles)
+     * inherit "nothing announced" and need no override.
+     */
+    fun observeAnnouncedModel(conversationId: String): Flow<AnnouncedModel?> = flowOf(null)
+
+    /**
+     * Emits the facts claude last reported about its own run for [conversationId] (#890): its build and the
+     * permission posture it claims, or **`null` until a report arrives**. Cold flow; re-emits on every
+     * change. Each `session_facts` frame replaces the reading. Cleared exactly as [observeAnnouncedModel] is.
+     *
+     * [SessionFacts.permissionMode] is **claude's claim**, never the permission reading: the confirmed mode
+     * stays [SessionSettings.permissionMode], and nothing here writes it.
+     *
+     * Default `flowOf(null)`, the same cascade-avoidance as [observeAnnouncedModel].
+     */
+    fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> = flowOf(null)
+
+    /**
      * Emits the usage-limit reading claude last reported for [conversationId], or **`null` when there
      * is none to read** (#802). `null` until the wire says otherwise; a [UsageLimitReading] once a
      * non-benign frame lands; back to `null` on the benign clearing edge or once the reading's
@@ -691,6 +718,38 @@ sealed interface ThreadItem {
         val manual: Boolean,
         val occurredAt: Instant,
     ) : ThreadItem
+
+    /**
+     * claude refused a turn on one model and either retried it on another or did not (#875). Carried by the
+     * `model_refusal_fallback` / `model_refusal_no_fallback` frames, which are conversation-scoped with no
+     * `turn_id`, so the row drives no turn, no status indicator and no model state — `model_announced`
+     * stays the authority for which model runs. The wire cannot name the refused partial reply, so no other
+     * row is retracted or edited. The frames' `scope` and `refusal_category` drive nothing and are not
+     * carried; a field the daemon dropped for size simply arrives empty.
+     *
+     * **Every string here is claude-authored and unsanitized** — bounded daemon-side, never cleaned. Held
+     * verbatim; the render boundary owes the stripping (see `ModelRefusalRow`). Consumers must render them
+     * inert and attributed to claude, must not persist them, and must not log them.
+     *
+     * Identity: the frame type — `fallbackModel != null` — plus [occurredAt], the envelope's (or stored
+     * entry's) `ts`: the protocol's `(type, ts)` join key. Invariant: unique among a thread's refusal rows.
+     * The thread's `LazyColumn` keys the row on it, so a duplicate crashes the list; uniqueness is a producer
+     * obligation — both thread writers skip one the thread already holds (`holdsModelRefusal`) — documented
+     * here and asserted in tests, not enforced at construction (as [SessionBoundary]).
+     *
+     * @param originalModel The model claude says refused the turn; empty when claude named none.
+     * @param fallbackModel The model claude says it retried on — **non-null iff the frame was
+     *   `model_refusal_fallback`**, which is what makes it the row's type half.
+     * @param banner claude's display prose about the refusal; empty when it sent none.
+     * @param bannerTruncated Whether the daemon named `banner` in `truncated_fields` — its answer, never re-derived.
+     */
+    data class ModelRefusal(
+        val originalModel: String,
+        val fallbackModel: String?,
+        val banner: String,
+        val bannerTruncated: Boolean,
+        val occurredAt: Instant,
+    ) : ThreadItem
 }
 
 /**
@@ -1045,6 +1104,47 @@ data class ResetStatus(
      */
     enum class Handoff { Pending, Written, Skipped }
 }
+
+/**
+ * The model claude announced for a conversation's latest turn (#890, pyrycode#1616/#1638) — the element type
+ * of [ConversationRepository.observeAnnouncedModel]. Wire SSOT: pyrycode `docs/protocol-mobile.md`
+ * § `model_announced`.
+ *
+ * [model] is **never empty** (the decoder drops a frame that breaks that rule) and is held **verbatim**: not
+ * trimmed, normalised, dated or looked up in any model list, where a miss is ordinary. [truncated] says the
+ * daemon cut [model] to fit its cap, so a consumer must not present the text as complete when it is set.
+ *
+ * **SECURITY.** [model] is claude-authored text that crossed the subprocess trust boundary. The daemon bounds
+ * it but does not sanitize it, so render it as **inert text only** — never as markup, an attribute, a URL, a
+ * filename, a cache key or a log line — and never key a behaviour on it. It is a report, not a control input.
+ *
+ * `data` is load-bearing: structural equality is what the repository's `distinctUntilChanged` relies on.
+ */
+data class AnnouncedModel(
+    val model: String,
+    val truncated: Boolean,
+)
+
+/**
+ * What claude reported about its own run for a conversation's latest turn (#890, pyrycode#2253/#2254) — the
+ * element type of [ConversationRepository.observeSessionFacts]. Wire SSOT: pyrycode `docs/protocol-mobile.md`
+ * § `session_facts`.
+ *
+ * Both strings **may be empty**, which is "not reported", not an error. [claudeCodeVersion] is claude's own
+ * build as a string, never parsed or compared. [permissionMode] is an **open set** and **a claim, not a
+ * guarantee**: nothing allow-lists it, and it is never the confirmed permission reading. [truncatedFields]
+ * names the fields the daemon cut, by their wire keys (`claude_code_version`, `permission_mode`), or is
+ * `null` when nothing was cut.
+ *
+ * **SECURITY.** Both strings are claude-authored text that crossed the subprocess trust boundary, bounded by
+ * the daemon but not sanitized. Render them as **inert text only** — never as markup, an attribute, a URL, a
+ * filename, a cache key or a log line — and never key a behaviour on them.
+ */
+data class SessionFacts(
+    val claudeCodeVersion: String,
+    val permissionMode: String,
+    val truncatedFields: List<String>?,
+)
 
 /**
  * The usage-limit reading claude last reported for one conversation (#802, pyrycode#1405/#1410) — the

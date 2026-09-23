@@ -71,13 +71,18 @@ conversation, not the whole host. See [Attachment upload](attachment-upload.md).
 
 Since 2026-09-22 the status events the thread observes each live in their own small internal class
 beside the repository: `StallProjection` (#395), `QueueProjection` (#460), `ApiRetryProjection` (#593),
-`CompactingProjection` (#596), `ThinkingProgressProjection` (#801) and `UsageLimitProjection` (#802).
+`CompactingProjection` (#596), `ThinkingProgressProjection` (#801), `UsageLimitProjection` (#802),
+`AnnouncedModelProjection` (#890) and `SessionFactsProjection` (#890).
 Each holds the state, the decoder and the cold read that used to sit in `RemoteConversationRepository`,
 under the same names, so the per-event sections in the
-[thread-observables document](remote-conversation-repository-thread-observables.md) still describe
-them. Only the owning class changed, and behaviour did not. `UsageLimitProjection` is the newest member
-and the only one whose clearing edge is self-contained: a benign `status` frame clears its own entry
-inside `apply`, so it needs no hook on another event's arm the way the stall/thinking-progress clears do.
+[thread-observables document](remote-conversation-repository-thread-observables.md) and the
+[live-stream document's `model_announced` / `session_facts` section](remote-conversation-repository-live-stream-and-modals.md#model_announced--session_facts--the-announced-model-and-session-facts-readings-890)
+still describe them. Only the owning class changed, and behaviour did not. `UsageLimitProjection`'s
+clearing edge is self-contained — a benign `status` frame clears its own entry inside `apply`, so it
+needs no hook on another event's arm the way the stall/thinking-progress clears do.
+`AnnouncedModelProjection` and `SessionFactsProjection` are each cleared only by the
+`session_transition` arm, the same `ResettingProjection` shape, since neither `model_announced` nor
+`session_facts` carries a falling edge of its own.
 
 The repository keeps three things. Its `onInbound` arm checks the negotiated `interactive` capability
 and calls the projection's `apply(envelope)`. Its `observe…` override returns the projection's
@@ -125,15 +130,15 @@ What the repository still owns, after #916:
   and calls `workspaceCommands.malformedWorkspaceReply()` on a decode failure.
 - **Every status projection** the thread reads from: `ConversationListProjection`, `ThreadProjection`,
   `StallProjection`, `QueueProjection`, `ApiRetryProjection`, `CompactingProjection`, `UsageLimitProjection`,
-  `ThinkingProgressProjection`, `ResettingProjection`, `ModelMenuProjection`, `QuestionBatchProjection` and
-  `BackgroundTaskProjection` — each its own small class, constructed once per repository instance, per the
-  split described above in § Status projections.
+  `ThinkingProgressProjection`, `ResettingProjection`, `ModelMenuProjection`, `QuestionBatchProjection`,
+  `BackgroundTaskProjection`, `AnnouncedModelProjection` and `SessionFactsProjection` — each its own small
+  class, constructed once per repository instance, per the split described above in § Status projections.
 - **`RelayRequests`** — the one request-id counter and reply-waiter table every command class, and the
   repository's own remaining reads, share.
 - **The reads that fan out directly to a projection, with no command-class indirection**:
   `observeConversations`, `observeMessages`, `observeLastMessage`, `observeStall`, `observeQueue`,
   `observeApiRetry`, `observeCompacting`, `observeResetting`, `observeUsageLimit`,
-  `observeThinkingProgress` and `observeModelMenu`.
+  `observeThinkingProgress`, `observeModelMenu`, `observeAnnouncedModel` and `observeSessionFacts`.
 - **`requestHistory`** — the on-disk history page read; kept here because it folds its page straight into
   `ThreadProjection`, and #916 explicitly left it in place.
 - **The v2 structured-stream and modal decode seams** — `liveSessionEvents`, `modalEvents`,

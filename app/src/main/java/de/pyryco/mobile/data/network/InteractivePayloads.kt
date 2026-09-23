@@ -5,11 +5,13 @@ import de.pyryco.mobile.data.model.ModalContext
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ToolDenial
+import de.pyryco.mobile.data.repository.AnnouncedModel
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.BannerLevel
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ResetStatus
+import de.pyryco.mobile.data.repository.SessionFacts
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UnrecognizedSite
 import de.pyryco.mobile.data.repository.UsageLimitReading
@@ -378,6 +380,71 @@ private fun String.toResetHandoff(): ResetStatus.Handoff? =
         "skipped" -> ResetStatus.Handoff.Skipped
         else -> null
     }
+
+/**
+ * The `model_announced` control event (#890, pyrycode#1616/#1638): the model claude named for a turn on its
+ * `system/init` line. Decode-only — the phone never sends one. Always decode through [MobileJson].
+ *
+ * Wire SSOT: pyrycode `docs/protocol-mobile.md` § `model_announced`, cited here, not restated. Shape:
+ * `{conversation_id, model, truncated}` — all three **strict-required, non-null** with no Kotlin default (the
+ * [CompactingPayloadDto] posture), so a missing field or one whose JSON shape cannot be read as its declared
+ * type fails the structural decode and the one envelope is dropped. The quoted-primitive latitude documented
+ * on [ApiRetryPayloadDto] applies here too.
+ *
+ * **Not** the per-session override that `session_settings.model` carries; see [toReading].
+ *
+ * **SECURITY.** [model] is claude-authored and crossed the subprocess trust boundary; the daemon bounds it at
+ * construction and does **not** sanitize it. It crosses this boundary **verbatim**. No client-side length cap
+ * is added — the daemon's bound and `OkHttpRelayTransport`'s frame contract already cover it, and [truncated]
+ * is how a consumer learns it lost characters. Nothing on this path is logged.
+ *
+ * This is **state**, not a [LiveSessionEvent]: it opens, closes and alters no turn.
+ */
+@Serializable
+internal data class ModelAnnouncedPayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    val model: String,
+    val truncated: Boolean,
+)
+
+/**
+ * Map a decoded [ModelAnnouncedPayloadDto] to an [AnnouncedModel], or **null** when [ModelAnnouncedPayloadDto.model]
+ * is empty — the contract says it never is, so an empty one is a malformed frame, dropped like a missing field.
+ * Otherwise a total verbatim copy: nothing is trimmed, normalised or looked up, and `conversation_id` stays the
+ * caller's routing key.
+ */
+internal fun ModelAnnouncedPayloadDto.toReading(): AnnouncedModel? = if (model.isEmpty()) null else AnnouncedModel(model, truncated)
+
+/**
+ * The `session_facts` control event (#890, pyrycode#2253/#2254): claude's own build and the permission posture
+ * it says it runs under, from the same `system/init` line as [ModelAnnouncedPayloadDto]. Decode-only. Always
+ * decode through [MobileJson].
+ *
+ * Wire SSOT: pyrycode `docs/protocol-mobile.md` § `session_facts`. Shape: `{conversation_id,
+ * claude_code_version, permission_mode, truncated_fields}`. The three strings are **strict-required,
+ * non-null**, and an empty one is valid ("not reported"). [truncatedFields] is the documented nullable: the
+ * daemon always writes the key, as a literal `null` when nothing was cut, and the Kotlin default only covers
+ * a non-conforming producer — the [RateLimitedPayloadDto] posture, where [MobileJson]'s `explicitNulls = false`
+ * collapses an omitted key into `null`. A value that is not an array of strings fails the decode.
+ *
+ * **SECURITY.** [claudeCodeVersion] and [permissionMode] are claude-authored and crossed the subprocess trust
+ * boundary, bounded by the daemon and not sanitized. They cross **verbatim**: the version is never parsed and
+ * the posture is an **open set** that nothing allow-lists, because an allow-list would drop the first report
+ * of a posture nobody has heard of. [permissionMode] is a claim, never the confirmed permission reading.
+ * Nothing on this path is logged.
+ *
+ * Like [ModelAnnouncedPayloadDto] it is state and opens, closes and alters no turn.
+ */
+@Serializable
+internal data class SessionFactsPayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    @SerialName("claude_code_version") val claudeCodeVersion: String,
+    @SerialName("permission_mode") val permissionMode: String,
+    @SerialName("truncated_fields") val truncatedFields: List<String>? = null,
+)
+
+/** Map a decoded [SessionFactsPayloadDto] to [SessionFacts]: a total verbatim copy without the routing key. */
+internal fun SessionFactsPayloadDto.toFacts(): SessionFacts = SessionFacts(claudeCodeVersion, permissionMode, truncatedFields)
 
 /**
  * The `rate_limited` control event (#802, pyrycode#1405/#1410): what claude said about its usage-limit
@@ -861,6 +928,71 @@ internal fun BannerPayloadDto.toRow(occurredAt: Instant): ThreadItem.Banner =
         truncated = truncated,
         occurredAt = occurredAt,
     )
+
+/**
+ * The `model_refusal_fallback` thread event (#875, pyrycode#2265): claude refused a turn on one model and
+ * retried it on another, folded into the conversation thread as a [ThreadItem.ModelRefusal]. Decode-only —
+ * the phone never sends one. Always decode through [MobileJson].
+ *
+ * Wire SSOT: pyrycode `internal/protocol/interactive.go` (`ModelRefusalFallbackPayload`) +
+ * `docs/protocol-mobile.md` § `model_refusal_fallback`. The six strings are strict-required with no Kotlin
+ * default: the Go struct sets no `omitempty`, so each always arrives present. The two report arrays are
+ * nullable because `null` is their normal wire value. [scope] and [refusalCategory] are decoded so their
+ * shape is checked and then dropped by [toRow]: they are claude's open assertions and drive nothing.
+ */
+@Serializable
+internal data class ModelRefusalFallbackPayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    @SerialName("original_model") val originalModel: String,
+    @SerialName("fallback_model") val fallbackModel: String,
+    val scope: String,
+    @SerialName("refusal_category") val refusalCategory: String,
+    val banner: String,
+    @SerialName("truncated_fields") val truncatedFields: List<String>?,
+    @SerialName("dropped_fields") val droppedFields: List<String>?,
+)
+
+/**
+ * The `model_refusal_no_fallback` thread event (#875, pyrycode#2266): the no-retry sibling of
+ * [ModelRefusalFallbackPayloadDto], told apart by envelope type, with no `fallback_model` or `scope`. The
+ * same strictness and the same inert [refusalCategory].
+ */
+@Serializable
+internal data class ModelRefusalNoFallbackPayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    @SerialName("original_model") val originalModel: String,
+    @SerialName("refusal_category") val refusalCategory: String,
+    val banner: String,
+    @SerialName("truncated_fields") val truncatedFields: List<String>?,
+    @SerialName("dropped_fields") val droppedFields: List<String>?,
+)
+
+/**
+ * Map a decoded [ModelRefusalFallbackPayloadDto] to a [ThreadItem.ModelRefusal]. **Total.** Strings are
+ * copied verbatim; stripping is the renderer's. [occurredAt] is the caller's: the envelope `ts` live, the
+ * entry timestamp on replay, which is what lets the two lanes join on one identity.
+ */
+internal fun ModelRefusalFallbackPayloadDto.toRow(occurredAt: Instant): ThreadItem.ModelRefusal =
+    ThreadItem.ModelRefusal(
+        originalModel = originalModel,
+        fallbackModel = fallbackModel,
+        banner = banner,
+        bannerTruncated = bannerWasCut(truncatedFields),
+        occurredAt = occurredAt,
+    )
+
+/** Map a decoded [ModelRefusalNoFallbackPayloadDto] to a [ThreadItem.ModelRefusal] with no fallback model. */
+internal fun ModelRefusalNoFallbackPayloadDto.toRow(occurredAt: Instant): ThreadItem.ModelRefusal =
+    ThreadItem.ModelRefusal(
+        originalModel = originalModel,
+        fallbackModel = null,
+        banner = banner,
+        bannerTruncated = bannerWasCut(truncatedFields),
+        occurredAt = occurredAt,
+    )
+
+// The daemon names each field it cut by its wire key; only the banner's cut is shown.
+private fun bannerWasCut(truncatedFields: List<String>?): Boolean = truncatedFields.orEmpty().contains("banner")
 
 /**
  * The `compaction_boundary` thread event (#874, pyrycode#2237): a finished compaction

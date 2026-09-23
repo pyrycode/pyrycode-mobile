@@ -85,6 +85,18 @@ class StableConversationRepository(
         switchToLive<ResetStatus?>(null) { it.observeResetting(conversationId) }
 
     /**
+     * The announced-model reading for [conversationId] (#890), switched over the live connection. The switch
+     * is how a reconnect or a host switch clears it: [flatMapLatest] drops the previous connection's
+     * projection, so one host's claude is never reported as the next one's.
+     */
+    override fun observeAnnouncedModel(conversationId: String): Flow<AnnouncedModel?> =
+        switchToLive<AnnouncedModel?>(null) { it.observeAnnouncedModel(conversationId) }
+
+    /** The session-facts reading for [conversationId] (#890), cleared across connections as [observeAnnouncedModel] is. */
+    override fun observeSessionFacts(conversationId: String): Flow<SessionFacts?> =
+        switchToLive<SessionFacts?>(null) { it.observeSessionFacts(conversationId) }
+
+    /**
      * The usage-limit reading for [conversationId] (#802), switched over the live connection like every
      * other cold read — and here the switch is the **account-isolation mechanism**, not just plumbing:
      * a usage-limit window belongs to an account rather than to a conversation, so [flatMapLatest]

@@ -1,6 +1,7 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
@@ -127,8 +128,8 @@ data class ThreadEffortChoice(
  * @param settingsAvailable Whether a settings reading is available at all. `false` ⇒ both labels read
  *   unknown; it covers no connection, no `interactive` capability, and the window before the first reply.
  * @param savedModel The saved model override verbatim, `""` meaning "no override, inherited default".
- * @param savedEffort The **saved** effort choice verbatim, `""` meaning inherited default. Never
- *   `effectiveEffort`, which is claude's *applied* reading and is #651's, not this surface's.
+ * @param savedEffort The **saved** effort choice verbatim, `""` meaning inherited default. It is the
+ *   display fallback only while [appliedEffort] reports no value (#889), and never a write source.
  * @param pendingModel / @param pendingEffort A tap whose write has not settled, or `null`. Cleared by an
  *   arriving reading — never by the acknowledgement, which is not a reading.
  * @param sessionId The session a write must address. **`""` means the daemon has no session to address**,
@@ -139,6 +140,8 @@ data class ThreadEffortChoice(
  *   stored settings or `yolo`.
  * @param pendingPermission A permission write whose request or settle is still running, or `null`. It
  *   marks the button pending and blocks a second write; it never changes the label.
+ * @param appliedEffort Claude's **applied** effort (#889), verbatim from the reading. Display-only: it
+ *   outranks [savedEffort] on screen and is never sent back.
  */
 data class ThreadRunConfig(
     val choices: List<ThreadModelChoice> = emptyList(),
@@ -153,12 +156,35 @@ data class ThreadRunConfig(
     val sessionId: String = "",
     val permissionMode: String = "",
     val pendingPermission: String? = null,
+    val appliedEffort: EffectiveEffort = EffectiveEffort.Unavailable,
 ) {
     /** What the surfaces show: a pending tap while one is outstanding, the confirmed reading otherwise. */
     val selectedModel: String get() = pendingModel ?: savedModel
 
-    /** The [selectedModel] twin for effort. */
-    val selectedEffort: String get() = pendingEffort ?: savedEffort
+    /**
+     * The effort the surfaces show and select (#889, desktop #1549 / #1554): a pending tap, else the value
+     * Claude applies, else — only when that reading is missing or empty — the saved choice. An explicit
+     * `null` reading selects nothing rather than falling back: Claude says it runs no effort parameter.
+     */
+    val selectedEffort: String
+        get() =
+            pendingEffort ?: when (appliedEffort) {
+                is EffectiveEffort.Applied -> appliedEffort.value.ifEmpty { savedEffort }
+                EffectiveEffort.NotReported -> ""
+                EffectiveEffort.Unavailable -> savedEffort
+            }
+
+    /** Why [selectedEffort] is not Claude's applied value, or `null` when it is (or a tap is pending, or
+     *  there is no reading at all). */
+    val effortNote: EffortNote?
+        get() =
+            when {
+                !settingsAvailable || pendingEffort != null -> null
+                appliedEffort == EffectiveEffort.NotReported -> EffortNote.NotReported
+                appliedEffort is EffectiveEffort.Applied && appliedEffort.value.isNotEmpty() -> null
+                savedEffort.isNotEmpty() -> EffortNote.SelectedRunningUnavailable
+                else -> EffortNote.DefaultRunningUnavailable
+            }
 
     /** The published row [selectedModel] names, or `null` when the menu published no matching one. */
     val selectedChoice: ThreadModelChoice? get() = choices.firstOrNull { it.value == selectedModel }
@@ -177,8 +203,15 @@ data class ThreadRunConfig(
     /** The footer's model segment. */
     val modelLabel: String get() = label(selectedModel) { selectedChoice?.label }
 
-    /** The footer's effort segment. No menu lookup: a level is its own label. */
-    val effortLabel: String get() = label(selectedEffort) { null }
+    /** The footer's effort segment. No menu lookup: a level is its own label. With nothing selected it
+     *  names the control (#889) rather than claiming "default", which an explicit `null` would contradict. */
+    val effortLabel: String
+        get() =
+            when {
+                !settingsAvailable -> UNKNOWN_RUN_CONFIG_LABEL
+                selectedEffort.isEmpty() -> EFFORT_PLACEHOLDER_LABEL
+                else -> selectedEffort.inert()
+            }
 
     /**
      * The three display states the contracts keep apart, collapsed to one string for the footer: no
@@ -200,3 +233,17 @@ data class ThreadRunConfig(
 internal const val UNKNOWN_RUN_CONFIG_LABEL = "unknown"
 
 internal const val INHERITED_RUN_CONFIG_LABEL = "default"
+
+internal const val EFFORT_PLACEHOLDER_LABEL = "Effort"
+
+/** Why the effort control does not show Claude's applied value (#889). Resolved to text at the UI layer. */
+enum class EffortNote {
+    /** The saved choice is shown; the running effort is unavailable. */
+    SelectedRunningUnavailable,
+
+    /** Nothing is selected, so Claude's default applies; the running effort is unavailable. */
+    DefaultRunningUnavailable,
+
+    /** Claude reports no effort parameter. */
+    NotReported,
+}

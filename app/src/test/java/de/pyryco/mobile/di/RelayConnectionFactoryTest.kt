@@ -19,7 +19,6 @@ import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.crypto.PairedServerEntry
 import de.pyryco.mobile.data.crypto.PairedServerStore
 import de.pyryco.mobile.data.crypto.PairedServerStoreException
-import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.RelayLinkStatus
@@ -1544,21 +1543,4 @@ class RelayConnectionFactoryTest {
 
         fun turn(id: Long) = envelope("turn_state", """{"conversation_id":"c","state":"thinking"}""").copy(eventId = id)
     }
-}
-
-/** Satisfies the relay source's cache dependency in Android-less JVM containers; stores nothing. */
-private object InertConversationCache : ConversationCache {
-    override suspend fun readConversations(serverId: String): List<Conversation> = emptyList()
-
-    override suspend fun writeConversations(
-        serverId: String,
-        conversations: List<Conversation>,
-    ) = Result.success(Unit)
-
-    override suspend fun removeHost(serverId: String) = Result.success(Unit)
-
-    override suspend fun removeConversation(
-        serverId: String,
-        conversationId: String,
-    ) = Result.success(Unit)
 }

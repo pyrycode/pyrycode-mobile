@@ -17,6 +17,7 @@ import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
@@ -111,6 +112,9 @@ class ThreadViewModel(
     // which [connectionStateSource]'s legacy four cases fold into Offline. Defaulted to never, as the
     // demo path's fake host is never rejected.
     pairingRejected: Flow<Boolean> = flowOf(false),
+    // #686: the phone's one remembered effort level, recalled once per opening by [effortRecall].
+    // Defaulted to a store that remembers nothing, so the demo path and existing tests stay inert.
+    rememberedEffort: RememberedEffortStore = RememberedEffortStore.None,
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
@@ -177,6 +181,9 @@ class ThreadViewModel(
 
     /** The [pendingModel] twin for effort (#807). */
     private val pendingEffort = MutableStateFlow<String?>(null)
+
+    /** This opening's recall of the remembered effort (#686); its write is [startEffortRecall]. */
+    private val effortRecall = EffortRecall(viewModelScope, rememberedEffort, ::startEffortRecall)
 
     /**
      * This conversation's saved run configuration (#590), the authority for the displayed model and
@@ -305,6 +312,10 @@ class ThreadViewModel(
             runConfigFlow,
         ) { conversations, content, pickerVisible, dialogs, runConfig ->
             val conv = conversations.firstOrNull { it.id == conversationId }
+            // #686: the one place that sees the settings reading and the live session together without a
+            // second `observeSessionSettings` subscription, which would send another settings request.
+            // The recall decides at most once, so a re-emission or a WhileSubscribed restart is harmless.
+            effortRecall.offer(runConfig, conv?.currentSessionId.orEmpty())
             ThreadUiState(
                 conversationId = conversationId,
                 displayName = conv?.displayName() ?: conversationId,
@@ -1019,6 +1030,8 @@ class ThreadViewModel(
     fun sendMessage(text: String) {
         if (text.isBlank()) return
         launchGuardedRepoCall {
+            // #686: a message sent while this opening's recall write is outstanding follows it.
+            effortRecall.awaitWrite()
             repository.sendMessage(state.value.conversationId, text)
             if (draftStore.draftFor(serverId, conversationId) == text) onDraftChange("")
         }
@@ -1343,11 +1356,21 @@ class ThreadViewModel(
      *  the selected row, forwarded verbatim — never `Effort.name.lowercase()`, whose five entries are this
      *  device's guess at a vocabulary the row itself publishes. */
     fun onEffortSelected(level: String) {
+        effortRecall.cancel()
         val config = state.value.runConfig
         if (config.pending || level == config.selectedEffort) return
         if (!skipUnlessWritable(config)) return
         pendingEffort.value = level
         sendSessionSettings(config.sessionId, effort = level) { pendingEffort.value = null }
+    }
+
+    /** The recall write (#686): a tap's write path with the remembered level, reverted the same way. */
+    private fun startEffortRecall(
+        sessionId: String,
+        level: String,
+    ): Job {
+        pendingEffort.value = level
+        return sendSessionSettings(sessionId, effort = level) { pendingEffort.value = null }
     }
 
     /**
@@ -1489,10 +1512,12 @@ class ThreadViewModel(
         model: String? = null,
         effort: String? = null,
         revert: () -> Unit,
-    ) {
+    ): Job =
         viewModelScope.launch {
             try {
                 repository.setSessionSettings(sessionId, model, effort)
+                // #686: an acknowledged effort write is the only thing that sets the remembered level.
+                if (effort != null) effortRecall.remember(effort)
                 // #807: the ack echoes only the input session id and confirms no value, so a settled write
                 // asks for a fresh reading rather than promoting the optimistic one. The pending survives
                 // until that reading lands (see [sessionSettings]); only the failure paths below clear it.
@@ -1507,7 +1532,6 @@ class ThreadViewModel(
                 sessionSettingsErrorChannel.trySend(Unit)
             }
         }
-    }
 
     fun onOverflowEvent(event: ThreadEvent) {
         when (event) {
@@ -1709,17 +1733,23 @@ private fun runConfig(
         sessionId = settings?.sessionId.orEmpty(),
         permissionMode = settings?.permissionMode.orEmpty(),
         pendingPermission = pendingPermission,
+        appliedEffort = settings?.effectiveEffort ?: EffectiveEffort.Unavailable,
     )
 }
 
 /**
- * Hides a permission mode left over from a replaced session (#650). A `session_transition` updates the
- * conversation's current session before the settings re-read lands, so until a reading for [liveSessionId]
- * arrives, the reading on hand describes a session that is gone. An empty [liveSessionId] is the v2
- * summary's placeholder and proves nothing. Model and effort are left alone.
+ * Hides a permission mode (#650) and an applied effort (#889) left over from a replaced session. A
+ * `session_transition` updates the conversation's current session before the settings re-read lands, so
+ * until a reading for [liveSessionId] arrives, the reading on hand describes a session that is gone. An
+ * empty [liveSessionId] is the v2 summary's placeholder and proves nothing. The saved model and effort are
+ * choices rather than readings of the running child, so they stay.
  */
 private fun ThreadRunConfig.forLiveSession(liveSessionId: String): ThreadRunConfig =
-    if (liveSessionId.isNotEmpty() && liveSessionId != sessionId) copy(permissionMode = "") else this
+    if (liveSessionId.isNotEmpty() && liveSessionId != sessionId) {
+        copy(permissionMode = "", appliedEffort = EffectiveEffort.Unavailable)
+    } else {
+        this
+    }
 
 /** How long a permission write's settle keeps re-reading after the ack (#650, desktop #1544). */
 internal const val PERMISSION_SETTLE_WINDOW_MS = 15_000L

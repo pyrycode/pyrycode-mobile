@@ -9,6 +9,8 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -115,6 +117,19 @@ def ui_suite_skippable(paths):
                                for p in paths)
 
 
+def device_only_classes():
+    """The test classes under app/src/androidTest, outside the e2e package, as fully qualified names.
+
+    Screen tests live in app/src/sharedTest and run under Robolectric in `./gradlew check`; only what needs
+    a real device stays in androidTest. A file's class is its path, so the folder a test sits in is the
+    whole rule and nothing else has to be kept in step.
+    """
+    root = ROOT / "app/src/androidTest/java"
+    names = (".".join(path.relative_to(root).with_suffix("").parts)
+             for path in sorted(root.rglob("*.kt")) if "@Test" in path.read_text())
+    return [name for name in names if not name.startswith(E2E_PACKAGE + ".")]
+
+
 def changed_paths(base="main"):
     """Tracked and untracked paths that differ from where this branch left base, or None when git cannot say."""
     try:
@@ -127,9 +142,132 @@ def changed_paths(base="main"):
         return None
 
 
+# ---- scripted-all: the seven scenarios on one emulator this script boots ------------------------------
+# Each `scripted <scenario>` run has Gradle boot and tear down its own managed emulator, and Gradle's own
+# waits for the device cost about 10 of each scenario's 23 seconds (measured 2026-09-23). scripted-all boots
+# the managed device's AVD once, read-only from its snapshot, and runs every scenario against it through
+# the harness's `connected` device, each with its own daemon, relay and pairing as before. The app is
+# reinstalled per scenario, so no app state carries over.
+
+def managed_avd(device):
+    """The AVD Gradle created for the managed device, or None before the ui gate has ever made it."""
+    if device != "pixel2Api33Atd":
+        return None
+    home = Path(os.environ.get("ANDROID_USER_HOME") or Path.home() / ".android") / "avd" / "gradle-managed"
+    found = sorted(home.glob("dev33_aosp_atd_*_Pixel_2.ini"))
+    return (home, found[0].stem) if found else None
+
+
+def free_emulator_port(start=5600, end=5680):
+    """An even console port whose adb port is free too. The emulator refuses a port in use, which boot retries."""
+    for port in range(start, end, 2):
+        try:
+            with socket.socket() as a, socket.socket() as b:
+                a.bind(("127.0.0.1", port))
+                b.bind(("127.0.0.1", port + 1))
+            return port
+        except OSError:
+            continue
+    return None
+
+
+def boot_emulator(env, avd_home, avd, timeout=180):
+    """Boot the AVD headless on a free port; returns (serial, process) or (None, None)."""
+    adb = str(Path(env["ANDROID_HOME"]) / "platform-tools" / "adb")
+    emulator = str(Path(env["ANDROID_HOME"]) / "emulator" / "emulator")
+    for _ in range(3):
+        port = free_emulator_port()
+        if port is None:
+            return None, None
+        serial = f"emulator-{port}"
+        # The flags Gradle's managed device uses (emu-launch-params.txt), plus a fixed port.
+        process = subprocess.Popen(
+            [emulator, f"@{avd}", "-no-window", "-no-boot-anim", "-no-audio", "-gpu", "auto-no-window",
+             "-force-snapshot-load", "-read-only", "-no-snapshot-save", "-port", str(port)],
+            env={**env, "ANDROID_AVD_HOME": str(avd_home)}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline and process.poll() is None:
+            booted = subprocess.run([adb, "-s", serial, "shell", "getprop", "sys.boot_completed"],
+                                    capture_output=True, text=True, timeout=30)
+            if booted.stdout.strip() == "1":
+                return serial, process
+            time.sleep(0.5)
+        stop_emulator(env, serial, process)
+    return None, None
+
+
+def stop_emulator(env, serial, process):
+    if process is None or process.poll() is not None:
+        return
+    adb = str(Path(env["ANDROID_HOME"]) / "platform-tools" / "adb")
+    subprocess.run([adb, "-s", serial, "emu", "kill"], capture_output=True, timeout=30)
+    try:
+        process.wait(timeout=20)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=20)
+
+
+def raise_interrupt(*_):
+    raise KeyboardInterrupt
+
+
+def run_scripted_all(env, run_dir, device):
+    """Run every scripted scenario, on one self-booted emulator when the AVD exists. Returns the exit code."""
+    expected_class = E2E_PACKAGE + ".DeterministicInteractiveStreamE2ETest"
+    avd = managed_avd(device) if env.get("ANDROID_HOME") else None
+    serial = process = None
+    if avd is not None:
+        serial, process = boot_emulator(env, *avd)
+    if serial is None:
+        print("Android gate: scripted-all could not boot its own emulator; each scenario uses the managed device",
+              file=sys.stderr)
+    # The dispatcher ends a timed-out gate with SIGTERM to its process group. Turn it into an exception so
+    # the finally below still stops the emulator; the emulator shares the group, so it gets the signal too.
+    signal.signal(signal.SIGTERM, raise_interrupt)
+    results = ROOT / "app/build/outputs/androidTest-results"
+    target = "connected" if serial else device
+    directory = results / "connected/debug" if target == "connected" else results / "managedDevice/debug" / target
+    all_paths, failed = [], []
+    try:
+        for scenario in SCENARIOS:
+            scenario_env = {**env, "DETERMINISTIC": "1", "SCENARIO": scenario, "DEVICE": target}
+            if serial:
+                scenario_env["ANDROID_SERIAL"] = serial
+            started = time.time_ns()
+            outcome = subprocess.run(["bash", str(ROOT / "scripts" / "e2e-emulator.sh")], cwd=ROOT,
+                                     env=scenario_env, stdout=sys.stderr, stderr=sys.stderr)
+            paths = fresh_reports(directory, started)
+            try:
+                _, passed, executed = combine_reports(paths, 1, expected_class)
+            except ValueError as error:
+                passed, executed = False, 0
+                print(f"Android gate: scripted {scenario}: {error}", file=sys.stderr)
+            ok = passed and outcome.returncode == 0
+            if not ok:
+                failed.append(scenario)
+            print(f"Android gate: scripted {scenario}: {'pass' if ok else 'FAIL'}, {executed} executed", file=sys.stderr)
+            # Copied before the next scenario overwrites the same report file on the connected device.
+            for index, path in enumerate(paths):
+                copy = run_dir / f"{scenario}-{index}-{path.name}"
+                shutil.copy2(path, copy)
+                all_paths.append(copy)
+    finally:
+        stop_emulator(env, serial, process)
+    try:
+        xml, _, executed = combine_reports(all_paths, len(SCENARIOS), expected_class)
+    except ValueError as error:
+        print(f"Android gate failed: {error}", file=sys.stderr)
+        return 1
+    (run_dir / "dispatcher.xml").write_text(xml + "\n")
+    print(xml)
+    print(f"Android gate: scripted-all {executed} executed; failed: {', '.join(failed) or 'none'}", file=sys.stderr)
+    return 1 if failed else 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=("ui", "scripted", "live"))
+    parser.add_argument("mode", choices=("ui", "scripted", "scripted-all", "live"))
     parser.add_argument("scenario", nargs="?", choices=SCENARIOS)
     args = parser.parse_args()
     if (args.mode == "scripted") != (args.scenario is not None):
@@ -152,15 +290,23 @@ def main():
     env.update(PYRY_NAME=identity, PAIR_NAME=identity)
     minimum, expected_class = 1, None
     if args.mode == "ui":
-        # Split the suite across emulator instances booted side by side. Measured 2026-09-22 on
-        # the dispatcher's own gate logs: one instance took 8m25s for the 238-test suite, and
-        # the wait is the single emulator, not Gradle. The scripted scenarios keep one instance.
-        shards = os.environ.get("UI_SHARDS", "2")
+        # UI_DEVICE_ALL=1 is the in-depth run: the shared screen tests on the emulator as well, split
+        # across two instances booted side by side. Measured 2026-09-22 on the dispatcher's own gate
+        # logs: one instance took 8m25s for the full suite, two took 4m43s. By default only the
+        # device-only classes run, few enough for one instance. The scripted scenarios keep one.
+        full = os.environ.get("UI_DEVICE_ALL") == "1"
+        shards = os.environ.get("UI_SHARDS", "2" if full else "1")
         if not shards.isdigit() or int(shards) < 1:
             parser.error("UI_SHARDS must be a positive integer")
         command = [str(ROOT / "gradlew"), f":app:{device}DebugAndroidTest", "--rerun",
                    f"-Pandroid.testInstrumentationRunnerArguments.notPackage={E2E_PACKAGE}",
                    f"-Pandroid.experimental.androidTest.numManagedDeviceShards={shards}", "--console=plain"]
+        if not full:
+            classes = device_only_classes()
+            if not classes:
+                print("Android gate: no device-only test classes found under app/src/androidTest", file=sys.stderr)
+                return 1
+            command.insert(3, "-Pandroid.testInstrumentationRunnerArguments.class=" + ",".join(classes))
     else:
         env.pop("LIVE", None)
         env.pop("DETERMINISTIC", None)
@@ -168,7 +314,7 @@ def main():
         if args.mode == "scripted":
             env.update(DETERMINISTIC="1", SCENARIO=args.scenario)
             expected_class = E2E_PACKAGE + ".DeterministicInteractiveStreamE2ETest"
-        else:
+        elif args.mode == "live":
             env["LIVE"] = "1"
             minimum = LIVE_MINIMUM
             expected_class = E2E_PACKAGE + ".InteractiveStreamE2ETest"
@@ -179,6 +325,8 @@ def main():
             return 1
     # Build test-only binaries from the configured sibling checkouts. Go's cache
     # keeps this cheap, and production daemon executables are never replaced.
+    # One fixed folder per checkout, not the run's own: Go then skips relinking an
+    # unchanged binary, about 15 seconds across the seven scripted scenarios.
     if args.mode != "ui":
         for variable, source_variable, package, binary in (
             ("PYRY_BIN", "PYRYCODE_SRC", "./cmd/pyry", "pyry"),
@@ -188,7 +336,8 @@ def main():
                 continue
             if env.get(variable) or not env.get(source_variable):
                 continue
-            destination = run_dir / binary
+            destination = ROOT / "build" / "e2e-bin" / binary
+            destination.parent.mkdir(parents=True, exist_ok=True)
             build = subprocess.run(["go", "build", "-o", str(destination), package],
                                    cwd=env[source_variable], env=env, stdout=sys.stderr, stderr=sys.stderr)
             if build.returncode:
@@ -196,6 +345,8 @@ def main():
                 return 1
             env[variable] = str(destination)
     print(f"Android gate: {args.mode} {args.scenario or ''}; artifacts: {run_dir}", file=sys.stderr)
+    if args.mode == "scripted-all":
+        return run_scripted_all(env, run_dir, device)
     started = time.time_ns()
     try:
         outcome = subprocess.run(command, cwd=ROOT, env=env, stdout=sys.stderr, stderr=sys.stderr)

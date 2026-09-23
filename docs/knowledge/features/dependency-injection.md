@@ -230,6 +230,12 @@ happens-before edge instead of a plain field read. Each class's `@After` also ca
 `assertAllClosed()` before `Dispatchers.resetMain()`, because an unguarded window between building
 the container and disposing it otherwise lets a background publish resume a torn-down Main on an
 unrelated test (#726) — see [the JVM unit-test pitfall](development-verification.md#test-scheduling-and-harnesses).
+Both `HostChannelListViewModelTest` and `HostDiscussionListViewModelTest` install a dispatching
+`StandardTestDispatcher(testScheduler)` as `Main` before resolving the ViewModel in their appModule
+test, rather than relying on the class's own `UnconfinedTestDispatcher`: an unconfined `Main` lets the
+source's `Dispatchers.Default` worker run the ViewModel and the test body in place, which can carry
+`closeAndAssertStopped()` itself onto that worker and make the #726 proof vacuous (#892) — see
+[the thread-identity detail](development-verification.md#test-scheduling-and-harnesses).
 
 `ConversationRepositoryBindingTest` verifies the generated flag and resolved
 singleton against Gradle's separate `expectedUseRelayRepository` test property.
