@@ -25,7 +25,9 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
@@ -56,7 +58,10 @@ data class HostChannelListEntry(
 
 data class HostChannelListState(
     val hosts: List<HostChannelListEntry> = emptyList(),
-    val workspacePickerServerId: String? = null,
+    /** The host whose Add workspace modal is open, or null when none is (#904). */
+    val addWorkspace: AddWorkspaceState? = null,
+    /** [addWorkspace]'s own host's recent folders, daemon-authored; empty while closed (#904). */
+    val addWorkspaceRecent: List<String> = emptyList(),
     /**
      * The folded nodes — **collapsed**, never expanded, so the empty initial set is "everything open"
      * and a host or workspace that arrives later needs no reconciliation to draw expanded.
@@ -102,6 +107,22 @@ data class ChatEditorState(
     val archiveFailed: Boolean = false,
 )
 
+/**
+ * The Add workspace modal's target and flags (#904), shaped like [ChatEditorState].
+ *
+ * [selected] is the folder OK will start a chat in: a recent folder the operator picked, or one just
+ * created on [serverId]. [busy] covers either write in flight — a folder creation or a chat start —
+ * since the modal's one loading flag gates both; [createFailed] and [startFailed] are flags so the
+ * failure string resolves on screen and no daemon message can reach the shell's live region.
+ */
+data class AddWorkspaceState(
+    val serverId: String,
+    val selected: String? = null,
+    val busy: Boolean = false,
+    val createFailed: Boolean = false,
+    val startFailed: Boolean = false,
+)
+
 /** The tree's two tiers. The same host draws a row in each, and the two fold independently. */
 enum class ConversationTreeSection {
     Channels,
@@ -144,7 +165,39 @@ class ChannelListViewModel(
     private val hostSource: HostConversationSource,
     private val pairedServers: PairedServerCollectionStore,
 ) : ViewModel() {
-    private val pendingHostWorkspacePicker = MutableStateFlow<String?>(null)
+    private val addWorkspace = MutableStateFlow<AddWorkspaceState?>(null)
+
+    /**
+     * The open Add workspace modal's host's recent folders, tagged with the host they were fetched for.
+     *
+     * Keyed on the server id alone, so a selection or a flag change never re-fetches but a close and
+     * reopen does. The repository is re-resolved on every snapshot, so a host that connects after the
+     * modal opened still fills it; a disconnect keeps the last list. The tag is what [hostState] checks
+     * before publishing, so no emission can pair one host's modal with another host's folders.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val addWorkspaceRecent: Flow<Pair<String?, List<String>>> =
+        addWorkspace
+            .map { it?.serverId }
+            .distinctUntilChanged()
+            .flatMapLatest { serverId ->
+                if (serverId == null) {
+                    flowOf(null to emptyList())
+                } else {
+                    hostSource.snapshots
+                        .map { hostSource.repositoryFor(serverId) }
+                        .distinctUntilChanged()
+                        .filterNotNull()
+                        .flatMapLatest { it.recentWorkspaces() }
+                        .map { it.take(MAX_ADD_WORKSPACE_RECENTS) }
+                        .catch { error ->
+                            if (error is CancellationException) throw error
+                            RelayLog.d { "event=add_workspace_recents_failed" }
+                            emit(emptyList())
+                        }.onStart { emit(emptyList()) }
+                        .map { serverId to it }
+                }
+            }
 
     // Fold and selection are the screen's, but they live here so they survive recomposition, LazyColumn
     // recycling, an incoming snapshot and the thread round trip (#731). The editor's machine is held
@@ -167,13 +220,22 @@ class ChannelListViewModel(
                     },
                 hostSource.attention,
             ) { entries, attention -> entries.map { it.copy(attention = attention[it.host.serverId].orEmpty()) } },
-            pendingHostWorkspacePicker,
+            combine(addWorkspace, addWorkspaceRecent, ::Pair),
             collapsedKeys,
             lastOpenedTarget,
             // Paired first: five flows is the typed `combine`'s limit.
             combine(hostEditor.state, chatEditor, ::Pair),
-        ) { hosts, pickerTarget, collapsed, selected, (editor, chat) ->
-            HostChannelListState(hosts, pickerTarget, collapsed, selected, editor, chat)
+        ) { hosts, (adding, recent), collapsed, selected, (editor, chat) ->
+            HostChannelListState(
+                hosts = hosts,
+                addWorkspace = adding,
+                // Only the open modal's own host's list, never one fetched for a previous target.
+                addWorkspaceRecent = if (adding != null && recent.first == adding.serverId) recent.second else emptyList(),
+                collapsed = collapsed,
+                selected = selected,
+                hostEditor = editor,
+                chatEditor = chat,
+            )
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), HostChannelListState())
 
     /**
@@ -247,20 +309,113 @@ class ChannelListViewModel(
         hostSource.retryHost(serverId)
     }
 
-    fun openHostWorkspacePicker(serverId: String) {
-        pendingHostWorkspacePicker.value = serverId
-        RelayLog.d { "event=host_workspace_picker_opened" }
+    /**
+     * Opens the Add workspace modal on a host row's own host (#904) — never the selected host. An id
+     * the list does not hold opens nothing.
+     */
+    fun openAddWorkspace(serverId: String) {
+        if (hostSource.snapshots.value.none { it.serverId == serverId }) {
+            RelayLog.d { "event=add_workspace_open_rejected code=unknown_host" }
+            return
+        }
+        addWorkspace.value = AddWorkspaceState(serverId)
+        RelayLog.d { "event=add_workspace_opened" }
     }
 
-    fun pickHostWorkspace(workspace: String) {
-        val serverId = pendingHostWorkspacePicker.value ?: return
-        pendingHostWorkspacePicker.value = null
-        launchGuardedRepoCall { sendHostDiscussion(serverId, workspace) }
+    /**
+     * Selects the folder OK will start a chat in, clearing a shown failure. Refused while a write is in
+     * flight: the write's terminal `compareAndSet` expects the state it published.
+     */
+    fun selectAddWorkspaceFolder(path: String) {
+        val state = addWorkspace.value ?: return
+        if (state.busy) return
+        addWorkspace.value = state.copy(selected = path, createFailed = false, startFailed = false)
     }
 
-    fun dismissHostWorkspacePicker() {
-        pendingHostWorkspacePicker.value = null
-        RelayLog.d { "event=host_workspace_picker_dismissed" }
+    /**
+     * Creates a folder on the modal's own host and selects it; it starts nothing (#904).
+     *
+     * The repository is resolved from the modal's `serverId` at the press, as [submitChatName] does, and
+     * both terminal transitions are `compareAndSet` against the state published before the write, so a
+     * result landing after a dismissal or a reopen cannot touch the modal. A failure keeps the selection
+     * and publishes a flag, never the exception's message.
+     */
+    fun createAddWorkspaceFolder(name: String) {
+        val state = addWorkspace.value ?: return
+        if (state.busy) return
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) return
+        val live = hostSource.repositoryFor(state.serverId)
+        if (live == null) {
+            RelayLog.d { "event=add_workspace_create_rejected code=unavailable" }
+            addWorkspace.value = state.copy(createFailed = true, startFailed = false)
+            return
+        }
+        val pending = state.copy(busy = true, createFailed = false, startFailed = false)
+        addWorkspace.value = pending
+        viewModelScope.launch {
+            RelayLog.d { "event=add_workspace_create_started" }
+            val path =
+                try {
+                    live.createWorkspaceFolder(trimmed)
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    // Never log the name, the path or the server's message; the UI gets one static string.
+                    RelayLog.d { "event=add_workspace_create_failed" }
+                    addWorkspace.compareAndSet(pending, pending.copy(busy = false, createFailed = true))
+                    return@launch
+                }
+            addWorkspace.compareAndSet(pending, pending.copy(busy = false, selected = path))
+            RelayLog.d { "event=add_workspace_created" }
+        }
+    }
+
+    /**
+     * OK: starts an unpromoted chat in exactly the selected folder on the modal's own host, then closes
+     * the modal and opens the chat's thread (#904).
+     *
+     * Resolution, the `busy` guard and the terminal transitions follow [createAddWorkspaceFolder]. The
+     * thread opens only when the modal is still the one that pressed OK: a chat started before a Cancel
+     * stays in the list, unopened.
+     */
+    fun submitAddWorkspace() {
+        val state = addWorkspace.value ?: return
+        if (state.busy) return
+        val workspace = state.selected ?: return
+        val live = hostSource.repositoryFor(state.serverId)
+        if (live == null) {
+            RelayLog.d { "event=add_workspace_start_rejected code=unavailable" }
+            addWorkspace.value = state.copy(createFailed = false, startFailed = true)
+            return
+        }
+        val pending = state.copy(busy = true, createFailed = false, startFailed = false)
+        addWorkspace.value = pending
+        viewModelScope.launch {
+            RelayLog.d { "event=add_workspace_start_started" }
+            val conversation =
+                try {
+                    live.createDiscussion(workspace)
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    RelayLog.d { "event=add_workspace_start_failed" }
+                    addWorkspace.compareAndSet(pending, pending.copy(busy = false, startFailed = true))
+                    return@launch
+                }
+            if (!addWorkspace.compareAndSet(pending, null)) {
+                RelayLog.d { "event=add_workspace_started code=dismissed" }
+                return@launch
+            }
+            val target = HostConversationTarget(state.serverId, conversation.id)
+            lastOpenedTarget.value = target
+            hostNavigationChannel.send(target)
+            RelayLog.d { "event=add_workspace_started" }
+        }
+    }
+
+    /** Cancel, Close and Back: close the Add workspace modal and send nothing. */
+    fun dismissAddWorkspace() {
+        addWorkspace.value = null
+        RelayLog.d { "event=add_workspace_dismissed" }
     }
 
     /**
@@ -418,5 +573,8 @@ class ChannelListViewModel(
     private companion object {
         const val STOP_TIMEOUT_MILLIS = 5_000L
         const val RECENT_DISCUSSIONS_LIMIT = 3
+
+        // The modal's content column is not lazy, so a hostile reply's list is bounded here.
+        const val MAX_ADD_WORKSPACE_RECENTS = 50
     }
 }
