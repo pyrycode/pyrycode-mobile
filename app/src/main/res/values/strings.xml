@@ -150,6 +150,13 @@
     <string name="cd_thread_refusal_collapse">Hide Claude\'s explanation</string>
     <string name="cd_tool_running">Tool call running</string>
     <string name="cd_tool_failed">Tool call failed</string>
+    <string name="cd_tool_done">Tool call done</string>
+    <string name="cd_tool_denied">Tool call denied</string>
+    <string name="tool_row_input">Input</string>
+    <string name="tool_row_output">Output</string>
+    <string name="tool_row_denial">Denied by claude</string>
+    <string name="tool_row_expand">Show tool details</string>
+    <string name="tool_row_collapse">Hide tool details</string>
     <string name="thread_overflow_new_session">Reset session</string>
     <string name="thread_overflow_rename">Rename</string>
     <string name="thread_overflow_change_workspace">Change workspace…</string>
@@ -234,6 +241,18 @@
     <string name="edit_chat_archive">Archive chat</string>
     <!-- Generic for the same reason edit_host_save_failed is: the shell announces it aloud (#827). -->
     <string name="edit_chat_save_failed">Couldn\'t rename the chat. Try again.</string>
+    <!--
+      The host row's Add workspace modal (#904). "Recent" and the create entry keep the bottom
+      sheet's wording, which the device suites match. Both failures are static for the reason
+      edit_chat_save_failed is: the shell announces them aloud.
+    -->
+    <string name="add_workspace_title">Add workspace</string>
+    <string name="add_workspace_recent">Recent</string>
+    <string name="add_workspace_new_folder">New folder</string>
+    <string name="add_workspace_empty">No recent folders on this host yet.</string>
+    <string name="add_workspace_create_folder">Create new folder under pyry-workspace…</string>
+    <string name="add_workspace_create_failed">Couldn\'t create the folder. Try again.</string>
+    <string name="add_workspace_start_failed">Couldn\'t start a chat in this folder. Try again.</string>
     <!--
       The Log data entry and its modal (#683). The row headline joins the Storage section in
       Clear cache\'s language; the title repeats it so the modal names what it was opened from.
