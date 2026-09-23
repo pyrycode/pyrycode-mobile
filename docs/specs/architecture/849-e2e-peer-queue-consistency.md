@@ -78,3 +78,11 @@ Peer failures stay category-only (`IllegalStateException` with an error `code`);
 ## Open questions
 
 - Whether real claude runs `sleep 90` in the foreground without a permission modal on the operator's live config: #481's shell tool passes live, so expected yes; a modal or a backgrounded sleep is a live-environment finding.
+
+## Revisions
+
+### 2026-09-23 — the wait is not a bare `sleep` (verifier MUST FIX, PR #858)
+
+The Open Question resolved in the negative. Claude Code's Bash tool refuses a command whose leading segment is `sleep N` with N ≥ 25 unless it runs in the background. The check runs in input validation, before permission checks, whenever the Monitor feature is on, and the daemon does not turn background tasks off. A bare `sleep 90` would end the peer's turn at once or background it, and the queue window of steps 3–5 would be gone.
+
+New contract: `WAIT_PROMPT` asks claude to run `python3 -c "import time; time.sleep(90)"` in the foreground, not in the background, then reply exactly `pyrywait`. The window stays 90 s, the turn count stays two, and every other step is unchanged. The constant's comment names why the command is not a bare `sleep`. The verifier's NIT on the peer methods' `internal` stays as is: `awaitQueue` exposes the app's `internal` `QueuedMessageDto`, so a public signature does not compile, and `dequeueMessage` keeps the same visibility beside it.

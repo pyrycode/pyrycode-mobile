@@ -1365,12 +1365,12 @@ class InteractiveStreamE2ETest {
 
     /**
      * Phone replies, queued sends and drops stay consistent with another client (#849, rung 3). In a
-     * conversation the [SecondClientPeer] starts, the peer's opening turn has claude run a shell sleep
-     * ([WAIT_PROMPT]); the queue steps run inside that window, opened by the turn's `tool_use`:
+     * conversation the [SecondClientPeer] starts, the peer's opening turn has claude run a 90-second shell
+     * wait ([WAIT_PROMPT]); the queue steps run inside that window, opened by the turn's `tool_use`:
      *  * the phone's [PING_PROMPT] queues — a queued row on the phone and an item in the peer's snapshot;
      *  * the phone queues and drops [DROP_PROMPT] — gone from both views;
      *  * the peer queues and drops [PEER_QUEUED_PROMPT] — a plain queued row on the phone until then.
-     * When the sleep ends the ping drains: claude's reply renders once on the phone, the prompt draws once,
+     * When the wait ends the ping drains: claude's reply renders once on the phone, the prompt draws once,
      * the peer sees that turn's `turn_end`, and both backlogs are empty — so neither dropped message can
      * still reach claude, and neither one's reply token is ever drawn.
      *
@@ -1408,7 +1408,7 @@ class InteractiveStreamE2ETest {
                 }.single()
             renameOpenThread(QUEUE_CHAT_NAME_PREFIX + System.currentTimeMillis())
 
-            // 2. The peer starts the conversation with a turn that sleeps; its tool call opens the window.
+            // 2. The peer starts the conversation with a turn that waits; its tool call opens the window.
             runBlocking {
                 peer.open(CONNECT_TIMEOUT_MS)
                 peer.sendMessage(conversationId, WAIT_PROMPT, THREAD_TIMEOUT_MS)
@@ -1449,7 +1449,7 @@ class InteractiveStreamE2ETest {
                 peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.none { it.text == PEER_QUEUED_PROMPT } }
             }
 
-            // 6. AC-1 / AC-2: the sleep ends, the ping drains and runs; the peer sees that turn end and an
+            // 6. AC-1 / AC-2: the wait ends, the ping drains and runs; the peer sees that turn end and an
             //    empty backlog, and the phone draws the reply and the prompt once each, no longer queued.
             runBlocking {
                 peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS, occurrence = 2)
@@ -1935,11 +1935,15 @@ class InteractiveStreamE2ETest {
         const val PEER_CHAT_NAME_PREFIX = "e2e848-"
 
         // #849 queue scenario. WAIT_PROMPT reuses #481's shell-tool lever to hold the peer's turn open for
-        // the queue steps; foreground, so the turn really waits. DROP_PROMPT and PEER_QUEUED_PROMPT ask for
-        // reply tokens no other prompt produces, so an exact-text node with either would mean a dropped
-        // message reached claude. None of the texts or the chat prefix contains the exact word "ping".
+        // the queue steps; foreground, so the turn really waits. The wait is not a bare `sleep 90`: claude's
+        // Bash tool refuses a leading `sleep N` of 25 s or more before any permission check, whenever its
+        // Monitor feature is on, so the turn would end at once or background the wait. DROP_PROMPT and
+        // PEER_QUEUED_PROMPT ask for reply tokens no other prompt produces, so an exact-text node with either
+        // would mean a dropped message reached claude. None of the texts or the chat prefix contains the exact
+        // word "ping".
         const val WAIT_PROMPT =
-            "Run this exact shell command with your tools in the foreground, then reply with exactly: pyrywait. Command: sleep 90"
+            "Run this exact shell command with your tools in the foreground, not in the background, then reply " +
+                "with exactly: pyrywait. Command: python3 -c \"import time; time.sleep(90)\""
         const val DROP_PROMPT = "Reply with exactly: pyrydropped"
         const val DROP_REPLY = "pyrydropped"
         const val PEER_QUEUED_PROMPT = "Reply with exactly: pyrypeerdropped"
@@ -1977,7 +1981,7 @@ class InteractiveStreamE2ETest {
         // Generous: a real claude turn over the relay can take many seconds end to end.
         const val REPLY_TIMEOUT_MS = 90_000L
 
-        // #849: the peer's wait turn sleeps 90 s before the drained ping's turn can even start.
+        // #849: the peer's wait turn holds 90 s before the drained ping's turn can even start.
         const val WAIT_TURN_TIMEOUT_MS = 240_000L
     }
 }
