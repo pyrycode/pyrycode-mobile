@@ -39,7 +39,14 @@ Requires a recent Android Studio (Hedgehog or later).
 `1:989241581793:android:90475142351ecb860f17a0` for `de.pyryco.mobile`). It carries no
 server credentials — those stay in the password manager. The Google Services Gradle
 plugin applies only when the file is present, so builds without it (CI, fresh worktrees)
-still succeed, with push disabled.
+still succeed, with push disabled — the `firebase-messaging` SDK dependency is unconditional,
+but without the file no `FirebaseApp` exists, so no token or message is ever delivered.
+
+Push is enabled only when the file is present. A received message must be a **data** message: while
+the app is backgrounded, a notification message goes to the system tray instead and never reaches
+the app's code. No daemon or relay push sender exists yet — the phone half (token capture, rotation
+and the background wake) is in place, but nothing on the server side sends FCM, so push notifications
+do not work end to end. See [`docs/knowledge/features/push-messaging-service.md`](docs/knowledge/features/push-messaging-service.md).
 
 ## Pre-ship gate
 
