@@ -115,3 +115,14 @@ The ticket names no documentation requirement. The documentation stage may fold 
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-24
+
+## Revisions
+
+### 2026-09-24: the composer places the cursor at the end after an outside change
+
+The pick test found this. `ThreadInputBar` took a `String` and passed it to `BasicTextField(String)`, which keeps the old cursor offset when the text changes from outside. After picking `/model ` from `/mo`, an argument typed next would land inside the name, giving `/moopusdel `. `ThreadInputBar` now holds its own `TextFieldValue`. When `text` differs from the field's own value, the field adopts it with the cursor at the end. This covers a completion, and also the clear after a send. One exception: `text` still equal to the draft as it stood before the field's latest edit (`textAtLastEdit`) is the asynchronous draft round trip lagging behind, not an outside change, so the field keeps its own value and cursor. A `LaunchedEffect(text)` forgets `textAtLastEdit` once the draft catches up, so a send that clears back to that same text is still adopted. `ThreadInputBar`'s signature is unchanged apart from `onAnchorChanged`. Resolves no open question. The file count is unchanged, because `ThreadInputBar.kt` was already in scope.
+
+### Open questions resolved
+
+1. `WindowInsets.isImeVisible` stays false under Robolectric. The screen tests open, pick and dismiss normally, because the effect only fires on first composition, when the draft is empty. The keyboard-hide test drives the internal `SlashCommandTypeAhead`.
+2. The width is unchanged at 240dp. The long-description test shows the row stays bounded.
