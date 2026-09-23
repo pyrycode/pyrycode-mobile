@@ -15,6 +15,7 @@ import de.pyryco.mobile.data.model.withDismissed
 import de.pyryco.mobile.data.model.withShown
 import de.pyryco.mobile.data.network.ArchiveConversationPayloadDto
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
+import de.pyryco.mobile.data.network.AttachmentChunkPlan
 import de.pyryco.mobile.data.network.BackfillSincePayloadDto
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.ChangeWorkspacePayloadDto
@@ -45,6 +46,7 @@ import de.pyryco.mobile.data.network.QuestionShownPayloadDto
 import de.pyryco.mobile.data.network.RecentWorkspacesListPayloadDto
 import de.pyryco.mobile.data.network.RegisterPushTokenPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
+import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RenameConversationPayloadDto
 import de.pyryco.mobile.data.network.RenameWorkspacePayloadDto
 import de.pyryco.mobile.data.network.ReplayCursor
@@ -102,6 +104,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.yield
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.JsonElement
@@ -397,6 +402,34 @@ class RemoteConversationRepository(
     @Synchronized
     private fun routeDebugBundle(envelope: Envelope): Boolean = debugBundle?.accept(envelope) == true
 
+    /** Held by one upload from its first chunk until it settles (#829), so uploads on this connection run one at a time. */
+    private val uploadLock = Mutex()
+    private var activeUpload: AttachmentUploadTransfer? = null
+    private var uploadInboundEnded = false
+
+    /** Registers [transfer] as the one routed upload, unless inbound has already ended. */
+    @Synchronized
+    private fun beginUpload(transfer: AttachmentUploadTransfer): Boolean {
+        if (uploadInboundEnded) return false
+        activeUpload = transfer
+        return true
+    }
+
+    @Synchronized
+    private fun finishUpload(transfer: AttachmentUploadTransfer) {
+        if (activeUpload === transfer) activeUpload = null
+    }
+
+    /** Runs in the inbound collector's `finally`: the daemon discards a partial upload with its connection. */
+    @Synchronized
+    private fun endAttachmentUploads() {
+        uploadInboundEnded = true
+        activeUpload?.fail(AttachmentUploadResult.ReconnectRequired)
+    }
+
+    @Synchronized
+    private fun routeAttachmentUpload(envelope: Envelope): Boolean = activeUpload?.accept(envelope) == true
+
     /**
      * Source of the client-owned [ThreadItem.UnrecognizedMessage.id] (#609). The `unrecognized_message`
      * wire frame carries neither a message id nor a `turn_id`, yet the thread's `LazyColumn` keys on
@@ -513,6 +546,7 @@ class RemoteConversationRepository(
                 pump.inbound.collect { envelope -> onInbound(envelope) }
             } finally {
                 endDebugBundle()
+                endAttachmentUploads()
                 failAllPending()
             }
         }
@@ -520,6 +554,7 @@ class RemoteConversationRepository(
 
     private fun onInbound(envelope: Envelope) {
         if (routeDebugBundle(envelope)) return
+        if (routeAttachmentUpload(envelope)) return
         recordReplayCursor(envelope)
         when (envelope.type) {
             TYPE_CONVERSATIONS -> {
@@ -2087,6 +2122,65 @@ class RemoteConversationRepository(
     }
 
     /**
+     * Upload [bytes] to [conversationId] on **this** connection as `attachment_chunk` frames (#829), under
+     * one freshly minted lowercase UUIDv4, and wait for the daemon's outcome. Never throws except on
+     * cancellation.
+     *
+     * An oversized file is refused before anything else. Otherwise the upload takes [uploadLock] and holds
+     * it until it settles, so a second upload's chunks only follow a settled first and the socket's send
+     * queue never carries two uploads at once. Each chunk's envelope id is recorded before it is sent, and
+     * the loop stops at the first settled outcome, so a refused, unsent or disconnected upload sends no
+     * further chunk. No timeout: the connection's own liveness teardown ends an upload the daemon never
+     * answers, through the inbound collector's `finally`.
+     *
+     * Logs the attachment id, the chunk index and the total — never the bytes, filename, digest or type.
+     */
+    override suspend fun uploadAttachment(
+        conversationId: String,
+        bytes: ByteArray,
+        filename: String,
+        mimeType: String,
+    ): AttachmentUploadResult {
+        if (!AttachmentUploadLimit.fits(bytes.size)) return AttachmentUploadResult.TooLarge
+        return uploadLock.withLock {
+            val transfer = AttachmentUploadTransfer(UUID.randomUUID().toString())
+            if (!beginUpload(transfer)) return@withLock AttachmentUploadResult.ReconnectRequired
+            try {
+                val plan = AttachmentChunkPlan(conversationId, transfer.attachmentId, bytes, filename, mimeType)
+                for (index in 0 until plan.totalChunks) {
+                    if (transfer.isSettled) break
+                    val chunk =
+                        Envelope(
+                            id = requestId.incrementAndGet(),
+                            type = TYPE_ATTACHMENT_CHUNK,
+                            ts = Clock.System.now().toString(),
+                            payload = MobileJson.encodeToJsonElement(plan.payload(index)),
+                        )
+                    transfer.expectReplyTo(chunk.id)
+                    val sent =
+                        try {
+                            pump.send(chunk)
+                        } catch (_: Exception) {
+                            false
+                        }
+                    if (!sent) {
+                        transfer.fail(AttachmentUploadResult.ReconnectRequired)
+                        break
+                    }
+                    RelayLog.d { "event=attachment_chunk id=${transfer.attachmentId} index=$index total=${plan.totalChunks}" }
+                    // Lets the inbound collector settle a refusal before the next chunk, and makes the loop cancellable.
+                    yield()
+                }
+                transfer.await().also { outcome ->
+                    RelayLog.d { "event=attachment_upload id=${transfer.attachmentId} outcome=${outcome::class.simpleName}" }
+                }
+            } finally {
+                finishUpload(transfer)
+            }
+        }
+    }
+
+    /**
      * Request the current claude screen for [conversationId] over v2 `request_snapshot` (#375) and
      * return the correlated `screen_snapshot` reply's rendered [ScreenSnapshotPayloadDto.text] — the
      * always-available, parser-independent snapshot floor (pyrycode#618). A pure read: it mutates no
@@ -3269,6 +3363,7 @@ class RemoteConversationRepository(
 
         /** Correlated failure reply (`{code, message, retryable}`) to a request (#346, #272). */
         const val TYPE_ERROR = "error"
+        const val TYPE_ATTACHMENT_CHUNK = "attachment_chunk"
 
         /** Server `error.code` for an unknown conversation → [IllegalArgumentException] (#346, AC #3). */
         const val ERROR_CONVERSATION_NOT_FOUND = "conversation.not_found"

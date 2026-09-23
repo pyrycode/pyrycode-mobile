@@ -233,6 +233,27 @@ class StableConversationRepository(
         systemPrompt: String?,
     ): Unit = live.setSystemPrompt(conversationId, systemPrompt)
 
+    /**
+     * Uploads on the repository live at call entry (#829), so a later connection change never moves an
+     * upload in flight. With none live this is a result rather than [IllegalStateException]: the upload
+     * contract reports every failure as a value, and an oversized file says not to retry even here.
+     */
+    override suspend fun uploadAttachment(
+        conversationId: String,
+        bytes: ByteArray,
+        filename: String,
+        mimeType: String,
+    ): AttachmentUploadResult {
+        val repository =
+            currentRepository.value
+                ?: return if (AttachmentUploadLimit.fits(bytes.size)) {
+                    AttachmentUploadResult.ReconnectRequired
+                } else {
+                    AttachmentUploadResult.TooLarge
+                }
+        return repository.uploadAttachment(conversationId, bytes, filename, mimeType)
+    }
+
     private companion object {
         const val NOT_CONNECTED = "No live relay connection"
     }

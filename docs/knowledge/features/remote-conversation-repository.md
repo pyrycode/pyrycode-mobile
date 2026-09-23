@@ -62,7 +62,10 @@ Authenticated payloads still require validation: the connection-owned
 `DebugBundleTransfer` validates diagnostic chunk fields before retaining opaque
 bytes. It shares the sole inbound consumer and exposes a separate
 [host transfer API](relay-debug-bundle-transfer.md),
-outside `ConversationRepository` and screen state.
+outside `ConversationRepository` and screen state. `AttachmentUploadTransfer` (#829) is its upload-leg
+sibling — also connection-owned, also routed first in `onInbound`, but **on** the
+`ConversationRepository` surface (`uploadAttachment`) rather than beside it, since the destination is a
+conversation, not the whole host. See [Attachment upload](attachment-upload.md).
 
 ## Status projections: one file per status event
 
@@ -264,6 +267,10 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   than #395/#596's bare `Set` because the wire carries a reading, **on the interface with a
   `flowOf(null)` default** — see [Thinking-progress state](thinking-progress-state.md); UI reaction is
   an unfiled sibling of the same #653 split).
+- Sibling transfer: [Attachment upload](attachment-upload.md) ([#829](https://github.com/pyrycode/pyrycode-mobile/issues/829),
+  **landed**) — `uploadAttachment`, the `AttachmentUploadTransfer` upload-leg sibling of
+  `DebugBundleTransfer`, the 8 MB local socket-queue bound, and the `StableConversationRepository`
+  snapshot-or-result delegation it needed instead of the usual snapshot-or-throw.
 - Connection wiring: [`RelayRepositoryCoordinator`](relay-repository-coordinator.md)
   ([#351](../codebase/351.md), **landed**) — constructs this repository per live connection against the
   pump + a child scope, made `NoiseSessionPump : ManagedSessionPump : SessionPump`, and publishes the
