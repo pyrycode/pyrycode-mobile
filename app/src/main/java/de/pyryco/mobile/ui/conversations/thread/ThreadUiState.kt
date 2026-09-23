@@ -76,6 +76,9 @@ data class ThreadUiState(
     // the screen asks, the VM decides whether the ask is honoured, and a second copy of that decision in
     // Compose would be a second place to get it wrong.
     val historyTail: ThreadHistoryTail = ThreadHistoryTail.None,
+    // #884: the Actions menu's commands this conversation's published slash-command menu proves absent,
+    // greyed out in the menu. Only the verdict reaches the screen, never a published string.
+    val absentActions: Set<ComposerAction> = emptySet(),
 )
 
 data class SaveAsChannelDialogState(

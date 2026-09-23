@@ -151,3 +151,7 @@ The ticket names no documentation requirement. The documentation stage should fo
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-24
+
+## Revisions
+
+**2026-09-24, Phase B: open question resolved.** At Robolectric's 320dp width, all four footer buttons still lay out and every existing footer case passes. The exception is `outsideTap_dismissesWithoutSelecting_andNeverReachesTheComposer`. With Actions leading the row, the model overlay now opens far enough right to cover the input field's centre, and the test tapped that centre as its "outside" point. The test now taps near the field's start, which the scrim still covers. Nothing changed in the footer layout. The contract is unchanged: an outside tap dismisses without selecting.

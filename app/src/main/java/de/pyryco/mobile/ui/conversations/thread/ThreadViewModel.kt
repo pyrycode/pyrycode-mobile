@@ -23,6 +23,7 @@ import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.SessionSettings
+import de.pyryco.mobile.data.repository.SlashCommandMenu
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
@@ -52,6 +53,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.runningFold
 import kotlinx.coroutines.flow.scan
@@ -260,6 +262,18 @@ class ThreadViewModel(
             runConfig(settings, menu, model, effort, permission)
         }.combine(runningModel) { config, running -> config.copy(running = running) }
 
+    /**
+     * The Actions menu's commands this conversation's published slash-command menu (#882) proves absent
+     * (#884). Seeded empty so a repository that never emits cannot stall [state]; the published strings
+     * stay inside [absentComposerActions].
+     */
+    private val absentActions: Flow<Set<ComposerAction>> =
+        repository
+            .observeSlashCommandMenu(conversationId)
+            .map(::absentComposerActions)
+            .onStart { emit(emptySet()) }
+            .distinctUntilChanged()
+
     private val transientDialogs: Flow<TransientDialogs> =
         combine(
             pendingRenameDialog,
@@ -355,16 +369,17 @@ class ThreadViewModel(
                 mutationsSupported = mutationsSupported,
                 historyTail = content.historyTail,
             )
-        }.stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000),
-            initialValue =
-                ThreadUiState(
-                    conversationId = conversationId,
-                    displayName = conversationId,
-                    mutationsSupported = mutationsSupported,
-                ),
-        )
+        }.combine(absentActions) { uiState, absent -> uiState.copy(absentActions = absent) }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue =
+                    ThreadUiState(
+                        conversationId = conversationId,
+                        displayName = conversationId,
+                        mutationsSupported = mutationsSupported,
+                    ),
+            )
 
     val connectionState: StateFlow<ConnectionState> =
         connectionStateSource
@@ -1056,6 +1071,26 @@ class ThreadViewModel(
         }
     }
 
+    /**
+     * Send the Actions menu's [action] command (#884) as an ordinary message to this conversation, through
+     * the same guarded send [sendMessage] runs, so a failed send is handled exactly as a composer message's.
+     * It leaves the typed draft alone, so there is no clear on success. A command the published menu proves
+     * absent is refused here too, behind the greyed-out row. Reset session carries no command and never
+     * comes this way. Logs static codes only.
+     */
+    fun onComposerCommand(action: ComposerAction) {
+        val command = action.command ?: return
+        if (action in state.value.absentActions) {
+            RelayLog.d { "event=composer_action action=${action.value} outcome=absent" }
+            return
+        }
+        launchGuardedRepoCall {
+            effortRecall.awaitWrite()
+            repository.sendMessage(conversationId, command)
+            RelayLog.d { "event=composer_action action=${action.value} outcome=sent" }
+        }
+    }
+
     fun retry() {
         viewModelScope.launch { connectionStateSource.retry() }
     }
@@ -1694,6 +1729,26 @@ private fun String.toChannelSlug(): String =
 // #807 deleted `Effort.wire()` / `Model.wire()`, the two enum-to-daemon-string mappers #544 added here.
 // Their premise was that the phone knows the server's vocabulary; it does not. Every argument sent now
 // comes from `ModelMenuRow.value` / `effortLevels` — the server's own strings, forwarded verbatim.
+
+/**
+ * The Actions menu's commands that [menu] proves absent (#884), after desktop's
+ * `composerActionAvailability`. Proof needs a menu, a dropped count of exactly 0, no row with a truncated
+ * `name` or `aliases`, and no row whose name or alias equals the command without its slash. Anything less
+ * proves nothing, and every row stays enabled. [ComposerAction.ResetSession] is never absent.
+ *
+ * The published strings are workspace-authored. They are only compared here, never returned, rendered,
+ * logged or sent.
+ */
+internal fun absentComposerActions(menu: SlashCommandMenu?): Set<ComposerAction> {
+    if (menu == null || menu.droppedCommands != 0) return emptySet()
+    val rows = menu.rows
+    if (rows.any { row -> row.truncatedFields.orEmpty().any { it == "name" || it == "aliases" } }) return emptySet()
+    return ComposerAction.entries
+        .filter { action ->
+            val name = action.command?.removePrefix("/") ?: return@filter false
+            rows.none { it.name == name || name in it.aliases }
+        }.toSet()
+}
 
 /**
  * The client's share of the #791 trust boundary: one daemon-authored string reduced to inert display
