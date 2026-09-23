@@ -57,28 +57,33 @@ when the matching helper is non-`null`.
 ## Placement in the thread
 
 Joins [`ThreadScreen`](thread-screen.md)'s single mutually-exclusive status slot
-(`ThreadStatusArea`, `ThreadScreen.kt`) as a fourth arm, ranked **between** api-retry and compaction:
+(`ThreadStatusArea`, `ThreadScreen.kt`) as a fourth arm, ranked **between** api-retry and resetting
+(originally compaction; [#872](https://github.com/pyrycode/pyrycode-mobile/issues/872) inserted
+[`ResettingIndicator`](resetting-indicator.md) below this arm without moving it):
 
 ```kotlin
 when {
     apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = slot)
     usageLimit != null                     -> UsageLimitIndicator(reading = usageLimit, modifier = slot)
+    resetting != null                      -> ResettingIndicator(status = resetting, modifier = slot)
     isCompacting                           -> CompactingIndicator(isCompacting = true, modifier = slot)
     turnOutcome != null                    -> TurnOutcomeIndicator(report = turnOutcome, modifier = slot)
     else                                   -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress)
 }
 ```
 
-Usage limit sits above compaction for the same reason api-retry already sits above it: compaction is
-benign progress and must never mask a signal that something may be going wrong. It sits below api-retry
-because a live retry is the stronger "something is wrong" signal when both are somehow true (never
-observed in practice). The arm is raised by a non-`null` reading alone — the benign clear and the read-time
-expiry are already applied upstream in [`UsageLimitProjection`](usage-limit-state.md#the-clear-is-session-scoped--the-expiry-is-the-readings-second-way-down),
+Usage limit sits above resetting and compaction for the same reason api-retry already sits above it: both
+are benign-or-routine (a report, and the daemon's own scheduled reset) and must never mask a signal that
+something may be going wrong. It sits below api-retry because a live retry is the stronger "something is
+wrong" signal when both are somehow true (never observed in practice). The arm is raised by a non-`null`
+reading alone — the benign clear and the read-time expiry are already applied upstream in
+[`UsageLimitProjection`](usage-limit-state.md#the-clear-is-session-scoped--the-expiry-is-the-readings-second-way-down),
 so nothing in this arm or the screen re-reads `resetsAt`/`status`. [#805](https://github.com/pyrycode/pyrycode-mobile/issues/805)
-added a fifth arm, [`TurnOutcomeIndicator`](turn-outcome-indicator.md), directly below compaction and
-above thinking — a failed or interrupted turn's outcome is post-turn, so it has never been observed
-overlapping this reading. See
-[API-retry indicator § Placement](api-retry-indicator.md#placement-in-the-thread) and
+added a fifth arm (now sixth), [`TurnOutcomeIndicator`](turn-outcome-indicator.md), directly below
+compaction and above thinking — a failed or interrupted turn's outcome is post-turn, so it has never been
+observed overlapping this reading. See
+[API-retry indicator § Placement](api-retry-indicator.md#placement-in-the-thread),
+[Resetting indicator § Placement](resetting-indicator.md#placement-in-the-thread) and
 [Compacting indicator § Placement](compacting-indicator.md#placement-in-the-thread) for the rest of the
 ladder's rationale, and [Thread screen — overlays and app bar](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643)
 for the `ThreadStatusArea` composable this arm was added to.
