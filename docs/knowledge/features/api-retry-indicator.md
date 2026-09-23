@@ -111,6 +111,8 @@ when {
         UsageLimitIndicator(reading = usageLimit, modifier = Modifier.fillMaxWidth())
     isCompacting ->
         CompactingIndicator(isCompacting = true, modifier = Modifier.fillMaxWidth())
+    turnOutcome != null ->
+        TurnOutcomeIndicator(report = turnOutcome, modifier = Modifier.fillMaxWidth())
     else ->
         ThinkingIndicator(isThinking = isThinking, modifier = Modifier.fillMaxWidth())
 }
@@ -227,9 +229,9 @@ both rendered branches are covered.
   `observeApiRetry`, the `api_retry` decode this component renders.
 - Host: [Thread screen](thread-screen.md) — threads `apiRetry` as another flat sibling parameter and
   arbitrates the status slot (the composer's `ThreadStatusArea` since [#643](../codebase/643.md);
-  the foot of the content `Column` before it), a four-way `when` across it,
-  [`UsageLimitIndicator`](usage-limit-indicator.md), [`CompactingIndicator`](compacting-indicator.md), and
-  `ThinkingIndicator`.
+  the foot of the content `Column` before it), a five-way `when` across it,
+  [`UsageLimitIndicator`](usage-limit-indicator.md), [`CompactingIndicator`](compacting-indicator.md),
+  [`TurnOutcomeIndicator`](turn-outcome-indicator.md), and `ThinkingIndicator`.
 - Idioms mirrored: [Thinking indicator](thinking-indicator.md) (the direct clone — early-return,
   sibling-`StateFlow`, defaulted-hoisted-parameter, merged-`semantics`, design-owed M3 default,
   light/dark previews, file-private spacing `val`s intentionally **not** shared/refactored across the

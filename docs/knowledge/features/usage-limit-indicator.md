@@ -64,6 +64,7 @@ when {
     apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = slot)
     usageLimit != null                     -> UsageLimitIndicator(reading = usageLimit, modifier = slot)
     isCompacting                           -> CompactingIndicator(isCompacting = true, modifier = slot)
+    turnOutcome != null                    -> TurnOutcomeIndicator(report = turnOutcome, modifier = slot)
     else                                   -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress)
 }
 ```
@@ -73,7 +74,10 @@ benign progress and must never mask a signal that something may be going wrong. 
 because a live retry is the stronger "something is wrong" signal when both are somehow true (never
 observed in practice). The arm is raised by a non-`null` reading alone — the benign clear and the read-time
 expiry are already applied upstream in [`UsageLimitProjection`](usage-limit-state.md#the-clear-is-session-scoped--the-expiry-is-the-readings-second-way-down),
-so nothing in this arm or the screen re-reads `resetsAt`/`status`. See
+so nothing in this arm or the screen re-reads `resetsAt`/`status`. [#805](https://github.com/pyrycode/pyrycode-mobile/issues/805)
+added a fifth arm, [`TurnOutcomeIndicator`](turn-outcome-indicator.md), directly below compaction and
+above thinking — a failed or interrupted turn's outcome is post-turn, so it has never been observed
+overlapping this reading. See
 [API-retry indicator § Placement](api-retry-indicator.md#placement-in-the-thread) and
 [Compacting indicator § Placement](compacting-indicator.md#placement-in-the-thread) for the rest of the
 ladder's rationale, and [Thread screen — overlays and app bar](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643)
@@ -166,7 +170,10 @@ date or figure is built from them, never clamped. Nothing branches on `status` b
   precedence-lives-in-the-screen posture) — this arm is the first in the family to render an icon rather
   than a spinner, since a report is not progress. [Thinking-progress state](thinking-progress-state.md)
   and [Thinking indicator](thinking-indicator.md) (the closest sibling in carrying daemon-originated
-  numbers, though that arm carries no daemon text and needs no display cap).
+  numbers, though that arm carries no daemon text and needs no display cap). [Turn-outcome
+  indicator](turn-outcome-indicator.md) ([#805](https://github.com/pyrycode/pyrycode-mobile/issues/805),
+  immediately below compaction in the ladder) — the next arm to render an icon rather than a spinner, and
+  the first to carry three independent daemon-authored strings through one sanitizer at once.
 - Spec: `docs/specs/architecture/804-usage-limit-status-arm.md`.
 - Server SSOT: `internal/protocol/interactive.go` (`RateLimitedPayload`), `docs/protocol-mobile.md §
   rate_limited` — cited, not restated.

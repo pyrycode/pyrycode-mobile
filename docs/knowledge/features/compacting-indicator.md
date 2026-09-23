@@ -52,7 +52,10 @@ Pure function of `isCompacting`: no `ViewModel` reference, no flow collection, n
 slot — a **three-way `when`** at the time of #597 (extended from #594's two-way `if`), a **four-way
 `when`** since [#804](https://github.com/pyrycode/pyrycode-mobile/issues/804) added
 [`UsageLimitIndicator`](usage-limit-indicator.md) between
-api-retry and this arm — inside a private `ThreadStatusArea` composable (`ThreadScreen.kt:471`), the
+api-retry and this arm, and a **five-way `when`** since
+[#805](https://github.com/pyrycode/pyrycode-mobile/issues/805) added
+[`TurnOutcomeIndicator`](turn-outcome-indicator.md) directly below this arm — inside a private
+`ThreadStatusArea` composable (`ThreadScreen.kt:471`), the
 first child of the composer's `bottomBar` column — through \#642 the same `when` lived at the foot of the
 content `Column`, above the composer rather than inside it. The arms, flags and precedence below api-retry
 are unchanged by any of these moves; only the mount point, a 4dp-remainder horizontal inset (see [Thread
@@ -67,6 +70,8 @@ when {
         UsageLimitIndicator(reading = usageLimit, modifier = Modifier.fillMaxWidth())
     isCompacting ->
         CompactingIndicator(isCompacting = true, modifier = Modifier.fillMaxWidth())
+    turnOutcome != null ->
+        TurnOutcomeIndicator(report = turnOutcome, modifier = Modifier.fillMaxWidth())
     else ->
         ThinkingIndicator(isThinking = isThinking, modifier = Modifier.fillMaxWidth())
 }
@@ -196,7 +201,7 @@ case).
 - Upstream signal: [Compacting state](compacting-state.md) — `ThreadViewModel.isCompacting` /
   `observeCompacting`, the `compacting` decode this component renders.
 - Host: [Thread screen](thread-screen.md) — threads `isCompacting` as another flat sibling parameter
-  and arbitrates the status slot across four affordances (the composer's `ThreadStatusArea` since
+  and arbitrates the status slot across five affordances (the composer's `ThreadStatusArea` since
   [#643](../codebase/643.md); the foot of the content `Column` before it).
 - Idioms mirrored: [Thinking indicator](thinking-indicator.md) (the direct clone — early-return,
   sibling-`StateFlow`, defaulted-hoisted-parameter, merged-`semantics`, design-owed M3 default,
@@ -204,6 +209,8 @@ case).
   slice — same slot, same precedence discipline, but carries a display sanity gate this one correctly
   does not clone), [Usage-limit indicator](usage-limit-indicator.md)
   ([#804](https://github.com/pyrycode/pyrycode-mobile/issues/804), immediately above this arm in the
+  ladder), [Turn-outcome indicator](turn-outcome-indicator.md)
+  ([#805](https://github.com/pyrycode/pyrycode-mobile/issues/805), immediately below this arm in the
   ladder), [Stall promotion banner](stall-promotion-banner.md) (the different-slot,
   independently-co-rendering counterpoint, untouched by this ticket).
 - Parent: split from [#583](https://github.com/pyrycode/pyrycode-mobile/issues/583); sibling data slice
