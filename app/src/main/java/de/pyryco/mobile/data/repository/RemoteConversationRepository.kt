@@ -28,6 +28,7 @@ import de.pyryco.mobile.data.network.DequeueMessagePayloadDto
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.ErrorPayload
 import de.pyryco.mobile.data.network.HistoryPagePayloadDto
+import de.pyryco.mobile.data.network.MessageAttachmentIds
 import de.pyryco.mobile.data.network.MessageChunkPayloadDto
 import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
@@ -1776,7 +1777,25 @@ class RemoteConversationRepository(
     override suspend fun sendMessage(
         conversationId: String,
         text: String,
+    ): Message = sendMessage(conversationId, text, emptyList())
+
+    /**
+     * The same send naming [attachmentIds] (#830) on the payload. The bound is checked before a request id
+     * is taken, so a refused list sends nothing. Logs only the id count, never an id or the text.
+     */
+    override suspend fun sendMessage(
+        conversationId: String,
+        text: String,
+        attachmentIds: List<String>,
     ): Message {
+        val namedIds =
+            try {
+                MessageAttachmentIds.forSend(attachmentIds)
+            } catch (e: IllegalArgumentException) {
+                RelayLog.w { "event=send_message outcome=too_many_attachments count=${attachmentIds.distinct().size}" }
+                throw e
+            }
+        namedIds?.let { RelayLog.d { "event=send_message attachments=${it.size}" } }
         val messageId = UUID.randomUUID().toString()
         val sentAt = Clock.System.now()
         val request =
@@ -1786,7 +1805,12 @@ class RemoteConversationRepository(
                 ts = sentAt.toString(),
                 payload =
                     MobileJson.encodeToJsonElement(
-                        SendMessagePayloadDto(conversationId = conversationId, messageId = messageId, text = text),
+                        SendMessagePayloadDto(
+                            conversationId = conversationId,
+                            messageId = messageId,
+                            text = text,
+                            attachmentIds = namedIds,
+                        ),
                     ),
             )
         // Throws on a server `error` / not-Open session; the confirmed insert below is unreachable

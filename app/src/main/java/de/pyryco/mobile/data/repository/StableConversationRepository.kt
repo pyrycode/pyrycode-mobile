@@ -192,6 +192,12 @@ class StableConversationRepository(
         text: String,
     ): Message = live.sendMessage(conversationId, text)
 
+    override suspend fun sendMessage(
+        conversationId: String,
+        text: String,
+        attachmentIds: List<String>,
+    ): Message = live.sendMessage(conversationId, text, attachmentIds)
+
     override suspend fun createWorkspaceFolder(name: String): String = live.createWorkspaceFolder(name)
 
     /**

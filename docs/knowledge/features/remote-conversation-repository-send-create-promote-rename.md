@@ -117,6 +117,47 @@ the log).
 > both the live `message` arm and `sendMessage` share it (mirroring the pre-existing `appendMessages`).
 > Behavior-preserving; the one sanctioned edit to the collector's existing `TYPE_MESSAGE` body.
 
+### Naming a message's attachments — `sendMessage(conversationId, text, attachmentIds)` (#830)
+
+`send_message` can name the [uploaded attachments](attachment-upload.md) (#829) a message references, in
+`SendMessagePayloadDto`'s optional `attachment_ids` (`@SerialName`, declared last). Under `MobileJson`
+(`encodeDefaults = true`, `explicitNulls = false`) the field defaults to `null`, which is **omitted**, not
+encoded as `[]` — an `emptyList()` default would have added the key to every existing text-only send.
+
+`MessageAttachmentIds` (`data/network/MessagePayload.kt`) is the `AttachmentUploadLimit` idiom applied to
+this bound: `MAX = 32`; `forSend(ids)` drops repeats keeping first-occurrence order, throws
+`IllegalArgumentException` when more than `MAX` distinct ids remain, and returns `null` for an empty list
+— so "no ids" has exactly one wire form. **The daemon counts the raw `attachment_ids` array elements,
+while the acceptance criteria count ids after repeats are dropped; sending the deduplicated list makes
+both counts equal**, so a caller can't be refused for repeats it didn't intend as distinct ids.
+
+`ConversationRepository` gains a third `sendMessage` overload (default-throwing, the `setSessionSettings`
+idiom — the two-argument member is untouched, so none of the seventeen existing test doubles change):
+
+```kotlin
+suspend fun sendMessage(conversationId: String, text: String, attachmentIds: List<String>): Message =
+    error("sendMessage with attachments is not implemented for this ConversationRepository")
+```
+
+`RemoteConversationRepository`'s two-argument `sendMessage` now calls the three-argument override with
+`emptyList()`. The override calls `MessageAttachmentIds.forSend` **before** minting `message_id` or
+building the envelope, so a too-many-ids refusal throws before any request id is taken or frame sent —
+otherwise it's the unchanged #346 flow (same `sendAndAwaitReply`, same confirmed-insert only after the
+`ack`), with `attachmentIds` set on the DTO. The returned `Message` carries no attachment reference of its
+own (#672). A daemon refusal (`attachment.not_found`, `protocol.malformed`) arrives as a correlated
+`error` and throws `RelayErrorException` through the same path as any other `sendMessage` failure — the
+confirmed insert is unreachable, so a refused send leaves the thread unchanged.
+
+`StableConversationRepository` overrides the three-argument member as
+`live.sendMessage(conversationId, text, attachmentIds)` — the repository live at call entry, the same
+snapshot-or-throw posture as the two-argument send (see [Stable conversation
+repository](stable-conversation-repository.md)).
+
+**Test gotcha:** `observeMessages` sends its own catch-up request as soon as it's collected. A test that
+collects the thread first and then asserts on `pump.sent.single()` fails with "more than one element" —
+filter the captured frames to `type == "send_message"` instead of asserting there's exactly one frame
+sent.
+
 ## `createDiscussion(workspace)` — the second mutation (#347)
 
 Creates an unpromoted discussion over v2 `create_conversation` and returns the server-created
