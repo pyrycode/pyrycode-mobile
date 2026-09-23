@@ -32,7 +32,7 @@ Three design points pinned in #201:
 ```kotlin
 bottomBar = {
     Column(Modifier.fillMaxWidth().background(surface).imePadding().padding(top = 12.dp, bottom = 16.dp)) {
-        ThreadStatusArea(apiRetry = apiRetry, usageLimit = usageLimit, isCompacting = isCompacting, turnOutcome = turnOutcome, isThinking = isThinking, thinkingProgress = thinkingProgress, showRePair = showRePair, onRePair = onRePair)
+        ThreadStatusArea(apiRetry = apiRetry, usageLimit = usageLimit, resetting = resetting, isCompacting = isCompacting, turnOutcome = turnOutcome, isThinking = isThinking, thinkingProgress = thinkingProgress, runningTool = if (isBusy) openTool else null, showRePair = showRePair, onRePair = onRePair)
         ThreadInputBar(onSend = onSendMessage, isBusy = isBusy, onInterrupt = onInterrupt, …)
         ThreadComposerFooter(runConfig = state.runConfig, onOpen = { openControl = it }, onStatusClick = { sheetVisible = true }, onAnchorChanged = { control, bounds -> footerAnchors[control] = bounds }, …)
     }
@@ -42,10 +42,12 @@ bottomBar = {
 private fun ThreadStatusArea(
     apiRetry: ApiRetryStatus,
     usageLimit: UsageLimitReading?, // #804
+    resetting: ResetStatus?, // #872
     isCompacting: Boolean,
     turnOutcome: TurnOutcomeReport?, // #805
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?, // #803
+    runningTool: ToolCall?, // #897
     showRePair: Boolean = false, // #843
     onRePair: () -> Unit = {}, // #843
 ) {
@@ -54,9 +56,10 @@ private fun ThreadStatusArea(
         when {
             apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = slot)
             usageLimit != null -> UsageLimitIndicator(reading = usageLimit, modifier = slot)
+            resetting != null -> ResettingIndicator(status = resetting, modifier = slot)
             isCompacting -> CompactingIndicator(isCompacting = true, modifier = slot)
             turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = slot)
-            else -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress)
+            else -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress, runningTool = runningTool)
         }
     }
     if (!showRePair) {
@@ -71,6 +74,9 @@ private fun ThreadStatusArea(
 }
 ```
 
+**`resetting: ResetStatus?` (#872) was already a `when` arm here**, inserted between usage limit and
+compaction — folded into the snippet above for accuracy; it predates #897 and is otherwise untouched by it.
+
 The `bottomBar` column's third band was `ThreadStatusRow(model = …, effort = …, onExpandClick = { sheetVisible = true }, …)` through [#807](../codebase/807.md); [#808](../codebase/808.md) replaced it with [`ThreadComposerFooter`](thread-composer-footer.md), shown above, and wrapped the surrounding `Scaffold` in a `Box` so an [`OptionsOverlay`](options-overlay.md) can draw above it on selection — see [Thread composer footer](thread-composer-footer.md) for the full wiring. `ThreadStatusArea` itself (below) is unaffected by that change.
 
 - **The trailing contextual-action slot (#843).** The KDoc above `ThreadStatusArea` had reserved this slot since #643 ("stays empty until #675 fills it"); [#843](https://github.com/pyrycode/pyrycode-mobile/issues/843) fills it with a **Re-pair** button (Figma `354:7093`, a 6dp-radius `Surface` at 16dp/8dp padding, `bodySmall` + `FontWeight.Medium`) while `showRePair` holds — a private `RePairButton` composable beside the existing signal, which shrinks into a `weight(1f)` box so the row splits leading/trailing rather than stacking. `showRePair` comes from `ThreadViewModel.rePairAvailable`, `true` exactly when this thread's own host is in the rejected-pairing state (see below); `onRePair` is bound at `MainActivity` to `navController.navigate(Routes.pairCode(target.serverId))`. **Deliberate deviation from Figma:** the frame paints the button `on-error`/`error`; the shipped button uses the theme's `errorContainer`/`onErrorContainer` pair instead — the same family [`ConnectionBanner`](connection-banner.md)'s `Offline` arm and [`HistoryRetryRow`](thread-screen-how-it-works-list-and-status-row.md) already use for an error-plus-action affordance, per the ticket's Figma notes. The label is the local string resource `R.string.thread_re_pair` ("Pairing error - Re-pair"), never daemon-authored text.
@@ -79,7 +85,9 @@ The `bottomBar` column's third band was `ThreadStatusRow(model = …, effort = �
 - **Moved, not rewritten.** The three original arms, their flags and their precedence (api-retry first, then compaction, then thinking — see [API-retry indicator](api-retry-indicator.md#placement-in-the-thread)) are byte-identical to the pre-#643 `when`; only the mount point and the horizontal inset changed at #643. `ThinkingIndicator.kt`, `ApiRetryIndicator.kt` and `CompactingIndicator.kt` were not touched by that move.
 - **[#803](thinking-indicator.md) adds a sixth flat sibling, `thinkingProgress: ThinkingProgress?`, and no new arm.** It decorates the thinking arm's own `else` branch, so it rides the precedence above rather than adding to it — retry and compaction still pre-empt a live reading for free. Visibility stays `isThinking`'s alone; see [Thinking indicator § What it does](thinking-indicator.md#what-it-does).
 - **[#804](https://github.com/pyrycode/pyrycode-mobile/issues/804) adds a seventh flat sibling, `usageLimit: UsageLimitReading?`, and one new `when` arm** — inserted between api-retry and compaction, since claude's usage-limit report is informational but must not be masked by compaction's benign progress. See [Usage-limit indicator](usage-limit-indicator.md#placement-in-the-thread) for the full component.
-- **[#805](https://github.com/pyrycode/pyrycode-mobile/issues/805) adds an eighth flat sibling, `turnOutcome: TurnOutcomeReport?`, and one new `when` arm** — inserted between compaction and thinking, the bottom of the ladder: `api-retry → usage limit → compaction → turn outcome → thinking`. Compaction is mid-turn progress and a turn outcome is necessarily post-turn, so the two co-occurring has not been observed. The arm is raised by a `turnOutcomeReport(event)` classification held in `ThreadViewModel.turnOutcome`, and it clears itself the moment the next turn's `thinking`/`responding` phase arrives — never on `idle`, which may arrive on either side of the `turn_end` it accompanies. See [Turn-outcome indicator](turn-outcome-indicator.md#placement-in-the-thread) for the full component.
+- **[#805](https://github.com/pyrycode/pyrycode-mobile/issues/805) adds an eighth flat sibling, `turnOutcome: TurnOutcomeReport?`, and one new `when` arm** — inserted between compaction and thinking, the bottom of the ladder at the time: `api-retry → usage limit → compaction → turn outcome → thinking`. Compaction is mid-turn progress and a turn outcome is necessarily post-turn, so the two co-occurring has not been observed. The arm is raised by a `turnOutcomeReport(event)` classification held in `ThreadViewModel.turnOutcome`, and it clears itself the moment the next turn's `thinking`/`responding` phase arrives — never on `idle`, which may arrive on either side of the `turn_end` it accompanies. See [Turn-outcome indicator](turn-outcome-indicator.md#placement-in-the-thread) for the full component.
+- **#872 adds a ninth flat sibling, `resetting: ResetStatus?`, and one new `when` arm** — inserted between usage limit and compaction (Reset session's phase belongs below the usage-limit report and above compaction's benign progress). See [Resetting indicator](resetting-indicator.md#placement-in-the-thread) for the full component. The ladder is now `api-retry → usage limit → resetting → compaction → turn outcome → thinking`.
+- **[#897](thinking-indicator.md#the-running-tool-897) adds a tenth flat sibling, `runningTool: ToolCall?`, and no new arm.** Like `thinkingProgress`, it decorates the thinking arm's own `else` branch, so every arm above still pre-empts it for free. It is also the one sibling here that is not sourced from a `ThreadViewModel` flow: `ThreadScreen` derives it locally as `if (isBusy) openToolCall(state.items) else null`, `openToolCall` being a pure top-level function beside the screen (`internal fun openToolCall(items: List<ThreadItem>): ToolCall?` — the latest `Running`-status tool row, or `null`). See [Thinking indicator § The running tool](thinking-indicator.md#the-running-tool-897) for the selector and label detail.
 - **`ComposerStatusGutter = 20dp − 16dp = 4dp`.** The three indicator files each already carry their own 16dp horizontal padding (sized for their old full-bleed foot-of-list mount), so reaching the design's 20dp content gutter needs only the 4dp remainder here, not the full 20dp — passing the full gutter would double the inset and land the indicators' content at 36dp, a fidelity miss that reads as a design error rather than a padding sum.
 - **The band collapses when nothing is live.** Every arm still early-returns when its flag is false, so an idle status area emits no node and the composer column's `Arrangement.spacedBy(8.dp)` gap simply doesn't open above the input field.
 - **The 12dp gap above the whole `Input area`** (`ComposerTopGap`, the composer column's own top padding) is what used to be the space between the list and the foot-of-list `Column`; it now holds regardless of whether a status arm is showing.
