@@ -2,6 +2,8 @@
 
 Split out of [Remote conversation repository — the Phase 4 `ConversationRepository`](remote-conversation-repository.md) on 2026-09-05 to keep that document under the 50000-byte size cap the docs guard enforces. Every section below moved here verbatim and kept its heading, so its anchors are unchanged. Part of [Remote conversation repository — the Phase 4 `ConversationRepository`](remote-conversation-repository.md); see that document for what it does, its edge cases and its links.
 
+**The thread store, the minted-id ledger and the pending drops now live in `ThreadProjection`** (#912), an `internal class` in `data/repository/ThreadProjection.kt`, split out of `RemoteConversationRepository` the way the status events were (#819 — see [Status projections](remote-conversation-repository.md#status-projections-one-file-per-status-event)). The repository still owns the connection's single inbound collector and every `interactive` capability gate; each thread frame's `onInbound` arm now hands off to a public method on the projection instead of a private method on the repository itself, and `sendMessage`, `dropQueuedMessage` and `requestHistory` record into it directly rather than into a repository field. The move changed no fold behaviour, so the sections below still describe it accurately — where a snippet shows a `private val` or `private fun` on `RemoteConversationRepository`, read it as the same member, now on `ThreadProjection` and mostly public (`observe`, `appendMessages`, `appendSessionBoundary`, `applyUnrecognizedMessage`, `applyBanner`, `applyCompactionBoundary`, `applyToolUse`, `applyToolResult`, `applyToolDenied`, `applyToolProgress`, `applyAssistantDelta`, `finalizeAssistantTurn`, `recordMinted`, `recordDrop`, `withdrawDrop`, `settleDrops`, `mergeHistoryPage`, `remove`); `removeOwnEcho`, `appendUnrecognizedMessage`, `appendBanner`, `appendCompactionBoundary` and the three `decode…` functions stayed private, just on the new class. `settleDrops` also gained an explicit `QueueProjection` parameter, since it no longer sits in the same class as `queueProjection`.
+
 ## The repository — one projection, cold fan-out
 
 ```kotlin
@@ -193,14 +195,16 @@ non-`Message` boundary can interleave by arrival order (see [Thread store §
 below](#the-unified-thread-store-and-the-session_transition-fold-336)):
 
 - A third projection, `private val threadByConversation = MutableStateFlow<Map<String,
-  List<ThreadItem>>>(emptyMap())`, holds each conversation's ordered thread rows — `message_id`-deduped
-  `MessageItem`s plus interleaved `SessionBoundary`s. It is written **only** by the one `init` collector,
-  from the `message` arm (appends each live message), the `message_chunk` arm (appends a whole backfill
-  batch), the structured-turn folds (#387 tool rows, #337 streaming deltas), and the #336 boundary fold.
-  The message rows go through one accumulator:
+  List<ThreadItem>>>(emptyMap())` on `ThreadProjection` (moved off `RemoteConversationRepository` itself,
+  #912), holds each conversation's ordered thread rows — `message_id`-deduped `MessageItem`s plus
+  interleaved `SessionBoundary`s. It is written **only** by the repository's one `init` collector handing
+  frames to the projection's public folds, and by the projection's own `appendMessages` called from
+  `sendMessage`'s confirmed insert — from the `message` arm (appends each live message), the
+  `message_chunk` arm (appends a whole backfill batch), the structured-turn folds (#387 tool rows, #337
+  streaming deltas), and the #336 boundary fold. The message rows go through one accumulator:
 
   ```kotlin
-  private fun appendMessages(rows: List<Pair<String, Message>>) {  // (conversationId, Message)
+  fun appendMessages(rows: List<Pair<String, Message>>) {  // (conversationId, Message); public since #912
       if (rows.isEmpty()) return
       threadByConversation.update { current -> /* per row: first-seen id appends at end as a
           ThreadItem.MessageItem; repeat id replaces in place (is-MessageItem guard + indexOfFirst),
@@ -221,10 +225,8 @@ below](#the-unified-thread-store-and-the-session_transition-fold-336)):
   override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
       flow {
           pump.send(backfillSinceRequest(conversationId))
-          emitAll(threadByConversation                       // store already holds ThreadItems (#336) —
-              .map { it[conversationId].orEmpty() }          //   no more `.map(MessageItem)` wrap
-              .distinctUntilChanged())
-      }
+          emitAll(threadProjection.observe(conversationId))  // ThreadProjection.observe (#912);
+      }                                                       // store already holds ThreadItems (#336)
   ```
 
   `distinctUntilChanged()` means a change to **another** conversation's slot does not re-emit this flow.
@@ -279,27 +281,35 @@ repository.
   existing suite is the guard). Four share a `private fun List<ThreadItem>.indexOfMessage(id, role): Int`
   guard; `appendMessages` keeps an **inline id-only** `is ThreadItem.MessageItem` guard (message dedup is
   role-agnostic — routing it through the role-taking helper would change semantics). `lastMessages` (the
-  messages-only preview) was **not** touched; `threadProjection` lost its `.map { MessageItem(it) }` wrap.
+  messages-only preview) was **not** touched; the repository's `threadProjection(conversationId)` cold
+  read lost its `.map { MessageItem(it) }` wrap (that method has since been moved and renamed to
+  `ThreadProjection.observe`, #912 — a different thing from the `threadProjection` field the repository
+  now holds; don't confuse the two).
 - **Rides the single existing inbound collector.** A new `TYPE_SESSION_TRANSITION` arm joins the
   `onInbound` demux, beside the `stall` / `queue_state` siblings — **no second subscription**. Gated
   **identically** on `CAPABILITY_INTERACTIVE in negotiatedCapabilities()` (the **reused** #385 supplier —
-  no new capability), it calls `decodeSessionTransition(envelope)` (the `decodeStall`/`decodeQueueState`
-  `try/catch (IllegalArgumentException) { null }` drop idiom) and folds via `appendSessionBoundary`.
+  no new capability), the repository calls `decodeSessionTransition(envelope)` (the
+  `decodeStall`/`decodeQueueState` `try/catch (IllegalArgumentException) { null }` drop idiom, kept on the
+  repository because the decoded boundary also feeds the session id and settings-revision writes below)
+  and folds via `ThreadProjection.appendSessionBoundary` (a public method on the projection since #912;
+  previously a private method on the repository itself).
 - **Folds a thread row only — three deliberate non-actions.** Unlike the structured-stream arm it
   surfaces **nothing** on [`liveSessionEvents`](remote-conversation-repository-live-stream-and-modals.md#livesessionevents--the-v2-structured-stream-decode-seam-385)
   (a boundary is a thread row, not a streaming event), does **not** clear a [stall](stall-state.md) (a
   session transition is not turn forward-progress), and **does not dedup** — `appendSessionBoundary`
   pure-appends in arrival order (the wire carries no row id; the repo is connection-scoped per #351, so
   arrival order is correct — the same posture as `applyAssistantDelta`).
-- **Routes strictly by the payload's `conversation_id`** into `threadByConversation[conversationId]`, so
-  a boundary can only ever surface in `observeMessages(thatId)` — cross-routing is structurally
-  impossible (no "is this conversation observed?" guard; an unobserved id simply sits unread). This is
-  the fail-closed client mirror of the producer's server-side drop of unbindable transitions (#741).
+- **Routes strictly by the payload's `conversation_id`** into `ThreadProjection`'s
+  `threadByConversation[conversationId]` slice, so a boundary can only ever surface in
+  `observeMessages(thatId)` — cross-routing is structurally impossible (no "is this conversation
+  observed?" guard; an unobserved id simply sits unread). This is the fail-closed client mirror of the
+  producer's server-side drop of unbindable transitions (#741).
 
 `security-sensitive`, but the repository stays plain orchestration: decode runs behind the authenticated
-Noise channel, and **nothing in the new arm or the drop branch logs the payload** — `conversation_id` /
-session ids / `workspace_cwd` are sensitive (a logged or mis-routed boundary is a cross-conversation
-leak). See [Session-transition fold § Trust boundary](session-transition-fold.md#trust-boundary--no-payload-logging).
+Noise channel, and **nothing in the arm, the decode or the projection's fold logs the payload** —
+`conversation_id` / session ids / `workspace_cwd` are sensitive (a logged or mis-routed boundary is a
+cross-conversation leak); `ThreadProjection` has no logging call at all (#912 security review). See
+[Session-transition fold § Trust boundary](session-transition-fold.md#trust-boundary--no-payload-logging).
 
 ## History pages fold into the same thread (#645)
 
