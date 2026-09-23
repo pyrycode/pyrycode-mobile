@@ -39,12 +39,14 @@ import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.ui.components.AddWorkspaceModal
 import de.pyryco.mobile.ui.components.EditChatModal
+import de.pyryco.mobile.ui.components.EditWorkspaceModal
 import de.pyryco.mobile.ui.conversations.components.TreeConversationRow
 import de.pyryco.mobile.ui.conversations.components.TreeHostRow
 import de.pyryco.mobile.ui.conversations.components.TreeSectionHeader
 import de.pyryco.mobile.ui.conversations.components.TreeWorkspaceRow
 import de.pyryco.mobile.ui.host.HostEditorModal
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
+import de.pyryco.mobile.ui.workspace.workspaceDisplayName
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import kotlin.time.Duration.Companion.days
@@ -247,6 +249,39 @@ sealed interface ChannelListEvent {
 
     /** The Add workspace modal's Cancel, Close and Back. */
     data object AddWorkspaceDismissed : ChannelListEvent
+
+    /**
+     * A workspace row's pencil, in either section: open Edit workspace on **that** row's own host and exact
+     * `cwd` (#905). Never the shown name, which two workspaces can share; the view model reads it from the
+     * host's own snapshot.
+     */
+    data class TreeWorkspaceEditTapped(
+        val serverId: String,
+        val cwd: String,
+    ) : ChannelListEvent
+
+    /**
+     * The Edit workspace modal's OK, carrying the entered name already trimmed by the component. No ids, for
+     * the reason [HostEditNameSubmitted] carries none; the view model applies the label rule.
+     */
+    data class WorkspaceEditNameSubmitted(
+        val name: String,
+    ) : ChannelListEvent
+
+    /** The Edit workspace modal's Cancel, Close and Back from the editor. */
+    data object WorkspaceEditDismissed : ChannelListEvent
+
+    /** The modal's Archive workspace, which asks for a confirmation in place rather than archiving. */
+    data object WorkspaceArchiveRequested : ChannelListEvent
+
+    /** The archive confirmation accepted, through the shell's own OK. */
+    data object WorkspaceArchiveConfirmed : ChannelListEvent
+
+    /**
+     * The archive confirmation backed out of, through any of the shell's dismissal routes while it is up —
+     * distinct from [WorkspaceEditDismissed] because it returns to the editor instead of closing.
+     */
+    data object WorkspaceArchiveDeclined : ChannelListEvent
 }
 
 /**
@@ -291,6 +326,7 @@ fun ChannelListScreen(
         onDismissRequest = { onEvent(ChannelListEvent.HostEditDismissed) },
     )
     ChatEditorModal(hostState = hostState, onEvent = onEvent)
+    WorkspaceEditorModal(hostState = hostState, onEvent = onEvent)
 }
 
 /**
@@ -354,6 +390,41 @@ private fun ChatEditorModal(
                 editor.failed -> stringResource(R.string.edit_chat_save_failed)
                 else -> null
             },
+    )
+}
+
+/**
+ * [EditWorkspaceModal] bound to the open [WorkspaceEditorState] (#905), present exactly while there is one.
+ *
+ * OK and Archive follow the workspace's **own** host's connection, read on every draw as the chat editor
+ * does. The folder's own name comes from the same display rule the row uses, with no label. Both failure
+ * strings are static: the shell announces them aloud, and the daemon's message never reaches this screen.
+ */
+@Composable
+private fun WorkspaceEditorModal(
+    hostState: HostChannelListState,
+    onEvent: (ChannelListEvent) -> Unit,
+) {
+    val editor = hostState.workspaceEditor ?: return
+    EditWorkspaceModal(
+        serverId = editor.serverId,
+        cwd = editor.cwd,
+        initialName = editor.initialName,
+        folderName = workspaceDisplayName(editor.cwd, label = null),
+        onDismissRequest = { onEvent(ChannelListEvent.WorkspaceEditDismissed) },
+        onSubmit = { name -> onEvent(ChannelListEvent.WorkspaceEditNameSubmitted(name)) },
+        onArchiveRequested = { onEvent(ChannelListEvent.WorkspaceArchiveRequested) },
+        onArchiveConfirmed = { onEvent(ChannelListEvent.WorkspaceArchiveConfirmed) },
+        onArchiveDeclined = { onEvent(ChannelListEvent.WorkspaceArchiveDeclined) },
+        hostAvailable = hostState.isHostConnected(editor.serverId),
+        loading = editor.saving,
+        error =
+            when {
+                editor.archiveFailed -> stringResource(R.string.edit_workspace_archive_failed)
+                editor.failed -> stringResource(R.string.edit_workspace_save_failed)
+                else -> null
+            },
+        confirmingArchive = editor.confirmingArchive,
     )
 }
 
@@ -504,6 +575,8 @@ private fun LazyListScope.treeSection(
                     workspaceName = group.displayName,
                     expanded = workspaceKey !in hostState.collapsed,
                     onToggleExpanded = { onEvent(ChannelListEvent.TreeFoldToggled(workspaceKey)) },
+                    // The group's own host and exact cwd, in both sections, never its shown name.
+                    onEditTapped = { onEvent(ChannelListEvent.TreeWorkspaceEditTapped(group.serverId, group.cwd)) },
                 )
             }
             if (workspaceKey in hostState.collapsed) return@forEach

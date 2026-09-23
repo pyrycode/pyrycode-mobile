@@ -40,3 +40,28 @@ fun workspaceDisplayName(
         cwd.substringAfterLast('/').ifEmpty { cwd }
     }
 }
+
+/** The daemon's bound on a stored workspace label, in UTF-8 bytes; it refuses anything longer. */
+internal const val MAX_WORKSPACE_LABEL_BYTES: Int = 128
+
+/**
+ * The label a `renameWorkspace` sends for the operator's typed [name] (#905) — the caller's half of
+ * that operation's contract.
+ *
+ * The input is trimmed. A blank result, or one equal to [folderName] — the text the workspace shows with
+ * no label, `workspaceDisplayName(cwd, label = null)` — is `null`, which clears the stored label rather
+ * than storing the folder's own name as one. Anything else is sent trimmed. The comparison is exact.
+ */
+fun workspaceLabelFor(
+    name: String,
+    folderName: String,
+): String? {
+    val trimmed = name.trim()
+    return if (trimmed.isEmpty() || trimmed == folderName) null else trimmed
+}
+
+/** [label]'s size in UTF-8 bytes, the unit the daemon bounds it in. */
+fun workspaceLabelByteCount(label: String): Int = label.encodeToByteArray().size
+
+/** Whether the daemon would refuse [label] for its size. A clear (`null`) never is. */
+fun isWorkspaceLabelTooLong(label: String?): Boolean = label != null && workspaceLabelByteCount(label) > MAX_WORKSPACE_LABEL_BYTES
