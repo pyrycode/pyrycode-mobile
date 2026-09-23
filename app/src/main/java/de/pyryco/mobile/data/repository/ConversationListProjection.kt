@@ -191,7 +191,7 @@ internal class ConversationListProjection {
 
     /**
      * Remove [conversationId] from the list [projection] and from [lastMessages] after a confirmed
-     * `delete` (#532) — the list and last-message half of the repository's `removeConversation`, which
+     * `delete` (#532) — the list and last-message half of [ConversationCommands]' `removeConversation`, which
      * clears the thread through [ThreadProjection.remove] beside this call. Idempotent by construction:
      * `List.filterNot` returns an element-equal list when the id is absent, and `Map - missingKey` an
      * equals-identical map, so [kotlinx.coroutines.flow.StateFlow] conflation makes deleting an

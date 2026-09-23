@@ -80,10 +80,10 @@ internal class ModelMenuProjection(
 
     /**
      * Request *envelope* id -> the conversation that `request_model_list` named (#792). The refusal
-     * correlation, and deliberately **not** the repository's `pendingRequests`: this verb's two replies
+     * correlation, and deliberately **not** [RelayRequests]' `pendingRequests`: this verb's two replies
      * arrive on different arms — a success is a `model_list` that #791's arm applies by the payload's own
      * conversation id and that completes no waiter, while a refusal is an `error`. A
-     * `sendAndAwaitReply` here would therefore suspend until teardown on the one outcome the verb
+     * [RelayRequests.sendAndAwaitReply] here would therefore suspend until teardown on the one outcome the verb
      * exists to produce, and AC #4 forbids waiting on a reply that cannot come at all.
      *
      * So the ask is fire-and-forget and this map is the whole of its correlation: written before the
@@ -188,7 +188,7 @@ internal class ModelMenuProjection(
      * controls stay blank with nothing to wait for.
      *
      * **Fire-and-forget, non-suspending and non-throwing** — the
-     * [RemoteConversationRepository.requestDebugBundle] posture, not the repository's `sendAndAwaitReply`.
+     * [RemoteConversationRepository.requestDebugBundle] posture, not [RelayRequests.sendAndAwaitReply].
      * The success is a `model_list` handled by its own arm and completes no waiter,
      * so an awaiting send would suspend until teardown on the very outcome this verb exists to produce;
      * and a conn without `interactive` is answered with nothing at all, so there would be nothing to
@@ -207,7 +207,7 @@ internal class ModelMenuProjection(
      *     answers idempotently.
      *  4. **It was already asked** on this connection, via [askedModelMenus]'s atomic test-and-set.
      *
-     * Past the guards, the correlation is registered **before** the send (`sendAndAwaitReply`'s
+     * Past the guards, the correlation is registered **before** the send ([RelayRequests.sendAndAwaitReply]'s
      * no-lost-reply ordering) and a send the transport refused rolls **both** entries back. That is not
      * a retry — nothing re-sends — it only declines to burn the one shot on a frame that never left,
      * and in that window the pump is not `Open`, so no ask of any collector's could have gone out
@@ -265,7 +265,7 @@ internal class ModelMenuProjection(
      * **Neither branch writes [modelMenusByConversation]**, so no refusal becomes an empty menu; both
      * leave the conversation unavailable, the same resting state it was already in.
      *
-     * The repository's `mapError` is deliberately not reused: it collapses `conversation.not_found` into an
+     * [RelayRequests.mapError] is deliberately not reused: it collapses `conversation.not_found` into an
      * [IllegalArgumentException] and discards the very code this branch exists to read.
      *
      * **Never logs.** It reads [ErrorPayload.code] and discards the rest — `message` is daemon-authored

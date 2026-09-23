@@ -32,12 +32,12 @@ override suspend fun sendMessage(conversationId: String, text: String): Message 
     val messageId = UUID.randomUUID().toString()        // client-minted; the sender's correlation handle
     val sentAt = Clock.System.now()
     val request = Envelope(
-        id = requestId.incrementAndGet(),               // the ENVELOPE id — distinct from messageId
+        id = relayRequests.nextRequestId(),              // the ENVELOPE id — distinct from messageId
         type = "send_message", ts = sentAt.toString(),
         payload = MobileJson.encodeToJsonElement(
             SendMessagePayloadDto(conversationId, messageId, text)),  // {conversation_id, message_id, text}
     )
-    sendAndAwaitReply(request)                           // throws on error / not-Open; ignore the empty {} ack
+    relayRequests.sendAndAwaitReply(request)             // throws on error / not-Open; ignore the empty {} ack
     val message = Message(messageId, sessionId = "", Role.User, text, sentAt, isStreaming = false)
     recordLastMessage(conversationId, message)           // confirmed-insert into BOTH projections,
     appendMessages(listOf(conversationId to message))    //   only after the ack
@@ -53,21 +53,30 @@ for an unknown conversation — the server is authoritative (the cached `project
 unknown id surfaces through the server's `conversation.not_found` `error`. Observably identical to the
 fake's synchronous throw; the contract pins the exception *type*, not the timing.
 
-### The `ack`/`error` correlation primitive (reused by #347/#348)
+### The `ack`/`error` correlation primitive (reused by #347/#348, moved to `RelayRequests` by #914)
 
 The class still runs **exactly one** `pump.inbound` collector — `sendMessage` does **not** open a
-second subscription. Correlation rides that single collector via a generic pending-reply registry:
+second subscription. Correlation rides that single collector via a generic pending-reply registry. Since
+\#914 the registry, the counter and the correlated await live on `RelayRequests`
+(`data/repository/RelayRequests.kt`), split out of the repository the way the projections were (#912,
+\#913); the repository still owns `onInbound` and looks a waiter up through `RelayRequests.waiter` to
+complete or fail it:
 
 ```kotlin
-// keyed by the request ENVELOPE id (requestId.incrementAndGet()), distinct from the payload message_id
+// RelayRequests — keyed by the request ENVELOPE id (nextRequestId()), distinct from the payload message_id
+private val requestId = AtomicLong(0)
 private val pendingRequests = ConcurrentHashMap<Long, CompletableDeferred<JsonElement>>()
 
-private suspend fun sendAndAwaitReply(request: Envelope): JsonElement {
+fun nextRequestId(): Long = requestId.incrementAndGet()
+
+fun waiter(inReplyTo: Long?): CompletableDeferred<JsonElement>? = inReplyTo?.let { id -> pendingRequests[id] }
+
+suspend fun sendAndAwaitReply(request: Envelope): JsonElement {
     val deferred = CompletableDeferred<JsonElement>()
     pendingRequests[request.id] = deferred                       // register BEFORE send (no lost-reply race)
     return try {
-        check(pump.send(request)) { "${request.type} not sent: session not connected" }  // → IllegalStateException
-        deferred.await()                                          // collector completes it on ack/error
+        check(send(request)) { "${request.type} not sent: session not connected" }  // → IllegalStateException
+        deferred.await()                                          // repository's onInbound completes it via waiter()
     } finally {
         pendingRequests.remove(request.id)                        // success, error, AND caller cancellation
     }
@@ -75,23 +84,29 @@ private suspend fun sendAndAwaitReply(request: Envelope): JsonElement {
 ```
 
 - **Keyed on the envelope id, not the payload `message_id`** — two distinct ids; conflating them would
-  break correlation. The collector's `ack`/`error` arms complete the matching deferred by
-  `Envelope.inReplyTo` (see the demux table above).
+  break correlation. The repository's `onInbound` `ack`/`error` arms look the matching deferred up through
+  `RelayRequests.waiter(envelope.inReplyTo)` and complete or fail it themselves (see the demux table above);
+  `RelayRequests` hands back the waiter rather than completing it so each arm keeps its own completion rule.
 - **`ConcurrentHashMap`** matches the file's existing `java.util.concurrent` posture (`AtomicLong`);
   it's touched from both the connection-scoped collector coroutine and arbitrary caller coroutines.
 - **Typed `<JsonElement>`** (the raw reply payload) so the one registry serves a bare-`ack` caller
-  (`sendMessage` ignores the empty `{}`) **and** future typed-reply callers (#347/#348 decode
+  (`sendMessage` ignores the empty `{}`) **and** every typed-reply caller (#347/#348 decode
   `conversation_created`/`conversation_updated` from it). Those siblings add their success-type `when`
-  branch and reuse the registry + the `error` branch + `mapError` **as-is**.
+  branch and reuse the registry + the `error` branch + `RelayRequests.mapError` **as-is**. Every request on
+  the connection takes its envelope id from `RelayRequests.nextRequestId` — the fire-and-forget frames and
+  the asks `ModelMenuProjection`/`QuestionBatchProjection` send included — so the model-list ask ledger and
+  `pendingRequests` stay disjoint.
 - **`sendMessage` suspends on `CompletableDeferred.await()` in the *caller's* coroutine** (a ViewModel
   scope), not the connection scope. Caller cancellation → `CancellationException` → the `finally`
   removes the entry (no leak). The reply is delivered by the collector coroutine;
   `complete`/`completeExceptionally` are thread-safe and idempotent across the two coroutines.
 - **On teardown, every pending deferred is failed — not left to hang ([#488](../codebase/488.md)).** The
-  single `init` collector's body is wrapped in `try { … } finally { failAllPending() }`. When the connection
+  single `init` collector's body is wrapped in `try { … } finally { endDebugBundle(); endAttachmentUploads();
+  relayRequests.failAllPending() }`. When the connection
   tears down — the primary trigger is [`RelayRepositoryCoordinator.teardownActive()`](relay-repository-coordinator.md)
   cancelling the collector's scope (`CancellationException` at the `collect` suspension), and the `finally`
-  also covers `pump.inbound` completing or throwing — `failAllPending()` completes **every** still-registered
+  also covers `pump.inbound` completing or throwing — `RelayRequests.failAllPending()` completes **every**
+  still-registered
   deferred exceptionally with a plain `IllegalStateException("connection torn down before reply")` and clears
   the map. So an awaiting `sendAndAwaitReply` caller (a tapped permission answer, a sent message, a promote,
   …) throws **promptly** instead of suspending forever (the pre-#488 behaviour was a **silent answer-drop**
@@ -104,7 +119,7 @@ private suspend fun sendAndAwaitReply(request: Envelope): JsonElement {
   registered concurrently *during* the sweep is never wiped without completion — `ConcurrentHashMap`-safe +
   idempotent. See [#488](../codebase/488.md).
 
-`mapError(payload): Throwable` turns a server `error` into the thrown domain exception: decode
+`RelayRequests.mapError(payload): Throwable` turns a server `error` into the thrown domain exception: decode
 `ErrorPayload` through `MobileJson`; `conversation.not_found` → `IllegalArgumentException("Unknown
 conversation: …")` (fake parity), every other code → [`RelayErrorException`](mobile-protocol-v2-wire-layer.md)`(code,
 retryable, message)`. A **decode failure is caught** and returns a fallback `RelayErrorException`
@@ -142,7 +157,7 @@ suspend fun sendMessage(conversationId: String, text: String, attachmentIds: Lis
 `RemoteConversationRepository`'s two-argument `sendMessage` now calls the three-argument override with
 `emptyList()`. The override calls `MessageAttachmentIds.forSend` **before** minting `message_id` or
 building the envelope, so a too-many-ids refusal throws before any request id is taken or frame sent —
-otherwise it's the unchanged #346 flow (same `sendAndAwaitReply`, same confirmed-insert only after the
+otherwise it's the unchanged #346 flow (same `RelayRequests.sendAndAwaitReply`, same confirmed-insert only after the
 `ack`), with `attachmentIds` set on the DTO. The returned `Message` carries no attachment reference of its
 own (#672). A daemon refusal (`attachment.not_found`, `protocol.malformed`) arrives as a correlated
 `error` and throws `RelayErrorException` through the same path as any other `sendMessage` failure — the
@@ -164,27 +179,30 @@ Creates an unpromoted discussion over v2 `create_conversation` and returns the s
 `Conversation`. [#347](../codebase/347.md) implements it by **composing** two already-merged building
 blocks — #346's `sendAndAwaitReply` correlation primitive and [#318](mobile-protocol-v2-wire-layer.md)'s
 `ConversationResponseDto.toConversation()` decode mapper — with one new `create_conversation` request
-encoder (`CreateConversationPayloadDto`).
+encoder (`CreateConversationPayloadDto`). The body now lives on `ConversationCommands` (#914,
+`data/repository/ConversationCommands.kt`); the repository's `override suspend fun createDiscussion` is a
+one-line hand-off.
 
 **The central contrast with `sendMessage`.** `send_message`'s reply is an empty `ack`, so `sendMessage`
 *reconstructs* its return `Message` from the input. `create_conversation`'s reply is a **typed
 `conversation_created` payload** carrying the **server-assigned** `id` and `cwd`, so `createDiscussion`
 *decodes* its return `Conversation` from the reply — it cannot reconstruct it (the server assigns the id,
 and a null `workspace` means the server picks the scratch `cwd`). The reply rides the **same** correlation
-primitive: `sendAndAwaitReply` hands the raw reply `JsonElement` back, and the caller decodes it.
+primitive: `RelayRequests.sendAndAwaitReply` hands the raw reply `JsonElement` back, and the caller decodes it.
 
 The flow (≤ ~10 lines):
 
 ```kotlin
-override suspend fun createDiscussion(workspace: String?): Conversation {
+// ConversationCommands
+suspend fun createDiscussion(workspace: String?): Conversation {
     val request = Envelope(
-        id = requestId.incrementAndGet(),
-        type = "create_conversation", ts = Clock.System.now().toString(),
+        id = requests.nextRequestId(),
+        type = TYPE_CREATE_CONVERSATION, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(CreateConversationPayloadDto(cwd = workspace)),
     )
-    val reply = sendAndAwaitReply(request)              // throws on server `error` / not-Open; the decode below is unreachable on failure
+    val reply = requests.sendAndAwaitReply(request)     // throws on server `error` / not-Open; the decode below is unreachable on failure
     val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-    upsertConversation(conversation)                    // confirmed-insert — ONLY after a successful decode (AC #2)
+    conversationList.upsertConversation(conversation)   // confirmed-insert — ONLY after a successful decode (AC #2)
     return conversation
 }
 ```
@@ -200,14 +218,20 @@ override suspend fun createDiscussion(workspace: String?): Conversation {
   `FakeConversationRepository.createDiscussion`, which picks `cwd = workspace ?: ""` locally (AC #1).
 - **Decode precedes the fold, so a garbage reply cannot corrupt the list.** A malformed
   `conversation_created` (missing field / bad `last_used_at`) throws the #318 decode boundary's
-  `SerializationException` / `IllegalArgumentException` **before** `upsertConversation` runs — the
+  `SerializationException` / `IllegalArgumentException` **before** `ConversationListProjection.upsertConversation`
+  runs — the
   projection is never mutated by a failure path (AC #3). The decode runs in the **caller's** coroutine
-  (after the `pendingRequests` entry is removed), so it never throws inside the single inbound collector.
+  (after the `RelayRequests.pendingRequests` entry is removed), so it never throws inside the single inbound
+  collector.
 
-### Confirmed-insert via `upsertConversation` (the projection's second writer)
+### Confirmed-insert via `ConversationListProjection.upsertConversation` (the projection's second writer)
+
+Since #913 this fold lives on `ConversationListProjection` (`data/repository/ConversationListProjection.kt`),
+not on the repository:
 
 ```kotlin
-private fun upsertConversation(conversation: Conversation) {
+// ConversationListProjection
+fun upsertConversation(conversation: Conversation) {
     projection.update { current ->                       // atomic CAS — retry-merges with a concurrent snapshot
         val existing = current.orEmpty()                 // null projection → single-element list
         val index = existing.indexOfFirst { it.id == conversation.id }
@@ -228,13 +252,16 @@ mapped later from a snapshot, so `StateFlow` conflation suppresses a redundant r
 [#348](../codebase/348.md) (`promote`) **reuses this fold verbatim** — its second call site, where an
 upsert replaces the existing *unpromoted* discussion entry in place with the promoted one. The second
 consumer confirms the helper is right-shaped: no abstraction was extracted (the #347 open question is
-resolved, not deferred).
+resolved, not deferred). Since #914 both `createDiscussion` and `promote` reach it as `conversationList`,
+the `ConversationListProjection` instance `ConversationCommands` is constructed with.
 
 > **Confirmed-insert is the trust property (mirrors #346).** A conversation is folded into the read
 > projection **only** on a server `conversation_created` success reply, never speculatively and never on
 > a failure path — so the list never shows a conversation the server did not create, by construction
-> (the fold is the last step, after both `sendAndAwaitReply` *and* the decode succeed; no rollback path
-> to get wrong). `mapError` is reused as-is — its `conversation.not_found` → `IllegalArgumentException`
+> (the fold is the last step, after both `RelayRequests.sendAndAwaitReply` *and* the decode succeed; no
+> rollback path
+> to get wrong). `RelayRequests.mapError` is reused as-is — its `conversation.not_found` →
+> `IllegalArgumentException`
 > branch is **not exercised** here, since create references no existing conversation.
 
 ## `promote(conversationId, name, workspace)` — the third mutation (#348)
@@ -245,25 +272,28 @@ Promotes an existing (scratch) discussion into a named, persistent channel over 
 `sendAndAwaitReply` → decode-reply → confirmed-fold → return shape — and is almost pure composition:
 it **reuses** #346's `sendAndAwaitReply` + `mapError`, #318's `ConversationResponseDto.toConversation()`,
 and #347's `upsertConversation`, adding only a new `promote_conversation` request encoder
-(`PromoteConversationPayloadDto`) and one `cwd`-resolution line.
+(`PromoteConversationPayloadDto`) and one `cwd`-resolution line. The body now lives on `ConversationCommands`
+(#914, `data/repository/ConversationCommands.kt`), beside `createDiscussion`; the repository's `override
+suspend fun promote` is a one-line hand-off.
 
 The flow (≤ ~10 lines):
 
 ```kotlin
-override suspend fun promote(conversationId: String, name: String, workspace: String?): Conversation {
+// ConversationCommands
+suspend fun promote(conversationId: String, name: String, workspace: String?): Conversation {
     // Null workspace ("promote in place") resolves to the conversation's existing cwd from the read
     // projection — the remote analog of the fake's `workspace ?: record.conversation.cwd`.
-    val cwd = workspace ?: projection.value?.firstOrNull { it.id == conversationId }?.cwd ?: ""
+    val cwd = workspace ?: conversationList.current().firstOrNull { it.id == conversationId }?.cwd ?: ""
     val request = Envelope(
-        id = requestId.incrementAndGet(),
-        type = "promote_conversation", ts = Clock.System.now().toString(),
+        id = requests.nextRequestId(),
+        type = TYPE_PROMOTE_CONVERSATION, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(
             PromoteConversationPayloadDto(conversationId = conversationId, name = name, cwd = cwd),
         ),
     )
-    val reply = sendAndAwaitReply(request)              // throws on server `error` / not-Open; the decode below is unreachable on failure
+    val reply = requests.sendAndAwaitReply(request)     // throws on server `error` / not-Open; the decode below is unreachable on failure
     val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-    upsertConversation(conversation)                    // confirmed-upsert — ONLY after a successful decode (AC #2/#3)
+    conversationList.upsertConversation(conversation)   // confirmed-upsert — ONLY after a successful decode (AC #2/#3)
     return conversation
 }
 ```
@@ -276,25 +306,27 @@ override suspend fun promote(conversationId: String, name: String, workspace: St
 - **Delta 2 — the reply is `conversation_updated`** (routed into the **same** success arm as
   `conversation_created`), decoded through the **same** #318 `ConversationResponseDto` (one DTO models
   both response types). A malformed reply throws the #318 decode exception in the **caller's** coroutine
-  **before** `upsertConversation` runs, so the projection is never mutated by a garbage success reply
+  **before** `ConversationListProjection.upsertConversation` runs, so the projection is never mutated by a
+  garbage success reply
   (AC #3, "no partial promote") — and never inside the lone inbound collector.
 - **Delta 3 — `cwd` resolution.** The domain `workspace` arg is nullable but the wire `cwd` is required.
   A **non-null** `workspace` (the `DEDICATED` choice) is sent verbatim; a **null** `workspace` (the
   `SCRATCH` choice / discussion-list default — both production callers reach this) means "promote in
-  place" and resolves to the conversation's existing `cwd`, read from the `projection.value` snapshot.
+  place" and resolves to the conversation's existing `cwd`, read from `ConversationListProjection.current()`.
   The `?: ""` final fallback is only reachable when `workspace` is null *and* the conversation is absent
   from the projection — **not reachable from the shipped UI** (it only promotes a visible, hence loaded,
   discussion); no throw is added for that should-not-happen state (Evidence-Based Fix Selection). The
   **returned** `cwd` always comes from the reply (server-authoritative), never the resolved request value
   (AC #1) — identical to #347's "return the reply's cwd, not the input."
 
-The `upsertConversation` upsert **replaces the existing unpromoted discussion entry in place** (same
+The `ConversationListProjection.upsertConversation` upsert **replaces the existing unpromoted discussion
+entry in place** (same
 `id`), so `observeConversations` re-emits with the conversation now in the **Channels** tier and gone from
 **Discussions** (AC #2) — list count unchanged, no duplicate.
 
 > **`conversation.not_found` is meaningful here — the AC-#3 branch #347 could not exercise.** Unlike
 > `createDiscussion`, `promote` references an **existing** conversation, so promoting an unknown id is a
-> real server error. `mapError` is reused **unchanged** — its `conversation.not_found` →
+> real server error. `RelayRequests.mapError` is reused **unchanged** — its `conversation.not_found` →
 > `IllegalArgumentException` branch (vs. `RelayErrorException` for any other code) is driven end-to-end by
 > #348's tests for the first time. The confirmed-upsert is the trust property (mirrors #346/#347): the
 > list never shows a promote the server did not perform, by construction.
@@ -306,22 +338,25 @@ renamed `Conversation`. [#530](../codebase/530.md) is `promote` ([#348](../codeb
 `cwd`** — otherwise byte-for-byte the same build-request → `sendAndAwaitReply` → decode-reply →
 confirmed-fold → return shape, and pure composition: it reuses #346's `sendAndAwaitReply` + `mapError`,
 \#318's `ConversationResponseDto.toConversation()`, and #347's `upsertConversation`, adding only a new
-`rename_conversation` request encoder (`RenameConversationPayloadDto`).
+`rename_conversation` request encoder (`RenameConversationPayloadDto`). The body now lives on
+`ConversationCommands` (#914, `data/repository/ConversationCommands.kt`), beside `promote`; the
+repository's `override suspend fun rename` is a one-line hand-off.
 
 The flow (≤ ~10 lines):
 
 ```kotlin
-override suspend fun rename(conversationId: String, name: String): Conversation {
+// ConversationCommands
+suspend fun rename(conversationId: String, name: String): Conversation {
     val request = Envelope(
-        id = requestId.incrementAndGet(),
+        id = requests.nextRequestId(),
         type = TYPE_RENAME_CONVERSATION, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(
             RenameConversationPayloadDto(conversationId = conversationId, name = name),
         ),
     )
-    val reply = sendAndAwaitReply(request)              // throws on server `error` / not-Open; the decode below is unreachable on failure
+    val reply = requests.sendAndAwaitReply(request)     // throws on server `error` / not-Open; the decode below is unreachable on failure
     val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-    upsertConversation(conversation)                    // confirmed-upsert — ONLY after a successful decode
+    conversationList.upsertConversation(conversation)   // confirmed-upsert — ONLY after a successful decode
     return conversation
 }
 ```
@@ -333,20 +368,23 @@ override suspend fun rename(conversationId: String, name: String): Conversation 
 - **The reply is `conversation_updated`**, routed into the **same** success arm `promote`'s reply already
   uses (added by #348) — no `onInbound` change needed. Decoded through the **same** #318
   `ConversationResponseDto`. A malformed reply throws the #318 decode exception in the caller's coroutine
-  **before** `upsertConversation` runs, so the projection is never mutated by a garbage success reply.
+  **before** `ConversationListProjection.upsertConversation` runs, so the projection is never mutated by a
+  garbage success reply.
 - **`name` is forwarded verbatim.** The `RenameDialog` is the sole trim authority; the daemon re-validates
   and rejects empty/whitespace titles server-side (`protocol.malformed`), surfaced as an ordinary
   `RelayErrorException` — no second client-side validation surface is added.
 - **The returned `name` is server-authoritative** (the reply's value, not the request's) — identical to
   `promote`'s "return the reply's cwd, not the input" discipline.
-- **`conversation.not_found` → `IllegalArgumentException`**, reusing `mapError` unchanged. Reachable only
+- **`conversation.not_found` → `IllegalArgumentException`**, reusing `RelayRequests.mapError` unchanged.
+  Reachable only
   if the conversation is deleted server-side between opening the thread and renaming — the call site
   (`ThreadViewModel`'s `RenameSubmit`) always passes the currently-open, hence server-known,
   `conversationId`, matching `promote`'s reachability profile. The [`#490`](../codebase/490.md) guard
   deliberately does **not** catch `IllegalArgumentException` (crash-as-programming-bug-signal), so this
   path is unreachable-by-construction from the shipped UI, not silently swallowed.
 
-The `upsertConversation` upsert **replaces the existing conversation entry in place** (same `id`), so
+The `ConversationListProjection.upsertConversation` upsert **replaces the existing conversation entry in
+place** (same `id`), so
 `observeConversations` re-emits with the new name in whichever tier (Channels/Discussions) it already sits
 in, and the thread top bar's `displayName` (derived from the same projection) re-emits too — both AC
 surfaces from one fold, no ViewModel change.

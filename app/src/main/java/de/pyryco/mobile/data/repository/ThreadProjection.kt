@@ -476,7 +476,7 @@ internal class ThreadProjection {
 
     /**
      * Drop [conversationId]'s thread after a confirmed `delete` (#532), the thread third of
-     * [RemoteConversationRepository]'s `removeConversation`. Removing an absent id re-emits nothing.
+     * [ConversationCommands]' `removeConversation`. Removing an absent id re-emits nothing.
      */
     fun remove(conversationId: String) {
         threadByConversation.update { it - conversationId }

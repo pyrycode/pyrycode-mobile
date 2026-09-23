@@ -407,7 +407,7 @@ class RelayRepositoryCoordinator(
      *
      * When no connection is active ([activeConnection] is `null`, between connections) it throws
      * [IllegalStateException]. When a connection exists but the pump is still pre-[PumpState.Open], the
-     * concrete `answerModal` → `sendAndAwaitReply` → `pump.send` returns false → [IllegalStateException]
+     * concrete `answerModal` → [ConversationCommands.answerModal] → [RelayRequests.sendAndAwaitReply] → `pump.send` returns false → [IllegalStateException]
      * (the #438 precedent) — so this needs **only** the null-guard, not a redundant `Open` gate. A server
      * `error` propagates as [de.pyryco.mobile.data.network.RelayErrorException] unchanged. Adds **no log**:
      * the `modalId`/`optionId` may name a sensitive command/path (never-log contract). [alwaysAllow] (#818)
