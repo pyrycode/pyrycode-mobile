@@ -3,7 +3,9 @@
 A per-conversation reading the thread layer can observe to learn **what claude last reported about its
 usage-limit window**, so a turn that stalls on a limit can say why. Landed in
 [#802](../../specs/architecture/802-decode-rate-limited-usage-limit-state.md) (split from #653, the data
-slice). Rendering the reading in the status area is a **sibling slice of the same split**, not yet filed.
+slice). Rendering the reading in the status area is sibling slice
+[#804](https://github.com/pyrycode/pyrycode-mobile/issues/804), shipped — see
+[Usage-limit indicator](usage-limit-indicator.md).
 
 This doc covers the **data layer only**: decode the inbound `rate_limited` envelope into observable
 state. It renders nothing itself. Wire SSOT: pyrycode `docs/protocol-mobile.md § rate_limited` +
@@ -188,11 +190,14 @@ single benign comparison, nor on `utilization` at all — both are reports, neve
 is never a scheduling input: the expiry is one comparison at read time, nothing schedules or iterates from
 it. Nothing is persisted, nothing is logged (payload, `conversation_id`, and the caught throwable are all
 discarded). Render-boundary obligations — inert-text rendering, defensive date formatting, copy that
-claims neither blocking nor lifting — are inherited by the render sibling, not discharged here; this
-slice has no UI sink.
+claims neither blocking nor lifting — are discharged by the render sibling,
+[Usage-limit indicator](usage-limit-indicator.md) (#804), not here; this slice has no UI sink.
 
 ## Related
 
+- [Usage-limit indicator](usage-limit-indicator.md) (#804) — the render sibling: the `ThreadStatusArea`
+  arm this reading drives, its three render-or-decline wording helpers, and the 30 s re-read ticker that
+  takes a displayed reading down at its `resets_at` without this layer's expiry rule being re-derived.
 - [Remote conversation repository](remote-conversation-repository.md) — hosts the
   `TYPE_RATE_LIMITED` demux arm; `UsageLimitProjection` holds the `usageLimitsByConversation` state, the
   decoder and the expiry-applying read.

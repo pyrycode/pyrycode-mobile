@@ -96,7 +96,7 @@ Scaffold(
                 .padding(top = 12.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            ThreadStatusArea(apiRetry = apiRetry, isCompacting = isCompacting, isThinking = isThinking)
+            ThreadStatusArea(apiRetry = apiRetry, usageLimit = usageLimit, isCompacting = isCompacting, isThinking = isThinking) // #804 added usageLimit
             ThreadInputBar(
                 onSend = onSendMessage,
                 modifier = Modifier.padding(horizontal = 20.dp),

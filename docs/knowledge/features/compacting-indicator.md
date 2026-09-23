@@ -49,17 +49,22 @@ Pure function of `isCompacting`: no `ViewModel` reference, no flow collection, n
 ## Placement in the thread
 
 **Moved in [#643](../codebase/643.md).** [`ThreadScreen`](thread-screen.md) arbitrates this status
-slot as a **three-way `when`** (extended from #594's two-way `if`) inside a private `ThreadStatusArea`
-composable (`ThreadScreen.kt:471`), the first child of the composer's `bottomBar` column — through
-\#642 the same `when` lived at the foot of the content `Column`, above the composer rather than inside
-it. The arms, flags and precedence are unchanged by the move; only the mount point and a 4dp-remainder
-horizontal inset (see [Thread screen — overlays and app bar](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643))
-are new:
+slot — a **three-way `when`** at the time of #597 (extended from #594's two-way `if`), a **four-way
+`when`** since [#804](https://github.com/pyrycode/pyrycode-mobile/issues/804) added
+[`UsageLimitIndicator`](usage-limit-indicator.md) between
+api-retry and this arm — inside a private `ThreadStatusArea` composable (`ThreadScreen.kt:471`), the
+first child of the composer's `bottomBar` column — through \#642 the same `when` lived at the foot of the
+content `Column`, above the composer rather than inside it. The arms, flags and precedence below api-retry
+are unchanged by any of these moves; only the mount point, a 4dp-remainder horizontal inset (see [Thread
+screen — overlays and app bar](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643)),
+and the inserted arm are new:
 
 ```kotlin
 when {
     apiRetry != ApiRetryStatus.NotRetrying ->
         ApiRetryIndicator(status = apiRetry, modifier = Modifier.fillMaxWidth())
+    usageLimit != null ->
+        UsageLimitIndicator(reading = usageLimit, modifier = Modifier.fillMaxWidth())
     isCompacting ->
         CompactingIndicator(isCompacting = true, modifier = Modifier.fillMaxWidth())
     else ->
@@ -72,13 +77,17 @@ when {
 - **Precedence stays single-sourced in the screen, not the ViewModel** — #594's deliberate decision,
   extended rather than revisited. `isThinking` keeps meaning "the `turn_state` phase" (other tests
   assert it directly), so suppressing it at its source would make the `ThreadViewModel` contract lie.
-- **api-retry keeps the top arm.** The two signals have never been observed overlapping and no AC is
-  spent on the combination, but the tie-break has a reason on record: api-retry is the "something is
-  going wrong" signal and compaction is benign progress, so the benign affordance must never mask the
-  alarming one. This is also the render-side answer to the ticket's bounded security question (§
-  Security) — see [Compacting state § Security](compacting-state.md#security) for the data-layer half.
+- **api-retry keeps the top arm, ahead of the usage-limit report as well as compaction.** None of the
+  three signals have been observed overlapping and no AC is spent on any combination, but the tie-break
+  has a reason on record: api-retry is the "something is going wrong" signal, a usage-limit report is
+  informational, and compaction is benign progress — the benign affordance must never mask a signal that
+  something may be wrong. This is also the render-side answer to the ticket's bounded security question (§
+  Security) — see [Compacting state § Security](compacting-state.md#security) for the data-layer half and
+  [Usage-limit indicator § Placement](usage-limit-indicator.md#placement-in-the-thread) for why that arm
+  sits immediately above this one.
 
-Both `[isCompacting]` and `[apiRetry]` are **conversation-level, not turn-scoped** — each must show
+`[isCompacting]`, `[apiRetry]`, and (since #804) the usage-limit reading are all **conversation-level, not
+turn-scoped** — each must show
 regardless of what `turn_state` says, including while `turn_state` is `idle`. `StallPromotionBanner`
 (a **separate** affordance above the message list) and the interrupt control (the send button's stop
 variant in `ThreadInputBar` since [#643](../codebase/643.md), below this slot in the same composer
@@ -187,13 +196,15 @@ case).
 - Upstream signal: [Compacting state](compacting-state.md) — `ThreadViewModel.isCompacting` /
   `observeCompacting`, the `compacting` decode this component renders.
 - Host: [Thread screen](thread-screen.md) — threads `isCompacting` as another flat sibling parameter
-  and arbitrates the status slot across three affordances (the composer's `ThreadStatusArea` since
+  and arbitrates the status slot across four affordances (the composer's `ThreadStatusArea` since
   [#643](../codebase/643.md); the foot of the content `Column` before it).
 - Idioms mirrored: [Thinking indicator](thinking-indicator.md) (the direct clone — early-return,
   sibling-`StateFlow`, defaulted-hoisted-parameter, merged-`semantics`, design-owed M3 default,
   light/dark previews), [API-retry indicator](api-retry-indicator.md) (the immediately-preceding render
   slice — same slot, same precedence discipline, but carries a display sanity gate this one correctly
-  does not clone), [Stall promotion banner](stall-promotion-banner.md) (the different-slot,
+  does not clone), [Usage-limit indicator](usage-limit-indicator.md)
+  ([#804](https://github.com/pyrycode/pyrycode-mobile/issues/804), immediately above this arm in the
+  ladder), [Stall promotion banner](stall-promotion-banner.md) (the different-slot,
   independently-co-rendering counterpoint, untouched by this ticket).
 - Parent: split from [#583](https://github.com/pyrycode/pyrycode-mobile/issues/583); sibling data slice
   [#596](../codebase/596.md) (PR #600, `da4c3f9`), natively blocking this ticket.
