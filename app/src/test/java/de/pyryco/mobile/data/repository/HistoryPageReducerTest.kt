@@ -6,6 +6,7 @@ import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.model.ToolDenial
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.ToolProgressPayloadDto
 import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -607,6 +608,135 @@ class HistoryPageReducerTest {
         assertEquals("late", toolCall?.output)
     }
 
+    // ---- #812: claude's elapsed-seconds reading on an open tool row --------------------------------
+
+    @Test
+    fun reduce_useThenProgress_retainsTheLatestReadingOnOneRunningRow() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(3, "tool_progress", toolProgressPayload("t1", 60)),
+                    entry(2, "tool_progress", toolProgressPayload("t1", 30)),
+                    entry(1, "tool_use", toolUsePayload("t1", name = "Bash", input = "sleep 90")),
+                ),
+                interactive = true,
+            )
+
+        assertEquals(listOf("t1"), rows.messageIds())
+        val toolCall = rows.messageRow("t1")?.toolCall
+        assertEquals(ToolCallStatus.Running, toolCall?.status)
+        assertEquals(60, toolCall?.elapsedSeconds)
+        assertEquals("sleep 90", toolCall?.input)
+    }
+
+    @Test
+    fun withToolProgress_keepsEveryReadingVerbatimAndARepeatIsANoOp() {
+        var rows =
+            listOf<ThreadItem>()
+                .withToolUse(LiveSessionEvent.ToolUse(CONVERSATION, "turn-1", "t1", "Bash", "ls"), TS_INSTANT)
+
+        // Zero, negative and backwards readings are upstream values: kept as sent, never clamped.
+        for (seconds in listOf(30, 0, -65, 12)) {
+            rows = rows.withToolProgress(progress("t1", seconds))
+            assertEquals(seconds, rows.messageRow("t1")?.toolCall?.elapsedSeconds)
+        }
+
+        assertTrue(rows.withToolProgress(progress("t1", 12)) === rows)
+        assertEquals(listOf("t1"), rows.messageIds())
+    }
+
+    @Test
+    fun reduce_progressAfterResult_neitherReopensNorOverwrites() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(4, "tool_progress", toolProgressPayload("t1", 90)),
+                    entry(3, "tool_result", toolResultPayload("t1", isError = false, summary = "done")),
+                    entry(2, "tool_progress", toolProgressPayload("t1", 30)),
+                    entry(1, "tool_use", toolUsePayload("t1", name = "Bash", input = "ls")),
+                ),
+                interactive = true,
+            )
+
+        val toolCall = rows.messageRow("t1")?.toolCall
+        assertEquals(ToolCallStatus.Done, toolCall?.status)
+        assertEquals("done", toolCall?.output)
+        // Closing the call clears the reading, and the late heartbeat does not bring it back.
+        assertEquals(null, toolCall?.elapsedSeconds)
+    }
+
+    @Test
+    fun reduce_progressAroundDenial_clearedAndLateProgressIgnored() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(4, "tool_progress", toolProgressPayload("t1", 90)),
+                    entry(3, "tool_denied", toolDeniedPayload("t1")),
+                    entry(2, "tool_progress", toolProgressPayload("t1", 30)),
+                    entry(1, "tool_use", toolUsePayload("t1", name = "Bash", input = "rm x")),
+                ),
+                interactive = true,
+            )
+
+        val toolCall = rows.messageRow("t1")?.toolCall
+        assertEquals(ToolCallStatus.Denied, toolCall?.status)
+        assertEquals(null, toolCall?.elapsedSeconds)
+    }
+
+    @Test
+    fun reduce_progressNamingNoRow_addsNoRow() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(3, "tool_progress", toolProgressPayload("tX", 30)),
+                    entry(2, "tool_use", toolUsePayload("t1", name = "Bash", input = "ls")),
+                    // Before its own tool_use: nothing to join yet, so the use opens with no reading.
+                    entry(1, "tool_progress", toolProgressPayload("t1", 5)),
+                ),
+                interactive = true,
+            )
+
+        assertEquals(listOf("t1"), rows.messageIds())
+        assertEquals(null, rows.messageRow("t1")?.toolCall?.elapsedSeconds)
+    }
+
+    @Test
+    fun reduce_malformedProgress_dropsOnlyThatEntry() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    // `elapsed_seconds` missing: the strict-required shape fails the decode.
+                    entry(4, "tool_progress", """{"conversation_id":"$CONVERSATION","turn_id":"turn-1","tool_use_id":"t1"}"""),
+                    // Not a number at all.
+                    entry(
+                        3,
+                        "tool_progress",
+                        """{"conversation_id":"$CONVERSATION","turn_id":"turn-1","tool_use_id":"t1","elapsed_seconds":"soon"}""",
+                    ),
+                    entry(2, "tool_progress", toolProgressPayload("t1", 30)),
+                    entry(1, "tool_use", toolUsePayload("t1", name = "Bash", input = "ls")),
+                ),
+                interactive = true,
+            )
+
+        assertEquals(listOf("t1"), rows.messageIds())
+        assertEquals(30, rows.messageRow("t1")?.toolCall?.elapsedSeconds)
+    }
+
+    @Test
+    fun reduce_progressWithoutInteractive_isIgnored() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(2, "tool_progress", toolProgressPayload("t1", 30)),
+                    entry(1, "message", messagePayload("m1", "assistant", "hi")),
+                ),
+                interactive = false,
+            )
+
+        assertEquals(listOf("m1"), rows.messageIds())
+    }
+
     // ---- Fixtures ---------------------------------------------------------------------------------
 
     private fun entry(
@@ -663,6 +793,16 @@ class HistoryPageReducerTest {
         """{"conversation_id":"$CONVERSATION","turn_id":"turn-1","tool_use_id":"$toolUseId","tool_name":"$toolName",""" +
             """"decision_reason_type":"$reasonType","decision_reason":"$reason","message":"$message",""" +
             """"truncated_fields":$truncated,"dropped_fields":$dropped}"""
+
+    private fun toolProgressPayload(
+        toolUseId: String,
+        elapsedSeconds: Int,
+    ): String = """{"conversation_id":"$CONVERSATION","turn_id":"turn-1","tool_use_id":"$toolUseId","elapsed_seconds":$elapsedSeconds}"""
+
+    private fun progress(
+        toolUseId: String,
+        elapsedSeconds: Int,
+    ): ToolProgressPayloadDto = ToolProgressPayloadDto(CONVERSATION, "turn-1", toolUseId, elapsedSeconds)
 
     /** An optional `"key":value` fragment appended to a payload; empty leaves the payload as it was. */
     private fun extraFields(extra: String): String = if (extra.isEmpty()) "" else ",$extra"

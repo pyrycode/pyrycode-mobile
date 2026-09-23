@@ -57,6 +57,7 @@ import de.pyryco.mobile.data.network.SessionSettingsUpdatedPayloadDto
 import de.pyryco.mobile.data.network.SessionTransitionPayloadDto
 import de.pyryco.mobile.data.network.SetSessionSettingsPayloadDto
 import de.pyryco.mobile.data.network.ToolDeniedPayloadDto
+import de.pyryco.mobile.data.network.ToolProgressPayloadDto
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
 import de.pyryco.mobile.data.network.ToolUsePayloadDto
 import de.pyryco.mobile.data.network.TurnEndPayloadDto
@@ -708,6 +709,13 @@ class RemoteConversationRepository(
                     applyToolDenied(envelope)
                 }
             }
+            TYPE_TOOL_PROGRESS -> {
+                // claude's elapsed reading for an open call (#812): see [applyToolProgress]. The same gate and
+                // thread-store-only shape as `tool_denied`; it clears no stall and emits no live event.
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    applyToolProgress(envelope)
+                }
+            }
             TYPE_STALL -> {
                 // Stall onset (#395): see [StallProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
@@ -1325,6 +1333,25 @@ class RemoteConversationRepository(
         threadByConversation.update { current ->
             val rows = current[dto.conversationId] ?: return@update current
             current + (dto.conversationId to rows.withToolDenied(dto.toolUseId, dto.toDenial()))
+        }
+    }
+
+    /**
+     * Retain claude's elapsed reading on a live tool row for a `tool_progress` (#812) through
+     * [withToolProgress], writing only the frame's own conversation. The drop and the no-slice rule are
+     * [applyToolDenied]'s: a malformed payload costs this one envelope, and a conversation with no retained
+     * rows gets no entry, since a heartbeat can never add a row. Nothing here logs.
+     */
+    private fun applyToolProgress(envelope: Envelope) {
+        val dto =
+            try {
+                MobileJson.decodeFromJsonElement<ToolProgressPayloadDto>(envelope.payload)
+            } catch (e: IllegalArgumentException) {
+                return
+            }
+        threadByConversation.update { current ->
+            val rows = current[dto.conversationId] ?: return@update current
+            current + (dto.conversationId to rows.withToolProgress(dto))
         }
     }
 
@@ -2923,6 +2950,9 @@ class RemoteConversationRepository(
 
         /** Thread-store event: claude refused a tool call `{…, tool_use_id, tool_name, message, …}` (#811). */
         const val TYPE_TOOL_DENIED = "tool_denied"
+
+        /** Thread-store event: claude's elapsed reading for an open call `{…, tool_use_id, elapsed_seconds}` (#812). */
+        const val TYPE_TOOL_PROGRESS = "tool_progress"
 
         /** Structured-stream event: end of a turn `{…, turn_id, stop_reason}` (#385, #607). */
         const val TYPE_TURN_END = "turn_end"

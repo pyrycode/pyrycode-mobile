@@ -119,6 +119,24 @@ internal fun ToolDeniedPayloadDto.toDenial(): ToolDenial =
     )
 
 /**
+ * `tool_progress` (#812, pyrycode#2324): claude's signed elapsed-seconds reading for the open call
+ * [toolUseId] names. All four fields are strict-required — the daemon pins every key — so a missing or
+ * wrong-typed one, or a reading outside [Int], drops the one envelope. [toolUseId] is an untrusted join
+ * handle and [elapsedSeconds] an upstream reading: neither is routing input, authority or timing evidence.
+ *
+ * Not a [LiveSessionEvent], for [ToolDeniedPayloadDto]'s reason. Both lanes decode it through this type and
+ * fold it with `withToolProgress`; there is no domain type to map into, since the retained value is the
+ * one [Int].
+ */
+@Serializable
+internal data class ToolProgressPayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    @SerialName("turn_id") val turnId: String,
+    @SerialName("tool_use_id") val toolUseId: String,
+    @SerialName("elapsed_seconds") val elapsedSeconds: Int,
+)
+
+/**
  * `turn_end`. The four trailing fields (#805) are claude's own stop shape and are **optional and open-set**
  * on the wire: an absent one — an older daemon — decodes to its empty value, the lenient-default posture
  * [ToolUsePayloadDto.parentToolUseId] set, and an unrecognised token is just a string. The eight numeric

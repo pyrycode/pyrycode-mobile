@@ -41,6 +41,7 @@ import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
 import de.pyryco.mobile.data.network.SessionTransitionPayloadDto
 import de.pyryco.mobile.data.network.ToolDeniedPayloadDto
+import de.pyryco.mobile.data.network.ToolProgressPayloadDto
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
 import de.pyryco.mobile.data.network.ToolUsePayloadDto
 import de.pyryco.mobile.data.network.TurnEndPayloadDto
@@ -55,6 +56,7 @@ import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.T
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_SEND_MESSAGE
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_SESSION_TRANSITION
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_TOOL_DENIED
+import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_TOOL_PROGRESS
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_TOOL_RESULT
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_TOOL_USE
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_TURN_END
@@ -144,6 +146,8 @@ internal fun List<ThreadItem>.withToolUse(
  *
  * A row already [ToolCallStatus.Denied] (#811) keeps that status and its denial: claude writes a
  * `tool_result` after refusing a call, and that result must not turn a blocked call into a failed one.
+ *
+ * Closing the call clears its elapsed reading (#812); see [withToolProgress].
  */
 internal fun List<ThreadItem>.withToolResult(event: LiveSessionEvent.ToolResult): List<ThreadItem> {
     val index = indexOfMessage(event.toolUseId, Role.Tool)
@@ -162,6 +166,7 @@ internal fun List<ThreadItem>.withToolResult(event: LiveSessionEvent.ToolResult)
                                 else -> ToolCallStatus.Done
                             },
                         parentToolUseId = event.parentToolUseId.ifEmpty { call.parentToolUseId },
+                        elapsedSeconds = null,
                     )
                 },
         )
@@ -173,7 +178,7 @@ internal fun List<ThreadItem>.withToolResult(event: LiveSessionEvent.ToolResult)
  * place, attaching [denial]. The denial wins over any prior status, because the daemon's result-line
  * recovery can report a denial after the call's `tool_result` shipped. Output, input, parent and position
  * are untouched, and a repeat denial is last-write-wins. **No matching row, no-op:** a denial never adds
- * a row.
+ * a row. A denial closes the call, so it clears the elapsed reading (#812).
  */
 internal fun List<ThreadItem>.withToolDenied(
     toolUseId: String,
@@ -182,7 +187,26 @@ internal fun List<ThreadItem>.withToolDenied(
     val index = indexOfMessage(toolUseId, Role.Tool)
     if (index < 0) return this
     val row = (this[index] as ThreadItem.MessageItem).message
-    val updated = row.copy(toolCall = row.toolCall?.copy(status = ToolCallStatus.Denied, denial = denial))
+    val updated =
+        row.copy(toolCall = row.toolCall?.copy(status = ToolCallStatus.Denied, denial = denial, elapsedSeconds = null))
+    return toMutableList().apply { this[index] = ThreadItem.MessageItem(updated) }
+}
+
+/**
+ * Retain claude's latest elapsed-seconds reading (`tool_progress`, #812) on the open [Role.Tool] row
+ * [ToolProgressPayloadDto.toolUseId] names, in place. The reading is copied **verbatim** — zero, negative
+ * and backwards values included — and a repeat of the held reading returns this list unchanged. **No
+ * matching row, or a row no longer [ToolCallStatus.Running], no-op:** a heartbeat never adds a row, and a
+ * late one neither reopens a closed call nor touches its outcome. Only the routing key is read beside the
+ * value; `turn_id` joins nothing, as for the other tool folds.
+ */
+internal fun List<ThreadItem>.withToolProgress(progress: ToolProgressPayloadDto): List<ThreadItem> {
+    val index = indexOfMessage(progress.toolUseId, Role.Tool)
+    if (index < 0) return this
+    val row = (this[index] as ThreadItem.MessageItem).message
+    val call = row.toolCall ?: return this
+    if (call.status != ToolCallStatus.Running || call.elapsedSeconds == progress.elapsedSeconds) return this
+    val updated = row.copy(toolCall = call.copy(elapsedSeconds = progress.elapsedSeconds))
     return toMutableList().apply { this[index] = ThreadItem.MessageItem(updated) }
 }
 
@@ -334,6 +358,13 @@ private fun List<ThreadItem>.withHistoryEntry(
                     MobileJson.decodeFromJsonElement<ToolDeniedPayloadDto>(entry.payload).let { dto ->
                         withToolDenied(dto.toolUseId, dto.toDenial())
                     }
+                }
+            // Not a live event either (#812); the daemon stores every heartbeat, so a page replays them.
+            TYPE_TOOL_PROGRESS ->
+                if (!interactive) {
+                    this
+                } else {
+                    withToolProgress(MobileJson.decodeFromJsonElement<ToolProgressPayloadDto>(entry.payload))
                 }
             TYPE_SESSION_TRANSITION ->
                 if (!interactive) {
