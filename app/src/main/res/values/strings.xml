@@ -239,6 +239,18 @@
     <!-- Generic for the same reason edit_host_save_failed is: the shell announces it aloud (#827). -->
     <string name="edit_chat_save_failed">Couldn\'t rename the chat. Try again.</string>
     <!--
+      The host row's Add workspace modal (#904). "Recent" and the create entry keep the bottom
+      sheet's wording, which the device suites match. Both failures are static for the reason
+      edit_chat_save_failed is: the shell announces them aloud.
+    -->
+    <string name="add_workspace_title">Add workspace</string>
+    <string name="add_workspace_recent">Recent</string>
+    <string name="add_workspace_new_folder">New folder</string>
+    <string name="add_workspace_empty">No recent folders on this host yet.</string>
+    <string name="add_workspace_create_folder">Create new folder under pyry-workspace…</string>
+    <string name="add_workspace_create_failed">Couldn\'t create the folder. Try again.</string>
+    <string name="add_workspace_start_failed">Couldn\'t start a chat in this folder. Try again.</string>
+    <!--
       The Log data entry and its modal (#683). The row headline joins the Storage section in
       Clear cache\'s language; the title repeats it so the modal names what it was opened from.
     -->
