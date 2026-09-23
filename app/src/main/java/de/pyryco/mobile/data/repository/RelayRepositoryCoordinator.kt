@@ -1,5 +1,6 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.ModalEvent
@@ -104,6 +105,14 @@ class RelayRepositoryCoordinator(
      * without a public API surface, mirroring [toPyrycodeLinkStatus]'s visibility.
      */
     internal val replayCursor: ReplayCursor = ReplayCursor()
+
+    /**
+     * Which background tasks this host has finished (#677). Lives here for [replayCursor]'s reason: each
+     * connection gets a fresh repository, but the daemon re-sends its retained roster on every reconnect, so
+     * the finished mark must outlive the connection or a finished task comes back as live on every return
+     * to the foreground. [teardownActive] never touches it. Threaded into each repository in [onConnection].
+     */
+    internal val finishedBackgroundTasks: FinishedBackgroundTasks = FinishedBackgroundTasks()
 
     /**
      * The single connection-state source of truth: the pump + child scope + concrete repository of the
@@ -241,6 +250,30 @@ class RelayRepositoryCoordinator(
     fun observeQuestionBatch(conversationId: String): Flow<QuestionBatch?> =
         questionBatches.map { it.batchFor(conversationId) }.distinctUntilChanged()
 
+    /**
+     * The background tasks each conversation holds on this host (#677), keyed by conversation id. A
+     * per-conversation surface reads through [observeBackgroundTasks] or [observeLiveBackgroundTaskCount].
+     *
+     * The [questionBatches] shape: switched to the active connection's
+     * [RemoteConversationRepository.backgroundTasks] and started [SharingStarted.Eagerly], so frames that
+     * arrive before any screen subscribes are held. Empty between connections, and each connection rebuilds
+     * it from its own frames; only [finishedBackgroundTasks] carries over. No log: the task strings are
+     * claude-authored command lines.
+     */
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val backgroundTasks: StateFlow<Map<String, BackgroundTaskRoster>> =
+        activeConnection
+            .flatMapLatest { conn -> conn?.repo?.backgroundTasks ?: flowOf(emptyMap()) }
+            .stateIn(scope, SharingStarted.Eagerly, emptyMap())
+
+    /** The background tasks [conversationId] holds on this host, or null when nothing has been reported (#677). */
+    fun observeBackgroundTasks(conversationId: String): Flow<BackgroundTaskRoster?> =
+        backgroundTasks.map { it[conversationId] }.distinctUntilChanged()
+
+    /** [BackgroundTaskRoster.liveCount] for [conversationId], or 0 when nothing has been reported (#677). */
+    fun observeLiveBackgroundTaskCount(conversationId: String): Flow<Int> =
+        observeBackgroundTasks(conversationId).map { it?.liveCount ?: 0 }.distinctUntilChanged()
+
     /** The combined two-part status (#392) #390 consumes off this concrete singleton: the supervisor's
      *  relay leg zipped with the derived pyrycode leg. `Eagerly` so `.value` is correct at any glance;
      *  cancelled by [close] (which cancels [scope]). */
@@ -286,6 +319,7 @@ class RelayRepositoryCoordinator(
                 deviceName,
                 negotiatedCapabilities = { (pump.state.value as? PumpState.Open)?.capabilities.orEmpty() },
                 replayCursor = replayCursor,
+                finishedBackgroundTasks = finishedBackgroundTasks,
             )
         // Publish the whole connection as ONE object: currentRepository now derives repo and pump-state
         // from this single switched value, closing the #493 cross-StateFlow race (see [currentRepository]).

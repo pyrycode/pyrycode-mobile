@@ -960,6 +960,99 @@ class RelayRepositoryCoordinatorTest {
         }
 
     // #825: a send goes only to the host holding the batch, even when another host holds an equal id.
+    // #677: background tasks are held Eagerly like question batches, read per conversation.
+    @Test
+    fun backgroundTasks_holdFramesBeforeAnySubscriberAndReadPerConversation() =
+        runTest {
+            val env = newEnv()
+            val pump = openInteractiveConnection(env)
+
+            pump.push(BackgroundTaskProjectionTest.started("t1", conversationId = "conv-1"))
+            pump.push(BackgroundTaskProjectionTest.started("t2", conversationId = "conv-1"))
+            pump.push(BackgroundTaskProjectionTest.terminal("t1", "completed", conversationId = "conv-1"))
+            pump.push(BackgroundTaskProjectionTest.rosterFrame(rows = emptyList(), conversationId = "conv-2"))
+            runCurrent()
+
+            assertEquals(setOf("conv-1", "conv-2"), env.coordinator.backgroundTasks.value.keys)
+            assertEquals(1, env.coordinator.observeLiveBackgroundTaskCount("conv-1").first())
+            assertEquals(0, env.coordinator.observeLiveBackgroundTaskCount("conv-2").first())
+            assertEquals(
+                0,
+                env.coordinator
+                    .observeBackgroundTasks("conv-2")
+                    .first()
+                    ?.tasks
+                    ?.size,
+            )
+            assertNull(env.coordinator.observeBackgroundTasks("conv-3").first())
+            assertEquals(0, env.coordinator.observeLiveBackgroundTaskCount("conv-3").first())
+
+            env.coordinator.close()
+        }
+
+    // The daemon re-sends its retained roster on every reconnect, and mobile reconnects on every return to the
+    // foreground: only the finished mark carries over, everything else is rebuilt from the new connection.
+    @Test
+    fun backgroundTasks_resetOnReconnectButTheFinishedMarkSurvivesTheReconciledRoster() =
+        runTest {
+            val env = newEnv()
+            val first = openInteractiveConnection(env)
+            first.push(BackgroundTaskProjectionTest.started("t1", conversationId = "conv-1"))
+            first.push(
+                BackgroundTaskProjectionTest.rosterFrame(rows = listOf(BackgroundTaskProjectionTest.row("t1")), conversationId = "conv-1"),
+            )
+            first.push(BackgroundTaskProjectionTest.terminal("t1", "completed", conversationId = "conv-1"))
+            first.push(BackgroundTaskProjectionTest.started("t9", conversationId = "conv-2"))
+            runCurrent()
+            assertEquals(0, env.coordinator.observeLiveBackgroundTaskCount("conv-1").first())
+
+            val second = openInteractiveConnection(env)
+            assertTrue(
+                env.coordinator.backgroundTasks.value
+                    .isEmpty(),
+            )
+
+            second.push(
+                BackgroundTaskProjectionTest.rosterFrame(rows = listOf(BackgroundTaskProjectionTest.row("t1")), conversationId = "conv-1"),
+            )
+            runCurrent()
+
+            val t1 =
+                env.coordinator
+                    .observeBackgroundTasks("conv-1")
+                    .first()
+                    ?.tasks
+                    ?.single()
+            assertEquals(true, t1?.isFinished)
+            assertNull(t1?.finish)
+            assertEquals(0, env.coordinator.observeLiveBackgroundTaskCount("conv-1").first())
+            assertNull(env.coordinator.observeBackgroundTasks("conv-2").first())
+
+            env.coordinator.close()
+        }
+
+    @Test
+    fun backgroundTasks_areHeldPerHost() =
+        runTest {
+            val hostA = newEnv()
+            val hostB = newEnv()
+            val pumpA = openInteractiveConnection(hostA)
+            val pumpB = openInteractiveConnection(hostB)
+
+            pumpA.push(BackgroundTaskProjectionTest.started("t1", conversationId = "conv-1"))
+            pumpA.push(BackgroundTaskProjectionTest.terminal("t1", "completed", conversationId = "conv-1"))
+            pumpB.push(BackgroundTaskProjectionTest.started("t1", conversationId = "conv-1"))
+            runCurrent()
+
+            assertEquals(0, hostA.coordinator.observeLiveBackgroundTaskCount("conv-1").first())
+            assertEquals(1, hostB.coordinator.observeLiveBackgroundTaskCount("conv-1").first())
+            assertTrue(hostA.coordinator.finishedBackgroundTasks.contains("conv-1", "t1"))
+            assertFalse(hostB.coordinator.finishedBackgroundTasks.contains("conv-1", "t1"))
+
+            hostA.coordinator.close()
+            hostB.coordinator.close()
+        }
+
     @Test
     fun questionSends_reachOnlyTheHostTheyAreMadeOn() =
         runTest {

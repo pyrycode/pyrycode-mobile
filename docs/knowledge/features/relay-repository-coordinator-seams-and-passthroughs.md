@@ -228,6 +228,77 @@ fun observeQuestionBatch(conversationId: String): Flow<QuestionBatch?> =
   below (§ [Outbound question-answer / refuse passthrough](#outbound-question-answer--refuse-passthrough-825)) —
   this seam itself stays read-only, the mirror of `modalEvents` before `answerModal`/`cancelModal` existed.
 
+## Background-task roster (#677)
+
+The held **`StateFlow<Map<String, BackgroundTaskRoster>>`** (`RemoteConversationRepository.backgroundTasks`)
+that tracks work claude left running past its turn — daemon state, not turn content, so it never reaches
+the thread timeline. Same shape as [`questionBatches`](#question-batch-projection-822): a per-connection
+concrete `StateFlow`, switched (not folded) at the coordinator, `Eagerly`, so a frame that arrives before
+any panel subscribes is not lost:
+
+```kotlin
+@OptIn(ExperimentalCoroutinesApi::class)
+val backgroundTasks: StateFlow<Map<String, BackgroundTaskRoster>> =
+    activeConnection
+        .flatMapLatest { conn -> conn?.repo?.backgroundTasks ?: flowOf(emptyMap()) }
+        .stateIn(scope, SharingStarted.Eagerly, emptyMap())
+
+fun observeBackgroundTasks(conversationId: String): Flow<BackgroundTaskRoster?> =
+    backgroundTasks.map { it[conversationId] }.distinctUntilChanged()
+
+fun observeLiveBackgroundTaskCount(conversationId: String): Flow<Int> =
+    observeBackgroundTasks(conversationId).map { it?.liveCount ?: 0 }.distinctUntilChanged()
+```
+
+The decode+fold itself lives on the repository at
+[`BackgroundTaskProjection`](remote-conversation-repository-live-stream-and-modals.md#backgroundtasks--the-v2-background-task-decodefold-seam-677) —
+this section covers only the part that is specific to the coordinator: the one piece of state that has to
+survive a reconnect.
+
+- **Resets on reconnect, like `questionBatches` — with one deliberate carry-over.** `flatMapLatest`
+  switches to the new connection's fresh `backgroundTasks`, which starts empty because each connection
+  builds a new `RemoteConversationRepository`. Unlike `questionBatches`, though, the daemon has no
+  reconcile-on-connect contract for background tasks beyond re-sending its **last retained roster** — the
+  same roster it already sent, including any task that has since finished. Mobile drops and rebuilds its
+  connection on every return from the background, so without a carry-over a completed task would read as
+  live again on every foreground.
+- **The carry-over is narrow: only which task ids finished, not their `status`/`summary`.**
+  `RelayRepositoryCoordinator` owns one `FinishedBackgroundTasks` instance for the life of the host — the
+  [`replayCursor`](#reconnect-spanning-replay-cursor-412) precedent for state a fresh per-connection
+  repository cannot hold — and threads it into each connection's repository in `onConnection`, the same
+  parameter shape as `replayCursor`. `teardownActive` never touches it. Everything else about a task
+  (its description, its last mid-life update, its terminal `status`/`summary`) resets with the connection
+  and is rebuilt only from that connection's own frames; a re-listed finished task therefore comes back
+  with `isFinished == true` but `finish == null`.
+- **The finished set stays bounded by the conversation's own rosters, not by an unrelated cap.** Each
+  roster calls `FinishedBackgroundTasks.retainOnly(conversationId, rowIds)`, forgetting any id the roster
+  no longer lists. A task the daemon has fully forgotten is forgotten here too, on the next roster for
+  that conversation.
+- **Host isolation is structural**, the same as `questionBatches`: one coordinator per host, and the map
+  and the finished set are both keyed by `conversationId` inside it, so a task id repeated across two
+  hosts' conversations cannot cross between them.
+- **Three deliberate differences from the desktop client's `backgroundTaskRosterStore`,** which this
+  seam's `BackgroundTaskProjection` otherwise follows for its merge rules:
+  1. Desktop's `setUpdatedTask` drops `status`/`summary` on a terminal update
+     ([pyrycode-desktop#1558](https://github.com/pyrycode/pyrycode-desktop/issues/1558)), which is why its
+     live count can stick at one after a task completes. This seam keeps both on the task's `finish` slot.
+  2. Desktop matches `status` against the closed set `completed`/`failed`/`stopped`. This seam finishes a
+     task on any non-empty `status` — the wire says "test `status != ""`, not a closed set" — so an
+     unrecognised terminal value still counts.
+  3. Desktop's later `unlistedStarts` (#1563) holds a started task outside the visible set until a roster
+     lists it, because claude also sends starts for long foreground `Bash` calls a roster never carries.
+     This ticket's one-set rule lists a start immediately instead. If a panel finds foreground starts
+     inflating `liveCount`, desktop's `unlistedStarts` is the precedent to adopt.
+- **No log.** `description`, `patch`, `status` and `summary` are claude-authored, unsanitised strings —
+  held as inert fields, never parsed (`patch` included), never used as a key besides `taskId`/
+  `conversationId`, and never logged. A malformed frame is dropped inside `BackgroundTaskProjection.apply`
+  without reading the caught exception's message, the `QueueProjection`/question-arm posture.
+- **A consumer must read the per-conversation surface** (`observeBackgroundTasks` /
+  `observeLiveBackgroundTaskCount`), not `backgroundTasks` directly — the whole-host map risks showing
+  one conversation's tasks inside another's panel, the same rule as `observeQuestionBatch`. The
+  Actions-menu panel and count that read this seam are [#678](https://github.com/pyrycode/pyrycode-mobile/issues/678);
+  this seam is data only.
+
 ## Outbound modal-send passthrough (#451)
 
 The **outbound mirror** of the inbound `modalEvents` seam: where `modalEvents` surfaces decoded modals *up*
