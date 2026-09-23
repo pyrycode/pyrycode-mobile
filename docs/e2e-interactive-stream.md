@@ -515,18 +515,19 @@ prompt, not the command's run time, is what holds the peer's turn open for the s
 - **Phone queues (AC2).** The phone types and sends a ping prompt while the peer's turn is running. It
   shows as a queued row on the phone (`stateDescription` "Waiting to send") and as an item in the peer's
   latest `queue_state` snapshot.
-- **Phone drops (AC3).** The phone queues a second message and taps its row's drop control.
-  **Narrowed until [#859](https://github.com/pyrycode/pyrycode-mobile/issues/859):** the daemon never
-  replies to `dequeue_message` (see [Queued backlog § Dropping a queued
-  entry](../knowledge/features/queued-backlog.md#dropping-a-queued-entry-dequeue_message-466)), so the
-  phone's own echo of the dropped message stays in the thread as a delivered bubble instead of
-  disappearing. The step checks only that the phone's queued row is gone and that the peer's snapshot
-  drops it too; the assertion that the text itself is gone from the phone's thread — and the equivalent
-  peer-drop assertion below — are commented with #859 and restored once it lands.
+- **Phone drops (AC3).** The phone queues a second message and taps its row's drop control. The daemon
+  never replies to `dequeue_message` (see [Queued backlog § Dropping a queued
+  entry](../knowledge/features/queued-backlog.md#dropping-a-queued-entry-dequeue_message-466)); the
+  confirmation is the next `queue_state` for the conversation lacking the item, which the phone's queued
+  row clearing, the peer's snapshot dropping it, and — since [#859](https://github.com/pyrycode/pyrycode-mobile/issues/859)
+  — the phone's own echo leaving the thread (`awaitGoneFromThread(DROP_PROMPT)`) all key off. Before #859
+  landed, the daemon's silent no-reply meant the phone's own echo stayed as a delivered bubble instead of
+  disappearing; the step checked only the queued row, and the equivalent peer-drop assertion below was
+  commented out. Both are restored now.
 - **Peer queues and drops (AC3).** The peer queues a message of its own. The phone renders it as an
   ordinary, unmatched queued row (`foldQueuedRows`'s tail case — the same fold #781/#782 gave another
-  device's item). The peer drops it (fire-and-forget, the same #859 gap); the phone's queued row for it
-  clears once the next `queue_state` says so.
+  device's item). The peer drops it fire-and-forget; the phone's queued row for it clears once the next
+  `queue_state` says so.
 - **Drain (AC1 + AC2).** The peer allows the held permission prompt once (`modal_answer` with
   `allow_once`, confirmed only by the matching `modal_dismissed` — the daemon sends no reply to
   `modal_answer` itself). The wait turn ends, the queued ping runs, and the peer sees that turn's
