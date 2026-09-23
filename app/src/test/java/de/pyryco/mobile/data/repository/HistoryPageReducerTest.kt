@@ -70,6 +70,81 @@ class HistoryPageReducerTest {
         assertEquals(ToolCallStatus.Done, toolCall?.status)
     }
 
+    // ---- #810: the tool call's own input fields and its parent identity reach the row --------------
+
+    @Test
+    fun reduce_toolUse_carriesInputFieldsAndParentVerbatim() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(
+                        1,
+                        "tool_use",
+                        toolUsePayload(
+                            "t1",
+                            name = "Edit",
+                            input = "a.kt",
+                            extra = """"parent_tool_use_id":"agent-1","input":{"file_path":"../a.kt","old_string":"x…"}""",
+                        ),
+                    ),
+                ),
+                interactive = true,
+            )
+
+        val toolCall = rows.messageRow("t1")?.toolCall
+        assertEquals(mapOf("file_path" to "../a.kt", "old_string" to "x…"), toolCall?.inputFields)
+        assertEquals("agent-1", toolCall?.parentToolUseId)
+        assertEquals("a.kt", toolCall?.input)
+    }
+
+    @Test
+    fun reduce_toolUseWithoutTheNewKeys_isATopLevelRowWithNoFields() {
+        val rows = reduceHistoryPage(listOf(entry(1, "tool_use", toolUsePayload("t1", name = "Read", input = "a.kt"))), interactive = true)
+
+        val toolCall = rows.messageRow("t1")?.toolCall
+        assertEquals(emptyMap<String, String>(), toolCall?.inputFields)
+        assertEquals("", toolCall?.parentToolUseId)
+    }
+
+    @Test
+    fun reduce_toolResultNamingAParent_setsTheRowsParent() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(
+                        2,
+                        "tool_result",
+                        toolResultPayload("t1", isError = false, summary = "ok", extra = """"parent_tool_use_id":"agent-1""""),
+                    ),
+                    entry(1, "tool_use", toolUsePayload("t1", name = "Read", input = "a.kt")),
+                ),
+                interactive = true,
+            )
+
+        assertEquals("agent-1", rows.messageRow("t1")?.toolCall?.parentToolUseId)
+    }
+
+    @Test
+    fun reduce_toolResultWithEmptyParent_keepsTheParentItsUseNamed() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(2, "tool_result", toolResultPayload("t1", isError = true, summary = "no", extra = """"parent_tool_use_id":""""")),
+                    entry(
+                        1,
+                        "tool_use",
+                        toolUsePayload("t1", name = "Read", input = "a.kt", extra = """"parent_tool_use_id":"agent-1","input":{"k":"v"}"""),
+                    ),
+                ),
+                interactive = true,
+            )
+
+        val toolCall = rows.messageRow("t1")?.toolCall
+        assertEquals("agent-1", toolCall?.parentToolUseId)
+        assertEquals(mapOf("k" to "v"), toolCall?.inputFields)
+        assertEquals(ToolCallStatus.Failed, toolCall?.status)
+    }
+
     @Test
     fun reduce_assistantDeltasAndTurnEnd_foldToOneFinalizedRow() {
         val rows =
@@ -209,7 +284,8 @@ class HistoryPageReducerTest {
     }
 
     @Test
-    fun reduce_boundariesSharingASessionPair_yieldOneRow() {
+    fun reduce_boundariesSharingASessionPairButNotAnInstant_yieldTwoRows() {
+        // #775: one session evicted twice is two real delimiters with one pair.
         val rows =
             reduceHistoryPage(
                 listOf(
@@ -219,6 +295,20 @@ class HistoryPageReducerTest {
                         sessionTransitionPayload("s-old", "s-new", "clear", occurredAt = "2026-09-05T11:00:00Z"),
                     ),
                     entry(1, "session_transition", sessionTransitionPayload("s-old", "s-new", "clear", occurredAt = OCCURRED_AT)),
+                ),
+                interactive = true,
+            )
+
+        assertEquals(2, rows.size)
+    }
+
+    @Test
+    fun reduce_boundariesSharingPairAndInstant_yieldOneRow() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(2, "session_transition", sessionTransitionPayload("s-old", "s-new", "clear")),
+                    entry(1, "session_transition", sessionTransitionPayload("s-old", "s-new", "clear")),
                 ),
                 interactive = true,
             )
@@ -295,9 +385,10 @@ class HistoryPageReducerTest {
     }
 
     @Test
-    fun merge_boundaryDifferingOnlyInOccurredAt_addsNoSecondRow() {
-        // Stricter than structural equality on purpose: ThreadScreen keys a boundary on the session
-        // pair alone, so admitting this row would give the LazyColumn two rows with one key (#775).
+    fun merge_boundaryDifferingOnlyInOccurredAt_isAdmitted() {
+        // #775: a session evicted, woken and evicted again emits the same pair twice with different
+        // instants. Both are real delimiters, and ThreadScreen keys a boundary on the pair AND occurredAt,
+        // so admitting the older one gives the LazyColumn two distinct keys.
         val live = reduceHistoryPage(listOf(entry(1, "session_transition", sessionTransitionPayload("s-old", "s-new", "clear"))), true)
         val later =
             reduceHistoryPage(
@@ -311,7 +402,20 @@ class HistoryPageReducerTest {
                 true,
             )
 
-        assertEquals(1, live.mergeHistoryRows(later).size)
+        val merged = live.mergeHistoryRows(later)
+
+        assertEquals(2, merged.size)
+        assertEquals(later + live, merged)
+    }
+
+    @Test
+    fun merge_boundaryMatchingOnPairAndInstantButNotReason_addsNoSecondRow() {
+        // The identity is the triple; a reason mismatch does not make a second row, because the key would
+        // not tell the two apart.
+        val live = reduceHistoryPage(listOf(entry(1, "session_transition", sessionTransitionPayload("s-old", "s-new", "clear"))), true)
+        val page = reduceHistoryPage(listOf(entry(1, "session_transition", sessionTransitionPayload("s-old", "s-new", "idle_evict"))), true)
+
+        assertEquals(live, live.mergeHistoryRows(page))
     }
 
     @Test
@@ -352,16 +456,22 @@ class HistoryPageReducerTest {
         toolUseId: String,
         name: String,
         input: String,
+        extra: String = "",
     ): String =
-        """{"conversation_id":"$CONVERSATION","turn_id":"turn-1","tool_use_id":"$toolUseId","name":"$name","input_summary":"$input"}"""
+        """{"conversation_id":"$CONVERSATION","turn_id":"turn-1","tool_use_id":"$toolUseId","name":"$name","input_summary":"$input"""" +
+            extraFields(extra) + "}"
 
     private fun toolResultPayload(
         toolUseId: String,
         isError: Boolean,
         summary: String,
+        extra: String = "",
     ): String =
         """{"conversation_id":"$CONVERSATION","turn_id":"turn-1","tool_use_id":"$toolUseId",""" +
-            """"is_error":$isError,"result_summary":"$summary"}"""
+            """"is_error":$isError,"result_summary":"$summary"""" + extraFields(extra) + "}"
+
+    /** An optional `"key":value` fragment appended to a payload; empty leaves the payload as it was. */
+    private fun extraFields(extra: String): String = if (extra.isEmpty()) "" else ",$extra"
 
     private fun assistantDeltaPayload(
         turnId: String,

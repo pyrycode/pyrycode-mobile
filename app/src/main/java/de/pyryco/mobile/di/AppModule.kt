@@ -28,6 +28,7 @@ import de.pyryco.mobile.data.network.RelayConnectionSupervisor
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.RelayTransportFactory
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.data.repository.CachingConversationRepository
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
@@ -81,13 +82,13 @@ val appModule =
         // credentials it belongs to. ConversationCacheBindingInstrumentedTest holds this.
         single<ConversationCache> { FileConversationCache(File(androidContext().noBackupFilesDir, "conversations")) }
         single { KeystoreDeviceStaticKeyStore(get()) } bind DeviceStaticKeyStore::class
-        // #790: a removed pairing takes its host's unsent composer text with it. Bound here rather
-        // than in the unpair controller so neither screen that opens the Edit host modal carries a
-        // draft-store dependency it does not otherwise use, and so any future removal path inherits
-        // the eviction. `save` and `setDisplayName` deliberately do not evict: re-pairing the same id
-        // and renaming a host both keep their drafts.
+        // #790: a removed pairing takes its host's unsent composer text with it, and (#798) its cached
+        // conversation content. Bound here rather than in the unpair controller so neither screen that
+        // opens the Edit host modal carries a draft-store or cache dependency it does not otherwise use,
+        // and so any future removal path inherits the eviction. `save` and `setDisplayName` deliberately
+        // do not evict: re-pairing the same id and renaming a host both keep their drafts and content.
         single {
-            ObservablePairedServerStore(KeystorePairedServerStore(get()), get<ComposerDraftStore>()::clearHost)
+            ObservablePairedServerStore(KeystorePairedServerStore(get()), forgetRemovedHost(get(), lazy { get() }))
         } binds arrayOf(PairedServerStore::class, PairedServerCollectionStore::class)
         single { NoiseClientInfo(deviceName = Build.MODEL, clientVersion = BuildConfig.VERSION_NAME) }
         single {
@@ -145,7 +146,7 @@ val appModule =
         viewModel { DiscussionListViewModel(get(), get()) }
         viewModel { get<ThreadDestinationFactory>().settings(get(), get()) }
         viewModel { get<ThreadDestinationFactory>().archive(get()) }
-        viewModel { get<ThreadDestinationFactory>().thread(get(), get(), get()) }
+        viewModel { get<ThreadDestinationFactory>().thread(get(), get()) }
         viewModel { get<ThreadDestinationFactory>().literal(get()) }
     }
 
@@ -176,7 +177,8 @@ fun hostConversationModule(
     decorateRepository: (ConversationRepository) -> ConversationRepository = { it },
 ): Module =
     module {
-        single { ThreadDestinationFactory(useRelay, get(), get(), get(), decorateRepository) }
+        // #797: the demo branch resolves no cache, as HostConversationSource's does below.
+        single { ThreadDestinationFactory(useRelay, get(), get(), get(), decorateRepository, cache = if (useRelay) get() else null) }
         single {
             // The demo branch resolves no cache: there is nothing persisted for a fake host to restore.
             if (useRelay) {
@@ -194,6 +196,7 @@ internal class ThreadDestinationFactory(
     private val fake: FakeConversationRepository,
     private val store: PairedServerCollectionStore,
     private val decorateRepository: (ConversationRepository) -> ConversationRepository,
+    private val cache: ConversationCache? = null,
 ) {
     val hostConnections get() = registry.hostConnections
 
@@ -221,15 +224,21 @@ internal class ThreadDestinationFactory(
             fake
         } else {
             val repositories = bundle?.coordinator?.currentRepository ?: MutableStateFlow(null)
-            decorateRepository(StableConversationRepository(repositories))
+            val stable = StableConversationRepository(repositories)
+            // #797: the thread cache sits under the hook, not in it, so an instrumentation decorator
+            // (E2eTestApplication's TappingConversationRepository) observes the restored thread too. A
+            // blank owner gets no cache, so no rows are ever filed under the empty id.
+            decorateRepository(
+                if (cache != null && serverId.isNotEmpty()) CachingConversationRepository(stable, cache, serverId) else stable,
+            )
         }
 
     fun thread(
         handle: SavedStateHandle,
-        preferences: AppPreferences,
-        // #789: the app-scoped composer-draft store. Passed per call, the same shape [preferences]
-        // already uses — one process-wide singleton reaching every thread destination, which is what
-        // lets a draft outlive the back-stack entry that typed it.
+        // #789: the app-scoped composer-draft store. One process-wide singleton reaching every thread
+        // destination, which is what lets a draft outlive the back-stack entry that typed it. #807 removed
+        // the `AppPreferences` that used to sit beside it: the thread's model and effort come from the
+        // daemon's session settings now, and no other thread state reads a device preference.
         draftStore: ComposerDraftStore,
     ): ThreadViewModel {
         val serverId = handle.get<String>("serverId").orEmpty()
@@ -237,7 +246,7 @@ internal class ThreadDestinationFactory(
         val repository = repository(serverId, bundle)
         RelayLog.d { "event=thread_destination_bound" }
         if (!useRelay && serverId == HostConversationSource.DEMO_SERVER_ID) {
-            return ThreadViewModel(handle, repository, FakeConnectionStateSource(), preferences, draftStore)
+            return ThreadViewModel(handle, repository, FakeConnectionStateSource(), draftStore)
         }
         val connection =
             object : ConnectionStateSource {
@@ -251,13 +260,15 @@ internal class ThreadDestinationFactory(
             handle,
             repository,
             connection,
-            preferences,
             draftStore,
             liveSessionEvents = bundle?.coordinator?.liveSessionEvents ?: emptyFlow(),
             currentModal = bundle?.coordinator?.currentModal ?: MutableStateFlow(ModalUiState.Hidden),
             answerModal = { modal, option -> checkNotNull(bundle).coordinator.answerModal(modal, option) },
             cancelModal = { modal -> checkNotNull(bundle).coordinator.cancelModal(modal) },
             interrupt = { id -> checkNotNull(bundle).coordinator.interrupt(id) },
+            questionBatch = { id -> bundle?.coordinator?.observeQuestionBatch(id) ?: flowOf(null) },
+            answerQuestionBatch = { batch, answers -> checkNotNull(bundle).coordinator.answerQuestionBatch(batch, answers) },
+            refuseQuestionBatch = { batch -> checkNotNull(bundle).coordinator.refuseQuestionBatch(batch) },
         )
     }
 

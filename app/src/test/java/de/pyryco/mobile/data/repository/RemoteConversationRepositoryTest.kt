@@ -2472,6 +2472,114 @@ class RemoteConversationRepositoryTest {
             assertEquals(listOf("live-1"), messageIds(thread.last()))
         }
 
+    // ---- #810: a tool call's input fields and parent identity reach the retained row on both lanes
+
+    // AC #3: the same tool_use + tool_result pair, once live under c1 and once replayed through a
+    // history_page under c2, retains the same ToolCall. Timestamps differ by lane by design (the live
+    // clock vs the stored entry's ts), so the comparison is the ToolCall, not the whole Message.
+    @Test
+    fun toolCall_liveAndHistoryLanes_retainIdenticalRows() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val live = collectMessages(repo, "c1")
+            val replayed = collectMessages(repo, "c2")
+            runCurrent()
+
+            pump.push(
+                Envelope(id = 1L, type = "tool_use", ts = TS, payload = MobileJson.parseToJsonElement(TOOL_USE_810.replace("CONV", "c1"))),
+            )
+            pump.push(
+                Envelope(
+                    id = 2L,
+                    type = "tool_result",
+                    ts = TS,
+                    payload = MobileJson.parseToJsonElement(TOOL_RESULT_810.replace("CONV", "c1")),
+                ),
+            )
+            runCurrent()
+
+            startRequestHistory(repo, "c2")
+            runCurrent()
+            val sentId = pump.sent.last { it.type == "request_history" }.id
+            val useEntry = TOOL_USE_810.replace("CONV", "c2")
+            val resultEntry = TOOL_RESULT_810.replace("CONV", "c2")
+            pump.push(
+                historyPageEnvelope(
+                    inReplyTo = sentId,
+                    raw =
+                        """
+                        {"entries":[
+                          {"id":2,"type":"tool_result","payload":$resultEntry,"ts":"2026-09-05T10:02:00Z"},
+                          {"id":1,"type":"tool_use","payload":$useEntry,"ts":"2026-09-05T10:01:00Z"}
+                        ],"cursor":"","at_start":true}
+                        """.trimIndent(),
+                ),
+            )
+            runCurrent()
+
+            val liveCall = (live.last().single() as ThreadItem.MessageItem).message.toolCall
+            val replayedCall = (replayed.last().single() as ThreadItem.MessageItem).message.toolCall
+            assertEquals(
+                ToolCall(
+                    toolName = "Edit",
+                    input = "a.kt",
+                    output = "ok",
+                    status = ToolCallStatus.Done,
+                    inputFields = mapOf("file_path" to "../src/a.kt", "old_string" to "x\ny…"),
+                    parentToolUseId = "agent-1",
+                ),
+                liveCall,
+            )
+            assertEquals(liveCall, replayedCall)
+        }
+
+    // AC #4: frames for c1 never alter c2's retained rows — even a tool_result for c1 whose
+    // tool_use_id collides with a row c2 already holds.
+    @Test
+    fun toolCall_framesForOneConversation_neverAlterAnothersRows() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val first = collectMessages(repo, "c1")
+            val second = collectMessages(repo, "c2")
+            runCurrent()
+
+            pump.push(
+                Envelope(id = 1L, type = "tool_use", ts = TS, payload = MobileJson.parseToJsonElement(TOOL_USE_810.replace("CONV", "c2"))),
+            )
+            runCurrent()
+            val before = second.last()
+
+            pump.push(
+                Envelope(
+                    id = 2L,
+                    type = "tool_use",
+                    ts = TS,
+                    payload =
+                        MobileJson.parseToJsonElement(
+                            """{"conversation_id":"c1","turn_id":"t9","tool_use_id":"tu-other","parent_tool_use_id":"agent-9",""" +
+                                """"name":"Bash","input_summary":"ls","input":{"command":"ls"}}""",
+                        ),
+                ),
+            )
+            pump.push(
+                Envelope(
+                    id = 3L,
+                    type = "tool_result",
+                    ts = TS,
+                    payload = MobileJson.parseToJsonElement(TOOL_RESULT_810.replace("CONV", "c1").replace("\"ok\"", "\"boom\"")),
+                ),
+            )
+            runCurrent()
+
+            assertEquals(before, second.last())
+            assertEquals(ToolCallStatus.Running, (second.last().single() as ThreadItem.MessageItem).message.toolCall?.status)
+            val firstCall = (first.last().single() as ThreadItem.MessageItem).message.toolCall
+            assertEquals(mapOf("command" to "ls"), firstCall?.inputFields)
+            assertEquals("agent-9", firstCall?.parentToolUseId)
+        }
+
     // ---- archive / unarchive (#549): archive_conversation / unarchive_conversation request →
     // ---- conversation_updated/error correlation, folding the is_archived flag ---------------------
 
@@ -5063,6 +5171,360 @@ class RemoteConversationRepositoryTest {
             assertEquals(listOf(false, true), compacting)
         }
 
+    // ---- #802: decode `rate_limited` as a conversation-observable usage-limit reading ------------
+    // Decode-only. The falling edge, the two unvalidated numbers and the expiry are what separate this
+    // arm from its `compacting` sibling, so those carry the load here.
+
+    // AC #1: nothing is readable until a frame lands, and the first frame surfaces every field
+    // VERBATIM — both claude-authored strings, both unvalidated numbers, and the truncation report.
+    @Test
+    fun usageLimit_absentUntilAFrameArrives_thenSurfacesEveryFieldVerbatim() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = interactiveRepo(pump)
+            val readings = collectUsageLimit(repo, "c1")
+            runCurrent()
+            assertEquals(listOf<UsageLimitReading?>(null), readings)
+
+            pump.push(
+                rateLimitedEnvelope(
+                    "c1",
+                    status = "allowed_warning",
+                    limitType = "seven_day",
+                    resetsAt = FUTURE_RESET,
+                    utilization = 0.94,
+                    truncatedFields = listOf("status"),
+                ),
+            )
+            runCurrent()
+            assertEquals(
+                listOf(null, UsageLimitReading("allowed_warning", "seven_day", FUTURE_RESET, 0.94, listOf("status"))),
+                readings,
+            )
+        }
+
+    // AC #1: a malformed payload is dropped without disturbing the reading or tearing down the single
+    // inbound consumer — a later valid frame still surfaces, proving the collector survived.
+    @Test
+    fun usageLimit_malformed_droppedCollectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = interactiveRepo(pump)
+            val readings = collectUsageLimit(repo, "c1")
+            runCurrent()
+
+            // Missing the required `conversation_id` → SerializationException → envelope dropped.
+            pump.push(rateLimitedProbe(1L, """{"status":"allowed_warning","limit_type":"seven_day","resets_at":0}"""))
+            // Wrong-typed `conversation_id` (number, not string) → dropped.
+            pump.push(rateLimitedProbe(2L, """{"conversation_id":7,"status":"s","limit_type":"l","resets_at":0}"""))
+            // Missing `status` → dropped (no required field is defaulted).
+            pump.push(rateLimitedProbe(3L, """{"conversation_id":"c1","limit_type":"seven_day","resets_at":0}"""))
+            // Genuinely wrong-shaped numbers — an object, then an array. NOT usable as probes: a
+            // *quoted* primitive (`"resets_at":"0"`), which kotlinx's tree decoder accepts even with
+            // `isLenient = false` (measured — see the ApiRetryPayloadDto KDoc), so it would decode
+            // green and prove nothing.
+            pump.push(rateLimitedProbe(4L, """{"conversation_id":"c1","status":"s","limit_type":"l","resets_at":{}}"""))
+            pump.push(
+                rateLimitedProbe(5L, """{"conversation_id":"c1","status":"s","limit_type":"l","resets_at":0,"utilization":[1]}"""),
+            )
+            runCurrent()
+            assertEquals(listOf<UsageLimitReading?>(null), readings)
+
+            pump.push(rateLimitedEnvelope("c1", id = 6L))
+            runCurrent()
+            assertEquals("the lone inbound collector survived every drop", 2, readings.size)
+            assertEquals("allowed_warning", readings.last()?.status)
+        }
+
+    // AC #1 (fail-closed): without `interactive` negotiated, a well-formed `rate_limited` never
+    // surfaces — a daemon ignoring the server-side fan-out gate cannot push one to a phone that did
+    // not negotiate the capability. The clock is pinned before FUTURE_RESET: on the real clock the
+    // fixture's reading is already expired, so a `null` would pass with the gate removed.
+    @Test
+    fun usageLimit_capabilityGateClosed_blocksDecode() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo =
+                RemoteConversationRepository(
+                    pump,
+                    backgroundScope,
+                    negotiatedCapabilities = { emptySet() },
+                    now = { Instant.fromEpochSeconds(FIXED_NOW) },
+                )
+            val readings = collectUsageLimit(repo, "c1")
+            runCurrent()
+
+            pump.push(rateLimitedEnvelope("c1"))
+            runCurrent()
+            assertEquals(listOf<UsageLimitReading?>(null), readings)
+        }
+
+    // AC #1 (fail-closed): a negotiated set carrying another token but NOT `interactive` still blocks.
+    // Clock pinned for the same reason as the closed-gate case.
+    @Test
+    fun usageLimit_capabilityGateOtherTokenOnly_blocksDecode() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo =
+                RemoteConversationRepository(
+                    pump,
+                    backgroundScope,
+                    negotiatedCapabilities = { setOf("something_else") },
+                    now = { Instant.fromEpochSeconds(FIXED_NOW) },
+                )
+            val readings = collectUsageLimit(repo, "c1")
+            runCurrent()
+
+            pump.push(rateLimitedEnvelope("c1"))
+            runCurrent()
+            assertEquals(listOf<UsageLimitReading?>(null), readings)
+        }
+
+    // AC #2, the load-bearing test of the slice: a benign-status frame clears THAT conversation's
+    // entry and no other's. The `stall` arm structurally cannot have a clearing edge, so cloning that
+    // arm too literally fails exactly here.
+    @Test
+    fun usageLimit_benignStatus_clearsOnlyThatConversation() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = interactiveRepo(pump)
+            val c1 = collectUsageLimit(repo, "c1")
+            val c2 = collectUsageLimit(repo, "c2")
+            runCurrent()
+
+            pump.push(rateLimitedEnvelope("c1", id = 1L))
+            pump.push(rateLimitedEnvelope("c2", id = 2L))
+            runCurrent()
+            assertEquals("allowed_warning", c1.last()?.status)
+            assertEquals("allowed_warning", c2.last()?.status)
+
+            pump.push(rateLimitedEnvelope("c1", status = "allowed", limitType = "five_hour", id = 3L))
+            runCurrent()
+            assertEquals("the benign frame cleared the conversation it named", null, c1.last())
+            assertEquals("and left every other conversation's reading standing", "allowed_warning", c2.last()?.status)
+        }
+
+    // AC #2: the clearing frame names a DIFFERENT `limit_type` than the warning it clears — every
+    // benign reading on record carries `five_hour` against `seven_day` on every warning. Pairing the
+    // clear to `limit_type` would never match; this asserts the pairing is the conversation id.
+    @Test
+    fun usageLimit_benignStatus_clearsAcrossADifferentLimitType() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = interactiveRepo(pump)
+            val readings = collectUsageLimit(repo, "c1")
+            runCurrent()
+
+            pump.push(rateLimitedEnvelope("c1", status = "allowed_warning", limitType = "seven_day", id = 1L))
+            runCurrent()
+            assertEquals("seven_day", readings.last()?.limitType)
+
+            pump.push(rateLimitedEnvelope("c1", status = "allowed", limitType = "five_hour", id = 2L))
+            runCurrent()
+            assertEquals("a mismatched limit_type must not stop the clear", null, readings.last())
+        }
+
+    // A benign frame for a conversation holding nothing is inert — removing an absent key is a no-op,
+    // so the observer stays at `null` and emits nothing new.
+    @Test
+    fun usageLimit_benignStatusWithNoPriorReading_emitsNothingNew() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = interactiveRepo(pump)
+            val readings = collectUsageLimit(repo, "c1")
+            runCurrent()
+
+            pump.push(rateLimitedEnvelope("c1", status = "allowed", limitType = "five_hour"))
+            runCurrent()
+            assertEquals(listOf<UsageLimitReading?>(null), readings)
+        }
+
+    // AC #3: an ABSENT `utilization` stays absent rather than becoming `0.0`, and an explicit `0.0`
+    // stays `0.0`. Reading a missing reading as zero would render a fresh window as an exhausted one,
+    // so the two are asserted APART rather than merely asserted present.
+    @Test
+    fun usageLimit_absentUtilizationStaysNull_andExplicitZeroStaysZero() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = interactiveRepo(pump)
+            val absent = collectUsageLimit(repo, "c1")
+            val zero = collectUsageLimit(repo, "c2")
+            runCurrent()
+
+            pump.push(rateLimitedEnvelope("c1", utilization = null, id = 1L))
+            pump.push(rateLimitedEnvelope("c2", utilization = 0.0, id = 2L))
+            runCurrent()
+            assertNull("an omitted reading must not be punned to 0.0", absent.last()?.utilization)
+            assertEquals("an explicit 0.0 is a real reading claude sent", 0.0, zero.last()?.utilization)
+            assertNotEquals(absent.last(), zero.last())
+        }
+
+    // AC #3: an out-of-range `utilization` is carried rather than rejected or clamped — it is claude's
+    // number and not a bounded fraction, so neither a negative nor an above-one value may be rewritten
+    // at the decode boundary.
+    @Test
+    fun usageLimit_outOfRangeUtilization_isCarriedNotClamped() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = interactiveRepo(pump)
+            val negative = collectUsageLimit(repo, "c1")
+            val aboveOne = collectUsageLimit(repo, "c2")
+            runCurrent()
+
+            pump.push(rateLimitedEnvelope("c1", utilization = -0.5, id = 1L))
+            pump.push(rateLimitedEnvelope("c2", utilization = 2.5, id = 2L))
+            runCurrent()
+            assertEquals(-0.5, negative.last()?.utilization)
+            assertEquals(2.5, aboveOne.last()?.utilization)
+        }
+
+    // AC #3: an out-of-range `resets_at` is carried too. The year-40000 case is also the
+    // Long-not-Int regression guard — it exceeds Int32, so an `Int` DTO field would fail the
+    // STRUCTURAL decode and drop the very frame this criterion requires be carried. The clock starts
+    // before the negative value so the carry is observable; "dropped at decode" would read `null`.
+    @Test
+    fun usageLimit_outOfRangeResetsAt_isCarriedNotRejected() =
+        runTest {
+            val pump = FakeSessionPump()
+            var nowSeconds = -100L
+            val repo = interactiveRepo(pump) { Instant.fromEpochSeconds(nowSeconds) }
+            val negative = collectUsageLimit(repo, "c1")
+            val farFuture = collectUsageLimit(repo, "c2")
+            runCurrent()
+
+            pump.push(rateLimitedEnvelope("c1", resetsAt = -42L, id = 1L))
+            pump.push(rateLimitedEnvelope("c2", resetsAt = YEAR_40000_RESET, id = 2L))
+            runCurrent()
+            assertEquals("a negative resets_at is carried, not rejected", -42L, negative.last()?.resetsAt)
+            assertEquals(YEAR_40000_RESET, farFuture.last()?.resetsAt)
+
+            nowSeconds = FIXED_NOW
+            val late = collectUsageLimit(repo, "c1")
+            runCurrent()
+            assertEquals("and, being a past instant, it is unreadable on the real timeline", listOf<UsageLimitReading?>(null), late)
+        }
+
+    // The DTO KDoc's claim: an out-of-contract `truncated_fields: []` decodes to an empty list rather
+    // than being punned to `null`, so the two stay distinguishable.
+    @Test
+    fun usageLimit_emptyTruncatedFields_staysEmptyNotNull() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = interactiveRepo(pump)
+            val readings = collectUsageLimit(repo, "c1")
+            runCurrent()
+
+            pump.push(rateLimitedEnvelope("c1", truncatedFields = emptyList()))
+            runCurrent()
+            assertEquals(emptyList<String>(), readings.last()?.truncatedFields)
+        }
+
+    // AC #4: a reading stops being readable once its `resets_at` has passed. Expiry is one comparison
+    // at READ time and there is deliberately no timer, so the proof is a reader asking after the
+    // deadline — the same shape desktop's selector has.
+    @Test
+    fun usageLimit_stopsBeingReadableOnceResetsAtHasPassed() =
+        runTest {
+            val pump = FakeSessionPump()
+            var nowSeconds = FIXED_NOW
+            val repo = interactiveRepo(pump) { Instant.fromEpochSeconds(nowSeconds) }
+            val early = collectUsageLimit(repo, "c1")
+            runCurrent()
+
+            pump.push(rateLimitedEnvelope("c1", resetsAt = FUTURE_RESET))
+            runCurrent()
+            assertEquals("readable while the clock is before resets_at", FUTURE_RESET, early.last()?.resetsAt)
+
+            nowSeconds = FUTURE_RESET + 1
+            val late = collectUsageLimit(repo, "c1")
+            runCurrent()
+            assertEquals(listOf<UsageLimitReading?>(null), late)
+        }
+
+    // AC #4: the boundary is exclusive — a reading is unreadable AT `resets_at`, not just after it.
+    // The reset instant is when the window is fresh again, not the last instant it was stale.
+    @Test
+    fun usageLimit_exactlyAtResetsAt_isUnreadable() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = interactiveRepo(pump) { Instant.fromEpochSeconds(FUTURE_RESET) }
+            val readings = collectUsageLimit(repo, "c1")
+            runCurrent()
+
+            pump.push(rateLimitedEnvelope("c1", resetsAt = FUTURE_RESET))
+            runCurrent()
+            assertEquals(listOf<UsageLimitReading?>(null), readings)
+        }
+
+    // AC #4: `resets_at == 0` means claude reported NO reset, emphatically not the epoch, so there is
+    // no time to expire at and the reading stays readable at any clock. Folding the zero into the
+    // comparison would read as "expired in 1970" and make every unreported reading invisible on
+    // arrival — the failure this branch forecloses.
+    @Test
+    fun usageLimit_zeroResetsAt_neverExpires() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = interactiveRepo(pump) { Instant.fromEpochSeconds(YEAR_40000_RESET) }
+            val readings = collectUsageLimit(repo, "c1")
+            runCurrent()
+
+            pump.push(rateLimitedEnvelope("c1", resetsAt = 0L))
+            runCurrent()
+            assertEquals("0 is not the epoch — the reading stands", 0L, readings.last()?.resetsAt)
+        }
+
+    // observeUsageLimit is distinctUntilChanged: another conversation's frames do not re-emit this
+    // flow, while a genuinely different reading for this one does.
+    @Test
+    fun usageLimit_distinctUntilChanged_otherConversationDoesNotReemit() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = interactiveRepo(pump)
+            val c1 = collectUsageLimit(repo, "c1")
+            runCurrent()
+            assertEquals(listOf<UsageLimitReading?>(null), c1)
+
+            // Separate batches, so c2 genuinely passes through two distinct states rather than being
+            // conflated into one no-op by the StateFlow.
+            pump.push(rateLimitedEnvelope("c2", id = 1L))
+            runCurrent()
+            pump.push(rateLimitedEnvelope("c2", status = "allowed", id = 2L))
+            runCurrent()
+            assertEquals(listOf<UsageLimitReading?>(null), c1)
+        }
+
+    // AC #5: a `rate_limited` neither raises nor clears a stall, and folds no thread row. A usage-limit
+    // report is neither a stall nor turn forward progress, and clearing one here would hand a daemon a
+    // lever for suppressing the phone's stall indicator.
+    @Test
+    fun usageLimit_inertTowardNeighbours_keepsStallAndFoldsNoThreadRow() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = interactiveRepo(pump)
+            val stalls = collectStall(repo, "c1")
+            val thread = collectMessages(repo, "c1")
+            val readings = collectUsageLimit(repo, "c1")
+            runCurrent()
+
+            pump.push(stallEnvelope("c1"))
+            runCurrent()
+            assertEquals(listOf(false, true), stalls)
+
+            // Each edge gets its own runCurrent(): pushed in one batch, the StateFlow conflates the
+            // raise and the clear and the collector would observe neither, so a single-batch version
+            // of this test would assert nothing about either edge.
+            pump.push(rateLimitedEnvelope("c1", id = 2L))
+            runCurrent()
+            assertEquals("the raising edge landed", "allowed_warning", readings.last()?.status)
+            assertEquals("a usage-limit report is not forward progress — the stall stands", listOf(false, true), stalls)
+
+            pump.push(rateLimitedEnvelope("c1", status = "allowed", id = 3L))
+            runCurrent()
+            assertEquals("the clearing edge landed", null, readings.last())
+            assertEquals("and a clear does not clear a stall either", listOf(false, true), stalls)
+            assertEquals("no thread row folded by either edge", listOf(emptyList<ThreadItem>()), thread)
+        }
+
     // ---- #801: decode `thinking_progress` as a conversation-observable reading --------------------
 
     // AC #1: a conversation no frame has named reads as NO READING (`null`), and the first frame
@@ -6345,6 +6807,50 @@ class RemoteConversationRepositoryTest {
             assertEquals("/x", boundaries[2].workspaceCwd)
             assertEquals("ev", boundaries[1].previousSessionId)
             assertEquals("ev", boundaries[1].newSessionId)
+        }
+
+    // #775 AC #1: a session evicted, woken and evicted again keeps its id, so an honest daemon sends `A->A`
+    // twice with different occurred_at. Both are real delimiters and both land, in arrival order.
+    @Test
+    fun sessionTransition_repeatedEvictionOfOneSession_foldsOneBoundaryPerInstant() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(sessionTransitionEnvelope("c1", "A", "A", "idle_evict", occurredAt = "2026-06-23T12:00:00Z", id = 1L))
+            runCurrent()
+            pump.push(messageEnvelope("c1", "m1", "user", "wake up", "2026-06-23T12:30:00Z"))
+            runCurrent()
+            pump.push(sessionTransitionEnvelope("c1", "A", "A", "idle_evict", occurredAt = "2026-06-23T13:00:00Z", id = 2L))
+            runCurrent()
+
+            assertEquals(listOf("boundary:IdleEvict", "m1", "boundary:IdleEvict"), threadShape(emissions.last()))
+            assertEquals(
+                listOf(Instant.parse("2026-06-23T12:00:00Z"), Instant.parse("2026-06-23T13:00:00Z")),
+                boundariesOf(emissions.last()).map { it.occurredAt },
+            )
+        }
+
+    // #775 AC #2: a frame repeating a held boundary's pair AND occurred_at is the same boundary, and adds no
+    // second row — whatever arrived in between keeps its place.
+    @Test
+    fun sessionTransition_repeatOfAHeldBoundary_addsNoSecondRow() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear", occurredAt = "2026-06-23T12:00:00Z", id = 1L))
+            runCurrent()
+            pump.push(messageEnvelope("c1", "m1", "user", "hi", "2026-06-23T12:30:00Z"))
+            runCurrent()
+            pump.push(sessionTransitionEnvelope("c1", "s1", "s2", "clear", occurredAt = "2026-06-23T12:00:00Z", id = 2L))
+            runCurrent()
+
+            assertEquals(listOf("boundary:Clear", "m1"), threadShape(emissions.last()))
         }
 
     // AC #4: occurred_at parses to the SessionBoundary.occurredAt Instant.
@@ -8294,6 +8800,31 @@ class RemoteConversationRepositoryTest {
         payload: String,
     ): Envelope = Envelope(id = id, type = "compacting", ts = TS, payload = MobileJson.parseToJsonElement(payload))
 
+    /**
+     * An `interactive`-capable repository (#802), optionally on a caller-supplied clock. The clock is
+     * what makes the read-time expiry deterministic: `Clock.System.now()` would make every
+     * `resets_at`-dependent assertion depend on the wall clock of the machine running the suite.
+     */
+    private fun TestScope.interactiveRepo(
+        pump: FakeSessionPump,
+        now: () -> Instant = { Instant.fromEpochSeconds(FIXED_NOW) },
+    ): RemoteConversationRepository =
+        RemoteConversationRepository(
+            pump,
+            backgroundScope,
+            negotiatedCapabilities = { setOf("interactive") },
+            now = now,
+        )
+
+    private fun TestScope.collectUsageLimit(
+        repo: RemoteConversationRepository,
+        conversationId: String,
+    ): MutableList<UsageLimitReading?> {
+        val emissions = mutableListOf<UsageLimitReading?>()
+        backgroundScope.launch { repo.observeUsageLimit(conversationId).collect { emissions += it } }
+        return emissions
+    }
+
     private fun TestScope.collectThinkingProgress(
         repo: RemoteConversationRepository,
         conversationId: String,
@@ -8302,6 +8833,41 @@ class RemoteConversationRepositoryTest {
         backgroundScope.launch { repo.observeThinkingProgress(conversationId).collect { emissions += it } }
         return emissions
     }
+
+    /**
+     * A `rate_limited` envelope (#802). All six keys are always present on the wire, so the helper
+     * always emits all six — including `utilization` and `truncated_fields`, whose **explicit `null`**
+     * is the shape the daemon sends when claude reported none, and which must stay distinguishable
+     * from `0` and from `[]` respectively. The defaults are the one measured non-benign reading:
+     * `allowed_warning` against `seven_day`.
+     */
+    private fun rateLimitedEnvelope(
+        conversationId: String,
+        status: String = "allowed_warning",
+        limitType: String = "seven_day",
+        resetsAt: Long = FUTURE_RESET,
+        utilization: Double? = null,
+        truncatedFields: List<String>? = null,
+        id: Long = 1L,
+    ): Envelope {
+        val truncated = truncatedFields?.joinToString(",", "[", "]") { "\"$it\"" } ?: "null"
+        return Envelope(
+            id = id,
+            type = "rate_limited",
+            ts = TS,
+            payload =
+                MobileJson.parseToJsonElement(
+                    """{"conversation_id":"$conversationId","status":"$status","limit_type":"$limitType",""" +
+                        """"resets_at":$resetsAt,"utilization":${utilization ?: "null"},"truncated_fields":$truncated}""",
+                ),
+        )
+    }
+
+    /** A raw `rate_limited` envelope carrying [payload] verbatim — for the malformed-payload probes. */
+    private fun rateLimitedProbe(
+        id: Long,
+        payload: String,
+    ): Envelope = Envelope(id = id, type = "rate_limited", ts = TS, payload = MobileJson.parseToJsonElement(payload))
 
     /**
      * A `thinking_progress` envelope `{conversation_id, estimated_tokens, estimated_tokens_delta}`
@@ -8704,6 +9270,16 @@ class RemoteConversationRepositoryTest {
     private companion object {
         const val TS = "2026-05-31T00:00:00Z"
 
+        /** A #810 `tool_use` payload with input fields and a parent; `CONV` is the conversation placeholder. */
+        const val TOOL_USE_810 =
+            """{"conversation_id":"CONV","turn_id":"t1","tool_use_id":"tu-810","parent_tool_use_id":"agent-1",""" +
+                """"name":"Edit","input_summary":"a.kt","input":{"file_path":"../src/a.kt","old_string":"x\ny…"}}"""
+
+        /** The `tool_result` completing [TOOL_USE_810], carrying the same parent. */
+        const val TOOL_RESULT_810 =
+            """{"conversation_id":"CONV","turn_id":"t1","tool_use_id":"tu-810","parent_tool_use_id":"agent-1",""" +
+                """"is_error":false,"result_summary":"ok"}"""
+
         /** A plain row: auto mode accepted, two effort levels, nothing cut (#791). */
         val ROW_SONNET = ModelRowFixture("claude-sonnet-5", "sonnet", "Sonnet 5")
 
@@ -8726,6 +9302,18 @@ class RemoteConversationRepositoryTest {
 
         /** An opaque daemon-minted history cursor (#623) — echoed back verbatim, never parsed. */
         const val CURSOR = "MS4zZjhiMWMwNC05ZDI3LTRlNWEtYjZjMS0yZTlmNzBkOGE0MTMuNy40MDk2"
+
+        /** The usage-limit expiry's fixed "now" (#802), in unix seconds — 2026-05-31, matching [TS]. */
+        const val FIXED_NOW = 1_780_185_600L
+
+        /** A `resets_at` comfortably after [FIXED_NOW], so a reading carrying it is readable. */
+        const val FUTURE_RESET = FIXED_NOW + 3_600L
+
+        /**
+         * A `resets_at` in year 40000 (#802) — representable on the wire, rejected nowhere, and **past
+         * `Int32`**, so it doubles as the Long-not-Int regression guard on [UsageLimitReading.resetsAt].
+         */
+        const val YEAR_40000_RESET = 1_200_000_000_000L
 
         /** The terminal shape of a history walk: no entries, empty cursor, `at_start` true. */
         const val EMPTY_TERMINAL_PAGE = """{"entries":[],"cursor":"","at_start":true}"""

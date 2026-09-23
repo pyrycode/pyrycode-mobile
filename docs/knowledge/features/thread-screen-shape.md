@@ -22,8 +22,10 @@ data class ThreadUiState(
     val workspacePath: String = "",                   // new in #226 — conv.cwd (full path; cf. leaf-only workspaceLabel)
     val lastUsedAt: Instant? = null,                  // new in #226 — conv.lastUsedAt; formatted in screen layer
     val sessionCount: Int = 0,                        // new in #226 — conv.sessionHistory.size
-    val selectedModel: Model = Model.OPUS_4_7,        // new in #145, retyped String→Model in #253
-    val selectedEffort: Effort = Effort.HIGH,         // new in #145 as `effort: String`, retyped String→Effort in #229
+    // selectedModel: Model / selectedEffort: Effort (new in #145, retyped in #253/#229) DELETED by #807 —
+    // replaced by val runConfig: ThreadRunConfig = ThreadRunConfig(), sourced from observeSessionSettings /
+    // observeModelMenu, never AppPreferences. currentSessionId (added after this snapshot) also deleted by
+    // #807 — ThreadRunConfig.sessionId (from SessionSettings) is the sole routing key. See thread-status-row.md.
     val yoloEnabled: Boolean = false,                 // new in #229 — always false, ignores AppPreferences.defaultYolo
     // model/effort/tokenPercent trio from #145 removed in #603 — see thread-status-row.md
 )
@@ -32,7 +34,8 @@ class ThreadViewModel(
     savedStateHandle: SavedStateHandle,
     private val repository: ConversationRepository,         // private val since #188
     private val connectionStateSource: ConnectionStateSource, // new in #201
-    private val appPreferences: AppPreferences,             // new in #253
+    // private val appPreferences: AppPreferences (new in #253) REMOVED by #807 — no thread state reads a
+    // device preference any more; see thread-status-row.md § Sourcing.
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
@@ -53,22 +56,17 @@ class ThreadViewModel(
     val navigationEvents: Flow<ThreadNavigation> =               // new in #227 — collected in MainActivity
         navigationChannel.receiveAsFlow()
 
-    private val modelOverride = MutableStateFlow<Model?>(null)    // new in #253 — null ⇒ "use Settings default"
-
-    private val selectedModelFlow: Flow<Model> =                  // new in #253
-        combine(appPreferences.defaultModel, modelOverride) { default, override -> override ?: default }
-
-    private val effortOverride = MutableStateFlow<Effort?>(null)  // new in #229 — null ⇒ "use Settings default"
-
-    private val selectedEffortFlow: Flow<Effort> =                // new in #229 — mirrors selectedModelFlow shape
-        combine(appPreferences.defaultEffort, effortOverride) { default, override -> override ?: default }
+    // modelOverride / selectedModelFlow (new in #253) and effortOverride / selectedEffortFlow (new in #229)
+    // — both AppPreferences-backed with an in-memory per-conversation override — DELETED by #807.
 
     private val yoloEnabled = MutableStateFlow(false)             // new in #229 — hardcoded false, NO defaultYolo read
 
-    private val runConfigFlow: Flow<RunConfig> =                  // new in #229 — pre-combiner keeps outer combine at 5-arity
-        combine(selectedModelFlow, selectedEffortFlow, yoloEnabled) { model, effort, yolo ->
-            RunConfig(model, effort, yolo)
-        }
+    // runConfigFlow (new in #229 as a 3-input pre-combiner over selectedModelFlow/selectedEffortFlow/yoloEnabled)
+    // KEPT ITS NAME but #807 replaced its inputs entirely: it now combines
+    // repository.observeSessionSettings(conversationId), repository.observeModelMenu(conversationId),
+    // a pendingModel: MutableStateFlow<String?>, a pendingEffort: MutableStateFlow<String?>, and yoloEnabled
+    // (still five inputs, combine's typed ceiling) into a ThreadRunConfig via a file-private runConfig(...)
+    // mapping function. See thread-status-row.md § Sourcing for the full current shape.
 
     private val transientDialogs: Flow<TransientDialogs> =        // new in #142; widened 2→3 in #226, 3→4 in #227 — keeps outer combine at 5-arity
         combine(
@@ -127,8 +125,7 @@ class ThreadViewModel(
                 workspacePath = conv?.cwd ?: "",                  // new in #226
                 lastUsedAt = conv?.lastUsedAt,                    // new in #226
                 sessionCount = conv?.sessionHistory?.size ?: 0,   // new in #226
-                selectedModel = runConfig.model,                  // new in #145, rewired from STUB_MODEL → prefs+override in #253, bundled in #229
-                selectedEffort = runConfig.effort,                // new in #145 as STUB_EFFORT, rewired to prefs+override in #229
+                runConfig = runConfig.config,                     // #807 — replaces selectedModel/selectedEffort above; see thread-status-row.md
                 yoloEnabled = runConfig.yoloEnabled,              // new in #229
             )
         }.stateIn(
@@ -176,21 +173,19 @@ class ThreadViewModel(
         pendingWorkspacePicker.value = false
     }
 
-    fun onModelSelected(model: Model) {                    // new in #253 — synchronous, does not write prefs
-        modelOverride.value = model
-    }
+    // onModelSelected(model: Model) / onEffortSelected(effort: Effort) — synchronous MutableStateFlow writes,
+    // new in #253/#229 — REPLACED by #807 with onModelSelected(value: String) / onEffortSelected(level: String),
+    // which mark a pending tap and send it to ConversationRepository.setSessionSettings addressed at
+    // SessionSettings.sessionId (never Conversation.currentSessionId), guarded on "already selected",
+    // "write already pending" and "sessionId is empty ⇒ read-only". See thread-status-row.md § Sourcing.
 
-    fun onEffortSelected(effort: Effort) {                 // new in #229 — synchronous, does not write prefs
-        effortOverride.value = effort
-    }
-
-    fun onYoloToggled(enabled: Boolean) {                  // new in #229 — synchronous, single writer of yoloEnabled
+    fun onYoloToggled(enabled: Boolean) {                  // new in #229 — now shares the #807 session-id routing too
         yoloEnabled.value = enabled
+        // ...
     }
 
     private data class RunConfig(                          // new in #229 — file-private bundle for the runConfigFlow pre-combine
-        val model: Model,
-        val effort: Effort,
+        val config: ThreadRunConfig,                        // #807 — was val model: Model, val effort: Effort
         val yoloEnabled: Boolean,
     )
 
@@ -224,8 +219,8 @@ fun ThreadScreen(
     onTitleClick: () -> Unit = {},
     onOverflowEvent: (ThreadEvent) -> Unit = {},      // new in #252 — renamed in place from onOverflowClick (#139)
     onShowLiteralScreen: () -> Unit = {},             // new in #382 — pure navigation to the literal_screen destination (not a ThreadEvent)
-    onModelSelected: (Model) -> Unit = {},            // new in #254 — replaces onExpandClick from #145
-    onEffortSelected: (Effort) -> Unit = {},          // new in #229
+    onModelSelected: (String) -> Unit = {},           // new in #254 as (Model) -> Unit — replaces onExpandClick from #145; retyped by #807
+    onEffortSelected: (String) -> Unit = {},          // new in #229 as (Effort) -> Unit; retyped by #807
     onYoloToggled: (Boolean) -> Unit = {},            // new in #229
     onWorkspaceChipTapped: () -> Unit = {},           // new in #137
     onWorkspacePicked: (String) -> Unit = {},         // new in #137
@@ -264,9 +259,10 @@ fun ThreadScreen(
         bottomBar = {                                  // wrapped in Column in #145
             Column(modifier = Modifier.fillMaxWidth()) {
                 ThreadStatusRow(
-                    model = state.selectedModel.label(),         // state.model → state.selectedModel.label() in #253
-                    effort = state.selectedEffort.label(),       // state.effort → state.selectedEffort.label() in #229
+                    model = state.runConfig.modelLabel,          // state.model → state.selectedModel.label() in #253 → state.runConfig.modelLabel in #807
+                    effort = state.runConfig.effortLabel,        // state.effort → state.selectedEffort.label() in #229 → state.runConfig.effortLabel in #807
                     onExpandClick = { sheetVisible = true },     // wired internally in #254
+                    pending = state.runConfig.pending,           // new in #807
                 )
                 ThreadInputBar(onSend = onSendMessage)
             }
@@ -351,18 +347,24 @@ fun ThreadScreen(
             onDismiss = { onOverflowEvent(ThreadEvent.SaveAsChannelDismiss) },
         )
     }
-    if (sheetVisible) {                           // Scaffold sibling, new in #254; widened in #229
+    if (sheetVisible) {                           // Scaffold sibling, new in #254; widened in #229; re-sourced in #807
         StatusSheet(
-            selectedModel = state.selectedModel,
-            onModelSelected = { model ->
-                onModelSelected(model)
+            choices = state.runConfig.choices,                          // #807
+            menuAvailable = state.runConfig.menuAvailable,              // #807
+            notListedModels = state.runConfig.droppedModels + state.runConfig.hiddenChoices,  // #807
+            selectedModel = state.runConfig.selectedModel,              // was state.selectedModel: Model through #807
+            onModelSelected = { value ->
+                onModelSelected(value)
                 sheetVisible = false              // auto-close on selection
             },
-            selectedEffort = state.selectedEffort,          // new in #229
-            onEffortSelected = { effort ->                  // new in #229 — auto-close (discrete pick)
-                onEffortSelected(effort)
+            effortChoices = state.runConfig.effortChoices,              // #807
+            selectedEffort = state.runConfig.selectedEffort,            // was state.selectedEffort: Effort through #807
+            onEffortSelected = { level ->                   // new in #229 — auto-close (discrete pick)
+                onEffortSelected(level)
                 sheetVisible = false
             },
+            pending = state.runConfig.pending,              // new in #807
+            enabled = state.runConfig.writable,             // new in #807 — "" sessionId ⇒ read-only
             yoloEnabled = state.yoloEnabled,                // new in #229
             onYoloToggled = onYoloToggled,                  // new in #229 — NO auto-close (toggle state-change)
             onDismiss = { sheetVisible = false },
@@ -504,6 +506,6 @@ fun ThreadTopAppBar(
 )
 ```
 
-`ThreadUiState` is still a **`data class`, not a `sealed interface`.** The canonical pattern in this codebase (`ChannelListUiState`, `DiscussionListUiState`, `ArchivedDiscussionsUiState`) is sealed `Loading | Empty | Loaded | Error` precisely because each represents a real async data-load stage; this screen still has zero `Loading` / `Error` distinction worth modelling (the `displayName` lookup falls back to the raw id rather than failing, so there is no error state to project). The first downstream ticket that introduces an error path or a "load-bearing waiting" frame is the one that widens to a sealed envelope; the current `data class` becomes the `Loaded` variant via grep-replace. Post-[#227](../codebase/227.md) the class carried eighteen fields, including `tokenPercent`; the additions since #145 (`showRenameDialog` from #141, `saveAsChannelDialog` from #142, `yoloEnabled` from #229, `channelInfoOpen` / `workspacePath` / `lastUsedAt` / `sessionCount` from #226, and `deleteConfirmVisible` from #227) all default so the pre-existing `assertEquals(ThreadUiState(...), vm.state.value)` test cases compile unchanged. [#603](../codebase/603.md) has since removed `tokenPercent` (see below); later tickets not covered by this ticket note have added further fields (`currentSessionId`, `mutationsSupported`) not reflected in the field count above. The `model: String` field was retyped to `selectedModel: Model` in [#253](../codebase/253.md) and the `effort: String` field was similarly retyped to `selectedEffort: Effort` in [#229](../codebase/229.md) — both as part of typing the Status Sheet's selection contracts; the fields' data-class default positions are preserved.
+`ThreadUiState` is still a **`data class`, not a `sealed interface`.** The canonical pattern in this codebase (`ChannelListUiState`, `DiscussionListUiState`, `ArchivedDiscussionsUiState`) is sealed `Loading | Empty | Loaded | Error` precisely because each represents a real async data-load stage; this screen still has zero `Loading` / `Error` distinction worth modelling (the `displayName` lookup falls back to the raw id rather than failing, so there is no error state to project). The first downstream ticket that introduces an error path or a "load-bearing waiting" frame is the one that widens to a sealed envelope; the current `data class` becomes the `Loaded` variant via grep-replace. Post-[#227](../codebase/227.md) the class carried eighteen fields, including `tokenPercent`; the additions since #145 (`showRenameDialog` from #141, `saveAsChannelDialog` from #142, `yoloEnabled` from #229, `channelInfoOpen` / `workspacePath` / `lastUsedAt` / `sessionCount` from #226, and `deleteConfirmVisible` from #227) all default so the pre-existing `assertEquals(ThreadUiState(...), vm.state.value)` test cases compile unchanged. [#603](../codebase/603.md) has since removed `tokenPercent` (see below); later tickets not covered by this ticket note added further fields (`currentSessionId`, `mutationsSupported`) not reflected in the field count above — and [`#807`](../codebase/807.md) has since **deleted `currentSessionId` again**, along with `selectedModel: Model` / `selectedEffort: Effort`. The `model: String` field was retyped to `selectedModel: Model` in [#253](../codebase/253.md) and the `effort: String` field was similarly retyped to `selectedEffort: Effort` in [#229](../codebase/229.md) — both as part of typing the Status Sheet's selection contracts. **[#807](../codebase/807.md) deleted both fields outright** in favour of one `runConfig: ThreadRunConfig`, sourced from the daemon's own `observeSessionSettings` / `observeModelMenu` readings rather than the `Model` / `Effort` device enums — see [thread-status-row.md § Sourcing](thread-status-row.md#sourcing) for the replacement and its rationale. This whole `## Shape` section is a snapshot as of the tickets it names; it is not re-synchronized on every later change, so treat the [how-it-works](thread-screen.md#map) split documents as the current source for anything not called out here.
 
-`ThreadScreen`'s signature is **`(state, onBack, onSendMessage, connectionState, onRetry, modifier, isThinking, isStalled, onTitleClick, onOverflowEvent, onModelSelected, onWorkspaceChipTapped, onWorkspacePicked, onWorkspacePickerDismissed)` — mixed: one sealed-event sink (`onOverflowEvent`) alongside six flat callbacks, plus three flat `State` parameters (`connectionState`, `isThinking`, `isStalled`).** Every other VM-backed screen in the codebase uses `(state: UiState, onEvent: (Event) -> Unit)` once they have at least one VM-owned event. #188 added `onSendMessage`, #201 added `onRetry`, #137 added three workspace handlers, #145 added a hoisted `onExpandClick` placeholder that #254 deleted in favour of an internal `{ sheetVisible = true }` plus a new `onModelSelected: (Model) -> Unit` parameter bound to `vm::onModelSelected` ([#253](../codebase/253.md)) — all as flat callbacks rather than folding into a sealed `ThreadEvent`. [`#251`](../codebase/251.md) **introduced** the `sealed interface ThreadEvent` (co-located at the top of `ThreadViewModel.kt`) and a `ThreadViewModel.onOverflowEvent(event: ThreadEvent)` dispatcher, **scoped to overflow only**: the existing six plain handlers (`sendMessage`, `retry`, `onWorkspaceChipTapped`, `onWorkspacePicked`, `onWorkspacePickerDismissed`, `onModelSelected`) are not migrated to the sealed surface. [`#252`](../codebase/252.md) mounted the [`ThreadOverflowMenu`](thread-overflow-menu.md) inside `ThreadTopAppBar`'s `actions` slot — `ThreadScreen` hoists `var overflowExpanded by rememberSaveable { mutableStateOf(false) }`, the screen's `onOverflowClick: () -> Unit = {}` parameter was renamed in place to `onOverflowEvent: (ThreadEvent) -> Unit = {}`, and `MainActivity` binds `onOverflowEvent = vm::onOverflowEvent` at the destination block. The screen-level `(state, onEvent)` collapse for *every* event (rolling the six plain methods into `ThreadEvent` too) is option (iii) from #203's convention question and remains deferred. `connectionState` stays a flat `State` parameter — it's state, not an event; [`#407`](../codebase/407.md) added `isThinking: Boolean = false` on the same footing (a defaulted flat `State` sibling, after `modifier`); [`#396`](../codebase/396.md) added `isStalled: Boolean = false` likewise. [`#382`](../codebase/382.md) added a defaulted `onShowLiteralScreen: () -> Unit = {}` (forwarded through `ThreadTopAppBar` to [`ThreadOverflowMenu`](thread-overflow-menu.md)'s always-available "Show the literal screen" item) — another **flat callback, not a `ThreadEvent`**: it is pure navigation (`MainActivity` wires `{ navController.navigate("literal_screen/$conversationId") }`), so routing it through the sealed surface would have coupled a view-only action to the VM. Mirrors `onOpenAbout`; keeps `ThreadViewModel`/`ThreadEvent` untouched. [`#446`](../codebase/446.md) added `modalState: ModalUiState = ModalUiState.Hidden` on the same footing as `isThinking` / `isStalled` (a defaulted flat `State` sibling — the hoisted app-level `currentModal` from #445), plus two then-**inert** flat callbacks `onModalOption: (String) -> Unit = {}` / `onModalCancel: () -> Unit = {}`; all defaulted, so no call-site cascade. [`#452`](../codebase/452.md) **made those live** and added two more defaulted siblings — `armedOptionId: String? = null` (a flat `State` sibling, the VM-scoped armed option from #451) and `modalSendErrors: Flow<Unit> = emptyFlow()` (a payload-free one-shot) — with `MainActivity` collecting `vm.armedOptionId`, forwarding `vm.modalSendErrors` by reference, and binding `onModalOption`/`onModalCancel` to `vm::onModalOption`/`vm::onModalCancel`; still all flat (not folded into `ThreadEvent`), still no call-site cascade.
+`ThreadScreen`'s signature is **`(state, onBack, onSendMessage, connectionState, onRetry, modifier, isThinking, isStalled, onTitleClick, onOverflowEvent, onModelSelected, onWorkspaceChipTapped, onWorkspacePicked, onWorkspacePickerDismissed)` — mixed: one sealed-event sink (`onOverflowEvent`) alongside six flat callbacks, plus three flat `State` parameters (`connectionState`, `isThinking`, `isStalled`).** Every other VM-backed screen in the codebase uses `(state: UiState, onEvent: (Event) -> Unit)` once they have at least one VM-owned event. #188 added `onSendMessage`, #201 added `onRetry`, #137 added three workspace handlers, #145 added a hoisted `onExpandClick` placeholder that #254 deleted in favour of an internal `{ sheetVisible = true }` plus a new `onModelSelected: (Model) -> Unit` parameter (retyped `(String) -> Unit` by [#807](../codebase/807.md)) bound to `vm::onModelSelected` ([#253](../codebase/253.md)) — all as flat callbacks rather than folding into a sealed `ThreadEvent`. [`#251`](../codebase/251.md) **introduced** the `sealed interface ThreadEvent` (co-located at the top of `ThreadViewModel.kt`) and a `ThreadViewModel.onOverflowEvent(event: ThreadEvent)` dispatcher, **scoped to overflow only**: the existing six plain handlers (`sendMessage`, `retry`, `onWorkspaceChipTapped`, `onWorkspacePicked`, `onWorkspacePickerDismissed`, `onModelSelected`) are not migrated to the sealed surface. [`#252`](../codebase/252.md) mounted the [`ThreadOverflowMenu`](thread-overflow-menu.md) inside `ThreadTopAppBar`'s `actions` slot — `ThreadScreen` hoists `var overflowExpanded by rememberSaveable { mutableStateOf(false) }`, the screen's `onOverflowClick: () -> Unit = {}` parameter was renamed in place to `onOverflowEvent: (ThreadEvent) -> Unit = {}`, and `MainActivity` binds `onOverflowEvent = vm::onOverflowEvent` at the destination block. The screen-level `(state, onEvent)` collapse for *every* event (rolling the six plain methods into `ThreadEvent` too) is option (iii) from #203's convention question and remains deferred. `connectionState` stays a flat `State` parameter — it's state, not an event; [`#407`](../codebase/407.md) added `isThinking: Boolean = false` on the same footing (a defaulted flat `State` sibling, after `modifier`); [`#396`](../codebase/396.md) added `isStalled: Boolean = false` likewise. [`#382`](../codebase/382.md) added a defaulted `onShowLiteralScreen: () -> Unit = {}` (forwarded through `ThreadTopAppBar` to [`ThreadOverflowMenu`](thread-overflow-menu.md)'s always-available "Show the literal screen" item) — another **flat callback, not a `ThreadEvent`**: it is pure navigation (`MainActivity` wires `{ navController.navigate("literal_screen/$conversationId") }`), so routing it through the sealed surface would have coupled a view-only action to the VM. Mirrors `onOpenAbout`; keeps `ThreadViewModel`/`ThreadEvent` untouched. [`#446`](../codebase/446.md) added `modalState: ModalUiState = ModalUiState.Hidden` on the same footing as `isThinking` / `isStalled` (a defaulted flat `State` sibling — the hoisted app-level `currentModal` from #445), plus two then-**inert** flat callbacks `onModalOption: (String) -> Unit = {}` / `onModalCancel: () -> Unit = {}`; all defaulted, so no call-site cascade. [`#452`](../codebase/452.md) **made those live** and added two more defaulted siblings — `armedOptionId: String? = null` (a flat `State` sibling, the VM-scoped armed option from #451) and `modalSendErrors: Flow<Unit> = emptyFlow()` (a payload-free one-shot) — with `MainActivity` collecting `vm.armedOptionId`, forwarding `vm.modalSendErrors` by reference, and binding `onModalOption`/`onModalCancel` to `vm::onModalOption`/`vm::onModalCancel`; still all flat (not folded into `ThreadEvent`), still no call-site cascade.

@@ -62,6 +62,7 @@ import de.pyryco.mobile.ui.conversations.list.HostConversationTarget
 import de.pyryco.mobile.ui.conversations.list.PendingPromotion
 import de.pyryco.mobile.ui.conversations.thread.LiteralScreenSurface
 import de.pyryco.mobile.ui.conversations.thread.LiteralScreenViewModel
+import de.pyryco.mobile.ui.conversations.thread.QuestionBatchModal
 import de.pyryco.mobile.ui.conversations.thread.ThreadNavigation
 import de.pyryco.mobile.ui.conversations.thread.ThreadScreen
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
@@ -350,11 +351,18 @@ internal fun PyryNavHost(
                             // Same rule again for editing (#744): the control's own host. The view model
                             // reads that host's stored record and owns the modal's target and flags.
                             is ChannelListEvent.TreeHostEditTapped -> vm.openHostEditor(event.serverId)
+                            // And for reconnecting (#840): the control's own host, retried alone.
+                            is ChannelListEvent.TreeHostReconnectTapped -> vm.reconnectHost(event.serverId)
                             is ChannelListEvent.HostEditNameSubmitted -> vm.submitHostName(event.name)
                             ChannelListEvent.HostEditDismissed -> vm.dismissHostEditor()
                             ChannelListEvent.HostUnpairRequested -> vm.requestHostUnpair()
                             ChannelListEvent.HostUnpairConfirmed -> vm.confirmHostUnpair()
                             ChannelListEvent.HostUnpairDeclined -> vm.declineHostUnpair()
+                            // And for renaming a chat (#827): the pencil's own host and conversation.
+                            is ChannelListEvent.TreeChatEditTapped -> vm.openChatEditor(event.target)
+                            is ChannelListEvent.ChatEditNameSubmitted -> vm.submitChatName(event.name)
+                            ChannelListEvent.ChatEditDismissed -> vm.dismissChatEditor()
+                            ChannelListEvent.ChatArchiveRequested -> vm.archiveChat()
                             is ChannelListEvent.WorkspacePicked -> vm.pickHostWorkspace(event.workspace)
                             ChannelListEvent.WorkspacePickerDismissed -> vm.dismissHostWorkspacePicker()
                         }
@@ -454,6 +462,9 @@ internal fun PyryNavHost(
                     draft = draft,
                     onDraftChange = vm::onDraftChange,
                 )
+                // #661: its own gate window, so it is drawn beside the screen rather than threaded through it.
+                val questionModal by vm.questionModal.collectAsStateWithLifecycle()
+                questionModal?.let { QuestionBatchModal(state = it, onEvent = vm::onQuestionEvent) }
             }
         }
         composable(

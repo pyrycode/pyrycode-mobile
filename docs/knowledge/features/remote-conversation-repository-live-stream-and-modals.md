@@ -80,6 +80,63 @@ repository stays plain orchestration: decode runs behind the authenticated Noise
 the new arm or the drop branch logs the payload** (`title`/`prompt`/option-`label` are operator content —
 pyrycode#701 "never log modal body text"). See [Modal events § Trust boundary](modal-events.md#trust-boundary--no-payload-logging).
 
+## `questionBatches` — the v2 clarification-batch decode+fold seam (#822)
+
+A **held `StateFlow<List<QuestionBatch>>`** (`mutableQuestionBatches` / `questionBatches`), not an event
+stream — the deliberate difference from
+[`liveSessionEvents`](#livesessionevents--the-v2-structured-stream-decode-seam-385) and
+[`modalEvents`](#modalevents--the-v2-permissionchoice-modal-decode-seam-437) above. Decodes the two v2
+**binary → phone** clarification-batch envelopes — `question_shown` (claude's whole `AskUserQuestion`
+call in one frame) and `question_dismissed` (its retirement) — into `QuestionBatch`
+(`data/model/QuestionBatch.kt`) via the DTOs and `toBatch()` in the new `data/network/QuestionPayloads.kt`
+(kept out of `InteractivePayloads.kt`, which #810 also touches). Not a modal: a batch carries its own
+`conversation_id` and several can be outstanding at once, so none of this touches `ModalEvent`,
+`ModalUiState` or `currentModal`.
+
+- **Rides the same single existing `pump.inbound` collector.** A new grouped
+  `TYPE_QUESTION_SHOWN, TYPE_QUESTION_DISMISSED` arm joins the `onInbound` `when (envelope.type)` demux,
+  gated identically on `CAPABILITY_INTERACTIVE in negotiatedCapabilities()` (the reused #385 supplier). It
+  calls a private `foldQuestionFrame(envelope)` that decodes inside one `try { … } catch
+  (IllegalArgumentException) { }` and applies `List<QuestionBatch>.withShown` / `.withDismissed` via
+  `mutableQuestionBatches.update {}` — the `decodeModalEvent` drop idiom, but folding straight into held
+  state rather than `tryEmit`ting an event. A malformed frame leaves the held list untouched and the
+  single collector survives; nothing is logged (the exception can quote the JSON input).
+- **Held state, not `replay = 0`, because the daemon's reconcile is a burst, not one event.** Protocol §
+  Reconnect / Backfill: on connect the daemon re-sends every outstanding batch for every conversation, in
+  no guaranteed order. A `SharedFlow` folded downstream — the `liveSessionEvents`/`modalEvents` shape —
+  can lose part of that burst to a late subscriber, the same failure mode [#492](current-modal-state.md)
+  fixed for modals by hoisting the fold to the coordinator. The fix here is different: fold directly into
+  a `StateFlow` at this seam, so a late reader of `questionBatches` always sees whatever the burst has
+  folded so far rather than a partial replay of it. No hoist is needed for this state to survive a late
+  subscriber — see the [coordinator](relay-repository-coordinator.md#questionbatches--the-v2-clarification-batch-projection-822)
+  for why the state itself still resets on reconnect (the opposite of `currentModal`).
+- **The empty-`questions` and repeated-id rules live on the pure fold, not the decode.**
+  `QuestionShownPayloadDto.toBatch()` always produces a `QuestionBatch`, even with an empty `questions`
+  list; `List<QuestionBatch>.withShown` (`data/model/QuestionBatch.kt`) is what turns an empty batch into
+  a no-op (it neither adds nor replaces a held batch) and replaces a held batch sharing a
+  `questionBatchId` in place rather than appending a second. `withDismissed` removes by id and is a no-op
+  for an unknown or already-removed one. Both rules mirror desktop's `reduceQuestionBatches`.
+- **`multi_select` needs an explicit type check, or a quoted `"false"` silently decodes true-typed.**
+  [`MobileJson`](mobile-protocol-v2-wire-layer.md) is non-lenient — a JSON number where a `String` is
+  expected fails decode — but it still parses a *quoted* `"false"` into a Kotlin `Boolean`, because
+  `JsonPrimitive.booleanOrNull` reads the primitive's content regardless of whether it is a JSON string.
+  `QuestionDto.multiSelect` is decoded as a raw `JsonPrimitive`; a private `strictBoolean()` rejects a
+  string or non-boolean primitive itself, with a static message naming only the key (the
+  `readEffectiveEffort` posture — never interpolate the offending value). A decode test that never
+  supplies a `"multi_select":"false"` fixture passes just as well with the type check missing, so the
+  string-typed case has to be an explicit rejection test, not just the `question_shown_zero.json` numeric
+  `false` fixture.
+- **On the concrete repo only, like `modalEvents`** — not on `ConversationRepository`. The panel
+  ([#661](https://github.com/pyrycode/pyrycode-mobile/issues/661)) and the answer/refusal sends
+  ([#825](https://github.com/pyrycode/pyrycode-mobile/issues/825)) reach it through
+  [`RelayRepositoryCoordinator.questionBatches`](relay-repository-coordinator.md#questionbatches--the-v2-clarification-batch-projection-822),
+  the same concrete-repo-then-coordinator reachability path as `modalEvents`.
+
+`security-sensitive`, but plain orchestration: decode runs behind the authenticated Noise channel, and
+`question`, `header`, `label` and `description` are claude-authored and unsanitised — held as inert
+fields and never used as a key (the two ids are daemon-asserted and are the only keys), never logged, and
+never placed in an exception message.
+
 ## The model-list inbound arm — the connection-scoped retention (#791)
 
 A new `TYPE_MODEL_LIST = "model_list"` arm joins the `onInbound` `when (envelope.type)` demux, byte-for-

@@ -12,36 +12,44 @@ var sheetVisible by rememberSaveable { mutableStateOf(false) }
 
 `rememberSaveable` (over bare `remember`) survives configuration changes (rotation) at zero VM-surface cost — same idiom as [`WorkspacePicker`](workspace-picker.md). The flag is **UI-local presentation state** with no business meaning the VM needs to react to; pushing it onto `ThreadUiState` would dirty the VM contract with screen-presentation concerns. The status row's `onExpandClick = { sheetVisible = true }` is wired internally inside the `bottomBar` block (above).
 
-After the existing [`WorkspacePicker`](workspace-picker.md) sibling at screen root, the [`StatusSheet`](status-sheet.md) renders as a second `Scaffold` sibling, gated on `sheetVisible`:
+After the existing [`WorkspacePicker`](workspace-picker.md) sibling at screen root, the [`StatusSheet`](status-sheet.md) renders as a second `Scaffold` sibling, gated on `sheetVisible`. **[#807](../codebase/807.md) re-sourced every argument below off the daemon's own readings** — the shape shown is the current one:
 
 ```kotlin
 if (sheetVisible) {
     StatusSheet(
-        selectedModel = state.selectedModel,
-        onModelSelected = { model ->
-            onModelSelected(model)
+        choices = state.runConfig.choices,
+        menuAvailable = state.runConfig.menuAvailable,
+        notListedModels = state.runConfig.droppedModels + state.runConfig.hiddenChoices,
+        selectedModel = state.runConfig.selectedModel,
+        onModelSelected = { value ->
+            onModelSelected(value)
             sheetVisible = false              // auto-close on Model pick
         },
-        selectedEffort = state.selectedEffort,        // new in #229
-        onEffortSelected = { effort ->                // new in #229
-            onEffortSelected(effort)
+        effortChoices = state.runConfig.effortChoices,
+        selectedEffort = state.runConfig.selectedEffort,
+        onEffortSelected = { level ->
+            onEffortSelected(level)
             sheetVisible = false              // auto-close on Effort pick
         },
-        yoloEnabled = state.yoloEnabled,              // new in #229
-        onYoloToggled = onYoloToggled,                // new in #229 — passthrough; NO auto-close on toggle
+        pending = state.runConfig.pending,
+        enabled = state.runConfig.writable,   // "" sessionId ⇒ read-only, not a failure
+        yoloEnabled = state.yoloEnabled,
+        onYoloToggled = onYoloToggled,        // passthrough; NO auto-close on toggle
         onDismiss = { sheetVisible = false },
     )
 }
 ```
 
-Three design points pinned in #254 + one widened in #229:
+Through [#807](../codebase/807.md) this call passed `selectedModel: Model` / `selectedEffort: Effort` sourced from `AppPreferences.defaultModel` / `defaultEffort` with an in-memory per-conversation override. #807 deleted that sourcing outright: every argument above now reads off `state.runConfig` (a [`ThreadRunConfig`](thread-status-row.md#sourcing), itself folded from `ConversationRepository.observeSessionSettings` + `observeModelMenu`), `choices` / `effortChoices` are the daemon's own published rows rather than the `Model` / `Effort` enums, and `enabled` is new — an empty `SessionSettings.sessionId` means the daemon has no session to address, so the sheet goes read-only rather than sending a write the server would refuse. See [status-sheet.md](status-sheet.md) for the sheet-side signature and rendering rules.
+
+Three design points pinned in #254 + one widened in #229 (still true post-#807 — only the argument sourcing changed):
 
 1. **Gated `if (sheetVisible) { StatusSheet(...) }`, not `AnimatedVisibility`.** `ModalBottomSheet` runs its own enter/exit animation; wrapping in `AnimatedVisibility` would double-animate the sheet. The `if` creates the composable on first show and destroys it on dismiss — what `ModalBottomSheet` expects. Same shape as the [`WorkspacePicker`](workspace-picker.md) sibling.
 2. **Sibling-to-Scaffold placement.** `ModalBottomSheet` lives in its own window, so source-order placement doesn't affect Z-order. Placing the sheet inside the `Scaffold`'s content slot would have worked but would mix the sheet's window-managed lifecycle with the body's layout-managed siblings.
 3. **Asymmetric auto-close (resolution of the [#254](../codebase/254.md) open question, decided in [#229](../codebase/229.md)).** Single-pick sections (Model radio, Effort chip) wrap in `{ value -> upstream(value); sheetVisible = false }` — a discrete pick is a complete action, M3 modal-bottom-sheet convention. Toggle sections (YOLO Switch) pass the upstream callback straight through with no auto-close — a Switch is a state-change the user may want to immediately reverse; closing the sheet would force a re-open just to undo. Apply the same rule to [#230](https://github.com/pyrycode/pyrycode-mobile/issues/230)'s Context window section based on whether it's a picker or a toggle.
 4. **`ModalBottomSheet`'s hide animation runs on a coroutine the framework owns** — no `sheetState.hide()` call needed before flipping `sheetVisible = false`.
 
-The screen-side `onModelSelected: (Model) -> Unit = {}`, `onEffortSelected: (Effort) -> Unit = {}`, `onYoloToggled: (Boolean) -> Unit = {}` all default to `{}` so the four existing `@Preview` composables keep compiling unchanged; `MainActivity` binds all three at the `CONVERSATION_THREAD` destination:
+The screen-side `onModelSelected: (String) -> Unit = {}` and `onEffortSelected: (String) -> Unit = {}` (retyped off `Model` / `Effort` by [#807](../codebase/807.md) — the argument is a published `ModelMenuRow.value` / effort-level string, forwarded verbatim and never parsed) plus `onYoloToggled: (Boolean) -> Unit = {}` all default to `{}` so the existing `@Preview` composables keep compiling unchanged; `MainActivity` binds all three at the `CONVERSATION_THREAD` destination:
 
 ```kotlin
 ThreadScreen(

@@ -67,6 +67,15 @@ sealed interface ChannelListEvent {
     data class HostEditNameSubmitted(val name: String) : ChannelListEvent
     /** The modal's Cancel, Close and Back, which the shell routes through one dismissal callback. */
     data object HostEditDismissed : ChannelListEvent
+    /** A Chats row's edit control: open the Edit chat modal for **that** row's own host and
+     *  conversation (#827). Channels rows draw no control and emit nothing here — editing a
+     *  channel is #667. */
+    data class TreeChatEditTapped(val target: HostConversationTarget) : ChannelListEvent
+    /** The open Edit chat modal's OK, already trimmed. No ids, for the reason
+     *  [HostEditNameSubmitted] carries none: the target is the open editor's. */
+    data class ChatEditNameSubmitted(val name: String) : ChannelListEvent
+    /** The Edit chat modal's Cancel, Close and Back. */
+    data object ChatEditDismissed : ChannelListEvent
     data class WorkspacePicked(val workspace: String) : ChannelListEvent
     data object WorkspacePickerDismissed : ChannelListEvent
 }
@@ -95,9 +104,10 @@ opt-in now, local to `ConversationTreeRows.kt`.
 nothing can emit is dead code. `CreateDiscussionTapped` and `LongPressFab` are gone too (#738), replaced by
 the host-qualified `TreeHostAddTapped` / `TreeHostAddLongPressed` pair, and `PairHostTapped` is new.
 `ChannelListEvent` still lives in `ChannelListScreen.kt`, not `ChannelListViewModel.kt`: the screen remains
-the producer for every variant except the seven the VM's destination wiring consumes directly
+the producer for every variant except the ten the VM's destination wiring consumes directly
 (`TreeHostAddTapped`, `TreeHostAddLongPressed`, `TreeHostEditTapped`, `HostEditNameSubmitted`,
-`HostEditDismissed` (#744), `WorkspacePicked`, `WorkspacePickerDismissed`);
+`HostEditDismissed` (#744), `TreeChatEditTapped`, `ChatEditNameSubmitted`, `ChatEditDismissed` (#827),
+`WorkspacePicked`, `WorkspacePickerDismissed`);
 `TreeRowTapped` / `TreeFoldToggled` / `SettingsTapped` / `ArchiveTapped` / `PairHostTapped` route through the
 destination's `when (event)` instead (see [Wiring](channel-list-screen-how-it-works.md#wiring)).
 
@@ -222,6 +232,16 @@ distinction from the tree's own blank at all — see the next section.
   rows and name field for the prompt inside the same shell, Cancel / the close glyph / system Back each
   decline rather than dismiss, and OK confirms exactly once.
 
+  `ChannelListScreenTest` gained (#827): every Chats row carries a pencil named "Edit chat <name>", Channels
+  rows carry none, and tapping the pencil emits exactly `TreeChatEditTapped` with the row's own target and no
+  `TreeRowTapped`. With an open `chatEditor`, the field pre-fills, OK emits `ChatEditNameSubmitted` with the
+  trimmed name, Cancel emits `ChatEditDismissed`, and `failed` shows the generic string. A mutable host state
+  in the harness flips a target host to disconnected — OK disables without closing the modal or losing the
+  typed name — and back to connected, re-enabling it. **A `LazyColumn` row below the fold is not composed**,
+  so a pencil assertion on a lower row needs `performScrollToNode(hasScrollAction())` first — the same call
+  the tree's own reach-the-last-row test above already uses; `onAllNodes(...).assertCountEquals(1)` against
+  an uncomposed row finds nothing and reads as a missing pencil rather than as an unscrolled list.
+
 ## Related
 
 - Ticket notes: [`../codebase/46.md`](../codebase/46.md), [`../codebase/21.md`](../codebase/21.md),
@@ -246,20 +266,24 @@ distinction from the tree's own blank at all — see the next section.
   `docs/specs/architecture/737-list-settings-archive-bar.md`,
   `docs/specs/architecture/738-list-add-controls-retire-fab.md`,
   `docs/specs/architecture/744-host-row-edit-and-rename.md`,
-  `docs/specs/architecture/745-unpair-host-from-edit-modal.md`
+  `docs/specs/architecture/745-unpair-host-from-edit-modal.md`,
+  `docs/specs/architecture/827-rename-chat-from-tree-row.md`
 - Upstream: [ChannelListViewModel](./channel-list-viewmodel.md) (`hostState` producer — fold/selection state,
   `onHostRowTapped`, `onFoldToggled`, `createHostDiscussion`, `openHostWorkspacePicker`, since #744
   `openHostEditor`, `submitHostName`, `dismissHostEditor`, and since #745 `requestHostUnpair`,
-  `confirmHostUnpair`, `declineHostUnpair`; the compatibility `state` producer, `onEvent`
+  `confirmHostUnpair`, `declineHostUnpair`, and since #827 `openChatEditor`, `submitChatName`,
+  `dismissChatEditor`, `isHostConnected`; the compatibility `state` producer, `onEvent`
   reducer and `navigationEvents` this screen once also consumed retired with the button in #738), [Tree
   rows](channel-list-screen-how-it-works.md#tree-rows-730) (`TreeSectionHeader` / `TreeHostRow` / `TreeWorkspaceRow` / `TreeConversationRow`,
   #730; `TreeRowControl` since #738, renamed from `TreeAddControl` in #744), [`EditHostModal`](mobile-modal.md#callers)
-  (#743's shell content, driven by this screen since #744), [`HostWorkspaceGroup`](channel-list-viewmodel-projection.md)
+  (#743's shell content, driven by this screen since #744), [`EditChatModal`](mobile-modal.md#callers)
+  (#826's shell content, driven by this screen since #827), [`HostWorkspaceGroup`](channel-list-viewmodel-projection.md)
   (#729's workspace projection this screen iterates), [ConversationAvatar](./conversation-avatar.md),
   [WorkspacePicker](./workspace-picker.md), [Navigation](./navigation.md), [Dependency injection](./dependency-injection.md)
 - Downstream: #737 (done — draws the list's own settings + archive bar in the `topBar` slot this section
-  describes; #740 files the still-open follow-up, a rung-3 scenario reaching Archived through the list's own
-  archive entry rather than Settings'), #738 (done — the remaining half of #732's split; retired the FAB and
+  describes; #740, done, added the rung-3 scenario reaching Archived through the list's own archive entry
+  rather than Settings' — see [Interactive stream e2e](../../e2e-interactive-stream.md#what-rung-3-is-made-of)),
+  #738 (done — the remaining half of #732's split; retired the FAB and
   the compatibility `ChannelListUiState` placeholders #731 deliberately kept, and gave the list its own
   section-header and host-row add controls), #744 (done, split from #642 — the host row's edit control and
   the rename path this section describes), #745 (done, split from #642 — wires `Unpair host` behind a

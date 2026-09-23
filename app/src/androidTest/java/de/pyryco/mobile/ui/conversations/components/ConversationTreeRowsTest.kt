@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
@@ -13,6 +14,7 @@ import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isHeading
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -223,6 +225,62 @@ class ConversationTreeRowsTest {
         composeTestRule
             .onAllNodes(hasContentDescription("Pyrycode: handshaking"), useUnmergedTree = true)
             .assertCountEquals(1)
+    }
+
+    @Test
+    fun hostRow_disconnected_drawsAReconnectControlNamingTheHost_andATapReachesOnlyIt() {
+        var reconnects = 0
+        var toggles = 0
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                TreeHostRow(
+                    serverId = "pyrybox",
+                    hostName = "Pyrybox",
+                    connectionStatus = ConnectionStatus(RelayLinkStatus.Offline, PyrycodeLinkStatus.Down),
+                    expanded = true,
+                    onToggleExpanded = { toggles++ },
+                    onEditTapped = {},
+                    onAddTapped = {},
+                    onAddLongPressed = {},
+                    onReconnectTapped = { reconnects++ },
+                )
+            }
+        }
+
+        val control = composeTestRule.onNodeWithTag(treeHostReconnectTestTag("pyrybox"))
+        control.assert(hasContentDescription(string(R.string.cd_tree_host_reconnect, "Pyrybox")))
+
+        control.performClick()
+
+        assertEquals(1, reconnects)
+        assertEquals(0, toggles)
+    }
+
+    @Test
+    fun hostRow_connectedConnectingOrIdle_drawsNoReconnectControl() {
+        val status = mutableStateOf(ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                TreeHostRow(
+                    serverId = "pyrybox",
+                    hostName = "Pyrybox",
+                    connectionStatus = status.value,
+                    expanded = true,
+                    onToggleExpanded = {},
+                    onEditTapped = {},
+                    onAddTapped = {},
+                    onAddLongPressed = {},
+                )
+            }
+        }
+
+        listOf(RelayLinkStatus.Connected, RelayLinkStatus.Connecting, RelayLinkStatus.Idle).forEach { relay ->
+            status.value = ConnectionStatus(relay, PyrycodeLinkStatus.Down)
+            composeTestRule.waitForIdle()
+            composeTestRule
+                .onAllNodes(hasTestTag(treeHostReconnectTestTag("pyrybox")), useUnmergedTree = true)
+                .assertCountEquals(0)
+        }
     }
 
     @Test

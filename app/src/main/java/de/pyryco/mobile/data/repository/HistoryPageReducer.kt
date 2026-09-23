@@ -93,8 +93,8 @@ internal fun List<ThreadItem>.withMessage(message: Message): List<ThreadItem> {
  * [Role.Tool] row with this id already exists (possibly already completed by an earlier `tool_result`),
  * it is left untouched — a duplicate never adds a second row nor resets a finished one to `Running`.
  * The `&& role == Role.Tool` match namespaces tool rows so a `toolUseId` can never clobber a real
- * `message_id` row. [timestamp] is the row clock (see this file's header); the tool name / input are
- * carried **verbatim** — never trimmed, parsed, or logged.
+ * `message_id` row. [timestamp] is the row clock (see this file's header); the tool name / input,
+ * the input fields and the parent id (#810) are carried **verbatim** — never trimmed, parsed, or logged.
  */
 internal fun List<ThreadItem>.withToolUse(
     event: LiveSessionEvent.ToolUse,
@@ -118,6 +118,8 @@ internal fun List<ThreadItem>.withToolUse(
                             input = event.inputSummary,
                             output = "",
                             status = ToolCallStatus.Running,
+                            inputFields = event.input,
+                            parentToolUseId = event.parentToolUseId,
                         ),
                 ),
             )
@@ -130,6 +132,10 @@ internal fun List<ThreadItem>.withToolUse(
  * **If no matching row exists, no-op:** a result with no prior use — including one arriving before its
  * use — is dropped, leaving no orphan half-row. A duplicate re-applies the same in-place update
  * (idempotent / last-write-wins, one row). The result summary is carried **verbatim**.
+ *
+ * The result's `parent_tool_use_id` (#810) replaces the row's when non-empty and leaves the use's in
+ * place when empty. A conforming daemon sends the same value on both frames; this only matters across a
+ * mid-stream daemon change where one frame lacks the key, and then it never un-nests a row.
  */
 internal fun List<ThreadItem>.withToolResult(event: LiveSessionEvent.ToolResult): List<ThreadItem> {
     val index = indexOfMessage(event.toolUseId, Role.Tool)
@@ -138,10 +144,13 @@ internal fun List<ThreadItem>.withToolResult(event: LiveSessionEvent.ToolResult)
     val updated =
         row.copy(
             toolCall =
-                row.toolCall?.copy(
-                    output = event.resultSummary,
-                    status = if (event.isError) ToolCallStatus.Failed else ToolCallStatus.Done,
-                ),
+                row.toolCall?.let { call ->
+                    call.copy(
+                        output = event.resultSummary,
+                        status = if (event.isError) ToolCallStatus.Failed else ToolCallStatus.Done,
+                        parentToolUseId = event.parentToolUseId.ifEmpty { call.parentToolUseId },
+                    )
+                },
         )
     return toMutableList().apply { this[index] = ThreadItem.MessageItem(updated) }
 }
@@ -356,8 +365,8 @@ private fun historyRowId(entryId: Long): String = "history-$entryId"
  *    `message_id` (so a stored `send_message` collapses into the local echo of that same send, which
  *    minted the id client-side before it could appear in either lane), a `tool_use_id`, and a `turn_id`.
  *    Two sends of identical text carry different ids and stay two rows.
- *  - a [ThreadItem.SessionBoundary] joins on its `(previousSessionId, newSessionId)` pair — see
- *    [holdsBoundary] for why that is stricter than structural equality on purpose.
+ *  - a [ThreadItem.SessionBoundary] joins on its `(previousSessionId, newSessionId, occurredAt)` identity
+ *    — see [holdsBoundary] for why that is neither the pair alone nor structural equality.
  *  - a [ThreadItem.UnrecognizedMessage] joins on its [historyRowId]-derived id.
  *
  * A duplicate is **skipped, not merged in place.** The only overlap a walk can produce is the narrow
@@ -381,23 +390,29 @@ private fun List<ThreadItem>.alreadyHolds(row: ThreadItem): Boolean =
     }
 
 /**
- * Whether this thread already holds a boundary for [boundary]'s `(previousSessionId, newSessionId)` pair.
+ * Whether this thread already holds [boundary] — a boundary with the same
+ * `(previousSessionId, newSessionId, occurredAt)` identity (#775).
  *
- * **Stricter than structural equality, deliberately.** Identical entries are `==` either way, so the
- * overlap dedup would work on equality alone. The pair is used because `ThreadScreen` keys a boundary row
- * on exactly `"boundary:<previous>-><new>"` and reads neither `reason` nor `occurredAt`: admitting a
- * second boundary that shares the pair would hand the `LazyColumn` two rows with one key, which throws.
- * An honest daemon does not mint such a pair (a session id rotates once); a hostile one trivially can,
- * and dropping the second row is the fail-safe direction — a missing delimiter, not a crashed thread.
+ * **One identity, three readers:** this history merge, the live lane's `appendSessionBoundary`, and the
+ * list key `ThreadRow.listKey` gives a boundary row. The key encodes exactly these three fields, so any
+ * two boundaries this predicate lets into one thread key distinctly, and the `LazyColumn`, which throws on
+ * a duplicate key, cannot be handed two rows with one key.
  *
- * This closes the history path only. The live lane's `appendSessionBoundary` does not dedup at all and
- * has the same exposure; that half is pre-existing and tracked as #775.
+ * **Not the pair alone.** An honest daemon repeats a pair: `idle_evict` mirrors the evicted id into both
+ * fields and a reactivated session keeps its id, so a session evicted twice sends `A->A` twice. Those are
+ * two real delimiters with two instants, and #645's pair-only check dropped the older one.
+ *
+ * **Not structural equality either.** Two frames equal on the triple but differing in `reason` or
+ * `workspaceCwd` would key alike, so the second is dropped — the fail-safe direction against a hostile
+ * daemon: a missing delimiter, never a crashed thread. A stored entry and its live frame are the same
+ * bytes (the daemon marshals one payload for both), so an overlap still collapses.
  */
-private fun List<ThreadItem>.holdsBoundary(boundary: ThreadItem.SessionBoundary): Boolean =
+internal fun List<ThreadItem>.holdsBoundary(boundary: ThreadItem.SessionBoundary): Boolean =
     any {
         it is ThreadItem.SessionBoundary &&
             it.previousSessionId == boundary.previousSessionId &&
-            it.newSessionId == boundary.newSessionId
+            it.newSessionId == boundary.newSessionId &&
+            it.occurredAt == boundary.occurredAt
     }
 
 private fun List<ThreadItem>.holdsUnrecognized(id: String): Boolean = any { it is ThreadItem.UnrecognizedMessage && it.id == id }

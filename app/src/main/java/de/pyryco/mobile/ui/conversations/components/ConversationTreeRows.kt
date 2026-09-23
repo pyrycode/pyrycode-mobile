@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.Power
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -166,6 +167,11 @@ fun TreeSectionHeader(
  * The design's hover treatment swaps the leg dots for the pencil and the plus, in that order. The phone
  * has no hover, so both are drawn persistently in the same order, outboard of the dots the design would
  * have hidden.
+ *
+ * A host whose relay leg [isDisconnected] draws the design's disconnected treatment (#840): glyph and
+ * name in the error colour, and a plug control inboard of the dots that reports through
+ * [onReconnectTapped]. The frame binds the name to `errorContainer`, which is near-white on the light
+ * surface, so both take `error` instead — error-toned and legible in either scheme.
  */
 @Composable
 fun TreeHostRow(
@@ -178,10 +184,12 @@ fun TreeHostRow(
     onAddTapped: () -> Unit,
     onAddLongPressed: () -> Unit,
     modifier: Modifier = Modifier,
+    onReconnectTapped: () -> Unit = {},
 ) {
-    // Clamped once here and reused for the row's own name and for all three control labels, so no path
-    // can format an unbounded daemon-authored name into a content description.
+    // Clamped once here and reused for the row's own name and for every control label, so no path can
+    // format an unbounded daemon-authored name into a content description.
     val bounded = boundedRowText(hostName)
+    val disconnected = connectionStatus.relay.isDisconnected()
     FoldableTreeRow(
         glyph = Icons.Filled.Dns,
         name = bounded,
@@ -190,8 +198,18 @@ fun TreeHostRow(
         expanded = expanded,
         onToggleExpanded = onToggleExpanded,
         modifier = modifier,
+        accent = if (disconnected) MaterialTheme.colorScheme.error else null,
     ) {
         Spacer(modifier = Modifier.width(TreeGlyphGap))
+        if (disconnected) {
+            TreeRowControl(
+                // Material's plug, matched to the frame's `plug-solid-full` as `Dns` was to its server.
+                icon = Icons.Filled.Power,
+                contentDescription = stringResource(R.string.cd_tree_host_reconnect, bounded),
+                onClick = onReconnectTapped,
+                modifier = Modifier.testTag(treeHostReconnectTestTag(serverId)),
+            )
+        }
         ConnectionLegPair(status = connectionStatus)
         TreeRowControl(
             // Matched to the Material set the same way this file matched `Dns` and `FolderOpen` to the
@@ -226,6 +244,24 @@ fun TreeHostRow(
 fun treeHostAddTestTag(serverId: String): String = "tree-host-add:${boundedTagId(serverId)}"
 
 fun treeHostEditTestTag(serverId: String): String = "tree-host-edit:${boundedTagId(serverId)}"
+
+fun treeHostReconnectTestTag(serverId: String): String = "tree-host-reconnect:${boundedTagId(serverId)}"
+
+/**
+ * Whether a host row draws the disconnected treatment and its reconnect control (#840).
+ *
+ * Exhaustive with no `else`, so a relay state added later has to be classified here. [RelayLinkStatus.Idle]
+ * is a deliberate background close rather than an error, and a dial in progress is not one either.
+ */
+internal fun RelayLinkStatus.isDisconnected(): Boolean =
+    when (this) {
+        is RelayLinkStatus.Reconnecting,
+        RelayLinkStatus.Offline,
+        RelayLinkStatus.DaemonAbsent,
+        RelayLinkStatus.PairingRejected,
+        -> true
+        RelayLinkStatus.Idle, RelayLinkStatus.Connecting, RelayLinkStatus.Connected -> false
+    }
 
 private fun boundedTagId(serverId: String): String =
     if (serverId.length <= MAX_TEST_TAG_ID_CHARS) {
@@ -267,7 +303,12 @@ fun TreeWorkspaceRow(
  *
  * The leading status slot is drawn only in the idle treatment and takes no state input: #668
  * introduces unread/activity state and the precedence behind it. [selected] draws the design's plain
- * highlighted treatment; the phone has no hover, and the edit content is #665.
+ * highlighted treatment.
+ *
+ * A non-null [onEditTapped] draws the design's hover pencil at the trailing edge, permanently, since the
+ * phone has no hover (#827) — the host row's pencil made the same trade (#744). The caller decides which
+ * rows get it: Chats rows do, Channels rows wait for #667. It is a [TreeRowControl], so a tap on it
+ * edits the row without opening it or moving the highlight.
  */
 @Composable
 fun TreeConversationRow(
@@ -275,7 +316,10 @@ fun TreeConversationRow(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    onEditTapped: (() -> Unit)? = null,
 ) {
+    // Clamped once and reused for the name and the pencil's label, as the host row does.
+    val bounded = boundedRowText(conversationName)
     val fill =
         if (selected) {
             MaterialTheme.colorScheme.primaryContainer.copy(alpha = SELECTED_FILL_ALPHA)
@@ -297,13 +341,21 @@ fun TreeConversationRow(
         IdleStatusDot()
         Spacer(modifier = Modifier.width(TreeGlyphGap))
         Text(
-            text = boundedRowText(conversationName),
+            text = bounded,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = false),
+            // Filling the width pushes the pencil to the trailing edge and ellipsizes a long name before it.
+            modifier = Modifier.weight(1f, fill = onEditTapped != null),
         )
+        if (onEditTapped != null) {
+            TreeRowControl(
+                icon = Icons.Filled.Edit,
+                contentDescription = stringResource(R.string.cd_tree_chat_edit, bounded),
+                onClick = onEditTapped,
+            )
+        }
     }
 }
 
@@ -312,7 +364,7 @@ fun TreeConversationRow(
  * content.
  *
  * The whole row is the fold control, so folding works by touch alone with nothing riding on a
- * pointer hovering. The row deliberately sets no `contentDescription` of its own: `clickable` merges
+ * pointer hovering. A non-null [accent] recolours the leading glyph and the name, and nothing else. The row deliberately sets no `contentDescription` of its own: `clickable` merges
  * descendants, and an overriding description would replace the chevron's and the leg dots' own
  * names. The action is named through `onClickLabel`, and the chevron repeats that name so the
  * control is identifiable in the unmerged tree too.
@@ -326,6 +378,7 @@ private fun FoldableTreeRow(
     expanded: Boolean,
     onToggleExpanded: () -> Unit,
     modifier: Modifier = Modifier,
+    accent: Color? = null,
     trailing: @Composable RowScope.() -> Unit = {},
 ) {
     val foldLabel = foldActionLabel(expanded = expanded, rowName = name)
@@ -343,7 +396,7 @@ private fun FoldableTreeRow(
         Icon(
             imageVector = glyph,
             contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            tint = accent ?: MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(TreeGlyphSize),
         )
         Spacer(modifier = Modifier.width(TreeGlyphGap))
@@ -353,7 +406,7 @@ private fun FoldableTreeRow(
             Text(
                 text = name,
                 style = nameStyle,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = accent ?: MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f, fill = false),
@@ -376,8 +429,8 @@ private fun FoldableTreeRow(
 }
 
 /**
- * The trailing row control: the section header's and the host row's plus (#738) and the host row's
- * pencil (#744). The body was already glyph-agnostic, so the caller supplies the [icon] and nothing else
+ * The trailing row control: the section header's and the host row's plus (#738), the host row's
+ * pencil (#744), a disconnected host's plug (#840) and a chat row's pencil (#827). The body was already glyph-agnostic, so the caller supplies the [icon] and nothing else
  * differs between them.
  *
  * [contentDescription] is the whole accessible name, because the controls repeat down the screen and two
@@ -493,7 +546,7 @@ private fun TreeRowsPreviewMatrix() {
                 selected = true,
                 onClick = {},
             )
-            TreeConversationRow(conversationName = "rocd-thinking", selected = false, onClick = {})
+            TreeConversationRow(conversationName = "rocd-thinking", selected = false, onClick = {}, onEditTapped = {})
             TreeHostRow(
                 serverId = "macbook",
                 hostName = "Macbook",

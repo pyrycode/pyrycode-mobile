@@ -35,7 +35,7 @@ Split on 2026-09-05 to keep this document under the 50000-byte cap the docs guar
 - [Remote conversation repository — the Phase 4 `ConversationRepository` — workspace folders, recent workspaces and push registration](remote-conversation-repository-workspace-and-push.md) — `createWorkspaceFolder(name) — the tenth mutation, leanest write-verb, first override of a previously-defaulted read/write pair ([#564](../codebase/564.md))`, `recentWorkspaces() — the fourth read verb, leanest of the family, no fold ([#565](../codebase/565.md))`, `registerPushToken(token) — the device-concern push registration (#359)`
 - [Remote conversation repository — the Phase 4 `ConversationRepository` — live stream, modal seams and the replay cursor](remote-conversation-repository-live-stream-and-modals.md) — `liveSessionEvents — the v2 structured-stream decode seam (#385)`, `modalEvents — the v2 permission/choice-modal decode seam (#437)`, `answerModal / cancelModal — the v2 modal answer/cancel control-send (#438)`, `recordReplayCursor(envelope) — the replay-cursor side-write (#412)`, `The resync arm — reset the cursor + surface the gap (#417)`
 - [Remote conversation repository — the Phase 4 `ConversationRepository` — thread-observable states and live tool rows](remote-conversation-repository-thread-observables.md) — `observeStall(conversationId) — the thread-observable stall state (#395)`, `observeQueue(conversationId) — the thread-observable queued backlog (#460)`, `observeApiRetry(conversationId) — the thread-observable API-retry state (#593)`, `observeCompacting(conversationId) — the thread-observable compaction state (#596)`, `observeThinkingProgress(conversationId) — the thread-observable thinking-progress reading (#801)`, `Live tool-call rows — applyToolUse / applyToolResult (#387)`
-- [Remote conversation repository — the Phase 4 `ConversationRepository` — screen snapshot, dequeue, interrupt and new session](remote-conversation-repository-control-sends.md) — `requestScreenSnapshot(conversationId) — the parser-independent screen-snapshot read (#375)`, `requestHistory(conversationId, cursor, limit) — the on-disk history page read (#623)`, `dropQueuedMessage(conversationId, queuedMessageId) — the dequeue_message outbound send (#466)`, `interrupt(conversationId) — explicitly targeted v2 interrupt`, `startNewSession() — explicitly targeted v2 new_session`
+- [Remote conversation repository — the Phase 4 `ConversationRepository` — screen snapshot, dequeue, interrupt and new session](remote-conversation-repository-control-sends.md) — `requestScreenSnapshot(conversationId) — the parser-independent screen-snapshot read (#375)`, `requestHistory(conversationId, cursor, limit) — the on-disk history page read (#623)`, `dropQueuedMessage(conversationId, queuedMessageId) — the dequeue_message outbound send (#466)`, `interrupt(conversationId) — explicitly targeted v2 interrupt`, `startNewSession() — explicitly targeted v2 new_session`, `answerQuestionBatch(questionBatchId, answers) / refuseQuestionBatch(questionBatchId) — the v2 question_answer / question_refused sends (#825)`
 - [Remote conversation repository — the Phase 4 `ConversationRepository` — state and concurrency, error handling and the hand-off](remote-conversation-repository-state-errors-and-handoff.md) — `State & concurrency model`, `Error handling`, `Hand-off — the live binding`
 
 The sections that stay here: `## Where it sits in the Phase 4 stack`, `## Status projections: one file per status event`, `## The `SessionPump` consumed contract`, `## Stubs — none remain; every method is now live`, `## Testing`, `## Related`.
@@ -66,13 +66,15 @@ outside `ConversationRepository` and screen state.
 
 ## Status projections: one file per status event
 
-Since 2026-09-22 the five status events the thread observes each live in their own small internal class
+Since 2026-09-22 the status events the thread observes each live in their own small internal class
 beside the repository: `StallProjection` (#395), `QueueProjection` (#460), `ApiRetryProjection` (#593),
-`CompactingProjection` (#596) and `ThinkingProgressProjection` (#801). Each holds the state, the decoder
-and the cold read that used to sit in `RemoteConversationRepository`, under the same names, so the
-per-event sections in the
+`CompactingProjection` (#596), `ThinkingProgressProjection` (#801) and `UsageLimitProjection` (#802).
+Each holds the state, the decoder and the cold read that used to sit in `RemoteConversationRepository`,
+under the same names, so the per-event sections in the
 [thread-observables document](remote-conversation-repository-thread-observables.md) still describe
-them. Only the owning class changed, and behaviour did not.
+them. Only the owning class changed, and behaviour did not. `UsageLimitProjection` is the newest member
+and the only one whose clearing edge is self-contained: a benign `status` frame clears its own entry
+inside `apply`, so it needs no hook on another event's arm the way the stall/thinking-progress clears do.
 
 The repository keeps three things. Its `onInbound` arm checks the negotiated `interactive` capability
 and calls the projection's `apply(envelope)`. Its `observe…` override returns the projection's

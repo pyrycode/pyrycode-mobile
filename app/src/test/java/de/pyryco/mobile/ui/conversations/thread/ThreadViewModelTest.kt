@@ -17,16 +17,18 @@ import de.pyryco.mobile.data.model.Session
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.preferences.AppPreferences
-import de.pyryco.mobile.data.preferences.Effort
-import de.pyryco.mobile.data.preferences.Model
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.FakeConnectionStateSource
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.HistoryEntry
 import de.pyryco.mobile.data.repository.HistoryPage
+import de.pyryco.mobile.data.repository.ModelMenu
+import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
+import de.pyryco.mobile.data.repository.SessionSettings
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.ThrowingConversationRepository
@@ -52,7 +54,6 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
-import kotlinx.coroutines.withTimeout
 import kotlinx.datetime.Instant
 import kotlinx.serialization.json.buildJsonObject
 import org.junit.After
@@ -65,7 +66,6 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.util.UUID
-import kotlin.time.Duration.Companion.seconds
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ThreadViewModelTest {
@@ -1813,174 +1813,275 @@ class ThreadViewModelTest {
             assertEquals("", vm.state.value.conversationId)
         }
 
+    // ---- #807: model and effort sourced from the daemon, never from AppPreferences ---------------
+    //
+    // #544's six device-default cases (selectedModel/selectedEffort follow and re-emit on
+    // AppPreferences.defaultModel/defaultEffort, and an override outlives a later default change) are
+    // deleted rather than rewritten: they asserted the sourcing this ticket retires. The ViewModel no
+    // longer takes an AppPreferences at all.
+
     @Test
-    fun state_initialValue_includesDefaultModelEffortAndYolo() =
+    fun state_initialValue_isUnknownRunConfigNotADeviceDefault() =
         runTest {
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, FakeConversationRepository())
+            val vm = makeVm(runConfigHandle(), FakeConversationRepository())
             // No collect{} — the stateIn(WhileSubscribed) initial value is the data-class defaults.
-            assertEquals(Model.OPUS_4_7, vm.state.value.selectedModel)
-            assertEquals(Effort.HIGH, vm.state.value.selectedEffort)
+            val config = vm.state.value.runConfig
+            assertEquals(UNKNOWN_RUN_CONFIG_LABEL, config.modelLabel)
+            assertEquals(UNKNOWN_RUN_CONFIG_LABEL, config.effortLabel)
+            assertFalse(config.settingsAvailable)
+            assertFalse(config.menuAvailable)
+            assertEquals("", config.sessionId)
             assertFalse(vm.state.value.yoloEnabled)
         }
 
     @Test
-    fun state_postSubscription_emitsDefaultModelEffortAndYolo() =
+    fun runConfig_withoutAnyReading_rendersUnknownAndOffersNothing() =
         runTest {
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, FakeConversationRepository())
+            // An unseeded Fake reads null for both, the same "unavailable" a live repository reports before
+            // its first reply. Unknown is the whole point: never Model.OPUS_4_7, never Effort.HIGH.
+            val vm = makeVm(runConfigHandle(), FakeConversationRepository())
             val collector = launch { vm.state.collect {} }
             advanceUntilIdle()
-            assertEquals(Model.OPUS_4_7, vm.state.value.selectedModel)
-            assertEquals(Effort.HIGH, vm.state.value.selectedEffort)
-            assertFalse(vm.state.value.yoloEnabled)
+            val config = vm.state.value.runConfig
+            assertEquals(UNKNOWN_RUN_CONFIG_LABEL, config.modelLabel)
+            assertEquals(UNKNOWN_RUN_CONFIG_LABEL, config.effortLabel)
+            assertEquals(emptyList<ThreadModelChoice>(), config.choices)
+            assertEquals(emptyList<ThreadEffortChoice>(), config.effortChoices)
+            assertFalse("an unaddressable session is read-only", config.writable)
             collector.cancel()
         }
 
     @Test
-    fun selectedModel_followsAppPreferencesDefault() =
+    fun runConfig_labelsComeFromTheReadingAndThePublishedRow() =
         runTest {
-            val prefs = AppPreferences(newDataStore())
-            prefs.setDefaultModel(Model.SONNET_4_6)
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
-            val seen =
-                withTimeout(2.seconds) {
-                    vm.state.first { it.selectedModel == Model.SONNET_4_6 }
-                }
-            assertEquals(Model.SONNET_4_6, seen.selectedModel)
-        }
-
-    @Test
-    fun selectedModel_reemitsWhenAppPreferencesDefaultChanges() =
-        runTest {
-            val prefs = AppPreferences(newDataStore())
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
-            val initial =
-                withTimeout(2.seconds) {
-                    vm.state.first { it.selectedModel == Model.OPUS_4_7 }
-                }
-            assertEquals(Model.OPUS_4_7, initial.selectedModel)
-            prefs.setDefaultModel(Model.HAIKU_4_5)
-            val updated =
-                withTimeout(2.seconds) {
-                    vm.state.first { it.selectedModel == Model.HAIKU_4_5 }
-                }
-            assertEquals(Model.HAIKU_4_5, updated.selectedModel)
-        }
-
-    @Test
-    fun onModelSelected_overridesPerConversationWithoutMutatingPreferences() =
-        runTest {
-            val prefs = AppPreferences(newDataStore())
-            // Sanity: the default starts at OPUS_4_7 (unparseable/missing → OPUS_4_7).
-            assertEquals(Model.OPUS_4_7, prefs.defaultModel.first())
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
-            withTimeout(2.seconds) {
-                vm.state.first { it.selectedModel == Model.OPUS_4_7 }
-            }
-            vm.onModelSelected(Model.HAIKU_4_5)
-            val seen =
-                withTimeout(2.seconds) {
-                    vm.state.first { it.selectedModel == Model.HAIKU_4_5 }
-                }
-            assertEquals(Model.HAIKU_4_5, seen.selectedModel)
-            // The AC's verification line: Settings default is unchanged.
-            assertEquals(Model.OPUS_4_7, prefs.defaultModel.first())
-        }
-
-    @Test
-    fun onModelSelected_overrideWinsOverSubsequentDefaultChange() =
-        runTest {
-            val prefs = AppPreferences(newDataStore())
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
-            withTimeout(2.seconds) {
-                vm.state.first { it.selectedModel == Model.OPUS_4_7 }
-            }
-            vm.onModelSelected(Model.HAIKU_4_5)
-            withTimeout(2.seconds) {
-                vm.state.first { it.selectedModel == Model.HAIKU_4_5 }
-            }
-            prefs.setDefaultModel(Model.SONNET_4_6)
+            val repo = FakeConversationRepository()
+            repo.setModelMenu(RUN_CONFIG_CONV, menu(row("opus", "Opus 4.7"), row("sonnet", "Sonnet 4.6")))
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(model = "sonnet", effort = "high"))
+            val vm = makeVm(runConfigHandle(), repo)
+            val collector = launch { vm.state.collect {} }
             advanceUntilIdle()
-            // The override sticks; the Settings default change does not override it.
-            assertEquals(Model.HAIKU_4_5, vm.state.value.selectedModel)
-            assertEquals(Model.SONNET_4_6, prefs.defaultModel.first())
+
+            val config = vm.state.value.runConfig
+            // The label is the row's displayName; the identity is the row's value.
+            assertEquals("Sonnet 4.6", config.modelLabel)
+            assertEquals("sonnet", config.selectedModel)
+            assertEquals("high", config.effortLabel)
+            collector.cancel()
         }
 
     @Test
-    fun selectedEffort_followsAppPreferencesDefault() =
+    fun runConfig_readingWithNoOverride_readsAsInheritedDefaultNotUnknown() =
         runTest {
-            val prefs = AppPreferences(newDataStore())
-            prefs.setDefaultEffort(Effort.LOW)
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
-            val seen =
-                withTimeout(2.seconds) {
-                    vm.state.first { it.selectedEffort == Effort.LOW }
-                }
-            assertEquals(Effort.LOW, seen.selectedEffort)
-        }
-
-    @Test
-    fun selectedEffort_reemitsWhenAppPreferencesDefaultChanges() =
-        runTest {
-            val prefs = AppPreferences(newDataStore())
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
-            val initial =
-                withTimeout(2.seconds) {
-                    vm.state.first { it.selectedEffort == Effort.HIGH }
-                }
-            assertEquals(Effort.HIGH, initial.selectedEffort)
-            prefs.setDefaultEffort(Effort.MAX)
-            val updated =
-                withTimeout(2.seconds) {
-                    vm.state.first { it.selectedEffort == Effort.MAX }
-                }
-            assertEquals(Effort.MAX, updated.selectedEffort)
-        }
-
-    @Test
-    fun onEffortSelected_overridesPerConversationWithoutMutatingPreferences() =
-        runTest {
-            val prefs = AppPreferences(newDataStore())
-            assertEquals(Effort.HIGH, prefs.defaultEffort.first())
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
-            withTimeout(2.seconds) {
-                vm.state.first { it.selectedEffort == Effort.HIGH }
-            }
-            vm.onEffortSelected(Effort.MAX)
-            val seen =
-                withTimeout(2.seconds) {
-                    vm.state.first { it.selectedEffort == Effort.MAX }
-                }
-            assertEquals(Effort.MAX, seen.selectedEffort)
-            // The AC's verification line: Settings default is unchanged.
-            assertEquals(Effort.HIGH, prefs.defaultEffort.first())
-        }
-
-    @Test
-    fun onEffortSelected_overrideWinsOverSubsequentDefaultChange() =
-        runTest {
-            val prefs = AppPreferences(newDataStore())
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
-            withTimeout(2.seconds) {
-                vm.state.first { it.selectedEffort == Effort.HIGH }
-            }
-            vm.onEffortSelected(Effort.MAX)
-            withTimeout(2.seconds) {
-                vm.state.first { it.selectedEffort == Effort.MAX }
-            }
-            prefs.setDefaultEffort(Effort.LOW)
+            // "" is a real reported value — "no override, inherited default" — and is not the same reading
+            // as an absent one, which is why settingsAvailable carries that distinction separately.
+            val repo = FakeConversationRepository()
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(model = "", effort = ""))
+            val vm = makeVm(runConfigHandle(), repo)
+            val collector = launch { vm.state.collect {} }
             advanceUntilIdle()
-            assertEquals(Effort.MAX, vm.state.value.selectedEffort)
-            assertEquals(Effort.LOW, prefs.defaultEffort.first())
+
+            val config = vm.state.value.runConfig
+            assertTrue(config.settingsAvailable)
+            assertEquals(INHERITED_RUN_CONFIG_LABEL, config.modelLabel)
+            assertEquals(INHERITED_RUN_CONFIG_LABEL, config.effortLabel)
+            collector.cancel()
+        }
+
+    @Test
+    fun runConfig_savedValueTheMenuDidNotPublish_rendersTheValueItself() =
+        runTest {
+            val repo = FakeConversationRepository()
+            repo.setModelMenu(RUN_CONFIG_CONV, menu(row("opus", "Opus 4.7")))
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(model = "opus[1m]"))
+            val vm = makeVm(runConfigHandle(), repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            // No row names it, so the reported value stands in — never a device enum and never another row.
+            assertEquals("opus[1m]", vm.state.value.runConfig.modelLabel)
+            assertEquals(null, vm.state.value.runConfig.selectedChoice)
+            collector.cancel()
+        }
+
+    @Test
+    fun runConfig_choicesAreThePublishedRowsInWireOrder() =
+        runTest {
+            val repo = FakeConversationRepository()
+            repo.setModelMenu(
+                RUN_CONFIG_CONV,
+                menu(row("haiku", "Haiku 4.5"), row("opus", "Opus 4.7"), row("sonnet", "Sonnet 4.6")),
+            )
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings())
+            val vm = makeVm(runConfigHandle(), repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            val config = vm.state.value.runConfig
+            assertTrue(config.menuAvailable)
+            assertEquals(listOf("haiku", "opus", "sonnet"), config.choices.map { it.value })
+            assertEquals(listOf("Haiku 4.5", "Opus 4.7", "Sonnet 4.6"), config.choices.map { it.label })
+            collector.cancel()
+        }
+
+    @Test
+    fun runConfig_effortLevelsComeFromTheSelectedRow() =
+        runTest {
+            val repo = FakeConversationRepository()
+            repo.setModelMenu(
+                RUN_CONFIG_CONV,
+                menu(
+                    row("opus", "Opus 4.7", effortLevels = listOf("low", "medium", "high")),
+                    row("haiku", "Haiku 4.5", effortLevels = emptyList()),
+                ),
+            )
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(model = "opus"))
+            val vm = makeVm(runConfigHandle(), repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertEquals(
+                listOf("low", "medium", "high"),
+                vm.state.value.runConfig.effortChoices
+                    .map { it.value },
+            )
+
+            // A row publishing no levels offers no effort choice — never the five Effort entries.
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(model = "haiku"))
+            advanceUntilIdle()
+            assertEquals(emptyList<ThreadEffortChoice>(), vm.state.value.runConfig.effortChoices)
+            collector.cancel()
+        }
+
+    @Test
+    fun runConfig_unsetSavedEffortStillOffersTheRowsLevels() =
+        runTest {
+            val repo = FakeConversationRepository()
+            repo.setModelMenu(RUN_CONFIG_CONV, menu(row("opus", "Opus 4.7", effortLevels = listOf("low", "max"))))
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(model = "opus", effort = ""))
+            val vm = makeVm(runConfigHandle(), repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            val config = vm.state.value.runConfig
+            assertEquals("", config.selectedEffort) // nothing is selected...
+            assertEquals(listOf("low", "max"), config.effortChoices.map { it.value }) // ...but both are offered
+            collector.cancel()
+        }
+
+    @Test
+    fun runConfig_droppedModelsIsCarriedAsReportedAndNeverRecomputed() =
+        runTest {
+            val repo = FakeConversationRepository()
+            // A non-zero count beside a short row list is legal: the producer's cap is daemon-side.
+            repo.setModelMenu(RUN_CONFIG_CONV, menu(row("opus", "Opus 4.7"), droppedModels = 44))
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings())
+            val vm = makeVm(runConfigHandle(), repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            assertEquals(44, vm.state.value.runConfig.droppedModels)
+            assertEquals(0, vm.state.value.runConfig.hiddenChoices)
+            collector.cancel()
+        }
+
+    @Test
+    fun runConfig_oversizedMenuIsCappedIntoHiddenChoicesLeavingDroppedModelsUntouched() =
+        runTest {
+            // A buggy or hostile daemon can publish more rows than the sheet's non-lazy Column should lay
+            // out. The client's own cut is reported separately so neither number is mistaken for the other.
+            val repo = FakeConversationRepository()
+            val rows = (1..40).map { row("m$it", "Model $it") }
+            repo.setModelMenu(RUN_CONFIG_CONV, ModelMenu(rows = rows, droppedModels = 7))
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings())
+            val vm = makeVm(runConfigHandle(), repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            val config = vm.state.value.runConfig
+            assertEquals(32, config.choices.size)
+            assertEquals(8, config.hiddenChoices)
+            assertEquals("the producer's own count is untouched", 7, config.droppedModels)
+            collector.cancel()
+        }
+
+    @Test
+    fun runConfig_claudeAuthoredTextIsRenderedInertWhileTheWriteArgumentStaysVerbatim() =
+        runTest {
+            // ModelMenuRow's strings cross the subprocess trust boundary unsanitized: the daemon bounds
+            // them but strips no control character and no terminal escape, so this client owes both.
+            val repo = FakeConversationRepository()
+            val hostileLabel = "Op[31mus\nx4.7" + "y".repeat(400)
+            val hostileLevel = "high"
+            repo.setModelMenu(
+                RUN_CONFIG_CONV,
+                menu(
+                    row(
+                        "opus",
+                        displayName = hostileLabel,
+                        resolvedModel = "resolved",
+                        effortLevels = listOf(hostileLevel),
+                    ),
+                ),
+            )
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(model = "opus"))
+            val vm = makeVm(runConfigHandle(), repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            val choice =
+                vm.state.value.runConfig.choices
+                    .single()
+            assertFalse("no control character survives into the label", choice.label.any { it.isISOControl() })
+            assertFalse("nor into the detail line", choice.detail.any { it.isISOControl() })
+            assertFalse(
+                "nor into an effort label",
+                choice.effortChoices
+                    .single()
+                    .label
+                    .any { it.isISOControl() },
+            )
+            assertTrue("the label is length-bounded", choice.label.length <= 128)
+            // The write argument is the daemon's own string and is forwarded byte-identical.
+            assertEquals("opus", choice.value)
+            assertEquals(hostileLevel, choice.effortChoices.single().value)
+            collector.cancel()
+        }
+
+    @Test
+    fun runConfig_savedValueWithControlCharacters_isRenderedInert() =
+        runTest {
+            // The footer's fallback path renders SessionSettings.model itself when no row names it — the
+            // same daemon-authored text, owed the same treatment.
+            val repo = FakeConversationRepository()
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(model = "opus", effort = "hi\ngh"))
+            val vm = makeVm(runConfigHandle(), repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            val config = vm.state.value.runConfig
+            assertFalse(config.modelLabel.any { it.isISOControl() })
+            assertFalse(config.effortLabel.any { it.isISOControl() })
+            collector.cancel()
+        }
+
+    @Test
+    fun runConfig_isScopedToItsOwnConversation() =
+        runTest {
+            // AC #4: opening another conversation starts with no carried-over selection, menu or session id.
+            val repo = FakeConversationRepository()
+            repo.setModelMenu(RUN_CONFIG_CONV, menu(row("opus", "Opus 4.7")))
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(model = "opus", effort = "high"))
+
+            val mine = makeVm(runConfigHandle(), repo)
+            val other = makeVm(SavedStateHandle(initialState = mapOf("conversationId" to "seed-discussion-a")), repo)
+            val collectors = listOf(launch { mine.state.collect {} }, launch { other.state.collect {} })
+            advanceUntilIdle()
+
+            assertEquals("Opus 4.7", mine.state.value.runConfig.modelLabel)
+            val neighbour = other.state.value.runConfig
+            assertEquals(UNKNOWN_RUN_CONFIG_LABEL, neighbour.modelLabel)
+            assertEquals(emptyList<ThreadModelChoice>(), neighbour.choices)
+            assertEquals("", neighbour.sessionId)
+            collectors.forEach { it.cancel() }
         }
 
     @Test
@@ -1991,7 +2092,7 @@ class ThreadViewModelTest {
             prefs.setDefaultYolo(true)
             assertTrue(prefs.defaultYolo.first())
             val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
+            val vm = makeVm(handle, FakeConversationRepository())
             val collector = launch { vm.state.collect {} }
             advanceUntilIdle()
             assertFalse(vm.state.value.yoloEnabled)
@@ -2003,8 +2104,12 @@ class ThreadViewModelTest {
         runTest {
             val prefs = AppPreferences(newDataStore())
             assertFalse(prefs.defaultYolo.first())
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
+            // #807: the toggle now needs an addressable session, because it shares the send path whose
+            // routing key became the settings reading's. Without a reading there is nothing to address and
+            // the tap is dropped — which is the read-only case, covered by its own test below.
+            val repo = FakeConversationRepository()
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings())
+            val vm = makeVm(runConfigHandle(), repo)
             val collector = launch { vm.state.collect {} }
             advanceUntilIdle()
             assertFalse(vm.state.value.yoloEnabled)
@@ -2024,7 +2129,7 @@ class ThreadViewModelTest {
         runTest {
             val prefs = AppPreferences(newDataStore())
             val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, FakeConversationRepository(), prefs = prefs)
+            val vm = makeVm(handle, FakeConversationRepository())
             val collector = launch { vm.state.collect {} }
             advanceUntilIdle()
             assertFalse(vm.state.value.yoloEnabled)
@@ -2034,61 +2139,62 @@ class ThreadViewModelTest {
             collector.cancel()
         }
 
-    // ---- #544: send session-settings on control change; revert + surface on failure --------------
+    // ---- #544/#807: send on change, addressed to the settings reading's session; revert on failure ---
 
     @Test
-    fun onModelSelected_whenConnected_sendsOnlyModelFieldToCurrentSession() =
+    fun onModelSelected_whenConnected_sendsOnlyModelFieldToTheSettingsReportedSession() =
         runTest {
             val repo = FakeConversationRepository()
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, repo)
+            repo.setModelMenu(RUN_CONFIG_CONV, menu(row("opus", "Opus 4.7"), row("haiku", "Haiku 4.5")))
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(sessionId = "settings-s9", model = "opus"))
+            val vm = makeVm(runConfigHandle(), repo)
             val collector = launch { vm.state.collect {} }
             advanceUntilIdle()
-            // Precondition: the resolved model is the app-preferences default (OPUS_4_7).
-            assertEquals(Model.OPUS_4_7, vm.state.value.selectedModel)
+            assertEquals("opus", vm.state.value.runConfig.selectedModel)
 
-            vm.onModelSelected(Model.HAIKU_4_5)
+            vm.onModelSelected("haiku")
             advanceUntilIdle()
 
-            // Only the changed field is sent, routed to the conversation's current SESSION id (#544).
             val call = repo.setSessionSettingsCalls.single()
-            assertEquals("claude-haiku-4-5", call.model)
+            // The daemon's own argument, forwarded verbatim — no enum mapping in between.
+            assertEquals("haiku", call.model)
             assertNull(call.effort)
             assertNull(call.yolo)
-            assertEquals("seed-session-personal", call.sessionId)
-            // On the Fake's success ack the optimistic value persists (no revert on the happy path).
-            assertEquals(Model.HAIKU_4_5, vm.state.value.selectedModel)
+            // #807: the settings reading's session id, NOT the conversation's ("seed-session-personal").
+            assertEquals("settings-s9", call.sessionId)
             collector.cancel()
         }
 
     @Test
-    fun onEffortSelected_whenConnected_sendsOnlyEffortFieldLowercased() =
+    fun onEffortSelected_whenConnected_sendsOnlyEffortFieldVerbatim() =
         runTest {
             val repo = FakeConversationRepository()
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, repo)
+            repo.setModelMenu(RUN_CONFIG_CONV, menu(row("opus", "Opus 4.7", effortLevels = listOf("low", "max"))))
+            repo.setSessionSettingsReading(
+                RUN_CONFIG_CONV,
+                settings(sessionId = "settings-s9", model = "opus", effort = "low"),
+            )
+            val vm = makeVm(runConfigHandle(), repo)
             val collector = launch { vm.state.collect {} }
             advanceUntilIdle()
-            assertEquals(Effort.HIGH, vm.state.value.selectedEffort)
 
-            vm.onEffortSelected(Effort.MAX)
+            vm.onEffortSelected("max")
             advanceUntilIdle()
 
             val call = repo.setSessionSettingsCalls.single()
-            assertEquals("max", call.effort) // Effort.wire() == name.lowercase() (the daemon validEffort set)
+            assertEquals("max", call.effort)
             assertNull(call.model)
             assertNull(call.yolo)
-            assertEquals("seed-session-personal", call.sessionId)
-            assertEquals(Effort.MAX, vm.state.value.selectedEffort)
+            assertEquals("settings-s9", call.sessionId)
             collector.cancel()
         }
 
     @Test
-    fun onYoloToggled_whenConnected_sendsOnlyYoloField() =
+    fun onYoloToggled_whenConnected_sendsOnlyYoloFieldToTheSettingsReportedSession() =
         runTest {
             val repo = FakeConversationRepository()
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, repo)
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(sessionId = "settings-s9"))
+            val vm = makeVm(runConfigHandle(), repo)
             val collector = launch { vm.state.collect {} }
             advanceUntilIdle()
             assertFalse(vm.state.value.yoloEnabled)
@@ -2100,7 +2206,9 @@ class ThreadViewModelTest {
             assertEquals(true, call.yolo) // a non-null Boolean is sent — distinct from an omitted field
             assertNull(call.model)
             assertNull(call.effort)
-            assertEquals("seed-session-personal", call.sessionId)
+            // #807 re-routed YOLO along with the other two: sendSessionSettings is shared, and the
+            // authoritative key is the settings reading's for every control that uses it.
+            assertEquals("settings-s9", call.sessionId)
             assertTrue(vm.state.value.yoloEnabled)
             collector.cancel()
         }
@@ -2109,14 +2217,15 @@ class ThreadViewModelTest {
     fun onModelSelected_sameAsCurrentValue_doesNotSend() =
         runTest {
             val repo = FakeConversationRepository()
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, repo)
+            repo.setModelMenu(RUN_CONFIG_CONV, menu(row("opus", "Opus 4.7")))
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(model = "opus"))
+            val vm = makeVm(runConfigHandle(), repo)
             val collector = launch { vm.state.collect {} }
             advanceUntilIdle()
-            assertEquals(Model.OPUS_4_7, vm.state.value.selectedModel)
+            assertEquals("opus", vm.state.value.runConfig.selectedModel)
 
             // Re-selecting the already-displayed value is a no-op — a radio onClick fires even when selected.
-            vm.onModelSelected(Model.OPUS_4_7)
+            vm.onModelSelected("opus")
             advanceUntilIdle()
 
             assertTrue("re-selecting the current value must not send", repo.setSessionSettingsCalls.isEmpty())
@@ -2124,10 +2233,91 @@ class ThreadViewModelTest {
         }
 
     @Test
-    fun onModelSelected_whenServerError_revertsModelAndSurfacesErrorWithoutLeakingMessage() =
+    fun onModelSelected_withEmptySessionId_isReadOnlyAndSendsNothing() =
         runTest {
-            // AC #2: set_session_settings is request/reply, so a server `error` surfaces as
-            // RelayErrorException. It must be caught, the control reverted to its last-known value, and
+            // AC #3: "" means the daemon has no session to address, which the daemon itself rejects. The
+            // tap is dropped rather than failed — a read-only session is not an error to surface.
+            val repo = FakeConversationRepository()
+            repo.setModelMenu(RUN_CONFIG_CONV, menu(row("opus", "Opus 4.7"), row("haiku", "Haiku 4.5")))
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(sessionId = "", model = "opus"))
+            val vm = makeVm(runConfigHandle(), repo)
+            val errors = mutableListOf<Unit>()
+            val errorCollector = launch { vm.sessionSettingsErrors.collect { errors += it } }
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+            assertFalse(vm.state.value.runConfig.writable)
+
+            vm.onModelSelected("haiku")
+            vm.onEffortSelected("high")
+            vm.onYoloToggled(true)
+            advanceUntilIdle()
+
+            assertTrue("nothing is sent to an unaddressable session", repo.setSessionSettingsCalls.isEmpty())
+            assertTrue("and a read-only session surfaces no failure", errors.isEmpty())
+            assertFalse("the control does not move either", vm.state.value.runConfig.pending)
+            errorCollector.cancel()
+            collector.cancel()
+        }
+
+    @Test
+    fun onModelSelected_settledWrite_staysPendingUntilAFreshReadingLands() =
+        runTest {
+            // AC #3: the ack echoes only the input session id, so a settled write asks for a fresh reading
+            // and the pending survives until that reading arrives. An acknowledgement is never the
+            // confirmed reading.
+            val repo = FakeConversationRepository()
+            repo.setModelMenu(RUN_CONFIG_CONV, menu(row("opus", "Opus 4.7"), row("haiku", "Haiku 4.5")))
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(sessionId = "settings-s9", model = "opus"))
+            val vm = makeVm(runConfigHandle(), repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onModelSelected("haiku")
+            advanceUntilIdle()
+
+            // Acked — but not confirmed: the tap still reads as pending, visibly distinct from settled.
+            assertTrue("the ack alone does not confirm", vm.state.value.runConfig.pending)
+            assertEquals("haiku", vm.state.value.runConfig.selectedModel)
+            assertEquals("opus", vm.state.value.runConfig.savedModel)
+            assertEquals("a settled write asks for a fresh reading", listOf(RUN_CONFIG_CONV), repo.sessionSettingsRefreshes)
+
+            // The fresh reading lands; the display updates with no further user turn.
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(sessionId = "settings-s9", model = "haiku"))
+            advanceUntilIdle()
+            assertFalse(vm.state.value.runConfig.pending)
+            assertEquals("haiku", vm.state.value.runConfig.savedModel)
+            assertEquals("Haiku 4.5", vm.state.value.runConfig.modelLabel)
+            collector.cancel()
+        }
+
+    @Test
+    fun onModelSelected_whileAWriteIsPending_doesNotSendASecondTime() =
+        runTest {
+            val repo = FakeConversationRepository()
+            repo.setModelMenu(
+                RUN_CONFIG_CONV,
+                menu(row("opus", "Opus 4.7"), row("haiku", "Haiku 4.5"), row("sonnet", "Sonnet 4.6")),
+            )
+            repo.setSessionSettingsReading(RUN_CONFIG_CONV, settings(sessionId = "settings-s9", model = "opus"))
+            val vm = makeVm(runConfigHandle(), repo)
+            val collector = launch { vm.state.collect {} }
+            advanceUntilIdle()
+
+            vm.onModelSelected("haiku")
+            advanceUntilIdle()
+            vm.onModelSelected("sonnet")
+            advanceUntilIdle()
+
+            assertEquals("two writes for one control must never be outstanding", 1, repo.setSessionSettingsCalls.size)
+            assertEquals("haiku", vm.state.value.runConfig.selectedModel)
+            collector.cancel()
+        }
+
+    @Test
+    fun onModelSelected_whenServerError_restoresConfirmedStateAndSurfacesErrorWithoutLeakingMessage() =
+        runTest {
+            // AC #3: set_session_settings is request/reply, so a server `error` surfaces as
+            // RelayErrorException. It must be caught, the previously confirmed reading restored, and
             // exactly one payload-free signal surfaced — the server-supplied message never reaches the
             // surface. Capture uncaught throws to prove the typed catch ran (viewModelScope is a separate
             // SupervisorJob, not runTest's scope, so a leaked throw hits the default handler).
@@ -2135,8 +2325,11 @@ class ThreadViewModelTest {
             val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
             Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
             try {
+                val backing = FakeConversationRepository()
+                backing.setModelMenu(RUN_CONFIG_CONV, menu(row("opus", "Opus 4.7"), row("haiku", "Haiku 4.5")))
+                backing.setSessionSettingsReading(RUN_CONFIG_CONV, settings(sessionId = "settings-s9", model = "opus"))
                 val repo =
-                    object : ConversationRepository by FakeConversationRepository() {
+                    object : ConversationRepository by backing {
                         override suspend fun setSessionSettings(
                             sessionId: String,
                             model: String?,
@@ -2144,18 +2337,18 @@ class ThreadViewModelTest {
                             yolo: Boolean?,
                         ): Unit = throw RelayErrorException(code = "protocol.malformed", retryable = false, message = "secret")
                     }
-                val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-                val vm = makeVm(handle, repo)
+                val vm = makeVm(runConfigHandle(), repo)
                 val errors = mutableListOf<Unit>()
                 val errorCollector = launch { vm.sessionSettingsErrors.collect { errors += it } }
                 val stateCollector = launch { vm.state.collect {} }
                 advanceUntilIdle()
-                assertEquals(Model.OPUS_4_7, vm.state.value.selectedModel)
+                assertEquals("opus", vm.state.value.runConfig.selectedModel)
 
-                vm.onModelSelected(Model.HAIKU_4_5)
+                vm.onModelSelected("haiku")
                 advanceUntilIdle()
 
-                assertEquals("the control reverts to its prior value", Model.OPUS_4_7, vm.state.value.selectedModel)
+                assertEquals("the control returns to the confirmed reading", "opus", vm.state.value.runConfig.selectedModel)
+                assertFalse("and is no longer pending", vm.state.value.runConfig.pending)
                 assertEquals("a server error surfaces exactly one signal", 1, errors.size)
                 assertTrue("the server-error throw must be caught, not propagated: $uncaught", uncaught.isEmpty())
                 errorCollector.cancel()
@@ -2170,13 +2363,15 @@ class ThreadViewModelTest {
         runTest {
             // AC #3: a change while disconnected throws IllegalStateException (the facade `live` getter) —
             // caught, reverted, one signal. Covers the ISE path over YOLO (the RelayErrorException path is
-            // covered over model), satisfying AC #5's "at least one control" across both failure modes.
+            // covered over model), so both failure modes are exercised across the shared send path.
             val uncaught = mutableListOf<Throwable>()
             val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
             Thread.setDefaultUncaughtExceptionHandler { _, e -> uncaught += e }
             try {
+                val backing = FakeConversationRepository()
+                backing.setSessionSettingsReading(RUN_CONFIG_CONV, settings(sessionId = "settings-s9"))
                 val repo =
-                    object : ConversationRepository by FakeConversationRepository() {
+                    object : ConversationRepository by backing {
                         override suspend fun setSessionSettings(
                             sessionId: String,
                             model: String?,
@@ -2184,8 +2379,7 @@ class ThreadViewModelTest {
                             yolo: Boolean?,
                         ): Unit = throw IllegalStateException("not connected")
                     }
-                val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-                val vm = makeVm(handle, repo)
+                val vm = makeVm(runConfigHandle(), repo)
                 val errors = mutableListOf<Unit>()
                 val errorCollector = launch { vm.sessionSettingsErrors.collect { errors += it } }
                 val stateCollector = launch { vm.state.collect {} }
@@ -2214,8 +2408,11 @@ class ThreadViewModelTest {
             // failure (no revert, no signal). A bare `catch (IllegalStateException)` would false-fire here.
             val gate = CompletableDeferred<Unit>() // never completes — the send stays suspended in-flight
             val entered = CompletableDeferred<Unit>()
+            val backing = FakeConversationRepository()
+            backing.setModelMenu(RUN_CONFIG_CONV, menu(row("opus", "Opus 4.7"), row("haiku", "Haiku 4.5")))
+            backing.setSessionSettingsReading(RUN_CONFIG_CONV, settings(sessionId = "settings-s9", model = "opus"))
             val repo =
-                object : ConversationRepository by FakeConversationRepository() {
+                object : ConversationRepository by backing {
                     override suspend fun setSessionSettings(
                         sessionId: String,
                         model: String?,
@@ -2226,15 +2423,14 @@ class ThreadViewModelTest {
                         gate.await()
                     }
                 }
-            val handle = SavedStateHandle(initialState = mapOf("conversationId" to "seed-channel-personal"))
-            val vm = makeVm(handle, repo)
+            val vm = makeVm(runConfigHandle(), repo)
             val errors = mutableListOf<Unit>()
             val errorCollector = launch { vm.sessionSettingsErrors.collect { errors += it } }
             val stateCollector = launch { vm.state.collect {} }
             advanceUntilIdle()
             val store = ViewModelStore().apply { put("vm", vm) }
 
-            vm.onModelSelected(Model.HAIKU_4_5)
+            vm.onModelSelected("haiku")
             advanceUntilIdle()
             assertTrue("the send must be in-flight", entered.isCompleted)
 
@@ -3559,11 +3755,53 @@ class ThreadViewModelTest {
         }
     }
 
+    // ---- #807 fixtures: the daemon's two readings, in the shapes the wire actually produces ------
+
+    private fun runConfigHandle(): SavedStateHandle = SavedStateHandle(initialState = mapOf("conversationId" to RUN_CONFIG_CONV))
+
+    /** A settings reading. Every field is retained exactly as a daemon would report it — nothing here is
+     *  defaulted to a device value, which is the lie #807 exists to remove. */
+    private fun settings(
+        sessionId: String = "settings-s9",
+        model: String = "",
+        effort: String = "",
+    ): SessionSettings =
+        SessionSettings(
+            sessionId = sessionId,
+            model = model,
+            effort = effort,
+            effectiveEffort = EffectiveEffort.Unavailable,
+            permissionMode = "",
+            yolo = false,
+            usedTokens = 0,
+            windowTokens = 0,
+        )
+
+    private fun menu(
+        vararg rows: ModelMenuRow,
+        droppedModels: Int = 0,
+    ): ModelMenu = ModelMenu(rows = rows.toList(), droppedModels = droppedModels)
+
+    /** One published row. [value] is the argument a write sends back; [displayName] is the label. */
+    private fun row(
+        value: String,
+        displayName: String = value,
+        resolvedModel: String = "",
+        effortLevels: List<String> = listOf("low", "high"),
+    ): ModelMenuRow =
+        ModelMenuRow(
+            resolvedModel = resolvedModel,
+            value = value,
+            displayName = displayName,
+            effortLevels = effortLevels,
+            supportsAutoMode = true,
+            truncatedFields = null,
+        )
+
     private fun TestScope.makeVm(
         handle: SavedStateHandle,
         repository: ConversationRepository,
         source: ConnectionStateSource = FakeConnectionStateSource(),
-        prefs: AppPreferences = AppPreferences(newDataStore()),
         // #789: defaulted to a fresh store so every pre-existing case is unaffected; the draft cases
         // pass their own to observe it.
         draftStore: ComposerDraftStore = ComposerDraftStore(),
@@ -3577,7 +3815,6 @@ class ThreadViewModelTest {
             handle,
             repository,
             source,
-            prefs,
             draftStore,
             liveSessionEvents,
             currentModal,
@@ -4020,6 +4257,10 @@ class ThreadViewModelTest {
         }
 
     private companion object {
+        /** The conversation the #807 run-configuration cases seed. A Fake-seeded channel, so
+         *  `observeConversations` resolves it and the state assembles as it does in production. */
+        const val RUN_CONFIG_CONV = "seed-channel-personal"
+
         const val ACTIVE_CONV = "thread-406-active"
 
         /** #789: a conversation the seeded fake actually knows, so sends and resets reach it. */

@@ -8,9 +8,13 @@ import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UnrecognizedSite
+import de.pyryco.mobile.data.repository.UsageLimitReading
 import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * Mobile Protocol v2 structured live-session stream payloads (#385): the `internal` decode DTOs for
@@ -45,6 +49,16 @@ internal data class AssistantDeltaPayloadDto(
     val text: String,
 )
 
+/**
+ * `tool_use`. [parentToolUseId] and [input] (#810) are the two **lenient-defaulted** fields in this
+ * file, a deliberate departure from the strict-required posture above: the daemon always emits both
+ * keys, so an absent one means an older binary, which meant "main thread" and "no fields" — decoding
+ * it to `""` / `{}` is what that binary said, whereas failing would drop the whole row.
+ *
+ * [input] is a raw [JsonElement] rather than a typed map because the AC requires an absent, `null`,
+ * empty or non-object input to yield no fields instead of a decode failure; [toInputFields] narrows
+ * it. A wire `null` for [parentToolUseId] still fails the decode — the contract never sends one.
+ */
 @Serializable
 internal data class ToolUsePayloadDto(
     @SerialName("conversation_id") val conversationId: String,
@@ -52,8 +66,11 @@ internal data class ToolUsePayloadDto(
     @SerialName("tool_use_id") val toolUseId: String,
     val name: String,
     @SerialName("input_summary") val inputSummary: String,
+    @SerialName("parent_tool_use_id") val parentToolUseId: String = "",
+    val input: JsonElement? = null,
 )
 
+/** `tool_result`. [parentToolUseId] is lenient-defaulted for the reason [ToolUsePayloadDto] states (#810). */
 @Serializable
 internal data class ToolResultPayloadDto(
     @SerialName("conversation_id") val conversationId: String,
@@ -61,6 +78,7 @@ internal data class ToolResultPayloadDto(
     @SerialName("tool_use_id") val toolUseId: String,
     @SerialName("is_error") val isError: Boolean,
     @SerialName("result_summary") val resultSummary: String,
+    @SerialName("parent_tool_use_id") val parentToolUseId: String = "",
 )
 
 @Serializable
@@ -237,6 +255,102 @@ internal data class CompactingPayloadDto(
 )
 
 /**
+ * The `rate_limited` control event (#802, pyrycode#1405/#1410): what claude said about its usage-limit
+ * window, so a turn that stops making progress because of one can say why. Decode-only — the phone
+ * never sends one. Always decode through [MobileJson].
+ *
+ * Wire SSOT: pyrycode `internal/protocol/interactive.go` (`RateLimitedPayload`) +
+ * `docs/protocol-mobile.md` § `rate_limited`, which is where the field semantics live — cited here,
+ * not restated. Shape: `{conversation_id, status, limit_type, resets_at, utilization,
+ * truncated_fields}`.
+ *
+ * **Four fields are strict-required and two are nullable**, and the split follows the wire rather than
+ * taste. The four required ones set no `omitempty`, so a missing one — or one whose JSON shape cannot
+ * be read as its declared type — fails the structural decode with a
+ * [kotlinx.serialization.SerializationException] and the one envelope is dropped (AC #1), the
+ * [CompactingPayloadDto] posture. [utilization] and [truncatedFields] are the documented nullables:
+ * the daemon always emits both keys, so an unreported value arrives as a literal `null` rather than a
+ * dropped key, and the Kotlin defaults only cover a non-conforming producer. [MobileJson]'s
+ * `explicitNulls = false` collapsing omitted with explicit-`null` is correct for both — the very
+ * collapse `effective_effort` had to *avoid*, because its three states mean three different things.
+ * An out-of-contract `[]` on `truncated_fields` decodes to an empty list rather than being punned to
+ * `null`, so what arrived is what is retained. The measured latitude documented on
+ * [ApiRetryPayloadDto] applies here too: kotlinx's *tree* decoder accepts a **quoted** primitive
+ * (`"resets_at":"0"`) even with `isLenient = false`, so that is not a strictness probe a test should
+ * lean on.
+ *
+ * **[resetsAt] is a [Long] and that is load-bearing rather than stylistic.** The Go field is `int64`
+ * and the contract admits year-40000 values — roughly `1.2e12` unix seconds, an order of magnitude
+ * past `Int32`. An `Int` here would fail the *structural* decode on exactly the out-of-range value the
+ * contract requires be **carried**, turning a carry-verbatim rule into a silent drop through a type
+ * choice. Nothing clamps or range-checks it; `0` means claude reported no reset, **not** the epoch.
+ *
+ * **[utilization] is a `Double?` for the same reason it is a `*float64` upstream**: `null` and `0.0`
+ * are different facts, and absence is the *common* case. Reading a missing reading as zero renders a
+ * fresh window as an exhausted one. It is claude's number and **not a bounded fraction** — nothing
+ * clamps, rounds or rescales it here.
+ *
+ * **SECURITY.** [status] and [limitType] are claude-authored strings that crossed the subprocess trust
+ * boundary; the daemon bounds them at construction and does **not** sanitize them. They cross this
+ * boundary **verbatim** — never trimmed, normalised, lower-cased, allow-listed or shape-checked. No
+ * client-side length cap is added: the daemon bounds both at construction and
+ * `OkHttpRelayTransport`'s frame contract bounds the envelope ahead of any parse, so a third bound
+ * would defend a failure that cannot reach this code, and [truncatedFields] is how a consumer learns a
+ * value lost characters. Nothing on this path is logged. See [UsageLimitReading] for the obligations
+ * that travel with the decoded value.
+ */
+@Serializable
+internal data class RateLimitedPayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    val status: String,
+    @SerialName("limit_type") val limitType: String,
+    @SerialName("resets_at") val resetsAt: Long,
+    val utilization: Double? = null,
+    @SerialName("truncated_fields") val truncatedFields: List<String>? = null,
+)
+
+/**
+ * The single benign `status` value (#802) — the **one** value anything in this client compares against,
+ * and the discriminator that tells a clearing edge from a warning. Every other status is an opaque
+ * label to render, never a case to branch on: the value set beyond this one is almost entirely
+ * unmeasured, so narrowing it would drop the first real limit that fires. `private` so the comparison
+ * cannot spread beyond [toReading].
+ */
+private const val STATUS_BENIGN = "allowed"
+
+/**
+ * Map a decoded [RateLimitedPayloadDto] to the portable [UsageLimitReading], or **null** on the benign
+ * **falling edge** — claude's latest reading of the window is benign, so the holder's entry is cleared.
+ *
+ * This mapper is the **sole owner of the edge semantics**, the [ApiRetryPayloadDto.toStatus] precedent
+ * rather than the `compacting` arm's `if (active)`: there a mapper would have been a ceremonial
+ * identity function, whereas here five wire fields collapse into a four-field reading plus a routing
+ * key the reading must not carry. Keeping the decision here means the benign comparison is expressed
+ * **exactly once** and a second `if` in the inbound arm cannot encode the same rule differently.
+ *
+ * Unlike [TurnStatePayloadDto.toEvent] / [SessionTransitionPayloadDto.toBoundary], a `null` here is
+ * **not** an unrecognized-value drop: an unrecognised status is an ordinary warning and surfaces
+ * verbatim. That asymmetry is the wire's, not this client's — a reader who assumes the two nulls mean
+ * the same thing has it backwards.
+ *
+ * Every field is otherwise a **total verbatim copy**. Nothing is clamped, rounded, rescaled,
+ * range-checked, trimmed or narrowed, and `conversation_id` is deliberately **not** copied into the
+ * reading — it stays the caller's routing key (see [UsageLimitReading]).
+ */
+internal fun RateLimitedPayloadDto.toReading(): UsageLimitReading? =
+    if (status == STATUS_BENIGN) {
+        null
+    } else {
+        UsageLimitReading(
+            status = status,
+            limitType = limitType,
+            resetsAt = resetsAt,
+            utilization = utilization,
+            truncatedFields = truncatedFields,
+        )
+    }
+
+/**
  * The `thinking_progress` control event (#801, pyrycode#1386): claude is actively reasoning, and
  * roughly how much — its **only** mid-turn proof of life on the stream-json surface, since nothing else
  * crosses the wire during a long assistant turn. Decode-only — the phone never sends one. Always decode
@@ -305,11 +419,26 @@ private fun String.toPhase(): LiveSessionEvent.TurnState.Phase? =
 internal fun AssistantDeltaPayloadDto.toEvent(): LiveSessionEvent = LiveSessionEvent.AssistantDelta(conversationId, turnId, seq, text)
 
 /** Total field copy: every [ToolUsePayloadDto] decodes to a [LiveSessionEvent.ToolUse]. */
-internal fun ToolUsePayloadDto.toEvent(): LiveSessionEvent = LiveSessionEvent.ToolUse(conversationId, turnId, toolUseId, name, inputSummary)
+internal fun ToolUsePayloadDto.toEvent(): LiveSessionEvent =
+    LiveSessionEvent.ToolUse(conversationId, turnId, toolUseId, name, inputSummary, parentToolUseId, input.toInputFields())
 
 /** Total field copy: every [ToolResultPayloadDto] decodes to a [LiveSessionEvent.ToolResult]. */
 internal fun ToolResultPayloadDto.toEvent(): LiveSessionEvent =
-    LiveSessionEvent.ToolResult(conversationId, turnId, toolUseId, isError, resultSummary)
+    LiveSessionEvent.ToolResult(conversationId, turnId, toolUseId, isError, resultSummary, parentToolUseId)
+
+/**
+ * `tool_use.input` narrowed to its string fields (#810): anything but a JSON object yields no fields,
+ * and within an object each JSON-string value is kept **verbatim** in wire order. A non-string value is
+ * off-contract (the daemon stringifies every value) and is skipped rather than rewritten.
+ */
+private fun JsonElement?.toInputFields(): Map<String, String> {
+    if (this !is JsonObject) return emptyMap()
+    return buildMap {
+        for ((key, value) in this@toInputFields) {
+            if (value is JsonPrimitive && value.isString) put(key, value.content)
+        }
+    }
+}
 
 /** Total field copy: [stopReason] passes through verbatim (consumers map the wire value). */
 internal fun TurnEndPayloadDto.toEvent(): LiveSessionEvent = LiveSessionEvent.TurnEnd(conversationId, turnId, stopReason)

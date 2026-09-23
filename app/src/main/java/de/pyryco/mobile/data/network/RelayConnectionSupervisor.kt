@@ -62,10 +62,10 @@ interface RelayConnectionController {
  * is out of scope; a future ticket may refine `Connected` to mean end-to-end readiness if wanted.
  *
  * Emits no logs: the outward signal is the typed [RelayLinkStatus] relay leg (and its derived 4-case
- * [ConnectionState]) — no strings beyond `secondsRemaining`, and `DaemonAbsent` is a static object
- * carrying no relay-supplied text. `PairedServer`, the relay URL, the transport, and `Down`'s
- * code/reason/cause are never logged; the 4404 branch reads `Down.code` only to compare it, never to
- * log it.
+ * [ConnectionState]) — no strings beyond `secondsRemaining`, and `DaemonAbsent` / `PairingRejected`
+ * are static objects carrying no relay-supplied text. `PairedServer`, the relay URL, the transport, and
+ * `Down`'s code/reason/cause are never logged; the 4404 / 4401 / 4426 branches read `Down.code` only to
+ * compare it, never to log it.
  */
 class RelayConnectionSupervisor(
     private val transportFactory: RelayTransportFactory,
@@ -142,6 +142,7 @@ class RelayConnectionSupervisor(
             val transport = transportFactory.create(paired)
             var sawUp = false
             var daemonAbsent = false
+            var pairingRejected = false
             val stableReached = AtomicBoolean(false)
             var stabilityTimer: Job? = null
             try {
@@ -160,11 +161,15 @@ class RelayConnectionSupervisor(
                         }
                         is TransportEvent.Down -> {
                             // #308 seam: a 4404 "no server" close (relay reachable, no daemon
-                            // registered) branches to DaemonAbsent; every other code — incl. 4401
-                            // auth-reject and a null dial failure — stays on the uniform retry path
-                            // (4401's halt/re-pair branch is a future ticket). Read-only: the code is
-                            // compared against the constant, never logged (no-log contract).
+                            // registered) branches to DaemonAbsent; a 4401 invalid-token or 4426
+                            // handshake-failed close is a rejected pairing that halts the redial
+                            // (#841); every other code and a null dial failure stay on the uniform
+                            // retry path. Read-only: the code is compared against the constants,
+                            // never logged (no-log contract).
                             daemonAbsent = event.code == RELAY_NO_DAEMON_CLOSE
+                            pairingRejected =
+                                event.code == RELAY_TOKEN_REJECTED_CLOSE ||
+                                event.code == HANDSHAKE_FAILED_CLOSE
                         }
                     }
                     // events completes after the single terminal Down (#306), ending collect.
@@ -181,7 +186,7 @@ class RelayConnectionSupervisor(
             }
             if (sawUp && stableReached.get()) attempt = 0
             attempt += 1
-            backoff(attempt, daemonAbsent)
+            if (pairingRejected) haltUntilRetry() else backoff(attempt, daemonAbsent)
         }
     }
 
@@ -189,12 +194,7 @@ class RelayConnectionSupervisor(
         attempt: Int,
         daemonAbsent: Boolean,
     ) {
-        // Drain any stale retry signal buffered while no wait was in progress (#498): a retry() issued
-        // during a healthy connection (loop inside events.collect) leaves a Unit in the CONFLATED
-        // retrySignal with no receiver. Discarding it here — before the first collapsibleWait — stops
-        // it pre-collapsing this fresh backoff. A retry() arriving *during* a wait lands after this
-        // drain, so it still collapses the wait as intended (AC#2).
-        while (retrySignal.tryReceive().isSuccess) { /* discard a stale pre-drop signal */ }
+        drainStaleRetrySignals()
         val base = backoffBaseSeconds(attempt)
         val intervalMs = jitteredBackoffMs(attempt, random)
         if (daemonAbsent) {
@@ -221,6 +221,23 @@ class RelayConnectionSupervisor(
         }
     }
 
+    /** A rejected pairing (#841): the refused credential cannot succeed on a redial, so wait with no
+     *  timeout until [retry] asks for one more dial. [close] cancels the wait; the next foreground
+     *  [connect] then starts a fresh loop. Consumes no jitter, so later backoffs keep their schedule. */
+    private suspend fun haltUntilRetry() {
+        drainStaleRetrySignals()
+        state.value = RelayLinkStatus.PairingRejected
+        retrySignal.receive()
+    }
+
+    /** Drains any stale retry signal buffered while no wait was in progress (#498): a retry() issued
+     *  during a healthy connection (loop inside events.collect) leaves a Unit in the CONFLATED
+     *  retrySignal with no receiver. Called once per drop, before the first wait, so it cannot
+     *  pre-collapse this drop's wait; a retry() arriving *during* the wait lands after it. */
+    private fun drainStaleRetrySignals() {
+        while (retrySignal.tryReceive().isSuccess) { /* discard a stale pre-drop signal */ }
+    }
+
     /** Waits up to [ms], returning early when [retry] collapses the wait.
      *  @return true if a retry arrived (reconnect now), false on full elapse. */
     private suspend fun collapsibleWait(ms: Long): Boolean = withTimeoutOrNull(ms) { retrySignal.receive() } != null
@@ -231,6 +248,12 @@ class RelayConnectionSupervisor(
 
         /** The relay's "no server" WS close: relay reachable, but no daemon registered behind it. */
         const val RELAY_NO_DAEMON_CLOSE = 4404
+
+        /** The daemon's close for an invalid, expired or revoked device token. */
+        const val RELAY_TOKEN_REJECTED_CLOSE = 4401
+
+        /** The daemon's close for a failed handshake: the saved server static key is stale. */
+        const val HANDSHAKE_FAILED_CLOSE = 4426
     }
 }
 
@@ -248,6 +271,7 @@ internal fun RelayLinkStatus.toConnectionState(): ConnectionState =
         RelayLinkStatus.Connecting -> ConnectionState.Connecting
         is RelayLinkStatus.Reconnecting -> ConnectionState.Reconnecting(secondsRemaining)
         RelayLinkStatus.DaemonAbsent -> ConnectionState.Offline
+        RelayLinkStatus.PairingRejected -> ConnectionState.Offline
         RelayLinkStatus.Offline -> ConnectionState.Offline
     }
 

@@ -575,7 +575,8 @@ class RelayConnectionSupervisorTest {
     @Test
     fun nonDaemonClose_followsExistingReconnectPath_neverDaemonAbsent() =
         runTest {
-            for (code in listOf(1006, 4401, 1000)) {
+            // 4401 / 4426 halt as a rejected pairing (#841); their neighbours still reconnect.
+            for (code in listOf(1006, 1000, 4400, 4427)) {
                 val (factory, supervisor) = newPairedSupervisor()
 
                 supervisor.connect()
@@ -621,6 +622,108 @@ class RelayConnectionSupervisorTest {
             supervisor.close()
         }
 
+    // ---- #841 AC 1+2: a 4401 / 4426 close is a rejected pairing and halts the redial ---------------
+
+    @Test
+    fun rejectedPairingClose_4401or4426_haltsRedial() =
+        runTest {
+            for (code in listOf(4401, 4426)) {
+                val (factory, supervisor) = newPairedSupervisor()
+
+                supervisor.connect()
+                runCurrent()
+                factory.created[0].emitUp()
+                runCurrent()
+                // A retry issued while connected is stale by the time of the drop; it must not skip the halt.
+                supervisor.retry()
+                runCurrent()
+                factory.created[0].emitDown(code = code)
+                runCurrent()
+
+                assertEquals("code $code", RelayLinkStatus.PairingRejected, supervisor.relayStatus.value)
+                assertEquals(ConnectionState.Offline, supervisor.state())
+                assertNull(supervisor.currentConnection.value)
+
+                advanceTimeBy(10 * 60_000L) // far past the 30 s cap
+                runCurrent()
+                assertEquals("code $code must not redial", 1, factory.created.size)
+                assertEquals(RelayLinkStatus.PairingRejected, supervisor.relayStatus.value)
+
+                supervisor.close()
+            }
+        }
+
+    @Test
+    fun rejectedPairing_explicitRetryDialsOnce_andARepeatedRejectionHaltsAgain() =
+        runTest {
+            val (factory, supervisor) = newPairedSupervisor()
+
+            supervisor.connect()
+            runCurrent()
+            factory.created[0].emitDown(code = 4401)
+            runCurrent()
+            assertEquals(RelayLinkStatus.PairingRejected, supervisor.relayStatus.value)
+
+            supervisor.retry()
+            runCurrent()
+            assertEquals(RelayLinkStatus.Connecting, supervisor.relayStatus.value)
+            assertEquals(2, factory.created.size)
+
+            factory.created[1].emitDown(code = 4426)
+            runCurrent()
+            advanceTimeBy(10 * 60_000L)
+            runCurrent()
+            assertEquals(RelayLinkStatus.PairingRejected, supervisor.relayStatus.value)
+            assertEquals(2, factory.created.size)
+
+            supervisor.close()
+        }
+
+    @Test
+    fun rejectedPairing_nextForegroundConnectDialsOnce() =
+        runTest {
+            val (factory, supervisor) = newPairedSupervisor()
+
+            supervisor.connect()
+            runCurrent()
+            factory.created[0].emitDown(code = 4401)
+            runCurrent()
+            assertEquals(RelayLinkStatus.PairingRejected, supervisor.relayStatus.value)
+
+            // Background close, then foreground connect: the lifecycle driver's pairing of the two calls.
+            supervisor.close()
+            supervisor.connect()
+            runCurrent()
+            assertEquals(RelayLinkStatus.Connecting, supervisor.relayStatus.value)
+            assertEquals(2, factory.created.size)
+
+            supervisor.close()
+        }
+
+    @Test
+    fun rejectedPairingOnOneHost_leavesAnotherHostsSupervisorRedialling() =
+        runTest {
+            val (rejectedFactory, rejected) = newPairedSupervisor()
+            val (otherFactory, other) = newPairedSupervisor()
+
+            rejected.connect()
+            other.connect()
+            runCurrent()
+            rejectedFactory.created[0].emitDown(code = 4401)
+            otherFactory.created[0].emitDown(code = 1006)
+            runCurrent()
+
+            assertEquals(RelayLinkStatus.PairingRejected, rejected.relayStatus.value)
+            assertTrue(other.relayStatus.value is RelayLinkStatus.Reconnecting)
+            advanceTimeBy(10 * 60_000L)
+            runCurrent()
+            assertEquals(1, rejectedFactory.created.size)
+            assertTrue(otherFactory.created.size > 1)
+
+            rejected.close()
+            other.close()
+        }
+
     // ---- #391: toConnectionState() preserves the four legacy cases; DaemonAbsent -> Offline -------
 
     @Test
@@ -630,6 +733,7 @@ class RelayConnectionSupervisorTest {
         assertEquals(ConnectionState.Reconnecting(7), RelayLinkStatus.Reconnecting(7).toConnectionState())
         assertEquals(ConnectionState.Offline, RelayLinkStatus.Offline.toConnectionState())
         assertEquals(ConnectionState.Offline, RelayLinkStatus.DaemonAbsent.toConnectionState())
+        assertEquals(ConnectionState.Offline, RelayLinkStatus.PairingRejected.toConnectionState())
         // #499 AC#3: idle derives to Connected so the banner stays hidden while unpaired/idle.
         assertEquals(ConnectionState.Connected, RelayLinkStatus.Idle.toConnectionState())
     }

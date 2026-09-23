@@ -307,6 +307,86 @@ daemon-supplied text can structurally reach the UI through this arm — the narr
 family), and **nothing in the new arm or the decode logs the payload**, including the conversation id.
 See [Thinking-progress state § Security](thinking-progress-state.md#security).
 
+## `observeUsageLimit(conversationId)` — the thread-observable usage-limit reading (#802)
+
+What claude last reported about its usage-limit window. [#802](../../specs/architecture/802-decode-rate-limited-usage-limit-state.md)
+decodes the capability-gated v2 `rate_limited` control envelope into a per-conversation
+`UsageLimitReading?` the thread layer observes to say why a waiting turn is waiting (the visible render
+is the sibling slice of the same split, not yet filed). The reading model — the benign clearing edge,
+the `null`-vs-`0` traps on `utilization`/`resetsAt`, and the read-time expiry — lives in
+[Usage-limit state](usage-limit-state.md); this section records only how it attaches to the repository —
+it rides the **same single inbound collector** as everything else, with **no new file beyond the DTO
+mapper, no second subscription**.
+
+- **The newest connection-scoped projection, and the first carrying daemon text and unvalidated numbers
+  into a domain type.** `UsageLimitProjection`'s `private val usageLimitsByConversation =
+  MutableStateFlow<Map<String, UsageLimitReading>>(emptyMap())` — a structural sibling of
+  `apiRetryByConversation`, not `compactingConversations`: `rate_limited` carries five wire fields, not
+  an edge bool. Written **only** from the repository's `TYPE_RATE_LIMITED` arm calling
+  `UsageLimitProjection.apply`, so raising and clearing edges never race (single writer);
+  `MutableStateFlow.update {}` matches the sibling projections' posture. Empty per connection (#351) →
+  a reading never survives a reconnect, which doubles as the wire's account-level pairing-scoped clear.
+- **One demux hook, inside the existing `interactive` gate, with the edge decision owned entirely by the
+  mapper.** A **new** `TYPE_RATE_LIMITED` arm calls `UsageLimitProjection.apply(envelope)`, which decodes
+  and then does `usageLimitsByConversation.update { if (reading == null) it - conversationId else it +
+  (conversationId to reading) } }`. Unlike `compacting`'s `if (active)` living in the arm, the benign
+  comparison lives in `RateLimitedPayloadDto.toReading()` — the `ApiRetryPayloadDto.toStatus()`
+  precedent, not the `compacting` arm's, because five wire fields collapse into a four-field reading plus
+  a routing key here, so a second `if` in the arm would encode the same rule twice. Routing is **strictly
+  the payload's own `conversation_id`**, which is what makes the different-`limit_type` clearing pairing
+  hold structurally: `limit_type` is read by no control-flow path, so pairing the clear to it is not
+  expressible. Like the `api_retry`/`compacting`/`thinking_progress` siblings and unlike the live-session
+  arm, this folds no thread row and does **not** touch `stalledConversations` in either direction — a
+  usage-limit report is neither a stall nor forward progress, and clearing one here would hand a daemon a
+  lever for suppressing the stall indicator by emitting `rate_limited` frames.
+- **The method is the only read surface, and where the expiry lives — the one property that sets this
+  arm apart from every sibling in the family.**
+
+  ```kotlin
+  override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> =
+      usageLimitProjection.observe(conversationId)
+  // UsageLimitProjection.observe:
+  fun observe(conversationId: String): Flow<UsageLimitReading?> =
+      usageLimitsByConversation.map { it[conversationId]?.takeIf(::isReadable) }.distinctUntilChanged()
+  ```
+
+  `isReadable(r) = r.resetsAt == 0L || now().epochSeconds < r.resetsAt` — `0` first, because it means
+  claude reported no reset rather than the epoch; the boundary is exclusive, so a reading is hidden *at*
+  `resetsAt` as well as after it. One comparison at read time; nothing schedules, delays, allocates or
+  iterates from `resetsAt` — a delay computed from claude's unvalidated number could be negative (firing
+  immediately, and spinning if a handler re-armed) or past a timer's clamp (also firing immediately rather
+  than never). Expiry is **not** eviction: an expired entry stays in the map and merely stops being
+  readable, which is what keeps the projection free of a timer. `distinctUntilChanged()` suppresses only
+  value-*identical* re-emissions — a `rate_limited` for **another** conversation does not re-emit this
+  flow; a `StateFlow` always has a current value, so every collector (including a `flatMapLatest`
+  re-subscription through the facade) gets the current reading (`null` until a frame lands, or once
+  expired) on subscription. See [Usage-limit state § the clear is session-scoped](usage-limit-state.md#the-clear-is-session-scoped--the-expiry-is-the-readings-second-way-down)
+  for the full rule and the wall-clock caveat it carries.
+- **`decodeRateLimited(envelope): Pair<String, UsageLimitReading?>?`** mirrors `decodeCompacting`: one
+  `try { decode → dto.conversationId to dto.toReading() } catch (IllegalArgumentException) { null }`
+  (`SerializationException ⊂` it). The two nullability levels say different things: the **outer** `null`
+  is "malformed, drop the envelope, hold what we have"; the **inner** `null` is the mapper's benign
+  falling edge, which `apply` turns into a clear. A caller that collapsed the two would either clear on a
+  malformed frame or ignore every clear. `RateLimitedPayloadDto` (four fields strict-required,
+  `utilization`/`truncatedFields` nullable-defaulted, `resetsAt` a `Long` — the Go `int64` width, past
+  `Int32` on the contract's own out-of-range values) and `toReading()` live in
+  `data/network/InteractivePayloads.kt`.
+- **On the interface with a default — like every other sibling here, unlike `liveSessionEvents`.** The
+  thread needs the current-value reading through the
+  [`StableConversationRepository`](stable-conversation-repository.md) facade, so `observeUsageLimit` is a
+  **defaulted** `ConversationRepository` method (`flowOf(null)`), with the facade and this repo
+  overriding it. The default absorbs the Fake/test-double cascade (no ≥5 split); no consumer cascade.
+  See [[post-352-connection-scoped-repo-behind-facade]].
+
+`security-sensitive`, and the widest interactive boundary shipped in this family so far: the payload
+carries claude-authored text (`status`/`limit_type`) and two unvalidated numbers (`resetsAt`/
+`utilization`), crossing verbatim with no client-side length cap, no normalising and no branch on
+`status` beyond the one benign comparison the mapper owns. **Nothing in the new arm, the decoder, or the
+drop branch logs the payload** — `status`/`limit_type` disclose the account's quota posture, and a
+logged `conversation_id` is the same cross-conversation correlation leak every sibling arm avoids. See
+[Usage-limit state § Security](usage-limit-state.md#security) for the full review, including why
+`resets_at` may never become a scheduling input.
+
 ## Live tool-call rows — `applyToolUse` / `applyToolResult` (#387)
 
 Correlate the v2 `tool_use` (start) / `tool_result` (completion)

@@ -79,8 +79,11 @@ compatibility selection nor another host's healthy connection is consulted.
 
 Success requires both `RelayLinkStatus.Connected` and
 `PyrycodeLinkStatus.Connected` for that record. A bare relay socket is insufficient.
-The connection wait has a 30-second deadline; a reported `DaemonAbsent` or
-`Offline` ends it earlier.
+The connection wait has a 30-second deadline; a reported `DaemonAbsent`,
+`PairingRejected` (#841) or `Offline` ends it earlier. A just-saved pairing the
+host refuses (a `4401`/`4426` close on its very first dial) therefore fails
+immediately with the same "Pairing saved. Host unavailable." feedback below,
+instead of waiting out the full 30 s — no new copy for this case.
 
 When a matching bundle is already unavailable, `pairingStatus` subscribes to its
 coordinator before requesting `retryHost(serverId, expectedBundle)` and suppresses
@@ -130,8 +133,10 @@ still applies; this screen adds no such hardening contract.
 
 `PairCodeViewModelTest` covers immutable confirmation binding, decline/draft return,
 duplicate confirmation, the persistence edit/Back lock, storage/name failures,
-retained retry, blank-name preservation, deadline and cancellation. Its
-case-sensitive peer fixture keeps `b` intact when pairing `B` with the same name.
+retained retry, blank-name preservation, deadline and cancellation, and (#841) a
+`PairingRejected` status after save ending the wait immediately with the existing
+"Pairing saved. Host unavailable." feedback rather than after the 30 s deadline.
+Its case-sensitive peer fixture keeps `b` intact when pairing `B` with the same name.
 
 `RelayConnectionFactoryTest.pairingStatusWaitsForExactCredentialsAndKeepsConnectedPeer`
 uses real Noise peers to pair/re-pair B while A stays connected, with equal names
@@ -160,3 +165,7 @@ remains intact. That real-daemon/live-relay scenario belongs to
   [paired-server collection](paired-server-store.md)
 - [Legacy dialog history](../codebase/501.md): store-free callback contract retained
   by `PasteCodeDialogTest`; it does not test the production full-screen flow.
+- [Relay link status](relay-link-status.md) § `PairingRejected` and
+  [Relay reconnect supervisor](relay-reconnect-supervisor.md) § Halt on a rejected pairing — the source
+  of the `PairingRejected` status this screen's terminal predicate now checks (#841, spec:
+  `docs/specs/architecture/841-rejected-pairing-relay-state.md`).

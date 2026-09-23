@@ -1,16 +1,16 @@
 package de.pyryco.mobile.ui.conversations.thread
 
 import android.content.res.Configuration
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -18,8 +18,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AlertDialogDefaults
-import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -34,7 +32,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,30 +47,25 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.DialogWindowProvider
-import androidx.compose.ui.window.SecureFlagPolicy
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
-import de.pyryco.mobile.data.preferences.Effort
-import de.pyryco.mobile.data.preferences.Model
-import de.pyryco.mobile.data.preferences.label
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.ui.components.MobileGateModal
 import de.pyryco.mobile.ui.conversations.components.ApiRetryIndicator
 import de.pyryco.mobile.ui.conversations.components.ChannelInfoSheet
 import de.pyryco.mobile.ui.conversations.components.ChannelInfoUiModel
@@ -150,8 +142,9 @@ fun ThreadScreen(
     onTitleClick: () -> Unit = {},
     onOverflowEvent: (ThreadEvent) -> Unit = {},
     onShowLiteralScreen: () -> Unit = {},
-    onModelSelected: (Model) -> Unit = {},
-    onEffortSelected: (Effort) -> Unit = {},
+    // #807: a published ModelMenuRow.value / effort level, forwarded verbatim — never a device enum.
+    onModelSelected: (String) -> Unit = {},
+    onEffortSelected: (String) -> Unit = {},
     onYoloToggled: (Boolean) -> Unit = {},
     onWorkspaceChipTapped: () -> Unit = {},
     onWorkspacePicked: (String) -> Unit = {},
@@ -275,10 +268,11 @@ fun ThreadScreen(
                 // it. Its own 16dp horizontal padding reproduces the footer frame's further `px-16`
                 // inside the 20dp content gutter applied here.
                 ThreadStatusRow(
-                    model = state.selectedModel.label(),
-                    effort = state.selectedEffort.label(),
+                    model = state.runConfig.modelLabel,
+                    effort = state.runConfig.effortLabel,
                     onExpandClick = { sheetVisible = true },
                     modifier = Modifier.padding(horizontal = ComposerGutter),
+                    pending = state.runConfig.pending,
                 )
             }
         },
@@ -478,16 +472,25 @@ fun ThreadScreen(
     }
     if (sheetVisible) {
         StatusSheet(
-            selectedModel = state.selectedModel,
-            onModelSelected = { model ->
-                onModelSelected(model)
+            choices = state.runConfig.choices,
+            menuAvailable = state.runConfig.menuAvailable,
+            // The producer's own cut plus this client's render cap, summed for display only — each keeps
+            // its own field on the state so neither is ever recomputed from the other.
+            notListedModels = state.runConfig.droppedModels + state.runConfig.hiddenChoices,
+            selectedModel = state.runConfig.selectedModel,
+            onModelSelected = { value ->
+                onModelSelected(value)
                 sheetVisible = false
             },
-            selectedEffort = state.selectedEffort,
-            onEffortSelected = { effort ->
-                onEffortSelected(effort)
+            effortChoices = state.runConfig.effortChoices,
+            selectedEffort = state.runConfig.selectedEffort,
+            onEffortSelected = { level ->
+                onEffortSelected(level)
                 sheetVisible = false
             },
+            pending = state.runConfig.pending,
+            // An empty session id means the daemon has no session to address, so the controls read only.
+            enabled = state.runConfig.writable,
             yoloEnabled = state.yoloEnabled,
             onYoloToggled = onYoloToggled,
             onDismiss = { sheetVisible = false },
@@ -699,25 +702,24 @@ private fun HistoryTailSurface(content: @Composable () -> Unit) {
  * [prompt][ModalUiState.Open.prompt], and [options][ModalUiState.Open.options] (in wire array order) and
  * highlights the producer's fail-safe-deny [defaultOptionId][ModalUiState.Open.defaultOptionId].
  *
+ * Since #815 it is drawn in the shared mobile modal container ([MobileGateModal]): the server title fills
+ * the header, the prompt and options fill the scroll area, and the footer carries only Cancel.
+ *
  * Security (this slice owns the render-time obligations #445 deferred):
  * - **Inert output-encoding** — every server string renders through plain [Text] (literal, no
  *   markup/HTML/active content; never [de.pyryco.mobile.ui.conversations.components.MarkdownText], no
  *   `SelectionContainer` clipboard path) — the values may name a sensitive command or path.
- * - **Screen-capture hardening** — [SecureFlagPolicy.SecureOn] sets `FLAG_SECURE` on the dialog's **own**
- *   window (a host-Activity flag would not cover it; the host carries no `FLAG_SECURE`). `SecureOn`, not
- *   the default `Inherit`, is load-bearing.
+ * - **Screen-capture hardening** and **tapjacking** (#452) — [MobileGateModal] sets `FLAG_SECURE` on the
+ *   dialog's **own** window (the host carries none) and `filterTouchesWhenObscured` on it, a deterministic
+ *   View-level net that is *different fabric* from the second-confirm UX belt (#451).
  * - **No persistence** — no modal-derived text reaches `rememberSaveable` / saved-instance state.
- * - **Tapjacking** (#452, now that the taps are live) — `filterTouchesWhenObscured` on the dialog's **own**
- *   window drops touches delivered while another window obscures it. A deterministic View-level net (min
- *   SDK 33), *different fabric* from the second-confirm UX belt (#451).
  *
  * Live in #452: [onOption] forwards every tapped option id verbatim — the VM decides arm-vs-send; the UI
  * never re-derives the arm. [armedOptionId] reflects the VM's armed non-default option (#451), drawing the
- * second-confirm affordance on that one option. [onCancel] is reached only via the explicit low-emphasis
- * Cancel button; back-press / outside-tap dismissal stay disabled (#446) so a permission gate never reads a
- * stray gesture as an implicit answer.
+ * second-confirm affordance on that one option. [onCancel] is reached only via the explicit Cancel button;
+ * the gate ignores back-press and outside taps and draws no close glyph (#446), so a permission gate never
+ * reads a stray gesture as an implicit answer.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PermissionModalOverlay(
     open: ModalUiState.Open,
@@ -725,50 +727,26 @@ private fun PermissionModalOverlay(
     onOption: (String) -> Unit,
     onCancel: () -> Unit,
 ) {
-    BasicAlertDialog(
-        onDismissRequest = onCancel,
-        properties =
-            DialogProperties(
-                securePolicy = SecureFlagPolicy.SecureOn,
-                dismissOnBackPress = false,
-                dismissOnClickOutside = false,
-            ),
+    MobileGateModal(
+        title = open.title,
+        cancelLabel = stringResource(R.string.modal_cancel),
+        onCancel = onCancel,
     ) {
-        // The taps now answer a high-consequence permission gate, so harden the dialog's own window against
-        // tapjacking: drop touches delivered while another window obscures it. No Compose-test semantics
-        // node ⇒ verified by inspection (matches #446's treatment of SecureOn).
-        val dialogWindow = (LocalView.current.parent as? DialogWindowProvider)?.window
-        SideEffect { dialogWindow?.decorView?.filterTouchesWhenObscured = true }
-        Surface(
-            shape = AlertDialogDefaults.shape,
-            color = AlertDialogDefaults.containerColor,
-            tonalElevation = AlertDialogDefaults.TonalElevation,
+        Text(text = open.prompt, style = MaterialTheme.typography.bodyLarge)
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Column(modifier = Modifier.padding(24.dp)) {
-                Text(text = open.title, style = MaterialTheme.typography.headlineSmall)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(text = open.prompt, style = MaterialTheme.typography.bodyMedium)
-                Spacer(modifier = Modifier.height(16.dp))
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    // Iterate in array order (the canonical display/selection order). isDefault drives the
-                    // fail-safe-deny highlight; isArmed reflects the VM's armed non-default option — no
-                    // option-id semantics are interpreted, every tap forwards verbatim.
-                    open.options.forEach { option ->
-                        ModalOptionButton(
-                            label = option.label,
-                            isDefault = option.id == open.defaultOptionId,
-                            isArmed = option.id == armedOptionId,
-                            onClick = { onOption(option.id) },
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-                TextButton(onClick = onCancel, modifier = Modifier.align(Alignment.End)) {
-                    Text(stringResource(R.string.modal_cancel))
-                }
+            // Iterate in array order (the canonical display/selection order). isDefault drives the
+            // fail-safe-deny highlight; isArmed reflects the VM's armed non-default option — no
+            // option-id semantics are interpreted, every tap forwards verbatim.
+            open.options.forEach { option ->
+                ModalOptionButton(
+                    label = option.label,
+                    isDefault = option.id == open.defaultOptionId,
+                    isArmed = option.id == armedOptionId,
+                    onClick = { onOption(option.id) },
+                )
             }
         }
     }
@@ -799,22 +777,25 @@ private fun ModalOptionButton(
 ) {
     val defaultDesc = stringResource(R.string.modal_default_option_desc)
     val armedDesc = stringResource(R.string.modal_armed_option_desc)
+    // The shell's action geometry (#815): small shape and a 48 dp minimum target.
+    val base = Modifier.fillMaxWidth().heightIn(min = 48.dp)
     val modifier =
         when {
-            isArmed ->
-                Modifier
-                    .fillMaxWidth()
-                    .semantics { stateDescription = armedDesc }
-            isDefault ->
-                Modifier
-                    .fillMaxWidth()
-                    .semantics { stateDescription = defaultDesc }
-            else -> Modifier.fillMaxWidth()
+            isArmed -> base.semantics { stateDescription = armedDesc }
+            isDefault -> base.semantics { stateDescription = defaultDesc }
+            else -> base
         }
+    val shape = MaterialTheme.shapes.small
     when {
-        isArmed -> FilledTonalButton(onClick = onClick, modifier = modifier) { Text(label) }
-        isDefault -> Button(onClick = onClick, modifier = modifier) { Text(label) }
-        else -> OutlinedButton(onClick = onClick, modifier = modifier) { Text(label) }
+        isArmed -> FilledTonalButton(onClick = onClick, modifier = modifier, shape = shape) { Text(label) }
+        isDefault -> Button(onClick = onClick, modifier = modifier, shape = shape) { Text(label) }
+        else ->
+            OutlinedButton(
+                onClick = onClick,
+                modifier = modifier,
+                shape = shape,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+            ) { Text(label) }
     }
 }
 
@@ -966,6 +947,41 @@ private fun ThreadScreenHistoryRetryPreview() {
 @Composable
 private fun ThreadScreenHistoryDeadEndPreview() {
     HistoryTailPreview(ThreadHistoryTail.DeadEnd)
+}
+
+/** #815: the permission prompt in the shared mobile modal container, with a non-default option armed. */
+@Preview(name = "Permission prompt — light", showBackground = true, widthDp = 412, heightDp = 892)
+@Preview(
+    name = "Permission prompt — dark",
+    showBackground = true,
+    widthDp = 412,
+    heightDp = 892,
+    uiMode = Configuration.UI_MODE_NIGHT_YES,
+)
+@Composable
+private fun PermissionModalOverlayPreview() {
+    PyrycodeMobileTheme {
+        PermissionModalOverlay(
+            open =
+                ModalUiState.Open(
+                    modalId = "preview",
+                    modalClass = "permission",
+                    title = "Permission required",
+                    prompt = "claude wants to run ls -la",
+                    options =
+                        listOf(
+                            ModalOption(id = "allow_once", label = "Allow once"),
+                            ModalOption(id = "allow_always", label = "Allow always"),
+                            ModalOption(id = "reject_once", label = "Reject once"),
+                            ModalOption(id = "reject_always", label = "Reject always"),
+                        ),
+                    defaultOptionId = "reject_once",
+                ),
+            armedOptionId = "allow_once",
+            onOption = {},
+            onCancel = {},
+        )
+    }
 }
 
 @Composable
