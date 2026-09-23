@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "989241581793",
+    "project_id": "pyrycode-mobile",
+    "storage_bucket": "pyrycode-mobile.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:989241581793:android:90475142351ecb860f17a0",
+        "android_client_info": {
+          "package_name": "de.pyryco.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyANAVSV2lYGdIMyB31vZANrFNJPJy0u1gk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

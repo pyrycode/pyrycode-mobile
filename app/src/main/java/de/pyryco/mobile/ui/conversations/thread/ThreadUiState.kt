@@ -1,0 +1,202 @@
+package de.pyryco.mobile.ui.conversations.thread
+
+import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.ModelMenuRow
+import de.pyryco.mobile.data.repository.QueuedMessage
+import de.pyryco.mobile.data.repository.ThreadItem
+import kotlinx.datetime.Instant
+
+sealed interface ThreadEvent {
+    data object NewSession : ThreadEvent
+
+    data object Rename : ThreadEvent
+
+    data class RenameSubmit(
+        val name: String,
+    ) : ThreadEvent
+
+    data object RenameDismiss : ThreadEvent
+
+    data object ChangeWorkspace : ThreadEvent
+
+    data object Archive : ThreadEvent
+
+    data object Delete : ThreadEvent
+
+    data object DeleteConfirm : ThreadEvent
+
+    data object DeleteDismiss : ThreadEvent
+
+    data object ChannelInfo : ThreadEvent
+
+    data object ChannelInfoDismiss : ThreadEvent
+
+    data object SaveAsChannel : ThreadEvent
+
+    data class SaveAsChannelSubmit(
+        val name: String,
+        val workspace: WorkspaceChoice,
+    ) : ThreadEvent
+
+    data object SaveAsChannelDismiss : ThreadEvent
+}
+
+enum class WorkspaceChoice { DEDICATED, SCRATCH }
+
+sealed interface ThreadNavigation {
+    data object PopBack : ThreadNavigation
+}
+
+data class ThreadUiState(
+    val conversationId: String,
+    val displayName: String,
+    val isPromoted: Boolean = false,
+    val hasMessages: Boolean = false,
+    val workspaceLabel: String = "scratch",
+    val workspacePickerVisible: Boolean = false,
+    val showRenameDialog: Boolean = false,
+    val saveAsChannelDialog: SaveAsChannelDialogState? = null,
+    val items: List<ThreadItem> = emptyList(),
+    val queuedMessages: List<QueuedMessage> = emptyList(),
+    val channelInfoOpen: Boolean = false,
+    val deleteConfirmVisible: Boolean = false,
+    val workspacePath: String = "",
+    val lastUsedAt: Instant? = null,
+    val sessionCount: Int = 0,
+    // #807: the thread's whole run-configuration surface — what the daemon has configured, what it
+    // published as selectable, and what a tap has asked for but not yet had confirmed. Replaces #544's
+    // `selectedModel` / `selectedEffort` device-enum pair AND its `currentSessionId` routing field: the
+    // session a write must address is [SessionSettings.sessionId], not Conversation.currentSessionId, and
+    // one carrier for all three keeps the footer and the Status sheet agreeing by construction.
+    val runConfig: ThreadRunConfig = ThreadRunConfig(),
+    val mutationsSupported: Boolean = true,
+    // #777/#778: what the thread's single oldest-end slot shows — loading, a retry, a dead end or
+    // nothing. The walk's TERMINATION reasons deliberately do not reach the screen, only its failures:
+    // the screen asks, the VM decides whether the ask is honoured, and a second copy of that decision in
+    // Compose would be a second place to get it wrong.
+    val historyTail: ThreadHistoryTail = ThreadHistoryTail.None,
+)
+
+data class SaveAsChannelDialogState(
+    val initialName: String,
+)
+
+/**
+ * One selectable model (#807) — a [de.pyryco.mobile.data.repository.ModelMenuRow] reduced to what the
+ * Status sheet renders plus the argument a write sends back.
+ *
+ * **[value] is the only field that stays verbatim, and the only one that is never rendered.** It is the
+ * argument [ConversationRepository.setSessionSettings] takes; it is an alias (`sonnet`), a bracketed
+ * variant (`opus[1m]`) or `default`, so nothing parses it and nothing presents it as a version.
+ * [label] and [detail] are the same daemon strings put through [inert] — see its KDoc for why the
+ * client owes that.
+ */
+data class ThreadModelChoice(
+    val value: String,
+    val label: String,
+    /** The row's `resolvedModel`, or `""` when it says nothing [label] does not already say. */
+    val detail: String,
+    val effortChoices: List<ThreadEffortChoice>,
+    /** Whether the row accepts `auto` permission mode (#650) — the only thing that offers Auto approval. */
+    val supportsAutoMode: Boolean = false,
+)
+
+/** One selectable reasoning-effort level of one [ThreadModelChoice] (#807). Same split as its parent:
+ *  [value] is the verbatim write argument, [label] the inert render of it. */
+data class ThreadEffortChoice(
+    val value: String,
+    val label: String,
+)
+
+/**
+ * The thread's run configuration (#807) — the daemon's saved reading, the vocabulary it published, and a
+ * tap that has not yet been confirmed, in one value the footer line and the Status sheet both read.
+ *
+ * **Nothing here falls back to `AppPreferences`.** An unavailable reading is rendered as *unknown*: the
+ * three-entry `Model` and five-entry `Effort` device enums are this phone's guesses, and a value this
+ * server never published is refused server-side.
+ *
+ * @param choices The published models in the daemon's own order, which is the display order.
+ * @param menuAvailable Whether a menu was ever published for this conversation. `false` with empty
+ *   [choices] is "no list"; `true` with empty [choices] is the different, equally legal reading that
+ *   claude offered nothing.
+ * @param droppedModels Entries the **producer** cut, exactly as reported and never recomputed from
+ *   `choices.size` — what lets the sheet say "10 of 47" rather than present a shortened menu as complete.
+ * @param hiddenChoices Entries **this client** cut at [MAX_RENDERED_MODEL_CHOICES]. Separate from
+ *   [droppedModels] so each number keeps its provenance; the sheet sums them for display only.
+ * @param settingsAvailable Whether a settings reading is available at all. `false` ⇒ both labels read
+ *   unknown; it covers no connection, no `interactive` capability, and the window before the first reply.
+ * @param savedModel The saved model override verbatim, `""` meaning "no override, inherited default".
+ * @param savedEffort The **saved** effort choice verbatim, `""` meaning inherited default. Never
+ *   `effectiveEffort`, which is claude's *applied* reading and is #651's, not this surface's.
+ * @param pendingModel / @param pendingEffort A tap whose write has not settled, or `null`. Cleared by an
+ *   arriving reading — never by the acknowledgement, which is not a reading.
+ * @param sessionId The session a write must address. **`""` means the daemon has no session to address**,
+ *   so the controls are read-only and nothing is sent.
+ * @param permissionMode The permission mode the current child confirmed (#650), verbatim. `""` means no
+ *   confirmation — no reading, a child that has not confirmed, a dormant session, or a reading left over
+ *   from a session the conversation has since replaced. It is never filled from a pending write, an ack,
+ *   stored settings or `yolo`.
+ * @param pendingPermission A permission write whose request or settle is still running, or `null`. It
+ *   marks the button pending and blocks a second write; it never changes the label.
+ */
+data class ThreadRunConfig(
+    val choices: List<ThreadModelChoice> = emptyList(),
+    val menuAvailable: Boolean = false,
+    val droppedModels: Int = 0,
+    val hiddenChoices: Int = 0,
+    val settingsAvailable: Boolean = false,
+    val savedModel: String = "",
+    val savedEffort: String = "",
+    val pendingModel: String? = null,
+    val pendingEffort: String? = null,
+    val sessionId: String = "",
+    val permissionMode: String = "",
+    val pendingPermission: String? = null,
+) {
+    /** What the surfaces show: a pending tap while one is outstanding, the confirmed reading otherwise. */
+    val selectedModel: String get() = pendingModel ?: savedModel
+
+    /** The [selectedModel] twin for effort. */
+    val selectedEffort: String get() = pendingEffort ?: savedEffort
+
+    /** The published row [selectedModel] names, or `null` when the menu published no matching one. */
+    val selectedChoice: ThreadModelChoice? get() = choices.firstOrNull { it.value == selectedModel }
+
+    /** The effort levels **the selected row** supports. Empty is a positive statement that this model
+     *  exposes no effort control — never a cue to substitute the `Effort` entries. */
+    val effortChoices: List<ThreadEffortChoice> get() = selectedChoice?.effortChoices.orEmpty()
+
+    /** Whether a model or effort write is outstanding: the surfaces keep it visibly distinct from confirmed
+     *  state. A permission write is [pendingPermission], kept apart so it gates only its own control. */
+    val pending: Boolean get() = pendingModel != null || pendingEffort != null
+
+    /** Whether a write can be addressed at all — the `""`-session-id read-only gate. */
+    val writable: Boolean get() = sessionId.isNotEmpty()
+
+    /** The footer's model segment. */
+    val modelLabel: String get() = label(selectedModel) { selectedChoice?.label }
+
+    /** The footer's effort segment. No menu lookup: a level is its own label. */
+    val effortLabel: String get() = label(selectedEffort) { null }
+
+    /**
+     * The three display states the contracts keep apart, collapsed to one string for the footer: no
+     * reading at all is *unknown*; a reading of `""` is the daemon's inherited default, which is a real
+     * answer rather than an absent one; anything else is the published label when the menu named one and
+     * the reported value itself — made [inert], since it is daemon-authored too — when it did not.
+     */
+    private inline fun label(
+        raw: String,
+        published: () -> String?,
+    ): String =
+        when {
+            !settingsAvailable -> UNKNOWN_RUN_CONFIG_LABEL
+            raw.isEmpty() -> INHERITED_RUN_CONFIG_LABEL
+            else -> published() ?: raw.inert()
+        }
+}
+
+internal const val UNKNOWN_RUN_CONFIG_LABEL = "unknown"
+
+internal const val INHERITED_RUN_CONFIG_LABEL = "default"
