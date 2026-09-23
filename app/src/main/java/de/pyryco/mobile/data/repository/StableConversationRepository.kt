@@ -97,6 +97,14 @@ class StableConversationRepository(
         switchToLive<SessionFacts?>(null) { it.observeSessionFacts(conversationId) }
 
     /**
+     * The context-usage reading for [conversationId] (#945), cleared across connections as [observeAnnouncedModel]
+     * is. The switch is also the reconnect ask: [flatMapLatest] ends the old repository's subscription and starts
+     * one on the new repository, and that subscription is what sends the new connection's `request_context_usage`.
+     */
+    override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> =
+        switchToLive<ContextUsage?>(null) { it.observeContextUsage(conversationId) }
+
+    /**
      * The usage-limit reading for [conversationId] (#802), switched over the live connection like every
      * other cold read — and here the switch is the **account-isolation mechanism**, not just plumbing:
      * a usage-limit window belongs to an account rather than to a conversation, so [flatMapLatest]
