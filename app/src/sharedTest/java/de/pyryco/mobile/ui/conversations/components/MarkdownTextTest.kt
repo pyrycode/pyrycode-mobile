@@ -45,6 +45,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
 
 /**
  * `MarkdownText`'s rendered output for the three GFM constructs #681 added, and for the two the
@@ -56,7 +57,11 @@ import org.junit.runner.RunWith
  * property rests on an absent branch, and an absent branch reddens nothing when someone later adds
  * the case. These tests are the branch's stand-in. The parser-level half lives in
  * `MarkdownTextParsingTest`, which needs no device.
+ *
+ * Under Robolectric the class measures text with real fonts, so a wide table really overflows the
+ * screen; the device ignores the graphics-mode annotation.
  */
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 @RunWith(AndroidJUnit4::class)
 class MarkdownTextTest {
     @get:Rule
