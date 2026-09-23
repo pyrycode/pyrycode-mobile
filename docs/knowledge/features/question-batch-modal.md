@@ -11,8 +11,8 @@ against fakes.
 
 ## Where it lives
 
-- `ui/conversations/thread/ThreadViewModel.kt` — `QuestionSelection`, `QuestionSendPhase`,
-  `QuestionModalState`, `QuestionModalEvent`, the `questionModal: StateFlow<QuestionModalState?>` and
+- `ui/conversations/thread/QuestionModalState.kt` — `QuestionSelection`, `QuestionSendPhase`,
+  `QuestionModalState`, `QuestionModalEvent`; `ThreadViewModel.kt` — the `questionModal: StateFlow<QuestionModalState?>` and
   `onQuestionEvent`.
 - `ui/conversations/thread/QuestionBatchModal.kt` (new file) — the stateless composable and its private
   `QuestionBlock` / `ChoiceRow`.
@@ -81,7 +81,7 @@ untested path.
 
 ## Placement: `MainActivity`, not `ThreadScreen`
 
-Unlike `PermissionModalOverlay`, which is a private composable drawn inline inside `ThreadScreen.kt`, the
+Unlike `PermissionModalOverlay`, which `ThreadScreen` draws inline from `ThreadPermissionModal.kt`, the
 route host in `MainActivity` draws `QuestionBatchModal` directly, as a sibling of the `ThreadScreen` call
 rather than a parameter threaded into it. `MobileGateModal` opens its own `Dialog` window, so where in the
 composition tree it is invoked does not change what it visually sits over — and drawing it from the route
