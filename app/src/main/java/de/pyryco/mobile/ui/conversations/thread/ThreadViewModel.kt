@@ -3,6 +3,7 @@ package de.pyryco.mobile.ui.conversations.thread
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.LiveSessionEvent
@@ -105,6 +106,10 @@ class ThreadViewModel(
     questionBatch: (conversationId: String) -> Flow<QuestionBatch?> = { flowOf(null) },
     private val answerQuestionBatch: suspend (questionBatchId: String, answers: List<QuestionAnswer>) -> Unit = { _, _ -> },
     private val refuseQuestionBatch: suspend (questionBatchId: String) -> Unit = {},
+    // #678: the coordinator's per-conversation background-task roster and its live count (#677). Read
+    // only: nothing here sends. Defaulted to "nothing reported" and 0, which is what a demo host shows.
+    backgroundTasks: (conversationId: String) -> Flow<BackgroundTaskRoster?> = { flowOf(null) },
+    backgroundTaskCount: (conversationId: String) -> Flow<Int> = { flowOf(0) },
     // #861: whether this thread's host has a live repository published — for a relay host, the
     // coordinator's `currentRepository` being non-null, which happens only after the Noise handshake,
     // later than the socket-level `Connected` [connectionStateSource] reports. Keys the #778 walk
@@ -274,6 +279,18 @@ class ThreadViewModel(
             .onStart { emit(emptySet()) }
             .distinctUntilChanged()
 
+    /**
+     * This conversation's background-task roster and live count on this thread's host (#678). Each arm is
+     * seeded so a source that never emits cannot stall [state]. The task strings stay inside the roster:
+     * nothing here reads, logs or keys on them.
+     */
+    private val backgroundTaskReading: Flow<Pair<BackgroundTaskRoster?, Int>> =
+        combine(
+            backgroundTasks(conversationId).onStart { emit(null) },
+            backgroundTaskCount(conversationId).onStart { emit(0) },
+            ::Pair,
+        ).distinctUntilChanged()
+
     private val transientDialogs: Flow<TransientDialogs> =
         combine(
             pendingRenameDialog,
@@ -370,7 +387,9 @@ class ThreadViewModel(
                 historyTail = content.historyTail,
             )
         }.combine(absentActions) { uiState, absent -> uiState.copy(absentActions = absent) }
-            .stateIn(
+            .combine(backgroundTaskReading) { uiState, (roster, count) ->
+                uiState.copy(backgroundTasks = roster, backgroundTaskCount = count)
+            }.stateIn(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
                 initialValue =

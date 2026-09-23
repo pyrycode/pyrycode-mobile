@@ -1,5 +1,6 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import de.pyryco.mobile.data.model.BackgroundTaskRoster
 import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.ModelMenuRow
@@ -79,6 +80,10 @@ data class ThreadUiState(
     // #884: the Actions menu's commands this conversation's published slash-command menu proves absent,
     // greyed out in the menu. Only the verdict reaches the screen, never a published string.
     val absentActions: Set<ComposerAction> = emptySet(),
+    // #678: this conversation's background-task roster on the open host — `null` when nothing has been
+    // reported — and its live count (unfinished tasks plus dropped ones), which the Actions row shows.
+    val backgroundTasks: BackgroundTaskRoster? = null,
+    val backgroundTaskCount: Int = 0,
 )
 
 data class SaveAsChannelDialogState(

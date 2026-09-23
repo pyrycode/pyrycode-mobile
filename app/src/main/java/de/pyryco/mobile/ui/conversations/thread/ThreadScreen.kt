@@ -226,13 +226,22 @@ fun ThreadScreen(
     // closed. The open menu is re-derived from the live run configuration on every pass, so the overlay
     // closes when the control stops offering anything (a write goes pending, a reading drops the menu).
     var openControl by remember(state.conversationId) { mutableStateOf<FooterControl?>(null) }
+    // #678: the read-only background-task panel the Actions menu opens. Local and keyed like [openControl]:
+    // closing it only flips this flag, so nothing is sent and no conversation or task changes.
+    var backgroundTasksOpen by remember(state.conversationId) { mutableStateOf(false) }
     val footerAnchors = remember { mutableStateMapOf<FooterControl, Rect>() }
     var layerOrigin by remember { mutableStateOf(Offset.Zero) }
     val openMenu =
         openControl
             ?.takeIf { footerControlEnabled(it, state.runConfig) }
             ?.let { control ->
-                footerMenu(control, state.runConfig, state.mutationsSupported, state.absentActions)?.let { control to it }
+                footerMenu(
+                    control,
+                    state.runConfig,
+                    state.mutationsSupported,
+                    state.absentActions,
+                    state.backgroundTaskCount,
+                )?.let { control to it }
             }
     LaunchedEffect(openControl, openMenu == null) {
         if (openMenu == null) openControl = null
@@ -512,6 +521,7 @@ fun ThreadScreen(
                                 when (val action = ComposerAction.fromValue(value)) {
                                     null -> Unit
                                     ComposerAction.ResetSession -> onOverflowEvent(ThreadEvent.NewSession)
+                                    ComposerAction.BackgroundTasks -> backgroundTasksOpen = true
                                     else -> onComposerCommand(action)
                                 }
                         }
@@ -522,6 +532,9 @@ fun ThreadScreen(
                 )
             }
         }
+    }
+    if (backgroundTasksOpen) {
+        BackgroundTaskPanel(roster = state.backgroundTasks, onDismiss = { backgroundTasksOpen = false })
     }
     WorkspacePicker(
         visible = state.workspacePickerVisible,
