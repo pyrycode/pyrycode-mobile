@@ -50,6 +50,7 @@ import de.pyryco.mobile.data.network.RequestHistoryPayloadDto
 import de.pyryco.mobile.data.network.RequestModelListPayloadDto
 import de.pyryco.mobile.data.network.RequestSessionSettingsPayloadDto
 import de.pyryco.mobile.data.network.RequestSnapshotPayloadDto
+import de.pyryco.mobile.data.network.RequestSystemPromptPayloadDto
 import de.pyryco.mobile.data.network.ScreenSnapshotPayloadDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
 import de.pyryco.mobile.data.network.SessionSettingsUpdatedPayloadDto
@@ -62,6 +63,7 @@ import de.pyryco.mobile.data.network.TurnStatePayloadDto
 import de.pyryco.mobile.data.network.UnrecognizedMessagePayloadDto
 import de.pyryco.mobile.data.network.WorkspaceFolderCreatedPayloadDto
 import de.pyryco.mobile.data.network.WorkspaceUpdatedPayloadDto
+import de.pyryco.mobile.data.network.setSystemPromptPayload
 import de.pyryco.mobile.data.network.toBatch
 import de.pyryco.mobile.data.network.toBoundary
 import de.pyryco.mobile.data.network.toConversation
@@ -72,6 +74,7 @@ import de.pyryco.mobile.data.network.toMenu
 import de.pyryco.mobile.data.network.toMessage
 import de.pyryco.mobile.data.network.toRow
 import de.pyryco.mobile.data.network.toSessionSettings
+import de.pyryco.mobile.data.network.toSystemPromptReading
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -604,7 +607,7 @@ class RemoteConversationRepository(
             }
             TYPE_ACK, TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_DELETED,
             TYPE_SCREEN_SNAPSHOT, TYPE_SESSION_SETTINGS_UPDATED, TYPE_WORKSPACE_FOLDER_CREATED,
-            TYPE_RECENT_WORKSPACES_LIST, TYPE_HISTORY_PAGE, TYPE_SESSION_SETTINGS,
+            TYPE_RECENT_WORKSPACES_LIST, TYPE_HISTORY_PAGE, TYPE_SESSION_SETTINGS, TYPE_SYSTEM_PROMPT,
             ->
                 // Success reply to a correlated request, handed verbatim to the waiter. An `ack`
                 // (#346) carries the empty `{}` the bare-ack waiter ignores; a `conversation_created`
@@ -629,7 +632,9 @@ class RemoteConversationRepository(
                 // a stale, duplicate or unsolicited one has no pending entry to complete and therefore no
                 // slot to land in — a reading can only ever be routed by the id its caller asked with. So
                 // an unmatched one is
-                // harmless; and `complete` is idempotent so a duplicate reply is harmless.
+                // harmless; and `complete` is idempotent so a duplicate reply is harmless. A `system_prompt`
+                // (#823) is the same shape for [requestSystemPrompt]: no conversation_id, so it is routed
+                // by `in_reply_to` alone, and without this entry its waiter would never complete.
                 // `conversation_created` stays here deliberately: unlike `conversation_updated` (which
                 // #721 moved to its own arm above) it is a correlated reply only — the create-on-host
                 // push is a `conversation_updated`, not a `conversation_created`.
@@ -2534,6 +2539,57 @@ class RemoteConversationRepository(
     }
 
     /**
+     * Read [conversationId]'s stored system prompt over v2 `request_system_prompt` (#823) — the
+     * [readSessionSettings] shape as a public one-shot. The `system_prompt` reply carries no
+     * conversation id, so it can only complete the waiter this call registered.
+     *
+     * **Gated fail-closed on `interactive`** before any frame is built: the daemon leaves a conn without
+     * it fully inert on this verb, so an ungated send would wait until teardown. Throws
+     * [IllegalStateException] for that and for a not-`Open` pump or teardown mid-await (#488), and a
+     * [kotlinx.serialization.SerializationException] for a malformed reply. Touches no state on any
+     * branch and logs nothing: the prompt, its length and the conversation id never reach Logcat.
+     */
+    override suspend fun requestSystemPrompt(conversationId: String): SystemPromptReading {
+        check(CAPABILITY_INTERACTIVE in negotiatedCapabilities()) { SYSTEM_PROMPT_READ_NOT_INTERACTIVE }
+        val request =
+            Envelope(
+                id = requestId.incrementAndGet(),
+                type = TYPE_REQUEST_SYSTEM_PROMPT,
+                ts = Clock.System.now().toString(),
+                payload = MobileJson.encodeToJsonElement(RequestSystemPromptPayloadDto(conversationId = conversationId)),
+            )
+        return sendAndAwaitReply(request).toSystemPromptReading()
+    }
+
+    /**
+     * Set or clear [conversationId]'s system prompt over v2 `set_system_prompt` (#823) — the [rename]
+     * shape. [systemPrompt] is forwarded verbatim in its three states ([setSystemPromptPayload]); a value
+     * over [SystemPromptLimit.MAX_BYTES] UTF-8 bytes is refused with [IllegalArgumentException] **before
+     * any frame is sent**. The ack is the reused `conversation_updated` record, which carries no prompt;
+     * it is decoded through the #318 boundary and confirmed-upserted exactly as [rename]'s is.
+     *
+     * Not gated on `interactive`: the daemon answers this verb on any conn. Throws
+     * [IllegalArgumentException] for `conversation.not_found` ([mapError]), [RelayErrorException] for
+     * any other server `error`, [IllegalStateException] when not connected, and the decode exception for
+     * a malformed ack — none of which mutate [projection]. The refusal message is static.
+     */
+    override suspend fun setSystemPrompt(
+        conversationId: String,
+        systemPrompt: String?,
+    ) {
+        require(systemPrompt == null || SystemPromptLimit.fits(systemPrompt)) { SYSTEM_PROMPT_TOO_LONG }
+        val request =
+            Envelope(
+                id = requestId.incrementAndGet(),
+                type = TYPE_SET_SYSTEM_PROMPT,
+                ts = Clock.System.now().toString(),
+                payload = setSystemPromptPayload(conversationId, systemPrompt),
+            )
+        val reply = sendAndAwaitReply(request)
+        upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation())
+    }
+
+    /**
      * Send v2 `new_session` for the viewed conversation, explicitly naming its id so another
      * device's activity cannot redirect the reset through the daemon's follow-active cursor.
      * See the upstream protocol's New session (v2) contract. This is fire-and-forget via
@@ -2789,6 +2845,18 @@ class RemoteConversationRepository(
          */
         const val TYPE_SESSION_SETTINGS = "session_settings"
 
+        /** Request: the system prompt one conversation stores (#823). Reply is [TYPE_SYSTEM_PROMPT]. */
+        const val TYPE_REQUEST_SYSTEM_PROMPT = "request_system_prompt"
+
+        /**
+         * Correlated reply for [TYPE_REQUEST_SYSTEM_PROMPT] (#823): the stored prompt and the running
+         * session's verdict against it. Carries no conversation id, and is **never an error frame**.
+         */
+        const val TYPE_SYSTEM_PROMPT = "system_prompt"
+
+        /** Request: set or clear a conversation's system prompt (#823). Acked by [TYPE_CONVERSATION_UPDATED]. */
+        const val TYPE_SET_SYSTEM_PROMPT = "set_system_prompt"
+
         /**
          * Correlated success reply carrying the bare promoted conversation object (#348, #274) — **and**
          * the server's unsolicited broadcast on a host-side create or auto-name, which carries no
@@ -3029,6 +3097,10 @@ class RemoteConversationRepository(
          * the never-log contract holds by construction.
          */
         const val PENDING_REQUEST_TORN_DOWN = "connection torn down before reply"
+
+        /** Static refusals for the system-prompt verbs (#823): never the value, its length or the id. */
+        const val SYSTEM_PROMPT_READ_NOT_INTERACTIVE = "request_system_prompt not sent: interactive not negotiated"
+        const val SYSTEM_PROMPT_TOO_LONG = "set_system_prompt not sent: value exceeds the byte limit"
 
         /**
          * RFC-3339 epoch cursor for "all history on first load" — `backfill_since.since_ts` is a

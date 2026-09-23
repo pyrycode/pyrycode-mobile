@@ -358,6 +358,43 @@ interface ConversationRepository {
     ): HistoryPage = error("requestHistory is not implemented for this ConversationRepository")
 
     /**
+     * Read the system prompt stored for [conversationId] (#823), one `request_system_prompt` per call.
+     * Keyed by **conversation**, never by session: a conversation with nothing running reads normally,
+     * and the read changes nothing on the daemon. The stored value keeps its three states apart (see
+     * [SystemPromptReading]), so it can be written straight back through [setSystemPrompt].
+     *
+     * The daemon never answers with an error — an unhosted conversation reads exactly like a hosted one
+     * that stores no prompt and runs no session. Throws [IllegalStateException] when the session is not
+     * connected **or** did not negotiate `interactive` (the daemon ignores this verb there, so the remote
+     * fails before sending rather than waiting forever), and the decode exception for a malformed reply.
+     * A failure is scoped to this read alone.
+     *
+     * Default throws — implementations without the verb (inline test doubles) inherit it, the same
+     * cascade-avoidance as [requestHistory].
+     */
+    suspend fun requestSystemPrompt(conversationId: String): SystemPromptReading =
+        error("requestSystemPrompt is not implemented for this ConversationRepository")
+
+    /**
+     * Store [systemPrompt] as [conversationId]'s system prompt (#823), one `set_system_prompt` per call,
+     * returning after the daemon's ack. `null` clears it, `""` stores an explicitly empty prompt, and any
+     * other string is stored **verbatim** — never trimmed or normalised. It takes effect at the
+     * conversation's next session start; nothing here restarts or resets a running session.
+     *
+     * Throws [IllegalArgumentException] **before any frame is sent** when the value exceeds
+     * [SystemPromptLimit.MAX_BYTES] (check [SystemPromptLimit.fits] first to tell that apart), and for an
+     * unknown conversation (server `conversation.not_found`, as [rename]);
+     * [de.pyryco.mobile.data.network.RelayErrorException] for any other server error;
+     * [IllegalStateException] when the session is not connected.
+     *
+     * Default throws, like [requestSystemPrompt].
+     */
+    suspend fun setSystemPrompt(
+        conversationId: String,
+        systemPrompt: String?,
+    ): Unit = error("setSystemPrompt is not implemented for this ConversationRepository")
+
+    /**
      * The run configuration of the session bound to [conversationId] — the settings **read** half (#590),
      * the counterpart of [setSessionSettings]'s write. Emits the latest [SessionSettings] this context
      * has read, or `null` while none is available.
@@ -645,6 +682,48 @@ data class SessionSettings(
     val usedTokens: Long,
     val windowTokens: Long,
 )
+
+/**
+ * A conversation's stored system prompt and how it relates to the running session (#823) — the return of
+ * [ConversationRepository.requestSystemPrompt]. `data` for structural equality, the [SessionSettings] rule.
+ *
+ * @param systemPrompt The stored prompt, with **three distinct states**: `null` means no prompt is stored,
+ *   `""` an explicitly empty prompt, and any other string the stored text. Untrusted operator-authored
+ *   text, held verbatim; render it as plain text only and keep it out of logs and exception messages.
+ * @param sessionPromptStatus Whether the running session was started with that value. Independent of
+ *   [systemPrompt] — never derive one from the other.
+ */
+data class SystemPromptReading(
+    val systemPrompt: String?,
+    val sessionPromptStatus: SessionPromptStatus,
+)
+
+/** The daemon's three-value verdict on the running session's prompt (#823); nothing else decodes. */
+enum class SessionPromptStatus {
+    /** The running session was started with the stored value. */
+    Matches,
+
+    /** The running session was started with a different value; the stored one applies at the next start. */
+    Differs,
+
+    /** Nothing is running to compare against — also the answer for a conversation the daemon does not host. */
+    NoSession,
+}
+
+/**
+ * The system prompt's size limit (#823) — the one place the 8192-byte cap and its UTF-8 count live, so
+ * the editing state and the channel modals reuse it rather than counting again. The daemon counts
+ * **UTF-8 bytes**, not characters, and the limit is inclusive.
+ */
+object SystemPromptLimit {
+    const val MAX_BYTES = 8192
+
+    /** The UTF-8 byte length of [text], which is what the daemon measures. */
+    fun utf8Bytes(text: String): Int = text.encodeToByteArray().size
+
+    /** Whether [text] is within the limit; exactly [MAX_BYTES] bytes fits. */
+    fun fits(text: String): Boolean = utf8Bytes(text) <= MAX_BYTES
+}
 
 /**
  * The models a server published for one conversation (#791) — the return of
