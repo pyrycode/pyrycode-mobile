@@ -6,7 +6,7 @@
 #
 #   * rung 3 (default): the REAL app on a headless emulator → host pyry daemon → real claude →
 #     assert "ping" renders. Semi-deterministic; burns one real claude turn. A LIVE=1 variant runs a
-#     curated set of rung-3 scenarios (thirteen methods, eight real claude turns — listed at the LIVE
+#     curated set of rung-3 scenarios (fourteen methods, nine real claude turns — listed at the LIVE
 #     TEST_TARGET below) against the PRODUCTION relay over wss:// (TLS), so a pre-ship gate
 #     catches the live-environment failure class a local relay cannot. See "LIVE mode" below.
 #   * rung 4 (DETERMINISTIC=1): the same real app + Noise/relay path, but claude is swapped for the
@@ -665,9 +665,20 @@ if [ -z "${DETERMINISTIC}" ]; then
   fi
   DAEMON_B_PID=$!
 fi
-sleep 3
-kill -0 "${DAEMON_PID}" 2>/dev/null || die "daemon exited early; see private log ${DAEMON_LOG}"
-[ -z "${DAEMON_B_PID}" ] || kill -0 "${DAEMON_B_PID}" 2>/dev/null || die "second daemon exited early; see private log ${DAEMON_B_LOG}"
+# Wait until each daemon's control socket answers `pyry status`, the readiness pyrycode's own e2e
+# harness polls for (internal/e2e/harness.go waitForReady), instead of the fixed three-second sleep this
+# replaced: that cost three seconds on every one of the seven scripted scenarios per verifier pass.
+if [ -n "${DETERMINISTIC}" ]; then DAEMON_HOME="${ISO_HOME}"; else DAEMON_HOME="${HOME}"; fi
+wait_daemon_ready() {
+  local name="$1" pid="$2" logfile="$3" label="$4" deadline=$((SECONDS + 15))
+  until env "HOME=${DAEMON_HOME}" "${PYRY_BIN}" status -pyry-name="${name}" >/dev/null 2>&1; do
+    kill -0 "${pid}" 2>/dev/null || die "${label} exited early; see private log ${logfile}"
+    [ "${SECONDS}" -lt "${deadline}" ] || die "${label} not ready within 15s; see private log ${logfile}"
+    sleep 0.1
+  done
+}
+wait_daemon_ready "${PYRY_NAME}" "${DAEMON_PID}" "${DAEMON_LOG}" "daemon"
+[ -z "${DAEMON_B_PID}" ] || wait_daemon_ready "${PYRY_NAME_B}" "${DAEMON_B_PID}" "${DAEMON_B_LOG}" "second daemon"
 log "daemon up (the test waits for the relay session to open before sending)."
 
 # ---- pair against the running test daemon ---------------
@@ -761,9 +772,9 @@ fi
 
 # ---- 4. run the managed-device instrumented test ----------------------------------------------
 # Deterministic mode runs exactly the scenario's one method (class#method); default rung 3 runs the whole
-# class; LIVE curates thirteen real-claude methods (ping + create-workspace-folder + new-session +
+# class; LIVE curates fourteen real-claude methods (ping + create-workspace-folder + new-session +
 # delete + archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
-# the #848 peer-started turn + the #849 peer queue + the #850 offline read, 8 turns — delete/rename/archive/unarchive/change-workspace/promote are daemon round-trips, the
+# the #848 peer-started turn + the #849 peer queue + the #850 offline read + the #891 running model, 9 turns — delete/rename/archive/unarchive/change-workspace/promote are daemon round-trips, the
 # list-archive-entry arrival is pure navigation, and the two-host scenario (#847) is pairing, navigation,
 # rename and link cycling, none of them claude turns) via a comma-separated class list — the full class' #481 tool-use test would spend an extra turn, so it stays
 # excluded.
@@ -772,13 +783,13 @@ if [ -n "${DETERMINISTIC}" ]; then
 elif [ -n "${LIVE}" ]; then
   # LIVE curates its real-claude turns: ping + create-workspace-folder + new-session + delete +
   # archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host +
-  # peer-started turn + peer queue + offline read (13 methods, 8 turns — the #848 peer's ping is the fourth,
-  # the #849 peer's wait turn and the phone's drained ping the fifth and sixth, the #850 phone's ping and the
-  # peer's offline turn the seventh and eighth; delete, archive-restore,
+  # peer-started turn + peer queue + offline read + running model (14 methods, 9 turns — the #848 peer's ping
+  # is the fourth, the #849 peer's wait turn and the phone's drained ping the fifth and sixth, the #850 phone's
+  # ping and the peer's offline turn the seventh and eighth, the #891 status-sheet ping the ninth; delete, archive-restore,
   # change-workspace, rename, save-as-channel, list-archive-entry and two-host spend none), passed as a comma-separated
   # class#method list. The class' #481 tool-use test stays excluded from LIVE for cost (it runs only in the
   # default whole-class rung-3 run).
-  TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_archiveRestore_roundTripsListMembership,${TEST_CLASS}#interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived,${TEST_CLASS}#interactiveTurn_twoHostsCollidingConversationId_stayPerHost,${TEST_CLASS}#interactiveTurn_peerStartedTurn_continuesOnPhone,${TEST_CLASS}#interactiveTurn_peerQueue_staysConsistentAcrossClients,${TEST_CLASS}#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect"
+  TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_archiveRestore_roundTripsListMembership,${TEST_CLASS}#interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived,${TEST_CLASS}#interactiveTurn_twoHostsCollidingConversationId_stayPerHost,${TEST_CLASS}#interactiveTurn_peerStartedTurn_continuesOnPhone,${TEST_CLASS}#interactiveTurn_peerQueue_staysConsistentAcrossClients,${TEST_CLASS}#interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect,${TEST_CLASS}#interactiveTurn_pingPrompt_statusSheetShowsRunningModel"
 else
   TEST_TARGET="${TEST_CLASS}"
 fi
@@ -812,7 +823,7 @@ fi
 if [ -n "${DETERMINISTIC}" ]; then
   log "PASS — scenario '${SCENARIO}' green: the emulator connected, sent the prompt, and the scripted reply rendered."
 elif [ -n "${LIVE}" ]; then
-  log "PASS — the headless emulator connected over the LIVE relay, sent the prompts, and the ping reply, the created-workspace flow, the new-session delimiter, the delete-conversation flow, the archive/restore round-trip, the change-workspace chip re-label, the rename top-bar/list re-label, the save-as-channel promote (top-bar re-label + channel tier), the list's archive entry reaching Archived, two hosts sharing one conversation id staying separate, a turn started from a second client continuing on the phone, phone replies, queued sends and drops staying consistent with that client, and a conversation staying readable offline and catching up on reconnect all rendered."
+  log "PASS — the headless emulator connected over the LIVE relay, sent the prompts, and the ping reply, the created-workspace flow, the new-session delimiter, the delete-conversation flow, the archive/restore round-trip, the change-workspace chip re-label, the rename top-bar/list re-label, the save-as-channel promote (top-bar re-label + channel tier), the list's archive entry reaching Archived, two hosts sharing one conversation id staying separate, a turn started from a second client continuing on the phone, phone replies, queued sends and drops staying consistent with that client, a conversation staying readable offline and catching up on reconnect, and the Status sheet's running model after a real turn all rendered."
 else
   log "PASS — the headless emulator connected, sent the prompt, and 'ping' rendered in the thread."
 fi

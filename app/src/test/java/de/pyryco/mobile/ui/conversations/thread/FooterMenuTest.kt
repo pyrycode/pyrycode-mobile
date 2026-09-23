@@ -1,5 +1,6 @@
 package de.pyryco.mobile.ui.conversations.thread
 
+import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.ui.conversations.components.OptionsOverlayOption
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -37,6 +38,7 @@ class FooterMenuTest {
         permissionMode: String = "",
         pendingPermission: String? = null,
         sessionId: String = "s1",
+        appliedEffort: EffectiveEffort = EffectiveEffort.Unavailable,
     ) = ThreadRunConfig(
         choices = choices,
         menuAvailable = menuAvailable,
@@ -50,6 +52,7 @@ class FooterMenuTest {
         sessionId = sessionId,
         permissionMode = permissionMode,
         pendingPermission = pendingPermission,
+        appliedEffort = appliedEffort,
     )
 
     @Test
@@ -179,5 +182,110 @@ class FooterMenuTest {
         // and a pending permission write does not block the model control.
         assertTrue(footerControlEnabled(FooterControl.Permission, config(permissionMode = "plan", pendingModel = "haiku")))
         assertTrue(footerControlEnabled(FooterControl.Model, config(permissionMode = "plan", pendingPermission = "default")))
+    }
+
+    // ---- #889: the effort display takes Claude's applied reading, falling back to the saved choice ----
+
+    @Test
+    fun effort_appliedValueWins_overADifferentSavedChoice() {
+        val runConfig = config(savedEffort = "high", appliedEffort = EffectiveEffort.Applied("max"))
+
+        assertEquals("max", runConfig.effortLabel)
+        assertEquals("max", footerMenu(FooterControl.Effort, runConfig)?.selectedValue)
+        assertNull(runConfig.effortNote)
+    }
+
+    @Test
+    fun effort_appliedValueWins_overAnEmptySavedChoice() {
+        val runConfig = config(savedEffort = "", appliedEffort = EffectiveEffort.Applied("high"))
+
+        assertEquals("high", runConfig.effortLabel)
+        assertEquals("high", runConfig.selectedEffort)
+        assertNull(runConfig.effortNote)
+    }
+
+    @Test
+    fun effort_aPendingTapOutranksTheAppliedValue() {
+        val runConfig = config(pendingEffort = "high", appliedEffort = EffectiveEffort.Applied("max"))
+
+        assertEquals("high", runConfig.effortLabel)
+        assertEquals("high", footerMenu(FooterControl.Effort, runConfig)?.selectedValue)
+        assertNull("the pending state description covers it", runConfig.effortNote)
+    }
+
+    @Test
+    fun effort_unavailableReading_fallsBackToTheSavedChoiceAndSaysSo() {
+        val runConfig = config(savedEffort = "high", appliedEffort = EffectiveEffort.Unavailable)
+
+        assertEquals("high", runConfig.effortLabel)
+        assertEquals("high", footerMenu(FooterControl.Effort, runConfig)?.selectedValue)
+        assertEquals(EffortNote.SelectedRunningUnavailable, runConfig.effortNote)
+    }
+
+    @Test
+    fun effort_unavailableReadingWithoutASavedChoice_readsEffortWithNothingSelected() {
+        val runConfig = config(savedEffort = "", appliedEffort = EffectiveEffort.Unavailable)
+
+        assertEquals("Effort", runConfig.effortLabel)
+        assertEquals("", footerMenu(FooterControl.Effort, runConfig)?.selectedValue)
+        assertEquals(EffortNote.DefaultRunningUnavailable, runConfig.effortNote)
+    }
+
+    @Test
+    fun effort_emptyAppliedReading_isTreatedAsUnavailable() {
+        val withChoice = config(savedEffort = "max", appliedEffort = EffectiveEffort.Applied(""))
+        assertEquals("max", withChoice.effortLabel)
+        assertEquals(EffortNote.SelectedRunningUnavailable, withChoice.effortNote)
+
+        val without = config(savedEffort = "", appliedEffort = EffectiveEffort.Applied(""))
+        assertEquals("Effort", without.effortLabel)
+        assertEquals("", without.selectedEffort)
+        assertEquals(EffortNote.DefaultRunningUnavailable, without.effortNote)
+    }
+
+    @Test
+    fun effort_explicitNull_clearsTheSelectionEvenWithASavedChoice() {
+        listOf("high", "").forEach { saved ->
+            val runConfig = config(savedEffort = saved, appliedEffort = EffectiveEffort.NotReported)
+
+            assertEquals("Effort", runConfig.effortLabel)
+            assertEquals("", footerMenu(FooterControl.Effort, runConfig)?.selectedValue)
+            assertEquals(EffortNote.NotReported, runConfig.effortNote)
+        }
+    }
+
+    @Test
+    fun effort_appliedValueOutsideThePublishedLevels_isTheLabelButSelectsNoOption() {
+        val runConfig = config(appliedEffort = EffectiveEffort.Applied("xhigh"))
+        val menu = footerMenu(FooterControl.Effort, runConfig)
+
+        assertEquals("xhigh", runConfig.effortLabel)
+        assertEquals(listOf("high", "max"), menu?.options?.map { it.value })
+        assertTrue(menu?.options.orEmpty().none { it.value == menu?.selectedValue })
+    }
+
+    @Test
+    fun effort_hostileAppliedValue_rendersInert() {
+        val runConfig = config(appliedEffort = EffectiveEffort.Applied("hi\u001B[31mgh\n" + "x".repeat(400)))
+
+        assertFalse(runConfig.effortLabel.any { it.isISOControl() })
+        assertTrue(runConfig.effortLabel.length <= 128)
+    }
+
+    @Test
+    fun effort_withNoPublishedLevels_isReadOnlyWhateverTheReading() {
+        val runConfig = config(savedModel = "haiku", appliedEffort = EffectiveEffort.Applied("high"))
+
+        assertEquals("high", runConfig.effortLabel)
+        assertNull(footerMenu(FooterControl.Effort, runConfig))
+        assertFalse(footerControlEnabled(FooterControl.Effort, runConfig))
+    }
+
+    @Test
+    fun effort_withoutAnyReading_staysUnknownWithNoNote() {
+        val runConfig = ThreadRunConfig()
+
+        assertEquals(UNKNOWN_RUN_CONFIG_LABEL, runConfig.effortLabel)
+        assertNull(runConfig.effortNote)
     }
 }

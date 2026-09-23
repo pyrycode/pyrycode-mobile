@@ -8,6 +8,8 @@ import de.pyryco.mobile.data.network.BannerPayloadDto
 import de.pyryco.mobile.data.network.CompactionBoundaryPayloadDto
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.ModelRefusalFallbackPayloadDto
+import de.pyryco.mobile.data.network.ModelRefusalNoFallbackPayloadDto
 import de.pyryco.mobile.data.network.ToolDeniedPayloadDto
 import de.pyryco.mobile.data.network.ToolProgressPayloadDto
 import de.pyryco.mobile.data.network.UnrecognizedMessagePayloadDto
@@ -127,6 +129,14 @@ internal class ThreadProjection {
     }
 
     /**
+     * Apply one `model_refusal_fallback` or `model_refusal_no_fallback` envelope (#875): decode it by its
+     * type, then fold its row. A malformed one is dropped.
+     */
+    fun applyModelRefusal(envelope: Envelope) {
+        decodeModelRefusal(envelope)?.let { (conversationId, row) -> appendModelRefusal(conversationId, row) }
+    }
+
+    /**
      * Append [rows] (`conversationId -> Message`) into [threadByConversation] as [ThreadItem.MessageItem]
      * rows in one atomic [MutableStateFlow.update], preserving order and deduping by `message_id` — the
      * per-row fold is [withMessage], which #645 lifted out of the repository so the history reduction runs
@@ -229,6 +239,22 @@ internal class ThreadProjection {
         threadByConversation.update { threads ->
             val thread = threads[conversationId].orEmpty()
             if (thread.holdsCompactionBoundary(row)) threads else threads + (conversationId to (thread + row))
+        }
+    }
+
+    /**
+     * End-append a [ThreadItem.ModelRefusal] to [conversationId]'s thread (#875), **unless the thread already
+     * holds one of its type and `ts`** ([holdsModelRefusal]) — the [appendBanner] shape, for the same reason:
+     * the daemon stamps one `ts` per refusal and hands it to both lanes, so a repeat is the same refusal
+     * arriving twice. The check runs inside the one atomic [MutableStateFlow.update].
+     */
+    private fun appendModelRefusal(
+        conversationId: String,
+        row: ThreadItem.ModelRefusal,
+    ) {
+        threadByConversation.update { threads ->
+            val thread = threads[conversationId].orEmpty()
+            if (thread.holdsModelRefusal(row)) threads else threads + (conversationId to (thread + row))
         }
     }
 
@@ -550,6 +576,31 @@ internal class ThreadProjection {
         try {
             val dto = MobileJson.decodeFromJsonElement<CompactionBoundaryPayloadDto>(envelope.payload)
             dto.conversationId to dto.toRow(occurredAt = Instant.parse(envelope.ts))
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+
+    /**
+     * Decode one v2 model refusal envelope (#875) to its routing conversation id and the mapped
+     * [ThreadItem.ModelRefusal], or **null** when it cannot be folded. The DTO is chosen by [Envelope.type],
+     * which is the only thing that tells the two frames apart. The row's identity is the envelope's `ts`, so a
+     * malformed `ts` drops the frame exactly as a malformed payload does. Mirrors [decodeBanner], and like it
+     * logs nothing: every field but the conversation id is claude-authored.
+     */
+    private fun decodeModelRefusal(envelope: Envelope): Pair<String, ThreadItem.ModelRefusal>? =
+        try {
+            val occurredAt = Instant.parse(envelope.ts)
+            when (envelope.type) {
+                RemoteConversationRepository.TYPE_MODEL_REFUSAL_FALLBACK ->
+                    MobileJson
+                        .decodeFromJsonElement<ModelRefusalFallbackPayloadDto>(envelope.payload)
+                        .let { it.conversationId to it.toRow(occurredAt) }
+                RemoteConversationRepository.TYPE_MODEL_REFUSAL_NO_FALLBACK ->
+                    MobileJson
+                        .decodeFromJsonElement<ModelRefusalNoFallbackPayloadDto>(envelope.payload)
+                        .let { it.conversationId to it.toRow(occurredAt) }
+                else -> null
+            }
         } catch (e: IllegalArgumentException) {
             null
         }

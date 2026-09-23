@@ -157,6 +157,8 @@ private fun ThreadItem.listKey(): String =
         is ThreadItem.Banner -> "banner:$occurredAt"
         // The daemon's per-compaction ts, which both thread writers dedup on (`holdsCompactionBoundary`, #874).
         is ThreadItem.CompactionBoundary -> "compaction:$occurredAt"
+        // The frame type and the daemon's per-refusal ts, which both thread writers dedup on (`holdsModelRefusal`, #875).
+        is ThreadItem.ModelRefusal -> if (fallbackModel != null) "refusal:fallback:$occurredAt" else "refusal:no-fallback:$occurredAt"
     }
 
 /**

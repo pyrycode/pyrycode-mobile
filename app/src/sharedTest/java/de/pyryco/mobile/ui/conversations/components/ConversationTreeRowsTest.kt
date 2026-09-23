@@ -39,7 +39,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.annotation.GraphicsMode
 
+// Robolectric measures text with real fonts here, so the one-line truncation checks hold; the device
+// ignores this annotation.
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 @RunWith(AndroidJUnit4::class)
 class ConversationTreeRowsTest {
     @get:Rule
