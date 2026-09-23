@@ -185,6 +185,22 @@ class ThreadViewModelComposerActionsTest {
             assertEquals(emptySet<ComposerAction>(), vm.state.value.absentActions)
         }
 
+    // #885: the published rows reach the composer's type-ahead verbatim; no menu is null, not empty.
+    @Test
+    fun thePublishedRows_reachTheState_andNoMenuReadsAsNull() =
+        runTest {
+            val repo = RecordingRepo()
+            val vm = collectedVm(repo)
+            assertEquals(null, vm.state.value.slashCommands)
+
+            val rows = listOf(row("clear", aliases = listOf("reset")), row("model"))
+            repo.fake.setSlashCommandMenu(CONV, SlashCommandMenu(rows = rows, droppedCommands = 0))
+            repo.fake.setSlashCommandMenu("other", SlashCommandMenu(rows = listOf(row("usage")), droppedCommands = 0))
+            advanceUntilIdle()
+
+            assertEquals(rows, vm.state.value.slashCommands)
+        }
+
     @Test
     fun anotherConversationsMenu_doesNotGreyThisOne() =
         runTest {

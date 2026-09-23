@@ -263,15 +263,14 @@ class ThreadViewModel(
         }.combine(runningModel) { config, running -> config.copy(running = running) }
 
     /**
-     * The Actions menu's commands this conversation's published slash-command menu (#882) proves absent
-     * (#884). Seeded empty so a repository that never emits cannot stall [state]; the published strings
-     * stay inside [absentComposerActions].
+     * This conversation's published slash-command menu (#882), feeding both the Actions menu's absent
+     * commands (#884) and the composer's type-ahead (#885). Seeded `null` so a repository that never emits
+     * cannot stall [state].
      */
-    private val absentActions: Flow<Set<ComposerAction>> =
+    private val slashCommandMenu: Flow<SlashCommandMenu?> =
         repository
             .observeSlashCommandMenu(conversationId)
-            .map(::absentComposerActions)
-            .onStart { emit(emptySet()) }
+            .onStart { emit(null) }
             .distinctUntilChanged()
 
     private val transientDialogs: Flow<TransientDialogs> =
@@ -369,17 +368,18 @@ class ThreadViewModel(
                 mutationsSupported = mutationsSupported,
                 historyTail = content.historyTail,
             )
-        }.combine(absentActions) { uiState, absent -> uiState.copy(absentActions = absent) }
-            .stateIn(
-                scope = viewModelScope,
-                started = SharingStarted.WhileSubscribed(5_000),
-                initialValue =
-                    ThreadUiState(
-                        conversationId = conversationId,
-                        displayName = conversationId,
-                        mutationsSupported = mutationsSupported,
-                    ),
-            )
+        }.combine(slashCommandMenu) { uiState, menu ->
+            uiState.copy(absentActions = absentComposerActions(menu), slashCommands = menu?.rows)
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000),
+            initialValue =
+                ThreadUiState(
+                    conversationId = conversationId,
+                    displayName = conversationId,
+                    mutationsSupported = mutationsSupported,
+                ),
+        )
 
     val connectionState: StateFlow<ConnectionState> =
         connectionStateSource
