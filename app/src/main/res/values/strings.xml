@@ -132,6 +132,12 @@
     <string name="thread_banner_attribution">"Claude: "</string>
     <string name="thread_banner_truncated">" (truncated)"</string>
     <string name="cd_thread_banner_warning">Warning from Claude</string>
+    <string name="thread_refusal_refused_on">"Refused on "</string>
+    <string name="thread_refusal_continued_on">", continued on "</string>
+    <string name="thread_refusal_refused_by">"Refused by "</string>
+    <string name="thread_refusal_unknown_model">unknown model</string>
+    <string name="cd_thread_refusal_expand">Show Claude\'s explanation</string>
+    <string name="cd_thread_refusal_collapse">Hide Claude\'s explanation</string>
     <string name="cd_tool_running">Tool call running</string>
     <string name="cd_tool_failed">Tool call failed</string>
     <string name="thread_overflow_new_session">Reset session</string>

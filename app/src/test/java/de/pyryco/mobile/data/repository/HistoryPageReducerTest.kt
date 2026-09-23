@@ -507,6 +507,73 @@ class HistoryPageReducerTest {
         assertEquals(page + live, live.mergeHistoryRows(page))
     }
 
+    // ---- #875: a stored model refusal replays as the row the live lane drew ------------------------
+
+    @Test
+    fun reduce_storedRefusalsOfBothTypes_becomeRowsStampedWithTheEntryTimestamp() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(2, "model_refusal_no_fallback", refusalPayload(null, banner = "", truncated = "null"), ts = OCCURRED_AT),
+                    entry(1, "model_refusal_fallback", refusalPayload("claude-sonnet-5", truncated = """["banner"]""")),
+                ),
+                true,
+            )
+
+        assertEquals(
+            listOf(
+                ThreadItem.ModelRefusal("claude-opus-5-5", "claude-sonnet-5", "Declined.", true, TS_INSTANT),
+                ThreadItem.ModelRefusal("claude-opus-5-5", null, "", false, Instant.parse(OCCURRED_AT)),
+            ),
+            rows,
+        )
+    }
+
+    @Test
+    fun reduce_storedRefusalWithoutInteractive_yieldsNothing() {
+        val entries =
+            listOf(
+                entry(2, "model_refusal_no_fallback", refusalPayload(null), ts = OCCURRED_AT),
+                entry(1, "model_refusal_fallback", refusalPayload("b")),
+            )
+
+        assertEquals(emptyList<ThreadItem>(), reduceHistoryPage(entries, false))
+    }
+
+    @Test
+    fun reduce_malformedRefusal_costsOnlyThatEntry() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(3, "message", messagePayload("m1", "user", "after")),
+                    // A fallback frame stored without its fallback_model.
+                    entry(2, "model_refusal_fallback", refusalPayload(null), ts = "2026-09-05T10:02:00Z"),
+                    entry(1, "model_refusal_no_fallback", refusalPayload(null), ts = "2026-09-05T10:01:00Z"),
+                ),
+                true,
+            )
+
+        assertEquals(2, rows.size)
+        assertEquals(Instant.parse("2026-09-05T10:01:00Z"), (rows.first() as ThreadItem.ModelRefusal).occurredAt)
+    }
+
+    @Test
+    fun merge_aPageWhoseRefusalIsAlreadyLive_addsNoSecondRow() {
+        // The live lane stamps the row with the envelope ts, which the daemon also hands the log entry.
+        val live: List<ThreadItem> = listOf(ThreadItem.ModelRefusal("claude-opus-5-5", "b", "Declined.", false, TS_INSTANT))
+        val page = reduceHistoryPage(listOf(entry(1, "model_refusal_fallback", refusalPayload("b"))), true)
+
+        assertEquals(live, live.mergeHistoryRows(page))
+    }
+
+    @Test
+    fun merge_theSiblingRefusalTypeAtOneTimestamp_isAdmitted() {
+        val live: List<ThreadItem> = listOf(ThreadItem.ModelRefusal("claude-opus-5-5", "b", "Declined.", false, TS_INSTANT))
+        val page = reduceHistoryPage(listOf(entry(1, "model_refusal_no_fallback", refusalPayload(null))), true)
+
+        assertEquals(page + live, live.mergeHistoryRows(page))
+    }
+
     // ---- #874: a stored compaction boundary replays as the divider the live lane drew ---------------
 
     @Test
@@ -908,6 +975,20 @@ class HistoryPageReducerTest {
             payload = MobileJson.parseToJsonElement(payload),
             timestamp = Instant.parse(ts),
         )
+
+    /**
+     * A stored model refusal payload (#875): the fallback shape when [fallbackModel] is non-null, else the
+     * no-fallback shape. [truncated] is a raw JSON literal for `truncated_fields`.
+     */
+    private fun refusalPayload(
+        fallbackModel: String?,
+        banner: String = "Declined.",
+        truncated: String = "null",
+    ): String {
+        val fallback = fallbackModel?.let { ""","fallback_model":"$it","scope":"session"""" }.orEmpty()
+        return """{"conversation_id":"$CONVERSATION","original_model":"claude-opus-5-5","refusal_category":"cyber",""" +
+            """"banner":"$banner","truncated_fields":$truncated,"dropped_fields":null$fallback}"""
+    }
 
     private fun messagePayload(
         messageId: String,

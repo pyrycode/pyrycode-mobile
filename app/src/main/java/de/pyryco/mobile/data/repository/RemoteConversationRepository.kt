@@ -685,6 +685,18 @@ class RemoteConversationRepository(
                     threadProjection.applyCompactionBoundary(envelope)
                 }
             }
+            TYPE_MODEL_REFUSAL_FALLBACK, TYPE_MODEL_REFUSAL_NO_FALLBACK -> {
+                // claude refused a turn on one model, and retried on another or did not (#875,
+                // pyrycode#2265/#2266). Same `interactive` gate as its thread-row siblings (fail-closed).
+                // Decode-or-drop by envelope type: a malformed payload or ts drops one envelope, the lone
+                // collector survives. Routes strictly by the payload's conversation_id. Exactly ONE write —
+                // the refusal row — and inert toward every neighbour: no liveSessionEvents emission, no turn
+                // opened, closed or altered, no status touched, and no model state, which `model_announced`
+                // alone owns. Nothing here logs any payload field: all of them but the id are claude's.
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    threadProjection.applyModelRefusal(envelope)
+                }
+            }
             TYPE_MODAL_SHOWN, TYPE_MODAL_DISMISSED -> {
                 // A v2 modal lifecycle envelope (#437). Same `interactive` gate as the structured-stream,
                 // `stall`, and `resync` siblings — a non-interactive phone never decodes a spurious modal
@@ -1429,6 +1441,22 @@ class RemoteConversationRepository(
          * count is an integer or `null`, neither clamped nor ordered.
          */
         const val TYPE_COMPACTION_BOUNDARY = "compaction_boundary"
+
+        /**
+         * Capability-gated thread event: claude refused a turn on one model and retried it on another
+         * `{conversation_id, original_model, fallback_model, scope, refusal_category, banner, truncated_fields,
+         * dropped_fields}` (#875, pyrycode#2265) — folds a [ThreadItem.ModelRefusal] into the conversation
+         * thread in arrival order. Conversation-scoped with no `turn_id`; every value but the id is claude's,
+         * bounded and unsanitized; `scope` and `refusal_category` are open and drive nothing.
+         */
+        const val TYPE_MODEL_REFUSAL_FALLBACK = "model_refusal_fallback"
+
+        /**
+         * Capability-gated thread event: the no-retry sibling of [TYPE_MODEL_REFUSAL_FALLBACK]
+         * `{conversation_id, original_model, refusal_category, banner, truncated_fields, dropped_fields}`
+         * (#875, pyrycode#2266), told apart by this envelope type alone.
+         */
+        const val TYPE_MODEL_REFUSAL_NO_FALLBACK = "model_refusal_no_fallback"
 
         /**
          * Outbound queue control: the phone's request to drop a not-yet-drained message
