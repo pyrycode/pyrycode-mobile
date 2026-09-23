@@ -46,6 +46,7 @@ import kotlinx.datetime.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -628,7 +629,15 @@ class ChannelListScreenTest {
     private fun openChat(
         saving: Boolean = false,
         failed: Boolean = false,
-    ) = ChatEditorState(serverId = "pyrybox", conversationId = "d1", initialName = "bravo chat", saving = saving, failed = failed)
+        archiveFailed: Boolean = false,
+    ) = ChatEditorState(
+        serverId = "pyrybox",
+        conversationId = "d1",
+        initialName = "bravo chat",
+        saving = saving,
+        failed = failed,
+        archiveFailed = archiveFailed,
+    )
 
     private fun chatHost(pyrycode: PyrycodeLinkStatus = PyrycodeLinkStatus.Connected) =
         entry(serverId = "pyrybox", displayName = "Pyrybox", chats = listOf(conversation("d1", "bravo chat", "/w/two", false)))
@@ -678,6 +687,50 @@ class ChannelListScreenTest {
         composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).assertTextContains("Typed")
         composeTestRule.onNode(hasText("OK")).performClick()
         assertEquals(listOf(ChannelListEvent.ChatEditNameSubmitted("Typed")), events)
+    }
+
+    @Test
+    fun editChatModal_archiveReportsOnlyTheArchive_whateverTheNameFieldHolds() {
+        setTree(chatHost(), chatEditor = openChat())
+
+        composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).performTextReplacement("   ")
+        composeTestRule.onNode(hasText(string(R.string.edit_chat_archive))).performClick()
+
+        assertEquals(listOf(ChannelListEvent.ChatArchiveRequested), events)
+    }
+
+    @Test
+    fun editChatModal_afterAFailedArchive_statesItGenericallyAndKeepsTheTypedName() {
+        val state = mutableStateOf(HostChannelListState(listOf(chatHost()), chatEditor = openChat()))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
+        }
+        composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).performTextReplacement("Typed")
+
+        state.value = state.value.copy(chatEditor = openChat(archiveFailed = true))
+        val failure = string(R.string.archive_failed)
+        composeTestRule.onNode(hasText(failure)).assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText(string(R.string.edit_chat_save_failed))).assertCountEquals(0)
+        assertFalse(failure.contains("bravo"))
+        composeTestRule.onNodeWithTag(EDIT_CHAT_NAME_FIELD_TAG).assertTextContains("Typed")
+        composeTestRule.onNode(hasText(string(R.string.edit_chat_archive))).assertIsEnabled()
+    }
+
+    @Test
+    fun editChatModal_archiveIsDisabledWhileItsHostIsDownOrAWriteIsInFlight() {
+        val state = mutableStateOf(HostChannelListState(listOf(chatHost(PyrycodeLinkStatus.Down)), chatEditor = openChat()))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
+        }
+        val archive = hasText(string(R.string.edit_chat_archive))
+        composeTestRule.onNode(archive).assertIsNotEnabled()
+
+        state.value = HostChannelListState(listOf(chatHost()), chatEditor = openChat())
+        composeTestRule.onNode(archive).assertIsEnabled()
+
+        state.value = state.value.copy(chatEditor = openChat(saving = true))
+        composeTestRule.onNode(archive).assertIsNotEnabled()
+        assertTrue(events.isEmpty())
     }
 
     @Test

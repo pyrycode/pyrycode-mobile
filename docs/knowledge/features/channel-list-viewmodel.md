@@ -180,6 +180,22 @@ publishes `null` unguarded, as `HostEditorController.dismiss` does. Unlike the h
 private `MutableStateFlow<ChatEditorState?>` on the view model itself, not a shared controller —
 `ChannelListViewModel` is `chatEditor`'s only owner, so #744/#751's extraction has no counterpart here.
 
+**The editor's Archive action (#828).** `ChatArchiveRequested -> vm.archiveChat()`, no target id: the
+target is whichever chat the editor already has open. `archiveChat` needs an open, non-`saving` editor,
+then resolves `hostSource.repositoryFor(target.serverId)` **at the press**, exactly as `submitChatName`
+does — the same host, never the selected one, which matters because conversation ids are host-local and
+two hosts can hold a chat with the same id. With no live repository it publishes `archiveFailed = true`
+and sends nothing; otherwise it publishes `saving = true` (clearing both `failed` and `archiveFailed`,
+since one in-flight flag now gates both the rename and the archive actions the modal draws) and launches
+`live.archive(conversationId)`, `compareAndSet`-terminal the same way: success clears the editor, a
+non-cancellation `Exception` restores `saving = false` with `archiveFailed = true`. It never calls
+`rename` or `delete`. It reads no field state — the name typed into the buffer is irrelevant to
+archiving and survives a failed archive untouched, since a failure keeps the same editor instance.
+`submitChatName` clears `archiveFailed` too, in both its pending and its unavailable-host branches, so a
+failed archive followed by a successful or failed rename never shows a stale archive error. The archived
+row leaves the Chats section the same way a rename's new name arrives — the host's own conversation
+stream re-emits it with `archived = true`; nothing here patches the snapshot.
+
 **The five-flow limit.** `hostState`'s `combine` was already at `combine`'s five-argument typed overload
 before this ticket. `chatEditor` makes six, so `hostEditor.state` and `chatEditor` are paired first through
 an inner `combine(hostEditor.state, chatEditor, ::Pair)`, and the outer `combine`'s lambda destructures the
@@ -303,6 +319,21 @@ and asserts no captured log line carries the name, either id or the exception's 
 and closes. A gated write completing after `dismissChatEditor()` does not reopen the editor — the same
 `compareAndSet`-survives-a-dismissal proof the host editor's suite already established. Dismiss sends
 nothing.
+
+**Archive coverage (#828, same `fixture()` and colliding `"same"` id).** `Repo` needed a recording
+`archive` that flips `archived = true` on its own rows and records the call, plus overridden `delete`
+and `unarchive` that only record — the fixture's `Repo.archive` had been a plain delegation to
+`FakeConversationRepository`, which throws on an id it was never seeded with, so a test calling
+`archive` on the fixture's synthetic rows would have gone green by silently exercising the failure path
+instead of the success one. Archiving `("Host","same")` archives only on Host's repo, sends no rename
+and no delete, closes the editor, and — once the stream re-emits — the chat is gone from Host's `chats`
+and present under Host's own `Archived` filter, while `host`'s same-id chat stays unarchived. The
+unavailable host sets `archiveFailed` and sends nothing. `RelayErrorException` and `IllegalStateException`
+both leave the editor open with `archiveFailed`, `!saving`, `!failed`, the row still active, and no
+captured log line carrying the message, an id or a name; a retry succeeds and closes the editor. A gated
+archive completing after a dismissal leaves the editor closed, and a second archive or a rename arriving
+mid-gate are both ignored — the same `saving`-guard-plus-`compareAndSet` proof #827's rename suite
+already established, reused rather than re-derived.
 
 Unavailable-target coverage denies lookup even with cached rows and connected
 indicators. Failure tests inspect the action job's cancellation state as well as

@@ -215,6 +215,12 @@ sealed interface ChannelListEvent {
     /** The Edit chat modal's Cancel, Close and Back. */
     data object ChatEditDismissed : ChannelListEvent
 
+    /**
+     * The Edit chat modal's Archive chat (#828). No ids and no name: the target is the open editor's, and
+     * archiving never depends on what the name field holds.
+     */
+    data object ChatArchiveRequested : ChannelListEvent
+
     data class WorkspacePicked(
         val workspace: String,
     ) : ChannelListEvent
@@ -278,7 +284,8 @@ fun ChannelListScreen(
  * disconnect disables OK and a reconnect re-enables it without the modal leaving composition — the typed
  * name lives in the component's buffer and survives both. The failure string is resolved here and is
  * generic by design: the shell announces it aloud, and the daemon's message never reaches this screen.
- * Archive stays unwired until #828.
+ * Archive (#828) reads the same availability and in-flight flag; its failure resolves the thread's own
+ * generic archive string rather than the rename's.
  */
 @Composable
 private fun ChatEditorModal(
@@ -291,10 +298,15 @@ private fun ChatEditorModal(
         initialName = editor.initialName,
         onDismissRequest = { onEvent(ChannelListEvent.ChatEditDismissed) },
         onSubmit = { name -> onEvent(ChannelListEvent.ChatEditNameSubmitted(name)) },
-        onArchiveRequested = {},
+        onArchiveRequested = { onEvent(ChannelListEvent.ChatArchiveRequested) },
         hostAvailable = hostState.isHostConnected(editor.serverId),
         loading = editor.saving,
-        error = if (editor.failed) stringResource(R.string.edit_chat_save_failed) else null,
+        error =
+            when {
+                editor.archiveFailed -> stringResource(R.string.archive_failed)
+                editor.failed -> stringResource(R.string.edit_chat_save_failed)
+                else -> null
+            },
     )
 }
 
