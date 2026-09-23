@@ -348,6 +348,8 @@ fun ThreadScreen(
                     // `items` index-for-index and only ever appends unmatched queued rows after them.
                     val cutoffChronologicalIndex =
                         remember(state.items) { mostRecentSessionBoundaryIndex(state.items) }
+                    // #896: a subagent's tool rows indent under the Agent/Task call that spawned them.
+                    val toolDepths = remember(state.items) { toolNestingDepths(state.items) }
                     val listState = rememberLazyListState()
                     val hasStreamingMessage by remember(state.items) {
                         derivedStateOf {
@@ -440,7 +442,11 @@ fun ThreadScreen(
                                 when (row) {
                                     is ThreadRow.Delivered ->
                                         when (val item = row.item) {
-                                            is ThreadItem.MessageItem -> MessageBubble(message = item.message)
+                                            is ThreadItem.MessageItem ->
+                                                MessageBubble(
+                                                    message = item.message,
+                                                    toolNestingDepth = toolDepths[item.message.id] ?: 0,
+                                                )
                                             is ThreadItem.SessionBoundary ->
                                                 SessionBoundaryDelimiter(boundary = item)
                                             is ThreadItem.UnrecognizedMessage ->
