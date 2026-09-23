@@ -4,6 +4,7 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
 import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.ModalContext
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.Role
@@ -7809,6 +7810,117 @@ class RemoteConversationRepositoryTest {
             runCurrent()
 
             assertEquals(listOf(ModalEvent.Shown("m1", "permission", "t", "p", emptyList(), "d", "")), events)
+        }
+
+    // ---- #817: modal_shown's four optional permission-context fields -----------------------------
+
+    /** Pushes one `modal_shown` whose payload is the base fields plus [contextJson], and returns its context. */
+    private fun TestScope.decodeModalContext(contextJson: String): ModalContext {
+        val pump = FakeSessionPump()
+        val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+        val events = collectModalEvents(repo)
+        runCurrent()
+        val separator = if (contextJson.isEmpty()) "" else ","
+        pump.push(
+            modalShownEnvelope(
+                """{"modal_id":"m1","class":"permission","title":"t","prompt":"p","options":[],""" +
+                    """"default_option_id":"d","conversation_id":"c1"$separator$contextJson}""",
+            ),
+        )
+        runCurrent()
+        return (events.single() as ModalEvent.Shown).context
+    }
+
+    @Test
+    fun modalShown_decodesPermissionContextStrings() =
+        runTest {
+            val context =
+                decodeModalContext(
+                    """"reason":"A rule matched","reason_type":"rule","blocked_path":"/etc/hosts",""" +
+                        """"description":"Edit the hosts file"""",
+                )
+
+            assertEquals(
+                ModalContext(
+                    reason = "A rule matched",
+                    reasonType = "rule",
+                    blockedPath = "/etc/hosts",
+                    description = "Edit the hosts file",
+                ),
+                context,
+            )
+        }
+
+    // A reason with no guaranteed JSON shape stays visible as its JSON text — `false`, `0` and `null` included.
+    @Test
+    fun modalShown_nonStringReason_decodesAsItsJsonText() =
+        runTest {
+            val cases =
+                listOf(
+                    "false" to "false",
+                    "0" to "0",
+                    "null" to "null",
+                    """{"rule":"Bash(ls)"}""" to """{"rule":"Bash(ls)"}""",
+                    """[1,"a"]""" to """[1,"a"]""",
+                )
+            for ((raw, expected) in cases) {
+                assertEquals(raw, ModalContext(reason = expected), decodeModalContext(""""reason":$raw"""))
+            }
+        }
+
+    @Test
+    fun modalShown_absentOrEmptyContext_decodesAsNone() =
+        runTest {
+            assertEquals(ModalContext.None, decodeModalContext(""))
+            assertEquals(
+                ModalContext.None,
+                decodeModalContext(""""reason":"","reason_type":"","blocked_path":"","description":"""""),
+            )
+        }
+
+    // An open vocabulary: an unknown category is carried verbatim, never dropped.
+    @Test
+    fun modalShown_unknownReasonType_isCarriedVerbatim() =
+        runTest {
+            assertEquals(
+                ModalContext(reasonType = "futureCategory_v9"),
+                decodeModalContext(""""reason_type":"futureCategory_v9""""),
+            )
+        }
+
+    // A wrong-typed display field is absent rather than dropping the whole permission prompt.
+    @Test
+    fun modalShown_wrongTypedStringContextFields_areAbsentAndTheModalStillSurfaces() =
+        runTest {
+            assertEquals(
+                ModalContext(reason = "r"),
+                decodeModalContext(""""reason":"r","reason_type":7,"blocked_path":{"p":1},"description":[true]"""),
+            )
+        }
+
+    @Test
+    fun modalShown_overLongContextValues_areClamped() =
+        runTest {
+            val long = "x".repeat(5000)
+            val context =
+                decodeModalContext(
+                    """"reason":"$long","reason_type":"$long","blocked_path":"$long","description":"$long"""",
+                )
+
+            assertEquals(2048, context.reason?.length)
+            assertEquals(128, context.reasonType?.length)
+            assertEquals(2048, context.blockedPath?.length)
+            assertEquals(2048, context.description?.length)
+        }
+
+    // The clamp never leaves a lone high surrogate where it cut through an emoji.
+    @Test
+    fun modalShown_clampDoesNotSplitASurrogatePair() =
+        runTest {
+            val value = "x".repeat(2047) + "😀"
+            val context = decodeModalContext(""""description":"$value"""")
+
+            assertEquals("x".repeat(2047), context.description)
         }
 
     // AC #2: modal_dismissed source `remote`, outcome = a selected option id.

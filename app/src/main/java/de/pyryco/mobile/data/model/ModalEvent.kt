@@ -39,7 +39,8 @@ sealed interface ModalEvent {
      * canonical display/selection order (AC #1/#5). [defaultOptionId] equals one of [options]`.id` by the
      * producer's invariant; this seam carries it verbatim and does not enforce the invariant.
      * [conversationId] is the conversation whose session raised the modal (#816), or `""` when the frame
-     * omitted it — an unscoped modal that no thread displays.
+     * omitted it — an unscoped modal that no thread displays. [context] is claude's optional decision
+     * context for a permission ask (#817), [ModalContext.None] when the frame carried none.
      */
     data class Shown(
         override val modalId: String,
@@ -49,6 +50,7 @@ sealed interface ModalEvent {
         val options: List<ModalOption>,
         val defaultOptionId: String,
         val conversationId: String = "",
+        val context: ModalContext = ModalContext.None,
     ) : ModalEvent
 
     /**
@@ -73,3 +75,28 @@ data class ModalOption(
     val id: String,
     val label: String,
 )
+
+/**
+ * Claude's own decision context for a permission ask (#817, daemon #2346): `modal_shown`'s optional
+ * `reason`, `reason_type`, `blocked_path` and `description`, each copied by the daemon from claude's
+ * `can_use_tool` ask. `null` means absent — the wire makes absent and empty equivalent, so the decode seam
+ * never hands out `""`. [reason] is display text even when the wire value was not a string (its JSON text,
+ * so `false`, `0` and `null` stay visible), and [reasonType] is an open vocabulary carried verbatim.
+ *
+ * Every value is claude-authored and untrusted: display-only, never decision authority, never a path to
+ * open or a value to log. A rendering consumer draws it as inert text.
+ */
+data class ModalContext(
+    val reason: String? = null,
+    val reasonType: String? = null,
+    val blockedPath: String? = null,
+    val description: String? = null,
+) {
+    /** `true` when the frame carried no context at all — the prompt then renders without a context area. */
+    val isEmpty: Boolean
+        get() = reason == null && reasonType == null && blockedPath == null && description == null
+
+    companion object {
+        val None = ModalContext()
+    }
+}
