@@ -338,9 +338,11 @@ Testing](dependency-injection.md#testing) for `HostConversationSourceTest`'s res
 cases and for why every other instrumented container built from `appModule` overrides this binding
 with a shared `InertConversationCache` fake rather than supplying a real `Context`. See [Caching
 conversation repository § Testing](caching-conversation-repository.md#testing) for the restore
-merge's own unit coverage. Live continuity across a real reconnect is
-[#673](https://github.com/pyrycode/pyrycode-mobile/issues/673)'s, not this cache's or the
-wrapper's.
+merge's own unit coverage. Live continuity across a real reconnect — a loaded conversation staying
+readable while its host link is cut and reconciling a peer's turn once the link is restored — is
+proven live by [#850](https://github.com/pyrycode/pyrycode-mobile/issues/850)
+(`InteractiveStreamE2ETest.interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect`), not this
+cache's or the wrapper's own unit suite.
 
 ## Related
 

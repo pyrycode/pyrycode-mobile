@@ -14,6 +14,7 @@ import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
@@ -32,15 +33,19 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.cache.ConversationCache
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
+import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_RELAY_URL
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLIC_KEY
+import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
@@ -50,10 +55,12 @@ import de.pyryco.mobile.ui.conversations.thread.SESSION_BOUNDARY_EXPLANATION
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedPingReply
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedSessionBoundary
 import de.pyryco.mobile.ui.conversations.thread.pingReplyMatcher
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
@@ -1483,6 +1490,155 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * A loaded conversation stays readable offline and catches up on reconnect (#850, rung 3; the live
+     * proof #795–#798 deferred). The phone loads a chat's history with one ping turn, then cuts its own
+     * link to the host as [setHostLink] does. With the connection-scoped repository gone, readability can
+     * only come from retained content:
+     *  * **offline** — the open thread still draws the ping and its reply, the chat's row is still in the
+     *    list, and reopening the row draws both again (the on-disk thread restore, not the in-memory rows);
+     *  * **meanwhile** — the [SecondClientPeer] sends [OFFLINE_PROMPT] and its turn ends, and the phone
+     *    draws none of it, which is what shows it really was offline;
+     *  * **reconnected** — the open thread draws the peer's reply from the ring replay; reopened, it draws
+     *    that turn after the ping, and each of the four messages once. The prompt comes only from a history
+     *    page, and the open thread's reconnect re-ask is lost (#861), so the reopen's opening ask fetches it.
+     *
+     * The cut waits until the phone itself has settled the ping reply — its thread cache holds it, which
+     * the open thread's collector writes only after drawing the settled row. A disconnect keeps only settled
+     * rows, and the peer's copy of `turn_end` can arrive before the phone's, so waiting on the peer alone
+     * could cut while the phone's reply still streamed and drop it by design.
+     *
+     * **Two real-claude turns**: the phone's ping and the peer's offline turn.
+     */
+    @Test
+    fun interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect() {
+        val args = InstrumentationRegistry.getArguments()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer =
+            SecondClientPeer(
+                PairedServer(
+                    serverId = serverId,
+                    token = twoHostArg(ARG_PEER_TOKEN),
+                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                    serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
+                ),
+            )
+        try {
+            // 1. The peer records frames from here on; the phone creates and renames a chat, as #848 does.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val before = runBlocking { withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { true } } }
+            createChat()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+            }
+            val conversationId =
+                runBlocking {
+                    withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { ids -> (ids - before).isNotEmpty() } - before }
+                }.single()
+            val chatName = OFFLINE_CHAT_NAME_PREFIX + System.currentTimeMillis()
+            renameOpenThread(chatName)
+
+            // 2. Load history: the phone's ping turn renders and ends. The peer's turn_end keeps the later
+            //    occurrence count right; the phone's own cache is what shows its rows settled before the cut.
+            sendFromPhone(PING_PROMPT)
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            runBlocking { peer.awaitFrame(conversationId, "turn_end", REPLY_TIMEOUT_MS) }
+            awaitCachedAssistantReply(serverId, conversationId)
+
+            // 3. AC-1: cut the phone's link. The open thread keeps what it drew.
+            setHostLink(serverId, up = false)
+            composeTestRule.waitForIdle()
+            assertDrawnOnce(inThreadList(PING_PROMPT), pingReplyMatcher())
+
+            // 4. AC-1: the chat's row is still listed, and reopening it offline draws the history again.
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitChannelList()
+            val chatRow = hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText(chatName, substring = true)
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) { runCatching { scrollListTo(chatRow) }.isSuccess }
+            composeTestRule.onAllNodes(chatRow).onFirst().performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(inThreadList(PING_PROMPT), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.awaitDisplayedPingReply(THREAD_TIMEOUT_MS)
+            assertDrawnOnce(inThreadList(PING_PROMPT), pingReplyMatcher())
+
+            // 5. AC-2: while the phone is offline the peer's turn runs to its end; the phone draws none of it.
+            runBlocking {
+                peer.sendMessage(conversationId, OFFLINE_PROMPT, THREAD_TIMEOUT_MS)
+                peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS, occurrence = 2)
+            }
+            composeTestRule.waitForIdle()
+            composeTestRule.onAllNodes(inThreadList(OFFLINE_PROMPT), useUnmergedTree = true).assertCountEquals(0)
+            composeTestRule.onAllNodes(offlineReplyMatcher(), useUnmergedTree = true).assertCountEquals(0)
+
+            // 6. AC-2: reconnect with the thread open; the ring replay brings the peer's reply into it. No live
+            //    frame carries another device's message text, so the prompt comes only from a history page.
+            //    The open thread's reconnect re-ask fires on socket-up, before the repository is back, and
+            //    dies (#861), so reopen the thread: its opening ask runs on the live repository. Once #861
+            //    lands, drop the reopen and wait for the prompt in the still-open thread instead.
+            setHostLink(serverId, up = true)
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onNode(offlineReplyMatcher(), useUnmergedTree = true).isDisplayed()
+            }
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitChannelList()
+            composeTestRule.waitUntil(LIST_TIMEOUT_MS) { runCatching { scrollListTo(chatRow) }.isSuccess }
+            composeTestRule.onAllNodes(chatRow).onFirst().performClick()
+            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
+                composeTestRule.onNode(offlineReplyMatcher(), useUnmergedTree = true).isDisplayed() &&
+                    composeTestRule.onAllNodes(inThreadList(OFFLINE_PROMPT), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            composeTestRule.waitForIdle()
+            assertDrawnOnce(inThreadList(PING_PROMPT), pingReplyMatcher(), inThreadList(OFFLINE_PROMPT), offlineReplyMatcher())
+            val tops =
+                listOf(pingReplyMatcher(), inThreadList(OFFLINE_PROMPT), offlineReplyMatcher()).map {
+                    composeTestRule
+                        .onNode(it, useUnmergedTree = true)
+                        .fetchSemanticsNode()
+                        .boundsInRoot.top
+                }
+            assertTrue("expected ping reply, offline prompt, offline reply top to bottom; tops $tops", tops == tops.sorted())
+            assertTrue("two of the messages share a row; tops $tops", tops.distinct().size == tops.size)
+        } finally {
+            peer.close()
+        }
+    }
+
+    /**
+     * Wait until the phone's thread cache for [conversationId] holds an assistant reply. The cache only
+     * ever holds settled rows, and the open thread's collector writes them after drawing them, so this is
+     * the phone's own proof that the reply settled — not another device's copy of `turn_end`.
+     */
+    private fun awaitCachedAssistantReply(
+        serverId: String,
+        conversationId: String,
+    ) {
+        val cache = GlobalContext.get().get<ConversationCache>()
+        runBlocking {
+            withTimeout(THREAD_TIMEOUT_MS) {
+                while (cache
+                        .readThread(
+                            serverId,
+                            conversationId,
+                        ).none { it is ThreadItem.MessageItem && it.message.role == Role.Assistant }
+                ) {
+                    delay(CACHE_POLL_MS)
+                }
+            }
+        }
+    }
+
+    /** Each of [matchers] matches exactly one node in the unmerged tree. */
+    private fun assertDrawnOnce(vararg matchers: SemanticsMatcher) {
+        matchers.forEach { composeTestRule.onAllNodes(it, useUnmergedTree = true).assertCountEquals(1) }
+    }
+
+    /** The peer's offline reply as a delivered bubble: exactly [OFFLINE_REPLY], as [pingReplyMatcher] anchors ping. */
+    private fun offlineReplyMatcher(): SemanticsMatcher =
+        hasText(OFFLINE_REPLY, ignoreCase = true) and hasAnyAncestor(hasTestTag(MESSAGE_BUBBLE_TEST_TAG))
+
+    /**
      * Type [text] and send it from the open thread. While a turn runs the button is Stop until the composer
      * holds text, so the tap waits for Send rather than interrupting the turn.
      */
@@ -1697,15 +1853,23 @@ class InteractiveStreamE2ETest {
      * false-green a state check.
      */
     private fun cycleHostLink(serverId: String) {
+        setHostLink(serverId, up = false)
+        setHostLink(serverId, up = true)
+    }
+
+    /**
+     * Cut ([up] false) or restore one host's link, and wait until its coordinator's repository is gone or
+     * back. Cutting tears down the connection-scoped repository, so what the phone still draws is retained.
+     */
+    private fun setHostLink(
+        serverId: String,
+        up: Boolean,
+    ) {
         val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
         runBlocking {
             withTimeout(CONNECT_TIMEOUT_MS) {
-                bundle.supervisor.close()
-                bundle.coordinator.currentRepository.first { it == null }
-            }
-            withTimeout(CONNECT_TIMEOUT_MS) {
-                bundle.supervisor.connect()
-                bundle.coordinator.currentRepository.first { it != null }
+                if (up) bundle.supervisor.connect() else bundle.supervisor.close()
+                bundle.coordinator.currentRepository.first { (it != null) == up }
             }
         }
     }
@@ -1961,6 +2125,12 @@ class InteractiveStreamE2ETest {
         const val PEER_QUEUED_REPLY = "pyrypeerdropped"
         const val QUEUE_CHAT_NAME_PREFIX = "e2e849-"
 
+        // The peer's turn while the phone is offline (#850). The reply is matched as exactly the token in a
+        // bubble, which the prompt's own text is not.
+        const val OFFLINE_PROMPT = "Reply with exactly: pyryoffline"
+        const val OFFLINE_REPLY = "pyryoffline"
+        const val OFFLINE_CHAT_NAME_PREFIX = "e2e850-"
+
         // Pairing-flow production strings (hardcoded in the composables, no resources). PASTE_CODE_LINK is
         // the common tail of all three scanner states' paste links — "Trouble scanning? Paste the pairing
         // code instead", "Paste the pairing code instead", "Paste code instead" — matched as a substring so
@@ -1988,6 +2158,9 @@ class InteractiveStreamE2ETest {
         const val LIST_TIMEOUT_MS = 30_000L
         const val CONNECT_TIMEOUT_MS = 30_000L
         const val THREAD_TIMEOUT_MS = 30_000L
+
+        // How often the #850 cut re-reads the thread cache while it waits for the settled reply.
+        const val CACHE_POLL_MS = 200L
 
         // Generous: a real claude turn over the relay can take many seconds end to end.
         const val REPLY_TIMEOUT_MS = 90_000L
