@@ -66,12 +66,18 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    archive entry (`CD_OPEN_ARCHIVE`, the sibling of the settings entry #737 put on the bar) and assert the
    title appears — proving the entry #737 shipped reaches Archived on its own, independently of the
    Settings route `interactiveTurn_archiveRestore_roundTripsListMembership` already covers; no claude turn,
-   no seeded conversation — the bar is drawn on every state of the list.
-   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740)**
-   runs a **curated set of nine scenarios** (ping + create-workspace-folder + new-session + delete +
-   archive-restore + change-workspace + rename + save-as-channel + list-archive-entry, three ping turns
-   plus a possible reset wrap-up turn — delete, archive-restore, change-workspace, rename, save-as-channel
-   and list-archive-entry spend none)
+   no seeded conversation — the bar is drawn on every state of the list; and a
+   **two-hosts-colliding-conversation-id** scenario (#847): seed one conversation under a shared id but a
+   different name on two isolated test daemons, pair the second host through the app's own scanner →
+   paste-code flow, and assert each host's row, thread and cache stay separated by `(serverId,
+   conversationId)` — re-checked after a rename of one host's conversation, after each host's relay link
+   is cut and restored, and after the app's object graph is rebuilt over the same on-device state; no
+   claude turn — pairing, navigation, rename and link cycling are daemon round-trips.
+   Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847)**
+   runs a **curated set of ten scenarios** (ping + create-workspace-folder + new-session + delete +
+   archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host, three
+   ping turns plus a possible reset wrap-up turn — delete, archive-restore, change-workspace, rename,
+   save-as-channel, list-archive-entry and two-host spend none)
    against the **production relay** over `wss://`
    (TLS) — the pre-ship gate that catches the live-environment failure class a local relay cannot; see
    [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay). The ping, create-workspace-folder and
@@ -80,7 +86,7 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    New-session also reveals the delimiter after a potentially tall wrap-up reply.
    **Pending coverage:** #679 owns cross-device Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
-   ending B while A continues. The curated nine-scenario gate does not cover it.
+   ending B while A continues. The curated ten-scenario gate does not cover it.
 4. **Emulator + deterministic host** ← **shipped (#431).** The same real app + Noise/relay path, but
    claude is swapped for #642's scripted `fakeclaude` backend replaying raw stream-json fixture bytes.
    No real claude, **zero claude turns**; re-running back-to-back uses the same stream contract. Run it with
@@ -165,7 +171,7 @@ production-side KDoc and its relationship to the tier tags #731 minted the same 
 [Add controls](../knowledge/features/channel-list-screen-tree-and-controls.md#add-controls-738) for `treeHostAddTestTag`'s own
 clamping rule.
 
-Rung 3 covers nine scenarios on this one harness: the **ping** happy path (a constrained reply renders);
+Rung 3 covers twelve scenarios on this one harness: the **ping** happy path (a constrained reply renders);
 a **tool-use** scenario (#481 — a constrained prompt makes real claude run a shell tool, asserting the
 tool step renders, keyed tolerantly on the verbatim tool name `"Bash"` in the tool-row header); a
 **thinking-spinner** scenario (#482 — a pure-reasoning prompt makes real claude think a beat, asserting
@@ -214,7 +220,17 @@ and after backing out the name is **present on a channel-tagged row** and **abse
 row** of the assembled conversation tree (i.e. presented in the promoted channel tier, not among the chats —
 since #731 replaced the flat list's Discussions drilldown with a tag read on the single assembled list) —
 proving the #348 promote wire against a real daemon; **zero** claude turns — create/promote are conversation-scoped daemon round-trips,
-promote being a pure registry op daemon-side). The tool-use
+promote being a pure registry op daemon-side); a **list-archive-entry** scenario (#740 —
+`interactiveTurn_listArchiveEntry_opensArchived`: tap the list's own archive entry and assert the
+Archived screen appears, proving the entry #737 put on the list's bar reaches Archived independently of
+the Settings route; **zero** claude turns, no daemon round-trip at all — the bar is drawn on every state
+of the list); and a **two-hosts-colliding-conversation-id** scenario (#847 —
+`interactiveTurn_twoHostsCollidingConversationId_stayPerHost`: seed one conversation under a shared id
+but a different name on two isolated test daemons, pair the second host through the app's own scanner →
+paste-code flow, and assert each host's row, thread and cache stay separated by `(serverId,
+conversationId)` — re-checked after a rename, after each host's relay link is cut and restored, and
+after the app's object graph is rebuilt over the same on-device state; **zero** claude turns — pairing,
+navigation, rename and link cycling are all daemon round-trips). The tool-use
 test asserts the **durable** terminal signal — the tool name in the resolved row —
 not the transient running spinner: rung 3 has no scripted backend to hold the turn open, so racing the
 spinner over a real relay turn is the "never on timing" failure the [Constraints](#constraints) forbid
@@ -377,6 +393,41 @@ pre-#731 version had to dodge exactly that: `discussion_list_title` was byte-ide
 absence assertion would then have run against the main list — a false green. That whole failure class is
 gone with the drilldown hop itself.
 
+The **two-hosts-colliding-conversation-id** scenario (#847 —
+`interactiveTurn_twoHostsCollidingConversationId_stayPerHost`) is likewise **always-on** (not `@Ignore`d):
+row, thread and cache separation by `(serverId, conversationId)` (#731, #795–#798) are **durable**
+structural facts, so it belongs in the always-on gate like #740's bar and #554's/#551's list inversions.
+Daemon-minted conversation ids never collide on their own, so `scripts/e2e-emulator.sh` seeds the
+collision before either daemon starts: one run-unique id, a different runtime-unique name
+(`"e2e847-a-" + epoch` / `"e2e847-b-" + epoch`) merged into each of two isolated test instances'
+`conversations.json` — host A's own instance, and a second `<PYRY_NAME>-b` instance spawned beside it.
+Host A is pre-paired by `E2eTestApplication` as usual; host B is paired **through the app's own scanner →
+paste-code flow** (`PasteCodeDialog` is unreachable directly — every scanner state offers a "paste the
+pairing code" button that opens `PairCodeScreen`), with the harness re-pointing the minted payload's
+`relay` at the phone's own relay URL before handing it to the test. `assertHostHoldsConversation` reads
+each host's own repository for the seeded id **before** any UI check, so the scenario cannot pass on two
+different ids under the hood. Separation is then read twice per checkpoint with no new test tag:
+**under its own host** (folding a host's Channels row by its `cd_tree_row_collapse` description hides
+only that host's conversation) and **opens its own conversation** (a row's thread shows only that row's
+name in the top bar). Both reads are repeated after renaming host A's conversation from its thread
+(#537's drive), after cutting and restoring each host's relay link in turn
+(`RelayConnectionRegistry.connectionFor(serverId)`'s supervisor close/connect, the #476 pattern applied
+per host), and after the app's object graph is rebuilt over the same on-device state — the restart an
+instrumented test can perform without killing its own process. `ActivityScenario.recreate()` is the
+wrong tool here: it retains the view models, which would keep holding the disposed graph, so the test
+destroys the rule's activity first, calls the new `E2eTestApplication.rebuildGraph()` (unregisters the
+old `LifecycleConnectionDriver`, `stopKoin`, then `startKoin` carrying the one `app_prefs` `DataStore`
+over), then launches a fresh `MainActivity`. Host B is removed from the paired-server store in `finally`,
+so a red scenario cannot leave a later scenario's host selection on host B. One gotcha for a future
+scanner sibling: the scanner's camera-error and denied states each draw a **plain, non-clickable**
+message containing "code instead" before their real paste button, so the paste-link matcher must require
+`hasClickAction()` alongside the text match — the first version tapped the plain message on the headless
+ATD's camera-error state and never navigated (verifier MUST FIX on PR #856). The live run that closed the
+ticket executed all ten curated methods with no failures or skips, which also answered the plan's one
+open question: the daemon serves a thread and a rename for the seeded conversation with no
+`current_session_id`, so `seed_collision_conversation` needed no session-id binding. Total real-claude
+cost: **zero** turns — pairing, navigation, rename and link cycling are all daemon round-trips.
+
 The **thinking-spinner** scenario (#482) is the **flakiest** rung-3 scenario and ships **`@Ignore`-gated /
 manual**: the spinner has **no durable equivalent** of the tool name — once real claude emits its first
 token, `turn_state` flips to `responding`, `isThinking` goes false, and `ThinkingIndicator` early-returns,
@@ -477,13 +528,15 @@ python3 scripts/android-test-gate.py live
 
 The wrapper sets `LIVE=1` and a unique `e2e-auto-…` test instance per invocation (see
 [Live mode (rung 3, live relay)](#live-mode-rung-3-live-relay) below), so there is no env-var
-incantation to remember — the nine curated `@Test` methods (ping + create-workspace-folder, #566;
+incantation to remember — the ten curated `@Test` methods (ping + create-workspace-folder, #566;
 new-session, #541; delete, #554; archive-restore, #551; change-workspace, #562; rename, #537;
-save-as-channel, #581; list-archive-entry, #740) ride the wrapped mode.
+save-as-channel, #581; list-archive-entry, #740; two-host separation, #847) ride the wrapped mode.
 
 These `InteractiveStreamE2ETest` cases preserve the ping and Reset-session
-regressions after host-owned routing. They do not prove two-host navigation,
-reconnect or phone-reply continuity; that rung-3 coverage remains #673.
+regressions after host-owned routing, and, since #847, that two paired hosts whose
+conversations share an id stay separate through pairing, rename, link-cycling and a
+restart. They do not prove reconnect or phone-reply continuity; that rung-3 coverage
+remains #673.
 
 **When the dispatcher runs it:**
 
@@ -492,18 +545,19 @@ reconnect or phone-reply continuity; that rung-3 coverage remains #673.
 - **when a daemon or relay change touching the mobile surface lands**, alongside the daemon's own
   `make e2e-realclaude` when that acceptance crosses repositories.
 
-**Cost:** three ping turns across nine curated methods (ping, create-workspace-folder,
+**Cost:** three ping turns across ten curated methods (ping, create-workspace-folder,
 and new-session), plus a reset wrap-up turn when handoff notes are enabled. Delete,
-archive-restore, change-workspace, rename, save-as-channel and list-archive-entry
-spend no Claude turns. Allow a few minutes of wall clock; the run is subscription-covered.
+archive-restore, change-workspace, rename, save-as-channel, list-archive-entry and
+two-host separation spend no Claude turns. Allow a few minutes of wall clock; the run
+is subscription-covered.
 
 The command must exit successfully and report at least eight executed passing tests
-(nine when the full curated list runs), with no skips. The gate's floor is "at least
-eight" rather than "exactly nine" — `scripts/test_android_test_gate.py` replays an
+(ten when the full curated list runs), with no skips. The gate's floor is "at least
+eight" rather than "exactly ten" — `scripts/test_android_test_gate.py` replays an
 eight-case fixture (`fixtures/default-workspace-live/588.xml`), and raising the floor
-to nine would redden that suite for no coverage gain, since nine executed tests already
+to ten would redden that suite for no coverage gain, since ten executed tests already
 clears an eight-test floor (plan `docs/specs/architecture/740-e2e-list-archive-entry.md`
-§ Revisions). A method silently dropped from the curated list is therefore a failure the
+§ Revisions, reaffirmed for #847). A method silently dropped from the curated list is therefore a failure the
 floor does not catch on its own; the executed count must be read against the list's
 actual current size, not just the floor. Shell cleanup preserves the original result and
 retains failure artifacts; a clean XML report with a failing process status is not a
@@ -516,7 +570,7 @@ restate scenario counts or turn costs — this document is the single authority 
 
 ## Live mode (rung 3, live relay)
 
-`LIVE=1` runs a **curated set of nine rung-3 scenarios** — the real app on the emulator, a host `pyry`
+`LIVE=1` runs a **curated set of ten rung-3 scenarios** — the real app on the emulator, a host `pyry`
 daemon, and **real claude** — but against the **production relay** (`wss://pyrycode-relay.pyryco.de`)
 over TLS instead of a local loopback relay. This is the post-verifier pre-ship gate: the dispatcher must
 never be the **first** real-stack execution, and a local relay structurally cannot catch a live-environment failure
@@ -540,7 +594,7 @@ device. The [recorded baseline](#verification-status) proves only managed
 `pixel2Api33Atd`, Pixel 2 / API 33 / AOSP ATD arm64. API 33 is the sole required
 version for now; API 35 is deferred.
 
-**What it runs.** Nine curated methods, passed as a comma-separated `class#method` list:
+**What it runs.** Ten curated methods, passed as a comma-separated `class#method` list:
 `InteractiveStreamE2ETest#interactiveTurn_pingPrompt_streamsPingReplyIntoThread`,
 `InteractiveStreamE2ETest#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace` (#566),
 `InteractiveStreamE2ETest#interactiveTurn_newSession_rendersSessionBoundaryDelimiter` (#541),
@@ -548,12 +602,14 @@ version for now; API 35 is deferred.
 `InteractiveStreamE2ETest#interactiveTurn_archiveRestore_roundTripsListMembership` (#551),
 `InteractiveStreamE2ETest#interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace` (#562),
 `InteractiveStreamE2ETest#interactiveTurn_renameConversation_relabelsTopBarAndListRow` (#537),
-`InteractiveStreamE2ETest#interactiveTurn_saveAsChannel_promotesToChannelTier` (#581), and
-`InteractiveStreamE2ETest#interactiveTurn_listArchiveEntry_opensArchived` (#740), so exactly
+`InteractiveStreamE2ETest#interactiveTurn_saveAsChannel_promotesToChannelTier` (#581),
+`InteractiveStreamE2ETest#interactiveTurn_listArchiveEntry_opensArchived` (#740), and
+`InteractiveStreamE2ETest#interactiveTurn_twoHostsCollidingConversationId_stayPerHost` (#847), so exactly
 **three real claude turns** are spent per run — the delete, archive-restore, change-workspace, rename,
-save-as-channel and list-archive-entry scenarios each add a method, not a turn
+save-as-channel, list-archive-entry and two-host scenarios each add a method, not a turn
 (create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips;
-list-archive-entry is pure navigation with no daemon round-trip at all).
+list-archive-entry is pure navigation with no daemon round-trip at all; two-host separation is pairing,
+navigation, rename and link cycling, also daemon round-trips).
 The full class also includes the
 #481 tool-use test, which
 stays excluded from LIVE (an extra turn, cost). `LIVE=1` is **mutually exclusive with `DETERMINISTIC=1`**
@@ -589,11 +645,12 @@ Prerequisites (on top of the "How to run" list):
 - The emulator needs outbound internet + DNS + a system-trusted TLS cert for the relay host. It reaches
   the public relay over its own NAT'd internet — **not** the `10.0.2.2` host alias, which is loopback-only.
 
-Cost: **three real claude turns per run across nine curated methods** (ping + create-workspace-folder, #566
+Cost: **three real claude turns per run across ten curated methods** (ping + create-workspace-folder, #566
 + new-session, #541; `/clear` spends none; delete, #554, archive-restore, #551, change-workspace, #562,
-rename, #537, save-as-channel, #581, and list-archive-entry, #740, each spend none —
-create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips, and list-archive-entry
-is pure navigation), a few minutes of wall clock, subscription-covered.
+rename, #537, save-as-channel, #581, list-archive-entry, #740, and two-host separation, #847, each spend
+none — create/rename/delete/archive/restore/change-workspace/promote are daemon round-trips,
+list-archive-entry is pure navigation, and two-host separation is pairing, navigation, rename and link
+cycling, also daemon round-trips), a few minutes of wall clock, subscription-covered.
 
 Environment checks for a new host (the recorded API 33 run passed these paths):
 
@@ -875,6 +932,16 @@ handoff; this table does not claim a later execution.
 
 Earlier results and failure history:
 
+- **LIVE verified for #847 (2026-09-23):** the dispatcher's real-claude gate ran
+  `python3 scripts/android-test-gate.py live` against `feature/847` merged with `main`,
+  the [recorded run](https://github.com/pyrycode/pyrycode-mobile/issues/847#issuecomment-5787319723)
+  executed all ten curated scenarios — the curated list's first run with
+  `interactiveTurn_twoHostsCollidingConversationId_stayPerHost` on it — with ten passes, no
+  failures or skips, exit 0, wall clock 76.7s. The gate's floor stayed at 8 (see
+  [Pre-ship gate](#pre-ship-gate)); ten executed clears it. This run is also the first live
+  evidence that the daemon serves a thread and a rename for the unbound seeded conversation
+  the harness writes (no `current_session_id`), resolving the plan's one open question
+  without needing a bound session id.
 - **LIVE verified for #740 (2026-09-23):** the dispatcher's real-claude gate ran
   `python3 scripts/android-test-gate.py live` against `feature/740` merged with `main`,
   the [recorded run](https://github.com/pyrycode/pyrycode-mobile/issues/740#issuecomment-5786884038)
@@ -956,9 +1023,13 @@ The remaining checks here are specific to a real relay or real Claude execution:
 ## Follow-ups to ticket
 
 - **Coverage — pending:** [#673](https://github.com/pyrycode/pyrycode-mobile/issues/673)
-  owns two-host navigation/reconnect, phone-reply continuity, and history paging
+  owns reconnect, phone-reply continuity, and history paging
   (scroll-back and reconnect-continuity) in the rung-3 `InteractiveStreamE2ETest`
-  harness. [#778](https://github.com/pyrycode/pyrycode-mobile/issues/778) shipped
+  harness. Two-host navigation is no longer part of its scope:
+  [#847](https://github.com/pyrycode/pyrycode-mobile/issues/847) shipped that piece as the
+  tenth curated `LIVE=1` method — two paired hosts whose conversations share an id stay
+  separate through pairing, rename, link-cycling and a restart.
+  [#778](https://github.com/pyrycode/pyrycode-mobile/issues/778) shipped
   the history-page retry and the reconnect/refused-cursor walk restart with
   deterministic coverage only (`ThreadHistoryDemandTest`, `ThreadViewModelTest`,
   `ThreadScreenHistoryTest`) and carried no `needs-real-claude`; the live proof for
@@ -1054,7 +1125,24 @@ The remaining checks here are specific to a real relay or real Claude execution:
   only curated method that spends nothing at all, not even a daemon round-trip) and folded into the
   pre-ship `LIVE=1` gate as the 9th curated method, taking the gate from an octet to a nonet at the same
   three ping turns plus an optional reset wrap-up (the live gate's floor intentionally stayed at 8, not 9 —
-  see [Pre-ship gate](#pre-ship-gate)); API-retry status (attempt N/M) — **rung 2 shipped (#594)**, the
+  see [Pre-ship gate](#pre-ship-gate)); Layer-3 (real claude) two-host separation — **shipped (#847)**,
+  proving that two paired hosts whose conversations share an id — daemon-minted ids never collide on their
+  own, so the harness seeds one — stay separate: `scripts/e2e-emulator.sh` starts a second isolated test
+  daemon before either starts, and the phone pairs it through its own scanner → paste-code flow
+  (`PairCodeScreen`), never `PasteCodeDialog` directly; always-on (row, thread and cache separation by
+  `(serverId, conversationId)`, #731/#795–#798, are durable structural facts), re-checked after a rename
+  of one host's conversation, after each host's relay link is cut and restored
+  (`RelayConnectionRegistry.connectionFor(serverId)`'s per-host close/connect, the #476 pattern applied
+  per host), and after the app's object graph is rebuilt over the same on-device state
+  (`E2eTestApplication.rebuildGraph`, the restart an instrumented test can perform without killing its
+  process — `ActivityScenario.recreate()` would retain view models still holding the disposed graph) —
+  and folded into the pre-ship `LIVE=1` gate as the 10th curated method (spending **no** extra claude
+  turn — pairing, navigation, rename and link cycling are all daemon round-trips), taking the gate from a
+  nonet to ten curated methods at the same three ping turns plus an optional reset wrap-up. The live run
+  that closed the ticket (`python3 scripts/android-test-gate.py live`, 2026-09-23) executed all ten with no
+  failures or skips, which also resolved the plan's one open question: the daemon does serve a thread and
+  a rename for the unbound seeded conversation, so `seed_collision_conversation` needed no session-id
+  binding; API-retry status (attempt N/M) — **rung 2 shipped (#594)**, the
   `ScriptedApiRetryTest` scenarios driving `api_retry` edges through the real #593 repository projection
   into `ThreadViewModel.apiRetry` and `ApiRetryIndicator`, covering both edges (the rising edge, including
   a climbed counter that must re-render rather than dedup, and the clearing edge reverting to whatever the
