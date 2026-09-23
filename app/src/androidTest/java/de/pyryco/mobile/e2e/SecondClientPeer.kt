@@ -5,6 +5,7 @@ import de.pyryco.mobile.data.crypto.DeviceStaticKeyPair
 import de.pyryco.mobile.data.crypto.DeviceStaticKeyStore
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
+import de.pyryco.mobile.data.network.DequeueMessagePayloadDto
 import de.pyryco.mobile.data.network.Envelope
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.NoiseClientInfo
@@ -12,6 +13,8 @@ import de.pyryco.mobile.data.network.NoiseSessionFactory
 import de.pyryco.mobile.data.network.NoiseSessionPump
 import de.pyryco.mobile.data.network.OkHttpRelayTransport
 import de.pyryco.mobile.data.network.PumpState
+import de.pyryco.mobile.data.network.QueueStatePayloadDto
+import de.pyryco.mobile.data.network.QueuedMessageDto
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
 import de.pyryco.mobile.data.network.TransportEvent
 import kotlinx.coroutines.CoroutineScope
@@ -19,11 +22,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import kotlinx.datetime.Clock
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.encodeToJsonElement
@@ -84,36 +90,57 @@ class SecondClientPeer(
         conversationId: String,
         text: String,
         timeoutMs: Long,
-    ) {
-        val id = requestId.incrementAndGet()
-        val request =
-            Envelope(
-                id = id,
-                type = "send_message",
-                ts = Clock.System.now().toString(),
-                payload =
-                    MobileJson.encodeToJsonElement(
-                        SendMessagePayloadDto(conversationId = conversationId, messageId = UUID.randomUUID().toString(), text = text),
-                    ),
-            )
-        check(pump.send(request)) { "peer session is not open" }
-        val reply =
-            withTimeout(timeoutMs) {
-                received.first { frames -> frames.any { it.inReplyTo == id } }.first { it.inReplyTo == id }
-            }
-        check(reply.type == "ack") { "peer send_message refused: ${reply.payloadField("code") ?: reply.type}" }
-    }
+    ) = request(
+        "send_message",
+        MobileJson.encodeToJsonElement(
+            SendMessagePayloadDto(conversationId = conversationId, messageId = UUID.randomUUID().toString(), text = text),
+        ),
+        timeoutMs,
+    )
 
-    /** The first recorded frame of [type] that names [conversationId], waiting up to [timeoutMs] for it. */
+    /** Drop [queuedMsgId] from [conversationId]'s backlog as this device (#849), and wait for the `ack`. */
+    internal suspend fun dequeueMessage(
+        conversationId: String,
+        queuedMsgId: Long,
+        timeoutMs: Long,
+    ) = request(
+        "dequeue_message",
+        MobileJson.encodeToJsonElement(DequeueMessagePayloadDto(conversationId = conversationId, queuedMsgId = queuedMsgId)),
+        timeoutMs,
+    )
+
+    /**
+     * The backlog the **latest** recorded `queue_state` for [conversationId] reports, once it satisfies
+     * [ready] (#849). Latest, not any: a snapshot is the whole backlog, so an older one describes a queue
+     * that has since changed.
+     */
+    internal suspend fun awaitQueue(
+        conversationId: String,
+        timeoutMs: Long,
+        ready: (List<QueuedMessageDto>) -> Boolean,
+    ): List<QueuedMessageDto> =
+        withTimeout(timeoutMs) {
+            received
+                .map { frames -> frames.lastOrNull { it.type == "queue_state" && it.payloadField("conversation_id") == conversationId } }
+                .filterNotNull()
+                .map { MobileJson.decodeFromJsonElement(QueueStatePayloadDto.serializer(), it.payload).queued.orEmpty() }
+                .first(ready)
+        }
+
+    /**
+     * The [occurrence]th recorded frame of [type] that names [conversationId] (the first by default),
+     * waiting up to [timeoutMs] for it.
+     */
     suspend fun awaitFrame(
         conversationId: String,
         type: String,
         timeoutMs: Long,
+        occurrence: Int = 1,
     ): Envelope =
         withTimeout(timeoutMs) {
             received
-                .first { frames -> frames.any { it.isFor(conversationId, type) } }
-                .first { it.isFor(conversationId, type) }
+                .first { frames -> frames.count { it.isFor(conversationId, type) } >= occurrence }
+                .filter { it.isFor(conversationId, type) }[occurrence - 1]
         }
 
     /** Tear down the session (wiping its keys), the socket and the recorder. Idempotent. */
@@ -121,6 +148,23 @@ class SecondClientPeer(
         if (!closed.compareAndSet(false, true)) return
         pump.close()
         scope.cancel()
+    }
+
+    /** Send a [type] request carrying [payload], and wait for the reply correlated to it: `ack` or a thrown `code`. */
+    private suspend fun request(
+        type: String,
+        payload: JsonElement,
+        timeoutMs: Long,
+    ) {
+        val id = requestId.incrementAndGet()
+        check(pump.send(Envelope(id = id, type = type, ts = Clock.System.now().toString(), payload = payload))) {
+            "peer session is not open"
+        }
+        val reply =
+            withTimeout(timeoutMs) {
+                received.first { frames -> frames.any { it.inReplyTo == id } }.first { it.inReplyTo == id }
+            }
+        check(reply.type == "ack") { "peer $type refused: ${reply.payloadField("code") ?: reply.type}" }
     }
 
     private fun Envelope.isFor(

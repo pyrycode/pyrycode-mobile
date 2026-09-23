@@ -1,6 +1,7 @@
 package de.pyryco.mobile.e2e
 
 import android.Manifest
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
@@ -112,6 +113,13 @@ class InteractiveStreamE2ETest {
             .getInstrumentation()
             .targetContext
             .getString(R.string.cd_thread_thinking)
+
+    // The queued row's state description and its drop control (#849), production strings from resources:
+    //   thread_queued_state_desc = "Waiting to send", cd_thread_queued_drop = "Drop this queued message".
+    private val queuedStateDescription: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_queued_state_desc)
+    private val queuedDropDescription: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_thread_queued_drop)
 
     @Test
     fun interactiveTurn_pingPrompt_streamsPingReplyIntoThread() {
@@ -1355,6 +1363,147 @@ class InteractiveStreamE2ETest {
         }
     }
 
+    /**
+     * Phone replies, queued sends and drops stay consistent with another client (#849, rung 3). In a
+     * conversation the [SecondClientPeer] starts, the peer's opening turn has claude run a shell sleep
+     * ([WAIT_PROMPT]); the queue steps run inside that window, opened by the turn's `tool_use`:
+     *  * the phone's [PING_PROMPT] queues — a queued row on the phone and an item in the peer's snapshot;
+     *  * the phone queues and drops [DROP_PROMPT] — gone from both views;
+     *  * the peer queues and drops [PEER_QUEUED_PROMPT] — a plain queued row on the phone until then.
+     * When the sleep ends the ping drains: claude's reply renders once on the phone, the prompt draws once,
+     * the peer sees that turn's `turn_end`, and both backlogs are empty — so neither dropped message can
+     * still reach claude, and neither one's reply token is ever drawn.
+     *
+     * Every backlog check on the peer reads the latest `queue_state`, which fans out to every interactive
+     * connection. The prompt counts use #848's list matcher, so a message drawn once as a bubble and once
+     * as a queued row counts twice.
+     *
+     * **Two real-claude turns**: the peer's wait turn and the drained ping.
+     */
+    @Test
+    fun interactiveTurn_peerQueue_staysConsistentAcrossClients() {
+        val args = InstrumentationRegistry.getArguments()
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer =
+            SecondClientPeer(
+                PairedServer(
+                    serverId = serverId,
+                    token = twoHostArg(ARG_PEER_TOKEN),
+                    relayUrl = requireNotNull(args.getString(ARG_RELAY_URL)),
+                    serverStaticPublicKey = requireNotNull(args.getString(ARG_SERVER_STATIC_PUBLIC_KEY)),
+                ),
+            )
+        try {
+            // 1. The phone creates and renames a chat, as #848 does; the peer joins as its own device.
+            awaitChannelList()
+            awaitConnected()
+            val before = runBlocking { withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { true } } }
+            createChat()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+            }
+            val conversationId =
+                runBlocking {
+                    withTimeout(LIST_TIMEOUT_MS) { hostConversationIds(serverId) { ids -> (ids - before).isNotEmpty() } - before }
+                }.single()
+            renameOpenThread(QUEUE_CHAT_NAME_PREFIX + System.currentTimeMillis())
+
+            // 2. The peer starts the conversation with a turn that sleeps; its tool call opens the window.
+            runBlocking {
+                peer.open(CONNECT_TIMEOUT_MS)
+                peer.sendMessage(conversationId, WAIT_PROMPT, THREAD_TIMEOUT_MS)
+                peer.awaitFrame(conversationId, "tool_use", REPLY_TIMEOUT_MS)
+            }
+
+            // 3. AC-2: the phone's message queues behind it, on the phone and in the peer's snapshot.
+            sendFromPhone(PING_PROMPT)
+            awaitQueuedRow(PING_PROMPT)
+            runBlocking { peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.any { it.text == PING_PROMPT } } }
+
+            // 4. AC-3: a message the phone queues and drops leaves both views; the ping stays queued.
+            sendFromPhone(DROP_PROMPT)
+            awaitQueuedRow(DROP_PROMPT)
+            runBlocking { peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.any { it.text == DROP_PROMPT } } }
+            val dropControl = hasContentDescription(queuedDropDescription) and hasAnyAncestor(queuedRow(DROP_PROMPT))
+            scrollListTo(dropControl)
+            composeTestRule.onNode(dropControl).performClick()
+            awaitGoneFromThread(DROP_PROMPT)
+            runBlocking {
+                peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue ->
+                    queue.none { it.text == DROP_PROMPT } && queue.any { it.text == PING_PROMPT }
+                }
+            }
+
+            // 5. AC-3: a message the peer queues is a plain queued row on the phone until the peer drops it.
+            val peerItem =
+                runBlocking {
+                    peer.sendMessage(conversationId, PEER_QUEUED_PROMPT, THREAD_TIMEOUT_MS)
+                    peer
+                        .awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.any { it.text == PEER_QUEUED_PROMPT } }
+                        .first { it.text == PEER_QUEUED_PROMPT }
+                }
+            awaitQueuedRow(PEER_QUEUED_PROMPT)
+            runBlocking { peer.dequeueMessage(conversationId, peerItem.queuedMsgId, THREAD_TIMEOUT_MS) }
+            awaitGoneFromThread(PEER_QUEUED_PROMPT)
+            runBlocking {
+                peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.none { it.text == PEER_QUEUED_PROMPT } }
+            }
+
+            // 6. AC-1 / AC-2: the sleep ends, the ping drains and runs; the peer sees that turn end and an
+            //    empty backlog, and the phone draws the reply and the prompt once each, no longer queued.
+            runBlocking {
+                peer.awaitFrame(conversationId, "turn_end", WAIT_TURN_TIMEOUT_MS, occurrence = 2)
+                peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.isEmpty() }
+            }
+            composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+            composeTestRule.waitForIdle()
+            composeTestRule.onAllNodes(pingReplyMatcher(), useUnmergedTree = true).assertCountEquals(1)
+            composeTestRule.onAllNodes(inThreadList(PING_PROMPT), useUnmergedTree = true).assertCountEquals(1)
+            composeTestRule.onAllNodes(queuedRow(PING_PROMPT)).assertCountEquals(0)
+
+            // 7. AC-3: with the backlog empty nothing dropped can run, and no dropped reply was ever drawn.
+            composeTestRule.onAllNodes(inThreadList(DROP_PROMPT), useUnmergedTree = true).assertCountEquals(0)
+            composeTestRule.onAllNodes(inThreadList(PEER_QUEUED_PROMPT), useUnmergedTree = true).assertCountEquals(0)
+            composeTestRule.onAllNodes(hasText(DROP_REPLY), useUnmergedTree = true).assertCountEquals(0)
+            composeTestRule.onAllNodes(hasText(PEER_QUEUED_REPLY), useUnmergedTree = true).assertCountEquals(0)
+        } finally {
+            peer.close()
+        }
+    }
+
+    /**
+     * Type [text] and send it from the open thread. While a turn runs the button is Stop until the composer
+     * holds text, so the tap waits for Send rather than interrupting the turn.
+     */
+    private fun sendFromPhone(text: String) {
+        composeTestRule.onNode(hasSetTextAction()).performTextInput(text)
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+    }
+
+    /** A node inside the thread's scrollable list with exactly [text]: a bubble or a queued row, not the top bar. */
+    private fun inThreadList(text: String): SemanticsMatcher = hasText(text) and hasAnyAncestor(hasScrollToNodeAction())
+
+    /** The queued row for [text]: its merged node carries the text and the "Waiting to send" state. */
+    private fun queuedRow(text: String): SemanticsMatcher =
+        hasText(text) and SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, queuedStateDescription)
+
+    /** Wait until [text] draws as a queued row in the open thread. */
+    private fun awaitQueuedRow(text: String) {
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(queuedRow(text)).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /** Wait until nothing in the open thread's list carries [text] — neither a queued row nor a bubble. */
+    private fun awaitGoneFromThread(text: String) {
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(inThreadList(text), useUnmergedTree = true).fetchSemanticsNodes().isEmpty()
+        }
+    }
+
     /** Wait until [serverId]'s repository holds a conversation-id set satisfying [ready], and return it. */
     private suspend fun hostConversationIds(
         serverId: String,
@@ -1785,6 +1934,18 @@ class InteractiveStreamE2ETest {
         const val ARG_PEER_TOKEN = "peerToken"
         const val PEER_CHAT_NAME_PREFIX = "e2e848-"
 
+        // #849 queue scenario. WAIT_PROMPT reuses #481's shell-tool lever to hold the peer's turn open for
+        // the queue steps; foreground, so the turn really waits. DROP_PROMPT and PEER_QUEUED_PROMPT ask for
+        // reply tokens no other prompt produces, so an exact-text node with either would mean a dropped
+        // message reached claude. None of the texts or the chat prefix contains the exact word "ping".
+        const val WAIT_PROMPT =
+            "Run this exact shell command with your tools in the foreground, then reply with exactly: pyrywait. Command: sleep 90"
+        const val DROP_PROMPT = "Reply with exactly: pyrydropped"
+        const val DROP_REPLY = "pyrydropped"
+        const val PEER_QUEUED_PROMPT = "Reply with exactly: pyrypeerdropped"
+        const val PEER_QUEUED_REPLY = "pyrypeerdropped"
+        const val QUEUE_CHAT_NAME_PREFIX = "e2e849-"
+
         // Pairing-flow production strings (hardcoded in the composables, no resources). PASTE_CODE_LINK is
         // the common tail of all three scanner states' paste links — "Trouble scanning? Paste the pairing
         // code instead", "Paste the pairing code instead", "Paste code instead" — matched as a substring so
@@ -1815,5 +1976,8 @@ class InteractiveStreamE2ETest {
 
         // Generous: a real claude turn over the relay can take many seconds end to end.
         const val REPLY_TIMEOUT_MS = 90_000L
+
+        // #849: the peer's wait turn sleeps 90 s before the drained ping's turn can even start.
+        const val WAIT_TURN_TIMEOUT_MS = 240_000L
     }
 }
