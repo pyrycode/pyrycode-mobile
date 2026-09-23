@@ -79,3 +79,7 @@ None named by the ticket. Pending for the documentation stage: the thread's stat
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-23
+
+## Revisions
+
+**2026-09-23 — Open question resolved (overlap with #816).** #816 merged to `main` (PR #870) during the build. `git merge-tree` of this branch against `origin/main` reports no conflict; `main` is merged into the branch and the touched scope re-verified on the merged tree. The design is unchanged.
