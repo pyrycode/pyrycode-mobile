@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.ModalContext
 import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.data.model.Role
@@ -828,7 +829,9 @@ private fun HistoryTailSurface(content: @Composable () -> Unit) {
  * highlights the producer's fail-safe-deny [defaultOptionId][ModalUiState.Open.defaultOptionId].
  *
  * Since #815 it is drawn in the shared mobile modal container ([MobileGateModal]): the server title fills
- * the header, the prompt and options fill the scroll area, and the footer carries only Cancel.
+ * the header, the prompt and options fill the scroll area, and the footer carries only Cancel. Since #817
+ * claude's decision context ([PermissionContext]) sits between the prompt and the options, only when the
+ * frame carried any.
  *
  * Security (this slice owns the render-time obligations #445 deferred):
  * - **Inert output-encoding** — every server string renders through plain [Text] (literal, no
@@ -858,6 +861,7 @@ private fun PermissionModalOverlay(
         onCancel = onCancel,
     ) {
         Text(text = open.prompt, style = MaterialTheme.typography.bodyLarge)
+        if (!open.context.isEmpty) PermissionContext(open.context)
         Column(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -874,6 +878,54 @@ private fun PermissionModalOverlay(
                 )
             }
         }
+    }
+}
+
+/**
+ * Claude's decision context for the ask (#817), in the desktop's order: reason, description, blocked path.
+ * The reason row's label names the `reason_type` — a sentence for `classifier` and `rule`, the raw category
+ * for any other value (never dropped), `Reason` when none arrived — and it renders alone when only the
+ * category did. Labels are local strings; every value is claude-authored and renders through plain [Text]
+ * only (no markdown, no link handling, no `SelectionContainer`, no saved state), like the prompt above it.
+ */
+@Composable
+private fun PermissionContext(context: ModalContext) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        // The container frame's (`533-2369`) content-row gap.
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (context.reason != null || context.reasonType != null) {
+            val label =
+                when (val type = context.reasonType) {
+                    "classifier" -> stringResource(R.string.modal_context_reason_classifier)
+                    "rule" -> stringResource(R.string.modal_context_reason_rule)
+                    null -> stringResource(R.string.modal_context_reason)
+                    else -> stringResource(R.string.modal_context_reason_type, type)
+                }
+            ModalContextRow(label = label, value = context.reason)
+        }
+        context.description?.let { ModalContextRow(stringResource(R.string.modal_context_description), it) }
+        context.blockedPath?.let { ModalContextRow(stringResource(R.string.modal_context_blocked_path), it) }
+    }
+}
+
+/**
+ * The container frame's label style over its value (the frame's "Input large" stacking, 8 dp apart) rather
+ * than its single-line read-only row, because a reason or description is prose an ellipsis would hide. The
+ * row merges its semantics so a screen reader reads label and value as one node.
+ */
+@Composable
+private fun ModalContextRow(
+    label: String,
+    value: String?,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) {},
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(text = label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+        if (value != null) Text(text = value, style = MaterialTheme.typography.bodyMedium)
     }
 }
 
@@ -1101,6 +1153,13 @@ private fun PermissionModalOverlayPreview() {
                             ModalOption(id = "reject_always", label = "Reject always"),
                         ),
                     defaultOptionId = "reject_once",
+                    context =
+                        ModalContext(
+                            reason = "Bash(ls:*) is on the ask list",
+                            reasonType = "rule",
+                            blockedPath = "/home/pyry/project",
+                            description = "List the project directory",
+                        ),
                 ),
             armedOptionId = "allow_once",
             onOption = {},

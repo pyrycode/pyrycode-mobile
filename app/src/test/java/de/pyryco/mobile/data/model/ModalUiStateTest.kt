@@ -65,6 +65,19 @@ class ModalUiStateTest {
         }
     }
 
+    // #817: the permission context rides the fold, and a later Shown replaces it wholesale.
+    @Test
+    fun shownCarriesItsPermissionContext_andALaterShownReplacesIt() {
+        val context = ModalContext(reason = "A rule matched", reasonType = "rule", blockedPath = "/etc", description = "d")
+        val shown = ModalEvent.Shown("m1", "permission", "t", "p", emptyList(), "d", "c1", context)
+
+        val opened = ModalUiState.Hidden.reduce(shown)
+        assertEquals(context, (opened as ModalUiState.Open).context)
+
+        val replaced = opened.reduce(shown.copy(modalId = "m2", context = ModalContext.None))
+        assertEquals(ModalContext.None, (replaced as ModalUiState.Open).context)
+    }
+
     @Test
     fun nonMatchingDismiss_leavesOpenUnchanged() {
         val open = open(modalId = "m1")
