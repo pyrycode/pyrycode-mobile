@@ -1,5 +1,8 @@
 package de.pyryco.mobile.ui.conversations.components
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
@@ -13,6 +16,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.model.ToolDenial
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Rule
 import org.junit.Test
@@ -26,6 +30,11 @@ class ToolCallRowTest {
     // Matches the string resources added in #388.
     private val runningDescription = "Tool call running"
     private val failedDescription = "Tool call failed"
+
+    private fun string(id: Int): String = InstrumentationRegistry.getInstrumentation().targetContext.getString(id)
+
+    private val doneDescription = string(R.string.cd_tool_done)
+    private val deniedDescription = string(R.string.cd_tool_denied)
 
     private fun runningToolCall() =
         ToolCall(
@@ -120,4 +129,102 @@ class ToolCallRowTest {
         composeTestRule.onNodeWithContentDescription(copyCode).assertDoesNotExist()
         composeTestRule.onNodeWithTag(CODE_BLOCK_HEADER_TAG).assertDoesNotExist()
     }
+
+    @Test
+    fun done_shows_its_own_affordance() {
+        setContent(doneToolCall())
+
+        composeTestRule.onNodeWithContentDescription(doneDescription).assertIsDisplayed()
+    }
+
+    @Test
+    fun denied_shows_its_own_affordance_not_the_failed_one() {
+        setContent(deniedToolCall())
+
+        composeTestRule.onNodeWithContentDescription(deniedDescription).assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription(failedDescription).assertDoesNotExist()
+    }
+
+    @Test
+    fun running_with_a_reading_shows_the_elapsed_time() {
+        setContent(runningToolCall().copy(elapsedSeconds = 65))
+
+        composeTestRule.onNodeWithTag(TOOL_ELAPSED_TAG).assertIsDisplayed()
+        composeTestRule.onNodeWithText("1m 05s").assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription(runningDescription).assertIsDisplayed()
+    }
+
+    @Test
+    fun running_without_a_reading_shows_no_time() {
+        setContent(runningToolCall())
+
+        composeTestRule.onNodeWithTag(TOOL_ELAPSED_TAG).assertDoesNotExist()
+    }
+
+    @Test
+    fun a_resolved_row_shows_no_time_even_with_a_stale_reading() {
+        setContent(doneToolCall().copy(elapsedSeconds = 12))
+
+        composeTestRule.onNodeWithTag(TOOL_ELAPSED_TAG).assertDoesNotExist()
+        composeTestRule.onNodeWithText("12s").assertDoesNotExist()
+    }
+
+    @Test
+    fun the_subject_comes_from_the_input_fields() {
+        setContent(
+            doneToolCall().copy(
+                inputFields = mapOf("command" to "git status", "description" to "Show working tree status"),
+            ),
+        )
+
+        composeTestRule.onNodeWithText("Show working tree status").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Bash").assertIsDisplayed()
+    }
+
+    @Test
+    fun an_expanded_denied_row_shows_the_denial_message() {
+        setContent(deniedToolCall())
+        composeTestRule.onNode(hasClickAction()).performClick()
+
+        composeTestRule.onNodeWithText("The user declined this command.").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Output").assertDoesNotExist()
+    }
+
+    @Test
+    fun a_row_stays_expanded_while_it_is_updated_in_place() {
+        var toolCall by mutableStateOf(runningToolCall().copy(elapsedSeconds = 3))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ToolCallRow(toolCall = toolCall)
+            }
+        }
+        composeTestRule.onNode(hasClickAction()).performClick()
+        composeTestRule.onNodeWithText("Input").assertIsDisplayed()
+
+        toolCall = toolCall.copy(elapsedSeconds = 4)
+        composeTestRule.onNodeWithText("4s").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Input").assertIsDisplayed()
+
+        toolCall = toolCall.copy(status = ToolCallStatus.Done, output = "built", elapsedSeconds = null)
+        composeTestRule.onNodeWithText("Input").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Output").assertIsDisplayed()
+        composeTestRule.onNodeWithText("built").assertIsDisplayed()
+    }
+
+    private fun deniedToolCall() =
+        ToolCall(
+            toolName = "Bash",
+            input = "rm -rf build",
+            output = "",
+            status = ToolCallStatus.Denied,
+            denial =
+                ToolDenial(
+                    toolName = "Bash",
+                    decisionReasonType = "user",
+                    decisionReason = "",
+                    message = "The user declined this command.",
+                    truncatedFields = null,
+                    droppedFields = null,
+                ),
+        )
 }

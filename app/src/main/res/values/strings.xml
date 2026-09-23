@@ -147,6 +147,13 @@
     <string name="cd_thread_refusal_collapse">Hide Claude\'s explanation</string>
     <string name="cd_tool_running">Tool call running</string>
     <string name="cd_tool_failed">Tool call failed</string>
+    <string name="cd_tool_done">Tool call done</string>
+    <string name="cd_tool_denied">Tool call denied</string>
+    <string name="tool_row_input">Input</string>
+    <string name="tool_row_output">Output</string>
+    <string name="tool_row_denial">Denied by claude</string>
+    <string name="tool_row_expand">Show tool details</string>
+    <string name="tool_row_collapse">Hide tool details</string>
     <string name="thread_overflow_new_session">Reset session</string>
     <string name="thread_overflow_rename">Rename</string>
     <string name="thread_overflow_change_workspace">Change workspace…</string>
