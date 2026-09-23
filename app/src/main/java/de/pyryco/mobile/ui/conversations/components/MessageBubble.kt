@@ -21,6 +21,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.coroutines.delay
 import kotlinx.datetime.Instant
@@ -42,6 +43,10 @@ internal val BubbleContentSpacing = 12.dp // `Message` gap-[12px] — body to me
 internal val MessageContentGutter = 20.dp
 internal val MessageRoleInset = 100.dp
 
+// #896: the frame has no subagent grouping, so each nesting level steps a tool row in by the
+// `Message area` gap it already uses between rows.
+private val ToolNestingIndent = MessageAreaRowSpacing
+
 // The bubble's own container, tagged because its *width* is the property under test and nothing else
 // observes it: a body `Text` hugs its own content whether or not the container around it does, so the
 // Surface is the only node that moves when the hug regresses.
@@ -53,10 +58,15 @@ private const val STREAMING_REVEAL_STEP_CHARS = 1
 private const val STREAMING_REVEAL_STEP_MS: Long = 1000L / STREAMING_REVEAL_CHARS_PER_SECOND
 private const val STREAMING_CARET_BLINK_PERIOD_MS: Long = 500L
 
+/**
+ * [toolNestingDepth] (#896) is read only by a tool row: how many `Agent`/`Task` calls deep a subagent's
+ * call sits. Each level indents the row's leading edge one [ToolNestingIndent] past the gutter.
+ */
 @Composable
 fun MessageBubble(
     message: Message,
     modifier: Modifier = Modifier,
+    toolNestingDepth: Int = 0,
 ) {
     when (message.role) {
         Role.User -> UserMessageBubble(message, modifier)
@@ -69,7 +79,12 @@ fun MessageBubble(
             message.toolCall?.let {
                 ToolCallRow(
                     toolCall = it,
-                    modifier = modifier.padding(horizontal = MessageContentGutter),
+                    modifier =
+                        modifier.padding(
+                            start = MessageContentGutter + ToolNestingIndent * toolNestingDepth,
+                            end = MessageContentGutter,
+                        ),
+                    subagentDepth = toolNestingDepth,
                 )
             }
     }
@@ -295,8 +310,22 @@ private fun MessageBubblePreviewSequence() {
         // this sequence wraps and so reaches the lane maximum, which is what made the hug invisible
         // under review: 272dp is the maximum, and a brief reply must sit well inside it.
         MessageBubble(previewMessage(role = Role.Assistant, content = "On it."))
+        // #896: an agent call, its subagent's call one level in, and that subagent's own subagent two in.
+        PreviewToolNesting.forEachIndexed { depth, toolCall ->
+            MessageBubble(
+                message = previewMessage(role = Role.Tool, content = "").copy(toolCall = toolCall),
+                toolNestingDepth = depth,
+            )
+        }
     }
 }
+
+private val PreviewToolNesting =
+    listOf(
+        ToolCall(toolName = "Agent", input = "Survey the schema", output = ""),
+        ToolCall(toolName = "Task", input = "Check the legacy table", output = ""),
+        ToolCall(toolName = "Grep", input = "user_id", output = "", inputFields = mapOf("pattern" to "user_id")),
+    )
 
 @Preview(name = "MessageBubble — Light", showBackground = true, widthDp = 412)
 @Composable

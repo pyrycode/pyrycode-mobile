@@ -91,6 +91,7 @@ internal const val TOOL_ELAPSED_TAG = "tool-row-elapsed"
 fun ToolCallRow(
     toolCall: ToolCall,
     modifier: Modifier = Modifier,
+    subagentDepth: Int = 0,
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     ToolCallRowContent(
@@ -98,17 +99,27 @@ fun ToolCallRow(
         expanded = expanded,
         onToggle = { expanded = !expanded },
         modifier = modifier,
+        subagentDepth = subagentDepth,
     )
 }
 
+/**
+ * [subagentDepth] (#896) is how many `Agent`/`Task` calls deep a subagent's call sits; above 0 the row
+ * says so in its content description. The description joins the clickable `Column`'s merged node, so a
+ * screen reader announces it with the row rather than as a separate stop, and the level carries the
+ * nesting that the caller's indent shows.
+ */
 @Composable
 private fun ToolCallRowContent(
     toolCall: ToolCall,
     expanded: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
+    subagentDepth: Int = 0,
 ) {
     val clickLabel = stringResource(if (expanded) R.string.tool_row_collapse else R.string.tool_row_expand)
+    val subagentDescription =
+        if (subagentDepth > 0) stringResource(R.string.cd_tool_subagent_step, subagentDepth) else null
     Surface(
         modifier =
             modifier
@@ -121,7 +132,13 @@ private fun ToolCallRowContent(
         Column(
             modifier =
                 Modifier
-                    .clickable(onClickLabel = clickLabel, role = Role.Button, onClick = onToggle)
+                    .then(
+                        if (subagentDescription != null) {
+                            Modifier.semantics { contentDescription = subagentDescription }
+                        } else {
+                            Modifier
+                        },
+                    ).clickable(onClickLabel = clickLabel, role = Role.Button, onClick = onToggle)
                     .padding(
                         start = ToolCallHorizontalPadding,
                         end = ToolCallHorizontalPadding,
