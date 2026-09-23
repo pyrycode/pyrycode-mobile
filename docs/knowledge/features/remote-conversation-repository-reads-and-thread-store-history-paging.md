@@ -61,11 +61,16 @@ different sequences that both look like small integers, and neither appears in t
 merge actually checks, per `ThreadItem` kind, is **the same key `ThreadScreen`'s `LazyColumn` uses to key
 that row** — not `==`. This mattered in practice: the obvious dedup for a `SessionBoundary` is structural
 equality (every field is payload-derived, so a page twin equals its live twin), and it passes every
-overlap test — but `ThreadScreen` keys a boundary row on `(previousSessionId, newSessionId)` alone and
-reads neither `reason` nor `occurredAt`, so a page carrying two boundaries sharing that pair and differing
-only in `occurredAt` would pass an equality check and still hand the `LazyColumn` two rows with one key,
-which throws. The general lesson: when a list row has a client-visible identity, dedup upstream on *that*
-identity, or the two can silently disagree. A `MessageItem` joins on `message_id` alone, id-only and
+overlap test — but at the time `ThreadScreen` keyed a boundary row on `(previousSessionId, newSessionId)`
+alone and read neither `reason` nor `occurredAt`, so a page carrying two boundaries sharing that pair and
+differing only in `occurredAt` would pass an equality check and still hand the `LazyColumn` two rows with
+one key, which throws. The general lesson: when a list row has a client-visible identity, dedup upstream
+on *that* identity, or the two can silently disagree. [#775](../codebase/775.md) later found that the
+pair alone is not a safe join key either — an idle-evicted session keeps its id, so a session evicted
+twice legitimately sends the pair twice with different instants, and both boundaries are real. The join
+key (`holdsBoundary`, `internal` since #775) and the list key both moved to the full
+`(previousSessionId, newSessionId, occurredAt)` triple, so the merge admits the second eviction instead
+of dropping it. A `MessageItem` joins on `message_id` alone, id-only and
 role-agnostic — one key serves a stored `message`/`send_message` entry, a `tool_use_id`, and a `turn_id`,
 and it is also `appendMessages`' existing live-lane dedup rule. An `UnrecognizedMessage` joins on its id,
 which the reducer derives as `"history-${entry.id}"` from the durable per-conversation log id — stable
@@ -93,10 +98,11 @@ indicator): the reduction's return type is `List<ThreadItem>` and it holds no re
 `stalledConversations`, the live-event stream, or the modal state, so those state frames simply have no
 arm and land in the silent `else`.
 
-**Out-of-scope, filed:** the live lane's own `appendSessionBoundary` still has no dedup at all (see
-[Session-transition fold](session-transition-fold.md)) — the merge above closes this only for the history
-path. Fixing the live side means editing `appendSessionBoundary` or the renderer's key, tracked as
-[#775](../codebase/775.md).
+**Closed by #775:** the live lane's own `appendSessionBoundary` used to have no dedup at all (see
+[Session-transition fold](session-transition-fold.md)) — the merge above closed the crash only for the
+history path. [#775](../codebase/775.md) gave `appendSessionBoundary`, this merge and the renderer's key
+one shared `(previousSessionId, newSessionId, occurredAt)` identity, so a repeated eviction is now
+admitted as its own row on every path instead of crashing the live lane.
 
 ## The walk that finally calls `requestHistory` (#777)
 

@@ -151,6 +151,13 @@ The stream interleaves both kinds of row in order, so the consumer never paginat
 
 - `MessageItem` **wraps** `Message` rather than having `Message` implement `ThreadItem` directly — keeping a `data/repository/` type out of `data/model/`'s parent chain preserves the layer direction.
 - `SessionBoundary` carries both `previousSessionId` and `newSessionId`. Previous anchors the delimiter to the messages above it; new gives the "claude doesn't remember above the line" prompt a stable handle.
+- `SessionBoundary`'s identity is `(previousSessionId, newSessionId, occurredAt)`, not the session pair
+  alone — invariant, unique within a thread ([#775](../codebase/775.md)). `ThreadScreen`'s `LazyColumn`
+  keys a boundary row on exactly these three fields, so a duplicate triple crashes it; the pair alone is
+  not unique, because an idle-evicted session keeps its id and every eviction of it is `A->A`. Uniqueness
+  is a producer obligation, not construction-enforced — both thread writers (the live lane's
+  `appendSessionBoundary` and the history merge's `holdsBoundary`) skip a boundary the thread already
+  holds — documented in KDoc and asserted in tests, the same posture as `UnrecognizedMessage.id`.
 - `BoundaryReason` lists exactly the three triggers CLAUDE.md names. No speculative `Manual` / `Other` / `Unknown` — add a value if and when a fourth trigger lands.
 - `SessionBoundary.workspaceCwd` (#192) carries the new workspace path on the `WorkspaceChange` variant only. Same defaulted-nullable-last-field pattern as `Message.toolCall` (#191); see [`../codebase/192.md`](../codebase/192.md).
 
