@@ -62,6 +62,109 @@ override suspend fun createWorkspaceFolder(name: String): String {
   conversation-scoped mutation the #537 family covers); the picker is reachable today from all three entry
   points regardless of the coarse flag's value.
 
+## `renameWorkspace` and `archiveWorkspace` — the two workspace-row verbs desktop already had (#663)
+
+Adds desktop's two remaining workspace operations for [#664](../codebase/664.md)'s Edit workspace modal to
+call; this ticket draws no UI. Both override throwing interface defaults, the `createWorkspaceFolder` shape,
+and both are delegated one line each by [`StableConversationRepository`](stable-conversation-repository.md)
+to its `live` handle, the `setSystemPrompt` shape. `HostConversationSource.repositoryFor(serverId)` is
+already the host targeting — one repository instance per host — so neither verb adds routing.
+
+**`renameWorkspace(path, label)` is a daemon verb; `archiveWorkspace(path)` is not.** The wire has
+`rename_workspace {path, label}`, answered by a correlated `workspace_updated` — the **same** push
+[#721](#721-apply-workspace-label-updates-and-the-conversation_updated-split) already applied unconditionally
+in [`onInbound`](remote-conversation-repository-reads-and-thread-store.md#the-repository--one-projection-cold-fan-out)
+for unsolicited relabels. #721 shipped the apply with nothing to complete; this ticket adds the sender and
+the waiter together. The daemon has no `archive_workspace`: `archiveWorkspace` is a client-side fan-out of
+the existing per-conversation `archive` (`sendArchiveToggle`), one `archive_conversation` per active row on
+this host whose `cwd` equals `path`. It sends no rename and no delete, so the stored label survives an
+archive.
+
+```kotlin
+override suspend fun renameWorkspace(path: String, label: String?) {
+    val request = Envelope(
+        id = requestId.incrementAndGet(), type = TYPE_RENAME_WORKSPACE, ts = Clock.System.now().toString(),
+        payload = MobileJson.encodeToJsonElement(RenameWorkspacePayloadDto(path = path, label = label)),
+    )
+    val reply = sendAndAwaitReply(request)
+    val confirmedPath = try {
+        MobileJson.decodeFromJsonElement<WorkspaceUpdatedPayloadDto>(reply).path
+    } catch (e: IllegalArgumentException) { null }
+    if (confirmedPath != path) throw malformedWorkspaceReply()
+}
+
+override suspend fun archiveWorkspace(path: String) {
+    val targets = projection.value.orEmpty().filter { it.cwd == path && !it.archived }.map { it.id }
+    var firstFailure: Exception? = null
+    for (conversationId in targets) {
+        try {
+            archive(conversationId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (firstFailure == null) firstFailure = e
+        }
+    }
+    firstFailure?.let { throw it }
+}
+```
+
+- **A reply from the shared correlated-reply machinery has to be checked against what the call promised,
+  not just awaited.** The `TYPE_WORKSPACE_UPDATED` arm looks up the waiter by `in_reply_to` **before**
+  decoding, applies `applyWorkspaceLabel` first, and completes the waiter only after — so the caller resumes
+  onto rows that already carry the new label — but the shared correlated arms elsewhere in `onInbound`
+  complete *any* waiter with *whatever* payload arrives under its id. A `conversation_updated`, or a
+  `workspace_updated` for a **different** path, correlated to this request's id would otherwise complete the
+  waiter successfully with `path` left unlabelled. `renameWorkspace` re-decodes the completed payload as
+  `WorkspaceUpdatedPayloadDto` and requires `decoded.path == path`, throwing `RelayErrorException` with
+  `ERROR_MALFORMED_REPLY` otherwise (also covers a plain decode failure). The verifier's one recorded NIT: a
+  correlated `workspace_updated` naming a *different* path is still applied to **that other path's** rows
+  before the mismatch is caught — consistent with #721's apply-unconditionally rule (a lying daemon could
+  reach the same row through an ungated `conversations` snapshot anyway), left as-is and recorded for #664's
+  error copy.
+- **The reason a malformed correlated reply cannot be left to the generic decode-or-drop.** Every other
+  `onInbound` arm's decode failure just drops the frame and leaves the collector alive — safe, because
+  nothing is waiting on it. A `rename_workspace` reply is different: dropping it silently would leave
+  `renameWorkspace`'s caller suspended until teardown (`failAllPending`) instead of failing promptly. So the
+  `TYPE_WORKSPACE_UPDATED` arm's decode `catch` calls `waiter?.completeExceptionally(malformedWorkspaceReply())`
+  before returning — only when a waiter exists; an unsolicited malformed push still just drops. The
+  kotlinx `SerializationException` itself is never forwarded, since its message can quote the payload (a
+  path and a label); the waiter gets a static `RelayErrorException(ERROR_MALFORMED_REPLY, ...)` instead.
+- **A test asserting "the label is visible when the call returns" can pass for the wrong reason.** Under
+  `StandardTestDispatcher` the caller resumes one dispatch after `waiter.complete()`, by which point the
+  apply has already run regardless of ordering in the source — so a test on that dispatcher cannot tell
+  "apply-then-complete" from "complete-then-apply". `RemoteConversationRepositoryWorkspaceTest`'s caller
+  coroutine runs on `UnconfinedTestDispatcher`, so `complete()` resumes it **inside** the inbound collector,
+  immediately after the line that calls it — the only way the ordering assertion is load-bearing.
+- **`archiveWorkspace` targets a one-time snapshot of `projection.value`, never a fetched or awaited list.**
+  A `null` projection (no `conversations` snapshot yet) yields no targets, matching the ticket's "does not
+  wait for a list that has not arrived yet." A path with no matching active row sends nothing at all — no
+  frame, no round trip. Archived rows at the same path are excluded (already inactive) but never touched
+  either way; `archive`'s own confirmed-upsert (unchanged from its existing per-conversation shape) is what
+  actually moves a row off the active list, one row at a time as its own reply lands.
+- **Sequential, not concurrent, and `CancellationException` is checked first because it is itself an
+  `IllegalStateException`.** Archiving one row at a time keeps ordering deterministic and means a lost
+  connection (`sendAndAwaitReply`'s not-connected `check`, or `failAllPending` mid-await) fails every
+  remaining row immediately rather than after a full timeout each — "try the rest" costs nothing once the
+  pump is dead. The per-row `catch` tests `CancellationException` before the general `Exception` catch and
+  rethrows it at once; getting that order backwards would swallow a caller's own cancellation as an ordinary
+  per-row failure and keep firing archive requests after the caller gave up (flagged SHOULD FIX in the
+  plan's security review, implemented as shipped). The loop always finishes the remaining rows before
+  throwing the **first** failure — confirmed rows stay archived, refused rows stay active, and a retry's
+  fresh snapshot sends only the still-active ones.
+- **`RenameWorkspacePayloadDto` relies on `MobileJson`'s `explicitNulls = false` to encode "clear" as
+  "omitted."** `RenameWorkspacePayloadDto(path, label: String? = null)` is encode-only; a `null` label is
+  dropped from the JSON entirely rather than serialized as `"label":null`. The daemon reads a missing
+  `label` the same way it reads an explicit `null` — both clear the stored label — so the two encodings are
+  interchangeable on the wire, and `RenameWorkspacePayloadDtoTest` pins both shapes byte-for-byte rather
+  than trusting that behaviour by inference.
+- **Path comparison is exact-bytes, matching `applyWorkspaceLabel`'s existing posture.** `archiveWorkspace`
+  filters `it.cwd == path` with plain `String` equality — no trim, no normalization — so a workspace at
+  `/w/alpha` and a sibling row at `/w/alpha/` or `/w/alpha ` are different targets, never conflated.
+- **Nothing here is logged, on either verb, on any branch.** `path` is a location on the daemon's host and
+  `label` is operator-authored text; neither appears in a log call or in any exception message this ticket
+  adds (`WORKSPACE_REPLY_MALFORMED` is a static string).
+
 ## `recentWorkspaces()` — the fourth read verb, leanest of the family, no fold ([#565](../codebase/565.md))
 
 Lists recently-used workspace folders over v2 `recent_workspaces` (server pyrycode#888, the recents

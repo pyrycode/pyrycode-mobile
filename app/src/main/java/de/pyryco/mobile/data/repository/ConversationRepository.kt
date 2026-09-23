@@ -272,6 +272,44 @@ interface ConversationRepository {
         error("createWorkspaceFolder is not implemented for this ConversationRepository")
 
     /**
+     * Set or clear the display name this host stores for the workspace at [path] (#663), one
+     * `rename_workspace` per call. [path] is the workspace's exact `cwd`, matched as bytes; [label] is
+     * sent verbatim, and `null` clears it. Trimming, and treating a blank or the folder's own name as a
+     * clear, are the caller's concern.
+     *
+     * Returns only after the daemon's correlated reply has been applied: by then every row at [path] in
+     * this repository, archived rows included, carries the stored label (or none). Rows at other paths
+     * are unchanged.
+     *
+     * Throws [de.pyryco.mobile.data.network.RelayErrorException] carrying the daemon's `code` for a
+     * refusal (`workspace.not_found`, or `protocol.malformed` for a blank or over-long label) and for a
+     * reply that does not confirm [path]; [IllegalStateException] when the session is not connected or
+     * tears down before the reply. No row changes on any failure.
+     *
+     * Default throws, like [createWorkspaceFolder]: only the relay repository implements it.
+     */
+    suspend fun renameWorkspace(
+        path: String,
+        label: String?,
+    ): Unit = error("renameWorkspace is not implemented for this ConversationRepository")
+
+    /**
+     * Archive every active channel and discussion on this host whose `cwd` equals [path] byte for byte
+     * (#663), through one [archive] per row. There is no workspace verb on the wire; this mirrors
+     * desktop's fan-out. Archived rows and other paths are left alone, nothing is renamed or deleted,
+     * and the stored workspace label stays.
+     *
+     * Targets are this repository's current rows at call time; a path with no active rows sends nothing.
+     * Each row leaves the active list when its own archive is confirmed, and the call returns after all
+     * of them. If any archive fails, the remaining rows are still attempted and the call then throws the
+     * first failure, with the types [archive] documents. Confirmed rows stay archived, so calling again
+     * archives only the rows still active.
+     *
+     * Default throws, like [renameWorkspace].
+     */
+    suspend fun archiveWorkspace(path: String): Unit = error("archiveWorkspace is not implemented for this ConversationRepository")
+
+    /**
      * Requests the current claude screen for [conversationId] and returns its rendered text — the
      * always-available, parser-independent snapshot floor (pyrycode#596, ADR 025 § Safe degradation).
      * The returned text is **verbatim**: never parsed, trimmed, or sanitized — decode fidelity is the
