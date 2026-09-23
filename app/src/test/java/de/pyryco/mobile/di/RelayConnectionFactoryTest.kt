@@ -46,9 +46,6 @@ import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
-import de.pyryco.mobile.ui.conversations.thread.LiteralScreenEvent
-import de.pyryco.mobile.ui.conversations.thread.LiteralScreenUiState
-import de.pyryco.mobile.ui.conversations.thread.LiteralScreenViewModel
 import de.pyryco.mobile.ui.conversations.thread.ThreadEvent
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import kotlinx.coroutines.CompletableDeferred
@@ -963,8 +960,6 @@ class RelayConnectionFactoryTest {
                 fun handle(host: String) = SavedStateHandle(mapOf("serverId" to host, "conversationId" to "c"))
                 val a = app.koin.get<ThreadViewModel> { parametersOf(handle("A")) }.also { vms += it }
                 val b = app.koin.get<ThreadViewModel> { parametersOf(handle("B")) }.also { vms += it }
-                val literalA = app.koin.get<LiteralScreenViewModel> { parametersOf(handle("A")) }.also { vms += it }
-                val literalB = app.koin.get<LiteralScreenViewModel> { parametersOf(handle("B")) }.also { vms += it }
                 assertNotSame(a, b)
                 backgroundScope.launch { a.state.collect {} }
                 backgroundScope.launch { b.state.collect {} }
@@ -1049,8 +1044,6 @@ class RelayConnectionFactoryTest {
                 a.onModalCancel()
                 a.onDropQueued(42)
                 a.onOverflowEvent(ThreadEvent.RenameSubmit("A renamed"))
-                literalA.onEvent(LiteralScreenEvent.Request)
-                literalB.onEvent(LiteralScreenEvent.Request)
                 runCurrent()
                 assertEquals(
                     listOf(
@@ -1061,16 +1054,15 @@ class RelayConnectionFactoryTest {
                         "modal_cancel",
                         "dequeue_message",
                         "rename_conversation",
-                        "request_snapshot",
                     ),
                     ta.outbound.map {
                         it.type
                     },
                 )
-                assertEquals(listOf("request_snapshot"), tb.outbound.map { it.type })
+                assertTrue(tb.outbound.isEmpty())
                 for (frame in ta.outbound.filter {
                     it.type in
-                        listOf("send_message", "interrupt", "new_session", "dequeue_message", "request_snapshot")
+                        listOf("send_message", "interrupt", "new_session", "dequeue_message")
                 }) {
                     assertEquals(
                         "c",
@@ -1087,39 +1079,16 @@ class RelayConnectionFactoryTest {
                         ?.jsonPrimitive
                         ?.content,
                 )
-
-                fun snapshot(
-                    t: PeerTransport,
-                    text: String,
-                ) {
-                    val request = t.outbound.last { it.type == "request_snapshot" }
-                    t.emit(
-                        envelope(
-                            "screen_snapshot",
-                            """{"conversation_id":"c","text":"$text","ts":"2026-09-20T00:00:00Z"}""",
-                        ).copy(inReplyTo = request.id),
-                    )
-                }
-                snapshot(ta, "A snapshot")
-                snapshot(tb, "B snapshot")
-                runCurrent()
-                assertEquals(LiteralScreenUiState.Content("A snapshot"), literalA.state.value)
-                assertEquals(LiteralScreenUiState.Content("B snapshot"), literalB.state.value)
                 registry.connectionFor("A")!!.supervisor.close()
                 runCurrent()
                 b.onInterrupt()
                 runCurrent()
                 assertEquals("interrupt", tb.outbound.last().type)
-                literalA.onEvent(LiteralScreenEvent.Retry)
-                runCurrent()
-                assertTrue(literalA.state.value is LiteralScreenUiState.Error)
                 f.handshaking = "A"
                 a.retry()
                 runCurrent()
-                literalA.onEvent(LiteralScreenEvent.Retry)
                 a.onInterrupt()
                 runCurrent()
-                assertTrue(literalA.state.value is LiteralScreenUiState.Error)
                 val nextA = f.transports.last()
                 assertEquals("A", nextA.record.serverId)
                 assertTrue(nextA.outbound.isEmpty())
@@ -1129,11 +1098,6 @@ class RelayConnectionFactoryTest {
                 runCurrent()
                 assertEquals("A reconnected", a.state.value.displayName)
                 assertEquals("B content", b.state.value.displayName)
-                literalA.onEvent(LiteralScreenEvent.Retry)
-                runCurrent()
-                snapshot(nextA, "A resumed snapshot")
-                runCurrent()
-                assertEquals(LiteralScreenUiState.Content("A resumed snapshot"), literalA.state.value)
                 val demoApp =
                     KoinApplication.init().modules(
                         appModule,
@@ -1151,7 +1115,6 @@ class RelayConnectionFactoryTest {
                     val chat = fake.createDiscussion(null)
                     val handle = SavedStateHandle(mapOf("serverId" to "demo", "conversationId" to chat.id))
                     val demo = demoApp.koin.get<ThreadViewModel> { parametersOf(handle) }.also { vms += it }
-                    val literal = demoApp.koin.get<LiteralScreenViewModel> { parametersOf(handle) }.also { vms += it }
                     backgroundScope.launch { demo.state.collect {} }
                     backgroundScope.launch { demo.isThinking.collect {} }
                     backgroundScope.launch { demo.connectionState.collect {} }
@@ -1162,7 +1125,6 @@ class RelayConnectionFactoryTest {
                     demo.onModalOption("deny")
                     demo.onModalCancel()
                     demo.retry()
-                    literal.onEvent(LiteralScreenEvent.Request)
                     runCurrent()
                     assertEquals(
                         "Demo renamed",
@@ -1175,7 +1137,6 @@ class RelayConnectionFactoryTest {
                     assertEquals(ModalUiState.Hidden, demo.currentModal.value)
                     assertFalse(demo.isThinking.value)
                     assertEquals(de.pyryco.mobile.data.model.ConnectionState.Connected, demo.connectionState.value)
-                    assertEquals(LiteralScreenUiState.Content(fake.requestScreenSnapshot(chat.id)), literal.state.value)
                     assertEquals(frames, f.transports.map { it.outbound.size })
                 } finally {
                     demoApp.close()

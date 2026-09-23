@@ -70,7 +70,6 @@ import de.pyryco.mobile.ui.conversations.components.RenameDialog
 import de.pyryco.mobile.ui.conversations.components.ResettingIndicator
 import de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog
 import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
-import de.pyryco.mobile.ui.conversations.components.StallPromotionBanner
 import de.pyryco.mobile.ui.conversations.components.StatusSheet
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
 import de.pyryco.mobile.ui.conversations.components.TurnOutcomeIndicator
@@ -121,7 +120,6 @@ fun ThreadScreen(
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
     isThinking: Boolean = false,
-    isStalled: Boolean = false,
     apiRetry: ApiRetryStatus = ApiRetryStatus.NotRetrying, // #594: claude's API-retry status, replaces the spinner
     usageLimit: UsageLimitReading? = null, // #804: claude's usage-limit report, below api-retry in the slot
     resetting: ResetStatus? = null, // #872: Reset session's phase, below usage limit and above compaction
@@ -132,7 +130,6 @@ fun ThreadScreen(
     onInterrupt: () -> Unit = {}, // #459: wired by MainActivity → vm::onInterrupt (the #458 send path)
     onTitleClick: () -> Unit = {},
     onOverflowEvent: (ThreadEvent) -> Unit = {},
-    onShowLiteralScreen: () -> Unit = {},
     // #807: a published ModelMenuRow.value / effort level, forwarded verbatim — never a device enum.
     onModelSelected: (String) -> Unit = {},
     onEffortSelected: (String) -> Unit = {},
@@ -244,7 +241,6 @@ fun ThreadScreen(
                     overflowExpanded = overflowExpanded,
                     onOverflowDismiss = { overflowExpanded = false },
                     onOverflowEvent = onOverflowEvent,
-                    onShowLiteralScreen = onShowLiteralScreen,
                     isPromoted = state.isPromoted,
                     mutationsSupported = state.mutationsSupported,
                 )
@@ -309,7 +305,6 @@ fun ThreadScreen(
                 // #843: a rejected pairing reads as Offline here, and its retry cannot succeed — the status
                 // area's Re-pair action replaces it. Network loss still gets the banner and its retry.
                 if (!showRePair) ConnectionBanner(state = connectionState, onRetry = onRetry)
-                StallPromotionBanner(isStalled = isStalled, onShowLiteralScreen = onShowLiteralScreen)
                 if (!state.isPromoted && !state.hasMessages) {
                     WorkspaceChip(
                         workspaceLabel = state.workspaceLabel,

@@ -39,7 +39,6 @@ import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
-import de.pyryco.mobile.ui.conversations.thread.LiteralScreenViewModel
 import de.pyryco.mobile.ui.conversations.thread.ThreadViewModel
 import de.pyryco.mobile.ui.onboarding.PairCodeViewModel
 import de.pyryco.mobile.ui.onboarding.ScannerViewModel
@@ -164,7 +163,6 @@ val appModule =
                 thread.addCloseable(viewing)
             }
         }
-        viewModel { get<ThreadDestinationFactory>().literal(get()) }
     }
 
 /**
@@ -314,15 +312,10 @@ internal class ThreadDestinationFactory(
         )
     }
 
-    fun literal(handle: SavedStateHandle): LiteralScreenViewModel {
-        RelayLog.d { "event=literal_destination_bound" }
-        return LiteralScreenViewModel(handle, repository(handle.get<String>("serverId").orEmpty()))
-    }
-
     /**
      * The Settings destination, owned by the server id the gear captured into its route (#749).
-     * Unlike [thread] and [literal] the owner is optional — a blank one means the destination owns
-     * no host — and unlike them it is never resolved to a bundle here: this screen reads identity
+     * Unlike [thread] the owner is optional — a blank one means the destination owns
+     * no host — and, unlike the thread, it is never resolved to a bundle here: this screen reads identity
      * and status only, so an owner that is saved but not yet connected is still its owner.
      *
      * [preferences] is the one process-wide store, but Settings no longer reads or writes it

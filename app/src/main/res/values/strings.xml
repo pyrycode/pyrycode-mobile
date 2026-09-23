@@ -113,8 +113,6 @@
     <string name="thread_re_pair">Pairing error - Re-pair</string>
     <string name="thread_history_dead_end_label">Earlier messages are unavailable</string>
     <string name="cd_thread_history_dead_end">Earlier messages in this conversation are unavailable</string>
-    <string name="thread_stall_promotion_message">Claude seems to have stalled. See what it\'s doing right now:</string>
-    <string name="cd_thread_stall_promotion">Claude seems to have stalled. Show the literal screen.</string>
     <string name="thread_interrupt_label">Stop</string>
     <string name="cd_thread_interrupt">Stop the running turn</string>
     <string name="cd_thread_copy_message">Copy this message</string>
@@ -140,7 +138,6 @@
     <string name="thread_overflow_archive">Archive</string>
     <string name="thread_overflow_channel_info">Channel info</string>
     <string name="thread_overflow_install_memory_plugin">Install memory plugin</string>
-    <string name="thread_overflow_show_literal_screen">Show the literal screen</string>
     <string name="rename_dialog_title">Rename</string>
     <string name="rename_dialog_field_label">Name</string>
     <string name="rename_dialog_save">Save</string>
@@ -151,14 +148,6 @@
     <string name="save_as_channel_dialog_workspace_scratch">Keep in scratch</string>
     <string name="save_as_channel_dialog_save">Save</string>
     <string name="save_as_channel_dialog_cancel">Cancel</string>
-    <string name="literal_screen_title">Claude\'s screen</string>
-    <string name="literal_screen_back">Back</string>
-    <string name="literal_screen_refresh">Refresh</string>
-    <string name="literal_screen_loading">Loading the screen</string>
-    <string name="literal_screen_retry">Try again</string>
-    <string name="literal_screen_error_unknown_conversation">This conversation couldn\'t be found.</string>
-    <string name="literal_screen_error_server">Couldn\'t load the screen. Try again.</string>
-    <string name="literal_screen_error_not_connected">Not connected. Reconnect to load the screen.</string>
     <string name="modal_default_option_desc">Default</string>
     <string name="modal_dismissed_remote">Resolved on another device</string>
     <string name="modal_dismissed_local">Resolved on this device</string>
