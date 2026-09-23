@@ -291,7 +291,8 @@ distinction from the tree's own blank at all — see the next section.
   emulator scenario for #744's rename flow, #745's removal and #715's two-host archive/restore case,
   blocked by all three and still open), #668
   (indicator-pair live accuracy, conversation-row unread/activity state), #665 (conversation-row edit
-  pencil), #663 (the workspace row's own add control — not #738's), #664 (the add controls' modal content,
-  beyond #738's reuse of the existing pairing scanner for the section header), #675 (disconnected-host
+  pencil), #664 (the workspace row's own add control and its modal content, beyond #738's reuse of
+  the existing pairing scanner for the section header; calls the `renameWorkspace` / `archiveWorkspace`
+  repository methods #663 added with no UI of its own), #675 (disconnected-host
   repair control), #154 / Phase 3 Settings / Phase 4 items predating #731 remain as recorded in
   [`../codebase/`](../codebase/) history.

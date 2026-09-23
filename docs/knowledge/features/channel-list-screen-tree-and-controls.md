@@ -129,10 +129,10 @@ deliberately, recorded in a KDoc comment on `TreeRowControl` in `ConversationTre
 header's own band grows from the design's bare 20dp text line to 48dp for the same reason — it carries a
 control now, not just a label.
 
-**Not in this slice.** `TreeWorkspaceRow` draws no add control — adding a workspace is #663's control and
-\#664's content, deliberately a tier above the host row's plus. The add control's eventual modal content
-(what a section header's pairing flow shows once it lands, beyond reusing the existing scanner) is #664's;
-this slice supplies only the control and its target.
+**Not in this slice.** `TreeWorkspaceRow` draws no add control — adding a workspace, both the control and
+its modal content, is #664's, deliberately a tier above the host row's plus. #663 (the same phase) adds
+`renameWorkspace` / `archiveWorkspace` to the host-owned repository that #664's Edit workspace modal calls,
+but draws no UI itself. This slice supplies only the section-header and host-row controls and their target.
 
 ## Host row edit control (#744)
 
