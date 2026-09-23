@@ -111,6 +111,8 @@ class ScriptedThreadHarness(
                     apiRetry = vm.apiRetry.collectAsState().value,
                     usageLimit = vm.usageLimit.collectAsState().value,
                     isCompacting = vm.isCompacting.collectAsState().value,
+                    // #805: a `replay = 0` live-event fold like isBusy, so it subscribes in this same pass.
+                    turnOutcome = vm.turnOutcome.collectAsState().value,
                     thinkingProgress = vm.thinkingProgress.collectAsState().value,
                     // #459: subscribe isBusy in the same composition pass as state/isThinking so its
                     // `replay = 0` upstream is live before any push* (awaitReady's top-bar proof covers it).
@@ -211,11 +213,19 @@ class ScriptedThreadHarness(
         ),
     )
 
-    /** Script one `turn_end` for [turnId], finalizing the streaming row (#337). */
+    /**
+     * Script one `turn_end` for [turnId], finalizing the streaming row (#337). The four stop-shape fields
+     * (#805) are omitted from the payload when `null`, so a caller that passes none sends the older frame
+     * unchanged and exercises the absent-field decode.
+     */
     fun pushTurnEnd(
         turnId: String,
         stopReason: String = "end_turn",
-    ) = pump.push(turnEndEnvelope(conversationId, turnId, stopReason))
+        outcome: String? = null,
+        isError: Boolean? = null,
+        terminalReason: String? = null,
+        errorCategory: String? = null,
+    ) = pump.push(turnEndEnvelope(conversationId, turnId, stopReason, outcome, isError, terminalReason, errorCategory))
 
     /** Script one `tool_use` — opens a `Running` tool row keyed by [toolUseId] (#387). */
     fun pushToolUse(
@@ -471,19 +481,33 @@ private fun unrecognizedMessageEnvelope(
             },
     )
 
+/**
+ * Built with [buildJsonObject] so a claude-authored field holding control characters (#805) is escaped
+ * into valid JSON rather than breaking the interpolated literal.
+ */
 private fun turnEndEnvelope(
     conversationId: String,
     turnId: String,
     stopReason: String,
+    outcome: String?,
+    isError: Boolean?,
+    terminalReason: String?,
+    errorCategory: String?,
 ): Envelope =
     Envelope(
         id = 1L,
         type = "turn_end",
         ts = TS,
         payload =
-            MobileJson.parseToJsonElement(
-                """{"conversation_id":"$conversationId","turn_id":"$turnId","stop_reason":"$stopReason"}""",
-            ),
+            buildJsonObject {
+                put("conversation_id", conversationId)
+                put("turn_id", turnId)
+                put("stop_reason", stopReason)
+                outcome?.let { put("outcome", it) }
+                isError?.let { put("is_error", it) }
+                terminalReason?.let { put("terminal_reason", it) }
+                errorCategory?.let { put("error_category", it) }
+            },
     )
 
 private fun toolUseEnvelope(

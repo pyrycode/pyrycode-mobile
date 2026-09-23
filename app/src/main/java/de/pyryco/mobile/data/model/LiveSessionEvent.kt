@@ -83,12 +83,26 @@ sealed interface LiveSessionEvent {
         val parentToolUseId: String = "",
     ) : LiveSessionEvent
 
-    /** End of a turn (`turn_end`). [stopReason] is carried as a plain string (wire values include
-     *  `end_turn`/`max_tokens`/`max_turn_requests`/`refusal`/`cancelled`); consumers map it. */
+    /**
+     * End of a turn (`turn_end`). [stopReason] is the daemon's classification, carried as a plain string
+     * (wire values include `end_turn`/`max_tokens`/`max_turn_requests`/`refusal`/`cancelled`); consumers
+     * map it.
+     *
+     * The four defaulted fields (#805) are claude's own account of the stop, each independent of the
+     * others: [isError] is claude's flag and is never implied by [outcome] (`outcome = "success"` with
+     * `isError = true` is a real failed turn), and [outcome] may disagree with [stopReason] by design.
+     * [errorCategory] is claude's report of an API error, not a verified account state. `""` / `false`
+     * means the daemon did not say. [outcome], [terminalReason] and [errorCategory] are claude-authored
+     * and unsanitized: render them only as inert, attributed text.
+     */
     data class TurnEnd(
         override val conversationId: String,
         val turnId: String,
         val stopReason: String,
+        val outcome: String = "",
+        val isError: Boolean = false,
+        val terminalReason: String = "",
+        val errorCategory: String = "",
     ) : LiveSessionEvent
 
     /**

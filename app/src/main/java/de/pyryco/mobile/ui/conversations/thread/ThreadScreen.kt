@@ -81,6 +81,8 @@ import de.pyryco.mobile.ui.conversations.components.SessionBoundaryDelimiter
 import de.pyryco.mobile.ui.conversations.components.StallPromotionBanner
 import de.pyryco.mobile.ui.conversations.components.StatusSheet
 import de.pyryco.mobile.ui.conversations.components.ThinkingIndicator
+import de.pyryco.mobile.ui.conversations.components.TurnOutcomeIndicator
+import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
 import de.pyryco.mobile.ui.conversations.components.UnrecognizedMessageRow
 import de.pyryco.mobile.ui.conversations.components.UsageLimitIndicator
 import de.pyryco.mobile.ui.conversations.components.WorkspaceChip
@@ -139,6 +141,7 @@ fun ThreadScreen(
     apiRetry: ApiRetryStatus = ApiRetryStatus.NotRetrying, // #594: claude's API-retry status, replaces the spinner
     usageLimit: UsageLimitReading? = null, // #804: claude's usage-limit report, below api-retry in the slot
     isCompacting: Boolean = false, // #597: claude is auto-compacting its context, replaces the spinner
+    turnOutcome: TurnOutcomeReport? = null, // #805: how the last turn failed or was interrupted, above thinking
     thinkingProgress: ThinkingProgress? = null, // #803: claude's live token reading, decorates the thinking arm
     isBusy: Boolean = false, // #459: a turn is in flight (thinking OR responding) → show the interrupt affordance
     onInterrupt: () -> Unit = {}, // #459: wired by MainActivity → vm::onInterrupt (the #458 send path)
@@ -253,6 +256,7 @@ fun ThreadScreen(
                     apiRetry = apiRetry,
                     usageLimit = usageLimit,
                     isCompacting = isCompacting,
+                    turnOutcome = turnOutcome,
                     isThinking = isThinking,
                     thinkingProgress = thinkingProgress,
                 )
@@ -566,6 +570,10 @@ fun ThreadScreen(
  * wrong. The arm is raised by a non-`null` reading alone; the expiry and the benign clear are already
  * applied upstream, so nothing here re-reads its fields.
  *
+ * A failed or interrupted turn's outcome (#805) sits directly above thinking — api-retry → usage limit →
+ * compaction → turn outcome → thinking. Compaction is mid-turn and the outcome is post-turn, so the two
+ * co-occurring has not been observed; the outcome clears when the next turn starts.
+ *
  * The design's trailing contextual-action slot stays empty until #675 fills it, so nothing inert is
  * emitted beside the signal. When no signal is live every arm returns without emitting, so the band
  * contributes no node and the composer column's gap above the input field collapses with it.
@@ -581,6 +589,7 @@ private fun ThreadStatusArea(
     apiRetry: ApiRetryStatus,
     usageLimit: UsageLimitReading?,
     isCompacting: Boolean,
+    turnOutcome: TurnOutcomeReport?,
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
 ) {
@@ -589,6 +598,7 @@ private fun ThreadStatusArea(
         apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = slot)
         usageLimit != null -> UsageLimitIndicator(reading = usageLimit, modifier = slot)
         isCompacting -> CompactingIndicator(isCompacting = true, modifier = slot)
+        turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = slot)
         else -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress)
     }
 }

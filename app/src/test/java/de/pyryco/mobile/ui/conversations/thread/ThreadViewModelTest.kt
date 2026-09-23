@@ -34,6 +34,7 @@ import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.conversations.ThrowingConversationRepository
+import de.pyryco.mobile.ui.conversations.components.TurnOutcomeReport
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -64,6 +65,7 @@ import kotlinx.serialization.json.buildJsonObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -434,6 +436,140 @@ class ThreadViewModelTest {
             assertTrue(vm.isBusy.value)
             collector.cancel()
         }
+
+    // ---- #805: turnOutcome, and turn_end still clearing the spinner and the Stop affordance ------
+
+    @Test
+    fun turnOutcome_initialValue_isNullWithNoLiveSource() =
+        runTest {
+            val handle = SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV))
+            val vm = makeVm(handle, FakeConversationRepository())
+            assertNull(vm.turnOutcome.value)
+        }
+
+    @Test
+    fun turnOutcome_failedTurnEnd_isReported() =
+        runTest {
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = vmWithLiveEvents(events)
+            val collector = launch { vm.turnOutcome.collect {} }
+            advanceUntilIdle()
+
+            events.emit(failedTurnEnd(ACTIVE_CONV))
+            advanceUntilIdle()
+
+            assertEquals(
+                TurnOutcomeReport(TurnOutcomeReport.Kind.Failed, listOf("prompt_too_long"), null),
+                vm.turnOutcome.value,
+            )
+            collector.cancel()
+        }
+
+    @Test
+    fun turnOutcome_cleanTurnEnd_clearsAStaleReport() =
+        runTest {
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = vmWithLiveEvents(events)
+            val collector = launch { vm.turnOutcome.collect {} }
+            advanceUntilIdle()
+
+            events.emit(failedTurnEnd(ACTIVE_CONV))
+            advanceUntilIdle()
+            events.emit(LiveSessionEvent.TurnEnd(ACTIVE_CONV, turnId = "t2", stopReason = "end_turn"))
+            advanceUntilIdle()
+
+            assertNull(vm.turnOutcome.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun turnOutcome_clearsWhenTheNextTurnStarts_butNotOnIdle() =
+        runTest {
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = vmWithLiveEvents(events)
+            val collector = launch { vm.turnOutcome.collect {} }
+            advanceUntilIdle()
+
+            events.emit(failedTurnEnd(ACTIVE_CONV))
+            // idle may accompany a turn_end in either order, and deltas/tool events are not a turn start.
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Idle))
+            events.emit(LiveSessionEvent.AssistantDelta(ACTIVE_CONV, turnId = "t1", seq = 0, text = "hi"))
+            events.emit(LiveSessionEvent.ReplayGap(ACTIVE_CONV))
+            advanceUntilIdle()
+            assertNotNull(vm.turnOutcome.value)
+
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Thinking))
+            advanceUntilIdle()
+            assertNull(vm.turnOutcome.value)
+
+            events.emit(LiveSessionEvent.TurnEnd(ACTIVE_CONV, "t2", "cancelled"))
+            advanceUntilIdle()
+            assertNotNull(vm.turnOutcome.value)
+
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Responding))
+            advanceUntilIdle()
+            assertNull(vm.turnOutcome.value)
+            collector.cancel()
+        }
+
+    @Test
+    fun turnOutcome_otherConversation_isIgnored() =
+        runTest {
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = vmWithLiveEvents(events)
+            val collector = launch { vm.turnOutcome.collect {} }
+            advanceUntilIdle()
+
+            events.emit(failedTurnEnd("other-conversation"))
+            advanceUntilIdle()
+            assertNull(vm.turnOutcome.value)
+
+            events.emit(failedTurnEnd(ACTIVE_CONV))
+            events.emit(turnState("other-conversation", LiveSessionEvent.TurnState.Phase.Thinking))
+            advanceUntilIdle()
+            assertNotNull(vm.turnOutcome.value)
+            collector.cancel()
+        }
+
+    // AC #4: a failed or interrupted turn must leave neither the spinner nor the Stop affordance on.
+    @Test
+    fun failedAndCancelledTurnEnds_clearIsThinkingAndIsBusy() =
+        runTest {
+            val events = MutableSharedFlow<LiveSessionEvent>()
+            val vm = vmWithLiveEvents(events)
+            val thinking = launch { vm.isThinking.collect {} }
+            val busy = launch { vm.isBusy.collect {} }
+            advanceUntilIdle()
+
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Thinking))
+            advanceUntilIdle()
+            assertTrue(vm.isThinking.value)
+            assertTrue(vm.isBusy.value)
+            events.emit(failedTurnEnd(ACTIVE_CONV))
+            advanceUntilIdle()
+            assertFalse(vm.isThinking.value)
+            assertFalse(vm.isBusy.value)
+
+            events.emit(turnState(ACTIVE_CONV, LiveSessionEvent.TurnState.Phase.Thinking))
+            advanceUntilIdle()
+            assertTrue(vm.isBusy.value)
+            events.emit(LiveSessionEvent.TurnEnd(ACTIVE_CONV, "t2", "cancelled", outcome = "error_during_execution", isError = true))
+            advanceUntilIdle()
+            assertFalse(vm.isThinking.value)
+            assertFalse(vm.isBusy.value)
+            thinking.cancel()
+            busy.cancel()
+        }
+
+    private fun failedTurnEnd(conversationId: String) =
+        LiveSessionEvent.TurnEnd(
+            conversationId,
+            turnId = "t1",
+            stopReason = "end_turn",
+            outcome = "success",
+            isError = true,
+            terminalReason = "prompt_too_long",
+        )
 
     // ---- #492: currentModal is the hoisted projection injected from the coordinator -------------
     // The fold itself moved to the process-scoped coordinator: the pure-fold behaviours (Shown→Open,
