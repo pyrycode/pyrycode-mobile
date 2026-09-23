@@ -97,7 +97,7 @@ and Settings pickers each use their own picker's captured owner —
 `SettingsViewModel.workspacePickerServerId` for Settings — independent of
 subsequent compatibility selection changes. The factory returns a reconnecting
 facade for that owner, or the existing fake singleton in demo mode. See
-[DI ownership](dependency-injection.md#destination-ownership).
+[DI ownership](dependency-injection-host-conversation-source.md#destination-ownership).
 
 Recents and `createWorkspaceFolder` must use the same owner as the caller's final
 workspace change or discussion creation. Binding only the ViewModel leaves this

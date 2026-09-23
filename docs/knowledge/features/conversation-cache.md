@@ -13,7 +13,7 @@ is the one app-private implementation, added in
 [#795](../../specs/architecture/795-app-private-conversation-cache.md). #795 shipped the storage
 layer alone; [#796](https://github.com/pyrycode/pyrycode-mobile/issues/796) made
 `HostConversationSource` its first production consumer and added the cache's one Koin binding —
-see [dependency injection § Restore from the on-disk cache](dependency-injection.md#restore-from-the-on-disk-cache-796)
+see [dependency injection § Restore from the on-disk cache](dependency-injection-host-conversation-source.md#restore-from-the-on-disk-cache-796)
 for how the source writes and seeds from it. [#797](../../specs/architecture/797-thread-row-cache.md)
 adds the thread-row family and the thread restore — see
 [Caching conversation repository](caching-conversation-repository.md) for the wrapper that reads and
@@ -31,8 +31,15 @@ interface ConversationCache {
     suspend fun readThread(serverId: String, conversationId: String): List<ThreadItem> = emptyList()
     suspend fun writeThread(serverId: String, conversationId: String, rows: List<ThreadItem>): Result<Unit> =
         Result.success(Unit)
+    suspend fun readReadPositions(serverId: String): Map<String, ReadPosition> = emptyMap()
+    suspend fun writeReadPositions(serverId: String, positions: Map<String, ReadPosition>): Result<Unit> =
+        Result.success(Unit)
     suspend fun removeHost(serverId: String): Result<Unit>
     suspend fun removeConversation(serverId: String, conversationId: String): Result<Unit>
+}
+
+data class ReadPosition(val completedTurnId: String, val readTurnId: String?) {
+    val unread: Boolean get() = readTurnId != completedTurnId
 }
 
 const val MAX_CACHED_THREAD_ROWS = 200
@@ -53,6 +60,21 @@ threads (`InertConversationCache`, and the fakes in `HostConversationSourceTest`
 replace**, like `writeConversations` is a whole-host replace, and it always stores
 `cacheableThreadRows(rows)` — never the caller's raw list — so no caller can persist an
 unrecognized, streaming or in-flight-tool row by constructing a `ThreadItem` list itself.
+
+**The read-position family (#877).** `readReadPositions`/`writeReadPositions` follow the same
+graceful-read, reporting-mutation, default-bodied shape as the other two families, over
+`Map<String, ReadPosition>` keyed by conversation id. `writeReadPositions` is a **whole-host
+replace**, like `writeConversations`. `ReadPosition.completedTurnId` is the latest turn this
+phone saw complete live for that conversation; `readTurnId` is the one the operator had seen
+as of their last open, or `null` if they have not opened it since a turn completed —
+`unread` is simply `readTurnId != completedTurnId`. A conversation absent from the map is
+read. Both ids are daemon-authored turn ids, used only for equality, exactly like
+`Conversation.id` above. The one production writer and reader is
+`HostConversationSource`'s per-host attention fold — see
+[dependency injection § Attention state](dependency-injection-host-conversation-source.md#attention-state-877) for
+`HostAttentionState`, the pure fold that produces the map this family persists, and for the
+bounds (`MAX_READ_POSITIONS`, `MAX_TURN_ID_CHARS`) that keep a hostile daemon from growing
+the document without limit.
 
 Two top-level functions in `ConversationCache.kt` define what a thread may hold, used by both the
 cache (enforced on write) and [`CachingConversationRepository`](caching-conversation-repository.md)
@@ -94,6 +116,7 @@ even there the only platform type is `java.io.File` — see § Root and storage 
 ```
 <root>/<sha256hex(serverId)>/conversations.json
 <root>/<sha256hex(serverId)>/threads/<sha256hex(conversationId)>.json   (#797)
+<root>/<sha256hex(serverId)>/read-positions.json                       (#877)
 ```
 
 A server id is daemon-supplied and opaque, so it is never pasted into a path: the host
@@ -125,6 +148,17 @@ ever built; `ThreadItem.toRecord()` throws if either ever reaches it).
 newSessionId, reason, occurredAt, workspaceCwd: String? = null)` round out the two row kinds.
 Enums serialize by name; `Instant` fields (`timestamp`, `occurredAt`) follow `lastUsedAt`'s
 ISO-text convention, not epoch millis.
+
+### Read positions (#877)
+
+The read-position document is a versioned envelope over an **array**, not an object:
+`CachedReadPositions(version: Int, positions: List<CachedReadPosition>)`,
+`CachedReadPosition(conversationId, completedTurnId, readTurnId: String? = null)`. An array
+keeps every daemon-authored conversation id a JSON *value*, matching the rest of this cache's
+never-an-id-as-a-key discipline (see § Layout above — a conversation id is hashed for a path
+for the same reason). `decodePositions` rejects a document whose entries do not have distinct
+`conversationId`s, the same duplicate-identity rule `readConversations` applies to
+`Conversation.id`, rather than picking a winner.
 
 ## Root and storage scope — `noBackupFilesDir`, never `filesDir`
 
@@ -227,6 +261,12 @@ directory already covers `threads/`, since the thread family is filed under it (
 `ConversationCache.removeConversation`'s KDoc records this as the rule any family added later must
 follow, so a permanently deleted conversation never leaves content behind under a family that
 forgot to extend the two removal operations.
+
+`removeConversation` extends the same way to the read-position family (#877): when the
+positions document exists, it is rewritten with the target conversation's entry dropped, by the
+same read-what-is-readable-then-rewrite rule. `removeHost`'s recursive directory delete already
+covers `read-positions.json` for free, since it sits alongside `conversations.json` under the
+host directory rather than in its own family root.
 
 ## Removal on unpair — `forgetRemovedHost`
 
@@ -333,6 +373,13 @@ working against host metadata that was never written; `removeHost` removing ever
 and no other host's; no conversation id in a path or a log line, success or failure; and a coded,
 causeless exception on a forced write failure.
 
+[`FileConversationCacheReadPositionTest.kt`](../../../app/src/test/java/de/pyryco/mobile/data/cache/FileConversationCacheReadPositionTest.kt)
+(#877) is a third sibling file, same second-instance and log-capture discipline. It covers a
+round trip; host isolation, with `removeHost` dropping a host's positions and leaving a sibling
+host's untouched; `removeConversation` dropping exactly one conversation's entry; and every
+graceful-empty-read shape (never written, corrupt, duplicate conversation id) reading back empty
+rather than throwing or repairing.
+
 No Compose UI test and no emulator scenario for either family — #796's restored conversation rows
 and #797's restored thread rows both draw through the same composables a live row does, so the
 screen needs no cache-specific coverage. See [dependency injection §
@@ -359,12 +406,15 @@ cache's or the wrapper's own unit suite.
 - [Relay log](relay-log.md) — the only logging facility this layer uses
 - [Caching conversation repository](caching-conversation-repository.md) — the wrapper that reads
   and writes the thread-row family this doc's § The contract and § Layout describe (#797)
+- [Dependency injection § Attention state](dependency-injection-host-conversation-source.md#attention-state-877) — the
+  per-host `HostAttentionState` fold that reads and writes the read-position family (#877)
 - Split from [#647](https://github.com/pyrycode/pyrycode-mobile/issues/647); downstream:
   [#796](https://github.com/pyrycode/pyrycode-mobile/issues/796) (done — host list restore, see
-  [dependency injection § Restore from the on-disk cache](dependency-injection.md#restore-from-the-on-disk-cache-796)),
+  [dependency injection § Restore from the on-disk cache](dependency-injection-host-conversation-source.md#restore-from-the-on-disk-cache-796)),
   [#797](../../specs/architecture/797-thread-row-cache.md) (done — thread-row family + thread
   restore), [#798](../../specs/architecture/798-clear-cache-on-removal.md) (done — `removeHost` wired
   to unpair via [`forgetRemovedHost`](#removal-on-unpair--forgetremovedhost), `removeConversation`
   wired to permanent deletion via
   [`CachingConversationRepository.delete`](caching-conversation-repository.md#delete--removing-the-cache-alongside-the-daemon-798);
-  archive and unarchive call neither)
+  archive and unarchive call neither), [#877](../../specs/architecture/877-conversation-attention-state.md)
+  (done — read-position family)

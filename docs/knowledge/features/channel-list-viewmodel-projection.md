@@ -64,7 +64,7 @@ rows. Snapshot changes cancel obsolete preview collections through `flatMapLates
 
 A host awaiting its first list reply is present with empty rows, and no source
 hosts produces `hosts = emptyList()`. Disconnected hosts keep source-owned cached
-rows; the ViewModel adds no list cache. See [snapshot lifetime](dependency-injection.md#snapshot-lifetime).
+rows; the ViewModel adds no list cache. See [snapshot lifetime](dependency-injection-host-conversation-source.md#snapshot-lifetime).
 The nullable `workspacePickerServerId` is combined from VM-owned picker state — see
 [`hostState` via `stateIn`](#hoststate-via-statein) above for the sharing config.
 
@@ -100,6 +100,25 @@ than re-sorting, which would risk the two orderings disagreeing if the upstream 
 drifts. `HostChannelListViewModelTest` pins "slice, don't resort" the same way the retired flat
 suite's `recentDiscussions_orderingFollowsUpstream` once did.
 
+### Attention join (#877)
+
+`hostState`'s combine gained a fifth source: `hostSource.attention`, joined at the entry
+level rather than inside the per-snapshot projection — `entries.map { it.copy(attention =
+attention[it.host.serverId].orEmpty()) }` runs *outside* the `hostSource.snapshots.flatMapLatest { … }`
+block that produces `entries`. A `turn_state`/`turn_end` event changes only `hostSource.attention`,
+never `hostSource.snapshots`, so this join never re-subscribes `observeHostEntry`'s per-host
+preview collectors — folding attention into the snapshot projection itself would have made every
+live turn re-run every host's preview `flatMapLatest`, blanking recent-chat previews through their
+`onStart { emit(null) }` on each one. See [dependency injection § Attention
+state](dependency-injection-host-conversation-source.md#attention-state-877) for the fold that produces
+`hostSource.attention` and for `HostChannelListEntry.attentionFor`'s Idle-default read.
+
+`onHostRowTapped(target)` calls `hostSource.markOpened(target.serverId, target.conversationId)`
+synchronously, alongside recording `lastOpenedTarget` — the list's own open path, distinct from a
+thread's `ConversationViewing` handle, which stays open only as long as that thread's `ViewModel`
+is alive. A tap clears that row's unread and failed marks on that host only; it does not hold the
+row read against a turn that completes after the tap but before the thread screen resolves.
+
 ## One-shot navigation via `Channel.BUFFERED` (#22)
 
 Both navigation flows use separate `Channel.BUFFERED` channels exposed through
@@ -128,7 +147,7 @@ before sending. Compatibility selection changes cannot redirect them, and a
 replacement repository for that same host is used. Cached rows or connected
 indicators cannot authorize a send: unknown, removed, disconnected and handshaking
 targets return no repository, create nothing and emit no success navigation. See
-[exact-host access](dependency-injection.md#exact-host-repository-access).
+[exact-host access](dependency-injection-host-conversation-source.md#exact-host-repository-access).
 
 A successful create emits exactly one target with the captured host and returned
 conversation id on `hostNavigationEvents`. Repository failures use the existing

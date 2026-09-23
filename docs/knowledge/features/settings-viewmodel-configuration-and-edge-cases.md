@@ -14,7 +14,7 @@ viewModel { get<ThreadDestinationFactory>().settings(get(), get(), get()) }
 The Koin registration changed shape in #749: `SettingsViewModel` construction moved from an inline
 `viewModel { SettingsViewModel(get(), get(), get<RelayRepositoryCoordinator>().connectionStatus) }`
 into `ThreadDestinationFactory.settings(handle, preferences, repository)`, alongside its `thread`
-and `literal` methods — see [dependency injection § Destination ownership](dependency-injection.md#destination-ownership)
+and `literal` methods — see [dependency injection § Destination ownership](dependency-injection-host-conversation-source.md#destination-ownership)
 for the factory method and the `hosts()` projection it builds `SettingsViewModel`'s `hosts` argument
 from. `preferences` is still the one process-wide `AppPreferences` singleton #398 resolved, but
 Settings no longer reads or writes all of it app-wide: since #714 `defaultWorkspace` and its picker
