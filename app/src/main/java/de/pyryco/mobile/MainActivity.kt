@@ -288,7 +288,7 @@ internal fun PyryNavHost(
                 },
             )
         }
-        composable(Routes.PAIR_CODE) {
+        composable(Routes.PAIR_CODE_ROUTE, arguments = Routes.pairCodeArguments()) {
             val vm = koinViewModel<PairCodeViewModel>()
             val state by vm.state.collectAsStateWithLifecycle()
             LaunchedEffect(state.phase) {
@@ -353,6 +353,9 @@ internal fun PyryNavHost(
                             is ChannelListEvent.TreeHostEditTapped -> vm.openHostEditor(event.serverId)
                             // And for reconnecting (#840): the control's own host, retried alone.
                             is ChannelListEvent.TreeHostReconnectTapped -> vm.reconnectHost(event.serverId)
+                            // Unless its pairing was rejected (#842): then the control re-pairs that host alone.
+                            is ChannelListEvent.TreeHostRePairTapped ->
+                                navController.navigate(Routes.pairCode(event.serverId))
                             is ChannelListEvent.HostEditNameSubmitted -> vm.submitHostName(event.name)
                             ChannelListEvent.HostEditDismissed -> vm.dismissHostEditor()
                             ChannelListEvent.HostUnpairRequested -> vm.requestHostUnpair()
@@ -653,6 +656,12 @@ internal object Routes {
     const val WELCOME = "welcome"
     const val SCANNER = "scanner"
     const val PAIR_CODE = "pair_code"
+
+    /**
+     * The pair-code destination's pattern, with an **optional** target host (#842), shaped like [SETTINGS]:
+     * plain [PAIR_CODE] still navigates here with the empty default and pairs whichever host the code names.
+     */
+    const val PAIR_CODE_ROUTE = "pair_code?serverId={serverId}"
     const val CHANNEL_LIST = "channel_list"
     const val DISCUSSION_LIST = "discussions"
     const val CONVERSATION_THREAD = "conversation_thread/{serverId}/{conversationId}"
@@ -687,6 +696,11 @@ internal object Routes {
                 defaultValue = ""
             },
         )
+
+    /** Re-pairing one host: carries its server id only, never its daemon-authored name. */
+    fun pairCode(serverId: String) = "pair_code?serverId=${Uri.encode(serverId)}"
+
+    fun pairCodeArguments() = settingsArguments()
 
     fun settingsOwner(arguments: Bundle?) = arguments?.getString("serverId").orEmpty()
 

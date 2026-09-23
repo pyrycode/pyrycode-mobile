@@ -164,6 +164,14 @@ sealed interface ChannelListEvent {
     ) : ChannelListEvent
 
     /**
+     * The same plug control on a host whose saved pairing was rejected (#842): a retry cannot succeed, so
+     * it opens re-pairing for **that** host. Carries the `serverId` only, like its retry sibling.
+     */
+    data class TreeHostRePairTapped(
+        val serverId: String,
+    ) : ChannelListEvent
+
+    /**
      * The open modal's OK, carrying the entered name already trimmed by the component.
      *
      * No `serverId`, deliberately: the target is the open editor's, held in the view model, and a second
@@ -433,7 +441,15 @@ private fun LazyListScope.treeSection(
                 onAddTapped = { onEvent(ChannelListEvent.TreeHostAddTapped(host.serverId)) },
                 onAddLongPressed = { onEvent(ChannelListEvent.TreeHostAddLongPressed(host.serverId)) },
                 modifier = Modifier.padding(top = if (index == 0) TreeFirstHostGap else TreeHostGap),
-                onReconnectTapped = { onEvent(ChannelListEvent.TreeHostReconnectTapped(host.serverId)) },
+                onReconnectTapped = {
+                    onEvent(
+                        if (host.connectionStatus.relay == RelayLinkStatus.PairingRejected) {
+                            ChannelListEvent.TreeHostRePairTapped(host.serverId)
+                        } else {
+                            ChannelListEvent.TreeHostReconnectTapped(host.serverId)
+                        },
+                    )
+                },
             )
         }
         if (hostKey in hostState.collapsed) return@forEachIndexed
