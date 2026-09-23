@@ -139,7 +139,9 @@ val appModule =
         viewModel { ScannerViewModel() }
         viewModel {
             val registry = get<RelayConnectionRegistry>()
-            PairCodeViewModel(get(), registry, registry::pairingStatus)
+            // #842: the route's optional target host; blank is the unrouted add-host entry.
+            val target = get<SavedStateHandle>().get<String>("serverId")?.takeIf { it.isNotEmpty() }
+            PairCodeViewModel(get(), registry, registry::pairingStatus, target)
         }
         // The third dependency is the paired-server store the Edit host modal reads and writes (#744).
         viewModel { ChannelListViewModel(get(), get(), get()) }

@@ -168,12 +168,109 @@ class PairCodeViewModelTest {
             }
         }
 
-    private suspend fun TestScope.withVm(block: suspend Fixture.() -> Unit) {
+    @Test fun targetModeRefusesACodeForAnotherHostBeforeConfirmation() =
+        runTest {
+            for (target in listOf("A", "b")) {
+                withVm(target) {
+                    val other = PairedServerEntry(record.copy(serverId = target, token = "old-secret"), "Pyrybox")
+                    store.entries = listOf(other)
+                    runCurrent()
+                    vm.onEvent(PairCodeEvent.Code(code))
+                    vm.onEvent(PairCodeEvent.Pair)
+                    vm.onEvent(PairCodeEvent.Confirm)
+                    runCurrent()
+                    assertEquals(PairCodePhase.Editing, vm.state.value.phase)
+                    assertEquals(null, vm.state.value.confirmation)
+                    assertEquals(WRONG_HOST_ERROR, vm.state.value.error)
+                    assertEquals(0, store.saves)
+                    assertEquals(0, connects)
+                    assertEquals(listOf(other), store.list())
+                }
+            }
+        }
+
+    @Test fun targetModeReplacesOnlyThatHostAndKeepsItsName() =
+        runTest {
+            withVm("B") {
+                val old = PairedServerEntry(record.copy(token = "old-secret"), "Pyrybox")
+                val peer = PairedServerEntry(record.copy(serverId = "C", token = "peer-secret"), "Macbook")
+                store.entries = listOf(old, peer)
+                assertEquals("B", vm.state.value.targetName)
+                runCurrent()
+                assertEquals("Pyrybox", vm.state.value.targetName)
+                vm.onEvent(PairCodeEvent.Name("Renamed"))
+                vm.onEvent(PairCodeEvent.Code(code))
+                submit()
+                runCurrent()
+                assertEquals(record, store.loadById("B")?.record)
+                assertEquals("Pyrybox", store.loadById("B")?.displayName)
+                assertEquals(peer, store.loadById("C"))
+                assertEquals(2, store.list().size)
+                assertEquals(0, store.nameWrites)
+                assertEquals(1, connects)
+                assertEquals(record, observed)
+                status.value = ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected)
+                runCurrent()
+                assertEquals(PairCodePhase.Complete, vm.state.value.phase)
+            }
+        }
+
+    @Test fun targetModeCancelAndFailedSaveLeaveEveryPairingUnchanged() =
+        runTest {
+            withVm("B") {
+                val old = PairedServerEntry(record.copy(token = "old-secret"), "Pyrybox")
+                val peer = PairedServerEntry(record.copy(serverId = "C", token = "peer-secret"), "Macbook")
+                store.entries = listOf(old, peer)
+                runCurrent()
+                vm.onEvent(PairCodeEvent.Code(code))
+                store.failSave = true
+                submit()
+                runCurrent()
+                assertEquals(PairCodePhase.Editing, vm.state.value.phase)
+                assertEquals(listOf(old, peer), store.list())
+                assertEquals(0, connects)
+                vm.onEvent(PairCodeEvent.Pair)
+                vm.onEvent(PairCodeEvent.Back)
+                assertEquals(PairCodePhase.Editing, vm.state.value.phase)
+                vm.onEvent(PairCodeEvent.Back)
+                runCurrent()
+                assertEquals(PairCodePhase.Cancelled, vm.state.value.phase)
+                assertEquals(listOf(old, peer), store.list())
+                assertEquals(0, store.nameWrites)
+            }
+        }
+
+    @Test fun targetModeRejectedWhileConnectingFailsBeforeTheDeadline() =
+        runTest {
+            withVm("B") {
+                store.entries = listOf(PairedServerEntry(record.copy(token = "old-secret"), "Pyrybox"))
+                runCurrent()
+                vm.onEvent(PairCodeEvent.Code(code))
+                submit()
+                runCurrent()
+                assertEquals(PairCodePhase.Connecting, vm.state.value.phase)
+                advanceTimeBy(1_000)
+                status.value = ConnectionStatus(RelayLinkStatus.PairingRejected, PyrycodeLinkStatus.Down)
+                runCurrent()
+                assertEquals(PairCodePhase.Editing, vm.state.value.phase)
+                assertTrue(
+                    vm.state.value.error
+                        .orEmpty()
+                        .contains("Pairing saved"),
+                )
+                assertEquals("Pyrybox", store.loadById("B")?.displayName)
+            }
+        }
+
+    private suspend fun TestScope.withVm(
+        target: String? = null,
+        block: suspend Fixture.() -> Unit,
+    ) {
         Dispatchers.setMain(StandardTestDispatcher(testScheduler))
         val oldSink = RelayLog.sink
         val logs = mutableListOf<String>()
         RelayLog.sink = { _, _, message -> logs += message }
-        val f = Fixture()
+        val f = Fixture(target)
         try {
             f.block()
             assertFalse(logs.joinToString().contains("secret"))
@@ -190,7 +287,9 @@ class PairCodeViewModelTest {
         }
     }
 
-    private class Fixture {
+    private class Fixture(
+        target: String? = null,
+    ) {
         val store = Store()
         var connects = 0
         var observed: PairedServer? = null
@@ -209,6 +308,7 @@ class PairCodeViewModelTest {
                     observed = it
                     status
                 },
+                target,
             )
 
         fun submit() {
@@ -222,6 +322,7 @@ class PairCodeViewModelTest {
         var saves = 0
         var failSave = false
         var failName = false
+        var nameWrites = 0
         var gate: CompletableDeferred<Unit>? = null
 
         override suspend fun save(record: PairedServer) {
@@ -245,6 +346,7 @@ class PairCodeViewModelTest {
             displayName: String?,
         ) {
             if (failName) throw PairedServerStoreException("secret")
+            nameWrites++
             entries = entries.map { if (it.record.serverId == serverId) it.copy(displayName = displayName) else it }
         }
     }

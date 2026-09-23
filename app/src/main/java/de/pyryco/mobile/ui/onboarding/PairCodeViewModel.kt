@@ -18,8 +18,13 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+
+/** Field errors on the pairing code; any other error renders in the action area. */
+internal const val INVALID_CODE_ERROR = "Invalid pairing code"
+internal const val WRONG_HOST_ERROR = "This code is for a different host"
 
 internal sealed interface PairCodePhase {
     data object Editing : PairCodePhase
@@ -41,6 +46,8 @@ internal data class PairCodeState(
     val phase: PairCodePhase = PairCodePhase.Editing,
     val confirmation: ScannerUiState.AwaitingConfirm? = null,
     val error: String? = null,
+    /** The re-paired host's label in target mode (#842): its stored name, else its server id. */
+    val targetName: String? = null,
 ) {
     override fun toString() = "PairCodeState([REDACTED])"
 }
@@ -65,10 +72,27 @@ internal class PairCodeViewModel(
     private val store: PairedServerCollectionStore,
     private val controller: RelayConnectionController,
     private val observe: (PairedServer) -> Flow<ConnectionStatus?>,
+    // #842: re-pairing one host. A code naming any other server id is refused, and the host's stored
+    // name is kept rather than set from the name field.
+    private val target: String? = null,
 ) : ViewModel() {
-    private val mutableState = MutableStateFlow(PairCodeState())
+    private val mutableState = MutableStateFlow(PairCodeState(targetName = target))
     val state = mutableState.asStateFlow()
     private var operation: Job? = null
+
+    init {
+        if (target != null) {
+            viewModelScope.launch {
+                val name =
+                    try {
+                        store.loadById(target)?.displayName?.takeIf(String::isNotBlank)
+                    } catch (_: PairedServerStoreException) {
+                        null
+                    }
+                if (name != null) mutableState.update { it.copy(targetName = name) }
+            }
+        }
+    }
 
     fun onEvent(event: PairCodeEvent) {
         val current = state.value
@@ -91,13 +115,15 @@ internal class PairCodeViewModel(
         }
         if (current.phase != PairCodePhase.Editing) return
         when (event) {
-            is PairCodeEvent.Name -> mutableState.value = current.copy(name = event.value)
+            is PairCodeEvent.Name -> if (target == null) mutableState.value = current.copy(name = event.value)
             is PairCodeEvent.Code -> mutableState.value = current.copy(code = event.value, error = null)
             PairCodeEvent.Pair -> {
                 val parsed = parsePairingPayload(current.code.trim()) as? PairingParseResult.Success
                 val fingerprint = parsed?.let { serverKeyFingerprint(it.server.serverStaticPublicKey) }
                 if (fingerprint == null) {
-                    fail("Invalid pairing code", "invalid_code")
+                    fail(INVALID_CODE_ERROR, "invalid_code")
+                } else if (target != null && parsed.server.serverId != target) {
+                    fail(WRONG_HOST_ERROR, "target_mismatch")
                 } else {
                     mutableState.value =
                         current.copy(
@@ -127,7 +153,7 @@ internal class PairCodeViewModel(
         )
         if (!saved) return
         try {
-            if (name.isNotBlank()) store.setDisplayName(server.serverId, name)
+            if (target == null && name.isNotBlank()) store.setDisplayName(server.serverId, name)
         } catch (_: PairedServerStoreException) {
             fail("Pairing saved, but the host name could not be saved. Retry or cancel.", "name_failed")
             return

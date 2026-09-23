@@ -476,6 +476,38 @@ class ChannelListScreenTest {
         assertEquals(listOf(ChannelListEvent.TreeHostReconnectTapped("macbook")), events)
     }
 
+    @Test
+    fun hostRowPlugControl_onARejectedPairing_opensRePairingForItsOwnHost() {
+        setTree(
+            entry(
+                serverId = "pyrybox",
+                displayName = "Pyrybox",
+                channels = listOf(conversation("c1", "alpha channel", "/w/one", true)),
+                relay = RelayLinkStatus.PairingRejected,
+            ),
+            entry(
+                serverId = "macbook",
+                displayName = "Macbook",
+                channels = listOf(conversation("c2", "beta channel", "/w/two", true)),
+                relay = RelayLinkStatus.Offline,
+            ),
+        )
+
+        composeTestRule
+            .onAllNodes(hasTestTag(treeHostReconnectTestTag("pyrybox")))
+            .onFirst()
+            .performClick()
+        composeTestRule
+            .onAllNodes(hasTestTag(treeHostReconnectTestTag("macbook")))
+            .onFirst()
+            .performClick()
+
+        assertEquals(
+            listOf(ChannelListEvent.TreeHostRePairTapped("pyrybox"), ChannelListEvent.TreeHostReconnectTapped("macbook")),
+            events,
+        )
+    }
+
     /** One open editor on `pyrybox`, whose flags each test sets to the state it is asserting. */
     private fun openEditor(
         saving: Boolean = false,
