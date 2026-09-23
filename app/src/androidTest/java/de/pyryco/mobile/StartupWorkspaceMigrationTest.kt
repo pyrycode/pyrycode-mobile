@@ -46,6 +46,7 @@ class StartupWorkspaceMigrationTest {
     private lateinit var originalCollection: PairedServerCollectionStore
 
     @Before fun bind() {
+        grantNotificationPermission()
         val koin = GlobalContext.get()
         originalPreferences = koin.get()
         originalStore = koin.get()
