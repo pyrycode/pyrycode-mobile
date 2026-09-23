@@ -177,3 +177,12 @@ The ticket carries no Documentation handoff section. Pending for the documentati
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-23
+
+## Revisions
+
+**2026-09-23 (Phase B):**
+
+- `ATTACHMENT_CHUNK_BYTES` and `ATTACHMENT_TEXT_MAX_BYTES` are top-level constants in `AttachmentPayloads.kt`, not members of a companion, so `AttachmentUploadLimit.MAX_BYTES` can be derived from the chunk size without reaching into the plan class.
+- The malformed-refusal code is `error.malformed_reply`, the value `RemoteConversationRepository.mapError` already uses for an undecodable `error`, not a new `protocol.malformed_reply`. A code that is empty or longer than 64 characters maps to it as well, with `retryable = false`.
+- Open question resolved: an unmatched `attachment_stored` is left unconsumed and falls through to `onInbound`'s `else -> Unit`. No behaviour depends on consuming it.
+- Test harness: `RemoteConversationRepositoryAttachmentTest` installs a capturing `RelayLog.sink` (the `DebugBundleDownloadControllerTest` pattern). Debug unit tests have `RelayLog.enabled = true`, and the default sink calls `android.util.Log`, which throws on the JVM. The capture also asserts the exact log lines and that they contain no filename, mime type or digest.

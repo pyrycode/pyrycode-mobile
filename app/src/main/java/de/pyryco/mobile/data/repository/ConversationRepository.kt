@@ -380,6 +380,22 @@ interface ConversationRepository {
         error("requestSystemPrompt is not implemented for this ConversationRepository")
 
     /**
+     * Upload a file's [bytes], [filename] and declared [mimeType] to [conversationId] on this repository's
+     * host (#829), and report how it ended: [AttachmentUploadResult.Stored] with the minted id only when
+     * the daemon answers `attachment_stored` for it, otherwise one [AttachmentUploadResult.Failed]. Files
+     * over [AttachmentUploadLimit.MAX_BYTES] are refused before anything is sent. Uploads on one
+     * connection run one at a time. Never throws except on cancellation.
+     *
+     * Default throws, like [requestSystemPrompt].
+     */
+    suspend fun uploadAttachment(
+        conversationId: String,
+        bytes: ByteArray,
+        filename: String,
+        mimeType: String,
+    ): AttachmentUploadResult = error("uploadAttachment is not implemented for this ConversationRepository")
+
+    /**
      * Store [systemPrompt] as [conversationId]'s system prompt (#823), one `set_system_prompt` per call,
      * returning after the daemon's ack. `null` clears it, `""` stores an explicitly empty prompt, and any
      * other string is stored **verbatim** — never trimmed or normalised. It takes effect at the
