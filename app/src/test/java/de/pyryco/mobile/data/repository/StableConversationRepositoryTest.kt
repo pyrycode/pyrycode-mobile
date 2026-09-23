@@ -455,6 +455,45 @@ class StableConversationRepositoryTest {
             assertEquals(listOf(false, true, false), compacting)
         }
 
+    // ---- #871: observeResetting delegates and tracks connection churn ----------------------------
+
+    @Test
+    fun observeResetting_whileAbsent_emitsNull() =
+        runTest {
+            val current = MutableStateFlow<ConversationRepository?>(null)
+            val facade = StableConversationRepository(current)
+
+            val readings = mutableListOf<ResetStatus?>()
+            backgroundScope.launch { facade.observeResetting("c1").collect { readings += it } }
+            runCurrent()
+
+            assertEquals(listOf<ResetStatus?>(null), readings)
+        }
+
+    @Test
+    fun observeResetting_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            val readings = mutableListOf<ResetStatus?>()
+            backgroundScope.launch { facade.observeResetting("c1").collect { readings += it } }
+            runCurrent()
+            assertEquals(listOf<ResetStatus?>(null), readings)
+
+            val wrappingUp = ResetStatus(ResetStatus.Phase.WrappingUp, ResetStatus.Handoff.Pending)
+            repoA.pushResetting(wrappingUp)
+            runCurrent()
+            assertEquals(listOf(null, wrappingUp), readings)
+
+            // Switching to a fresh (not-resetting) connection drops the prior connection's reading.
+            current.value = repoB
+            runCurrent()
+            assertEquals(listOf(null, wrappingUp, null), readings)
+        }
+
     // ---- #802: observeUsageLimit delegates and tracks connection churn ---------------------------
 
     @Test
@@ -739,6 +778,14 @@ class StableConversationRepositoryTest {
         override fun observeApiRetry(conversationId: String): Flow<ApiRetryStatus> = apiRetry
 
         override fun observeCompacting(conversationId: String): Flow<Boolean> = compacting
+
+        private val resetting = MutableStateFlow<ResetStatus?>(null)
+
+        fun pushResetting(value: ResetStatus?) {
+            resetting.value = value
+        }
+
+        override fun observeResetting(conversationId: String): Flow<ResetStatus?> = resetting
 
         override fun observeUsageLimit(conversationId: String): Flow<UsageLimitReading?> = usageLimit
 

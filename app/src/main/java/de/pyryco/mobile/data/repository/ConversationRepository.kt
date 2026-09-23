@@ -85,6 +85,25 @@ interface ConversationRepository {
     fun observeCompacting(conversationId: String): Flow<Boolean> = flowOf(false)
 
     /**
+     * Emits which phase of a Reset [conversationId] is in, and what became of its handoff note (#871), or
+     * **`null` when no reset is running**. `null` until the wire says otherwise; a [ResetStatus] on each
+     * rising edge; back to `null` on the falling edge or on the conversation's session transition. Cold
+     * flow; re-emits on every change. The thread layer observes this to say whether the reset is writing
+     * a handoff note or restarting.
+     *
+     * **One reset is one reading that changes, never two readings.** The wire sends two rising edges
+     * before its single falling edge — `wrapping_up` then `restarting` — so the second replaces the
+     * first; a consumer that treats a new non-null value as a new reset draws two where one happened.
+     * The falling edge always arrives (pyrycode `docs/protocol-mobile.md` § `resetting`), so a consumer
+     * owes no timeout of its own.
+     *
+     * Default `flowOf(null)` — implementations without an interactive wire (the fake, inline test
+     * doubles) inherit "no reset" and need no override, the same cascade-avoidance as
+     * [observeCompacting] / [observeThinkingProgress].
+     */
+    fun observeResetting(conversationId: String): Flow<ResetStatus?> = flowOf(null)
+
+    /**
      * Emits the usage-limit reading claude last reported for [conversationId], or **`null` when there
      * is none to read** (#802). `null` until the wire says otherwise; a [UsageLimitReading] once a
      * non-benign frame lands; back to `null` on the benign clearing edge or once the reading's
@@ -947,6 +966,40 @@ sealed interface ApiRetryStatus {
         val current: Int,
         val total: Int,
     ) : ApiRetryStatus
+}
+
+/**
+ * Where a running Reset is (#871, pyrycode#2478) — the element type of
+ * [ConversationRepository.observeResetting], co-located with the contract it serves like
+ * [ApiRetryStatus]. Wire SSOT: pyrycode `docs/protocol-mobile.md` § `resetting`.
+ *
+ * **Two closed enums and no [String].** The wire's `phase` and `handoff` are closed sets while a reset
+ * runs, so the decode boundary narrows both and drops a frame carrying any other token; the routing
+ * `conversation_id` stays a key in the repository projection. No daemon-supplied text reaches a
+ * consumer through this type — and none exists to reach it: the handoff note itself never crosses the
+ * wire, only whether one was made.
+ *
+ * There is no "not resetting" member: that is `null` at the flow. The two fields are carried
+ * independently because the contract states a closed set per field and no rule about their combination.
+ *
+ * `data` is load-bearing rather than cosmetic: structural equality is what makes the repository's
+ * `distinctUntilChanged` projection behave (the [ApiRetryStatus] rule). The `wrapping_up` → `restarting`
+ * phase change is a different value and re-emits; another conversation's frame leaves this one equal and
+ * does not.
+ */
+data class ResetStatus(
+    val phase: Phase,
+    val handoff: Handoff,
+) {
+    /** The reset's current step: the wrap-up turn writing the note, or the respawn under a new session. */
+    enum class Phase { WrappingUp, Restarting }
+
+    /**
+     * Whether the successor gets a handoff note. [Pending] throughout the wrap-up turn; resolved once, on
+     * the move to [Phase.Restarting]. [Skipped] is a **reported outcome, not a missing value**: it covers
+     * every reason no note was made, and all of them mean the successor starts without one.
+     */
+    enum class Handoff { Pending, Written, Skipped }
 }
 
 /**
