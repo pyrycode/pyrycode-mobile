@@ -103,40 +103,50 @@ suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long): Un
   authored it, so a confirmed drop also removes it, or the thread keeps a row that reads as a message
   claude received when it never was. The removal targets exactly one `ThreadItem.MessageItem`, correlated
   on `QueuedMessage.messageId`, and is invisible to `observeQueue` / `observeLastMessage`.
-  **Known bug ([#859](https://github.com/pyrycode/pyrycode-mobile/issues/859), found live by #849's
-  second-client scenario): there is no `ack` to be "successful" on.** `handleDequeueMessage`
-  (pyrycode `internal/relay/v2session_modal.go`) sends **no reply and no broadcast** for
-  `dequeue_message` — `../pyrycode/docs/protocol-mobile.md` § Queue (v2) names none either;
-  convergence is the next `queue_state` alone. The `sendAndAwaitReply` this method calls (below)
-  therefore never completes against the real daemon — it is failed only by the connection-teardown
-  sweep — so `removeOwnEcho` never runs and the caller's coroutine stays suspended for the
-  connection's life. The backlog row still clears correctly (that projection updates from
-  `queue_state` alone, independent of this send), but the dropped message's own thread echo stays as
-  a delivered bubble until the connection tears down. Unit tests never caught this because the fake
-  transport answers the dequeue with an `ack` the real daemon does not send. The fix (unscheduled) is
-  to key the confirmation on the `queued_msg_id` leaving the next `queue_state` snapshot, not on a
-  reply that never arrives; every "empty `ack`" and "on the ack" reference below describes the
-  **intended**, not the **actual**, wire contract until that lands.
+- **There is no `ack` to be "successful" on ([#859](https://github.com/pyrycode/pyrycode-mobile/issues/859),
+  found live by #849's second-client scenario).** `handleDequeueMessage` (pyrycode
+  `internal/relay/v2session_modal.go`) sends **no reply and no broadcast** for `dequeue_message` —
+  `../pyrycode/docs/protocol-mobile.md` § Queue (v2) names none either; convergence is the next
+  `queue_state` alone, including for a request the daemon cannot apply (an unknown, already-delivered or
+  in-flight head id is silently ignored). The method originally called `sendAndAwaitReply` on the
+  assumption of an empty ack; that assumption was wrong, so the awaited deferred never completed against
+  production — it was failed only by the connection-teardown sweep — `removeOwnEcho` never ran, and the
+  caller's coroutine stayed suspended for the connection's life. Unit tests never caught this because the
+  fake transport answered the dequeue with an `ack` the real daemon does not send. **#859 fixes this by not
+  awaiting a reply at all:** `dropQueuedMessage` sends through the raw `pump.send` (the `interrupt` idiom)
+  and returns once the frame is on the wire, throwing only `IllegalStateException` for a not-connected
+  session. The confirmation moves to the inbound side: a new connection-scoped ledger,
+  `RemoteConversationRepository.pendingDrops` (`conversationId -> (queued_msg_id -> echo message id)`),
+  records the requested drop **before** the send (so a confirming snapshot can never land before there is
+  a request to settle against it; a failed send withdraws the entry). The `TYPE_QUEUE_STATE` arm calls
+  `settleDrops` after every `queueProjection.apply`, which atomically claims every pending entry whose
+  `queued_msg_id` the fresh snapshot no longer holds and runs `removeOwnEcho` for each — so a drop settles
+  at most once. Keyed on the requested id, never on the backlog shrinking, so an item that drains normally
+  (no drop request from this device) keeps its echo. **The one ambiguity is accepted, not defended
+  against**: if the head item drains just before the dequeue lands, the daemon ignores the now-moot
+  dequeue and the next snapshot looks exactly like a successful drop, so the phone removes the echo of a
+  message claude did receive — the daemon gives no signal that tells the two cases apart, and the operator
+  did ask for that message to go.
 - **The correlation is resolved and spent entirely inside `RemoteConversationRepository` — no UI,
   ViewModel or facade signature change.** `dropQueuedMessage(conversationId, queuedMessageId)` still takes
   only the `queued_msg_id` the caller already has; the repository looks up that item's `messageId` in its
   **own** `queuedByConversation` snapshot before sending, because a successful drop provokes a fresh
   `queue_state` that would remove the item first if read afterwards (safe to read early since
-  `queued_msg_id` is a per-conversation counter that is never recycled). On the ack, and only then, the
-  resolved id is checked against a connection-scoped **minted-id ledger** — `conversationId -> the message
-  ids this device minted and echoed`, written by `sendMessage` after its own ack — and the matching thread
-  row is removed only if the id is non-empty and present in that ledger, which also consumes it (so a
-  second queued item legally sharing the same `message_id` removes nothing on its own drop). **This is
-  § Queue (v2)'s multi-device rule made mechanical**: the thread projection alone is not a valid
-  correlation store, because it also holds rows folded from history pages (#623/#778) that can carry
-  another device's ids, and `message_id` is client-chosen with uniqueness enforced nowhere — matching
-  against the projection directly would let a colliding id delete a row this phone never sent. An item
-  carrying `""`, one minted by another device, or a `queuedMessageId` no longer in the snapshot all
+  `queued_msg_id` is a per-conversation counter that is never recycled). Once the confirming `queue_state`
+  settles the drop, the resolved id is checked against a connection-scoped **minted-id ledger** —
+  `conversationId -> the message ids this device minted and echoed`, written by `sendMessage` after its
+  own ack — and the matching thread row is removed only if the id is non-empty and present in that ledger,
+  which also consumes it (so a second queued item legally sharing the same `message_id` removes nothing on
+  its own drop). **This is § Queue (v2)'s multi-device rule made mechanical**: the thread projection alone
+  is not a valid correlation store, because it also holds rows folded from history pages (#623/#778) that
+  can carry another device's ids, and `message_id` is client-chosen with uniqueness enforced nowhere —
+  matching against the projection directly would let a colliding id delete a row this phone never sent. An
+  item carrying `""`, one minted by another device, or a `queuedMessageId` no longer in the snapshot all
   correlate with nothing: the send still goes, no thread row is touched, and **text is never compared**.
-  A throw from the send skips the removal entirely, so a failed drop leaves both the entry and the echo in
-  place — there is still nothing to roll back. The send surfaces the outcome; the [#467](../codebase/467.md)
-  drop affordance fires it and swallows any failure **inert** (no user-visible error surface — AC #4
-  there).
+  A throw from the send skips the removal entirely (the withdrawn `pendingDrops` entry has nothing to
+  settle), so a failed drop leaves both the entry and the echo in place — there is still nothing to roll
+  back. The send surfaces the outcome; the [#467](../codebase/467.md) drop affordance fires it and
+  swallows any failure **inert** (no user-visible error surface — AC #4 there).
 - **`queuedMessageId` is the `QueuedMessage.id` echoed back verbatim** — a `Long` (the wire `uint64`),
   encoded by `DequeueMessagePayloadDto` to a JSON **number**, not a String (the pyrycode#720 trap). The
   daemon validates the `(conversation_id, queued_msg_id)` pair against its own per-conversation queue and
@@ -148,13 +158,14 @@ suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long): Un
   ctor param, no coordinator passthrough, no Koin wiring (modals, keyed by `modal_id` only, are app-level and
   fetched off the concrete coordinator instead). The fake and inline test doubles inherit the throwing
   default; only the [live remote repo](remote-conversation-repository.md) and the facade override it.
-- **Reuses `sendAndAwaitReply` (#346) verbatim — no new error mapping.** Empty `ack` ⇒ success; `error`
-  ⇒ caller-visible failure (`conversation.not_found` → `IllegalArgumentException`, any other code →
-  `RelayErrorException(code, retryable)`, malformed → fallback `RelayErrorException`, never hangs); not
-  connected ⇒ `IllegalStateException`. A stale / already-drained id (observed code `queue.stale_id`)
-  surfaces **generically** as `RelayErrorException` — no bespoke queue-error mapping is pre-built, and the
-  [#467](../codebase/467.md) drop affordance confirmed it: that slice swallows the error inert (no
-  "already gone" visual), so no distinction was ever needed.
+- **Fire-and-forget through the raw `pump.send`, not `sendAndAwaitReply` (#859).** The daemon replies to
+  neither a successful dequeue nor one it cannot apply, so the only throw left is `IllegalStateException`
+  for a not-connected session (`pump.send` returns `false`); no `RelayErrorException` or
+  `IllegalArgumentException` reaches the caller from this send any more. A stale / already-drained id
+  (the wire's `queue.stale_id`) is one of the requests the daemon silently ignores — it was never
+  distinguished from success even under the old ack-based mapping, and the [#467](../codebase/467.md) drop
+  affordance already swallows any failure inert (no "already gone" visual), so nothing downstream needed
+  the distinction.
 - **No idempotency key** (unlike `modal_answer`) — `queued_msg_id` is a monotonic per-conversation ordinal,
   never recycled, so a replayed drop targets an already-consumed id → a benign daemon stale-id reject, no
   double-effect hazard. The `modal_cancel` no-token posture.

@@ -1363,10 +1363,15 @@ class ThreadViewModel(
      * screen forwards only the row's [Long] queued-message id).
      *
      * **No optimistic removal** (AC #3): the row leaves only on the next `queue_state` ([observeQueue]),
-     * so this holds no state to roll back and a failed drop is inert (AC #4). The catch contract mirrors
-     * [sendInterrupt] exactly: the [CancellationException] rethrow **MUST precede** the typed catches
-     * (`j.u.c.CancellationException` extends `IllegalStateException` on the JVM) so structured cancellation
-     * is never swallowed; the server-error and not-connected throws are swallowed with no error surface.
+     * so this holds no state to roll back and a failed drop is inert (AC #4). The daemon never replies to
+     * the dequeue (#859), so the call returns once the frame is sent; the repository removes the drop's
+     * own echo from the thread when that snapshot arrives. The remote throws only when not connected;
+     * the [RelayErrorException] catch covers the interface contract's other implementations.
+     *
+     * The catch contract mirrors [sendInterrupt] exactly: the [CancellationException] rethrow **MUST
+     * precede** the typed catches (`j.u.c.CancellationException` extends `IllegalStateException` on the
+     * JVM) so structured cancellation is never swallowed; the server-error and not-connected throws are
+     * swallowed with no error surface.
      */
     fun onDropQueued(queuedMessageId: Long) {
         viewModelScope.launch {
