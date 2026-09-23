@@ -1205,7 +1205,8 @@ Earlier results and failure history:
   history; [the plan's revisions](specs/architecture/588-default-workspace-live-recheck.md#revisions)
   retain the triage and its evidence limits.
 - **Dispatcher-run:** before verifier, `python3 scripts/android-test-gate.py ui` runs the non-E2E
-  device tests, followed by one `scripted` invocation for each of `ping`, `stream`, `spinner`,
+  device tests, skipped when the branch touches only docs, scripts and the e2e-only sources
+  (see [development verification](knowledge/features/development-verification.md)), followed by one `scripted` invocation for each of `ping`, `stream`, `spinner`,
   `tool`, `tool-failed`, `reconnect` and `replay-order`. Tagged tickets run `live` after verifier.
   Reports must be fresh and count executed tests. The live floor is eight. Leave the baseline
   command unset because the shared retry filter currently accepts Go test names.

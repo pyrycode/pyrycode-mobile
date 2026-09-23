@@ -97,6 +97,36 @@ def combine_reports(paths, minimum, expected_class=None):
     return ET.tostring(combined, encoding="unicode"), failed == 0, executed
 
 
+# The e2e files no UI-suite test or the shared instrumentation runner uses. The suite leaves the e2e package out
+# at run time, but the runner, the test application and the unrecognised-row sentinel in that package serve every
+# device test, so only these three are safe to change without re-running it. A guard test keeps that true.
+E2E_ONLY_SOURCES = tuple(f"app/src/androidTest/java/de/pyryco/mobile/e2e/{name}.kt" for name in
+                         ("InteractiveStreamE2ETest", "DeterministicInteractiveStreamE2ETest", "SecondClientPeer"))
+
+
+def ui_suite_skippable(paths):
+    """True when the branch changes something, and nothing the UI suite builds or runs.
+
+    Docs, Markdown, scripts and the e2e-only sources qualify. A change to this script's own ui command is then
+    first exercised by the next branch that touches the app. Measured 2026-09-23: six of one night's 37 verifier
+    passes re-ran the five-minute suite for tickets that changed only live e2e tests and scripts.
+    """
+    return bool(paths) and all(p.startswith(("docs/", "scripts/")) or p.endswith(".md") or p in E2E_ONLY_SOURCES
+                               for p in paths)
+
+
+def changed_paths(base="main"):
+    """Tracked and untracked paths that differ from where this branch left base, or None when git cannot say."""
+    try:
+        def git(*args):
+            return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, check=True).stdout
+        fork = git("merge-base", "HEAD", base).strip()
+        listed = git("diff", "--name-only", fork) + git("ls-files", "--others", "--exclude-standard")
+        return sorted(set(listed.split()))
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("ui", "scripted", "live"))
@@ -107,6 +137,10 @@ def main():
     device = os.environ.get("DEVICE", "pixel2Api33Atd")
     if not device.isalnum():
         parser.error("DEVICE must be an alphanumeric Gradle device name")
+    # UI_GATE_FULL=1 runs the suite even on a branch that cannot affect it.
+    if args.mode == "ui" and os.environ.get("UI_GATE_FULL") != "1" and ui_suite_skippable(changed_paths()):
+        print("Android gate: ui skipped; the branch changes only docs, scripts and e2e-only tests", file=sys.stderr)
+        return 0
     artifacts = ROOT / "build" / "dispatcher-tests"
     artifacts.mkdir(parents=True, exist_ok=True)
     run_dir = Path(tempfile.mkdtemp(prefix=f"{args.mode}-", dir=artifacts))
