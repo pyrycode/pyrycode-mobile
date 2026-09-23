@@ -46,6 +46,7 @@ import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_RELAY_URL
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLIC_KEY
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
+import de.pyryco.mobile.ui.conversations.components.RUNNING_MODEL_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
@@ -60,6 +61,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Ignore
 import org.junit.Rule
@@ -128,6 +130,12 @@ class InteractiveStreamE2ETest {
     private val queuedDropDescription: String =
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_thread_queued_drop)
 
+    // #891: the footer's Status-sheet opener and the running-model row's unavailable note, from resources.
+    private val statusExpandDescription: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_thread_status_expand)
+    private val runningModelUnavailable: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.status_sheet_running_model_unavailable)
+
     @Test
     fun interactiveTurn_pingPrompt_streamsPingReplyIntoThread() {
         // 1. A paired launch lands on the channel list, read off the list's own arrival marker (#736).
@@ -150,6 +158,38 @@ class InteractiveStreamE2ETest {
 
         // 5. Match the displayed reply itself; queued prompt removal cannot offset this signal.
         composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+    }
+
+    /**
+     * #891: after one real turn, the Status sheet's running-model row shows what claude announced on its
+     * `system/init` line (`model_announced`). Asserts only that the row carries a non-empty value and not
+     * the unavailable note — the model name depends on the operator's claude and is never hard-coded.
+     */
+    @Test
+    fun interactiveTurn_pingPrompt_statusSheetShowsRunningModel() {
+        awaitChannelList()
+        awaitConnected()
+        createChat()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
+        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+        composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+
+        composeTestRule.onNode(hasContentDescription(statusExpandDescription)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasTestTag(RUNNING_MODEL_TEST_TAG)).fetchSemanticsNodes().isNotEmpty()
+        }
+
+        val shown =
+            composeTestRule
+                .onNode(hasTestTag(RUNNING_MODEL_TEST_TAG))
+                .fetchSemanticsNode()
+                .config[SemanticsProperties.Text]
+                .joinToString("") { it.text }
+        assertTrue("running-model row is empty", shown.isNotBlank())
+        assertNotEquals(runningModelUnavailable, shown)
     }
 
     /**

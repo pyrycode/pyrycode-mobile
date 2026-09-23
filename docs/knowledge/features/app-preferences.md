@@ -72,6 +72,11 @@ Phase 4 FCM push key ([#364](../codebase/364.md)):
 
 - `pushToken: Flow<String?>` — the phone's FCM registration token, persisted so it survives process death and can be re-registered with the daemon on every reconnect without waiting for Firebase to re-mint it. `stringPreferencesKey("push_token")`. **The first key in this file with no fallback default** — the getter is the bare `dataStore.data.map { prefs -> prefs[PUSH_TOKEN] }` (no `?: …` elvis), so absence reads as `null`. The `null` is **load-bearing**: it is the "dormant / nothing to register yet" signal the connect-time re-registration reader depends on — *not* an oversight to coalesce away with a default. Matching `suspend fun setPushToken(token: String)`; single-key `edit` overwrite means a new value replaces the prior one (last-write-wins, the rotation path [#361] drives via Firebase's `onNewToken`; no history retained). **Dormant today** — no live caller in the shipped app: the *origin* (Firebase `onNewToken` → `setPushToken`) is the #361 Firebase slice, and the *reader* (connect-time re-registration, which then calls [`RemoteConversationRepository.registerPushToken`](remote-conversation-repository.md), the [#359](../codebase/359.md) wire sender) is the orchestration sibling. **Never logged** (AC #5 — a grep-verified code-level invariant, not unit-tested). Stored as a non-secret (see the storage-tier note below), so this is the first `data/preferences/` key whose value comes from outside the user/UI.
 
+Remembered effort key ([#686](https://github.com/pyrycode/pyrycode-mobile/issues/686)):
+
+- `rememberedEffort: Flow<String?>` — the phone's one remembered effort level, app-wide across chats, channels and hosts, `null` until an effort write has ever succeeded. `stringPreferencesKey("remembered_effort")`, no fallback — the same shape as `pushToken`'s bare `dataStore.data.map { prefs -> prefs[KEY] }`. **Deliberately apart from `defaultEffort`:** the stored value is a daemon-published level string (e.g. `xhigh`), not an `Effort` entry, and it is set only after a `set_session_settings` write the daemon acknowledges — never from `defaultEffort`'s `HIGH` substitute-on-miss, a passive settings reading, or the Settings "Default effort" row. Matching `suspend fun setRememberedEffort(level: String): Result<Unit>`, the `editWorkspace` IOException-to-`Result` posture; logs `event=remembered_effort_set outcome=success|io_failure`, never the level.
+- Read and written through an adapter, not directly: `AppPreferences.asRememberedEffortStore()` (`ui/conversations/thread/EffortRecall.kt`) exposes these two members as `RememberedEffortStore`, the interface `ThreadViewModel` depends on (`RememberedEffortStore.None` by default, so the demo path and pre-#686 tests stay inert). The `EffortRecall` collaborator decides once per thread opening whether to write the remembered level through the normal effort write path, and remembers a level only after any effort write — a tap or a recall — is acknowledged. See [Thread composer footer § Remembered effort recall](thread-composer-footer.md#remembered-effort-recall-686) for the decision and isolation rules.
+
 Secrets (the pairing token / device static key) are explicitly **not** stored here — those live Keystore-wrapped under `data/crypto/` (the device X25519 static keypair, the paired-server key store). `AppPreferences` is for non-secret booleans/strings/ints. **The FCM `pushToken` is deliberately on this non-secret side, not a contradiction:** an FCM registration token is a device-scoped wake *address*, not a credential — possessing it is insufficient to push a notification (an attacker also needs the project's FCM server key, held only on the daemon/backend), it rotates, and it is overwrite-only. Classified by value × revocability (mirroring KitchenClaw ADR-007's DataStore-for-non-sensitive / encrypted-store-for-auth-tokens split), it belongs in plain `DataStore<Preferences>`. Do **not** "upgrade" it to Keystore — that would miscategorise it against the existing trust boundary. See [#364](../codebase/364.md) for the full security rationale.
 
 ## How it works
@@ -122,6 +127,17 @@ class AppPreferences(private val dataStore: DataStore<Preferences>) {
         dataStore.edit { prefs -> prefs[DEFAULT_EFFORT] = effort.name }
     }
 
+    val rememberedEffort: Flow<String?> =                          // #686 — note: NO `?: default`
+        dataStore.data.map { prefs -> prefs[REMEMBERED_EFFORT] }
+
+    suspend fun setRememberedEffort(level: String): Result<Unit> =
+        try {
+            dataStore.edit { prefs -> prefs[REMEMBERED_EFFORT] = level }
+            Result.success(Unit)
+        } catch (error: IOException) {
+            Result.failure(error)
+        }
+
     val defaultYolo: Flow<Boolean> =
         dataStore.data.map { prefs -> prefs[DEFAULT_YOLO] ?: false }
 
@@ -148,6 +164,7 @@ class AppPreferences(private val dataStore: DataStore<Preferences>) {
         val USE_WALLPAPER_COLORS = booleanPreferencesKey("use_wallpaper_colors")
         val DEFAULT_MODEL = stringPreferencesKey("default_model")
         val DEFAULT_EFFORT = stringPreferencesKey("default_effort")
+        val REMEMBERED_EFFORT = stringPreferencesKey("remembered_effort")
         val DEFAULT_YOLO = booleanPreferencesKey("default_yolo")
         val NOTIFICATIONS_ENABLED = booleanPreferencesKey("notifications_enabled")
         val PUSH_TOKEN = stringPreferencesKey("push_token")
@@ -296,3 +313,4 @@ prevent an old path from being copied over it.
 - [#268](../codebase/268.md) (first Notifications key — `notificationsEnabled` flow + `setNotificationsEnabled` setter + `booleanPreferencesKey("notifications_enabled")`, the **first definer + first writer in one slice**; the only `?: true` default in the file; consumed by the Settings "Push notifications when claude responds" switch via `SettingsViewModel.onTogglePushNotifications`; write-live / read-dead until Phase 4 notification delivery — merged)
 - [#364](../codebase/364.md) (Phase 4 FCM push — `pushToken: Flow<String?>` + `setPushToken` setter + `stringPreferencesKey("push_token")`, the **first key with no fallback default** — `null` is the load-bearing "nothing to register yet" signal; the first key whose value originates outside the user/UI (Firebase); deliberately plain-DataStore non-secret per the storage-tier classification; **dormant** — origin is the #361 Firebase slice, reader is the connect-time re-registration sibling that calls [`RemoteConversationRepository.registerPushToken`](remote-conversation-repository.md) ([#359](../codebase/359.md)); never logged — merged)
 - Phase 3+: remaining `Settings` preferences and notification *delivery* (Phase 4) will land as additional keys here (or as sibling classes once the Notifications group grows past one key — see the splitting rule above; the first-non-defaults-key trigger already fired at #268 without prompting a split).
+- [#686](https://github.com/pyrycode/pyrycode-mobile/issues/686) (mobile port of desktop [#1549](https://github.com/pyrycode/pyrycode-desktop/issues/1549) / PR #1554 — `rememberedEffort: Flow<String?>` + `setRememberedEffort` setter + `stringPreferencesKey("remembered_effort")`, the **second key with no fallback default** after `pushToken`; read and written only through `AppPreferences.asRememberedEffortStore()` and the `EffortRecall` collaborator, never directly by `ThreadViewModel` or Settings; see [Thread composer footer § Remembered effort recall](thread-composer-footer.md#remembered-effort-recall-686) for the once-per-opening decision — merged)

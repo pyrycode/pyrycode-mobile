@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isSelectable
 import androidx.compose.ui.test.junit4.ComposeContentTestRule
@@ -16,6 +17,8 @@ import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import de.pyryco.mobile.ui.conversations.thread.ThreadEffortChoice
 import de.pyryco.mobile.ui.conversations.thread.ThreadModelChoice
+import de.pyryco.mobile.ui.conversations.thread.ThreadReportedText
+import de.pyryco.mobile.ui.conversations.thread.ThreadRunningModel
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -65,6 +68,8 @@ class StatusSheetTest {
         pending: Boolean = false,
         enabled: Boolean = true,
         onDismiss: () -> Unit = {},
+        effortNote: String? = null,
+        running: ThreadRunningModel = ThreadRunningModel(),
     ) = setContent {
         PyrycodeMobileTheme {
             StatusSheetContent(
@@ -81,6 +86,8 @@ class StatusSheetTest {
                 pending = pending,
                 enabled = enabled,
                 onDismiss = onDismiss,
+                effortNote = effortNote,
+                running = running,
             )
         }
     }
@@ -196,6 +203,15 @@ class StatusSheetTest {
         assertEquals(listOf("low"), picks)
     }
 
+    // #889: the sheet says why the selection is not Claude's applied effort.
+    @Test
+    fun an_effort_note_renders_below_the_effort_chips() {
+        composeTestRule.setSheet(selectedEffort = "", effortNote = "Claude reports no effort parameter.")
+
+        composeTestRule.onNode(hasText("Claude reports no effort parameter.")).assertIsDisplayed()
+        composeTestRule.onNode(isSelectable() and hasText("high")).assertIsNotSelected()
+    }
+
     @Test
     fun a_row_publishing_no_levels_offers_no_effort_choice() {
         composeTestRule.setSheet(selectedModel = "haiku")
@@ -203,6 +219,50 @@ class StatusSheetTest {
         composeTestRule.onNode(hasText("No effort levels published for this model.")).assertIsDisplayed()
         composeTestRule.onAllNodes(hasText("low")).assertCountEquals(0)
         composeTestRule.onAllNodes(hasText("high")).assertCountEquals(0)
+    }
+
+    // ---- Running model (#891) --------------------------------------------------------------------
+
+    @Test
+    fun the_announced_model_and_build_render_apart_from_the_selected_model() {
+        composeTestRule.setSheet(
+            selectedModel = "sonnet",
+            running =
+                ThreadRunningModel(
+                    model = ThreadReportedText("claude-opus-4-7", truncated = false),
+                    build = ThreadReportedText("2.1.3", truncated = false),
+                ),
+        )
+
+        composeTestRule.onNode(hasText("Running model")).assertIsDisplayed()
+        composeTestRule.onNode(hasTestTag(RUNNING_MODEL_TEST_TAG) and hasText("claude-opus-4-7")).assertIsDisplayed()
+        composeTestRule.onNode(hasText("Claude Code 2.1.3")).assertIsDisplayed()
+        composeTestRule.onNode(isSelectable() and hasText("Sonnet 4.6")).assertIsSelected()
+    }
+
+    @Test
+    fun no_announcement_renders_the_unavailable_state_and_no_build_line() {
+        composeTestRule.setSheet(selectedModel = "opus")
+
+        composeTestRule.onNode(hasText("Running model")).assertIsDisplayed()
+        composeTestRule.onNode(hasText("Not announced yet")).assertIsDisplayed()
+        composeTestRule.onNode(hasTestTag(RUNNING_MODEL_TEST_TAG)).assertDoesNotExist()
+        composeTestRule.onAllNodes(hasText("Claude Code", substring = true)).assertCountEquals(0)
+    }
+
+    @Test
+    fun a_truncated_value_carries_a_visible_and_announced_mark() {
+        composeTestRule.setSheet(
+            running =
+                ThreadRunningModel(
+                    model = ThreadReportedText("claude-opus", truncated = true),
+                    build = ThreadReportedText("2.1", truncated = true),
+                ),
+        )
+
+        // The mark is part of the node's text, which is what TalkBack reads.
+        composeTestRule.onNode(hasTestTag(RUNNING_MODEL_TEST_TAG) and hasText("claude-opus (truncated)")).assertIsDisplayed()
+        composeTestRule.onNode(hasText("Claude Code 2.1 (truncated)")).assertIsDisplayed()
     }
 
     // ---- Pending and read-only -------------------------------------------------------------------

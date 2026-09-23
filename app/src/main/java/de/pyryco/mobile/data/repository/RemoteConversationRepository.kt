@@ -180,6 +180,12 @@ class RemoteConversationRepository(
         )
 
     /**
+     * The slash-command menu of every conversation (#882). [onInbound] hands it `slash_command_list` behind
+     * the `interactive` gate; [observeSlashCommandMenu] reads it. It sends nothing: the frame has no verb.
+     */
+    private val slashCommandMenuProjection = SlashCommandMenuProjection()
+
+    /**
      * The request↔reply plumbing of this connection (#914): the one envelope-id counter every request takes
      * its id from, the reply waiters, the correlated await and the teardown sweep. [onInbound] completes or
      * fails waiters through it, and the [init] collector's `finally` sweeps it last.
@@ -569,6 +575,13 @@ class RemoteConversationRepository(
                     modelMenuProjection.apply(envelope)
                 }
             }
+            TYPE_SLASH_COMMAND_LIST -> {
+                // The per-conversation slash-command menu (#882), behind the same `interactive` gate as
+                // `model_list`: see [SlashCommandMenuProjection.apply].
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    slashCommandMenuProjection.apply(envelope)
+                }
+            }
             TYPE_API_RETRY -> {
                 // API-retry status (#593): see [ApiRetryProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
@@ -705,6 +718,18 @@ class RemoteConversationRepository(
                 // state, emits no liveSessionEvents, and opens, closes or alters no turn. Nothing logged.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     threadProjection.applyCompactionBoundary(envelope)
+                }
+            }
+            TYPE_MODEL_REFUSAL_FALLBACK, TYPE_MODEL_REFUSAL_NO_FALLBACK -> {
+                // claude refused a turn on one model, and retried on another or did not (#875,
+                // pyrycode#2265/#2266). Same `interactive` gate as its thread-row siblings (fail-closed).
+                // Decode-or-drop by envelope type: a malformed payload or ts drops one envelope, the lone
+                // collector survives. Routes strictly by the payload's conversation_id. Exactly ONE write —
+                // the refusal row — and inert toward every neighbour: no liveSessionEvents emission, no turn
+                // opened, closed or altered, no status touched, and no model state, which `model_announced`
+                // alone owns. Nothing here logs any payload field: all of them but the id are claude's.
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    threadProjection.applyModelRefusal(envelope)
                 }
             }
             TYPE_MODAL_SHOWN, TYPE_MODAL_DISMISSED -> {
@@ -1013,6 +1038,9 @@ class RemoteConversationRepository(
         thinkingProgressProjection.observe(conversationId)
 
     override fun observeModelMenu(conversationId: String): Flow<ModelMenu?> = modelMenuProjection.observe(conversationId)
+
+    override fun observeSlashCommandMenu(conversationId: String): Flow<SlashCommandMenu?> =
+        slashCommandMenuProjection.observe(conversationId)
 
     /** Create an unpromoted discussion (#347); see [ConversationCommands.createDiscussion]. */
     override suspend fun createDiscussion(workspace: String?): Conversation = conversationCommands.createDiscussion(workspace)
@@ -1361,6 +1389,14 @@ class RemoteConversationRepository(
         const val TYPE_MODEL_LIST = "model_list"
 
         /**
+         * Capability-gated inventory (#882): the slash commands claude will accept for one conversation, a
+         * full snapshot that replaces that conversation's menu. Arrives on the live interactive lane (with an
+         * `event_id`) and as a per-conversation snapshot on every (re)connect (with none). Declares no
+         * inbound verb.
+         */
+        const val TYPE_SLASH_COMMAND_LIST = "slash_command_list"
+
+        /**
          * Request: one conversation's model menu, on demand (#792, daemon pyrycode#2125). The third and
          * last way a client gets a menu and the only one it can trigger itself — it covers the
          * conversation created *after* the phone connected, which crosses neither unsolicited delivery
@@ -1480,6 +1516,22 @@ class RemoteConversationRepository(
          * count is an integer or `null`, neither clamped nor ordered.
          */
         const val TYPE_COMPACTION_BOUNDARY = "compaction_boundary"
+
+        /**
+         * Capability-gated thread event: claude refused a turn on one model and retried it on another
+         * `{conversation_id, original_model, fallback_model, scope, refusal_category, banner, truncated_fields,
+         * dropped_fields}` (#875, pyrycode#2265) — folds a [ThreadItem.ModelRefusal] into the conversation
+         * thread in arrival order. Conversation-scoped with no `turn_id`; every value but the id is claude's,
+         * bounded and unsanitized; `scope` and `refusal_category` are open and drive nothing.
+         */
+        const val TYPE_MODEL_REFUSAL_FALLBACK = "model_refusal_fallback"
+
+        /**
+         * Capability-gated thread event: the no-retry sibling of [TYPE_MODEL_REFUSAL_FALLBACK]
+         * `{conversation_id, original_model, refusal_category, banner, truncated_fields, dropped_fields}`
+         * (#875, pyrycode#2266), told apart by this envelope type alone.
+         */
+        const val TYPE_MODEL_REFUSAL_NO_FALLBACK = "model_refusal_no_fallback"
 
         /**
          * Outbound queue control: the phone's request to drop a not-yet-drained message

@@ -415,6 +415,10 @@ class HostDiscussionListViewModelTest {
     @Test
     fun appModuleInjectsSharedDemoSourceAndPromotesThroughExistingFakeSingleton() =
         runTest(dispatcher) {
+            // The Koin source publishes from Dispatchers.Default. An unconfined Main would run the view
+            // model, and through it this body and its finally, on that worker (#892); dispatching Main
+            // queues them for this thread instead.
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
             // Built inside the guard: resolving the ViewModel starts a Dispatchers.Default-backed
             // source and attaches a Main-bound collector, so it must never happen on a path with no
             // finally to close it (#726).

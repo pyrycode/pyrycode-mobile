@@ -149,6 +149,15 @@ class StableConversationRepository(
         switchToLive<ModelMenu?>(null) { it.observeModelMenu(conversationId) }
 
     /**
+     * The slash-command menu for [conversationId] (#882), switched over the live connection like
+     * [observeModelMenu]: [flatMapLatest] dropping the previous connection's projection is what stops one
+     * host's commands being offered for another's conversation. `null` while none is live is the same
+     * "no frame heard" value an unheard conversation produces.
+     */
+    override fun observeSlashCommandMenu(conversationId: String): Flow<SlashCommandMenu?> =
+        switchToLive<SlashCommandMenu?>(null) { it.observeSlashCommandMenu(conversationId) }
+
+    /**
      * Invalidate [conversationId]'s settings reading on the live repository (#590). Deliberately routed
      * through [currentRepository]`.value` rather than [live]: an invalidation with no connection is a
      * no-op, not an [IllegalStateException] — the caller has nothing to recover, and the next connection

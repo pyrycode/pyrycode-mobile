@@ -64,6 +64,7 @@ import de.pyryco.mobile.ui.conversations.components.CompactionBoundaryDivider
 import de.pyryco.mobile.ui.conversations.components.ConnectionBanner
 import de.pyryco.mobile.ui.conversations.components.EmptyThreadState
 import de.pyryco.mobile.ui.conversations.components.MessageBubble
+import de.pyryco.mobile.ui.conversations.components.ModelRefusalRow
 import de.pyryco.mobile.ui.conversations.components.OptionsOverlay
 import de.pyryco.mobile.ui.conversations.components.QueuedMessageRow
 import de.pyryco.mobile.ui.conversations.components.RenameDialog
@@ -446,6 +447,7 @@ fun ThreadScreen(
                                                 UnrecognizedMessageRow(item = item)
                                             is ThreadItem.Banner -> BannerNoticeRow(item = item)
                                             is ThreadItem.CompactionBoundary -> CompactionBoundaryDivider(item = item)
+                                            is ThreadItem.ModelRefusal -> ModelRefusalRow(item = item)
                                         }
                                     // One render path for both kinds of queued row — the one the echo
                                     // correlated to and the one this device minted no echo for — so the
@@ -542,6 +544,8 @@ fun ThreadScreen(
             // An empty session id means the daemon has no session to address, so the controls read only.
             enabled = state.runConfig.writable,
             onDismiss = { sheetVisible = false },
+            effortNote = state.runConfig.effortNote?.let { stringResource(it.textRes()) },
+            running = state.runConfig.running,
         )
     }
     if (state.channelInfoOpen) {
@@ -730,6 +734,7 @@ private fun ThreadItem.timestamp(): Instant =
         is ThreadItem.UnrecognizedMessage -> occurredAt
         is ThreadItem.Banner -> occurredAt
         is ThreadItem.CompactionBoundary -> occurredAt
+        is ThreadItem.ModelRefusal -> occurredAt
     }
 
 internal fun ThreadUiState.toChannelInfoUiModel(now: Instant = Clock.System.now()): ChannelInfoUiModel =

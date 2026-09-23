@@ -930,6 +930,71 @@ internal fun BannerPayloadDto.toRow(occurredAt: Instant): ThreadItem.Banner =
     )
 
 /**
+ * The `model_refusal_fallback` thread event (#875, pyrycode#2265): claude refused a turn on one model and
+ * retried it on another, folded into the conversation thread as a [ThreadItem.ModelRefusal]. Decode-only —
+ * the phone never sends one. Always decode through [MobileJson].
+ *
+ * Wire SSOT: pyrycode `internal/protocol/interactive.go` (`ModelRefusalFallbackPayload`) +
+ * `docs/protocol-mobile.md` § `model_refusal_fallback`. The six strings are strict-required with no Kotlin
+ * default: the Go struct sets no `omitempty`, so each always arrives present. The two report arrays are
+ * nullable because `null` is their normal wire value. [scope] and [refusalCategory] are decoded so their
+ * shape is checked and then dropped by [toRow]: they are claude's open assertions and drive nothing.
+ */
+@Serializable
+internal data class ModelRefusalFallbackPayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    @SerialName("original_model") val originalModel: String,
+    @SerialName("fallback_model") val fallbackModel: String,
+    val scope: String,
+    @SerialName("refusal_category") val refusalCategory: String,
+    val banner: String,
+    @SerialName("truncated_fields") val truncatedFields: List<String>?,
+    @SerialName("dropped_fields") val droppedFields: List<String>?,
+)
+
+/**
+ * The `model_refusal_no_fallback` thread event (#875, pyrycode#2266): the no-retry sibling of
+ * [ModelRefusalFallbackPayloadDto], told apart by envelope type, with no `fallback_model` or `scope`. The
+ * same strictness and the same inert [refusalCategory].
+ */
+@Serializable
+internal data class ModelRefusalNoFallbackPayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    @SerialName("original_model") val originalModel: String,
+    @SerialName("refusal_category") val refusalCategory: String,
+    val banner: String,
+    @SerialName("truncated_fields") val truncatedFields: List<String>?,
+    @SerialName("dropped_fields") val droppedFields: List<String>?,
+)
+
+/**
+ * Map a decoded [ModelRefusalFallbackPayloadDto] to a [ThreadItem.ModelRefusal]. **Total.** Strings are
+ * copied verbatim; stripping is the renderer's. [occurredAt] is the caller's: the envelope `ts` live, the
+ * entry timestamp on replay, which is what lets the two lanes join on one identity.
+ */
+internal fun ModelRefusalFallbackPayloadDto.toRow(occurredAt: Instant): ThreadItem.ModelRefusal =
+    ThreadItem.ModelRefusal(
+        originalModel = originalModel,
+        fallbackModel = fallbackModel,
+        banner = banner,
+        bannerTruncated = bannerWasCut(truncatedFields),
+        occurredAt = occurredAt,
+    )
+
+/** Map a decoded [ModelRefusalNoFallbackPayloadDto] to a [ThreadItem.ModelRefusal] with no fallback model. */
+internal fun ModelRefusalNoFallbackPayloadDto.toRow(occurredAt: Instant): ThreadItem.ModelRefusal =
+    ThreadItem.ModelRefusal(
+        originalModel = originalModel,
+        fallbackModel = null,
+        banner = banner,
+        bannerTruncated = bannerWasCut(truncatedFields),
+        occurredAt = occurredAt,
+    )
+
+// The daemon names each field it cut by its wire key; only the banner's cut is shown.
+private fun bannerWasCut(truncatedFields: List<String>?): Boolean = truncatedFields.orEmpty().contains("banner")
+
+/**
  * The `compaction_boundary` thread event (#874, pyrycode#2237): a finished compaction
  * `{conversation_id, trigger, pre_tokens, post_tokens}`, folded into the conversation thread as a
  * [ThreadItem.CompactionBoundary]. Decode-only — the phone never sends one. Always decode through [MobileJson].

@@ -759,6 +759,43 @@ class StableConversationRepositoryTest {
             assertEquals(listOf(null, MENU, null), menus)
         }
 
+    // ---- #882: observeSlashCommandMenu delegates, and a host switch drops the previous host's menu --
+
+    @Test
+    fun observeSlashCommandMenu_whileAbsent_emitsNull() =
+        runTest {
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(null))
+
+            val menus = mutableListOf<SlashCommandMenu?>()
+            backgroundScope.launch { facade.observeSlashCommandMenu("c1").collect { menus += it } }
+            runCurrent()
+
+            assertEquals(listOf<SlashCommandMenu?>(null), menus)
+        }
+
+    // The menu is per host: a host switch reads the new connection's repository, which starts empty, rather
+    // than leaving another machine's commands standing.
+    @Test
+    fun observeSlashCommandMenu_delegatesToLiveRepo_andDoesNotLeakAcrossSwitch() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val repoB = RecordingConversationRepository()
+            val current = MutableStateFlow<ConversationRepository?>(repoA)
+            val facade = StableConversationRepository(current)
+
+            val menus = mutableListOf<SlashCommandMenu?>()
+            backgroundScope.launch { facade.observeSlashCommandMenu("c1").collect { menus += it } }
+            runCurrent()
+
+            repoA.pushSlashCommandMenu(SLASH_MENU)
+            runCurrent()
+            assertEquals(SLASH_MENU, menus.last())
+
+            current.value = repoB
+            runCurrent()
+            assertEquals(listOf(null, SLASH_MENU, null), menus)
+        }
+
     @Test
     fun refreshSessionSettings_delegatesToLiveRepo() =
         runTest {
@@ -944,6 +981,14 @@ class StableConversationRepositoryTest {
 
         override fun observeModelMenu(conversationId: String): Flow<ModelMenu?> = modelMenu
 
+        private val slashCommandMenu = MutableStateFlow<SlashCommandMenu?>(null)
+
+        fun pushSlashCommandMenu(value: SlashCommandMenu?) {
+            slashCommandMenu.value = value
+        }
+
+        override fun observeSlashCommandMenu(conversationId: String): Flow<SlashCommandMenu?> = slashCommandMenu
+
         override fun refreshSessionSettings(conversationId: String) {
             refreshSessionSettingsCalls += conversationId
         }
@@ -1074,6 +1119,13 @@ class StableConversationRepositoryTest {
             ModelMenu(
                 rows = listOf(ModelMenuRow("claude-sonnet-5", "sonnet", "Sonnet 5", listOf("low", "high"), true, null)),
                 droppedModels = 4,
+            )
+
+        /** One retained slash-command menu (#882) — arbitrary values; only their survival is asserted. */
+        val SLASH_MENU =
+            SlashCommandMenu(
+                rows = listOf(SlashCommandMenuRow("usage", "", "Show session cost", listOf("cost", "stats"), null)),
+                droppedCommands = 1,
             )
 
         fun conversation(id: String): Conversation =

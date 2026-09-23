@@ -52,6 +52,25 @@ class AppPreferences(
         dataStore.edit { prefs -> prefs[DEFAULT_EFFORT] = effort.name }
     }
 
+    /**
+     * The phone's one remembered effort level (#686): the published level string of the last effort write
+     * the daemon acknowledged, or `null` when none has succeeded yet. No fallback, and deliberately apart
+     * from [defaultEffort], whose `HIGH` substitute is not evidence of a successful choice.
+     */
+    val rememberedEffort: Flow<String?> =
+        dataStore.data.map { prefs -> prefs[REMEMBERED_EFFORT] }
+
+    /** Stores [level] verbatim. Logs the outcome by static code only, never the level. */
+    suspend fun setRememberedEffort(level: String): Result<Unit> =
+        try {
+            dataStore.edit { prefs -> prefs[REMEMBERED_EFFORT] = level }
+            RelayLog.d { "event=remembered_effort_set outcome=success" }
+            Result.success(Unit)
+        } catch (error: IOException) {
+            RelayLog.w { "event=remembered_effort_set outcome=io_failure" }
+            Result.failure(error)
+        }
+
     val defaultYolo: Flow<Boolean> =
         dataStore.data.map { prefs -> prefs[DEFAULT_YOLO] ?: false }
 
@@ -140,6 +159,7 @@ class AppPreferences(
         val USE_WALLPAPER_COLORS = booleanPreferencesKey("use_wallpaper_colors")
         val DEFAULT_MODEL = stringPreferencesKey("default_model")
         val DEFAULT_EFFORT = stringPreferencesKey("default_effort")
+        val REMEMBERED_EFFORT = stringPreferencesKey("remembered_effort")
         val DEFAULT_YOLO = booleanPreferencesKey("default_yolo")
         val NOTIFICATIONS_ENABLED = booleanPreferencesKey("notifications_enabled")
         val DEFAULT_WORKSPACE = stringPreferencesKey("default_workspace")
