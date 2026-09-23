@@ -4,6 +4,8 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
 
 **The thread store, the minted-id ledger and the pending drops now live in `ThreadProjection`** (#912), an `internal class` in `data/repository/ThreadProjection.kt`, split out of `RemoteConversationRepository` the way the status events were (#819 — see [Status projections](remote-conversation-repository.md#status-projections-one-file-per-status-event)). The repository still owns the connection's single inbound collector and every `interactive` capability gate; each thread frame's `onInbound` arm now hands off to a public method on the projection instead of a private method on the repository itself, and `sendMessage`, `dropQueuedMessage` and `requestHistory` record into it directly rather than into a repository field. The move changed no fold behaviour, so the sections below still describe it accurately — where a snippet shows a `private val` or `private fun` on `RemoteConversationRepository`, read it as the same member, now on `ThreadProjection` and mostly public (`observe`, `appendMessages`, `appendSessionBoundary`, `applyUnrecognizedMessage`, `applyBanner`, `applyCompactionBoundary`, `applyToolUse`, `applyToolResult`, `applyToolDenied`, `applyToolProgress`, `applyAssistantDelta`, `finalizeAssistantTurn`, `recordMinted`, `recordDrop`, `withdrawDrop`, `settleDrops`, `mergeHistoryPage`, `remove`); `removeOwnEcho`, `appendUnrecognizedMessage`, `appendBanner`, `appendCompactionBoundary` and the three `decode…` functions stayed private, just on the new class. `settleDrops` also gained an explicit `QueueProjection` parameter, since it no longer sits in the same class as `queueProjection`.
 
+**The list projection and the last-message previews now live in `ConversationListProjection`** (#913), an `internal class` in `data/repository/ConversationListProjection.kt`, split out the same way. The repository still decodes the frames the list state doesn't own alone (`message`, `conversation_updated`, `workspace_updated` each also feed something else), but the `conversations` snapshot decode moved wholesale into `applySnapshot`, and every list write and read is now a public method on the projection: `upsertConversation`, `applyWorkspaceLabel`, `recordLastMessage`, `updateCurrentSessionId`, `remove`, `observe`, `observeLastMessage`, `current`, plus the private `project`. Where the sections below show `projection` or `lastMessages` as a `private val` on `RemoteConversationRepository`, or show one of those names as a repository method, read it as the same member, now on `ConversationListProjection`. `removeConversation` stays split across two projections: it calls `ConversationListProjection.remove` and `ThreadProjection.remove` side by side, and `promote` / `archiveWorkspace`'s one-time snapshot reads are `ConversationListProjection.current()`.
+
 ## The repository — one projection, cold fan-out
 
 ```kotlin
@@ -26,8 +28,9 @@ compiled unchanged — **zero edit fan-out** (which kept #359 off the now-merged
 hook is the first live caller of `registerPushToken`. So `""` is **no longer the production value** — see
 [`registerPushToken`](remote-conversation-repository-workspace-and-push.md#registerpushtokentoken--the-device-concern-push-registration-359).
 
-**The list projection.** One `private val projection = MutableStateFlow<List<Conversation>?>(null)`
-(`null` = list not yet loaded); every cold read derives from it. Since [#721](#721-apply-workspace-label-updates-and-the-conversation_updated-split)
+**The list projection**, now `ConversationListProjection.projection` (#913): a `private val projection =
+MutableStateFlow<List<Conversation>?>(null)` (`null` = list not yet loaded); every cold read derives from it.
+Since [#721](#721-apply-workspace-label-updates-and-the-conversation_updated-split)
 it has **four writers**, all inside the single inbound collector or a caller coroutine it hands off to: the
 `init` collector's authoritative full-replace on each `conversations` snapshot; the two mutations' confirmed
 folds (an atomic CAS upsert via `upsertConversation`) — `createDiscussion`'s insert
@@ -76,7 +79,8 @@ arm above, which discarded any frame without a matching `pendingRequests` entry 
 a conversation created on another client reached this phone only on the next full `conversations` snapshot,
 even though #720 had already landed `Conversation.workspaceLabel` and `workspace_label` on both DTOs.
 
-- **`applyWorkspaceLabel(path, label)`** is a direct sibling of `updateCurrentSessionId`: `projection.update
+- **`ConversationListProjection.applyWorkspaceLabel(path, label)`** (#913) is a direct sibling of
+  `updateCurrentSessionId`, on the same class: `projection.update
   { current?.map { if (it.cwd == path) it.copy(workspaceLabel = label) else it } }`. A `null`
   (pre-first-snapshot) projection stays `null` — a push with no rows to label must not invent one. A path
   matching no row is a genuine no-op (`map` returns an element-equal list, so `StateFlow` conflation
@@ -155,8 +159,9 @@ content (only `last_message_ts`, which maps to no domain field), the preview is 
 **message read path**, not the list read. [#329](../codebase/329.md) implements it by **riding the live
 `message` stream** (Design A — no `backfill_since` request, no `message_chunk` parsing):
 
-- A second projection, `private val lastMessages = MutableStateFlow<Map<String, Message>>(emptyMap())`,
-  is fed **only** by the same single `init` inbound collector via the `"message"` demux branch above —
+- A second projection, `private val lastMessages = MutableStateFlow<Map<String, Message>>(emptyMap())` on
+  `ConversationListProjection` (#913, moved off `RemoteConversationRepository` itself), is fed **only** by
+  the same single `init` inbound collector via the `"message"` demux branch above —
   decode through the [#317](mobile-protocol-v2-wire-layer.md) `MessagePayloadDto.toMessage` boundary
   (`sessionId = ""`, a list-tier placeholder the preview never reads), key by the DTO's
   `conversation_id`, and fold the **strictly-greater-by-`timestamp`** message via

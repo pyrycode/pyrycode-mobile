@@ -259,8 +259,16 @@ already-resolved batch, a malformed answer, and a device without the remote-perm
 dropped silently, and the inbound `question_dismissed` is the only resolution signal. So both methods
 check everything checkable **before** sending and never treat a sent frame as a resolution.
 
+The body of both methods now lives on `QuestionBatchProjection` (#913, `data/repository/QuestionBatchProjection.kt`);
+the repository's `suspend fun`s keep their signature and KDoc and delegate:
+
 ```kotlin
-suspend fun answerQuestionBatch(questionBatchId: String, answers: List<QuestionAnswer>) {
+suspend fun answerQuestionBatch(questionBatchId: String, answers: List<QuestionAnswer>): Unit =
+    questionBatchProjection.answer(questionBatchId, answers)
+suspend fun refuseQuestionBatch(questionBatchId: String): Unit = questionBatchProjection.refuse(questionBatchId)
+
+// QuestionBatchProjection.answer / .refuse (not suspend — nothing in either body suspends):
+fun answer(questionBatchId: String, answers: List<QuestionAnswer>) {
     val batch = heldQuestionBatch(questionBatchId)
     require(answers.map { it.questionIndex }.sorted() == batch.questions.indices.toList()) {
         "$TYPE_QUESTION_ANSWER must answer every question exactly once"
@@ -272,12 +280,13 @@ suspend fun answerQuestionBatch(questionBatchId: String, answers: List<QuestionA
     )
     sendQuestionFrame(TYPE_QUESTION_ANSWER, MobileJson.encodeToJsonElement(payload))
 }
-// refuseQuestionBatch(questionBatchId) is heldQuestionBatch(questionBatchId) + one question_refused frame, no answers.
+// refuse(questionBatchId) is heldQuestionBatch(questionBatchId) + one question_refused frame, no answers.
 ```
 
 - **Validates against this connection's own held state, not the coordinator's projection.** A private
-  `heldQuestionBatch` reads `mutableQuestionBatches.value` directly — the same state `questionBatches`
-  projects, but read before the coordinator's `stateIn` republishes it, which trails by a dispatch.
+  `heldQuestionBatch` on `QuestionBatchProjection` reads `mutableQuestionBatches.value` directly — the same
+  state `questionBatches` projects, but read before the coordinator's `stateIn` republishes it, which
+  trails by a dispatch.
   Validating against that trailing copy would briefly reject a batch that had just arrived and accept
   one that had just been dismissed. Absent → `IllegalStateException` covers every batch this connection
   cannot resolve: never shown, already dismissed, or dropped by the reconnect that rebuilt this

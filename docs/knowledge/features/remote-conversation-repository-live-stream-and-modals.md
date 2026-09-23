@@ -2,6 +2,24 @@
 
 Split out of [Remote conversation repository — the Phase 4 `ConversationRepository`](remote-conversation-repository.md) on 2026-09-05 to keep that document under the 50000-byte size cap the docs guard enforces. Every section below moved here verbatim and kept its heading, so its anchors are unchanged. Part of [Remote conversation repository — the Phase 4 `ConversationRepository`](remote-conversation-repository.md); see that document for what it does, its edge cases and its links.
 
+**The retained model menus, the one-shot `request_model_list` ask and their refusal correlation now live in
+`ModelMenuProjection`** (#913), an `internal class` in `data/repository/ModelMenuProjection.kt`; **the
+clarification batches, their fold and their answer/refusal sends now live in `QuestionBatchProjection`**
+(`data/repository/QuestionBatchProjection.kt`), split out the same way `ThreadProjection` was (#912). Each
+takes the repository's pump `send`, and `ModelMenuProjection` also takes the repository's
+`negotiatedCapabilities` supplier, plus a `nextRequestId` lambda over the repository's one `requestId`
+counter — a lambda rather than a bound reference, since both projections are constructed in the property
+list above `requestId` and a bound `requestId::incrementAndGet` would read the field before it is
+initialised. The repository still owns the single inbound collector and the `interactive` gate on each arm;
+`observeModelMenu` reads `ModelMenuProjection.observe`, and the repository's public `questionBatches`,
+`answerQuestionBatch` and `refuseQuestionBatch` hand off to `QuestionBatchProjection.batches` / `answer` /
+`refuse` (`answerToken` stayed on the repository — it belongs to `answerModal`, not to question batches).
+Where the sections below show `modelMenusByConversation`, `askedModelMenus`, `modelListAsks`,
+`askForModelMenu`, `onModelListRefusal` or `decodeModelList` as a member of `RemoteConversationRepository`,
+read it as the same member, now on `ModelMenuProjection`; where they show `mutableQuestionBatches`,
+`foldQuestionFrame`, `heldQuestionBatch`, `sendQuestionFrame` or `questionToken`, read it as the same member,
+now on `QuestionBatchProjection` (`foldQuestionFrame` was renamed `apply` on the move).
+
 ## `liveSessionEvents` — the v2 structured-stream decode seam (#385)
 
 A hot **`val liveSessionEvents: SharedFlow<LiveSessionEvent>`** (`RemoteConversationRepository.kt:174-180`)
@@ -117,7 +135,8 @@ Noise channel, and a malformed frame drops only itself — the lone collector su
 
 ## `questionBatches` — the v2 clarification-batch decode+fold seam (#822)
 
-A **held `StateFlow<List<QuestionBatch>>`** (`mutableQuestionBatches` / `questionBatches`), not an event
+A **held `StateFlow<List<QuestionBatch>>`** (`QuestionBatchProjection.mutableQuestionBatches` /
+`batches`, exposed on the repository as `questionBatches`, #913), not an event
 stream — the deliberate difference from
 [`liveSessionEvents`](#livesessionevents--the-v2-structured-stream-decode-seam-385) and
 [`modalEvents`](#modalevents--the-v2-permissionchoice-modal-decode-seam-437) above. Decodes the two v2
@@ -231,9 +250,9 @@ never parsed (`patch` included), never evaluated or executed, never used as a ke
 
 A new `TYPE_MODEL_LIST = "model_list"` arm joins the `onInbound` `when (envelope.type)` demux, byte-for-
 byte the `queue_state` / [`stall`](stall-state.md) sibling shape: gated identically on
-`CAPABILITY_INTERACTIVE in negotiatedCapabilities()` (the reused #385 supplier), calling a private
-`decodeModelList(envelope): Pair<String, ModelMenu>?` and folding the result into connection-scoped
-state. The frame carries the per-conversation menu of models claude will accept — identifiers, labels,
+`CAPABILITY_INTERACTIVE in negotiatedCapabilities()` (the reused #385 supplier), calling
+`ModelMenuProjection.apply(envelope)` (#913), which decodes via a private `decodeModelList(envelope):
+Pair<String, ModelMenu>?` and folds the result into connection-scoped state. The frame carries the per-conversation menu of models claude will accept — identifiers, labels,
 per-row effort levels, auto-mode support and truncation metadata, drawn from claude's `initialize`
 control reply — arriving once per claude child spawn on the live lane (with an `event_id`) and again as a
 per-conversation burst on every (re)connect (without one); the payload is identical on both paths, so
@@ -248,8 +267,8 @@ nothing here branches on delivery path. Decode boundary:
   correlation leak — the uniform rule across every `onInbound` arm. `toMenu()` is total and authors no
   message at all, so the only throwables here are kotlinx-serialization's, caught and discarded rather
   than surfaced.
-- **`modelMenusByConversation: MutableStateFlow<Map<String, ModelMenu>>`** is connection-scoped, in-memory
-  state written **only** from the single existing `init` inbound collector — single writer, so snapshots
+- **`ModelMenuProjection.modelMenusByConversation: MutableStateFlow<Map<String, ModelMenu>>`** (#913) is
+  connection-scoped, in-memory state written **only** from the single existing `init` inbound collector — single writer, so snapshots
   never race, and the atomic `update {}` matches the sibling projections' memory-visibility posture. No
   new coroutine, no new scope, no new dispatcher.
 - **Snapshot-replace, keyed by the frame's own `conversation_id` and nothing else.** The arm does one
@@ -317,7 +336,8 @@ ask](mobile-protocol-v2-wire-layer-application-payloads.md#the-on-demand-ask--re
   the send would therefore suspend until connection teardown on the very outcome the verb exists to
   produce, and a connection without `interactive` is answered with nothing at all, so there would be
   nothing to await.
-- **Two ledgers, different lifetimes.** `askedModelMenus: MutableSet<String>` (a `ConcurrentHashMap` key
+- **Two ledgers, different lifetimes, both on `ModelMenuProjection`** (#913). `askedModelMenus:
+  MutableSet<String>` (a `ConcurrentHashMap` key
   set) is the one-shot record — a conversation already holding a menu, or already asked, is not asked
   again — connection-scoped like `modelMenusByConversation`, so "once" means once per connection; a fresh
   connection's reconcile burst is the recovery path. `modelListAsks: ConcurrentHashMap<Long, String>`

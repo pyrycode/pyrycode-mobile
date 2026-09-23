@@ -10,8 +10,6 @@ import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
-import de.pyryco.mobile.data.model.withDismissed
-import de.pyryco.mobile.data.model.withShown
 import de.pyryco.mobile.data.network.ArchiveConversationPayloadDto
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.AttachmentChunkPlan
@@ -36,13 +34,7 @@ import de.pyryco.mobile.data.network.ModalAnswerPayloadDto
 import de.pyryco.mobile.data.network.ModalCancelPayloadDto
 import de.pyryco.mobile.data.network.ModalDismissedPayloadDto
 import de.pyryco.mobile.data.network.ModalShownPayloadDto
-import de.pyryco.mobile.data.network.ModelListPayloadDto
 import de.pyryco.mobile.data.network.PromoteConversationPayloadDto
-import de.pyryco.mobile.data.network.QuestionAnswerEntryDto
-import de.pyryco.mobile.data.network.QuestionAnswerPayloadDto
-import de.pyryco.mobile.data.network.QuestionDismissedPayloadDto
-import de.pyryco.mobile.data.network.QuestionRefusedPayloadDto
-import de.pyryco.mobile.data.network.QuestionShownPayloadDto
 import de.pyryco.mobile.data.network.RecentWorkspacesListPayloadDto
 import de.pyryco.mobile.data.network.RegisterPushTokenPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
@@ -51,7 +43,6 @@ import de.pyryco.mobile.data.network.RenameConversationPayloadDto
 import de.pyryco.mobile.data.network.RenameWorkspacePayloadDto
 import de.pyryco.mobile.data.network.ReplayCursor
 import de.pyryco.mobile.data.network.RequestHistoryPayloadDto
-import de.pyryco.mobile.data.network.RequestModelListPayloadDto
 import de.pyryco.mobile.data.network.RequestSessionSettingsPayloadDto
 import de.pyryco.mobile.data.network.RequestSnapshotPayloadDto
 import de.pyryco.mobile.data.network.RequestSystemPromptPayloadDto
@@ -67,13 +58,10 @@ import de.pyryco.mobile.data.network.TurnStatePayloadDto
 import de.pyryco.mobile.data.network.WorkspaceFolderCreatedPayloadDto
 import de.pyryco.mobile.data.network.WorkspaceUpdatedPayloadDto
 import de.pyryco.mobile.data.network.setSystemPromptPayload
-import de.pyryco.mobile.data.network.toBatch
 import de.pyryco.mobile.data.network.toBoundary
 import de.pyryco.mobile.data.network.toConversation
-import de.pyryco.mobile.data.network.toConversations
 import de.pyryco.mobile.data.network.toEvent
 import de.pyryco.mobile.data.network.toHistoryPage
-import de.pyryco.mobile.data.network.toMenu
 import de.pyryco.mobile.data.network.toMessage
 import de.pyryco.mobile.data.network.toSessionSettings
 import de.pyryco.mobile.data.network.toSystemPromptReading
@@ -88,11 +76,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
@@ -126,8 +112,8 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * `pump.inbound` is hot and **single-consumer**, so the repository runs exactly one long-lived
  * collector (launched in [init] on the connection-scoped [scope]) that demultiplexes by
- * [Envelope.type] into a single [projection] `StateFlow`. [observeConversations] is a cold flow that
- * fans out from that projection, so N concurrent collectors share the one inbound consumer.
+ * [Envelope.type] into the list held by [ConversationListProjection]. [observeConversations] is a cold flow
+ * that fans out from that projection, so N concurrent collectors share the one inbound consumer.
  *
  * Every interface method other than [observeConversations] is a not-yet-implemented stub that the
  * sibling slices replace in this same class: thread reads (#313), last-message (#329), mutations
@@ -193,34 +179,12 @@ class RemoteConversationRepository(
     private val finishedBackgroundTasks: FinishedBackgroundTasks = FinishedBackgroundTasks(),
 ) : ConversationRepository {
     /**
-     * The demuxed list projection: `null` until the first `conversations` snapshot loads, then the
-     * latest full-list snapshot. The primary read source; [observeConversations] derives every cold
-     * read from it. Written by the single [init] inbound collector (the authoritative full-replace on
-     * each `conversations` snapshot), by [createDiscussion]'s confirmed insert (#347), **and** by
-     * [promote]'s confirmed upsert (#348) — both mutations fold a [Conversation] in via
-     * [upsertConversation], an atomic [MutableStateFlow.update] CAS upsert (dedup by id) run only after
-     * the correlated reply (`conversation_created` / `conversation_updated`) lands, so the writers
-     * retry-merge rather than clobber. Two further inbound writers land here since #721: an
-     * **unsolicited** `conversation_updated` folds through that same [upsertConversation], and a
-     * `workspace_updated` relabels every row sharing its path via [applyWorkspaceLabel]. [promote]
-     * additionally **reads** [projection]`.value` (a
-     * lock-free snapshot) to resolve the conversation's existing cwd when its `workspace` argument is
-     * null. `StateFlow` conflation means a value-equal result does not re-emit (e.g. a redundant reply
-     * to a second collector's request, or the authoritative snapshot that later re-includes a
-     * just-folded conversation).
+     * The conversation list and the last-message previews (#913): the list projection, the most-recent
+     * message per conversation, and every write that folds into either. [onInbound] hands it the
+     * `conversations` snapshot, and the mutations and the `message` / `conversation_updated` /
+     * `workspace_updated` / `session_transition` arms fold into it once they have decoded their frame.
      */
-    private val projection = MutableStateFlow<List<Conversation>?>(null)
-
-    /**
-     * `conversationId -> most-recent` [Message] seen on this connection's live `message` stream
-     * (#329). Written by the single [init] inbound collector **and** by [sendMessage]'s confirmed
-     * insert (#346) — two writers, but every write goes through the atomic [MutableStateFlow.update]
-     * fold below, so concurrent updates retry-merge correctly. [observeLastMessage] fans out from it.
-     * Connection-scoped in-memory state — lost on process death and re-derived from the live stream
-     * on reconnect (the cold-start gap is the #313 backfill hand-off). The fold is
-     * strictly-greater-by-timestamp, mirroring the fake's `maxByOrNull { it.timestamp }`.
-     */
-    private val lastMessages = MutableStateFlow<Map<String, Message>>(emptyMap())
+    private val conversationListProjection = ConversationListProjection()
 
     /**
      * The per-conversation status readings, one small projection per wire event: stall (#395), queue
@@ -245,62 +209,18 @@ class RemoteConversationRepository(
     private val threadProjection = ThreadProjection()
 
     /**
-     * `conversationId -> the model menu this connection heard for it` (#791) — the identifiers, labels,
-     * per-row effort levels and auto-mode support the daemon published. Written **only** from the single
-     * [init] inbound collector: each `model_list` frame is a full snapshot that **replaces** that
-     * conversation's entry, leaving every other conversation untouched. Single writer on the one
-     * collector coroutine, so snapshots never race; the atomic [MutableStateFlow.update] matches the
-     * sibling projections' memory-visibility posture. [observeModelMenu] fans out from it.
-     *
-     * **Nothing ever removes a key, and no connection edge clears the map.** Absence of a frame is the
-     * wire's only "no list" signal, so a blanket clear would manufacture an unavailable reading the
-     * daemon never stated. Connection-scoped in-memory state — a fresh repository per connection (#351)
-     * starts empty, which is the only reset this state has, and is also where "per host" comes from: the
-     * published vocabulary varies by machine and account rather than by conversation.
-     *
-     * Unlike [QueueProjection] this is **not** a transient "right now" condition — a published
-     * vocabulary is a standing fact about the host for as long as the connection lives.
+     * The model menu of every conversation (#913): the retained menus, the one-shot `request_model_list`
+     * ask and its refusal correlation. [onInbound] hands it `model_list` behind the `interactive` gate and
+     * the refusal half of `error`; [observeModelMenu] reads it. Its ask takes its envelope id from this
+     * repository's one [requestId] — read through a lambda, because [requestId] is declared below and a
+     * bound reference would capture it before it is initialised.
      */
-    private val modelMenusByConversation = MutableStateFlow<Map<String, ModelMenu>>(emptyMap())
-
-    /**
-     * The conversations this connection already sent a `request_model_list` for (#792) — the one-shot
-     * ledger behind [askForModelMenu]. Connection-scoped like [modelMenusByConversation], so "asked
-     * once" means once per connection: a fresh repository (#351) starts empty and the new connection's
-     * reconcile burst is what fills it, which is exactly the recovery path the no-retry rule names.
-     *
-     * Membership is added by an atomic [MutableSet.add] **test-and-set** rather than a read followed by
-     * a write, so two collectors subscribing to the same conversation in the same instant still produce
-     * one ask. An entry is removed on only two occasions, neither of which re-sends anything: a send the
-     * transport refused (an ask that never left is not an ask), and a `model_list.unavailable` refusal,
-     * which is the wire's statement that *the same request may succeed later* — see
-     * [onModelListRefusal].
-     *
-     * Its keyspace is conversation ids the client already holds from the daemon's own `conversations`
-     * snapshot, so nothing a daemon sends can grow it past the set it already published, and it dies
-     * with the connection. It holds ids and no content.
-     */
-    private val askedModelMenus: MutableSet<String> = ConcurrentHashMap.newKeySet()
-
-    /**
-     * Request *envelope* id -> the conversation that `request_model_list` named (#792). The refusal
-     * correlation, and deliberately **not** [pendingRequests]: this verb's two replies arrive on
-     * different arms — a success is a `model_list` that #791's arm applies by the payload's own
-     * conversation id and that completes no waiter, while a refusal is an `error`. A
-     * [sendAndAwaitReply] here would therefore suspend until teardown on the one outcome the verb
-     * exists to produce, and AC #4 forbids waiting on a reply that cannot come at all.
-     *
-     * So the ask is fire-and-forget and this map is the whole of its correlation: written before the
-     * send, consumed by whichever arm answers. The two maps are **disjoint by construction** — an ask
-     * registers in exactly one of them and never the other — so an `inReplyTo` resolves in at most one
-     * and neither lookup can consume the other's reply.
-     *
-     * **The entry is consumed and discarded, never used to route the retention.** Routing stays the
-     * `model_list` payload's own `conversation_id`, so a daemon answering an ask for A with a payload
-     * naming B cannot land B's rows under A — the cross-conversation injection #791 foreclosed
-     * structurally, which this ticket must not re-open by correlating what it must not.
-     */
-    private val modelListAsks = ConcurrentHashMap<Long, String>()
+    private val modelMenuProjection =
+        ModelMenuProjection(
+            send = pump::send,
+            negotiatedCapabilities = negotiatedCapabilities,
+            nextRequestId = { requestId.incrementAndGet() },
+        )
 
     /**
      * `conversationId -> settings-read ordinal` (#590) — the **refresh trigger** for
@@ -446,15 +366,17 @@ class RemoteConversationRepository(
     val modalEvents: SharedFlow<ModalEvent> = mutableModalEvents.asSharedFlow()
 
     /**
-     * The clarification batches outstanding on **this connection** (#822), folded from `question_shown` /
-     * `question_dismissed` by the single inbound collector. Held state rather than a `replay = 0` event
-     * stream: the daemon's connect-time reconcile re-sends every outstanding batch in one burst, and an
-     * event stream folded downstream could lose part of it to a late subscriber. A new connection builds a
-     * new repository, so this starts empty and the reconcile rebuilds it — the protocol's reset-on-reconnect
-     * rule, the opposite of `currentModal`'s retain. On the concrete repository only, like [modalEvents].
+     * The clarification batches outstanding on **this connection** (#822), held by [QuestionBatchProjection]
+     * (#913), which folds `question_shown` / `question_dismissed` and sends the answers and refusals. A new
+     * connection builds a new repository, so this starts empty and the reconcile rebuilds it. On the concrete
+     * repository only, like [modalEvents].
      */
-    private val mutableQuestionBatches = MutableStateFlow<List<QuestionBatch>>(emptyList())
-    val questionBatches: StateFlow<List<QuestionBatch>> = mutableQuestionBatches.asStateFlow()
+    private val questionBatchProjection =
+        QuestionBatchProjection(
+            send = pump::send,
+            nextRequestId = { requestId.incrementAndGet() },
+        )
+    val questionBatches: StateFlow<List<QuestionBatch>> = questionBatchProjection.batches
 
     /**
      * The background tasks each conversation holds on **this connection** (#677), keyed by conversation id; a
@@ -487,21 +409,9 @@ class RemoteConversationRepository(
         if (routeAttachmentUpload(envelope)) return
         recordReplayCursor(envelope)
         when (envelope.type) {
-            TYPE_CONVERSATIONS -> {
-                // The reply to our request AND any unsolicited change push arrive as a full-list
-                // `conversations` snapshot, so re-emission needs no in_reply_to correlation (AC #3).
-                // Decode is the single failure surface: a malformed payload (missing required field
-                // → SerializationException, bad timestamp → IllegalArgumentException; the former is a
-                // subtype of the latter) is dropped so the single inbound consumer survives, rather
-                // than letting an uncaught throw freeze every future update for the connection.
-                val decoded =
-                    try {
-                        MobileJson.decodeFromJsonElement<ConversationsPayload>(envelope.payload)
-                    } catch (e: IllegalArgumentException) {
-                        return
-                    }
-                projection.value = decoded.toConversations()
-            }
+            TYPE_CONVERSATIONS ->
+                // A full-list snapshot, reply or unsolicited push: see [ConversationListProjection.applySnapshot].
+                conversationListProjection.applySnapshot(envelope)
             TYPE_MESSAGE -> {
                 // A live (or send_message-echo) `message` envelope. Decode + map through the single
                 // #317 boundary; a malformed payload (missing field / unmappable role →
@@ -521,7 +431,7 @@ class RemoteConversationRepository(
                 // message is also a thread row (#313): append it to the conversation thread in
                 // arrival order, deduped by message_id. The thread is a distinct projection from
                 // the last-message preview.
-                recordLastMessage(conversationId, message)
+                conversationListProjection.recordLastMessage(conversationId, message)
                 threadProjection.appendMessages(listOf(conversationId to message))
             }
             TYPE_MESSAGE_CHUNK -> {
@@ -565,7 +475,7 @@ class RemoteConversationRepository(
                         } catch (e: IllegalArgumentException) {
                             return
                         }
-                    upsertConversation(conversation)
+                    conversationListProjection.upsertConversation(conversation)
                 }
             }
             TYPE_WORKSPACE_UPDATED -> {
@@ -595,7 +505,7 @@ class RemoteConversationRepository(
                         waiter?.completeExceptionally(malformedWorkspaceReply())
                         return
                     }
-                applyWorkspaceLabel(decoded.path, decoded.label)
+                conversationListProjection.applyWorkspaceLabel(decoded.path, decoded.label)
                 waiter?.complete(envelope.payload)
             }
             TYPE_ACK, TYPE_CONVERSATION_CREATED, TYPE_CONVERSATION_DELETED,
@@ -639,13 +549,13 @@ class RemoteConversationRepository(
                 // idempotent and a no-op when no entry matches.
                 //
                 // Since #792 the arm also carries the refusal half of `request_model_list`, whose ask
-                // registers in [modelListAsks] and never in [pendingRequests]. The two maps are disjoint
+                // registers in [ModelMenuProjection]'s ask ledger and never in [pendingRequests]. The two maps are disjoint
                 // by construction, so an id resolves in at most one and the two lookups cannot consume
                 // each other's reply; an `inReplyTo` matching neither (a stale, duplicated or
                 // unsolicited error) is a no-op in both.
                 envelope.inReplyTo?.let { id ->
                     pendingRequests[id]?.completeExceptionally(mapError(envelope.payload))
-                    modelListAsks.remove(id)?.let { conversationId -> onModelListRefusal(conversationId, envelope.payload) }
+                    modelMenuProjection.applyRefusal(id, envelope.payload)
                 }
             TYPE_TURN_STATE, TYPE_ASSISTANT_DELTA, TYPE_TOOL_USE, TYPE_TOOL_RESULT, TYPE_TURN_END -> {
                 // A v2 structured live-session envelope (#385). AC #2: gate on the negotiated
@@ -722,41 +632,10 @@ class RemoteConversationRepository(
                 }
             }
             TYPE_MODEL_LIST -> {
-                // The per-conversation model menu (#791). Same `interactive` gate as the live-session /
-                // `stall` / `queue_state` siblings: a non-interactive phone never decodes a spurious
-                // `model_list` from a buggy/hostile daemon that ignored the server-side fan-out gate
-                // (fail-closed, defence in depth). Each frame is snapshot-shaped full state, so it FULLY
-                // REPLACES this conversation's entry and leaves every other conversation untouched — no
-                // merge, no append, and re-applying the reconnect burst is safe by construction.
-                //
-                // Routing is the payload's own conversation_id and NOTHING else. Never the envelope id,
-                // which every frame in the reconcile burst repeats, and never burst position: the daemon
-                // walks its registry in an order that is not a contract. An id no collector observes
-                // simply sits unread in the map.
-                //
-                // Nothing is cleared here or on a connection edge — absence of a frame is the wire's only
-                // "no list" signal, so a clear would manufacture an unavailable reading the daemon never
-                // stated. A malformed payload decodes to null and is dropped so the single inbound
-                // consumer survives, leaving the previously retained menu standing. Like the `queue_state`
-                // sibling and unlike the live-session arm, this folds no thread row and does NOT clear a
-                // stall — a menu is not turn forward progress. Drop silently: every row string is
-                // claude-authored text that crossed the subprocess trust boundary, and a logged
-                // conversation_id is a cross-conversation correlation leak.
-                //
-                // Since #792 the frame is also the correlated answer to this client's own
-                // `request_model_list`, and the ONLY thing that changes for it is that the ask's
-                // correlation entry is consumed here. It is consumed and DISCARDED: the retention below
-                // still routes on the payload's own conversation_id, so a daemon answering an ask for A
-                // with a payload naming B lands B's rows under B and leaves A unavailable, rather than
-                // cross-routing them. The removal is unconditional on the decode succeeding — a
-                // malformed answer is still an answer, and leaving the entry would leak it until the
-                // connection died — and it does NOT release the one-shot in [askedModelMenus], because
-                // the ask was answered.
+                // The per-conversation model menu (#791), and since #792 the answer to this client's own
+                // ask: see [ModelMenuProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    envelope.inReplyTo?.let(modelListAsks::remove)
-                    decodeModelList(envelope)?.let { (conversationId, menu) ->
-                        modelMenusByConversation.update { it + (conversationId to menu) }
-                    }
+                    modelMenuProjection.apply(envelope)
                 }
             }
             TYPE_API_RETRY -> {
@@ -808,7 +687,7 @@ class RemoteConversationRepository(
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     decodeSessionTransition(envelope)?.let { (conversationId, boundary) ->
                         threadProjection.appendSessionBoundary(conversationId, boundary)
-                        updateCurrentSessionId(conversationId, boundary.newSessionId)
+                        conversationListProjection.updateCurrentSessionId(conversationId, boundary.newSessionId)
                         // Third write since #590: the session this conversation's settings describe has
                         // been replaced, so every reading of it is stale. Bump the trigger rather than
                         // reading here — the read belongs on a collector's coroutine, and a conversation
@@ -899,7 +778,7 @@ class RemoteConversationRepository(
                 // modal, so it never reaches modalEvents. Held per connection, not a thread row, and it
                 // clears no stall. Drop silently: the claude-authored strings and the nonce are never logged.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    foldQuestionFrame(envelope)
+                    questionBatchProjection.apply(envelope)
                 }
             }
             TYPE_BACKGROUND_TASK_STARTED, TYPE_BACKGROUND_TASK_UPDATED, TYPE_BACKGROUND_TASK_ROSTER -> {
@@ -981,33 +860,6 @@ class RemoteConversationRepository(
         }
 
     /**
-     * Decode one v2 `model_list` envelope (#791) to its routing conversation id and retained
-     * [ModelMenu], or **null** when it cannot be read. Decodes the untrusted [Envelope.payload] through
-     * the single configured [MobileJson] and maps via `toMenu()`. The whole body is one `try`/`catch
-     * (IllegalArgumentException)` ([kotlinx.serialization.SerializationException] ⊂
-     * [IllegalArgumentException]), so a malformed payload — a missing/wrong-typed `conversation_id` or
-     * `dropped_models`, a `models` or `effort_levels` that is explicitly `null` (both are always arrays
-     * on the wire), or a row missing one of its required strings — yields `null`, dropping the one
-     * envelope while the lone inbound collector survives. There is no partial menu: a bad row fails the
-     * whole frame, and the caller's previously retained menu stands because nothing was written.
-     *
-     * Because `toMenu()` is **total**, structural malformation is the only null path — there is no
-     * unrecognized *value* to reject, unlike [decodeLiveSessionEvent]. Returning a [Pair] of the routing
-     * id and the already-mapped domain value keeps the untrusted wire DTO from escaping this boundary,
-     * matching every sibling decoder. Mirrors the [StallProjection] / [QueueProjection] decoders' drop idiom —
-     * **nothing here logs the payload**, which is mandatory rather than stylistic: the rows are
-     * claude-authored text the daemon does not sanitize, and the caught throwable (kotlinx-serialization
-     * can quote the offending input in its message) is discarded rather than surfaced.
-     */
-    private fun decodeModelList(envelope: Envelope): Pair<String, ModelMenu>? =
-        try {
-            val dto = MobileJson.decodeFromJsonElement<ModelListPayloadDto>(envelope.payload)
-            dto.conversationId to dto.toMenu()
-        } catch (e: IllegalArgumentException) {
-            null
-        }
-
-    /**
      * Decode one v2 `session_transition` envelope (#336) to its routing [conversationId] and the mapped
      * [ThreadItem.SessionBoundary], or **null** when it cannot be folded. Decodes the untrusted
      * [Envelope.payload] through the single configured [MobileJson] and maps via `toBoundary()`. The whole
@@ -1051,30 +903,6 @@ class RemoteConversationRepository(
         }
 
     /**
-     * Fold one question envelope (#822) into [questionBatches] via [withShown] / [withDismissed]. The decode
-     * is strict ([QuestionShownPayloadDto], [QuestionDismissedPayloadDto]); any failure is an
-     * [IllegalArgumentException] ([kotlinx.serialization.SerializationException] ⊂ it) and changes nothing,
-     * so the lone inbound collector survives. The exception is discarded unlogged: kotlinx messages can
-     * quote the JSON input.
-     */
-    private fun foldQuestionFrame(envelope: Envelope) {
-        try {
-            when (envelope.type) {
-                TYPE_QUESTION_SHOWN -> {
-                    val batch = MobileJson.decodeFromJsonElement<QuestionShownPayloadDto>(envelope.payload).toBatch()
-                    mutableQuestionBatches.update { it.withShown(batch) }
-                }
-                TYPE_QUESTION_DISMISSED -> {
-                    val dismissed = MobileJson.decodeFromJsonElement<QuestionDismissedPayloadDto>(envelope.payload)
-                    mutableQuestionBatches.update { it.withDismissed(dismissed.questionBatchId) }
-                }
-            }
-        } catch (e: IllegalArgumentException) {
-            return
-        }
-    }
-
-    /**
      * Read the inline `conversation_id` of a `resync` marker (#417) as a JSON string, or **null** when
      * it is absent / not a string / the payload is not a JSON object. Pure structural access off
      * [Envelope.payload] — no `decodeFromJsonElement`, no DTO (mirrors the server's payload-less
@@ -1109,26 +937,6 @@ class RemoteConversationRepository(
             IllegalArgumentException("Unknown conversation: ${error.message}")
         } else {
             RelayErrorException(code = error.code, retryable = error.retryable, message = error.message)
-        }
-    }
-
-    /**
-     * Most-recent-by-timestamp fold for [conversationId]'s last-message preview ([lastMessages]).
-     * Atomic check-then-replace: replace the stored entry **iff** [message]'s timestamp is strictly
-     * greater, so out-of-order older arrivals and re-delivered duplicates are no-ops (no re-emit).
-     * Called by both the live `message` collector arm and [sendMessage]'s confirmed insert.
-     */
-    private fun recordLastMessage(
-        conversationId: String,
-        message: Message,
-    ) {
-        lastMessages.update { current ->
-            val existing = current[conversationId]
-            if (existing != null && message.timestamp <= existing.timestamp) {
-                current
-            } else {
-                current + (conversationId to message)
-            }
         }
     }
 
@@ -1178,100 +986,22 @@ class RemoteConversationRepository(
     }
 
     /**
-     * Fold a `session_transition`'s [newSessionId] into the list [projection] entry for [conversationId]
-     * (#578) — the sibling write to [ThreadProjection.appendSessionBoundary], resolving the live session identity the v2
-     * `conversations` summary omits (so a session-scoped frame like `set_session_settings` targets the
-     * real session instead of the defaulted empty id). Field-updates an **existing** entry only: a
-     * [List.map] over the current list, so an unknown [conversationId] yields an element-equal list
-     * ([StateFlow] conflation ⇒ no re-emit, **no phantom conversation** — unlike [ThreadProjection.appendSessionBoundary]
-     * the list projection must not gain a phantom entry, so the `else it` identity branch *is* the
-     * absent-conversation guard), and a `null` (pre-first-snapshot) projection stays `null`. Written
-     * **verbatim for every reason** (`clear` carries the freshly-rotated-to id; `idle_evict` carries the
-     * evicted id unchanged ⇒ element-equal no-op in the common case), mirroring [ThreadProjection.appendSessionBoundary]'s
-     * copy-through posture. The atomic [MutableStateFlow.update] CAS retry-merges against a concurrent
-     * authoritative `conversations` snapshot rather than clobbering it, as [upsertConversation] does.
-     * [newSessionId] is sensitive and is never logged (Security review).
-     */
-    private fun updateCurrentSessionId(
-        conversationId: String,
-        newSessionId: String,
-    ) {
-        projection.update { current ->
-            current?.map { if (it.id == conversationId) it.copy(currentSessionId = newSessionId) else it }
-        }
-    }
-
-    /**
-     * Confirmed-insert [conversation] into the list [projection] (#347): an atomic
-     * [MutableStateFlow.update] CAS upsert — replace the entry with the same `id` in place, else
-     * append — so a concurrent authoritative `conversations` snapshot retry-merges rather than being
-     * lost, and a re-delivered create is idempotent. Folding into the `null` (pre-first-snapshot)
-     * projection yields a single-element list, which [observeConversations] then emits (AC #2).
-     */
-    private fun upsertConversation(conversation: Conversation) {
-        projection.update { current ->
-            val existing = current.orEmpty()
-            val index = existing.indexOfFirst { it.id == conversation.id }
-            if (index >= 0) {
-                existing.toMutableList().apply { this[index] = conversation }
-            } else {
-                existing + conversation
-            }
-        }
-    }
-
-    /**
-     * Apply a `workspace_updated` notification (#721) to the list [projection]: every conversation whose
-     * [Conversation.cwd] equals [path] takes [label] — a string replacing the stored display name, a
-     * `null` clearing it. A workspace is a **folder**, and N conversations may share one, so this is a
-     * fan-out over the whole projection rather than a keyed upsert; archived rows are included, because
-     * archiving a conversation does not un-name its folder.
-     *
-     * Direct sibling of [updateCurrentSessionId], and it inherits that shape's three properties:
-     * [path] is matched by **exact string equality** — no trim, no normalization, no filesystem access
-     * (the protocol compares the path as bytes, so two paths differing by a trailing separator are
-     * distinct workspaces and normalizing would merge workspaces the daemon keeps apart); the `else it`
-     * identity branch means a path matching no row is a genuine no-op, since `map` then returns an
-     * element-equal list and [StateFlow] conflation suppresses re-emission — **no phantom conversation**,
-     * as the frame carries a path and not a conversation; and a `null` (pre-first-snapshot) projection
-     * stays `null`, a push that arrives before the first snapshot having no rows to label.
-     *
-     * The atomic [MutableStateFlow.update] CAS is load-bearing rather than stylistic: [projection] is
-     * written from caller coroutines too (the correlated mutations, via [upsertConversation]), so a
-     * `.value = …` read-modify-write would open a real check-then-mutate window against a concurrent
-     * snapshot or upsert.
-     *
-     * [path] and [label] are never logged (Security review): the path is a filesystem location on the
-     * daemon's host and the label is operator-authored text, and the daemon keeps both out of its own
-     * records for this verb. [label] is stored **verbatim** — never trimmed or truncated, and a blank is
-     * not folded to `null`; the daemon's 128-byte bound is a size limit and not a safety property, and
-     * safe rendering of this opaque text belongs to the consuming slices (#722, #641).
-     */
-    private fun applyWorkspaceLabel(
-        path: String,
-        label: String?,
-    ) {
-        projection.update { current ->
-            current?.map { if (it.cwd == path) it.copy(workspaceLabel = label) else it }
-        }
-    }
-
-    /**
      * Remove [conversationId] from **all three** read projections after a confirmed `delete` (#532) —
-     * the contrast to [upsertConversation]. The [ConversationRepository.delete] contract's
+     * the contrast to [ConversationListProjection.upsertConversation]. The [ConversationRepository.delete] contract's
      * post-condition spans all three streams, and the fake achieves it by removing its *unified* record
      * ([FakeConversationRepository]'s `state - conversationId` empties list, messages, and last-message
      * at once); the remote holds three *separate* `StateFlow`s read independently by [observeMessages] /
      * [observeLastMessage], so a list-only removal would leave those streams emitting a hard-deleted
-     * conversation's rows. Clearing all three is *completing* the delete, not scope creep. Idempotent by
+     * conversation's rows. Clearing all three is *completing* the delete, not scope creep. Since #913 the list
+     * and last-message streams are cleared by [ConversationListProjection.remove] and the thread by
+     * [ThreadProjection.remove]. Idempotent by
      * construction: `List.filterNot` returns an element-equal list when the id is absent, and
      * `Map - missingKey` an equals-identical map, so [StateFlow] conflation makes deleting an
      * already-absent id re-emit nothing on any of the three.
      */
     private fun removeConversation(conversationId: String) {
-        projection.update { current -> current?.filterNot { it.id == conversationId } }
+        conversationListProjection.remove(conversationId)
         threadProjection.remove(conversationId)
-        lastMessages.update { it - conversationId }
     }
 
     override fun observeConversations(filter: ConversationFilter): Flow<List<Conversation>> =
@@ -1280,23 +1010,8 @@ class RemoteConversationRepository(
             // and re-subscribing (e.g. on lifecycle resume) naturally re-issues. A pre-Open send returns
             // false and is dropped — the coordinator (#302) wires this against an Open pump.
             pump.send(listConversationsRequest())
-            emitAll(projection.filterNotNull().map { project(it, filter) })
+            emitAll(conversationListProjection.observe(filter))
         }
-
-    /** Apply the [ConversationFilter] then order most-recently-used first — mirrors the fake exactly. */
-    private fun project(
-        conversations: List<Conversation>,
-        filter: ConversationFilter,
-    ): List<Conversation> =
-        conversations
-            .filter { conversation ->
-                when (filter) {
-                    ConversationFilter.All -> true
-                    ConversationFilter.Channels -> conversation.isPromoted && !conversation.archived
-                    ConversationFilter.Discussions -> !conversation.isPromoted && !conversation.archived
-                    ConversationFilter.Archived -> conversation.archived
-                }
-            }.sortedByDescending { it.lastUsedAt }
 
     private fun listConversationsRequest(): Envelope =
         Envelope(
@@ -1528,14 +1243,7 @@ class RemoteConversationRepository(
             emitAll(threadProjection.observe(conversationId))
         }
 
-    /**
-     * Most-recent live [Message] for [conversationId] (#329), a pure cold projection of the shared
-     * [lastMessages] `StateFlow`. Issues no request — rides the live `message` stream. A `StateFlow`
-     * always has a current value, so every collector (including a `flatMapLatest` re-subscription)
-     * receives the current most-recent (or `null` when the conversation is absent) on subscription
-     * and re-emits only on change; the one inbound consumer fans out to unlimited collectors.
-     */
-    override fun observeLastMessage(conversationId: String): Flow<Message?> = lastMessages.map { it[conversationId] }.distinctUntilChanged()
+    override fun observeLastMessage(conversationId: String): Flow<Message?> = conversationListProjection.observeLastMessage(conversationId)
 
     override fun observeStall(conversationId: String): Flow<Boolean> = stallProjection.observe(conversationId)
 
@@ -1552,138 +1260,7 @@ class RemoteConversationRepository(
     override fun observeThinkingProgress(conversationId: String): Flow<ThinkingProgress?> =
         thinkingProgressProjection.observe(conversationId)
 
-    /**
-     * The model menu this connection heard for [conversationId] (#791), a cold projection of the
-     * shared [modelMenusByConversation] `StateFlow` over the `model_list` frames the daemon publishes
-     * unasked. An absent key is `null`, which is **unavailable**: a normal,
-     * permanent resting state, never an error, never the `Model` / `Effort` device enums and — because
-     * the lookup is by the caller's own id — never another conversation's rows.
-     *
-     * [distinctUntilChanged] suppresses only value-*identical* re-emissions, so a `model_list` for
-     * **another** conversation does not re-emit this flow, and the reconnect burst's re-send of an
-     * unchanged menu costs a consumer nothing. A genuinely different menu is a different [ModelMenu]
-     * value and does reach the collector — the [observeApiRetry] property, which a membership `Set`
-     * could not provide. A `StateFlow` always has a current value, so every collector (including a
-     * `flatMapLatest` re-subscription through the facade) receives the current reading (`null` until a
-     * frame lands) on subscription; the one inbound consumer fans out to unlimited collectors.
-     *
-     * Since #792 the subscription also **triggers the ask** for a conversation this connection holds no
-     * menu for — see [askForModelMenu]. Subscribing to a conversation's menu is wanting it, and this is
-     * the seam where the conversation to name is known, the desktop client's conversation-activation
-     * decision transferred to the reading mobile actually has. The ask is non-suspending and
-     * non-throwing, so the first emission is not delayed and an unavailable reading still reports
-     * `null` immediately rather than stalling on a reply that may never come.
-     */
-    override fun observeModelMenu(conversationId: String): Flow<ModelMenu?> =
-        modelMenusByConversation
-            .map { it[conversationId] }
-            .distinctUntilChanged()
-            .onStart { askForModelMenu(conversationId) }
-
-    /**
-     * Send one `request_model_list` naming [conversationId] (#792, daemon pyrycode#2125) — the third
-     * and last way a client gets a menu and the only one it can trigger itself. It closes the window
-     * the frame's two unsolicited paths leave open: a conversation **created after the phone connected**
-     * crosses neither the live lane nor the connect-time reconcile, so without this its model and effort
-     * controls stay blank with nothing to wait for.
-     *
-     * **Fire-and-forget, non-suspending and non-throwing** — the [requestDebugBundle] posture, not
-     * [sendAndAwaitReply]. The success is a `model_list` handled by its own arm and completes no waiter,
-     * so an awaiting send would suspend until teardown on the very outcome this verb exists to produce;
-     * and a conn without `interactive` is answered with nothing at all, so there would be nothing to
-     * wait for. Every failure is absorbed here: nothing is thrown into the subscribing collector, and
-     * the reading keeps reporting `null`.
-     *
-     * Four guards, each returning without sending:
-     *
-     *  1. **An empty id names nothing** and is refused daemon-side, so it is the same failure spelled
-     *     differently rather than a second case — not sending is the whole of that branch.
-     *  2. **`interactive` was not negotiated.** The daemon leaves such a conn fully inert on this verb,
-     *     so a send would buy nothing and could not even be refused.
-     *  3. **A menu is already retained** for it — "a conversation that already holds a menu is not asked
-     *     again". A plain snapshot read, deliberately not atomic with guard 4: the worst a race there
-     *     costs is one redundant ask for a menu that landed in the same instant, which the daemon
-     *     answers idempotently.
-     *  4. **It was already asked** on this connection, via [askedModelMenus]'s atomic test-and-set.
-     *
-     * Past the guards, the correlation is registered **before** the send ([sendAndAwaitReply]'s
-     * no-lost-reply ordering) and a send the transport refused rolls **both** entries back. That is not
-     * a retry — nothing re-sends — it only declines to burn the one shot on a frame that never left,
-     * and in that window the pump is not `Open`, so no ask of any collector's could have gone out
-     * either.
-     *
-     * **Never logs, on any branch.** The conversation id is a cross-conversation correlation key, and
-     * this method authors no message at all — deliberately not [interrupt]'s `check(pump.send(…)) { … }`
-     * idiom, so there is no failure text to leak.
-     */
-    private fun askForModelMenu(conversationId: String) {
-        if (conversationId.isEmpty()) return
-        if (CAPABILITY_INTERACTIVE !in negotiatedCapabilities()) return
-        if (conversationId in modelMenusByConversation.value) return
-        if (!askedModelMenus.add(conversationId)) return
-
-        val request =
-            Envelope(
-                id = requestId.incrementAndGet(),
-                type = TYPE_REQUEST_MODEL_LIST,
-                ts = Clock.System.now().toString(),
-                payload = MobileJson.encodeToJsonElement(RequestModelListPayloadDto(conversationId = conversationId)),
-            )
-        modelListAsks[request.id] = conversationId
-        val sent =
-            try {
-                pump.send(request)
-            } catch (e: Exception) {
-                false
-            }
-        if (!sent) {
-            modelListAsks.remove(request.id)
-            askedModelMenus.remove(conversationId)
-        }
-    }
-
-    /**
-     * Read a refusal of this client's own `request_model_list` (#792) and decide whether the one-shot
-     * stands. **Tells the daemon's two codes apart, which is the point of this method**: they mean
-     * different things and a client that merged them would either re-ask a conversation that will never
-     * exist or never re-ask one that would answer tomorrow.
-     *
-     *  - **`model_list.unavailable`** — the daemon *does* host the conversation but has no vocabulary to
-     *    answer with yet, so the same request may succeed later. The [askedModelMenus] entry is released
-     *    so a **later trigger** may ask again.
-     *  - **`conversation.not_found`** — the daemon does not host what was named. **Terminal** for that
-     *    id on this connection; the entry stands.
-     *  - **Any other code, and a payload that will not decode** — fail closed, treated as terminal. An
-     *    unrecognised code is not a statement that asking again would help.
-     *
-     * **Releasing is not retrying** (AC #3). There is no timer, no backoff, no scheduled re-send and
-     * nothing here that sends at all: a refusal with the collector still subscribed produces no second
-     * frame, and only a **new** subscription asks again — which this class never creates. A reply that
-     * never arrives and a timeout need no handling for the same reason there is no waiter to expire.
-     *
-     * **Neither branch writes [modelMenusByConversation]**, so no refusal becomes an empty menu; both
-     * leave the conversation unavailable, the same resting state it was already in.
-     *
-     * [mapError] is deliberately not reused: it collapses `conversation.not_found` into an
-     * [IllegalArgumentException] and discards the very code this branch exists to read.
-     *
-     * **Never logs.** It reads [ErrorPayload.code] and discards the rest — `message` is daemon-authored
-     * prose and pairing it with a conversation id in one line is exactly what this ticket's security
-     * note forbids. The decode failure is caught and **discarded** rather than logged or rethrown, since
-     * a kotlinx-serialization message can quote the offending input.
-     */
-    private fun onModelListRefusal(
-        conversationId: String,
-        payload: JsonElement,
-    ) {
-        val code =
-            try {
-                MobileJson.decodeFromJsonElement<ErrorPayload>(payload).code
-            } catch (e: IllegalArgumentException) {
-                return
-            }
-        if (code == ERROR_MODEL_LIST_UNAVAILABLE) askedModelMenus.remove(conversationId)
-    }
+    override fun observeModelMenu(conversationId: String): Flow<ModelMenu?> = modelMenuProjection.observe(conversationId)
 
     /**
      * Create an unpromoted discussion over v2 `create_conversation` (#347). Encodes the request
@@ -1691,14 +1268,14 @@ class RemoteConversationRepository(
      * correlated `conversation_created` reply — the **typed** bare-conversation payload (contrast
      * [sendMessage]'s empty `ack`, which it reconstructs from input). Decodes the reply through the
      * #318 [ConversationResponseDto] boundary, so a malformed reply throws before any state mutation,
-     * then **confirmed-inserts** the returned [Conversation] into [projection] — only after the reply
+     * then **confirmed-inserts** the returned [Conversation] into [ConversationListProjection] — only after the reply
      * decodes — so [observeConversations] re-emits with it (AC #2). The returned `cwd` is the
      * **server-assigned** value from the reply (a null [workspace] requests a scratch cwd the server
      * picks), never the input (AC #1).
      *
      * Throws [RelayErrorException] for a server `error`, [IllegalStateException] when the session is
      * not connected, and the #318 decode exception ([kotlinx.serialization.SerializationException] /
-     * [IllegalArgumentException]) for a malformed reply — none of which mutate [projection] (AC #3).
+     * [IllegalArgumentException]) for a malformed reply — none of which mutate [ConversationListProjection] (AC #3).
      */
     override suspend fun createDiscussion(workspace: String?): Conversation {
         val request =
@@ -1712,19 +1289,19 @@ class RemoteConversationRepository(
         // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
         val reply = sendAndAwaitReply(request)
         val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-        upsertConversation(conversation)
+        conversationListProjection.upsertConversation(conversation)
         return conversation
     }
 
     /**
      * Promote an existing (scratch) conversation into a named, persistent channel over v2
      * `promote_conversation` (#348). Resolves the required wire `cwd` from [workspace] or — when null
-     * ("promote in place") — the conversation's existing cwd in [projection], encodes the request
+     * ("promote in place") — the conversation's existing cwd in [ConversationListProjection], encodes the request
      * ([PromoteConversationPayloadDto], all three fields required), sends it, and awaits its correlated
      * `conversation_updated` reply — the **typed** bare-conversation payload (contrast [sendMessage]'s
      * empty `ack`). Decodes the reply through the #318 [ConversationResponseDto] boundary, so a
      * malformed reply throws before any state mutation, then **confirmed-upserts** the returned
-     * [Conversation] into [projection] — only after the reply decodes — so [observeConversations]
+     * [Conversation] into [ConversationListProjection] — only after the reply decodes — so [observeConversations]
      * re-emits with it now in the Channels tier (AC #2). The returned `name`/`cwd`/`isPromoted` are the
      * **server-authoritative** reply values (AC #1), never the request's resolved cwd.
      *
@@ -1732,7 +1309,7 @@ class RemoteConversationRepository(
      * mirroring the fake's type), [RelayErrorException] for any other server `error`,
      * [IllegalStateException] when the session is not connected, and the #318 decode exception
      * ([kotlinx.serialization.SerializationException] / [IllegalArgumentException]) for a malformed
-     * reply — none of which mutate [projection] (AC #3).
+     * reply — none of which mutate [ConversationListProjection] (AC #3).
      */
     override suspend fun promote(
         conversationId: String,
@@ -1743,7 +1320,7 @@ class RemoteConversationRepository(
         // projection — the remote analog of the fake's `workspace ?: record.conversation.cwd`. The
         // `?: ""` fallback is only reachable when the conversation is absent from the projection (not
         // reachable from the shipped UI, which only promotes a visible, hence loaded, conversation).
-        val cwd = workspace ?: projection.value?.firstOrNull { it.id == conversationId }?.cwd ?: ""
+        val cwd = workspace ?: conversationListProjection.current().firstOrNull { it.id == conversationId }?.cwd ?: ""
         val request =
             Envelope(
                 id = requestId.incrementAndGet(),
@@ -1758,7 +1335,7 @@ class RemoteConversationRepository(
         // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
         val reply = sendAndAwaitReply(request)
         val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-        upsertConversation(conversation)
+        conversationListProjection.upsertConversation(conversation)
         return conversation
     }
 
@@ -1827,7 +1404,7 @@ class RemoteConversationRepository(
                 timestamp = sentAt,
                 isStreaming = false,
             )
-        recordLastMessage(conversationId, message)
+        conversationListProjection.recordLastMessage(conversationId, message)
         threadProjection.appendMessages(listOf(conversationId to message))
         // Record the echo as ours (#781) — only an id in this ledger may later be correlated with a
         // queued item and removed. Recorded after the ack, so a failed send leaves no phantom claim.
@@ -2136,54 +1713,14 @@ class RemoteConversationRepository(
     suspend fun answerQuestionBatch(
         questionBatchId: String,
         answers: List<QuestionAnswer>,
-    ) {
-        val batch = heldQuestionBatch(questionBatchId)
-        require(answers.map { it.questionIndex }.sorted() == batch.questions.indices.toList()) {
-            "$TYPE_QUESTION_ANSWER must answer every question exactly once"
-        }
-        val payload =
-            QuestionAnswerPayloadDto(
-                questionBatchId = questionBatchId,
-                answerToken = questionToken("answer", questionBatchId),
-                answers = answers.sortedBy { it.questionIndex }.map { QuestionAnswerEntryDto(it.questionIndex, it.values) },
-            )
-        sendQuestionFrame(TYPE_QUESTION_ANSWER, MobileJson.encodeToJsonElement(payload))
-    }
+    ): Unit = questionBatchProjection.answer(questionBatchId, answers)
 
     /**
      * Decline the held clarification batch [questionBatchId] (#825) over v2 `question_refused`: the
      * batch id and a token, nothing else. Same fire-and-forget, no-clear and failure posture as
      * [answerQuestionBatch].
      */
-    suspend fun refuseQuestionBatch(questionBatchId: String) {
-        heldQuestionBatch(questionBatchId)
-        val payload = QuestionRefusedPayloadDto(questionBatchId, questionToken("refuse", questionBatchId))
-        sendQuestionFrame(TYPE_QUESTION_REFUSED, MobileJson.encodeToJsonElement(payload))
-    }
-
-    private fun heldQuestionBatch(questionBatchId: String): QuestionBatch =
-        checkNotNull(mutableQuestionBatches.value.firstOrNull { it.questionBatchId == questionBatchId }) {
-            "question batch not outstanding"
-        }
-
-    private fun sendQuestionFrame(
-        type: String,
-        payload: JsonElement,
-    ) {
-        val request = Envelope(id = requestId.incrementAndGet(), type = type, ts = Clock.System.now().toString(), payload = payload)
-        check(pump.send(request)) { "$type not sent: session not connected" }
-    }
-
-    /**
-     * The `answer_token` for a question send (#825): the verb and the daemon-minted batch nonce, so a
-     * retry of the same send reuses the token while an answer and a refusal, or two batches, never share
-     * one. It carries no answer value and no claude-authored text. Secrecy does not matter; the daemon's
-     * real dedup is its one-shot consume of the batch id.
-     */
-    private fun questionToken(
-        verb: String,
-        questionBatchId: String,
-    ): String = "$verb:$questionBatchId"
+    suspend fun refuseQuestionBatch(questionBatchId: String): Unit = questionBatchProjection.refuse(questionBatchId)
 
     /**
      * Mint the `answer_token` for a `modal_answer`: a deterministic, collision-free encoding of the
@@ -2228,17 +1765,17 @@ class RemoteConversationRepository(
      * `conversation_updated` reply — the **typed** bare-conversation payload now carrying `is_archived`
      * (pyrycode#881). Decodes the reply through the #318 [ConversationResponseDto] boundary, so a
      * malformed reply throws before any state mutation, then **confirmed-upserts** the returned
-     * [Conversation] into [projection] — only after the reply decodes — so [observeConversations]
+     * [Conversation] into [ConversationListProjection] — only after the reply decodes — so [observeConversations]
      * re-emits with the conversation in its new tier (leaving/entering [ConversationFilter.Archived]).
      *
      * A direct analogue of [rename] (encode → [sendAndAwaitReply] → typed-decode → fold) minus the
      * return value: the [ConversationRepository] contract returns [Unit], so the decoded conversation is
      * folded but not returned. Idempotent: pyrycode#881 replies `conversation_updated` with the unchanged
-     * state on a re-archive/re-unarchive, and [upsertConversation] replaces the entry with an equal value
+     * state on a re-archive/re-unarchive, and [ConversationListProjection.upsertConversation] replaces the entry with an equal value
      * (a benign re-emit). Throws [IllegalArgumentException] for an unknown conversation (server
      * `conversation.not_found`, mirroring the fake's type), [RelayErrorException] for any other server
      * `error`, [IllegalStateException] when the session is not connected, and the #318 decode exception
-     * for a malformed reply — none of which mutate [projection] (AC #3, #4). Adds no logging (the id and
+     * for a malformed reply — none of which mutate [ConversationListProjection] (AC #3, #4). Adds no logging (the id and
      * reply stay off the log, the `security-sensitive` discipline).
      */
     private suspend fun sendArchiveToggle(
@@ -2256,14 +1793,14 @@ class RemoteConversationRepository(
         // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
         val reply = sendAndAwaitReply(request)
         val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-        upsertConversation(conversation)
+        conversationListProjection.upsertConversation(conversation)
     }
 
     /**
      * Permanently delete [conversationId] over v2 `delete_conversation` (#532, server pyrycode#822 /
      * PR #884). Encodes the id-only [DeleteConversationPayloadDto] request, sends it, and awaits its
      * correlated `conversation_deleted` ack. Unlike [rename] / [sendArchiveToggle] (whose reply is a
-     * bare `conversation_updated` folded via [upsertConversation]), delete's reply is a dedicated
+     * bare `conversation_updated` folded via [ConversationListProjection.upsertConversation]), delete's reply is a dedicated
      * `{id}` ack — the record is gone, so there is nothing to upsert. The ack is decoded through the
      * [ConversationDeletedPayloadDto] boundary **only** to validate the reply shape (#318 posture — a
      * malformed ack throws here, before any removal); the decoded value is **discarded** (the repo
@@ -2317,7 +1854,7 @@ class RemoteConversationRepository(
      * both required — no `cwd`, contrast [promote]), sends it, and awaits its correlated
      * `conversation_updated` reply — the **typed** bare-conversation payload. Decodes the reply through
      * the #318 [ConversationResponseDto] boundary, so a malformed reply throws before any state
-     * mutation, then **confirmed-upserts** the returned [Conversation] into [projection] — only after
+     * mutation, then **confirmed-upserts** the returned [Conversation] into [ConversationListProjection] — only after
      * the reply decodes — so [observeConversations] re-emits with the new name (and the thread top bar,
      * derived from the same projection). The returned `name` is the **server-authoritative** reply
      * value, not the request's.
@@ -2328,7 +1865,7 @@ class RemoteConversationRepository(
      * conversation (server `conversation.not_found`, mirroring the fake's type), [RelayErrorException]
      * for any other server `error`, [IllegalStateException] when the session is not connected, and the
      * #318 decode exception ([kotlinx.serialization.SerializationException] / [IllegalArgumentException])
-     * for a malformed reply — none of which mutate [projection] (AC #3).
+     * for a malformed reply — none of which mutate [ConversationListProjection] (AC #3).
      */
     override suspend fun rename(
         conversationId: String,
@@ -2348,7 +1885,7 @@ class RemoteConversationRepository(
         // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
         val reply = sendAndAwaitReply(request)
         val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-        upsertConversation(conversation)
+        conversationListProjection.upsertConversation(conversation)
         return conversation
     }
 
@@ -2437,7 +1974,7 @@ class RemoteConversationRepository(
      * Not gated on `interactive`: the daemon answers this verb on any conn. Throws
      * [IllegalArgumentException] for `conversation.not_found` ([mapError]), [RelayErrorException] for
      * any other server `error`, [IllegalStateException] when not connected, and the decode exception for
-     * a malformed ack — none of which mutate [projection]. The refusal message is static.
+     * a malformed ack — none of which mutate [ConversationListProjection]. The refusal message is static.
      */
     override suspend fun setSystemPrompt(
         conversationId: String,
@@ -2452,7 +1989,7 @@ class RemoteConversationRepository(
                 payload = setSystemPromptPayload(conversationId, systemPrompt),
             )
         val reply = sendAndAwaitReply(request)
-        upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation())
+        conversationListProjection.upsertConversation(MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation())
     }
 
     /**
@@ -2469,7 +2006,7 @@ class RemoteConversationRepository(
      * the real one arrives later via the out-of-scope `session_transition` marker (#336 fold). So the
      * returned placeholder's identity fields (`id`, `claudeSessionUuid`) are **explicitly unassigned**
      * (empty strings, not a fabricated-to-look-real UUID); it is never persisted, never enters
-     * [projection], and the #540 consumer discards it.
+     * [ConversationListProjection], and the #540 consumer discards it.
      */
     override suspend fun startNewSession(
         conversationId: String,
@@ -2502,7 +2039,7 @@ class RemoteConversationRepository(
      * encodes the request, sends it, and awaits its correlated `conversation_updated` reply — the same
      * reply reuse rename relies on. Decodes the reply through the #318 [ConversationResponseDto]
      * boundary, so a malformed reply throws before any state mutation, then **confirmed-upserts** the
-     * returned [Conversation] into [projection] — only after the reply decodes — so the new `cwd`
+     * returned [Conversation] into [ConversationListProjection] — only after the reply decodes — so the new `cwd`
      * becomes visible on the workspace chip / list (AC #2). The folded `cwd` is the
      * **server-authoritative** reply value (the daemon's resolved realpath), not the request's.
      *
@@ -2513,7 +2050,7 @@ class RemoteConversationRepository(
      * ordinary [RelayErrorException]. Throws [IllegalArgumentException] for an unknown conversation
      * (server `conversation.not_found`, as [rename]), [RelayErrorException] for any other server
      * `error`, [IllegalStateException] when the session is not connected, and the #318 decode exception
-     * for a malformed reply — none of which mutate [projection] (AC #3).
+     * for a malformed reply — none of which mutate [ConversationListProjection] (AC #3).
      *
      * `change_workspace` performs **no session transition** — it updates the recorded `cwd` only; the
      * new folder takes effect on the conversation's next fresh session spawn (#823 Out-of-Scope, AC
@@ -2521,7 +2058,7 @@ class RemoteConversationRepository(
      * forces a [Session] return, but there is no session identity to return: the returned placeholder's
      * identity fields (`id`, `claudeSessionUuid`) are **explicitly unassigned** (empty strings, not a
      * fabricated UUID — the [startNewSession] precedent); it is never persisted, never enters
-     * [projection], and the #560 `onWorkspacePicked` caller discards it.
+     * [ConversationListProjection], and the #560 `onWorkspacePicked` caller discards it.
      */
     override suspend fun changeWorkspace(
         conversationId: String,
@@ -2541,7 +2078,7 @@ class RemoteConversationRepository(
         // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
         val reply = sendAndAwaitReply(request)
         val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
-        upsertConversation(conversation)
+        conversationListProjection.upsertConversation(conversation)
         // Vestigial: change_workspace has no session transition (AC #4), so no session identity.
         return Session(
             id = "",
@@ -2601,7 +2138,7 @@ class RemoteConversationRepository(
      * Set or clear the label this host stores for the workspace at [path] over v2 `rename_workspace`
      * (#663). [path] and [label] go out verbatim ([RenameWorkspacePayloadDto]); the daemon validates the
      * label. The [TYPE_WORKSPACE_UPDATED] arm of [onInbound] applies the correlated reply through
-     * [applyWorkspaceLabel] **before** completing this waiter, so the rows are relabelled by the time
+     * [ConversationListProjection.applyWorkspaceLabel] **before** completing this waiter, so the rows are relabelled by the time
      * this returns — there is nothing left to fold here.
      *
      * The reply is still re-decoded and must name [path]: a frame of another type correlated to this id
@@ -2637,8 +2174,9 @@ class RemoteConversationRepository(
     /**
      * Archive every active row at [path] on this host (#663) — the client-side fan-out desktop's
      * `requestArchiveWorkspace` performs, since the wire has no workspace archive verb. Targets are a
-     * one-time snapshot of [projection]: rows whose `cwd` equals [path] by plain [String] equality (no
-     * trim, no normalization) and that are not already archived. A `null` projection has no rows, so the
+     * one-time snapshot of [ConversationListProjection.current]: rows whose `cwd` equals [path] by plain
+     * [String] equality (no trim, no normalization) and that are not already archived. Before the first
+     * snapshot there are no rows, so the
      * call does not wait for a list, and no targets means no frame.
      *
      * Each target goes through [archive] **sequentially**, which confirmed-upserts its own row on its own
@@ -2651,8 +2189,8 @@ class RemoteConversationRepository(
      */
     override suspend fun archiveWorkspace(path: String) {
         val targets =
-            projection.value
-                .orEmpty()
+            conversationListProjection
+                .current()
                 .filter { it.cwd == path && !it.archived }
                 .map { it.id }
         var firstFailure: Exception? = null
@@ -3075,7 +2613,7 @@ class RemoteConversationRepository(
         /**
          * Server `error.code` refusing a [TYPE_REQUEST_MODEL_LIST] because the daemon **does** host the
          * named conversation but has no vocabulary to answer with yet (#792, daemon pyrycode#2125) —
-         * the one **retryable** refusal on that verb, and the only one [onModelListRefusal] releases a
+         * the one **retryable** refusal on that verb, and the only one [ModelMenuProjection]'s `onModelListRefusal` releases a
          * one-shot for. Its sibling `conversation.not_found` is terminal for that id, which is why the
          * two are branched on rather than merged.
          */

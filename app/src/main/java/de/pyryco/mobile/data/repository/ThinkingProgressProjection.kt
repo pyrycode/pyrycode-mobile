@@ -24,7 +24,7 @@ import kotlinx.serialization.json.decodeFromJsonElement
 internal class ThinkingProgressProjection {
     /**
      * `conversationId -> latest thinking-progress reading` (#801) — how far that conversation's current
-     * reasoning has got. A payload-carrying `Map`, [ApiRetryProjection] / [RemoteConversationRepository.modelMenusByConversation]'s
+     * reasoning has got. A payload-carrying `Map`, [ApiRetryProjection] / [ModelMenuProjection.modelMenusByConversation]'s
      * shape rather than [CompactingProjection]' bare `Set`, for the reason #593 chose it: the wire
      * carries a reading, and membership cannot represent one.
      *

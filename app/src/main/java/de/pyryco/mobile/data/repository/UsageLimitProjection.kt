@@ -54,7 +54,7 @@ internal class UsageLimitProjection(
      * envelope ahead of any parse and the daemon bounds both strings at construction — so a flooding
      * daemon costs one entry per distinct id rather than an unbounded append per frame, and the
      * connection scope returns it to zero. The posture [QueueProjection] and
-     * the repository's `modelMenusByConversation` already ship; no eviction policy is built for a failure nobody has
+     * `ModelMenuProjection.modelMenusByConversation` already ship; no eviction policy is built for a failure nobody has
      * observed. In particular **the expiry is not an eviction**: an expired entry stays here and merely
      * stops being readable (see [observe]), which is what keeps this projection free of the
      * timer it would otherwise need.
