@@ -10,6 +10,16 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// Firebase client configuration (#579). Applied only when the file is present, so builds
+// without it (CI, fresh worktrees) still succeed, with push disabled.
+if (file("google-services.json").exists()) {
+    pluginManager.apply(
+        libs.plugins.google.services
+            .get()
+            .pluginId,
+    )
+}
+
 abstract class GitShaValueSource : ValueSource<String, ValueSourceParameters.None> {
     @get:Inject
     abstract val execOperations: ExecOperations
