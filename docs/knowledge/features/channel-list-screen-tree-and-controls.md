@@ -221,5 +221,6 @@ a channel's own editor (#667) can be added later without touching this row. `tar
 Opening the modal from that target, resolving which host renames it, and following that host's connection
 live are the view model's job — see [ChannelListViewModel](channel-list-viewmodel.md#wiring) — and the
 modal itself is [`EditChatModal`](mobile-modal.md#callers), unchanged by this ticket except for gaining
-its first caller. Archive stays wired to an empty lambda here until #828, the same placeholder the host
-row's Unpair action carried between #744 and #745.
+its first caller. Archive chat was wired in #828, the same placeholder-then-wire shape the host row's
+Unpair action carried between #744 and #745 — but unlike Unpair, Archive takes no confirmation step,
+since the host's own Archive screen restores the chat.

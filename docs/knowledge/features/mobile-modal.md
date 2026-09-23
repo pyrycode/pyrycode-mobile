@@ -265,7 +265,10 @@ and takes no confirmation step, since an archived chat comes back through Archiv
 opens it on that row's own host and conversation, and OK renames through that host's
 `ConversationRepository.rename`, resolved at the press — see
 [ChannelListScreen § tree and controls](channel-list-screen-tree-and-controls.md#chat-row-edit-control-827)
-and [ChannelListViewModel](channel-list-viewmodel.md#wiring). Archive stays wired to `{}` until #828.
+and [ChannelListViewModel](channel-list-viewmodel.md#wiring). Archive chat was wired in #828, on the
+same guard's other half: `live.archive(conversationId)` on the same host-resolved-at-the-press
+repository, no confirmation step (desktop parity — Archive's Restore undoes it), and no read of the
+name field either way, success or failure.
 
 A clamp on attacker-influenceable text must not split a UTF-16 surrogate pair when the clamped
 value can round-trip back into a write unedited. `EditChatModal` seeds its field with
