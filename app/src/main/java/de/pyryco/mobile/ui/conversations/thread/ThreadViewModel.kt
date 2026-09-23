@@ -12,6 +12,7 @@ import de.pyryco.mobile.data.model.Question
 import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.model.scopedTo
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.repository.ApiRetryStatus
@@ -341,12 +342,11 @@ class ThreadViewModel(
     // #406: the coordinator's reconnection-surviving live-event seam, reduced to [isThinking]. Defaulted
     // to an empty flow so the fake-backed graph + existing tests stay inert (the flag holds `false`).
     liveSessionEvents: Flow<LiveSessionEvent> = emptyFlow(),
-    // #492: the coordinator's process-scoped, reconnection-surviving "current modal" projection (#437/#445),
-    // folded once at the coordinator layer (no longer per-thread-screen) and re-exposed here verbatim as
-    // [currentModal]. Defaulted to a fresh MutableStateFlow(Hidden) so the fake-backed Koin graph + non-modal
-    // tests stay inert — exactly as the old empty-flow default did. As a `val` ctor property it *is* the
-    // exposed StateFlow (no wrapping); the arm/answer/cancel logic reads its `.value` unchanged (AC #3).
-    val currentModal: StateFlow<ModalUiState> = MutableStateFlow(ModalUiState.Hidden),
+    // #492: the host coordinator's process-scoped, reconnection-surviving "current modal" projection
+    // (#437/#445), folded once at the coordinator layer. It holds the host's single modal whichever
+    // conversation raised it; #816 scopes it to this thread as [currentModal]. Defaulted to a fresh
+    // MutableStateFlow(Hidden) so the fake-backed Koin graph + non-modal tests stay inert.
+    private val hostModal: StateFlow<ModalUiState> = MutableStateFlow(ModalUiState.Hidden),
     // #451: the outbound modal-send path → the coordinator's passthrough to the connection-scoped concrete
     // repo (RelayRepositoryCoordinator.answerModal / cancelModal). Defaulted no-ops so the fake-backed Koin
     // graph + existing ThreadViewModel tests stay inert. The VM holds only these two suspend lambdas, never
@@ -370,6 +370,16 @@ class ThreadViewModel(
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
+
+    /**
+     * The host's modal as this thread sees it (#816): shown only when the conversation that raised it is
+     * this thread's own, else [ModalUiState.Hidden] (see [scopedTo]). Seeded from the host's current value
+     * and collected `Eagerly`, so `.value` is right from construction.
+     */
+    val currentModal: StateFlow<ModalUiState> =
+        hostModal
+            .map { it.scopedTo(conversationId) }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, hostModal.value.scopedTo(conversationId))
 
     // #789: the owning host, read off the same handle the destination factory reads it from. Paired with
     // [conversationId] it keys this chat's composer draft — never the conversation id alone, which is
@@ -1229,7 +1239,7 @@ class ThreadViewModel(
      * different option re-arms. No-op if no modal is open.
      */
     fun onModalOption(optionId: String) {
-        val open = currentModal.value as? ModalUiState.Open ?: return
+        val open = scopedModal() as? ModalUiState.Open ?: return
         when {
             optionId == open.defaultOptionId -> sendAnswer(open.modalId, optionId)
             armedModalOption.value == ArmedModalOption(open.modalId, optionId) ->
@@ -1241,10 +1251,17 @@ class ThreadViewModel(
     /** Cancel the currently-open modal (#451): clear any arm and send `modal_cancel`. No-op if no modal is
      *  open. */
     fun onModalCancel() {
-        val open = currentModal.value as? ModalUiState.Open ?: return
+        val open = scopedModal() as? ModalUiState.Open ?: return
         armedModalOption.value = null
         sendCancel(open.modalId)
     }
+
+    /**
+     * The input guard's read of this thread's modal (#816). It reads the host flow synchronously instead of
+     * [currentModal]'s collected copy, so a modal raised by another conversation can never be answered from
+     * this thread, not even in the instant before that copy updates.
+     */
+    private fun scopedModal(): ModalUiState = hostModal.value.scopedTo(conversationId)
 
     /**
      * Send a `modal_answer` for [optionId] of modal [modalId] via the injected outbound path. Clears the

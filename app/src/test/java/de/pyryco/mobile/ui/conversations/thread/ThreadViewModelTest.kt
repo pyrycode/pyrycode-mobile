@@ -762,6 +762,86 @@ class ThreadViewModelTest {
             assertNull(vm.armedOptionId.value)
         }
 
+    // ---- #816: the host's modal is scoped to the conversation that raised it ---------------------
+
+    @Test
+    fun modalForAnotherConversation_isHiddenAndCannotBeAnswered() =
+        runTest {
+            val modal =
+                MutableStateFlow<ModalUiState>(
+                    openModal(modalId = "m1", options = fourOptions, conversationId = "other-conv"),
+                )
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modal, recorder)
+            advanceUntilIdle()
+
+            assertEquals(ModalUiState.Hidden, vm.currentModal.value)
+
+            vm.onModalOption("reject_once") // the default: would answer on a single tap if owned
+            vm.onModalOption("allow_once")
+            vm.onModalOption("allow_once") // arm + confirm: would answer if owned
+            vm.onModalCancel()
+            advanceUntilIdle()
+
+            assertTrue("a foreign prompt must not be answerable", recorder.answers.isEmpty())
+            assertTrue("a foreign prompt must not be cancellable", recorder.cancels.isEmpty())
+            assertNull(vm.armedOptionId.value)
+        }
+
+    @Test
+    fun modalWithoutConversation_rendersInNoThreadAndIsInert() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(openModal(modalId = "m1", conversationId = ""))
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modal, recorder)
+            advanceUntilIdle()
+
+            assertEquals(ModalUiState.Hidden, vm.currentModal.value)
+            vm.onModalOption("reject_once")
+            vm.onModalCancel()
+            advanceUntilIdle()
+
+            assertTrue(recorder.answers.isEmpty())
+            assertTrue(recorder.cancels.isEmpty())
+        }
+
+    @Test
+    fun modalScoping_followsTheHostModalAcrossConversations() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(ModalUiState.Hidden)
+            val vm = vmWithModal(modal)
+            advanceUntilIdle()
+
+            // A prompt for another conversation, then its resolution, never reach this thread.
+            modal.value = openModal(modalId = "m1", conversationId = "other-conv")
+            advanceUntilIdle()
+            assertEquals(ModalUiState.Hidden, vm.currentModal.value)
+            modal.value = ModalUiState.Dismissed("m1", "reject_once", "remote", conversationId = "other-conv")
+            advanceUntilIdle()
+            assertEquals(ModalUiState.Hidden, vm.currentModal.value)
+
+            // This thread's own prompt, and its resolution, do.
+            val own = openModal(modalId = "m2")
+            modal.value = own
+            advanceUntilIdle()
+            assertEquals(own, vm.currentModal.value)
+            val dismissed = ModalUiState.Dismissed("m2", "allow_once", "local", conversationId = ACTIVE_CONV)
+            modal.value = dismissed
+            advanceUntilIdle()
+            assertEquals(dismissed, vm.currentModal.value)
+        }
+
+    @Test
+    fun modalScoping_holdsFromConstruction() =
+        runTest {
+            // The seeded value is scoped too, so a VM built while a foreign prompt is open never shows it.
+            val vm = vmWithModal(MutableStateFlow(openModal(modalId = "m1", conversationId = "other-conv")))
+            assertEquals(ModalUiState.Hidden, vm.currentModal.value)
+
+            val own = openModal(modalId = "m2")
+            assertEquals(own, vmWithModal(MutableStateFlow(own)).currentModal.value)
+        }
+
     @Test
     fun modalSend_scopeCancellationMidSend_doesNotEmitErrorSignal() =
         runTest {
@@ -4179,7 +4259,9 @@ class ThreadViewModelTest {
                 ModalOption("reject_once", "Reject once"),
             ),
         defaultOptionId: String = "reject_once",
-    ): ModalUiState.Open = ModalUiState.Open(modalId, modalClass, title, prompt, options, defaultOptionId)
+        // #816: owned by the thread under test unless a case says otherwise.
+        conversationId: String = ACTIVE_CONV,
+    ): ModalUiState.Open = ModalUiState.Open(modalId, modalClass, title, prompt, options, defaultOptionId, conversationId)
 
     private fun turnState(
         conversationId: String,

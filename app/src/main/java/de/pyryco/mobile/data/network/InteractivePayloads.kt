@@ -462,7 +462,10 @@ internal fun TurnEndPayloadDto.toEvent(): LiveSessionEvent =
  * an untrusted boundary: a missing/wrong-typed field throws a [kotlinx.serialization.SerializationException]
  * and the one malformed envelope is dropped, keeping the stream alive (AC #4).
  *
- * Modal payloads carry **no `conversation_id`** — `modal_id` is the sole correlation key. `class`,
+ * `modal_id` is the sole correlation key for answers. `modal_shown`'s `conversation_id` (daemon #1065) is
+ * an outbound-only scoping stamp that picks the thread that displays the modal (#816). It is the one
+ * defaulted field: a frame without it still decodes, as the unscoped `""` that no thread displays,
+ * rather than dropping the prompt path. `modal_dismissed` carries no conversation. `class`,
  * `source`, and `outcome` are **plain `String`s carried verbatim** (not Kotlin enums): AC #3 requires an
  * unknown/forward-compat value to survive rather than be coerced or dropped, so the mappers are **total**
  * (never `null`) — the only decode-failure path is a structurally malformed envelope. `class` is a Kotlin
@@ -485,6 +488,7 @@ internal data class ModalShownPayloadDto(
     val prompt: String,
     val options: List<ModalOptionDto>,
     @SerialName("default_option_id") val defaultOptionId: String,
+    @SerialName("conversation_id") val conversationId: String = "",
 )
 
 @Serializable
@@ -503,6 +507,7 @@ internal fun ModalShownPayloadDto.toEvent(): ModalEvent =
         prompt = prompt,
         options = options.map { ModalOption(it.id, it.label) },
         defaultOptionId = defaultOptionId,
+        conversationId = conversationId,
     )
 
 /** Total field copy: [outcome] and [source] pass through verbatim (consumers map the wire values). */

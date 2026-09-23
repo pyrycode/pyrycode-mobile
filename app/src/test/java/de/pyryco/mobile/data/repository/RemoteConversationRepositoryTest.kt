@@ -7621,7 +7621,7 @@ class RemoteConversationRepositoryTest {
                     """
                     {"modal_id":"m1","class":"permission","title":"Allow?","prompt":"Run rm -rf build/?",
                      "options":[{"id":"allow","label":"Allow"},{"id":"deny","label":"Deny"}],
-                     "default_option_id":"deny"}
+                     "default_option_id":"deny","conversation_id":"c1"}
                     """.trimIndent(),
                 ),
             )
@@ -7636,6 +7636,7 @@ class RemoteConversationRepositoryTest {
                         prompt = "Run rm -rf build/?",
                         options = listOf(ModalOption("allow", "Allow"), ModalOption("deny", "Deny")),
                         defaultOptionId = "deny",
+                        conversationId = "c1",
                     ),
                 ),
                 events,
@@ -7643,6 +7644,26 @@ class RemoteConversationRepositoryTest {
             // Explicit order assertion (AC #5): array order is the canonical display order.
             val shown = events.single() as ModalEvent.Shown
             assertEquals(listOf("allow", "deny"), shown.options.map { it.id })
+        }
+
+    // #816: a modal_shown without conversation_id still decodes, as unscoped (`""`), so it renders in no
+    // thread rather than being dropped or treated as belonging to every thread.
+    @Test
+    fun modalShown_withoutConversationId_decodesAsUnscoped() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectModalEvents(repo)
+            runCurrent()
+
+            pump.push(
+                modalShownEnvelope(
+                    """{"modal_id":"m1","class":"permission","title":"t","prompt":"p","options":[],"default_option_id":"d"}""",
+                ),
+            )
+            runCurrent()
+
+            assertEquals(listOf(ModalEvent.Shown("m1", "permission", "t", "p", emptyList(), "d", "")), events)
         }
 
     // AC #2: modal_dismissed source `remote`, outcome = a selected option id.
