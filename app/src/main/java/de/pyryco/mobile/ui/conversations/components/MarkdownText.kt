@@ -45,6 +45,7 @@ import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.LinkInteractionListener
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -566,12 +567,16 @@ private fun Modifier.tableOuterEdges(
  * deliberately carries no copy control; whether that output becomes copyable is #658's call. The
  * control copies [content] — the string this block was built from — never text read back out of the
  * rendered tree.
+ *
+ * [textStyle] sets the code's size; the block always draws it monospace. The tool row passes the
+ * design's 12sp `bodySmall` (#895); markdown keeps the default.
  */
 @Composable
 internal fun CodeBlock(
     content: String,
     language: String?,
     copyable: Boolean = false,
+    textStyle: TextStyle = MaterialTheme.typography.bodyMedium,
 ) {
     val syntaxLanguage = remember(language) { resolveSyntaxLanguage(language) }
     val structure =
@@ -618,10 +623,7 @@ internal fun CodeBlock(
                                 top = CodeBlockBodyVerticalPadding,
                                 bottom = CodeBlockBodyVerticalPadding,
                             ),
-                        style =
-                            MaterialTheme.typography.bodyMedium.copy(
-                                fontFamily = FontFamily.Monospace,
-                            ),
+                        style = textStyle.copy(fontFamily = FontFamily.Monospace),
                         softWrap = false,
                     )
                 }

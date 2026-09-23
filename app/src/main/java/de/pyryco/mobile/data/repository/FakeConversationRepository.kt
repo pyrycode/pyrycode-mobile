@@ -334,6 +334,23 @@ class FakeConversationRepository(
 
     override fun observeModelMenu(conversationId: String): Flow<ModelMenu?> = modelMenus.map { it[conversationId] }.distinctUntilChanged()
 
+    private val slashCommandMenus = MutableStateFlow<Map<String, SlashCommandMenu>>(emptyMap())
+
+    /**
+     * Seed or clear one conversation's slash-command menu (#882) — the test/preview seam for the composer's
+     * command offers. The Fake has no wire, so a menu exists only because a caller put it there; an unseeded
+     * conversation reads `null`.
+     */
+    fun setSlashCommandMenu(
+        conversationId: String,
+        menu: SlashCommandMenu?,
+    ) {
+        slashCommandMenus.update { if (menu == null) it - conversationId else it + (conversationId to menu) }
+    }
+
+    override fun observeSlashCommandMenu(conversationId: String): Flow<SlashCommandMenu?> =
+        slashCommandMenus.map { it[conversationId] }.distinctUntilChanged()
+
     /**
      * Records the ask and re-emits nothing: the Fake has no wire to re-read, so a seeded reading is
      * already current. Non-throwing, like every implementation of this method.

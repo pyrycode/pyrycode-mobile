@@ -5,8 +5,9 @@ when it finishes**. A `tool_use` event opens a `Running` `Role.Tool` [`Message`]
 carrying the tool name + input; the matching `tool_result` (correlated by `toolUseId`) updates that
 same row to `Done` (or `Failed`) and attaches the output. Landed in [#387](../codebase/387.md) (split
 from #368, the data slice; blocked by [#385](../codebase/385.md)). The **visible** status affordance —
-the running/done/failed leading slot on the row — shipped in [#388](../codebase/388.md), which consumes
-this (see [ToolCallRow § Status affordance](tool-call-row.md#status-affordance-388)).
+the running/done/failed/denied trailing slot on the row — shipped in [#388](../codebase/388.md) and was
+restyled with its own per-state glyph for `Denied` and an elapsed-time reading in #895, which consume
+this (see [ToolCallRow § Trailing status](tool-call-row.md#trailing-status)).
 
 This is the **data layer only**: correlate the event pair into one evolving `ToolCall` and interleave
 it into the thread stream. It renders nothing; output-encoding the untrusted strings is the
@@ -92,9 +93,9 @@ A denial is **not** a `LiveSessionEvent`: nothing on the live stream consumes it
 `unrecognized_message` — it folds into the thread store only and is never emitted on
 `liveSessionEvents`. That keeps it out of `ThreadViewModel`'s four exhaustive `when`s over
 `LiveSessionEvent`, which a new subtype would otherwise have forced to grow an arm for an event they
-don't need. `ToolCallStatusIcon` in `ToolCallRow.kt` — the one exhaustive `when` over
-`ToolCallStatus` — reuses the `Failed` presentation unchanged for `Denied`; #658 owns its real
-design.
+don't need. The row's trailing-status `when` over `ToolCallStatus` in `ToolCallRow.kt` reused the
+`Failed` presentation for `Denied` as a stop-gap until #895 (split from #658) gave `Denied` its own
+glyph and content description — see [ToolCallRow § Trailing status](tool-call-row.md#trailing-status).
 
 The disk cache (`FileConversationCache.CachedToolCall`) persists `status` by enum name, so a `Denied`
 row survives a cache round-trip; `denial` itself is not persisted (out of scope, the #810

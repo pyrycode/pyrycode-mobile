@@ -1200,6 +1200,45 @@ class FakeConversationRepositoryTest {
             assertNull(repo.observeModelMenu(SEED_ID).first())
         }
 
+    // ---- #882: slash-command menus are seeded, never manufactured -------------------------------
+
+    // An unseeded conversation reads `null`: the Fake has no wire and invents no commands.
+    @Test
+    fun observeSlashCommandMenu_unseeded_isNull() =
+        runBlocking {
+            assertNull(FakeConversationRepository().observeSlashCommandMenu(SEED_ID).first())
+        }
+
+    // A seeded menu reads back verbatim for that conversation alone.
+    @Test
+    fun observeSlashCommandMenu_seeded_emitsTheMenuForThatConversationOnly() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            val menu =
+                SlashCommandMenu(
+                    rows = listOf(SlashCommandMenuRow("clear", "[name]", "Start a new session", listOf("reset", "new"), null)),
+                    droppedCommands = 3,
+                )
+
+            repo.setSlashCommandMenu(SEED_ID, menu)
+
+            assertEquals(menu, repo.observeSlashCommandMenu(SEED_ID).first())
+            assertNull(repo.observeSlashCommandMenu("another-conversation").first())
+        }
+
+    // Clearing returns the conversation to `null`, distinct from a seeded empty menu.
+    @Test
+    fun setSlashCommandMenu_null_clearsBackToNull() =
+        runBlocking {
+            val repo = FakeConversationRepository()
+            repo.setSlashCommandMenu(SEED_ID, SlashCommandMenu(rows = emptyList(), droppedCommands = 0))
+            assertEquals(SlashCommandMenu(emptyList(), 0), repo.observeSlashCommandMenu(SEED_ID).first())
+
+            repo.setSlashCommandMenu(SEED_ID, null)
+
+            assertNull(repo.observeSlashCommandMenu(SEED_ID).first())
+        }
+
     private companion object {
         /** The seeded channel whose messages the history-walk tests replace wholesale. */
         const val SEED_ID = "seed-channel-personal"
