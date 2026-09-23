@@ -2,6 +2,7 @@ package de.pyryco.mobile.ui.conversations.components
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,10 +42,11 @@ import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlin.math.roundToInt
 
 /** One row of an [OptionsOverlay]: [value] is handed back verbatim on selection and never rendered;
- *  [label] is the only text drawn. */
+ *  [label] is the only text drawn. A row that is not [enabled] is greyed out and inert (#884). */
 data class OptionsOverlayOption(
     val value: String,
     val label: String,
+    val enabled: Boolean = true,
 )
 
 // Figma 533:1958's `Options overlay`: a 6dp-rounded column with 2dp of vertical padding, its rows inset
@@ -61,6 +63,9 @@ private val OverlayMaxWidth = 240.dp
 // layer's edges.
 private val OverlayAnchorGap = 4.dp
 private val OverlayEdgeMargin = 8.dp
+
+// Material 3's content alpha for a disabled control.
+private const val DISABLED_ALPHA = 0.38f
 
 /**
  * Figma `533:1958`'s `Options overlay` (#808): a compact popup of options that opens above the control
@@ -82,6 +87,9 @@ private val OverlayEdgeMargin = 8.dp
  * Every [OptionsOverlayOption.label] may be daemon-authored. Labels are drawn through [Text] only, one
  * line, ellipsized. [notListed] > 0 adds a caption that marks the list as a subset, so a cut menu never
  * reads as complete.
+ *
+ * [actions] draws the rows as buttons rather than a radio group (#884): a menu of actions has no
+ * selected value, so no row is highlighted and none announces a selection.
  */
 @Composable
 fun OptionsOverlay(
@@ -92,6 +100,7 @@ fun OptionsOverlay(
     onSelect: (String) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    actions: Boolean = false,
 ) {
     val currentOnDismiss by rememberUpdatedState(onDismiss)
     BackHandler(onBack = { currentOnDismiss() })
@@ -116,6 +125,7 @@ fun OptionsOverlay(
                 selectedValue = selectedValue,
                 notListed = notListed,
                 onSelect = onSelect,
+                actions = actions,
             )
         }
     }
@@ -154,6 +164,7 @@ private fun OptionsColumn(
     selectedValue: String,
     notListed: Int,
     onSelect: (String) -> Unit,
+    actions: Boolean,
 ) {
     Surface(
         shape = OverlayShape,
@@ -167,24 +178,37 @@ private fun OptionsColumn(
                     .widthIn(min = OverlayMinWidth, max = OverlayMaxWidth)
                     .verticalScroll(rememberScrollState())
                     .padding(vertical = OverlayVerticalPadding)
-                    .selectableGroup(),
+                    .then(if (actions) Modifier else Modifier.selectableGroup()),
         ) {
             options.forEach { option ->
-                val selected = option.value == selectedValue
+                val selected = !actions && option.value == selectedValue
+                val onClick = { onSelect(option.value) }
                 Text(
                     text = option.label,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
+                    color =
+                        if (option.enabled) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = DISABLED_ALPHA)
+                        },
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier =
                         Modifier
                             .fillMaxWidth()
                             .background(if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-                            .selectable(
-                                selected = selected,
-                                role = Role.RadioButton,
-                                onClick = { onSelect(option.value) },
+                            .then(
+                                if (actions) {
+                                    Modifier.clickable(enabled = option.enabled, role = Role.Button, onClick = onClick)
+                                } else {
+                                    Modifier.selectable(
+                                        selected = selected,
+                                        enabled = option.enabled,
+                                        role = Role.RadioButton,
+                                        onClick = onClick,
+                                    )
+                                },
                             ).padding(horizontal = OptionHorizontalPadding, vertical = OptionVerticalPadding),
                 )
             }

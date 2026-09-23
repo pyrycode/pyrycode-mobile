@@ -218,6 +218,12 @@ really advances virtual time. When adding a finite watchdog or timeout, drive on
 the intended deadline with `advanceTimeBy(...)` followed by `runCurrent()`;
 `advanceUntilIdle()` also advances newly armed watchdogs.
 
+A fake repository seed backed by a `MutableStateFlow` — `FakeConversationRepository.setSlashCommandMenu`,
+for example — needs `advanceUntilIdle()` before a `ViewModel.state.value` assertion sees it, even with an
+`UnconfinedTestDispatcher` installed as `Main` (#884): the write still has to propagate through whatever
+`map` / `combine` / `stateIn` chain sits between the fake's `MutableStateFlow` and the cached `state.value`.
+A scripted fake's plain `MutableSharedFlow.emit`, by contrast, does not need it.
+
 A plain-Kotlin controller constructed with `runTest`'s `backgroundScope` as its owner scope (rather
 than the `TestScope` itself) never leaves its initial state under `advanceUntilIdle()` —
 `backgroundScope` coroutines are not what that call drains, so every assertion fails on the test's own
