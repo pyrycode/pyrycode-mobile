@@ -26,6 +26,7 @@ import de.pyryco.mobile.data.network.NoiseClientInfo
 import de.pyryco.mobile.data.network.RelayTransportFactory
 import de.pyryco.mobile.data.network.base64StdEncode
 import de.pyryco.mobile.data.preferences.AppPreferences
+import de.pyryco.mobile.di.InertAttachmentStore
 import de.pyryco.mobile.di.InertConversationCache
 import de.pyryco.mobile.di.ObservablePairedServerStore
 import de.pyryco.mobile.di.RelayConnectionFactory
@@ -315,6 +316,7 @@ class ArchiveNavigationTest {
                     // ConversationCache (#796) whose real binding needs one. See InertConversationCache
                     // for why these containers override it rather than supply the Context.
                     single<ConversationCache> { InertConversationCache }
+                    single { InertAttachmentStore }
                 },
             )
         return StateRestorationTester(compose).also { tester ->
