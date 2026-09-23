@@ -71,6 +71,14 @@ refuses a code naming any other `serverId` (exact, case-sensitive) before the fi
 names the Host name field with that host's stored display name, and never overwrites it — see
 [pair-with-code target mode](paste-code-dialog.md#re-pairing-a-target-host-842).
 
+Since [#843](https://github.com/pyrycode/pyrycode-mobile/issues/843), the open thread itself is a fourth
+entry, scoped to its own host: the composer status area's Re-pair button (visible while `ThreadViewModel.rePairAvailable`
+holds — see [Thread screen § trailing contextual-action slot](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643))
+calls `navController.navigate(Routes.pairCode(target.serverId))`, the same target-mode route #842's tree
+row uses. The thread entry stays underneath on the back stack rather than the channel list — Cancel pops
+back to the still-open thread with its cached history intact, Complete pops the whole graph to the channel
+list exactly as the other three entries do.
+
 Pair validates the trimmed code and opens the existing fingerprint surface in
 the same destination. Confirm uses exactly the record displayed there. The host
 name is trimmed only for persistence: nonblank names are local metadata, while
