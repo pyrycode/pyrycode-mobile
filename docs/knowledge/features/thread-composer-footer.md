@@ -10,7 +10,7 @@ Renders one small button per selectable control — `Permission` (#650), `Model`
 
 ## Sourcing
 
-The footer's values come from `ThreadUiState.runConfig: ThreadRunConfig` (`ThreadViewModel.kt`) — the same daemon-sourced state the [`StatusSheet`](status-sheet.md) reads (for Model and Effort; see below for Permission), so the surfaces agree by construction. `ThreadRunConfig` folds `ConversationRepository.observeSessionSettings(conversationId)` (the saved `model` / `effort` / `permissionMode` plus the `sessionId` a write must address) and `observeModelMenu(conversationId)` (the models this conversation's daemon published, each with its own `effortLevels` and, since #650, `supportsAutoMode`) together with independent pending-write flags — `pendingModel: String?`, `pendingEffort: String?`, and `pendingPermission: String?` — each `null` when no write is outstanding for that control.
+The footer's values come from `ThreadUiState.runConfig: ThreadRunConfig` (`ThreadUiState.kt`) — the same daemon-sourced state the [`StatusSheet`](status-sheet.md) reads (for Model and Effort; see below for Permission), so the surfaces agree by construction. `ThreadRunConfig` folds `ConversationRepository.observeSessionSettings(conversationId)` (the saved `model` / `effort` / `permissionMode` plus the `sessionId` a write must address) and `observeModelMenu(conversationId)` (the models this conversation's daemon published, each with its own `effortLevels` and, since #650, `supportsAutoMode`) together with independent pending-write flags — `pendingModel: String?`, `pendingEffort: String?`, and `pendingPermission: String?` — each `null` when no write is outstanding for that control.
 
 Two computed properties resolve what each button shows:
 
