@@ -14,7 +14,10 @@ directly as its third caller — desktop's `EditChatDialogView` on the phone, a 
 outlined archive action, not yet drawn by any screen. Since #904
 [`AddWorkspaceModal`](#callers) draws this shell directly as its fourth caller — desktop's
 host-row Add workspace dialog on the phone, a folder list in place of a typed path, replacing
-the host row's own long-press into [`WorkspacePicker`](workspace-picker.md). Existing dialogs
+the host row's own long-press into [`WorkspacePicker`](workspace-picker.md). Since #905
+[`EditWorkspaceModal`](#callers) draws this shell directly as its fifth caller — desktop's
+`EditWorkspaceDialogView` on the phone, a name field plus an outlined archive action, driven by
+every workspace row's own pencil in both tree sections. Existing dialogs
 such as [CreateFolderDialog](create-folder-dialog.md) remain separate; consumer tickets own
 their migration and operation-specific acceptance — `CreateFolderDialog` itself is now reused
 unchanged as a second window stacked over `AddWorkspaceModal`, described below.
@@ -321,6 +324,40 @@ only when that tag matches the currently open target; see
 [ChannelListViewModel § the tagged recents combine](channel-list-viewmodel.md#wiring) for the
 mechanism. Worth checking for any future caller that derives a host-scoped list alongside a
 host-scoped open/close flag through the same `combine`.
+
+[`EditWorkspaceModal`](../../../app/src/main/java/de/pyryco/mobile/ui/components/EditWorkspaceModal.kt)
+(#905) is the shell's fifth direct caller — like `EditChatModal`, it draws `MobileModal` itself. It is
+desktop's `EditWorkspaceDialogView` on the phone: one "Workspace name (optional):" field seeded from the
+caller and an outlined "Archive workspace" action, in the same field and action styling `EditChatModal`
+established. `serverId` and `cwd` key the edit buffer and are never rendered, logged or reported — the
+same identity-keyed-buffer pattern `EditHostModal` established. OK is enabled on an available host and a
+label the daemon would accept; a blank name is allowed, since it clears the label rather than failing
+validation. The field's `supportingText` shows the trimmed name's size against the daemon's own unit,
+"UTF-8 bytes: n/128" (chosen over the plan's "n/128 bytes" because Android Lint's `PluralsCandidate` flags
+a bare number-then-word as a pluralizable string; leading with the unit avoids that without a plurals
+resource for what is really a counter). Archive workspace swaps the content for a confirmation in place —
+`EditHostModal`'s unpair shape again — naming the workspace and warning that every active chat and channel
+there moves to Archive; the shell's own footer carries the decision (OK confirms, every dismissal route
+declines), and the typed name survives a decline because the buffer is keyed on identity, not on the
+confirmation flag. [ChannelListScreen](channel-list-screen-tree-and-controls.md#workspace-row-edit-and-archive-control-905)
+(#905) is its first and only caller: every workspace row's own pencil, in both sections, opens it on that
+row's own host and exact `cwd` — see that section and
+[ChannelListViewModel](channel-list-viewmodel.md#wiring) for the label rule and the write targeting.
+
+The seed and the confirmation's name are both daemon-authored (the row's shown name) and both clamped once
+by `clampWorkspaceText` inside the modal before they reach layout or the prompt's format argument — the
+same round-trip-safe, surrogate-pair-aware clamp `workspaceDisplayName` uses. The label rule
+(`workspaceLabelFor`, `ui/workspace/WorkspaceDisplayName.kt`) treats that same clamped cut as the folder's
+own name too, so an untouched OK on an overlong folder seed clears the label instead of storing the cut as
+a new one — but only when the clamp actually cut the folder name; an uncut name is compared exactly and
+untrimmed, so a folder whose real name carries trailing whitespace is not silently treated as matching its
+own trimmed display. This asymmetry was a two-round fix during verification: the first attempt trimmed
+every folder-name comparison, which cleared labels for names it should not have matched.
+
+**A Compose semantics trap in this field's test.** `TextField`'s `supportingText` composes into the
+field's own merged `Text` semantics, so `assertTextEquals(typed)` fails against the byte-count line even
+when the typed value is correct. Use `assertTextContains(typed)` for any field in this shell that pairs a
+value with supporting text.
 
 **`PermissionModalOverlay`** (`ui/conversations/thread/ThreadPermissionModal.kt`, #815) is the first of
 [`MobileGateModal`](#the-hardened-gate-mobilegatemodal)'s two callers, and the only one using it rather than
