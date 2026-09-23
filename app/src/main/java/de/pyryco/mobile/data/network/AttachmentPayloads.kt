@@ -89,6 +89,18 @@ data class AttachmentOfferedPayloadDto(
 }
 
 /**
+ * Mobile Protocol v2 `request_attachment` payload (#899): ask this connection's daemon for one stored file.
+ * Wire SSOT: `../pyrycode/docs/protocol-mobile.md` § Attachments → `request_attachment`. Both keys are always
+ * sent, and both are checked with [isAttachmentIdShape] before one is built. The answer names the request's
+ * envelope id, so there is no request-id key.
+ */
+@Serializable
+internal data class RequestAttachmentPayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    @SerialName("attachment_id") val attachmentId: String,
+)
+
+/**
  * Whether [value] is the published `attachment_id` shape (`protocol-mobile.md` § The `attachment_id` shape),
  * which conversation ids share: a lowercase UUIDv4, 36 bytes, `-` at 8, 13, 18 and 23, `4` at 14, one of
  * `8`, `9`, `a`, `b` at 19, and lowercase hex everywhere else. The alphabet is what keeps the id from

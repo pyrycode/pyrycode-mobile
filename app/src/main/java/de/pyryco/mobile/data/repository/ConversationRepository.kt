@@ -509,6 +509,32 @@ interface ConversationRepository {
     ): AttachmentUploadResult = error("uploadAttachment is not implemented for this ConversationRepository")
 
     /**
+     * Fetch [attachmentId] of [conversationId] over this repository's connection (#899): one
+     * `request_attachment`, and the verified bytes in memory, or one [AttachmentRetrievalResult.Failed].
+     * Connection-level and host-blind; screens call [retrieveAttachment], which keeps the file for its host.
+     * Never throws except on cancellation.
+     *
+     * Default throws, like [requestSystemPrompt].
+     */
+    suspend fun fetchAttachment(
+        conversationId: String,
+        attachmentId: String,
+    ): AttachmentFetchResult = error("fetchAttachment is not implemented for this ConversationRepository")
+
+    /**
+     * The file [attachmentId] of [conversationId], kept in app-private storage for this repository's host
+     * (#899). A file kept earlier is returned without sending anything; otherwise it is fetched once, however
+     * many callers ask at the same time. The id may come from an offer or from an upload: the request is the
+     * same. Never throws except on cancellation.
+     *
+     * Default throws, like [requestSystemPrompt]: only the host-bound [CachingConversationRepository] keeps files.
+     */
+    suspend fun retrieveAttachment(
+        conversationId: String,
+        attachmentId: String,
+    ): AttachmentRetrievalResult = error("retrieveAttachment is not implemented for this ConversationRepository")
+
+    /**
      * Store [systemPrompt] as [conversationId]'s system prompt (#823), one `set_system_prompt` per call,
      * returning after the daemon's ack. `null` clears it, `""` stores an explicitly empty prompt, and any
      * other string is stored **verbatim** — never trimmed or normalised. It takes effect at the
