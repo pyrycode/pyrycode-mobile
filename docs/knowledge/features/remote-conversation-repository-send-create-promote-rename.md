@@ -6,7 +6,10 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
 
 Posts the user's text over v2 `send_message` and returns the persisted `Message`.
 [#346](../codebase/346.md) implements it, and in doing so adds the **shared request↔reply correlation
-primitive** the remaining mutations (#347/#348) reuse.
+primitive** the remaining mutations (#347/#348) reuse. The body now lives on `MessageCommands` (#915,
+`data/repository/MessageCommands.kt`), beside `uploadAttachment`, `requestScreenSnapshot` and
+`dropQueuedMessage`; the repository's `override suspend fun sendMessage` (both overloads) is a one-line
+hand-off.
 
 **The corrected wire premise is load-bearing.** `send_message` does **not** echo the sender its own
 persisted `Message`. The only sender-correlated reply is an empty **`ack`** on success
@@ -28,19 +31,20 @@ silently vanish; perceived send latency is a future UI-layer concern, not a data
 The flow (≤ ~15 lines):
 
 ```kotlin
-override suspend fun sendMessage(conversationId: String, text: String): Message {
+// MessageCommands
+suspend fun sendMessage(conversationId: String, text: String): Message {
     val messageId = UUID.randomUUID().toString()        // client-minted; the sender's correlation handle
     val sentAt = Clock.System.now()
     val request = Envelope(
-        id = relayRequests.nextRequestId(),              // the ENVELOPE id — distinct from messageId
+        id = requests.nextRequestId(),                   // the ENVELOPE id — distinct from messageId
         type = "send_message", ts = sentAt.toString(),
         payload = MobileJson.encodeToJsonElement(
             SendMessagePayloadDto(conversationId, messageId, text)),  // {conversation_id, message_id, text}
     )
-    relayRequests.sendAndAwaitReply(request)             // throws on error / not-Open; ignore the empty {} ack
+    requests.sendAndAwaitReply(request)                  // throws on error / not-Open; ignore the empty {} ack
     val message = Message(messageId, sessionId = "", Role.User, text, sentAt, isStreaming = false)
-    recordLastMessage(conversationId, message)           // confirmed-insert into BOTH projections,
-    appendMessages(listOf(conversationId to message))    //   only after the ack
+    conversationList.recordLastMessage(conversationId, message)  // confirmed-insert into BOTH projections,
+    threadProjection.appendMessages(listOf(conversationId to message))  //   only after the ack
     return message
 }
 ```
@@ -55,8 +59,9 @@ fake's synchronous throw; the contract pins the exception *type*, not the timing
 
 ### The `ack`/`error` correlation primitive (reused by #347/#348, moved to `RelayRequests` by #914)
 
-The class still runs **exactly one** `pump.inbound` collector — `sendMessage` does **not** open a
-second subscription. Correlation rides that single collector via a generic pending-reply registry. Since
+The repository still runs **exactly one** `pump.inbound` collector — `sendMessage` (now on
+`MessageCommands`, #915) does **not** open a second subscription. Correlation rides that single collector
+via a generic pending-reply registry. Since
 \#914 the registry, the counter and the correlated await live on `RelayRequests`
 (`data/repository/RelayRequests.kt`), split out of the repository the way the projections were (#912,
 \#913); the repository still owns `onInbound` and looks a waiter up through `RelayRequests.waiter` to
@@ -101,8 +106,9 @@ suspend fun sendAndAwaitReply(request: Envelope): JsonElement {
   removes the entry (no leak). The reply is delivered by the collector coroutine;
   `complete`/`completeExceptionally` are thread-safe and idempotent across the two coroutines.
 - **On teardown, every pending deferred is failed — not left to hang ([#488](../codebase/488.md)).** The
-  single `init` collector's body is wrapped in `try { … } finally { endDebugBundle(); endAttachmentUploads();
-  relayRequests.failAllPending() }`. When the connection
+  single `init` collector's body is wrapped in `try { … } finally { endDebugBundle();
+  messageCommands.endAttachmentUploads(); relayRequests.failAllPending() }` — `endDebugBundle()` and
+  `endAttachmentUploads()` both hand off to `MessageCommands` since #915. When the connection
   tears down — the primary trigger is [`RelayRepositoryCoordinator.teardownActive()`](relay-repository-coordinator.md)
   cancelling the collector's scope (`CancellationException` at the `collect` suspension), and the `finally`
   also covers `pump.inbound` completing or throwing — `RelayRequests.failAllPending()` completes **every**
@@ -154,7 +160,7 @@ suspend fun sendMessage(conversationId: String, text: String, attachmentIds: Lis
     error("sendMessage with attachments is not implemented for this ConversationRepository")
 ```
 
-`RemoteConversationRepository`'s two-argument `sendMessage` now calls the three-argument override with
+`MessageCommands`' two-argument `sendMessage` now calls the three-argument override with
 `emptyList()`. The override calls `MessageAttachmentIds.forSend` **before** minting `message_id` or
 building the envelope, so a too-many-ids refusal throws before any request id is taken or frame sent —
 otherwise it's the unchanged #346 flow (same `RelayRequests.sendAndAwaitReply`, same confirmed-insert only after the

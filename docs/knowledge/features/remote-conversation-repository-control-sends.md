@@ -9,18 +9,21 @@ Requests a one-shot text picture of the current claude screen and returns its re
 [#375](../codebase/375.md) is a near-verbatim mirror of `sendMessage`'s shape, but it **decodes its reply**
 (like `createDiscussion` / `promote`) rather than reconstructing from input, and — unlike every prior
 mutation — it **mutates no projection**. It is the **first pure read** to ride the #346 correlation
-primitive.
+primitive. The body now lives on `MessageCommands` (#915, `data/repository/MessageCommands.kt`), beside
+`sendMessage`, `uploadAttachment` and `dropQueuedMessage`; the repository's `override suspend fun
+requestScreenSnapshot` is a one-line hand-off.
 
 The flow (the entire method, ≤ ~12 lines):
 
 ```kotlin
-override suspend fun requestScreenSnapshot(conversationId: String): String {
+// MessageCommands
+suspend fun requestScreenSnapshot(conversationId: String): String {
     val request = Envelope(
-        id = relayRequests.nextRequestId(),
+        id = requests.nextRequestId(),
         type = TYPE_REQUEST_SNAPSHOT, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(RequestSnapshotPayloadDto(conversationId = conversationId)),
     )
-    val reply = relayRequests.sendAndAwaitReply(request)   // throws on server `error` / not-Open; decode below unreachable on failure
+    val reply = requests.sendAndAwaitReply(request)   // throws on server `error` / not-Open; decode below unreachable on failure
     return MobileJson.decodeFromJsonElement<ScreenSnapshotPayloadDto>(reply).text
 }
 ```
@@ -58,12 +61,16 @@ ack; that assumption was wrong, so the awaited deferred never completed against 
 echo removal never ran, and the caller's coroutine stayed suspended for the connection's life — found live
 by #849's second-client scenario, fixed by #859: the send is now **fire-and-forget**, and the echo removal
 is settled from the next `queue_state`, described in full at [Queued backlog § Dropping a queued
-entry](queued-backlog.md#dropping-a-queued-entry-dequeue_message-466).
+entry](queued-backlog.md#dropping-a-queued-entry-dequeue_message-466). The body now lives on
+`MessageCommands` (#915, `data/repository/MessageCommands.kt`), beside `sendMessage`, `uploadAttachment`
+and `requestScreenSnapshot`; the repository's `override suspend fun dropQueuedMessage` is a one-line
+hand-off.
 
 ```kotlin
-override suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long) {
+// MessageCommands
+suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: Long) {
     val request = Envelope(
-        id = relayRequests.nextRequestId(),
+        id = requests.nextRequestId(),
         type = TYPE_DEQUEUE_MESSAGE, ts = Clock.System.now().toString(),
         payload = MobileJson.encodeToJsonElement(
             DequeueMessagePayloadDto(conversationId = conversationId, queuedMsgId = queuedMessageId),
@@ -73,22 +80,25 @@ override suspend fun dropQueuedMessage(conversationId: String, queuedMessageId: 
     val echoId = queueProjection.current(conversationId)
         .firstOrNull { it.id == queuedMessageId }?.messageId.orEmpty()
     if (echoId.isNotEmpty()) {
-        pendingDrops.update { it + (conversationId to (it[conversationId].orEmpty() + (queuedMessageId to echoId))) }
+        threadProjection.recordDrop(conversationId, queuedMessageId, echoId)
     }
-    if (!pump.send(request)) {
-        pendingDrops.update { it + (conversationId to (it[conversationId].orEmpty() - queuedMessageId)) }
+    if (!send(request)) {
+        threadProjection.withdrawDrop(conversationId, queuedMessageId)
         throw IllegalStateException("$TYPE_DEQUEUE_MESSAGE not sent: session not connected")
     }
 }
 ```
 
-- **Fire-and-forget, not `RelayRequests.sendAndAwaitReply` (#859).** The method sends through the raw `pump.send` (the
-  `interrupt` idiom) and returns once the frame is on the wire. It registers in no `RelayRequests.pendingRequests` slot,
-  so it can now throw only `IllegalStateException` from a not-connected session (`pump.send` returns
+- **Fire-and-forget, not `RelayRequests.sendAndAwaitReply` (#859).** The method sends through the pump's raw
+  `send` (the `interrupt` idiom, passed into `MessageCommands`' constructor) and returns once the frame is
+  on the wire. It registers in no `RelayRequests.pendingRequests` slot,
+  so it can now throw only `IllegalStateException` from a not-connected session (`send` returns
   `false`) — never `RelayErrorException` or `IllegalArgumentException`.
-- **`pendingDrops: MutableStateFlow<Map<String, Map<Long, String>>>`** — `conversationId -> (queued_msg_id
-  -> echo message id)`, connection-scoped and in-memory like `mintedMessageIds`. `dropQueuedMessage`
-  **records before it sends**: the entry goes in first, so a confirming `queue_state` can never land
+- **The pending-drop ledger lives on `ThreadProjection`** (`pendingDrops:
+  MutableStateFlow<Map<String, Map<Long, String>>>`, `conversationId -> (queued_msg_id -> echo message
+  id)`), not on `MessageCommands` — `dropQueuedMessage` calls `ThreadProjection.recordDrop` /
+  `.withdrawDrop` rather than updating a `StateFlow` of its own. `recordDrop`
+  **records before the send**: the entry goes in first, so a confirming `queue_state` can never land
   before there is a request to settle against it. (An earlier design recorded after a successful send and
   settled immediately; that ordering left a window no deterministic unit test could exercise, because the
   fake pump's inbound collector never interleaves with a call that doesn't suspend — recording first
