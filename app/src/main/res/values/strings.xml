@@ -90,6 +90,11 @@
     <string name="cd_thread_thinking">Agent is thinking</string>
     <string name="thread_thinking_progress_label">Thinking… ~%1$d tokens this step</string>
     <string name="cd_thread_thinking_progress">Claude is thinking, about %1$d tokens into its current reasoning step</string>
+    <!-- #897: the open tool call in the thinking arm's slot. %1$s is the daemon's tool name, %2$s claude's elapsed reading. -->
+    <string name="thread_tool_running_label">Running %1$s…</string>
+    <string name="thread_tool_running_elapsed_label">Running %1$s… %2$s</string>
+    <string name="cd_thread_tool_running">Claude is running %1$s</string>
+    <string name="cd_thread_tool_running_elapsed">Claude is running %1$s, %2$s elapsed</string>
     <string name="thread_api_retry_label">Retrying — attempt %1$d/%2$d</string>
     <string name="thread_api_retry_label_unknown">Retrying…</string>
     <string name="cd_thread_api_retry">Claude is retrying, attempt %1$d of %2$d</string>

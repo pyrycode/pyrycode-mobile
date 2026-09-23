@@ -50,6 +50,8 @@ import androidx.compose.ui.unit.dp
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.ModalUiState
+import de.pyryco.mobile.data.model.ToolCall
+import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.ThinkingProgress
@@ -270,6 +272,8 @@ fun ThreadScreen(
                             .padding(top = ComposerTopGap, bottom = ComposerBottomGap),
                     verticalArrangement = Arrangement.spacedBy(ComposerSectionGap),
                 ) {
+                    // #897: the open tool call names itself in the thinking arm's slot, only while a turn runs.
+                    val openTool = remember(state.items) { openToolCall(state.items) }
                     ThreadStatusArea(
                         apiRetry = apiRetry,
                         usageLimit = usageLimit,
@@ -278,6 +282,7 @@ fun ThreadScreen(
                         turnOutcome = turnOutcome,
                         isThinking = isThinking,
                         thinkingProgress = thinkingProgress,
+                        runningTool = if (isBusy) openTool else null,
                         showRePair = showRePair,
                         onRePair = onRePair,
                     )
@@ -657,6 +662,11 @@ fun ThreadScreen(
  * unchanged. Visibility stays governed by [isThinking] alone — `turn_state` owns the thinking phase
  * (#406), and letting a reading raise the arm on its own would be a fourth arm wearing the third one's
  * name.
+ *
+ * [runningTool] (#897) rides the same `else` branch and does raise it: a tool claude is running during
+ * the `responding` phase is exactly the signal the band otherwise lacks. The screen passes it only while
+ * the turn is busy, so every arm above still pre-empts it and a closed call drops the band back to what
+ * it would otherwise show.
  */
 @Composable
 private fun ThreadStatusArea(
@@ -667,6 +677,7 @@ private fun ThreadStatusArea(
     turnOutcome: TurnOutcomeReport?,
     isThinking: Boolean,
     thinkingProgress: ThinkingProgress?,
+    runningTool: ToolCall?,
     showRePair: Boolean = false,
     onRePair: () -> Unit = {},
 ) {
@@ -678,7 +689,13 @@ private fun ThreadStatusArea(
             resetting != null -> ResettingIndicator(status = resetting, modifier = slot)
             isCompacting -> CompactingIndicator(isCompacting = true, modifier = slot)
             turnOutcome != null -> TurnOutcomeIndicator(report = turnOutcome, modifier = slot)
-            else -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress)
+            else ->
+                ThinkingIndicator(
+                    isThinking = isThinking,
+                    modifier = slot,
+                    progress = thinkingProgress,
+                    runningTool = runningTool,
+                )
         }
     }
     if (!showRePair) {
@@ -767,3 +784,15 @@ internal fun ThreadUiState.toChannelInfoUiModel(now: Instant = Clock.System.now(
         memoryPlugins = emptyList(),
         channelId = conversationId,
     )
+
+/**
+ * The thread's open tool call (#897): the latest row in [items] whose call is still
+ * [ToolCallStatus.Running], or `null`. Denied, done and failed rows are not open. One call supplies both
+ * the name and the elapsed reading the status area shows, so the two can never come from different calls,
+ * and a newer open call replaces an older one because it sits later in the chronological list.
+ */
+internal fun openToolCall(items: List<ThreadItem>): ToolCall? =
+    items
+        .lastOrNull { item ->
+            item is ThreadItem.MessageItem && item.message.toolCall?.status == ToolCallStatus.Running
+        }.let { (it as? ThreadItem.MessageItem)?.message?.toolCall }
