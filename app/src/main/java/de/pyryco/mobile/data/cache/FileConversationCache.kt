@@ -447,6 +447,7 @@ private fun ThreadItem.toRecord(): CachedThreadRow =
             )
         is ThreadItem.UnrecognizedMessage -> throw IllegalStateException("unrecognized rows are never cached")
         is ThreadItem.Banner -> throw IllegalStateException("banner rows are never cached")
+        is ThreadItem.CompactionBoundary -> throw IllegalStateException("compaction rows are never cached")
     }
 
 private fun CachedThreadRow.toDomain(): ThreadItem {

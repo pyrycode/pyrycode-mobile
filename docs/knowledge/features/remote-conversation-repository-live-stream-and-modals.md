@@ -87,6 +87,34 @@ repository stays plain orchestration: decode runs behind the authenticated Noise
 the new arm or the drop branch logs the payload** (`title`/`prompt`/option-`label` are operator content —
 pyrycode#701 "never log modal body text"). See [Modal events § Trust boundary](modal-events.md#trust-boundary--no-payload-logging).
 
+## The compaction-boundary decode+fold seam (#874)
+
+A new `TYPE_COMPACTION_BOUNDARY = "compaction_boundary"` arm joins the `onInbound` `when (envelope.type)`
+demux, gated on `CAPABILITY_INTERACTIVE in negotiatedCapabilities()` (the reused #385 supplier) — a finished
+compaction, folded into the thread as a `ThreadItem.CompactionBoundary` divider rather than emitted on
+[`liveSessionEvents`](#livesessionevents--the-v2-structured-stream-decode-seam-385).
+
+- **`decodeCompactionBoundary(envelope)`** decodes the `CompactionBoundaryPayloadDto` and
+  `Instant.parse(envelope.ts)` inside one `try`/`catch (IllegalArgumentException)` — the `decodeBanner`
+  drop idiom — and routes by the payload's own `conversation_id`. `appendCompactionBoundary` end-appends
+  the mapped row inside one atomic `threadByConversation.update`, unless the thread already holds one
+  stamped that `ts` (`holdsCompactionBoundary`) — the `appendBanner` dedup shape, because the daemon hands
+  the same `ts` to both this arm and a later history page holding the same frame.
+- **Renders no `LiveSessionEvent` and clears no stall.** The frame is conversation-scoped with no
+  `turn_id` and can arrive with no preceding `compacting` edge; `compacting` alone still drives the
+  status-area indicator (unchanged by this arm — see [Compacting
+  indicator](compacting-indicator.md#edge-cases--limitations)). Exactly one write, and nothing on this
+  arm logs the envelope, its `conversation_id`, or either count.
+- **Counts and trigger are narrowed at the DTO mapper (`toRow`), not here** — a non-negative safe integer
+  or `null` per count, an exact-`"manual"` boolean for the open `trigger` string — so no claude-authored
+  token reaches the row or a log.
+- The row, its label rules, and its cache exclusion are documented at [Session boundary delimiter §
+  CompactionBoundaryDivider](session-boundary-delimiter.md#compactionboundarydivider-874) and
+  [Conversation cache](conversation-cache.md); this section records only the decode seam.
+
+`security-sensitive`, the same posture as the sibling arms above: decode runs behind the authenticated
+Noise channel, and a malformed frame drops only itself — the lone collector survives.
+
 ## `questionBatches` — the v2 clarification-batch decode+fold seam (#822)
 
 A **held `StateFlow<List<QuestionBatch>>`** (`mutableQuestionBatches` / `questionBatches`), not an event

@@ -507,6 +507,85 @@ class HistoryPageReducerTest {
         assertEquals(page + live, live.mergeHistoryRows(page))
     }
 
+    // ---- #874: a stored compaction boundary replays as the divider the live lane drew ---------------
+
+    @Test
+    fun reduce_storedCompactionBoundary_becomesARowStampedWithTheEntryTimestamp() {
+        val rows = reduceHistoryPage(listOf(entry(5, "compaction_boundary", compactionPayload())), true)
+
+        assertEquals(listOf(ThreadItem.CompactionBoundary(24000L, 3000L, manual = true, occurredAt = TS_INSTANT)), rows)
+    }
+
+    @Test
+    fun reduce_storedCompactionBoundaryWithNullOrInvalidCounts_claimsNoSize() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(2, "compaction_boundary", compactionPayload(trigger = "", pre = "-1"), ts = "2026-09-05T10:02:00Z"),
+                    entry(1, "compaction_boundary", compactionPayload(trigger = "auto", post = "null"), ts = "2026-09-05T10:01:00Z"),
+                ),
+                true,
+            )
+
+        assertEquals(
+            listOf(Triple(24000L, null, false), Triple(null, 3000L, false)),
+            rows.map { (it as ThreadItem.CompactionBoundary).let { row -> Triple(row.preTokens, row.postTokens, row.manual) } },
+        )
+    }
+
+    @Test
+    fun reduce_storedCompactionBoundaryWithoutInteractive_yieldsNothing() {
+        assertEquals(emptyList<ThreadItem>(), reduceHistoryPage(listOf(entry(1, "compaction_boundary", compactionPayload())), false))
+    }
+
+    @Test
+    fun reduce_malformedCompactionBoundary_costsOnlyThatEntry() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(3, "message", messagePayload("m1", "user", "after")),
+                    // A count that is no integer.
+                    entry(2, "compaction_boundary", compactionPayload(pre = "1.5"), ts = "2026-09-05T10:02:00Z"),
+                    entry(1, "compaction_boundary", compactionPayload(), ts = "2026-09-05T10:01:00Z"),
+                ),
+                true,
+            )
+
+        assertEquals(2, rows.size)
+        assertEquals(Instant.parse("2026-09-05T10:01:00Z"), (rows.first() as ThreadItem.CompactionBoundary).occurredAt)
+    }
+
+    @Test
+    fun reduce_compactionBoundariesRepeatingOneTimestamp_yieldOneRow() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(2, "compaction_boundary", compactionPayload(pre = "2")),
+                    entry(1, "compaction_boundary", compactionPayload(pre = "1")),
+                ),
+                true,
+            )
+
+        assertEquals(listOf(1L), rows.map { (it as ThreadItem.CompactionBoundary).preTokens })
+    }
+
+    @Test
+    fun merge_aPageWhoseCompactionBoundaryIsAlreadyLive_addsNoSecondRow() {
+        // The live lane stamps the row with the envelope ts, which the daemon also hands the log entry.
+        val live: List<ThreadItem> = listOf(ThreadItem.CompactionBoundary(24000L, 3000L, manual = true, occurredAt = TS_INSTANT))
+        val page = reduceHistoryPage(listOf(entry(1, "compaction_boundary", compactionPayload())), true)
+
+        assertEquals(live, live.mergeHistoryRows(page))
+    }
+
+    @Test
+    fun merge_compactionBoundaryAtADifferentTimestamp_isAdmitted() {
+        val live: List<ThreadItem> = listOf(ThreadItem.CompactionBoundary(24000L, 3000L, manual = true, occurredAt = TS_INSTANT))
+        val page = reduceHistoryPage(listOf(entry(1, "compaction_boundary", compactionPayload(), ts = OCCURRED_AT)), true)
+
+        assertEquals(page + live, live.mergeHistoryRows(page))
+    }
+
     // ---- #811: a refused call replays as denied, never as failed -----------------------------------
 
     @Test
@@ -914,6 +993,12 @@ class HistoryPageReducerTest {
         text: String = "Blocked by hook",
         truncated: Boolean = false,
     ): String = """{"conversation_id":"$CONVERSATION","level":"$level","text":"$text","truncated":$truncated,"stops_turn":true}"""
+
+    private fun compactionPayload(
+        trigger: String = "manual",
+        pre: String = "24000",
+        post: String = "3000",
+    ): String = """{"conversation_id":"$CONVERSATION","trigger":"$trigger","pre_tokens":$pre,"post_tokens":$post}"""
 
     private fun messageItem(
         id: String,

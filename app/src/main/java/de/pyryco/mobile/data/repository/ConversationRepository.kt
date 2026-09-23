@@ -647,6 +647,34 @@ sealed interface ThreadItem {
         val truncated: Boolean,
         val occurredAt: Instant,
     ) : ThreadItem
+
+    /**
+     * A finished compaction (#874): claude shrank the conversation's context, so it no longer remembers
+     * detail from above this point. Carried by the `compaction_boundary` frame, which is conversation-scoped
+     * with no `turn_id` and may arrive with no `compacting` edge before it, so the row drives no turn and no
+     * status indicator. **Not a session boundary** — it changes no above-the-line de-emphasis.
+     *
+     * Every field is narrowed from claude's assertion at decode, so no claude-authored string is held here.
+     *
+     * Identity: [occurredAt], the envelope's (or stored entry's) `ts` — the protocol's `(type, ts)` join key
+     * with the type implied by this variant. Invariant: unique among a thread's compaction boundaries. The
+     * thread's `LazyColumn` keys the row on it, so a duplicate crashes the list; uniqueness is a producer
+     * obligation — both thread writers skip one the thread already holds (`holdsCompactionBoundary`) —
+     * documented here and asserted in tests, not enforced at construction (as [SessionBoundary]).
+     *
+     * Never cached: history replay restores it.
+     *
+     * @param preTokens claude's context size before the compaction, or null when it stated none, stated
+     *   `null`, or stated a value that is not a non-negative safe integer. Never a stand-in `0`.
+     * @param postTokens The size after, on the same rule.
+     * @param manual Whether claude's open `trigger` was exactly `manual`; every other token reads as unknown.
+     */
+    data class CompactionBoundary(
+        val preTokens: Long?,
+        val postTokens: Long?,
+        val manual: Boolean,
+        val occurredAt: Instant,
+    ) : ThreadItem
 }
 
 /**

@@ -196,6 +196,12 @@ case).
   that reason — see `docs/e2e-interactive-stream.md`'s `Coverage:` entry. Coverage is rung 2 only:
   `ScriptedCompactingTest`, driving both edges (including "shows while `turn_state` is idle" and
   "clearing while idle leaves no status") through the real repository fold.
+- **`compaction_boundary` drives no indicator state.** #874 added a separate
+  thread row, `CompactionBoundaryDivider`, folded from the `compaction_boundary` frame — a *finished*
+  compaction, distinct from this component's *in-progress* `compacting` edge. The two never interact:
+  `compacting` alone still drives this indicator (unchanged by #874), the divider is folded and rendered
+  independently, and neither arm reads or clears the other's state. See [Session boundary delimiter §
+  CompactionBoundaryDivider](session-boundary-delimiter.md#compactionboundarydivider-874).
 
 ## Related
 
