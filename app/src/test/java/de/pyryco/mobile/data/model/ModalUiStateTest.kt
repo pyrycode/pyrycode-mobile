@@ -30,6 +30,7 @@ class ModalUiStateTest {
                     prompt = "rm -rf /tmp/build",
                     options = options,
                     defaultOptionId = "reject_once",
+                    conversationId = "c1",
                 ),
             )
 
@@ -41,6 +42,7 @@ class ModalUiStateTest {
                 prompt = "rm -rf /tmp/build",
                 options = options,
                 defaultOptionId = "reject_once",
+                conversationId = "c1",
             ),
             next,
         )
@@ -55,8 +57,9 @@ class ModalUiStateTest {
             val open = open(modalId = "m1")
             val next = open.reduce(ModalEvent.Dismissed(modalId = "m1", outcome = "allow_once", source = source))
 
+            // The dismissed state carries the open modal's conversation (#816): the wire dismiss has none.
             assertEquals(
-                ModalUiState.Dismissed(modalId = "m1", outcome = "allow_once", source = source),
+                ModalUiState.Dismissed(modalId = "m1", outcome = "allow_once", source = source, conversationId = "c1"),
                 next,
             )
         }
@@ -87,6 +90,40 @@ class ModalUiStateTest {
         assertEquals("m2", (next as ModalUiState.Open).modalId)
     }
 
+    @Test
+    fun repeatShownWithSameModalId_replacesOpenInPlace() {
+        // A reconnect re-sends the outstanding modal_shown with the same modal_id and conversation (#816).
+        val resent = ModalEvent.Shown("m1", "permission", "Run command?", "do it now", emptyList(), "d", "c1")
+        val next = open(modalId = "m1").reduce(resent)
+
+        assertEquals(
+            ModalUiState.Open("m1", "permission", "Run command?", "do it now", emptyList(), "d", "c1"),
+            next,
+        )
+    }
+
+    @Test
+    fun scopedTo_keepsOpenAndDismissedOnlyForTheirOwnConversation() {
+        val open = open(modalId = "m1")
+        val dismissed = ModalUiState.Dismissed("m1", "reject_once", "remote", conversationId = "c1")
+
+        assertEquals(open, open.scopedTo("c1"))
+        assertEquals(dismissed, dismissed.scopedTo("c1"))
+        assertEquals(ModalUiState.Hidden, open.scopedTo("c2"))
+        assertEquals(ModalUiState.Hidden, dismissed.scopedTo("c2"))
+        assertEquals(ModalUiState.Hidden, ModalUiState.Hidden.scopedTo("c1"))
+    }
+
+    @Test
+    fun scopedTo_blankConversationOnEitherSide_rendersInNoThread() {
+        // An unscoped prompt (no conversation_id on the wire) belongs to no thread, never to every thread.
+        val unscoped = open(modalId = "m1").copy(conversationId = "")
+        assertEquals(ModalUiState.Hidden, unscoped.scopedTo(""))
+        assertEquals(ModalUiState.Hidden, unscoped.scopedTo("c1"))
+        assertEquals(ModalUiState.Hidden, ModalUiState.Dismissed("m1", "o", "remote").scopedTo(""))
+        assertEquals(ModalUiState.Hidden, open(modalId = "m1").scopedTo(""))
+    }
+
     private fun open(modalId: String): ModalUiState.Open =
         ModalUiState.Open(
             modalId = modalId,
@@ -95,5 +132,6 @@ class ModalUiStateTest {
             prompt = "do the thing",
             options = listOf(ModalOption("allow_once", "Allow once"), ModalOption("reject_once", "Reject once")),
             defaultOptionId = "reject_once",
+            conversationId = "c1",
         )
 }

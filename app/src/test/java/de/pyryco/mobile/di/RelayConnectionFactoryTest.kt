@@ -1578,7 +1578,7 @@ class RelayConnectionFactoryTest {
         fun modal(title: String) =
             envelope(
                 "modal_shown",
-                """{"modal_id":"same","class":"permission","title":"$title","prompt":"Allow?","options":[{"id":"deny","label":"Deny"}],"default_option_id":"deny"}""",
+                """{"modal_id":"same","class":"permission","title":"$title","prompt":"Allow?","options":[{"id":"deny","label":"Deny"}],"default_option_id":"deny","conversation_id":"c"}""",
             )
 
         fun turn(id: Long) = envelope("turn_state", """{"conversation_id":"c","state":"thinking"}""").copy(eventId = id)

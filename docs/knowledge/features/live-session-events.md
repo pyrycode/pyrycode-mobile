@@ -267,9 +267,11 @@ as the control-derived `ReplayGap` member — #417 — but via the resync arm, n
 > pattern (`internal` DTOs in `InteractivePayloads.kt` → `toEvent()` mappers → a portable sealed family),
 > on the **same** single inbound collector behind the **same** `interactive` gate, with the **same**
 > fail-closed `try/catch (IllegalArgumentException)` drop. But they are deliberately **not** a sixth
-> `LiveSessionEvent`: modal payloads carry **no `conversation_id`** (`modalId` is the sole correlation
-> key), whereas every member here mandates `conversationId` and the demux routes on it — so they form
-> their own [`ModalEvent`](modal-events.md) family on their own concrete-only
+> `LiveSessionEvent`: `modalId`, not `conversation_id`, is modal events' correlation key — every member
+> here mandates a non-null `conversationId` the demux **routes on**, while `Shown.conversationId` (#816)
+> is a defaulted, display-only scoping stamp nothing here routes on (`""` = no thread, and `Dismissed`
+> carries none at all) — so they form their own [`ModalEvent`](modal-events.md) family on their own
+> concrete-only
 > [`modalEvents`](remote-conversation-repository-live-stream-and-modals.md#modalevents--the-v2-permissionchoice-modal-decode-seam-437)
 > flow. Two further contrasts worth noting when adding a new interactive event: the modal mappers are
 > **total** (`class`/`source`/`outcome` carried **verbatim** as `String`, never coerced to an enum that
@@ -329,7 +331,9 @@ is **not** one of the five render envelopes and does **not** flow through the de
 - [Modal events](modal-events.md) ([#437](../codebase/437.md)) — the **sibling decode family**: the same
   three-layer pattern + single-collector gated demux arm + fail-closed drop, on its own
   [`modalEvents`](remote-conversation-repository-live-stream-and-modals.md#modalevents--the-v2-permissionchoice-modal-decode-seam-437)
-  flow (modal payloads carry no `conversation_id`, so not a sixth member here).
+  flow (`modalId`, not `conversation_id`, is the correlation key this family routes on, so not a sixth
+  member here — see [#816](modal-events.md#conversation_id-the-one-defaulted-field-816) for the
+  display-only `Shown.conversationId`).
 - [Noise session pump](noise-session-pump.md) — surfaces `PumpState.Open.capabilities` (#401), the
   gate source.
 - [Mobile Protocol v2 wire layer](mobile-protocol-v2-wire-layer.md) — `MobileJson`, `Envelope`,

@@ -12,10 +12,13 @@ package de.pyryco.mobile.data.model
  * an overlay — those are the downstream consumer slices (#438 answer/cancel, #439 render UI, #440
  * read-only mode).
  *
- * Modal events carry **no `conversation_id`** — [modalId] is the sole correlation key (the phone treats
- * it as an opaque token to echo back in #438, never as a routing key it asserts; the daemon validates it
- * against its own outstanding-modal state). This is why modal events form their own family on their own
- * flow rather than a sixth [LiveSessionEvent], whose every subtype mandates a `conversationId`.
+ * [modalId] is the sole correlation key for answers (the phone treats it as an opaque token to echo back
+ * in #438, never as a routing key it asserts; the daemon validates it against its own outstanding-modal
+ * state). [Shown.conversationId] (daemon #1065) is an outbound-only **scoping** stamp naming the
+ * conversation that raised the modal: the phone uses it to choose which thread displays the modal (#816)
+ * and never sends it back. `modal_dismissed` carries no conversation. Modal events form their own family
+ * on their own flow rather than a sixth [LiveSessionEvent], whose every subtype mandates a
+ * `conversationId`.
  *
  * The free-form text fields ([Shown.title], [Shown.prompt], [ModalOption.label]) and the verbatim
  * strings ([Shown.modalClass], [Dismissed.outcome], [Dismissed.source]) are carried **verbatim** — the
@@ -35,6 +38,8 @@ sealed interface ModalEvent {
      * forward-compat value survives (AC #3). [options] preserves wire array order, which **is** the
      * canonical display/selection order (AC #1/#5). [defaultOptionId] equals one of [options]`.id` by the
      * producer's invariant; this seam carries it verbatim and does not enforce the invariant.
+     * [conversationId] is the conversation whose session raised the modal (#816), or `""` when the frame
+     * omitted it — an unscoped modal that no thread displays.
      */
     data class Shown(
         override val modalId: String,
@@ -43,6 +48,7 @@ sealed interface ModalEvent {
         val prompt: String,
         val options: List<ModalOption>,
         val defaultOptionId: String,
+        val conversationId: String = "",
     ) : ModalEvent
 
     /**

@@ -24,8 +24,8 @@ out of scope:
 It follows the established v2 decode-slice pattern of [Live-session events](live-session-events.md)
 ([#385](../codebase/385.md)) — same three layers, same single-collector demux arm, same fail-closed
 drop — with two deliberate departures called out below: a **separate event family on its own flow**
-(modal payloads carry no `conversation_id`), and **verbatim strings, no enum coercion** (forward-compat
-values must survive).
+(`modal_id`, not `conversation_id`, is the correlation key every subtype mandates), and **verbatim
+strings, no enum coercion** (forward-compat values must survive).
 
 ## What the daemon sends
 
@@ -34,19 +34,25 @@ When the supervised `claude` surfaces a permission/choice modal, the daemon desc
 `modal_shown` → `modal_answer`/`modal_cancel` (#438) → `modal_dismissed`. The two **binary → phone**
 envelopes this seam decodes:
 
-| Wire `type` | Payload fields (all required, no `omitempty`) | Meaning |
+| Wire `type` | Payload fields | Meaning |
 |---|---|---|
-| `modal_shown` | `modal_id`, `class`, `title`, `prompt`, `options` (ordered `[{id, label}]`), `default_option_id` | a surfaced permission/choice modal |
-| `modal_dismissed` | `modal_id`, `outcome`, `source` | its resolution |
+| `modal_shown` | `modal_id`, `class`, `title`, `prompt`, `options` (ordered `[{id, label}]`), `default_option_id` (all required, no `omitempty`); `conversation_id` (daemon #1065, outbound-only scoping stamp — see below) | a surfaced permission/choice modal |
+| `modal_dismissed` | `modal_id`, `outcome`, `source` (all required, no `omitempty`) | its resolution |
 
 Pinned by the wire SSOT (pyrycode#701 `internal/protocol/messaging.go` + `docs/protocol-mobile.md`
 § Modal (v2)):
 
-- **No `conversation_id` on either payload.** `modal_id` is the **sole correlation key** — an opaque
-  nonce the phone echoes back in #438, **never** a routing key it asserts. The daemon validates it
-  against its own outstanding-modal state (pyrycode#701/#703/#706); this seam carries it verbatim and
-  makes **no** routing decision on it. (This is the structural reason modal events are their own family,
-  not a sixth `LiveSessionEvent` — see [below](#why-a-separate-family-not-a-sixth-livesessionevent).)
+- **`modal_id` is the sole correlation key for answers**, on both payloads — an opaque nonce the phone
+  echoes back in #438, **never** a routing key it asserts. The daemon validates it against its own
+  outstanding-modal state (pyrycode#701/#703/#706); this seam carries it verbatim and makes **no** routing
+  decision on it. (This is the structural reason modal events are their own family, not a sixth
+  `LiveSessionEvent` — see [below](#why-a-separate-family-not-a-sixth-livesessionevent).)
+- **`modal_shown`'s `conversation_id` is outbound-only (#1065).** It names the conversation whose session
+  raised the modal, so the phone can choose which thread *displays* the prompt (#816) — it is never sent
+  back on `modal_answer` / `modal_cancel`, and the daemon never trusts a phone-asserted conversation. A
+  reconnect re-send of `modal_shown` (the same `modal_id`) carries the same `conversation_id` as the
+  original. `modal_dismissed` carries no conversation at all; a resolution's conversation is known only
+  because [the fold](current-modal-state.md) remembers which conversation raised the modal it resolves.
 - **`options` is an ordered array**, and **array order IS the canonical display/selection order**.
   `kotlinx.serialization` preserves `List` order, so the DTO inherits it; the mapper's `options.map { … }`
   keeps it (AC #1/#5 assert it).
@@ -89,6 +95,17 @@ the **fail-closed** posture: a missing/wrong-typed field fails the structural de
 stream survives. The file already carries multiple top-level types, so the
 [[ktlint-filename-rule-single-class]] does not constrain its name.
 
+#### `conversation_id`: the one defaulted field (#816)
+
+`ModalShownPayloadDto` gains `@SerialName("conversation_id") val conversationId: String = ""` — the
+**only** defaulted field on either modal DTO; every other field stays required and the fail-closed posture
+above is otherwise unchanged. A frame that omits the key still decodes, with `conversationId == ""`, which
+[the fold's `scopedTo`](current-modal-state.md) treats as "matches no thread" rather than "matches every
+thread" (a missing/blank scoping stamp fails closed to invisible, never to all-threads). An explicit `null`
+for the key still fails the decode, exactly as for every other field — the contract says the field is a
+string, and the default only covers a key that is absent. `ModalDismissedPayloadDto` gains no field; the
+wire dismiss carries no conversation (see the table above).
+
 ### 2. Event family — `data/model/ModalEvent.kt` (new, public, portable)
 
 One `sealed interface ModalEvent` with a common `val modalId: String` and two `data class` subtypes named
@@ -105,6 +122,7 @@ sealed interface ModalEvent {
         val prompt: String,
         val options: List<ModalOption>,    // array order = canonical display order (AC #1/#5)
         val defaultOptionId: String,       // ∈ options[].id by producer invariant; carried, NOT enforced
+        val conversationId: String = "",   // #816: outbound-only display-scoping stamp; "" = unscoped
     ) : ModalEvent
 
     data class Dismissed(
@@ -174,7 +192,8 @@ TYPE_MODAL_SHOWN, TYPE_MODAL_DISMISSED -> {
 ```
 
 - **Decode-and-emit only.** Unlike the `TYPE_TURN_STATE …` arm, this arm does **not** fold a thread row
-  (modals are not rows and carry no `conversation_id`) and does **not** clear a stall — a `modal_shown`
+  (modals are not rows, and this seam never routes on `Shown.conversationId` — see #816 below) and does
+  **not** clear a stall — a `modal_shown`
   means `claude` is *waiting* for input, **not** turn forward-progress, so it must not clear an active
   [stall](stall-state.md). Two clean separations from the live-session arm.
 - **Capability gate (the one judgment call).** The arm rides the **existing** `CAPABILITY_INTERACTIVE in
@@ -244,12 +263,15 @@ into the coordinator in [#492](../codebase/492.md)).
 Modal events get their **own** `ModalEvent` family on their **own** `modalEvents` flow, deliberately
 **not** added to [`LiveSessionEvent`](live-session-events.md)/`liveSessionEvents`. Two reasons:
 
-- **Structural blocker — no `conversation_id`.** Every `LiveSessionEvent` subtype mandates `val
-  conversationId: String` (the structured arm routes on it — `stalledConversations.update { it -
-  event.conversationId }`). Modal payloads carry **no `conversation_id`** (`modal_id` is the sole
-  correlation key). Forcing modal events into `LiveSessionEvent` would mean making `conversationId`
-  nullable across all five existing subtypes + every consumer `when` + the stall-clearing fold — a wide,
-  semantically-wrong cascade. A separate family is the minimal, honest shape.
+- **Structural blocker — `conversation_id` is a different kind of field.** Every `LiveSessionEvent`
+  subtype mandates a non-null `val conversationId: String` that the structured arm **routes on**
+  (`stalledConversations.update { it - event.conversationId }`) — a required correlation key. `modal_id`,
+  not `conversationId`, is modal events' correlation key, and `Shown.conversationId` (#816) is a
+  **defaulted, display-only scoping stamp** the phone never routes decode on — `""` means "no thread",
+  not "route to every thread," and `Dismissed` carries none at all. Forcing modal events into
+  `LiveSessionEvent` would still mean making `conversationId` mean two different things across the family
+  (a mandatory routing key on five subtypes, an optional display hint on one) — a semantically-wrong
+  cascade. A separate family stays the minimal, honest shape.
 - **Different handling.** Modal events don't fold thread rows and don't touch stalls; they only emit.
   Mixing them into the row-folding `TYPE_TURN_STATE …` arm would require carve-outs. A separate arm + flow
   keeps each concern clean and lets the #445 consumer collect `modalEvents` directly without filtering
@@ -326,10 +348,10 @@ options[].id` invariant (producer-owned; a #446 default-to-first render fallback
   fold](relay-repository-coordinator-seams-and-passthroughs.md#modal-event-seam-445-and-the-hoisted-currentmodal-fold-492)
   live here (seam in [#445](../codebase/445.md); fold hoisted in [#492](../codebase/492.md), which also
   demoted `modalEvents` to `private`).
-- [Current-modal state](current-modal-state.md) ([#445](../codebase/445.md) / [#492](../codebase/492.md)) —
-  the projection that folds this stream into `currentModal`, hoisted in #492 to the process-scoped
-  coordinator (the ViewModel re-exposes it); realizes the "which-modal-is-open is a downstream projection"
-  deferral above.
+- [Current-modal state](current-modal-state.md) ([#445](../codebase/445.md) / [#492](../codebase/492.md) /
+  #816) — the projection that folds this stream into `currentModal`, hoisted in #492 to the process-scoped
+  coordinator; since #816 each `ThreadViewModel` filters that host-level fold down to its own conversation
+  via `ModalUiState.scopedTo`, consuming `Shown.conversationId` from this seam.
 - [Mobile Protocol v2 wire layer](mobile-protocol-v2-wire-layer.md) — `MobileJson`, `Envelope`,
   `@SerialName` Go-interop.
 - Sibling slices: **#438** answer/cancel send (**landed** — [`answerModal` / `cancelModal`](remote-conversation-repository-live-stream-and-modals.md#answermodal--cancelmodal--the-v2-modal-answercancel-control-send-438),

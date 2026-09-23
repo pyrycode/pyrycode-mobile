@@ -34,15 +34,23 @@ RelayRepositoryCoordinator.modalEvents : Flow<ModalEvent>   ◀── #445 seam,
 RelayRepositoryCoordinator.currentModal : StateFlow<ModalUiState>   ◀── #492 the single process-scoped projection
         │  injected at the AppModule ThreadViewModel factory (no new Koin binding)
         ▼
-ThreadViewModel.currentModal : StateFlow<ModalUiState>   ◀── #492 re-exposed verbatim (a `val` ctor property, no re-fold)
+ThreadViewModel.hostModal : StateFlow<ModalUiState>   ◀── #492 taken verbatim as a private ctor property (renamed in #816)
+        │  ModalUiState.scopedTo(conversationId)   ◀── #816 per-thread filter (this ViewModel's own conversationId)
+        ▼
+ThreadViewModel.currentModal : StateFlow<ModalUiState>   ◀── #816 scoped, stateIn(viewModelScope, Eagerly)
         │  separate parameter beside `state` / `isThinking` / `isStalled`
         ▼
 ThreadScreen → modal overlay (#446 renders it; #451 answers it, #452 renders the armed affordance)
 ```
 
-Note the projection is **app-level**, not per-conversation: modal events carry **no `conversation_id`**
-([Modal events](modal-events.md)), so `modalId` is the sole correlation key and there is **one** active
-modal across the app (not one per thread). This is *why* it hoists cleanly to the app-level coordinator.
+The coordinator's fold is **host-level**, not per-conversation: it is keyed solely on `modalId` and holds
+**one** active modal per host, not a map keyed by conversation (desktop keeps such a map; mobile
+deliberately does not — #816's Technical Notes). Since #816, `modal_shown` carries a `conversation_id`
+(daemon #1065) that scopes **display**, not the fold itself: each `ThreadViewModel` filters the host's
+single modal down to its own conversation via `ModalUiState.scopedTo` before exposing its own
+`currentModal`, so a modal raised by conversation A never renders — or answers — in an open thread for
+conversation B on the same host. A blank/absent `conversation_id` decodes to `""` and matches no thread
+(see [Modal events](modal-events.md#conversation_id-the-one-defaulted-field-816)).
 
 ### 1. The coordinator seam (reconnection-surviving) → the hoisted fold
 
@@ -94,24 +102,36 @@ Every field is carried **verbatim** — no parsing, enum-coercion, trimming, or 
 \#437's forward-compat posture). It reuses `data.model.ModalOption` (no parallel option type). `Hidden` is
 the initial / resolved-and-cleared state and does double duty as the inert default.
 
-`ThreadViewModel` takes the coordinator's already-folded projection as a **defaulted** `val` ctor property
-and re-exposes it with **no wrapping**:
+`ThreadViewModel` takes the coordinator's already-folded projection as a **defaulted, private** `hostModal`
+ctor property (renamed from the public `currentModal` in #816) and derives its own scoped `currentModal`
+from it:
 
 ```kotlin
 class ThreadViewModel(
     …,
-    // #492: the coordinator's process-scoped, reconnection-surviving "current modal" projection,
-    // folded once at the coordinator (no longer per-thread-screen) and re-exposed here verbatim.
-    // Default = a fresh MutableStateFlow(Hidden) so the fake-backed Koin graph + non-modal tests stay inert.
-    val currentModal: StateFlow<ModalUiState> = MutableStateFlow(ModalUiState.Hidden),
+    // #492: the host coordinator's process-scoped, reconnection-surviving "current modal" projection,
+    // folded once at the coordinator. It holds the host's single modal whichever conversation raised it;
+    // #816 scopes it to this thread as [currentModal]. Default = a fresh MutableStateFlow(Hidden) so the
+    // fake-backed Koin graph + non-modal tests stay inert.
+    private val hostModal: StateFlow<ModalUiState> = MutableStateFlow(ModalUiState.Hidden),
     …,
-)
+) {
+    // #816: this thread's own view of the host modal — Hidden unless hostModal's conversationId
+    // matches this VM's own conversationId. Seeded from hostModal.value so .value is right at construction.
+    val currentModal: StateFlow<ModalUiState> =
+        hostModal
+            .map { it.scopedTo(conversationId) }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, hostModal.value.scopedTo(conversationId))
+}
 ```
 
-As a `val` ctor property it **is** the exposed `currentModal` — the VM does not re-derive it. The
-`armedOptionId` / `onModalOption` / `onModalCancel` / `sendAnswer` / `sendCancel` logic reads
-`currentModal` / `currentModal.value` unchanged — a `StateFlow` still satisfies them, which is the
-structural mechanism by which the arm/answer/cancel behaviour (and its tests) stays unchanged.
+`AppModule` passes the coordinator's `currentModal` as the `hostModal` argument (a rename only — the value
+supplied is unchanged). `armedOptionId` combines the scoped `currentModal`, so an arm never surfaces for a
+foreign prompt. `onModalOption` / `onModalCancel` do **not** read `currentModal.value` — they read
+`hostModal.value.scopedTo(conversationId)` synchronously through a private `scopedModal()` helper, so the
+input guard never lags the host flow by a dispatch: a tap in another thread cannot answer this thread's
+prompt (or vice versa) even in the instant before the `stateIn` collector runs. `sendAnswer` / `sendCancel`
+are unchanged — they still take a `modalId` and never see a conversation.
 
 ## Why `Eagerly`, not `WhileSubscribed`
 
@@ -146,16 +166,18 @@ rationale moved verbatim from the VM to the coordinator in #492 (the reasoning i
 with a distinct source, taken by the stateless `ThreadScreen` as a **separate** parameter beside `state`.
 Folding it into the `state` `combine` would force a restructure and touch its `initialValue`. The render
 slice **#446** consumes it the same way — a separate `(state, currentModal, onEvent)` parameter on the
-stateless screen. It is **app-level**, not per-conversation: there is **no `conversationId` filter**
-(contrast [`thinkingTransition`](turn-state-thinking-flag.md)'s guard) because modal events carry no
-`conversation_id`.
+stateless screen. Since #816 it **does** carry a `conversationId` filter, like
+[`thinkingTransition`](turn-state-thinking-flag.md)'s guard — but the filter lives in the ViewModel
+(`hostModal.map { it.scopedTo(conversationId) }`), not inside the coordinator's fold, which stays a single
+host-wide accumulator.
 
 ## Lifecycle, errors, edge cases
 
 - **Lifecycle** — `stateIn(scope, Eagerly, Hidden)` on the coordinator's **process-lived** scope (not
-  `viewModelScope` any more): collects for the coordinator's lifetime, cancelled only by `close()`. The VM's
-  `currentModal` is just a reference to that one `StateFlow`; no parallel mutable modal state exists. The
-  fold is pure (no dispatcher switch).
+  `viewModelScope`): the host fold collects for the coordinator's lifetime, cancelled only by `close()`.
+  Since #816 the VM layers its own `stateIn(viewModelScope, Eagerly, …)` on top to compute the scoped
+  `currentModal`, cancelled with the VM; no parallel mutable modal state exists on either layer, and the
+  scoping `map` is pure (no dispatcher switch).
 - **Errors** — none. `modalEvents` is a `SharedFlow` that never completes-with-error; malformed envelopes
   are already dropped at the #437 decode boundary, so every event reaching the fold is well-typed and the
   fold is total over the sealed `ModalEvent`. Absence of a live source is the empty flow ⇒ state stays
@@ -186,7 +208,8 @@ viewModel {
         get(), get(), get(), get(),
         coordinator.liveSessionEvents,
         // #492: the process-scoped "current modal" projection, folded once at the coordinator.
-        coordinator.currentModal,
+        // #816 renamed the ctor parameter to hostModal; the value supplied is unchanged.
+        hostModal = coordinator.currentModal,
         answerModal = coordinator::answerModal,
         cancelModal = coordinator::cancelModal,
         …,
@@ -194,11 +217,13 @@ viewModel {
 }
 ```
 
-`AppModule` supplies `coordinator.currentModal` in both real and demo builds; the
+`AppModule` supplies `coordinator.currentModal` as `hostModal` in both real and demo builds; the
 [repository build option](dependency-injection.md#how-it-works) does not gate this flow.
 The defaulted `MutableStateFlow(Hidden)` is used by direct test/preview construction
 that omits the argument. A fresh coordinator also starts at `Hidden` until a modal
-event arrives; connection teardown retains its last state as described above.
+event arrives; connection teardown retains its last state as described above — and since that
+retained state still flows through `scopedTo` in the VM, a retained `Open` for another conversation
+stays invisible to a thread that isn't its own.
 
 ## Related
 
@@ -213,8 +238,10 @@ event arrives; connection teardown retains its last state as described above.
   seam (now private) and the hoisted `currentModal` fold (§ Modal event seam).
 - [Turn-state thinking flag](turn-state-thinking-flag.md) ([#406](../codebase/406.md)) — the `isThinking`
   projection this is the **modal twin** of; contrast the `scan`/`Eagerly` vs `mapNotNull`/`WhileSubscribed`
-  choice and the app-level vs per-conversation routing. (`isThinking` remains folded in the VM — it is
-  per-conversation and screen-scoped; the modal projection is app-level, hence the hoist.)
+  choice. `isThinking` remains folded per-conversation directly in the VM; the modal *fold* stays hoisted
+  and host-level at the coordinator (one modal per host, not a per-conversation map — the reason it hoists
+  cleanly at all), and since #816 the VM applies its own per-conversation filter (`scopedTo`) on top,
+  giving the two signals the same conversation-scoped shape at the point the screen consumes them.
 - [Stall state](stall-state.md) ([#395](../codebase/395.md)) — the other sibling transient signal
   (`isStalled`).
 - [Guarded repo launch](guarded-repo-launch.md) ([#490](../codebase/490.md)) — the deterministic
