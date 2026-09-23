@@ -8,6 +8,7 @@ import de.pyryco.mobile.data.model.ToolDenial
 import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.BoundaryReason
 import de.pyryco.mobile.data.repository.QueuedMessage
+import de.pyryco.mobile.data.repository.ResetStatus
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UnrecognizedSite
 import de.pyryco.mobile.data.repository.UsageLimitReading
@@ -319,6 +320,62 @@ internal data class CompactingPayloadDto(
     @SerialName("conversation_id") val conversationId: String,
     val active: Boolean,
 )
+
+/**
+ * The `resetting` control event (#871, pyrycode#2478): the daemon is running a conversation Reset — a
+ * wrap-up turn that writes a handoff note, then a respawn of claude under a new session. Decode-only —
+ * the phone never sends one. Always decode through [MobileJson].
+ *
+ * Wire SSOT: pyrycode `docs/protocol-mobile.md` § `resetting`, which owns the edge sequence; it is cited
+ * here, not restated. Shape: `{conversation_id, active, phase, handoff}` — four fields, all
+ * **strict-required, non-null** with no Kotlin default (the [CompactingPayloadDto] posture): the daemon
+ * never omits a key, and a falling edge carries both strings as `""` rather than dropping them. A missing
+ * field, or one whose JSON shape cannot be read as its declared type, fails the structural decode and the
+ * one envelope is dropped. The quoted-primitive latitude documented on [ApiRetryPayloadDto] applies here
+ * too.
+ *
+ * [phase] and [handoff] are plain `String`s rather than enums: an unrecognised token is a *mapper* drop
+ * (see [toStatus]), not a decode failure — the [SessionTransitionPayloadDto.reason] posture. Both are
+ * daemon-selected constants, never claude-authored, and no note text crosses the wire.
+ *
+ * This is **state**, not one of the [LiveSessionEvent] streaming events, so it never lands on the live
+ * event stream, and it opens, closes and alters no turn.
+ */
+@Serializable
+internal data class ResettingPayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    val active: Boolean,
+    val phase: String,
+    val handoff: String,
+)
+
+/**
+ * Map a **rising-edge** [ResettingPayloadDto] to a [ResetStatus], or **null** when [ResettingPayloadDto.phase]
+ * or [ResettingPayloadDto.handoff] is outside its closed set — including the empty strings, which belong
+ * only to the falling edge. Like [SessionTransitionPayloadDto.toBoundary] the null is an unrecognised-value
+ * drop, distinct from a malformed envelope. The falling edge never reaches this mapper: its strings are
+ * meaningless, so the caller clears on `active: false` without reading them.
+ */
+internal fun ResettingPayloadDto.toStatus(): ResetStatus? {
+    val resetPhase = phase.toResetPhase() ?: return null
+    val resetHandoff = handoff.toResetHandoff() ?: return null
+    return ResetStatus(resetPhase, resetHandoff)
+}
+
+private fun String.toResetPhase(): ResetStatus.Phase? =
+    when (this) {
+        "wrapping_up" -> ResetStatus.Phase.WrappingUp
+        "restarting" -> ResetStatus.Phase.Restarting
+        else -> null
+    }
+
+private fun String.toResetHandoff(): ResetStatus.Handoff? =
+    when (this) {
+        "pending" -> ResetStatus.Handoff.Pending
+        "written" -> ResetStatus.Handoff.Written
+        "skipped" -> ResetStatus.Handoff.Skipped
+        else -> null
+    }
 
 /**
  * The `rate_limited` control event (#802, pyrycode#1405/#1410): what claude said about its usage-limit
