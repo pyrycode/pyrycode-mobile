@@ -34,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -44,9 +45,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -74,6 +78,7 @@ import de.pyryco.mobile.ui.conversations.components.CompactingIndicator
 import de.pyryco.mobile.ui.conversations.components.ConnectionBanner
 import de.pyryco.mobile.ui.conversations.components.EmptyThreadState
 import de.pyryco.mobile.ui.conversations.components.MessageBubble
+import de.pyryco.mobile.ui.conversations.components.OptionsOverlay
 import de.pyryco.mobile.ui.conversations.components.QueuedMessageRow
 import de.pyryco.mobile.ui.conversations.components.RenameDialog
 import de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog
@@ -217,237 +222,276 @@ fun ThreadScreen(
     LaunchedEffect(sessionSettingsErrors, snackbarHostState) {
         sessionSettingsErrors.collect { snackbarHostState.showSnackbar(sessionSettingsFailedMessage) }
     }
-    Scaffold(
-        modifier = modifier,
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        topBar = {
-            ThreadTopAppBar(
-                title = state.displayName,
-                onBack = onBack,
-                onTitleClick = onTitleClick,
-                onOverflowClick = { overflowExpanded = true },
-                overflowExpanded = overflowExpanded,
-                onOverflowDismiss = { overflowExpanded = false },
-                onOverflowEvent = onOverflowEvent,
-                onShowLiteralScreen = onShowLiteralScreen,
-                isPromoted = state.isPromoted,
-                mutationsSupported = state.mutationsSupported,
-            )
-        },
-        // Figma 16:8's `Input area` (533:1957): a gap-8 column of the status area, the input field and
-        // the model/effort footer, opening 12dp below the message area and closing 16dp above the
-        // frame's foot. It owns the composer's surface and the IME lift, so the whole input area rises
-        // above the keyboard as one unit while the header and the list stay put — and, sitting in the
-        // bottomBar slot over an opaque surface, it leaves the message list the only scrolling region.
-        bottomBar = {
+    // #808: the footer's open option overlay. Plain `remember`, keyed on the conversation, and never
+    // `rememberSaveable`: a back-stack return or another conversation must open with every overlay
+    // closed. The open menu is re-derived from the live run configuration on every pass, so the overlay
+    // closes when the control stops offering anything (a write goes pending, a reading drops the menu).
+    var openControl by remember(state.conversationId) { mutableStateOf<FooterControl?>(null) }
+    val footerAnchors = remember { mutableStateMapOf<FooterControl, Rect>() }
+    var layerOrigin by remember { mutableStateOf(Offset.Zero) }
+    val openMenu =
+        openControl
+            ?.takeIf { footerControlEnabled(it, state.runConfig) }
+            ?.let { control -> footerMenu(control, state.runConfig)?.let { control to it } }
+    LaunchedEffect(openControl, openMenu == null) {
+        if (openMenu == null) openControl = null
+    }
+    Box(
+        modifier = modifier.onGloballyPositioned { layerOrigin = it.positionInWindow() },
+    ) {
+        Scaffold(
+            modifier = Modifier.fillMaxSize(),
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            topBar = {
+                ThreadTopAppBar(
+                    title = state.displayName,
+                    onBack = onBack,
+                    onTitleClick = onTitleClick,
+                    onOverflowClick = { overflowExpanded = true },
+                    overflowExpanded = overflowExpanded,
+                    onOverflowDismiss = { overflowExpanded = false },
+                    onOverflowEvent = onOverflowEvent,
+                    onShowLiteralScreen = onShowLiteralScreen,
+                    isPromoted = state.isPromoted,
+                    mutationsSupported = state.mutationsSupported,
+                )
+            },
+            // Figma 16:8's `Input area` (533:1957): a gap-8 column of the status area, the input field and
+            // the model/effort footer, opening 12dp below the message area and closing 16dp above the
+            // frame's foot. It owns the composer's surface and the IME lift, so the whole input area rises
+            // above the keyboard as one unit while the header and the list stay put — and, sitting in the
+            // bottomBar slot over an opaque surface, it leaves the message list the only scrolling region.
+            bottomBar = {
+                Column(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surface)
+                            .imePadding()
+                            .padding(top = ComposerTopGap, bottom = ComposerBottomGap),
+                    verticalArrangement = Arrangement.spacedBy(ComposerSectionGap),
+                ) {
+                    ThreadStatusArea(
+                        apiRetry = apiRetry,
+                        usageLimit = usageLimit,
+                        isCompacting = isCompacting,
+                        isThinking = isThinking,
+                        thinkingProgress = thinkingProgress,
+                    )
+                    ThreadInputBar(
+                        text = draft,
+                        onTextChange = onDraftChange,
+                        // The composer no longer clears itself here (#789): sendMessage clears the draft
+                        // once the daemon has accepted it, so a refused send leaves the text to resend.
+                        // Blank sends are still refused — the button disables, and the IME Send action that
+                        // can still fire on an empty field hits the ViewModel's own blank guard.
+                        onSend = { onSendMessage(draft) },
+                        modifier = Modifier.padding(horizontal = ComposerGutter),
+                        isBusy = isBusy,
+                        onInterrupt = onInterrupt,
+                    )
+                    // The design puts the model/effort controls in the footer, below the input field, not
+                    // above it. Its own 16dp horizontal padding reproduces the footer frame's further `px-16`
+                    // inside the 20dp content gutter applied here.
+                    ThreadComposerFooter(
+                        runConfig = state.runConfig,
+                        onOpen = { openControl = it },
+                        onStatusClick = { sheetVisible = true },
+                        onAnchorChanged = { control, bounds -> footerAnchors[control] = bounds },
+                        modifier = Modifier.padding(horizontal = ComposerGutter),
+                    )
+                }
+            },
+        ) { inner ->
             Column(
                 modifier =
                     Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surface)
-                        .imePadding()
-                        .padding(top = ComposerTopGap, bottom = ComposerBottomGap),
-                verticalArrangement = Arrangement.spacedBy(ComposerSectionGap),
+                        .padding(inner)
+                        .fillMaxSize(),
             ) {
-                ThreadStatusArea(
-                    apiRetry = apiRetry,
-                    usageLimit = usageLimit,
-                    isCompacting = isCompacting,
-                    isThinking = isThinking,
-                    thinkingProgress = thinkingProgress,
-                )
-                ThreadInputBar(
-                    text = draft,
-                    onTextChange = onDraftChange,
-                    // The composer no longer clears itself here (#789): sendMessage clears the draft
-                    // once the daemon has accepted it, so a refused send leaves the text to resend.
-                    // Blank sends are still refused — the button disables, and the IME Send action that
-                    // can still fire on an empty field hits the ViewModel's own blank guard.
-                    onSend = { onSendMessage(draft) },
-                    modifier = Modifier.padding(horizontal = ComposerGutter),
-                    isBusy = isBusy,
-                    onInterrupt = onInterrupt,
-                )
-                // The design puts the model/effort line in the footer, below the input field, not above
-                // it. Its own 16dp horizontal padding reproduces the footer frame's further `px-16`
-                // inside the 20dp content gutter applied here.
-                ThreadStatusRow(
-                    model = state.runConfig.modelLabel,
-                    effort = state.runConfig.effortLabel,
-                    onExpandClick = { sheetVisible = true },
-                    modifier = Modifier.padding(horizontal = ComposerGutter),
-                    pending = state.runConfig.pending,
-                )
-            }
-        },
-    ) { inner ->
-        Column(
-            modifier =
-                Modifier
-                    .padding(inner)
-                    .fillMaxSize(),
-        ) {
-            ConnectionBanner(state = connectionState, onRetry = onRetry)
-            StallPromotionBanner(isStalled = isStalled, onShowLiteralScreen = onShowLiteralScreen)
-            if (!state.isPromoted && !state.hasMessages) {
-                WorkspaceChip(
-                    workspaceLabel = state.workspaceLabel,
-                    onClick = onWorkspaceChipTapped,
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                )
-            }
-            // #782: the thread's rows are the join of its items with the daemon's queued backlog, so a
-            // message the daemon parked draws once — in place, carrying the queue treatment — instead
-            // of once as an optimistic echo and again in a foot-of-list section. Pure and cached on
-            // both inputs; the backlog stays replacement truth on ThreadUiState and never folds into
-            // the message reducer.
-            val rows =
-                remember(state.items, state.queuedMessages) {
-                    foldQueuedRows(state.items, state.queuedMessages)
+                ConnectionBanner(state = connectionState, onRetry = onRetry)
+                StallPromotionBanner(isStalled = isStalled, onShowLiteralScreen = onShowLiteralScreen)
+                if (!state.isPromoted && !state.hasMessages) {
+                    WorkspaceChip(
+                        workspaceLabel = state.workspaceLabel,
+                        onClick = onWorkspaceChipTapped,
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
                 }
-            // A backlog item this device minted no echo for is a row of its own, so the empty state
-            // must yield to it (#782 AC #3). When an item *is* matched its echo is a MessageItem, so
-            // hasMessages already covers that case.
-            if (!state.hasMessages && state.queuedMessages.isEmpty()) {
-                EmptyThreadState(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
-                            .padding(horizontal = 24.dp),
-                )
-            } else {
-                val reversedRows = rows.asReversed()
-                // Still read off state.items, and still comparing against an index into `rows`: the two
-                // spaces agree wherever a boundary can land, because `rows` shares its prefix with
-                // `items` index-for-index and only ever appends unmatched queued rows after them.
-                val cutoffChronologicalIndex =
-                    remember(state.items) { mostRecentSessionBoundaryIndex(state.items) }
-                val listState = rememberLazyListState()
-                val hasStreamingMessage by remember(state.items) {
-                    derivedStateOf {
-                        state.items.any { it is ThreadItem.MessageItem && it.message.isStreaming }
+                // #782: the thread's rows are the join of its items with the daemon's queued backlog, so a
+                // message the daemon parked draws once — in place, carrying the queue treatment — instead
+                // of once as an optimistic echo and again in a foot-of-list section. Pure and cached on
+                // both inputs; the backlog stays replacement truth on ThreadUiState and never folds into
+                // the message reducer.
+                val rows =
+                    remember(state.items, state.queuedMessages) {
+                        foldQueuedRows(state.items, state.queuedMessages)
                     }
-                }
-                var userScrolledAway by remember { mutableStateOf(false) }
-                val autoScrollNestedScroll =
-                    remember {
-                        object : NestedScrollConnection {
-                            override fun onPreScroll(
-                                available: Offset,
-                                source: NestedScrollSource,
-                            ): Offset {
-                                if (source == NestedScrollSource.UserInput && available.y != 0f) {
-                                    userScrolledAway = true
-                                }
-                                return Offset.Zero
-                            }
+                // A backlog item this device minted no echo for is a row of its own, so the empty state
+                // must yield to it (#782 AC #3). When an item *is* matched its echo is a MessageItem, so
+                // hasMessages already covers that case.
+                if (!state.hasMessages && state.queuedMessages.isEmpty()) {
+                    EmptyThreadState(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .padding(horizontal = 24.dp),
+                    )
+                } else {
+                    val reversedRows = rows.asReversed()
+                    // Still read off state.items, and still comparing against an index into `rows`: the two
+                    // spaces agree wherever a boundary can land, because `rows` shares its prefix with
+                    // `items` index-for-index and only ever appends unmatched queued rows after them.
+                    val cutoffChronologicalIndex =
+                        remember(state.items) { mostRecentSessionBoundaryIndex(state.items) }
+                    val listState = rememberLazyListState()
+                    val hasStreamingMessage by remember(state.items) {
+                        derivedStateOf {
+                            state.items.any { it is ThreadItem.MessageItem && it.message.isStreaming }
                         }
                     }
-                LaunchedEffect(listState) {
-                    snapshotFlow {
-                        listState.firstVisibleItemIndex == 0 &&
-                            listState.firstVisibleItemScrollOffset == 0
-                    }.collect { atBottom ->
-                        if (atBottom) userScrolledAway = false
-                    }
-                }
-                // #777: the oldest-end demand predicate. Under reverseLayout the oldest row is the LAST
-                // visible index, not the first.
-                //
-                // The row count is read through rememberUpdatedState over the THREAD ITEMS, never through
-                // layoutInfo.totalItemsCount: the latter counts the oldest-end loading row itself, so a
-                // page answering atStart = false with zero entries would self-drive with no further user
-                // input — ask, the indicator mounts, the count rises, the page settles, the indicator
-                // unmounts, the count falls, the predicate re-fires. Reading the thread's own count makes
-                // the indicator's presence unable to move the predicate: at the oldest end the last
-                // visible index is rowCount - 1 without it and rowCount with it, and `>=` holds for both,
-                // so distinctUntilChanged sees no edge and no second demand is issued.
-                val historyRowCount by rememberUpdatedState(rows.size)
-                val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
-                LaunchedEffect(listState) {
-                    snapshotFlow {
-                        val oldestVisible =
-                            listState.layoutInfo.visibleItemsInfo
-                                .lastOrNull()
-                                ?.index ?: -1
-                        historyRowCount > 0 && oldestVisible >= historyRowCount - 1
-                    }.distinctUntilChanged()
-                        .collect { atOldestRow -> if (atOldestRow) demandOlderHistory() }
-                }
-                LaunchedEffect(hasStreamingMessage, listState) {
-                    if (!hasStreamingMessage) return@LaunchedEffect
-                    snapshotFlow {
-                        listState.layoutInfo.visibleItemsInfo
-                            .firstOrNull { it.index == 0 }
-                            ?.size ?: 0
-                    }.distinctUntilChanged()
-                        .collect {
-                            if (!userScrolledAway) {
-                                listState.scrollToItem(0)
-                            }
-                        }
-                }
-                LazyColumn(
-                    state = listState,
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .weight(1f)
-                            .nestedScroll(autoScrollNestedScroll),
-                    reverseLayout = true,
-                ) {
-                    itemsIndexed(
-                        items = reversedRows,
-                        // The key derivation and its uniqueness argument live beside the fold, in
-                        // ThreadRows.kt — a matched queued row deliberately takes the key its
-                        // delivered form carries, which is what leaves it in place across delivery.
-                        key = { reversedIndex, row -> row.listKey(rows.size - 1 - reversedIndex) },
-                    ) { reversedIndex, row ->
-                        val chronologicalIndex = rows.size - 1 - reversedIndex
-                        val rowAlpha =
-                            if (chronologicalIndex < cutoffChronologicalIndex) {
-                                ABOVE_DELIMITER_ALPHA
-                            } else {
-                                1f
-                            }
-                        Box(modifier = Modifier.alpha(rowAlpha)) {
-                            when (row) {
-                                is ThreadRow.Delivered ->
-                                    when (val item = row.item) {
-                                        is ThreadItem.MessageItem -> MessageBubble(message = item.message)
-                                        is ThreadItem.SessionBoundary ->
-                                            SessionBoundaryDelimiter(boundary = item)
-                                        is ThreadItem.UnrecognizedMessage ->
-                                            UnrecognizedMessageRow(item = item)
+                    var userScrolledAway by remember { mutableStateOf(false) }
+                    val autoScrollNestedScroll =
+                        remember {
+                            object : NestedScrollConnection {
+                                override fun onPreScroll(
+                                    available: Offset,
+                                    source: NestedScrollSource,
+                                ): Offset {
+                                    if (source == NestedScrollSource.UserInput && available.y != 0f) {
+                                        userScrolledAway = true
                                     }
-                                // One render path for both kinds of queued row — the one the echo
-                                // correlated to and the one this device minted no echo for — so the
-                                // two cannot drift apart. The id is bound here, so the row never
-                                // holds one.
-                                is ThreadRow.Queued ->
-                                    QueuedMessageRow(
-                                        text = row.text,
-                                        onDrop = { onDropQueued(row.queuedMessageId) },
-                                    )
+                                    return Offset.Zero
+                                }
                             }
                         }
+                    LaunchedEffect(listState) {
+                        snapshotFlow {
+                            listState.firstVisibleItemIndex == 0 &&
+                                listState.firstVisibleItemScrollOffset == 0
+                        }.collect { atBottom ->
+                            if (atBottom) userScrolledAway = false
+                        }
                     }
-                    // #777: under reverseLayout a later item takes a higher index and draws further up,
-                    // so appending here puts the affordance at the oldest end for free. #778 widened it
-                    // from one row to four states, but it is still ONE slot and one key — loading, a
-                    // retry or a dead end, never two of them at once.
-                    when (state.historyTail) {
-                        ThreadHistoryTail.None -> Unit
-                        ThreadHistoryTail.Loading -> item(key = HISTORY_TAIL_KEY) { HistoryLoadingRow() }
-                        ThreadHistoryTail.Retry ->
-                            item(key = HISTORY_TAIL_KEY) { HistoryRetryRow(onRetry = onRetryOlderHistory) }
-                        ThreadHistoryTail.DeadEnd -> item(key = HISTORY_TAIL_KEY) { HistoryDeadEndRow() }
+                    // #777: the oldest-end demand predicate. Under reverseLayout the oldest row is the LAST
+                    // visible index, not the first.
+                    //
+                    // The row count is read through rememberUpdatedState over the THREAD ITEMS, never through
+                    // layoutInfo.totalItemsCount: the latter counts the oldest-end loading row itself, so a
+                    // page answering atStart = false with zero entries would self-drive with no further user
+                    // input — ask, the indicator mounts, the count rises, the page settles, the indicator
+                    // unmounts, the count falls, the predicate re-fires. Reading the thread's own count makes
+                    // the indicator's presence unable to move the predicate: at the oldest end the last
+                    // visible index is rowCount - 1 without it and rowCount with it, and `>=` holds for both,
+                    // so distinctUntilChanged sees no edge and no second demand is issued.
+                    val historyRowCount by rememberUpdatedState(rows.size)
+                    val demandOlderHistory by rememberUpdatedState(onDemandOlderHistory)
+                    LaunchedEffect(listState) {
+                        snapshotFlow {
+                            val oldestVisible =
+                                listState.layoutInfo.visibleItemsInfo
+                                    .lastOrNull()
+                                    ?.index ?: -1
+                            historyRowCount > 0 && oldestVisible >= historyRowCount - 1
+                        }.distinctUntilChanged()
+                            .collect { atOldestRow -> if (atOldestRow) demandOlderHistory() }
+                    }
+                    LaunchedEffect(hasStreamingMessage, listState) {
+                        if (!hasStreamingMessage) return@LaunchedEffect
+                        snapshotFlow {
+                            listState.layoutInfo.visibleItemsInfo
+                                .firstOrNull { it.index == 0 }
+                                ?.size ?: 0
+                        }.distinctUntilChanged()
+                            .collect {
+                                if (!userScrolledAway) {
+                                    listState.scrollToItem(0)
+                                }
+                            }
+                    }
+                    LazyColumn(
+                        state = listState,
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .nestedScroll(autoScrollNestedScroll),
+                        reverseLayout = true,
+                    ) {
+                        itemsIndexed(
+                            items = reversedRows,
+                            // The key derivation and its uniqueness argument live beside the fold, in
+                            // ThreadRows.kt — a matched queued row deliberately takes the key its
+                            // delivered form carries, which is what leaves it in place across delivery.
+                            key = { reversedIndex, row -> row.listKey(rows.size - 1 - reversedIndex) },
+                        ) { reversedIndex, row ->
+                            val chronologicalIndex = rows.size - 1 - reversedIndex
+                            val rowAlpha =
+                                if (chronologicalIndex < cutoffChronologicalIndex) {
+                                    ABOVE_DELIMITER_ALPHA
+                                } else {
+                                    1f
+                                }
+                            Box(modifier = Modifier.alpha(rowAlpha)) {
+                                when (row) {
+                                    is ThreadRow.Delivered ->
+                                        when (val item = row.item) {
+                                            is ThreadItem.MessageItem -> MessageBubble(message = item.message)
+                                            is ThreadItem.SessionBoundary ->
+                                                SessionBoundaryDelimiter(boundary = item)
+                                            is ThreadItem.UnrecognizedMessage ->
+                                                UnrecognizedMessageRow(item = item)
+                                        }
+                                    // One render path for both kinds of queued row — the one the echo
+                                    // correlated to and the one this device minted no echo for — so the
+                                    // two cannot drift apart. The id is bound here, so the row never
+                                    // holds one.
+                                    is ThreadRow.Queued ->
+                                        QueuedMessageRow(
+                                            text = row.text,
+                                            onDrop = { onDropQueued(row.queuedMessageId) },
+                                        )
+                                }
+                            }
+                        }
+                        // #777: under reverseLayout a later item takes a higher index and draws further up,
+                        // so appending here puts the affordance at the oldest end for free. #778 widened it
+                        // from one row to four states, but it is still ONE slot and one key — loading, a
+                        // retry or a dead end, never two of them at once.
+                        when (state.historyTail) {
+                            ThreadHistoryTail.None -> Unit
+                            ThreadHistoryTail.Loading -> item(key = HISTORY_TAIL_KEY) { HistoryLoadingRow() }
+                            ThreadHistoryTail.Retry ->
+                                item(key = HISTORY_TAIL_KEY) { HistoryRetryRow(onRetry = onRetryOlderHistory) }
+                            ThreadHistoryTail.DeadEnd -> item(key = HISTORY_TAIL_KEY) { HistoryDeadEndRow() }
+                        }
                     }
                 }
+            }
+        }
+        // #808: drawn over the Scaffold in this screen's own window, not in a Popup, so the input field
+        // keeps its focus and the dismissing tap never reaches the composer. The anchor is read from the
+        // footer button's live window bounds, so the overlay follows the IME lift.
+        openMenu?.let { (control, menu) ->
+            footerAnchors[control]?.let { anchor ->
+                OptionsOverlay(
+                    options = menu.options,
+                    selectedValue = menu.selectedValue,
+                    notListed = menu.notListed,
+                    anchor = anchor.translate(-layerOrigin),
+                    onSelect = { value ->
+                        when (control) {
+                            FooterControl.Model -> onModelSelected(value)
+                            FooterControl.Effort -> onEffortSelected(value)
+                        }
+                        openControl = null
+                    },
+                    onDismiss = { openControl = null },
+                )
             }
         }
     }

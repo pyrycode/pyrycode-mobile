@@ -108,3 +108,10 @@ Pending for the documentation stage. The ticket names none. `docs/knowledge/feat
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-23
+
+## Revisions
+
+**2026-09-23 (implementation).**
+- Open question resolved without a design change. `width(IntrinsicSize.Max)` before `verticalScroll` measures the overlay column correctly, and the rows render at their widest label's width between the 80dp and 240dp bounds. `ThreadComposerFooterTest` asserts every row is displayed.
+- The overlay rows use 10dp of vertical padding instead of the design's 6dp, so each row is 36dp tall and thumb-sized. The reason is the same as the footer buttons' `heightIn(min = 32.dp)`. This is recorded beside `OptionsOverlay`'s constants.
+- The enablement rule is one internal function, `footerControlEnabled`, next to `footerMenu`. The footer and `ThreadScreen`'s stale-overlay close both read it, so the two cannot disagree.
