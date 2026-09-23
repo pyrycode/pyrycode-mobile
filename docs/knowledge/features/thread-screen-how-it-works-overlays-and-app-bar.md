@@ -30,24 +30,30 @@ Three design points pinned in #201:
 ```kotlin
 bottomBar = {
     Column(Modifier.fillMaxWidth().background(surface).imePadding().padding(top = 12.dp, bottom = 16.dp)) {
-        ThreadStatusArea(apiRetry = apiRetry, isCompacting = isCompacting, isThinking = isThinking)
+        ThreadStatusArea(apiRetry = apiRetry, isCompacting = isCompacting, isThinking = isThinking, thinkingProgress = thinkingProgress)
         ThreadInputBar(onSend = onSendMessage, isBusy = isBusy, onInterrupt = onInterrupt, …)
         ThreadStatusRow(model = …, effort = …, onExpandClick = { sheetVisible = true }, …)
     }
 }
 
 @Composable
-private fun ThreadStatusArea(apiRetry: ApiRetryStatus, isCompacting: Boolean, isThinking: Boolean) {
+private fun ThreadStatusArea(
+    apiRetry: ApiRetryStatus,
+    isCompacting: Boolean,
+    isThinking: Boolean,
+    thinkingProgress: ThinkingProgress?, // #803
+) {
     val slot = Modifier.fillMaxWidth().padding(horizontal = ComposerStatusGutter) // 20dp gutter − the indicators' own 16dp
     when {
         apiRetry != ApiRetryStatus.NotRetrying -> ApiRetryIndicator(status = apiRetry, modifier = slot)
         isCompacting -> CompactingIndicator(isCompacting = true, modifier = slot)
-        else -> ThinkingIndicator(isThinking = isThinking, modifier = slot)
+        else -> ThinkingIndicator(isThinking = isThinking, modifier = slot, progress = thinkingProgress)
     }
 }
 ```
 
 - **Moved, not rewritten.** The three arms, their flags and their precedence (api-retry first, then compaction, then thinking — see [API-retry indicator](api-retry-indicator.md#placement-in-the-thread)) are byte-identical to the pre-#643 `when`; only the mount point and the horizontal inset changed. `ThinkingIndicator.kt`, `ApiRetryIndicator.kt` and `CompactingIndicator.kt` were not touched.
+- **[#803](thinking-indicator.md) adds a sixth flat sibling, `thinkingProgress: ThinkingProgress?`, and no new arm.** It decorates the thinking arm's own `else` branch, so it rides the precedence above rather than adding to it — retry and compaction still pre-empt a live reading for free. Visibility stays `isThinking`'s alone; see [Thinking indicator § What it does](thinking-indicator.md#what-it-does).
 - **`ComposerStatusGutter = 20dp − 16dp = 4dp`.** The three indicator files each already carry their own 16dp horizontal padding (sized for their old full-bleed foot-of-list mount), so reaching the design's 20dp content gutter needs only the 4dp remainder here, not the full 20dp — passing the full gutter would double the inset and land the indicators' content at 36dp, a fidelity miss that reads as a design error rather than a padding sum.
 - **The band collapses when nothing is live.** Every arm still early-returns when its flag is false, so an idle status area emits no node and the composer column's `Arrangement.spacedBy(8.dp)` gap simply doesn't open above the input field.
 - **The 12dp gap above the whole `Input area`** (`ComposerTopGap`, the composer column's own top padding) is what used to be the space between the list and the foot-of-list `Column`; it now holds regardless of whether a status arm is showing.

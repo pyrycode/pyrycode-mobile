@@ -1438,7 +1438,17 @@ explanation as a current limitation. Compaction status ("Compacting conversation
   `{conversation_id, active}` with no counter, percent, or ETA, so there is no display-gate case of the
   API-retry kind to cover. Mobile currently has no curated rung-3 or rung-4 scenario for `compacting`; the
   stream-json producer can carry the event, and a future raw replay can exercise it. Keep this as an
-  explicit coverage gap, distinct from the `@Ignore`d #482 spinner; parser-gap sentinel (an
+  explicit coverage gap, distinct from the `@Ignore`d #482 spinner; thinking-token reading
+  ("Thinking… ~N tokens this step", decorating the thinking arm rather than adding one) —
+  **rung 2 shipped (#803)**, the `ScriptedThinkingProgressTest` scenarios driving `thinking_progress`
+  edges through the real #801 repository projection into `ThreadViewModel.thinkingProgress` and
+  `ThinkingIndicator`, covering a rising reading, a falling reading (a real restart, not clamped), an
+  identical repeat (held, not rewritten), both mutual-exclusion cases (api-retry and compaction each
+  still winning the slot over a live reading), and the never-received case rendering exactly as today.
+  Mobile currently has no curated rung-3 or rung-4 scenario for `thinking_progress`: the stream-json
+  producer can carry the frame, so adding coverage requires a real-Claude scenario or a raw replay
+  fragment with the event shape — #679 already owns the rung-3 slot this ticket would otherwise need.
+  Keep that absence explicit, the same posture as `api_retry` and `compacting`; parser-gap sentinel (an
   unrecognized-message row fails every live scenario) —
   **rung 3 shipped (#586)**, a single `UnrecognizedRowSentinel` rule field on `InteractiveStreamE2ETest`
   that fails **any** scenario during which an `unrecognized_message` row (#609) reached the thread, naming

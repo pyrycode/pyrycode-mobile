@@ -107,6 +107,7 @@ class ScriptedThreadHarness(
                     isThinking = vm.isThinking.collectAsState().value,
                     apiRetry = vm.apiRetry.collectAsState().value,
                     isCompacting = vm.isCompacting.collectAsState().value,
+                    thinkingProgress = vm.thinkingProgress.collectAsState().value,
                     // #459: subscribe isBusy in the same composition pass as state/isThinking so its
                     // `replay = 0` upstream is live before any push* (awaitReady's top-bar proof covers it).
                     isBusy = vm.isBusy.collectAsState().value,
@@ -155,6 +156,18 @@ class ScriptedThreadHarness(
      * subscribe-before-push hazard — pushed after [start] anyway, for uniformity.
      */
     fun pushCompacting(active: Boolean) = pump.push(compactingEnvelope(conversationId, active))
+
+    /**
+     * Script one `thinking_progress` reading (#801). There is **no edge to script**: the frame only ever
+     * asserts a reading, so re-fire it with a lower [estimatedTokens] for the restart behaviour and with
+     * an identical one for the repeat. Clears come from other frames — [pushTurnEnd] and
+     * [pushSessionTransition] — never from this one. Like [pushCompacting] it projects a retained
+     * `MutableStateFlow`, so it has no subscribe-before-push hazard.
+     */
+    fun pushThinkingProgress(
+        estimatedTokens: Long,
+        estimatedTokensDelta: Long = 64,
+    ) = pump.push(thinkingProgressEnvelope(conversationId, estimatedTokens, estimatedTokensDelta))
 
     /**
      * Script one `unrecognized_message` (#609) — a claude message kind the daemon's stream-json parser
@@ -355,6 +368,27 @@ private fun compactingEnvelope(
         type = "compacting",
         ts = TS,
         payload = MobileJson.parseToJsonElement("""{"conversation_id":"$conversationId","active":$active}"""),
+    )
+
+/**
+ * A `thinking_progress` envelope `{conversation_id, estimated_tokens, estimated_tokens_delta}` (#801),
+ * cloning [turnStateEnvelope]'s shape. Both readings are 64-bit on the wire, so they are interpolated as
+ * [Long] — an `Int` here would silently refuse a value the wire can legally carry.
+ */
+private fun thinkingProgressEnvelope(
+    conversationId: String,
+    estimatedTokens: Long,
+    estimatedTokensDelta: Long,
+): Envelope =
+    Envelope(
+        id = 1L,
+        type = "thinking_progress",
+        ts = TS,
+        payload =
+            MobileJson.parseToJsonElement(
+                """{"conversation_id":"$conversationId","estimated_tokens":$estimatedTokens,""" +
+                    """"estimated_tokens_delta":$estimatedTokensDelta}""",
+            ),
     )
 
 /**

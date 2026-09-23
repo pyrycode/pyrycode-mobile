@@ -12,6 +12,7 @@ import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import kotlinx.datetime.Instant
@@ -138,4 +139,104 @@ class ThinkingIndicatorTest {
         thinking = false
         composeTestRule.onNodeWithContentDescription(thinkingDescription).assertDoesNotExist()
     }
+
+    // ---- #803: the thinking arm carries claude's live token reading ------------------------------
+
+    /**
+     * AC #1: a reading replaces the plain label in place — the arm stays one merged node and the
+     * counter-less description is gone, so the two presentations can never be on screen together.
+     */
+    @Test
+    fun readingIsShown_replacingThePlainLabel() {
+        setThreadScreen(ThinkingProgress(estimatedTokens = 184, estimatedTokensDelta = 64))
+
+        composeTestRule.onNodeWithContentDescription(progressDescription(184)).assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription(thinkingDescription).assertDoesNotExist()
+    }
+
+    /**
+     * AC #2: a *falling* reading is a real reading — `estimated_tokens` restarts near zero at every
+     * inference-request boundary, repeatedly inside one turn — so the label follows it down rather than
+     * holding a running maximum. The negative control is the stale value: 184 must be gone.
+     */
+    @Test
+    fun aFallingReadingUpdatesTheLabel() {
+        var progress by mutableStateOf<ThinkingProgress?>(ThinkingProgress(184, 64))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadScreen(
+                    state = populatedState(),
+                    onBack = {},
+                    onSendMessage = {},
+                    connectionState = ConnectionState.Connected,
+                    onRetry = {},
+                    isThinking = true,
+                    thinkingProgress = progress,
+                )
+            }
+        }
+        composeTestRule.onNodeWithContentDescription(progressDescription(184)).assertIsDisplayed()
+
+        progress = ThinkingProgress(estimatedTokens = 4, estimatedTokensDelta = 4)
+
+        composeTestRule.onNodeWithContentDescription(progressDescription(4)).assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription(progressDescription(184)).assertDoesNotExist()
+    }
+
+    /**
+     * AC #1, second half: with no reading the arm renders exactly as it does today. `null` is "no
+     * reading", never "claude is not thinking" — it must degrade to the plain label and never to a
+     * stalled or failed presentation.
+     */
+    @Test
+    fun withoutAReading_theArmIsUnchanged() {
+        setThreadScreen(progress = null)
+
+        composeTestRule.onNodeWithContentDescription(thinkingDescription).assertIsDisplayed()
+    }
+
+    /**
+     * The display sanity gate declines a reading it cannot honestly render and falls back to the plain
+     * label — never a clamp, and never a rewritten server value. #801 carries a negative reading verbatim
+     * through the decode boundary by design, so this is the layer that refuses to put one on screen.
+     */
+    @Test
+    fun aNegativeReadingDeclinesToThePlainLabel() {
+        setThreadScreen(ThinkingProgress(estimatedTokens = -5, estimatedTokensDelta = -5))
+
+        composeTestRule.onNodeWithContentDescription(thinkingDescription).assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription(progressDescription(-5)).assertDoesNotExist()
+    }
+
+    /** The gate's upper bound: an absurd magnitude from a buggy or hostile daemon cannot stretch the band. */
+    @Test
+    fun anImplausiblyLargeReadingDeclinesToThePlainLabel() {
+        setThreadScreen(ThinkingProgress(estimatedTokens = Long.MAX_VALUE, estimatedTokensDelta = 64))
+
+        composeTestRule.onNodeWithContentDescription(thinkingDescription).assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription(progressDescription(Long.MAX_VALUE)).assertDoesNotExist()
+    }
+
+    private fun setThreadScreen(progress: ThinkingProgress?) {
+        composeTestRule.setContent {
+            PyrycodeMobileTheme {
+                ThreadScreen(
+                    state = populatedState(),
+                    onBack = {},
+                    onSendMessage = {},
+                    connectionState = ConnectionState.Connected,
+                    onRetry = {},
+                    isThinking = true,
+                    thinkingProgress = progress,
+                )
+            }
+        }
+    }
+
+    /** The resolved `cd_thread_thinking_progress` for [tokens] — the arm's description while a reading is live. */
+    private fun progressDescription(tokens: Long): String =
+        InstrumentationRegistry
+            .getInstrumentation()
+            .targetContext
+            .getString(R.string.cd_thread_thinking_progress, tokens)
 }

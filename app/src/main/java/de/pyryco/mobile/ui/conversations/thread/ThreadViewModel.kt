@@ -22,6 +22,7 @@ import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
 import de.pyryco.mobile.data.repository.SessionSettings
+import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
@@ -658,6 +659,36 @@ class ThreadViewModel(
                 scope = viewModelScope,
                 started = SharingStarted.WhileSubscribed(5_000),
                 initialValue = false,
+            )
+
+    /**
+     * How far this conversation's current reasoning has got (#801) — drives the token reading the
+     * thinking arm carries instead of a bare indefinite spinner (#803). A sibling [StateFlow] beside
+     * [connectionState] / [isThinking] / [isStalled] / [isCompacting] (not a [ThreadUiState] field): like
+     * them it is a transient, connection-scoped cross-cutting signal the stateless screen takes as a
+     * separate parameter. Sourced from the already-injected [repository].
+     *
+     * `null` is **no reading, never "claude is not thinking"** — it covers no live connection, a
+     * connection without the `interactive` capability, and the window before the first frame. Absence
+     * proves nothing in either direction: the PTY surface emits none of these frames at all, and on the
+     * emitting surface a gap may only mean the producer's rate bound has not been crossed. Nothing here
+     * or downstream may infer a stall from it; [isStalled] is the separate signal for that.
+     *
+     * `observeThinkingProgress` already applies `distinctUntilChanged` in the remote impl and defaults to
+     * `flowOf(null)` on the interface and the facade, so no extra operator is needed — **and none may be
+     * added.** That one dedup carries both halves of the reading's contract: an identical repeat is
+     * dropped, so the rendered label holds rather than being rewritten, while a *falling* reading is a
+     * different [ThinkingProgress] value and does reach the screen. The reading restarts near zero at
+     * every inference-request boundary, repeatedly inside one turn, so a second dedup, a `derivedStateOf`
+     * or any running-maximum guard would break one half or the other.
+     */
+    val thinkingProgress: StateFlow<ThinkingProgress?> =
+        repository
+            .observeThinkingProgress(conversationId)
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = null,
             )
 
     /**

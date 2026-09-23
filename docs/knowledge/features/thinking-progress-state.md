@@ -4,7 +4,8 @@ A per-conversation reading the thread layer can observe to learn **how far claud
 has got** — its only mid-turn proof of life on the stream-json surface, since nothing else crosses the
 wire during a long assistant turn. Landed in
 [#801](../../specs/architecture/801-thinking-progress-decode.md) (split from #653, the data slice).
-Rendering the reading in the status area is a **sibling slice of the same split**, not yet filed.
+Rendering the reading in the status area is the **sibling render slice** of the same split,
+[#803](thinking-indicator.md) — `ThinkingIndicator`'s optional `progress` param.
 
 This doc covers the **data layer only**: decode the inbound `thinking_progress` envelope into
 observable state. It renders nothing itself.
@@ -143,7 +144,9 @@ daemon never decodes it and never surfaces it.
   [`stall`](stall-state.md) (#395) and [`compacting`](compacting-state.md) (#596) arms have the
   identical property (worse, in `stall`'s case, with no wire clearing edge at all) without incident.
   **The rendering sibling must not block interaction on the reading and must tolerate a long-lived
-  one.**
+  one.** [#803](thinking-indicator.md) meets both: nothing on the render path throws, logs, or blocks,
+  and the interrupt control, composer and `StallPromotionBanner` all stay live beside the arm regardless
+  of what it shows.
 
 ## Security
 
@@ -158,10 +161,15 @@ offending input in its own message). Memory posture (unbounded key growth from a
 daemon sending frames for fabricated conversation ids) is pre-existing and identical across every sibling
 projection, not fixed per-arm. UI-side leakage (screenshot/overlay disclosing that a conversation is
 active) belongs to the rendering sibling, exactly as [Compacting indicator](compacting-indicator.md)
-(#597) inherited it from [Compacting state](compacting-state.md) (#596).
+(#597) inherited it from [Compacting state](compacting-state.md) (#596). [#803](thinking-indicator.md)
+accepted the same disclosure rather than deferring it: the arm now also discloses roughly how deep the
+reasoning has got, which is strictly narrower than the thread content already on screen above it.
 
 ## Related
 
+- [Thinking indicator](thinking-indicator.md) (#803) — the render sibling: `ThinkingIndicator`'s optional
+  `progress` param, the wording rules the wire contract forces, and the display sanity gate that declines
+  an implausible reading rather than clamping it.
 - [Remote conversation repository](remote-conversation-repository.md) — hosts the
   demux arm; `ThinkingProgressProjection` holds the `thinkingProgressByConversation` state, the decode and the read.
 - [Compacting state](compacting-state.md) (#596) — the closest sibling in shape (no counter on the wire
