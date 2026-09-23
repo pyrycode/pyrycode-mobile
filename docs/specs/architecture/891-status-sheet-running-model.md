@@ -101,3 +101,11 @@ The ticket has no Documentation handoff section. Suggested for the documentation
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-23
+
+## Revisions
+
+### 2026-09-24 — rework after verifier review on PR #936
+
+- **Live gate wiring (MUST FIX).** `python3 scripts/android-test-gate.py live` runs only the curated `LIVE` `TEST_TARGET` list in `scripts/e2e-emulator.sh`, so the new scenario would never have run. `interactiveTurn_pingPrompt_statusSheetShowsRunningModel` is appended to that list, the method and turn counts in its comments and the `PASS` line move to fourteen methods and nine real claude turns, and `LIVE_MINIMUM` in `scripts/android-test-gate.py` rises to 14 so dropping the method reddens the gate. Choice: the scenario keeps its own turn (one extra real claude turn per live run) rather than folding into `interactiveTurn_pingPrompt_streamsPingReplyIntoThread` — the #848/#849/#850 shape, and each scenario stays independently diagnosable.
+- **Nits.** `StatusSheet.kt`'s private `AnnotatedString` helper is renamed `withTruncationMark` (distinct from the ViewModel's `reportedText`), and `Caption` gains an `AnnotatedString` overload the build line uses, so its style lives in one place.
+- The dispatcher's merge of `main` moved `StatusSheetTest` to `app/src/sharedTest`; its three running-model cases now run under Robolectric in `./gradlew check` rather than as a focused managed-device run.

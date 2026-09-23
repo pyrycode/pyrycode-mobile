@@ -335,7 +335,7 @@ private fun RunningModelSection(running: ThreadRunningModel) {
         UnavailableNote(text = stringResource(R.string.status_sheet_running_model_unavailable))
     } else {
         Text(
-            text = reportedText(model.text, model.truncated, truncatedMark),
+            text = withTruncationMark(model.text, model.truncated, truncatedMark),
             modifier =
                 Modifier
                     .fillMaxWidth()
@@ -346,22 +346,19 @@ private fun RunningModelSection(running: ThreadRunningModel) {
         )
     }
     running.build?.let { build ->
-        Text(
+        Caption(
             text =
-                reportedText(
+                withTruncationMark(
                     stringResource(R.string.status_sheet_running_build, build.text),
                     build.truncated,
                     truncatedMark,
                 ),
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
 
 /** [text] plus, when it was cut, the client-owned italic mark — text, so TalkBack reads it too. */
-private fun reportedText(
+private fun withTruncationMark(
     text: String,
     truncated: Boolean,
     mark: String,
@@ -388,6 +385,11 @@ private fun UnavailableNote(text: String) {
 
 @Composable
 private fun Caption(text: String) {
+    Caption(text = AnnotatedString(text))
+}
+
+@Composable
+private fun Caption(text: AnnotatedString) {
     Text(
         text = text,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
