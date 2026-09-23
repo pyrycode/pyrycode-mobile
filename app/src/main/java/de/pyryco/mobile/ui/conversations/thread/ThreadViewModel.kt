@@ -17,6 +17,7 @@ import de.pyryco.mobile.data.repository.ApiRetryStatus
 import de.pyryco.mobile.data.repository.ConnectionStateSource
 import de.pyryco.mobile.data.repository.ConversationFilter
 import de.pyryco.mobile.data.repository.ConversationRepository
+import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.data.repository.ModelMenu
 import de.pyryco.mobile.data.repository.ModelMenuRow
 import de.pyryco.mobile.data.repository.QueuedMessage
@@ -1709,17 +1710,23 @@ private fun runConfig(
         sessionId = settings?.sessionId.orEmpty(),
         permissionMode = settings?.permissionMode.orEmpty(),
         pendingPermission = pendingPermission,
+        appliedEffort = settings?.effectiveEffort ?: EffectiveEffort.Unavailable,
     )
 }
 
 /**
- * Hides a permission mode left over from a replaced session (#650). A `session_transition` updates the
- * conversation's current session before the settings re-read lands, so until a reading for [liveSessionId]
- * arrives, the reading on hand describes a session that is gone. An empty [liveSessionId] is the v2
- * summary's placeholder and proves nothing. Model and effort are left alone.
+ * Hides a permission mode (#650) and an applied effort (#889) left over from a replaced session. A
+ * `session_transition` updates the conversation's current session before the settings re-read lands, so
+ * until a reading for [liveSessionId] arrives, the reading on hand describes a session that is gone. An
+ * empty [liveSessionId] is the v2 summary's placeholder and proves nothing. The saved model and effort are
+ * choices rather than readings of the running child, so they stay.
  */
 private fun ThreadRunConfig.forLiveSession(liveSessionId: String): ThreadRunConfig =
-    if (liveSessionId.isNotEmpty() && liveSessionId != sessionId) copy(permissionMode = "") else this
+    if (liveSessionId.isNotEmpty() && liveSessionId != sessionId) {
+        copy(permissionMode = "", appliedEffort = EffectiveEffort.Unavailable)
+    } else {
+        this
+    }
 
 /** How long a permission write's settle keeps re-reading after the ack (#650, desktop #1544). */
 internal const val PERMISSION_SETTLE_WINDOW_MS = 15_000L

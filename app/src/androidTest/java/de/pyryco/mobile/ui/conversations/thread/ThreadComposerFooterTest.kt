@@ -10,6 +10,8 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotFocused
+import androidx.compose.ui.test.assertIsNotSelected
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasSetTextAction
@@ -24,6 +26,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.repository.EffectiveEffort
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -253,6 +256,24 @@ class ThreadComposerFooterTest {
         footerButton("Opus 4.7").performClick()
 
         composeTestRule.onNodeWithText("+42 not listed").assertIsDisplayed()
+    }
+
+    // #889: an explicit null reading clears the selection and explains why, in the button's state
+    // description; an applied value replaces the saved one on the button and in the overlay.
+    @Test
+    fun effortButton_followsTheAppliedReading_andExplainsAMissingOne() {
+        setThread(baseConfig.copy(appliedEffort = EffectiveEffort.NotReported))
+
+        footerButton("Effort").assert(
+            SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, string(R.string.thread_effort_note_not_reported)),
+        )
+
+        state = state(runConfig = baseConfig.copy(appliedEffort = EffectiveEffort.Applied("max")))
+        composeTestRule.waitForIdle()
+
+        footerButton("max").performClick()
+        composeTestRule.onNode(isSelectable() and hasText("max")).assertIsSelected()
+        composeTestRule.onNode(isSelectable() and hasText("high")).assertIsNotSelected()
     }
 
     // AC#3: a pending tap is visibly distinct, and a refused write (the VM clears the pending tap) returns
