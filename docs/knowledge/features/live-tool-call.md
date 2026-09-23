@@ -25,6 +25,7 @@ data class ToolCall(
     val inputFields: Map<String, String> = emptyMap(),  // #810
     val parentToolUseId: String = "",                   // #810
     val denial: ToolDenial? = null,                     // #811
+    val elapsedSeconds: Int? = null,                    // #812
 )
 
 data class ToolDenial(                                  // #811
@@ -53,6 +54,7 @@ new exported type in the slice. See [Data model](data-model.md).
 | **`tool_result`** (`isError == false`) | `applyToolResult` | update the matching row in place: `output = resultSummary`, `status = Done` unless already `Denied`, `parentToolUseId` per the [#810 precedence rule](#tool_use-input-fields-and-parent_tool_use_id-810) |
 | **`tool_result`** (`isError == true`) | `applyToolResult` | update the matching row in place: `output = resultSummary`, `status = Failed` unless already `Denied`, `parentToolUseId` per the [#810 precedence rule](#tool_use-input-fields-and-parent_tool_use_id-810) |
 | **`tool_denied`** ([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811)) | `withToolDenied` | update the matching row in place: `status = Denied`, `denial = ToolDenial(...)` verbatim — **wins over whatever status the row held**, output/input/parent/position untouched; **no matching row → no-op**, a denial never adds a row |
+| **`tool_progress`** ([#812](https://github.com/pyrycode/pyrycode-mobile/issues/812)) | `withToolProgress` | update the matching **`Running`** row in place: `elapsedSeconds = elapsedSeconds` verbatim (zero/negative/backwards kept as sent); **no matching row, or the row is no longer `Running` → no-op** — a heartbeat never adds a row, reopens a closed call, or overwrites its outcome |
 
 `failed ⟺ ToolResult.isError == true`; `done` otherwise; a row already `Denied` stays `Denied`
 regardless of which `tool_result` arrives afterwards. Correlation is by **`toolUseId`, not by
@@ -97,6 +99,39 @@ design.
 The disk cache (`FileConversationCache.CachedToolCall`) persists `status` by enum name, so a `Denied`
 row survives a cache round-trip; `denial` itself is not persisted (out of scope, the #810
 `inputFields` precedent), so a row restored from cache is `Denied` with `denial = null`.
+
+### Progress ([#812](https://github.com/pyrycode/pyrycode-mobile/issues/812))
+
+claude reports its own elapsed-seconds reading for an open call as a `tool_progress` frame
+(pyrycode#2324), carrying only `conversationId`/`turnId`/`toolUseId`/`elapsedSeconds` — no session id,
+tool name or sequence number, because the row it updates already supplies the rest. `withToolProgress`
+retains the reading **verbatim** on the matching `Running` row: zero, negative and backwards values are
+upstream readings the daemon forwards without computing, rate-limiting, deduplicating or clamping, not
+a validation result, so none of that happens on this client either. `turnId` is not part of the match,
+the same as every other tool fold (`toolUseId` is the wire's own globally-unique join key).
+
+**Absence proves nothing.** A call that finishes before claude's first heartbeat emits no frame at
+all, and a later frame can be lost independently of the never-droppable lifecycle frames — so a gap
+between readings, or no reading ever arriving, never means the call stalled, restarted or failed. A
+`tool_progress` naming an unknown row, or a row that is `Done`/`Failed`/`Denied`, is a **no-op**: it
+never adds a row, never reopens a closed one, and never touches `output`/`status`/`denial`. Closing a
+row — `withToolResult` or `withToolDenied`, whichever fires — also clears `elapsedSeconds` back to
+`null`, so a finished row never carries a stale "still running" number forward; a `tool_progress` that
+arrives after closing is simply ignored, it does not need to un-set anything itself. `elapsedSeconds`
+is never persisted to the disk cache, the same posture as `denial`.
+
+Like `tool_denied`, this is **not** a `LiveSessionEvent` — nothing on the live stream consumes it, so
+it folds into the thread store only and stays out of `ThreadViewModel`'s exhaustive `when`s. It also
+does not clear the stall projection; whether a heartbeat should count as forward progress for the
+stall banner is a product question outside this ticket, left for a future ticket to decide. **The
+daemon replays `tool_progress` in conversation history** the same way it replays `tool_denied` — every
+mapped turn event is appended to durable history before the wire fan-out — so
+`HistoryPageReducer.withHistoryEntry`'s `TYPE_TOOL_PROGRESS` arm decodes and folds the identical frame
+through the identical `ToolProgressPayloadDto` + `withToolProgress` on the replay lane.
+
+Rendering the reading — formatting, showing it only while running, never inventing a timer when no
+reading has arrived — is [#658](https://github.com/pyrycode/pyrycode-mobile/issues/658)'s; this ticket
+ends at the retained model.
 
 ## `tool_use.input` fields and `parent_tool_use_id` (#810)
 
@@ -147,6 +182,9 @@ crash, a duplicate row, or an orphan:
 | `tool_denied` naming no known row ([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811)) | `withToolDenied` finds no row → **no-op**, no row is added |
 | Malformed `tool_denied` payload ([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811)) | dropped at `applyToolDenied`'s own `catch (IllegalArgumentException)` (live lane) or the replay lane's existing `try` — that one envelope/entry is dropped, the collector survives |
 | `tool_denied` for a `conversation_id` mobile holds no rows for ([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811)) | `applyToolDenied` returns the map **unchanged** rather than minting an empty slice — a denial can never add a row, so it must not grow the map either (a hostile daemon sending random conversation ids would otherwise cause unbounded growth) |
+| `tool_progress` naming no known row, or a row that is `Done`/`Failed`/`Denied` ([#812](https://github.com/pyrycode/pyrycode-mobile/issues/812)) | `withToolProgress` finds no matching `Running` row → **no-op**, no row added, no outcome touched |
+| Malformed `tool_progress` payload ([#812](https://github.com/pyrycode/pyrycode-mobile/issues/812)) | dropped at `applyToolProgress`'s own `catch (IllegalArgumentException)` (live lane) or the replay lane's existing `try` — that one envelope/entry is dropped, the collector survives |
+| `tool_progress` for a `conversation_id` mobile holds no rows for ([#812](https://github.com/pyrycode/pyrycode-mobile/issues/812)) | `applyToolProgress` returns the map **unchanged**, the same no-empty-slice guard as `tool_denied` |
 
 ## Chronological interleave (AC #4) — why it's free
 
@@ -184,6 +222,12 @@ history beside the ring), so `HistoryPageReducer.withHistoryEntry` decodes and f
 frame through the identical `toDenial()` + `withToolDenied` on the replay lane — a history page
 carrying `tool_use`, `tool_denied` and `tool_result` for one call replays to a `Denied` row exactly
 like the live sequence does.
+
+`tool_progress` ([#812](https://github.com/pyrycode/pyrycode-mobile/issues/812)) is the same shape of
+addition as `tool_denied`: its own verb (`TYPE_TOOL_PROGRESS`), its own arm inside the same gated
+dispatch, its own private fold (`applyToolProgress`) that decodes `ToolProgressPayloadDto` directly
+rather than through `decodeLiveSessionEvent`, and it is replayed in history the same way — see
+[§ Progress](#progress-812) above for the retained-value rules.
 
 ## Capability gate (fail-closed)
 
@@ -240,6 +284,17 @@ conversation slice for an unseen `conversation_id` (the same unbounded-growth gu
 already needed, but a denial can *only* ever relabel, never add, so the guard here returns the map
 unchanged rather than an empty entry). `ToolDenial` is never persisted to the disk cache.
 
+[#812](https://github.com/pyrycode/pyrycode-mobile/issues/812) (`tool_progress`, self-reviewed
+**PASS**) retains one `Int` verbatim — no clamping, subtraction or use as timing evidence anywhere in
+the data layer, so there is no "validation" logic to get wrong. `toolUseId` is used solely as an
+equality key against rows this client already holds, through the same `Role.Tool`-namespaced
+`indexOfMessage` every other tool fold uses, so a forged id can neither reach a message/assistant row
+nor create one; the worst a hostile or buggy daemon achieves is a wrong number on a row it already
+opened in the same conversation. `applyToolProgress` never mints an empty conversation slice for an
+unseen `conversation_id`, the same guard `applyToolDenied` needed. Decode failures are caught and
+discarded without logging, matching this seam's standing posture; `elapsedSeconds` is never persisted
+to the disk cache.
+
 ## Related
 
 - [#387 implementation notes](../codebase/387.md) — files, line refs, design choices, verification.
@@ -263,5 +318,9 @@ unchanged rather than an empty entry). `ToolDenial` is never persisted to the di
   `ToolCall.denial: ToolDenial?` from the `tool_denied` frame (see [§ Denied](#denied-811) above),
   folded on both the live lane (`applyToolDenied`) and the replay lane (`HistoryPageReducer`'s
   `TYPE_TOOL_DENIED` arm). Rendering the denied row is [#658](https://github.com/pyrycode/pyrycode-mobile/issues/658).
+- [#812](https://github.com/pyrycode/pyrycode-mobile/issues/812) — adds `ToolCall.elapsedSeconds` from
+  the `tool_progress` frame (see [§ Progress](#progress-812) above), folded on both the live lane
+  (`applyToolProgress`) and the replay lane (`HistoryPageReducer`'s `TYPE_TOOL_PROGRESS` arm). Rendering
+  the reading is [#658](https://github.com/pyrycode/pyrycode-mobile/issues/658).
 - Server SSOT: pyrycode#607 (wire types + capabilities), #616 (capability-gated fan-out), ADR 025
   § Phase 2 structured streaming, EPIC pyrycode#596.

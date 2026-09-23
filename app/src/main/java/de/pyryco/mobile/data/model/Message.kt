@@ -33,6 +33,12 @@ enum class ToolCallStatus { Running, Done, Failed, Denied }
  * is the main thread). Both are inert display and grouping data — never a path to open, a command to
  * run, a URL or a log line. Defaulted, like [status], so existing constructions need no change.
  * [denial] (#811) is non-null only on a [ToolCallStatus.Denied] row; see [ToolDenial].
+ *
+ * [elapsedSeconds] (#812) is claude's latest `tool_progress` reading for the call, kept exactly as sent:
+ * zero, negative and backwards values are upstream readings, not errors. It is non-null only while the row
+ * is [ToolCallStatus.Running]; closing the call clears it and a late reading is ignored. `null` means no
+ * reading arrived, which proves nothing — a short call finishes before claude's first heartbeat, and a
+ * heartbeat can be lost. Never subtract readings or treat one as timing evidence; displaying it is #658's.
  */
 data class ToolCall(
     val toolName: String,
@@ -42,6 +48,7 @@ data class ToolCall(
     val inputFields: Map<String, String> = emptyMap(),
     val parentToolUseId: String = "",
     val denial: ToolDenial? = null,
+    val elapsedSeconds: Int? = null,
 )
 
 /**
