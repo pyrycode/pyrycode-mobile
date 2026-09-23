@@ -171,7 +171,8 @@ class StableConversationRepository(
         model: String?,
         effort: String?,
         yolo: Boolean?,
-    ) = live.setSessionSettings(sessionId, model, effort, yolo)
+        permissionMode: String?,
+    ) = live.setSessionSettings(sessionId, model, effort, yolo, permissionMode)
 
     override suspend fun startNewSession(
         conversationId: String,

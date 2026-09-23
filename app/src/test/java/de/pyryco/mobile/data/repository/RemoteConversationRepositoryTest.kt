@@ -3101,6 +3101,40 @@ class RemoteConversationRepositoryTest {
             runCurrent()
         }
 
+    // #650: a permission-mode change carries `permission_mode` alone — no `yolo`, which the daemon would
+    // reject as malformed beside it.
+    @Test
+    fun setSessionSettings_permissionMode_isSentWithoutYolo() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            startSetSessionSettings(repo, "s1", permissionMode = "plan")
+            runCurrent()
+
+            val sent = pump.sent.single { it.type == "set_session_settings" }
+            assertEquals(
+                MobileJson.parseToJsonElement("""{"session_id":"s1","permission_mode":"plan"}"""),
+                sent.payload,
+            )
+            pump.push(sessionSettingsUpdatedEnvelope(inReplyTo = sent.id, sessionId = "s1"))
+            runCurrent()
+        }
+
+    // #650: a frame carrying both posture spellings cannot be built, so nothing is sent.
+    @Test
+    fun setSessionSettings_permissionModeWithYolo_isRefusedBeforeSending() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
+
+            val outcome = startSetSessionSettings(repo, "s1", yolo = true, permissionMode = "plan")
+            runCurrent()
+
+            assertTrue(outcome().exceptionOrNull() is IllegalArgumentException)
+            assertTrue(pump.sent.none { it.type == "set_session_settings" })
+        }
+
     // AC #1: a combined change carries all four keys.
     @Test
     fun setSessionSettings_combinedFields_sendsAllFields() =
@@ -8348,9 +8382,10 @@ class RemoteConversationRepositoryTest {
         model: String? = null,
         effort: String? = null,
         yolo: Boolean? = null,
+        permissionMode: String? = null,
     ): () -> Result<Unit> {
         var outcome: Result<Unit>? = null
-        backgroundScope.launch { outcome = runCatching { repo.setSessionSettings(sessionId, model, effort, yolo) } }
+        backgroundScope.launch { outcome = runCatching { repo.setSessionSettings(sessionId, model, effort, yolo, permissionMode) } }
         return { requireNotNull(outcome) { "setSessionSettings has not completed" } }
     }
 

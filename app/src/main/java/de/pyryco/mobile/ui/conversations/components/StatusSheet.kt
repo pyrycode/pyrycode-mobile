@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -25,7 +24,6 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.SheetState
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -62,8 +60,6 @@ fun StatusSheet(
     onEffortSelected: (String) -> Unit,
     pending: Boolean,
     enabled: Boolean,
-    yoloEnabled: Boolean,
-    onYoloToggled: (Boolean) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -84,8 +80,6 @@ fun StatusSheet(
             onEffortSelected = onEffortSelected,
             pending = pending,
             enabled = enabled,
-            yoloEnabled = yoloEnabled,
-            onYoloToggled = onYoloToggled,
             onDismiss = onDismiss,
         )
     }
@@ -103,12 +97,11 @@ internal fun StatusSheetContent(
     onEffortSelected: (String) -> Unit,
     pending: Boolean,
     enabled: Boolean,
-    yoloEnabled: Boolean,
-    onYoloToggled: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     // The menu length is the daemon's, and its producer cap is not a wire constant — so the body scrolls
-    // rather than clipping the YOLO and Context-window sections below a long Model section. The
+    // rather than clipping the Context-window section below a long Model section. #650 moved the
+    // permission control to the composer footer, where it reads the daemon's confirmed mode. The
     // SettingsScreen / MobileModal idiom; ModalBottomSheet handles the nested scroll.
     Column(
         modifier =
@@ -133,8 +126,6 @@ internal fun StatusSheetContent(
             onEffortSelected = onEffortSelected,
             enabled = enabled && !pending,
         )
-        SectionHeader(text = "YOLO mode")
-        YoloRow(enabled = yoloEnabled, onToggled = onYoloToggled)
         SectionHeader(text = "Context window")
         ContextWindowSection()
         Spacer(modifier = Modifier.height(24.dp))
@@ -333,39 +324,6 @@ private fun Caption(text: String) {
     )
 }
 
-@Composable
-private fun YoloRow(
-    enabled: Boolean,
-    onToggled: (Boolean) -> Unit,
-) {
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .toggleable(
-                    value = enabled,
-                    role = Role.Switch,
-                    onValueChange = onToggled,
-                ).padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "Auto-accept tool calls",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                text = "Claude runs commands without asking for confirmation. Use carefully.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Spacer(modifier = Modifier.width(16.dp))
-        Switch(checked = enabled, onCheckedChange = null)
-    }
-}
-
 // Deliberate divergence from Figma node 20:151, which draws a populated figure and a
 // severity-coloured bar. The daemon does not serve mobile a real context figure yet (#591), so a
 // number here would always be a stub. Wording matches desktop; layout and typography are unchanged.
@@ -425,7 +383,6 @@ private fun PreviewSheet(
     selectedEffort: String = "high",
     pending: Boolean = false,
     enabled: Boolean = true,
-    yoloEnabled: Boolean = false,
     darkTheme: Boolean = false,
 ) {
     val selected = choices.firstOrNull { it.value == selectedModel }
@@ -446,8 +403,6 @@ private fun PreviewSheet(
                     onEffortSelected = {},
                     pending = pending,
                     enabled = enabled,
-                    yoloEnabled = yoloEnabled,
-                    onYoloToggled = {},
                     onDismiss = {},
                 )
             }
@@ -475,9 +430,9 @@ private fun StatusSheetMenuUnavailablePreview() = PreviewSheet(choices = emptyLi
 @Composable
 private fun StatusSheetTruncatedMenuPreview() = PreviewSheet(notListedModels = 44)
 
-@Preview(name = "StatusSheet — applying, YOLO on", showBackground = true, widthDp = 412)
+@Preview(name = "StatusSheet — applying", showBackground = true, widthDp = 412)
 @Composable
-private fun StatusSheetPendingPreview() = PreviewSheet(pending = true, yoloEnabled = true)
+private fun StatusSheetPendingPreview() = PreviewSheet(pending = true)
 
 @Preview(name = "StatusSheet — read-only session", showBackground = true, widthDp = 412)
 @Composable

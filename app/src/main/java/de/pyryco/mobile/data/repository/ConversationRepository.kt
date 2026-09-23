@@ -203,6 +203,9 @@ interface ConversationRepository {
      * (e.g. `session.not_found` for an unhosted session, `protocol.malformed` for an invalid
      * model/effort the daemon re-validates) — distinguishable by its `code`.
      *
+     * [permissionMode] (#650) is the posture field beside [yolo]: never pass both, which the daemon
+     * rejects and the request DTO refuses to build ([IllegalArgumentException]).
+     *
      * Default throws — implementations that do not support settings inherit it, so the inline test
      * doubles need no override (the same cascade-avoidance as [delete] / [requestScreenSnapshot]). The
      * Fake and Remote override it.
@@ -212,6 +215,7 @@ interface ConversationRepository {
         model: String? = null,
         effort: String? = null,
         yolo: Boolean? = null,
+        permissionMode: String? = null,
     ): Unit = error("setSessionSettings is not implemented for this ConversationRepository")
 
     suspend fun startNewSession(

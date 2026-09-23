@@ -70,6 +70,7 @@
     <string name="cd_thread_status_expand">Expand status details</string>
     <string name="thread_footer_change_model">Change model</string>
     <string name="thread_footer_change_effort">Change effort</string>
+    <string name="thread_footer_change_permission">Change permission mode</string>
     <string name="thread_footer_pending">Applying</string>
     <string name="thread_options_not_listed">+%1$d not listed</string>
     <string name="cd_options_overlay_dismiss">Close options</string>

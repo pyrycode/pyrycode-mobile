@@ -31,7 +31,9 @@ import de.pyryco.mobile.ui.conversations.components.turnOutcomeReport
 import de.pyryco.mobile.ui.conversations.launchGuardedRepoCall
 import de.pyryco.mobile.ui.workspace.workspaceDisplayName
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -42,6 +44,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
@@ -55,6 +58,7 @@ import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Instant
 
 /**
@@ -128,7 +132,6 @@ data class ThreadUiState(
     // session a write must address is [SessionSettings.sessionId], not Conversation.currentSessionId, and
     // one carrier for all three keeps the footer and the Status sheet agreeing by construction.
     val runConfig: ThreadRunConfig = ThreadRunConfig(),
-    val yoloEnabled: Boolean = false,
     val mutationsSupported: Boolean = true,
     // #777/#778: what the thread's single oldest-end slot shows — loading, a retry, a dead end or
     // nothing. The walk's TERMINATION reasons deliberately do not reach the screen, only its failures:
@@ -157,6 +160,8 @@ data class ThreadModelChoice(
     /** The row's `resolvedModel`, or `""` when it says nothing [label] does not already say. */
     val detail: String,
     val effortChoices: List<ThreadEffortChoice>,
+    /** Whether the row accepts `auto` permission mode (#650) — the only thing that offers Auto approval. */
+    val supportsAutoMode: Boolean = false,
 )
 
 /** One selectable reasoning-effort level of one [ThreadModelChoice] (#807). Same split as its parent:
@@ -191,6 +196,12 @@ data class ThreadEffortChoice(
  *   arriving reading — never by the acknowledgement, which is not a reading.
  * @param sessionId The session a write must address. **`""` means the daemon has no session to address**,
  *   so the controls are read-only and nothing is sent.
+ * @param permissionMode The permission mode the current child confirmed (#650), verbatim. `""` means no
+ *   confirmation — no reading, a child that has not confirmed, a dormant session, or a reading left over
+ *   from a session the conversation has since replaced. It is never filled from a pending write, an ack,
+ *   stored settings or `yolo`.
+ * @param pendingPermission A permission write whose request or settle is still running, or `null`. It
+ *   marks the button pending and blocks a second write; it never changes the label.
  */
 data class ThreadRunConfig(
     val choices: List<ThreadModelChoice> = emptyList(),
@@ -203,6 +214,8 @@ data class ThreadRunConfig(
     val pendingModel: String? = null,
     val pendingEffort: String? = null,
     val sessionId: String = "",
+    val permissionMode: String = "",
+    val pendingPermission: String? = null,
 ) {
     /** What the surfaces show: a pending tap while one is outstanding, the confirmed reading otherwise. */
     val selectedModel: String get() = pendingModel ?: savedModel
@@ -217,7 +230,8 @@ data class ThreadRunConfig(
      *  exposes no effort control — never a cue to substitute the `Effort` entries. */
     val effortChoices: List<ThreadEffortChoice> get() = selectedChoice?.effortChoices.orEmpty()
 
-    /** Whether a write is outstanding: the surfaces keep it visibly distinct from confirmed state. */
+    /** Whether a model or effort write is outstanding: the surfaces keep it visibly distinct from confirmed
+     *  state. A permission write is [pendingPermission], kept apart so it gates only its own control. */
     val pending: Boolean get() = pendingModel != null || pendingEffort != null
 
     /** Whether a write can be addressed at all — the `""`-session-id read-only gate. */
@@ -430,7 +444,7 @@ class ThreadViewModel(
     private val navigationChannel = Channel<ThreadNavigation>(capacity = Channel.BUFFERED)
     val navigationEvents: Flow<ThreadNavigation> = navigationChannel.receiveAsFlow()
 
-    /** A model tap whose write has not settled (#807), or `null`. Single-writer, like [yoloEnabled]:
+    /** A model tap whose write has not settled (#807), or `null`. Single-writer:
      *  [onModelSelected] sets it, a failed write clears it, and [sessionSettings]'s `onEach` clears it
      *  when a reading lands. */
     private val pendingModel = MutableStateFlow<String?>(null)
@@ -452,27 +466,46 @@ class ThreadViewModel(
     private val sessionSettings: Flow<SessionSettings?> =
         repository
             .observeSessionSettings(conversationId)
-            .onEach {
+            .onEach { reading ->
                 pendingModel.value = null
                 pendingEffort.value = null
+                // #650: a `null` reading heads every new subscription (host switch, owning-host reconnect)
+                // and follows a failed read; a reading for another session means the session was replaced.
+                // Either way the permission write belongs to a context that is gone. The check runs before
+                // the tick below so the settle loop never sees a reading from the new context.
+                permissionWrite?.let { write ->
+                    if (reading == null || reading.sessionId != write.sessionId) cancelPermissionWrite()
+                }
+                settingsReadings.update { SettingsReading(it.seq + 1, reading) }
             }
 
-    private val yoloEnabled = MutableStateFlow(false)
+    /** The permission mode a write asked for (#650), while its request or settle runs; else `null`. */
+    private val pendingPermission = MutableStateFlow<String?>(null)
+
+    /** The outstanding permission write (#650), or `null`. At most one; set and cleared on Main only. */
+    private var permissionWrite: PermissionWrite? = null
+
+    /**
+     * Every reading [sessionSettings] delivers, numbered (#650), so the settle loop can wait for the reply
+     * to its own refresh without opening a second subscription — which would send a second
+     * `request_session_settings` per trigger. The number moves on equal readings too.
+     */
+    private val settingsReadings = MutableStateFlow(SettingsReading(0L, null))
 
     /**
      * The run-configuration arm of [state] (#807). Five inputs, which is exactly Kotlin's typed `combine`
      * ceiling — the reason this stays one arm of the five-arm `state` combine instead of needing a sixth
      * or the sibling-[StateFlow] shape [draft] uses.
      */
-    private val runConfigFlow: Flow<RunConfig> =
+    private val runConfigFlow: Flow<ThreadRunConfig> =
         combine(
             sessionSettings,
             repository.observeModelMenu(conversationId),
             pendingModel,
             pendingEffort,
-            yoloEnabled,
-        ) { settings, menu, model, effort, yolo ->
-            RunConfig(runConfig(settings, menu, model, effort), yolo)
+            pendingPermission,
+        ) { settings, menu, model, effort, permission ->
+            runConfig(settings, menu, model, effort, permission)
         }
 
     private val transientDialogs: Flow<TransientDialogs> =
@@ -562,8 +595,7 @@ class ThreadViewModel(
                 workspacePath = conv?.cwd ?: "",
                 lastUsedAt = conv?.lastUsedAt,
                 sessionCount = conv?.sessionHistory?.size ?: 0,
-                runConfig = runConfig.config,
-                yoloEnabled = runConfig.yoloEnabled,
+                runConfig = runConfig.forLiveSession(conv?.currentSessionId.orEmpty()),
                 mutationsSupported = mutationsSupported,
                 historyTail = content.historyTail,
             )
@@ -1528,20 +1560,103 @@ class ThreadViewModel(
     }
 
     /**
-     * The [onModelSelected] twin for YOLO (#544). [yoloEnabled] is a raw [Boolean] source, so the guard
-     * and the revert compare/restore its `.value` directly.
+     * Apply a footer permission-mode choice (#650). [value] must be one of [PermissionModeOption]'s wire
+     * values; anything else is dropped, so no daemon- or screen-supplied string becomes a posture write.
      *
-     * #807 re-routed its session id along with the other two: [sendSessionSettings] is shared, and the
-     * authoritative key is the settings reading's. Keeping `Conversation.currentSessionId` alive for this
-     * one control would leave two routing sources — a second place to get the same thing wrong.
+     * Nothing is sent for the confirmed mode, without a confirmed mode (the button is hidden then), while
+     * a permission write is outstanding, for Auto approval when the selected row does not support it, or
+     * without a session to address. Unlike model and effort there is no optimistic value: the label stays
+     * on the confirmed reading and [ThreadRunConfig.pendingPermission] only marks it pending.
      */
-    fun onYoloToggled(enabled: Boolean) {
-        if (enabled == yoloEnabled.value) return
+    fun onPermissionModeSelected(value: String) {
+        val mode = PermissionModeOption.fromWire(value) ?: return
         val config = state.value.runConfig
+        if (config.permissionMode.isEmpty() || value == config.permissionMode) return
+        if (permissionWrite != null) return
+        if (mode == PermissionModeOption.Auto && config.selectedChoice?.supportsAutoMode != true) return
         if (!skipUnlessWritable(config)) return
-        val previous = yoloEnabled.value
-        yoloEnabled.value = enabled
-        sendSessionSettings(config.sessionId, yolo = enabled) { yoloEnabled.value = previous }
+        sendPermissionMode(config.sessionId, mode)
+    }
+
+    /**
+     * Send one permission write and settle it (#650). Bypass approvals goes out as `yolo = true` and every
+     * other mode as `permissionMode`, never both.
+     *
+     * The ack confirms the request, not claude's mode, so it runs desktop #1544's settle rule: re-read at
+     * once, then every [PERMISSION_SETTLE_INTERVAL_MS] for at most [PERMISSION_SETTLE_WINDOW_MS], and stop
+     * when a reading reports [mode]. Each read waits for the previous reply, so reads never overlap. A
+     * refusal or a send failure clears the pending mark, surfaces the existing [sessionSettingsErrors]
+     * signal and asks for one re-read.
+     *
+     * The job is started lazily so [permissionWrite] is recorded before its body runs. It is cancelled by
+     * [cancelPermissionWrite] when the context changes; the canceller clears the pending mark, so a
+     * cancelled job never touches state again. The [CancellationException] rethrow precedes the typed
+     * catches, as in [sendSessionSettings].
+     */
+    private fun sendPermissionMode(
+        sessionId: String,
+        mode: PermissionModeOption,
+    ) {
+        pendingPermission.value = mode.wire
+        val job =
+            viewModelScope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    if (mode == PermissionModeOption.Bypass) {
+                        repository.setSessionSettings(sessionId, yolo = true)
+                    } else {
+                        repository.setSessionSettings(sessionId, permissionMode = mode.wire)
+                    }
+                } catch (e: CancellationException) {
+                    throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
+                } catch (e: RelayErrorException) {
+                    failPermissionWrite(outcome = "refused")
+                    return@launch
+                } catch (e: IllegalStateException) {
+                    failPermissionWrite(outcome = "failed")
+                    return@launch
+                }
+                RelayLog.d { "event=permission_write outcome=acked" }
+                settlePermission(mode.wire)
+                finishPermissionWrite()
+            }
+        permissionWrite = PermissionWrite(sessionId, job)
+        job.start()
+    }
+
+    /** The settle loop of [sendPermissionMode]. Logs only a static outcome and the read count. */
+    private suspend fun settlePermission(requested: String) {
+        var reads = 0
+        val confirmed =
+            withTimeoutOrNull(PERMISSION_SETTLE_WINDOW_MS) {
+                var seen: Boolean
+                do {
+                    val asked = settingsReadings.value.seq
+                    repository.refreshSessionSettings(conversationId)
+                    val reading = settingsReadings.first { it.seq > asked }.settings
+                    reads++
+                    seen = reading?.permissionMode == requested
+                    if (!seen) delay(PERMISSION_SETTLE_INTERVAL_MS)
+                } while (!seen)
+                true
+            } ?: false
+        RelayLog.d { "event=permission_settle outcome=${if (confirmed) "confirmed" else "expired"} reads=$reads" }
+    }
+
+    private fun finishPermissionWrite() {
+        permissionWrite = null
+        pendingPermission.value = null
+    }
+
+    private fun failPermissionWrite(outcome: String) {
+        RelayLog.d { "event=permission_write outcome=$outcome" }
+        finishPermissionWrite()
+        sessionSettingsErrorChannel.trySend(Unit)
+        repository.refreshSessionSettings(conversationId)
+    }
+
+    private fun cancelPermissionWrite() {
+        permissionWrite?.job?.cancel()
+        finishPermissionWrite()
     }
 
     /**
@@ -1558,7 +1673,7 @@ class ThreadViewModel(
     }
 
     /**
-     * The shared outbound path for the three Status-sheet controls (#544): send only the changed field(s)
+     * The shared outbound path for the model and effort controls (#544): send only the changed field(s)
      * to [ThreadUiState.currentSessionId] and, on failure, run [revert] to restore the control and surface a
      * one-shot [sessionSettingsErrors] signal. The catch triad clones [sendChangeWorkspace] (set_session_settings
      * is request/reply, so a server `error` reply is reachable) with the two failure catches gaining the
@@ -1582,12 +1697,11 @@ class ThreadViewModel(
         sessionId: String,
         model: String? = null,
         effort: String? = null,
-        yolo: Boolean? = null,
         revert: () -> Unit,
     ) {
         viewModelScope.launch {
             try {
-                repository.setSessionSettings(sessionId, model, effort, yolo)
+                repository.setSessionSettings(sessionId, model, effort)
                 // #807: the ack echoes only the input session id and confirms no value, so a settled write
                 // asks for a fresh reading rather than promoting the optimistic one. The pending survives
                 // until that reading lands (see [sessionSettings]); only the failure paths below clear it.
@@ -1665,12 +1779,17 @@ class ThreadViewModel(
         val optionId: String,
     )
 
-    /** The run-configuration arm's payload: the #807 daemon-sourced surface plus the YOLO flag, which is
-     *  a [ThreadUiState] field of its own rather than part of [ThreadRunConfig] — #807 re-sources model
-     *  and effort only, and folding YOLO into that type would move a control this ticket does not touch. */
-    private data class RunConfig(
-        val config: ThreadRunConfig,
-        val yoloEnabled: Boolean,
+    /** The outstanding permission write (#650): the session it addressed, and the job that sends and
+     *  settles it. */
+    private class PermissionWrite(
+        val sessionId: String,
+        val job: Job,
+    )
+
+    /** One delivered settings reading and its arrival number (#650). */
+    private data class SettingsReading(
+        val seq: Long,
+        val settings: SessionSettings?,
     )
 
     /**
@@ -1752,7 +1871,7 @@ private fun String.toChannelSlug(): String =
  * function reaches `Text` and nothing else — never `MarkdownText`, a WebView, a URL, a filename, a
  * `testTag`, a map key or a log field.
  */
-private fun String.inert(): String = filterNot { it.isISOControl() }.take(MAX_RUN_CONFIG_LABEL_CHARS)
+internal fun String.inert(): String = filterNot { it.isISOControl() }.take(MAX_RUN_CONFIG_LABEL_CHARS)
 
 private const val MAX_RUN_CONFIG_LABEL_CHARS = 128
 
@@ -1775,6 +1894,7 @@ private fun runConfig(
     menu: ModelMenu?,
     pendingModel: String?,
     pendingEffort: String?,
+    pendingPermission: String?,
 ): ThreadRunConfig {
     val rows = menu?.rows.orEmpty()
     return ThreadRunConfig(
@@ -1788,8 +1908,25 @@ private fun runConfig(
         pendingModel = pendingModel,
         pendingEffort = pendingEffort,
         sessionId = settings?.sessionId.orEmpty(),
+        permissionMode = settings?.permissionMode.orEmpty(),
+        pendingPermission = pendingPermission,
     )
 }
+
+/**
+ * Hides a permission mode left over from a replaced session (#650). A `session_transition` updates the
+ * conversation's current session before the settings re-read lands, so until a reading for [liveSessionId]
+ * arrives, the reading on hand describes a session that is gone. An empty [liveSessionId] is the v2
+ * summary's placeholder and proves nothing. Model and effort are left alone.
+ */
+private fun ThreadRunConfig.forLiveSession(liveSessionId: String): ThreadRunConfig =
+    if (liveSessionId.isNotEmpty() && liveSessionId != sessionId) copy(permissionMode = "") else this
+
+/** How long a permission write's settle keeps re-reading after the ack (#650, desktop #1544). */
+internal const val PERMISSION_SETTLE_WINDOW_MS = 15_000L
+
+/** The pause between two settle reads once a reading has not yet reported the requested mode. */
+internal const val PERMISSION_SETTLE_INTERVAL_MS = 500L
 
 /** One published row, split into the verbatim write argument and the inert render of it. `resolvedModel`
  *  becomes [ThreadModelChoice.detail] only when it says something the label does not. */
@@ -1800,6 +1937,7 @@ private fun ModelMenuRow.toChoice(): ThreadModelChoice {
         label = label,
         detail = resolvedModel.inert().takeIf { it.isNotBlank() && it != label }.orEmpty(),
         effortChoices = effortLevels.map { ThreadEffortChoice(value = it, label = it.inert()) },
+        supportsAutoMode = supportsAutoMode,
     )
 }
 
