@@ -283,7 +283,7 @@ operator-*typed* name at the 128-char boundary; #851's security review flagged t
 `HostIdentityRow`'s `boundedRowText`, `ArchivedDiscussionsScreen` and `DebugBundleDownload`, as
 out of that ticket's scope and left for a follow-up.
 
-**`PermissionModalOverlay`** (`ui/conversations/thread/ThreadScreen.kt`, #815) is the first of
+**`PermissionModalOverlay`** (`ui/conversations/thread/ThreadPermissionModal.kt`, #815) is the first of
 [`MobileGateModal`](#the-hardened-gate-mobilegatemodal)'s two callers, and the only one using it rather than
 `MobileModal` before #661. It draws the [permission-modal overlay](permission-modal-overlay.md): the server
 `title` fills the gate's header, the prompt and the wire-order option list fill `content`, and the footer's

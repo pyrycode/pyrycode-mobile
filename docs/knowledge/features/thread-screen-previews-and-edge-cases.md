@@ -4,7 +4,7 @@ Split out of [Thread screen](thread-screen.md) on 2026-09-05 to keep that docume
 
 ## Previews
 
-Four `@Preview`s at the bottom of `ThreadScreen.kt`:
+Four `@Preview`s in `ThreadScreenPreviews.kt`, split out of `ThreadScreen.kt` on 2026-09-23:
 
 - **`ThreadScreenLightPreview`** ([#246](../codebase/246.md)) — `PyrycodeMobileTheme(darkTheme = false) { ThreadScreen(state = ThreadUiState(conversationId = "seed-channel-personal", displayName = "kitchenclaw refactor", isPromoted = true, items = previewItems()), onBack = {}, onSendMessage = {}, connectionState = ConnectionState.Connected, onRetry = {}) }`. The `"kitchenclaw refactor"` seed reproduces the Figma `16:14` title literal. Carried a `tokenPercent = 73` arg from [#145](../codebase/145.md) through #602 (landed the status row in the warning band, exercising the then-threshold-driven color); [#603](../codebase/603.md) stripped the arg along with the field.
 - **`ThreadScreenDarkPreview`** ([#246](../codebase/246.md)) — same seed with `darkTheme = true`. Verifies the AppBar `Schemes/surface` `#101418` token, the [`MessageBubble`](message-bubble.md) bubble palettes, and the [`SessionBoundaryDelimiter`](session-boundary-delimiter.md) divider colour all render against the dark theme without explicit color overrides.
