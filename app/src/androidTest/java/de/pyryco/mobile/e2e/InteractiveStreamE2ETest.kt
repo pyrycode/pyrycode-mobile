@@ -1,10 +1,14 @@
 package de.pyryco.mobile.e2e
 
+import android.Manifest
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.hasAnySibling
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasScrollToNodeAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -16,15 +20,21 @@ import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.lifecycle.Lifecycle
+import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.MainActivity
 import de.pyryco.mobile.R
+import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.repository.ConnectionStateSource
+import de.pyryco.mobile.data.repository.ConversationFilter
+import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
 import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
@@ -37,6 +47,7 @@ import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedSessionBoundary
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.junit.Assert.assertEquals
 import org.junit.Ignore
 import org.junit.Rule
 import org.junit.Test
@@ -1172,6 +1183,278 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * Two paired hosts whose conversations share one id stay separate (#847, rung 3). Daemon-minted ids
+     * never collide by chance, so `scripts/e2e-emulator.sh` seeds the collision: before either daemon
+     * starts it writes ONE promoted conversation under the same run-unique id into host A's instance and
+     * a second test daemon's instance, named [collisionNameA][ARG_COLLISION_NAME_A] and
+     * [collisionNameB][ARG_COLLISION_NAME_B]. Host A is pre-paired by [E2eTestApplication]; host B is
+     * paired here through the app's own paste-a-code flow, with the code the harness minted and
+     * re-pointed at the relay the phone dials.
+     *
+     * **What "separate" is read from.** Row, thread and cache are all keyed by `(serverId,
+     * conversationId)` (#731, #795–#798). A key that dropped the host would show one name twice, open
+     * one host's conversation from the other's row, or file a rename under both. Each check below keys
+     * on the two exact, run-unique names, so the two reads distinguish the hosts with no new test tag:
+     *  * **under its own host** — folding a host's Channels row hides its own conversation and leaves
+     *    the other host's ([assertEachUnderOwnHost]);
+     *  * **opens its own conversation** — a row's thread shows that row's name and never the other's
+     *    ([assertRowOpensOwnThread]).
+     * Both are re-read after a rename of host A's conversation, after each host's link is cut and
+     * restored, and after the object graph is rebuilt over the same on-device state — the restart an
+     * instrumented test can perform ([E2eTestApplication.rebuildGraph]; it cannot kill its own process).
+     *
+     * **Shared app state.** Every live method shares one Application and one Koin graph, and a newly
+     * saved host becomes the registry's selection, which the other scenarios' connection waits follow.
+     * Host B is therefore removed in `finally`, on whichever graph is current then.
+     *
+     * **Zero real-claude turns**: pairing, navigation, rename and link cycling are daemon round-trips.
+     */
+    @Test
+    fun interactiveTurn_twoHostsCollidingConversationId_stayPerHost() {
+        val serverIdA = twoHostArg(ARG_SERVER_ID)
+        val serverIdB = twoHostArg(ARG_SERVER_ID_B)
+        val collisionId = twoHostArg(ARG_COLLISION_CONVERSATION_ID)
+        val nameA = twoHostArg(ARG_COLLISION_NAME_A)
+        val nameB = twoHostArg(ARG_COLLISION_NAME_B)
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        var relaunched: ActivityScenario<MainActivity>? = null
+        try {
+            // 1. Host A's seeded conversation is on the list, and host A really holds it under the seeded id.
+            awaitChannelList()
+            awaitConnected()
+            awaitChannelRow(nameA)
+            assertHostHoldsConversation(serverIdA, collisionId, nameA)
+
+            // 2. Pair host B through the section header's add control → scanner → paste link → PairCodeScreen.
+            //    The scanner asks for CAMERA at runtime; granting it first keeps the system dialog off screen.
+            instrumentation.uiAutomation.grantRuntimePermission(instrumentation.targetContext.packageName, Manifest.permission.CAMERA)
+            pairHostByCode(twoHostArg(ARG_PAIR_CODE_B))
+            awaitChannelRow(nameB)
+            assertHostHoldsConversation(serverIdB, collisionId, nameB)
+
+            // 3. AC-1 + AC-2: each conversation sits under its own host and each row opens its own thread.
+            val labelA = hostLabel(serverIdA)
+            val labelB = hostLabel(serverIdB)
+            assertHostsStaySeparate(labelA to nameA, labelB to nameB)
+
+            // 4. AC-2: rename host A's conversation from its thread (#537's drive). The new name shows on
+            //    A's thread and A's row only; B's row and thread keep B's name.
+            val renamedA = RENAMED_NAME_PREFIX + System.currentTimeMillis()
+            openRow(nameA)
+            renameOpenThread(renamedA)
+            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+            awaitChannelList()
+            awaitChannelRow(renamedA)
+            composeTestRule.onAllNodes(channelRow(nameA)).assertCountEquals(0)
+            assertHostsStaySeparate(labelA to renamedA, labelB to nameB)
+
+            // 5. AC-3: cut and restore each host's link in turn, then re-read both.
+            cycleHostLink(serverIdA)
+            cycleHostLink(serverIdB)
+            awaitChannelRow(renamedA)
+            awaitChannelRow(nameB)
+            assertHostsStaySeparate(labelA to renamedA, labelB to nameB)
+
+            // 6. AC-3: restart. No activity may outlive the graph it resolved, so the rule's activity is
+            //    destroyed first (recreate() would retain its view models, which hold the old graph).
+            composeTestRule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)
+            instrumentation.runOnMainSync {
+                (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph()
+            }
+            relaunched = ActivityScenario.launch(MainActivity::class.java)
+            awaitChannelList()
+            awaitConnected()
+            awaitChannelRow(renamedA)
+            awaitChannelRow(nameB)
+            assertHostsStaySeparate(labelA to renamedA, labelB to nameB)
+        } finally {
+            runBlocking { GlobalContext.getOrNull()?.get<PairedServerCollectionStore>()?.remove(serverIdB) }
+            relaunched?.close()
+        }
+    }
+
+    /** A two-host instrumentation argument (#847), failing with the script that passes it. */
+    private fun twoHostArg(key: String): String =
+        requireNotNull(InstrumentationRegistry.getArguments().getString(key)) {
+            "missing instrumentation arg '$key' — scripts/e2e-emulator.sh passes it on rung 3 and LIVE"
+        }
+
+    /** A conversation row in the Channels tier carrying exactly [name]. */
+    private fun channelRow(name: String): SemanticsMatcher = hasTestTag(TREE_CHANNEL_ROW_TEST_TAG) and hasText(name)
+
+    /** Scroll the tree until a node matching [matcher] is composed, so a long list cannot hide it. */
+    private fun scrollListTo(matcher: SemanticsMatcher) {
+        composeTestRule.onAllNodes(hasScrollToNodeAction()).onFirst().performScrollToNode(matcher)
+    }
+
+    /** Wait until the Channels row named [name] is on screen. */
+    private fun awaitChannelRow(name: String) {
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            runCatching { scrollListTo(channelRow(name)) }.isSuccess
+        }
+        composeTestRule.onAllNodes(channelRow(name)).onFirst().assertIsDisplayed()
+    }
+
+    /**
+     * The seeded collision is real: [serverId]'s own repository holds [conversationId] under [name]. Without
+     * this a seed that wrote two different ids would pass every UI check below trivially.
+     */
+    private fun assertHostHoldsConversation(
+        serverId: String,
+        conversationId: String,
+        name: String,
+    ) {
+        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
+        val held =
+            runBlocking {
+                withTimeout(LIST_TIMEOUT_MS) {
+                    val repository = bundle.coordinator.currentRepository.first { it != null }
+                    checkNotNull(repository)
+                        .observeConversations(ConversationFilter.All)
+                        .first { rows -> rows.any { it.id == conversationId } }
+                        .first { it.id == conversationId }
+                }
+            }
+        assertEquals(name, held.name)
+    }
+
+    /** The host row's label as the tree draws it: the saved display name, else "Unnamed host". */
+    private fun hostLabel(serverId: String): String {
+        val saved = runBlocking { GlobalContext.get().get<PairedServerCollectionStore>().loadById(serverId) }
+        return saved?.displayName?.takeIf { it.isNotBlank() }
+            ?: InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.unnamed_host)
+    }
+
+    /**
+     * Pair a second host by pasting [pairCode]: the Channels header's add control opens the scanner, whose
+     * every state offers a paste link ([PASTE_CODE_LINK]), which opens `PairCodeScreen`. Pair → confirm the
+     * fingerprint → the screen waits for Connected and returns to the list.
+     */
+    private fun pairHostByCode(pairCode: String) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val pairControl =
+            context.getString(R.string.cd_tree_section_pair_host, context.getString(R.string.channels_section_header))
+        composeTestRule.onAllNodes(hasContentDescription(pairControl)).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(PASTE_CODE_LINK, substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(PASTE_CODE_LINK, substring = true).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasSetTextAction() and hasText(PAIR_CODE_FIELD)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasSetTextAction() and hasText(HOST_NAME_FIELD)).performTextInput(HOST_B_NAME)
+        composeTestRule.onNode(hasSetTextAction() and hasText(PAIR_CODE_FIELD)).performTextInput(pairCode)
+        composeTestRule.onNode(hasText(PAIR_BUTTON) and hasClickAction()).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(CONFIRM_PAIRING).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNodeWithText(CONFIRM_PAIRING).performClick()
+        // Save, then up to the view model's 30 s connection wait, then the pop back to the list.
+        composeTestRule.waitUntil(PAIR_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /** Both halves of "separate", for both hosts: see [assertEachUnderOwnHost] and [assertRowOpensOwnThread]. */
+    private fun assertHostsStaySeparate(
+        hostA: Pair<String, String>,
+        hostB: Pair<String, String>,
+    ) {
+        assertEachUnderOwnHost(hostA, hostB)
+        assertEachUnderOwnHost(hostB, hostA)
+        assertRowOpensOwnThread(hostA.second, hostB.second)
+        assertRowOpensOwnThread(hostB.second, hostA.second)
+    }
+
+    /**
+     * Folding [host]'s Channels row (label to conversation name) hides its own conversation and leaves
+     * [other]'s: the row was drawn under that host. The first fold control of a label is the Channels
+     * section's, which the tree draws before the Chats section. The fold is undone before returning.
+     */
+    private fun assertEachUnderOwnHost(
+        host: Pair<String, String>,
+        other: Pair<String, String>,
+    ) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val collapse = hasContentDescription(context.getString(R.string.cd_tree_row_collapse, host.first))
+        val expand = hasContentDescription(context.getString(R.string.cd_tree_row_expand, host.first))
+        awaitChannelRow(host.second)
+        scrollListTo(collapse)
+        composeTestRule.onAllNodes(collapse).onFirst().performClick()
+        composeTestRule.waitUntil(LIST_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(channelRow(host.second)).fetchSemanticsNodes().isEmpty()
+        }
+        awaitChannelRow(other.second)
+        scrollListTo(expand)
+        composeTestRule.onAllNodes(expand).onFirst().performClick()
+        awaitChannelRow(host.second)
+    }
+
+    /** [name]'s row opens a thread titled [name], never [other]; then back to the list. */
+    private fun assertRowOpensOwnThread(
+        name: String,
+        other: String,
+    ) {
+        openRow(name)
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(name).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(name).onFirst().assertIsDisplayed()
+        composeTestRule.onAllNodesWithText(other).assertCountEquals(0)
+        composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
+        awaitChannelList()
+    }
+
+    /**
+     * Tap the Channels row named [name] and wait for its thread: the send button is drawn and the list has
+     * left composition, so no row still fading out of the transition can answer a thread-side name check.
+     */
+    private fun openRow(name: String) {
+        awaitChannelRow(name)
+        composeTestRule.onAllNodes(channelRow(name)).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty() &&
+                composeTestRule.onAllNodes(hasTestTag(CHANNEL_LIST_TEST_TAG)).fetchSemanticsNodes().isEmpty()
+        }
+    }
+
+    /** Rename the open thread's conversation to [newName] and wait for its top bar to re-label (#537's drive). */
+    private fun renameOpenThread(newName: String) {
+        composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(RENAME_ITEM).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onAllNodesWithText(RENAME_ITEM).onFirst().performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasSetTextAction() and isFocused()).performTextReplacement(newName)
+        composeTestRule.onNodeWithText(RENAME_SAVE).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(newName).fetchSemanticsNodes().isNotEmpty()
+        }
+    }
+
+    /**
+     * Cut and restore one host's link, the per-host form of the rung-4 close / connect drive. Readiness is
+     * the coordinator's repository, not a `ConnectionState`: an idle `Connected` after `close()` would
+     * false-green a state check.
+     */
+    private fun cycleHostLink(serverId: String) {
+        val bundle = checkNotNull(GlobalContext.get().get<RelayConnectionRegistry>().connectionFor(serverId)) { "host not registered" }
+        runBlocking {
+            withTimeout(CONNECT_TIMEOUT_MS) {
+                bundle.supervisor.close()
+                bundle.coordinator.currentRepository.first { it == null }
+            }
+            withTimeout(CONNECT_TIMEOUT_MS) {
+                bundle.supervisor.connect()
+                bundle.coordinator.currentRepository.first { it != null }
+            }
+        }
+    }
+
+    /**
      * Block until the channel list is on screen, keyed on the app-authored marker the list screen sets
      * ([CHANNEL_LIST_TEST_TAG], #736) rather than on anything drawn on it. Every scenario arrives through
      * here, including the two `@Ignore`d manual ones.
@@ -1391,6 +1674,36 @@ class InteractiveStreamE2ETest {
         // gate runs green (no collision with channels left by prior runs) and does not collide as a substring
         // with top-bar / list chrome the assertions also match.
         const val PROMOTE_NAME_PREFIX = "e2e581-"
+
+        // #847 two-host scenario. The five arguments scripts/e2e-emulator.sh passes on rung 3 and LIVE
+        // (host A's own four stay E2eTestApplication's). PAIR_CODE_B carries a pairing token: never log it.
+        const val ARG_SERVER_ID_B = "serverIdB"
+        const val ARG_PAIR_CODE_B = "pairCodeB"
+        const val ARG_COLLISION_CONVERSATION_ID = "collisionConversationId"
+        const val ARG_COLLISION_NAME_A = "collisionNameA"
+        const val ARG_COLLISION_NAME_B = "collisionNameB"
+
+        // Pairing-flow production strings (hardcoded in the composables, no resources). PASTE_CODE_LINK is
+        // the common tail of all three scanner states' paste links — "Trouble scanning? Paste the pairing
+        // code instead", "Paste the pairing code instead", "Paste code instead" — matched as a substring so
+        // the camera state the emulator lands in does not matter. PAIR_BUTTON is matched exactly and with a
+        // click action, apart from the "Pairing" title and the "Pairing code" label.
+        const val PASTE_CODE_LINK = "code instead"
+        const val HOST_NAME_FIELD = "Host name"
+        const val PAIR_CODE_FIELD = "Pairing code"
+        const val PAIR_BUTTON = "Pair"
+        const val CONFIRM_PAIRING = "Confirm pairing"
+
+        // Host B's display name, typed on the pair-code screen. Shares no substring with the seeded
+        // "e2e847-a-" / "e2e847-b-" conversation names or RENAMED_NAME_PREFIX, so no exact match can
+        // confuse a host row with a conversation row.
+        const val HOST_B_NAME = "Second e2e host"
+
+        // Runtime-unique rename target for host A's seeded conversation, distinct from #537's prefix.
+        const val RENAMED_NAME_PREFIX = "e2e847-renamed-"
+
+        // The pair-code screen waits up to 30 s for the new host to connect before it returns to the list.
+        const val PAIR_TIMEOUT_MS = 60_000L
 
         const val LIST_TIMEOUT_MS = 30_000L
         const val CONNECT_TIMEOUT_MS = 30_000L

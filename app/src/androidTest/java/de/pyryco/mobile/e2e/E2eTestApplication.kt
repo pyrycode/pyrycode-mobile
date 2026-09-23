@@ -2,7 +2,11 @@ package de.pyryco.mobile.e2e
 
 import android.app.Application
 import android.os.Bundle
+import android.os.Looper
 import android.util.Log
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.data.crypto.PairedServer
 import de.pyryco.mobile.data.crypto.PairedServerStore
@@ -11,9 +15,12 @@ import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.di.appModule
 import de.pyryco.mobile.di.conversationRepositoryModule
 import de.pyryco.mobile.di.hostConversationModule
+import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
 import kotlinx.coroutines.runBlocking
 import org.koin.android.ext.koin.androidContext
+import org.koin.core.context.GlobalContext
 import org.koin.core.context.startKoin
+import org.koin.core.context.stopKoin
 import org.koin.core.module.Module
 import org.koin.dsl.module
 
@@ -73,6 +80,33 @@ class E2eTestApplication : Application() {
                 "app.onCreate: pairing saved; load() readBack=${if (readBack != null) "OK serverId=${readBack.serverId}" else "NULL (save did not persist!)"}",
             )
         }
+    }
+
+    /**
+     * The app restart an instrumented test can perform (#847): it cannot kill its own process, so it
+     * rebuilds the relay branch's object graph over the same on-device state — the Keystore-backed
+     * paired-server store, the host-keyed conversation cache and `app_prefs`. Nothing is re-saved: the
+     * hosts the store already holds are the state under test. Call with no activity alive (the old
+     * view models hold the old graph) and on the main thread, which `ProcessLifecycleOwner` requires.
+     *
+     * Two carry-overs keep the rebuild honest. The running `DataStore` is handed to the new graph,
+     * because `appModule` creates it with no `onClose` and a second instance over `app_prefs` throws
+     * "multiple DataStores active". And the old [LifecycleConnectionDriver] is unregistered first, so
+     * lifecycle edges reach only the new registry. `stopKoin` disposes the old registry and host sources
+     * through their `onClose`, closing every old socket.
+     */
+    fun rebuildGraph() {
+        check(Looper.myLooper() == Looper.getMainLooper()) { "rebuildGraph must run on the main thread" }
+        val old = GlobalContext.get()
+        val preferences = old.get<DataStore<Preferences>>()
+        ProcessLifecycleOwner.get().lifecycle.removeObserver(old.get<LifecycleConnectionDriver>())
+        stopKoin()
+        startKoin {
+            allowOverride(true)
+            androidContext(this@E2eTestApplication)
+            modules(appModule, tappedRelayRepositoryModule(), module { single<DataStore<Preferences>> { preferences } })
+        }
+        Log.i("E2E", "app.rebuildGraph: object graph rebuilt over the same on-device state")
     }
 
     /**

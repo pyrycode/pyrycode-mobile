@@ -103,3 +103,9 @@ Pending for the documentation stage. In `docs/e2e-interactive-stream.md`: add th
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-23
+
+## Revisions
+
+- **2026-09-23: the collision is checked directly, not only through the UI.** The scenario now uses `collisionConversationId`, which the plan passed but did not read. After host A's row appears, and again after host B pairs, `assertHostHoldsConversation` reads that host's own repository (`RelayConnectionRegistry.connectionFor(serverId).coordinator.currentRepository`) and requires the conversation under the seeded id with that host's name. If the seed wrote two different ids, every UI check would pass without testing a collision, so this check is what makes the scenario prove its premise.
+- **2026-09-23: thread arrival waits for the list to leave composition.** `openRow` waits for the send button and for `CHANNEL_LIST_TEST_TAG` to be gone. A list row still fading out during the navigation transition could otherwise satisfy, or break, the thread-side name checks.
+- **Open question 1 is still open.** No run in this build exercised the unbound seed against a real daemon: the scenario needs two live daemons, which only the harness gate provides. If the dispatcher's live run rejects the unbound row, bind a run-unique `current_session_id` in `seed_collision_conversation`.
