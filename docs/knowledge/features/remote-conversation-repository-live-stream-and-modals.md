@@ -133,6 +133,40 @@ compaction, folded into the thread as a `ThreadItem.CompactionBoundary` divider 
 `security-sensitive`, the same posture as the sibling arms above: decode runs behind the authenticated
 Noise channel, and a malformed frame drops only itself — the lone collector survives.
 
+## `model_announced` / `session_facts` — the announced-model and session-facts readings (#890)
+
+Two per-turn status readings, each its own held `StateFlow<Map<String, T>>` in its own file —
+`AnnouncedModelProjection` and `SessionFactsProjection` — the [status-projection](remote-conversation-repository.md#status-projections-one-file-per-status-event)
+shape, same as `ResettingProjection`. Both frames come off claude's `system/init` line, are conversation-scoped,
+arrive once per turn and are **not** deduplicated by the daemon: `TYPE_MODEL_ANNOUNCED = "model_announced"`
+and `TYPE_SESSION_FACTS = "session_facts"` each get their own `onInbound` arm, gated on the negotiated
+`interactive` capability, calling the projection's `apply(envelope)`.
+
+- **Decode-or-drop, the sibling idiom.** Each projection's private decoder wraps its DTO mapping in one
+  `try`/`catch (IllegalArgumentException)` that returns `null` and discards the caught throwable — nothing
+  logs a field, including `conversation_id`. `ModelAnnouncedPayloadDto.toReading()` also drops a frame whose
+  `model` is empty, the wire contract's one field-level rule; `SessionFactsPayloadDto.toFacts()` is a total
+  verbatim copy, since both its strings may legitimately be empty.
+- **Latest always wins.** `apply` does a plain `update { it + (id to reading) }` — no latch on the first
+  frame, no merge with the prior reading. A `/model` turn still announces the old model, so a consumer that
+  latched the first announcement would go stale.
+- **Cleared only by that conversation's `session_transition`**, next to `resettingProjection.clear` in the
+  same arm — neither frame carries a falling edge of its own. A reconnect or host switch clears both
+  readings too, for free, through `StableConversationRepository.switchToLive<T?>(null)`: a fresh connection
+  publishes a fresh `RemoteConversationRepository`, and the facade's `flatMapLatest` drops the old one's
+  reading. A frame naming another conversation never touches this one — `observe(conversationId)` is
+  `.map { it[conversationId] }.distinctUntilChanged()` over the shared map, the same isolation every
+  sibling projection gets from keying on the wire's own `conversation_id`.
+- **Never writes `SessionSettings`.** `observeAnnouncedModel`/`observeSessionFacts` are read-only additions
+  beside `observeSessionSettings`, `observeResetting`, and the other status reads; neither arm touches
+  `sessionSettingsCommands`, the stall state, the thread or a turn. `SessionFacts.permissionMode` is
+  claude's claim, never the #650 confirmed permission reading — a dedicated test
+  (`neitherFrame_touchesStallThreadOrSessionSettings`) proves a `session_facts` frame claiming
+  `bypassPermissions` leaves `observeSessionSettings`'s `permissionMode` unchanged.
+- **Renders nothing.** Both readings are data-layer only; the UI that surfaces "what claude says it's
+  running" is a separate, not-yet-shipped ticket. See [`AnnouncedModel`/`SessionFacts`](conversation-repository.md#shape)
+  for the domain types and their untrusted-text KDoc.
+
 ## `questionBatches` — the v2 clarification-batch decode+fold seam (#822)
 
 A **held `StateFlow<List<QuestionBatch>>`** (`QuestionBatchProjection.mutableQuestionBatches` /
