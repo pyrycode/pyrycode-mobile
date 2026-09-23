@@ -200,6 +200,8 @@ def main():
             return 1
     # Build test-only binaries from the configured sibling checkouts. Go's cache
     # keeps this cheap, and production daemon executables are never replaced.
+    # One fixed folder per checkout, not the run's own: Go then skips relinking an
+    # unchanged binary, about 15 seconds across the seven scripted scenarios.
     if args.mode != "ui":
         for variable, source_variable, package, binary in (
             ("PYRY_BIN", "PYRYCODE_SRC", "./cmd/pyry", "pyry"),
@@ -209,7 +211,8 @@ def main():
                 continue
             if env.get(variable) or not env.get(source_variable):
                 continue
-            destination = run_dir / binary
+            destination = ROOT / "build" / "e2e-bin" / binary
+            destination.parent.mkdir(parents=True, exist_ok=True)
             build = subprocess.run(["go", "build", "-o", str(destination), package],
                                    cwd=env[source_variable], env=env, stdout=sys.stderr, stderr=sys.stderr)
             if build.returncode:
