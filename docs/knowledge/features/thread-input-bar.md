@@ -109,7 +109,7 @@ Scaffold(
 ) { inner -> LazyColumn(reverseLayout = true, …) { … } }
 ```
 
-`ThreadInputBar` itself only ever received the 20dp horizontal gutter as a plain `modifier` `padding` from its caller — the composable has no opinion about the gutter or the surrounding column; see [Thread screen — overlays and app bar](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643) for the status area's own gutter arithmetic and [Thread status row](thread-status-row.md) for the footer.
+`ThreadInputBar` itself only ever received the 20dp horizontal gutter as a plain `modifier` `padding` from its caller — the composable has no opinion about the gutter or the surrounding column; see [Thread screen — overlays and app bar](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643) for the status area's own gutter arithmetic and [Thread composer footer](thread-composer-footer.md) for the footer.
 
 The screen signature **stays a flat callback list** rather than collapsing into a sealed `ThreadEvent` — #643 added `isBusy` / `onInterrupt` as two more flat parameters (both already existed on `ThreadScreen` since #459; #643 only threaded them one slot lower, into the composer) rather than folding anything into an event type. The #139 [Thread screen](thread-screen.md) doc's original prediction that the signature would fold into `ThreadEvent` after the first VM-owned event has not come to pass across nine further slices; the flat-callback shape keeps winning on cost.
 
