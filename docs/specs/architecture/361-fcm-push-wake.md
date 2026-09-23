@@ -137,3 +137,10 @@ Pending for the documentation stage:
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-24
+
+## Revisions
+
+- 2026-09-24 (build): both open questions are resolved, and the design is unchanged.
+  - The service test builds its `RemoteMessage` from a `Bundle`. That lets it carry `gcm.n.*` notification keys next to the pairing- and command-shaped data.
+  - Robolectric's `buildService(...).create()` constructs `FirebaseMessagingService` without an initialised `FirebaseApp`.
+  - The driver keeps its existing no-logs contract, so the only push log line is the service's `event=push_wake`.
