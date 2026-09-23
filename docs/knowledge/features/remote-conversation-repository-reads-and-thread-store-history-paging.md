@@ -170,11 +170,23 @@ depends on here.
   restart that reset `MAX_HISTORY_PAGES` would be a bound with an off switch, and a flapping connection
   could otherwise launder a fresh budget on every reconnect. Two triggers restart it: `requestHistory`
   throwing `RelayErrorException("history.invalid_cursor")` for a non-empty cursor (the refused-cursor
-  case), and the injected `ConnectionStateSource` transitioning to `Connected` **after** having left it —
-  not the connection the thread opened on, since that source hands every collector its current value on
-  subscription. Both restarts carry a monotonic `walk` generation so a settle from a connection that has
-  since been superseded is dropped rather than written into the restarted walk; this is what keeps a
-  reconnect from writing a dead connection's cursor into the live one.
+  case), and an injected `repositoryAvailable: Flow<Boolean>` transitioning back to `true` **after** having
+  left it — not the availability the thread opened on, since the flow hands every collector its current
+  value on subscription. Both restarts carry a monotonic `walk` generation so a settle from a connection
+  that has since been superseded is dropped rather than written into the restarted walk; this is what keeps
+  a reconnect from writing a dead connection's cursor into the live one.
+  [#861](https://github.com/pyrycode/pyrycode-mobile/issues/861) moved the second trigger off the
+  socket-level `ConnectionStateSource`: for a relay host, `RelayConnectionSupervisor.observe()` reports
+  `Connected` at socket-open, before the Noise handshake publishes the repository
+  (`RelayRepositoryCoordinator.currentRepository` turns non-null only at `PumpState.Open`), so a restart
+  keyed on that source re-asked a still-`null` repository and settled `PermanentFailure`
+  (`HistoryWalkStop.DeadEnd`) with nothing left to recover it. `ThreadDestinationFactory.thread` now derives
+  `repositoryAvailable` from `bundle.coordinator.currentRepository.map { it != null }` — the same StateFlow
+  that backs the thread's `StableConversationRepository` — so the restart cannot fire ahead of the facade it
+  feeds. The non-retryable `IllegalStateException(NOT_CONNECTED)` branch in `launchHistoryAsk` is unchanged;
+  its recovery is this restart firing once the repository arrives, which now actually happens. The default
+  `flowOf(true)` for every other construction site (including the demo path's always-available fake
+  repository) keeps this restart inert there, as before.
 - **A refusal of the newest-page ask (empty cursor) settles permanently instead of restarting** — this is
   what keeps the restart cycle structurally impossible rather than merely capped: every non-empty-cursor
   ask the repository ever receives from this walk originates from a reader scroll or a reader press on the

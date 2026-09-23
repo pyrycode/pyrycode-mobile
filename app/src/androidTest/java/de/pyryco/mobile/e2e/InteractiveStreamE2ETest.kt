@@ -1494,9 +1494,9 @@ class InteractiveStreamE2ETest {
      *    list, and reopening the row draws both again (the on-disk thread restore, not the in-memory rows);
      *  * **meanwhile** — the [SecondClientPeer] sends [OFFLINE_PROMPT] and its turn ends, and the phone
      *    draws none of it, which is what shows it really was offline;
-     *  * **reconnected** — the open thread draws the peer's reply from the ring replay; reopened, it draws
-     *    that turn after the ping, and each of the four messages once. The prompt comes only from a history
-     *    page, and the open thread's reconnect re-ask is lost (#861), so the reopen's opening ask fetches it.
+     *  * **reconnected** — the still-open thread draws the peer's reply from the ring replay and its prompt
+     *    from the reconnect history re-ask (#861), that turn after the ping, and each of the four messages
+     *    once. The prompt comes only from a history page.
      *
      * The cut waits until the phone itself has settled the ping reply — its thread cache holds it, which
      * the open thread's collector writes only after drawing the settled row. A disconnect keeps only settled
@@ -1569,18 +1569,9 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(offlineReplyMatcher(), useUnmergedTree = true).assertCountEquals(0)
 
             // 6. AC-2: reconnect with the thread open; the ring replay brings the peer's reply into it. No live
-            //    frame carries another device's message text, so the prompt comes only from a history page.
-            //    The open thread's reconnect re-ask fires on socket-up, before the repository is back, and
-            //    dies (#861), so reopen the thread: its opening ask runs on the live repository. Once #861
-            //    lands, drop the reopen and wait for the prompt in the still-open thread instead.
+            //    frame carries another device's message text, so the prompt comes only from a history page:
+            //    the still-open thread's reconnect re-ask, which waits for the published repository (#861).
             setHostLink(serverId, up = true)
-            composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
-                composeTestRule.onNode(offlineReplyMatcher(), useUnmergedTree = true).isDisplayed()
-            }
-            composeTestRule.onNode(hasContentDescription(CD_BACK)).performClick()
-            awaitChannelList()
-            composeTestRule.waitUntil(LIST_TIMEOUT_MS) { runCatching { scrollListTo(chatRow) }.isSuccess }
-            composeTestRule.onAllNodes(chatRow).onFirst().performClick()
             composeTestRule.waitUntil(REPLY_TIMEOUT_MS) {
                 composeTestRule.onNode(offlineReplyMatcher(), useUnmergedTree = true).isDisplayed() &&
                     composeTestRule.onAllNodes(inThreadList(OFFLINE_PROMPT), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()

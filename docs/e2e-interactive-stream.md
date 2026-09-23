@@ -90,10 +90,11 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    and settled, it cuts its own link to the host and confirms the open thread, the chat's row on the
    list, and the thread reopened from disk all still show that turn; while the phone is offline the peer
    sends a second prompt and its turn ends, and the phone renders neither it nor its reply; on reconnect,
-   with the thread still open, the peer's reply arrives by the daemon's ring replay, but the prompt text
-   does not — reaching the thread only once it is reopened, a work-around for a gap this ticket found and
-   filed as [#861](https://github.com/pyrycode/pyrycode-mobile/issues/861) — after which
-   each of the four messages renders exactly once, in order. Two claude turns — the phone's ping and the
+   with the thread still open, the peer's reply arrives by the daemon's ring replay and the prompt text
+   arrives through the thread's own reconnect history re-ask
+   ([#861](https://github.com/pyrycode/pyrycode-mobile/issues/861) — the re-ask now waits for the
+   repository to be published rather than firing on socket-up), with no reopen in between — each of the
+   four messages renders exactly once, in order. Two claude turns — the phone's ping and the
    peer's offline turn.
    Semi-deterministic. A **`LIVE=1` variant (#527, extended #566 / #541 / #554 / #551 / #562 / #537 / #581 / #740 / #847 / #848 / #849 / #850)**
    runs a **curated set of thirteen scenarios** (ping + create-workspace-folder + new-session + delete +
@@ -112,10 +113,10 @@ layer with Compose + Espresso. Canonical design: pyrycode ADR 025; capstone wire
    New-session also reveals the delimiter after a potentially tall wrap-up reply.
    **Pending coverage:** #679 owns cross-device Stop in `InteractiveStreamE2ETest`:
    real turns in A and B, another device most recently using A, and phone Stop in B
-   ending B while A continues. The curated thirteen-scenario gate does not cover it. Nor, until
-   [#861](https://github.com/pyrycode/pyrycode-mobile/issues/861) lands, does an open thread recover a
-   peer's reconnect-window prompt on its own — #850 found that gap and worked around it by reopening
-   the thread.
+   ending B while A continues. The curated thirteen-scenario gate does not cover it.
+   An open thread recovering a peer's reconnect-window prompt on its own — the gap #850 found — is
+   **shipped (#861)**: the still-open thread's reconnect history re-ask now waits for the repository to
+   be published, so it reaches a live repository instead of a socket that is up but not yet handshaked.
 4. **Emulator + deterministic host** ← **shipped (#431).** The same real app + Noise/relay path, but
    claude is swapped for #642's scripted `fakeclaude` backend replaying raw stream-json fixture bytes.
    No real claude, **zero claude turns**; re-running back-to-back uses the same stream contract. Run it with
@@ -562,23 +563,28 @@ chat's list row, and the thread reopened after navigating back all still show is
 content, not a live read. While offline the peer sends a second prompt and its turn ends (`turn_end`
 occurrence 2 keeps the wait honest); the phone draws neither the prompt nor the reply, the negative
 control that shows it really was offline. On `setHostLink(serverId, up = true)`, with the thread still
-open, the peer's reply arrives by the daemon's ring replay — but the prompt text does not: no live frame
-carries another device's message text, only a history page does, and the still-open thread's own
-reconnect re-ask fires as soon as the socket comes up, before the coordinator's repository is back, and
-dies with an `IllegalStateException` — a production bug this ticket found and filed rather than fixed,
-[#861](https://github.com/pyrycode/pyrycode-mobile/issues/861). The scenario works around it: it leaves
-the thread, reopens the chat's row, and waits there instead — a fresh `ThreadViewModel`'s opening history
-ask runs on the live repository — for both the prompt and the reply, then asserts each of the four
-messages (`PING_PROMPT`, its reply, `OFFLINE_PROMPT`, its reply) renders **exactly once**, in
-`boundsInRoot.top` order. Once #861 lands, the reopen step can be dropped for waiting on the prompt in
-the still-open thread. Two real claude turns: the phone's ping and the peer's offline turn. Folded into
-the pre-ship `LIVE=1` gate as the 13th curated method, taking `LIVE_MINIMUM` from 12 to 13 and the run's
-real-claude cost from six turns to eight. The live run that closed the ticket
-(`python3 scripts/android-test-gate.py live`, 2026-09-23; branch `feature/850` at `c9b0fdc084` merged
-with `main` at `923b176bef`) executed all thirteen with no failures or skips; two earlier live attempts
-on this branch failed first because the cut raced the phone's own settled reply rather than the peer's,
-then because the reconnect assertion ran before the reopened thread's history page had arrived, before
-the fixes recorded above landed.
+open, the peer's reply arrives by the daemon's ring replay — the prompt text does not, since no live
+frame carries another device's message text, only a history page does. When this scenario shipped
+(#850), the still-open thread's own reconnect re-ask fired as soon as the socket came up, before the
+coordinator's repository was back, and died with an `IllegalStateException` — a production bug that
+ticket found and filed rather than fixed, [#861](https://github.com/pyrycode/pyrycode-mobile/issues/861),
+and the scenario worked around it by leaving the thread and reopening the chat's row so a fresh
+`ThreadViewModel`'s opening history ask ran on the live repository for both the prompt and the reply.
+**#861 fixed the bug**: the reconnect re-ask now keys off the host's `coordinator.currentRepository`
+going non-null instead of the socket-level `ConnectionState`, so it no longer fires ahead of the
+repository it needs. Step 6 dropped the reopen; it waits in the still-open thread for both the peer's
+reply and `OFFLINE_PROMPT` to render, then asserts each of the four messages (`PING_PROMPT`, its reply,
+`OFFLINE_PROMPT`, its reply) renders **exactly once**, in `boundsInRoot.top` order. Two real claude
+turns: the phone's ping and the peer's offline turn. Folded into the pre-ship `LIVE=1` gate as the 13th
+curated method, taking `LIVE_MINIMUM` from 12 to 13 and the run's real-claude cost from six turns to
+eight. The live run that closed #850 (`python3 scripts/android-test-gate.py live`, 2026-09-23; branch
+`feature/850` at `c9b0fdc084` merged with `main` at `923b176bef`) executed all thirteen with no failures
+or skips; two earlier live attempts on that branch failed first because the cut raced the phone's own
+settled reply rather than the peer's, then because the reconnect assertion ran before the reopened
+thread's history page had arrived, before the fixes recorded above landed. The live run that closed
+\#861 (`python3 scripts/android-test-gate.py live`, 2026-09-23; branch `feature/861` at `24c9490d9a`
+merged with `origin/main` at `148b9f7225`) re-proved the same thirteen scenarios with step 6's reopen
+dropped — see the dedicated entry below.
 
 The **thinking-spinner** scenario (#482) is the **flakiest** rung-3 scenario and ships **`@Ignore`-gated /
 manual**: the spinner has **no durable equivalent** of the tool name — once real claude emits its first
@@ -698,9 +704,10 @@ phone, since #849 that phone replies, queued sends and drops stay consistent wit
 that same device's view of the backlog, and since #850 that a loaded conversation stays
 readable while its host link is cut and reconciles a peer's turn once the link is restored.
 They do not prove cross-device Stop, which belongs to
-[#679](https://github.com/pyrycode/pyrycode-mobile/issues/679), nor an open thread recovering a
-peer's reconnect-window prompt on its own without being reopened — a gap #850 found and filed as
-[#861](https://github.com/pyrycode/pyrycode-mobile/issues/861).
+[#679](https://github.com/pyrycode/pyrycode-mobile/issues/679). The gap #850 found — an open thread
+recovering a peer's reconnect-window prompt on its own, without being reopened — is closed by
+[#861](https://github.com/pyrycode/pyrycode-mobile/issues/861): #850's scenario proves it directly, with
+no reopen step.
 
 **When the dispatcher runs it:**
 
@@ -1112,6 +1119,14 @@ handoff; this table does not claim a later execution.
 
 Earlier results and failure history:
 
+- **LIVE verified for #861 (2026-09-23):** the dispatcher's real-claude gate ran
+  `python3 scripts/android-test-gate.py live` against `feature/861` at `24c9490d9a` merged with
+  `origin/main` at `148b9f7225` (2 commits behind before the merge), executed all thirteen curated
+  scenarios with thirteen passes, no failures or skips, exit 0, wall clock 100.3s. This is the first
+  live run of `interactiveTurn_offlineRead_reconcilesPeerTurnOnReconnect` with step 6's reopen dropped:
+  the still-open thread's reconnect history re-ask, now keyed on the host's repository becoming
+  available instead of the socket, delivered both the peer's reply and `OFFLINE_PROMPT` without leaving
+  the thread.
 - **LIVE verified for #850 (2026-09-23):** the dispatcher's real-claude gate ran
   `python3 scripts/android-test-gate.py live` against `feature/850` at `c9b0fdc084` merged with `main`
   at `923b176bef`, executed all thirteen curated scenarios — the curated list's first run with
@@ -1121,10 +1136,12 @@ Earlier results and failure history:
   branch failed first: the phone-side cut raced the peer's `turn_end` rather than the phone's own
   settled reply, so a still-streaming row could be dropped before the offline reads ran; once fixed on
   the phone's own cache, a second run failed because the post-reconnect assertion ran before the
-  reopened thread's history page had arrived — the still-open thread's own reconnect re-ask fires before
-  its repository is back and dies outright, filed as
+  reopened thread's history page had arrived — the still-open thread's own reconnect re-ask fired before
+  its repository was back and died outright, filed as
   [#861](https://github.com/pyrycode/pyrycode-mobile/issues/861) rather than fixed here. The scenario
-  reopens the thread after reconnect as the work-around; the plan's Revisions record both findings.
+  reopened the thread after reconnect as the work-around at the time; #861 fixed the re-ask and the
+  scenario's step 6 no longer reopens (see the #861 entry above). The plan's Revisions record both
+  original findings.
 - **LIVE verified for #849 (2026-09-23):** the dispatcher's real-claude gate ran
   `python3 scripts/android-test-gate.py live` against `feature/849` at `9788df3e67` merged with `main`
   at `e1e96d7139`, the
@@ -1254,10 +1271,11 @@ The remaining checks here are specific to a real relay or real Claude execution:
   `LIVE=1` method, riding #848's `SecondClientPeer`; and offline reading with reconnect
   reconciliation as [#850](https://github.com/pyrycode/pyrycode-mobile/issues/850), the
   thirteenth curated `LIVE=1` method, riding the same peer. #850 also found that an open
-  thread's own reconnect history re-ask dies outright rather than merely lagging, filed as
-  [#861](https://github.com/pyrycode/pyrycode-mobile/issues/861) and worked around in the
-  scenario by reopening the thread; that gap is not yet covered live in the still-open-thread
-  shape. [#778](https://github.com/pyrycode/pyrycode-mobile/issues/778) shipped
+  thread's own reconnect history re-ask dies outright rather than merely lagging, filed and fixed as
+  [#861](https://github.com/pyrycode/pyrycode-mobile/issues/861): the re-ask is now keyed on the host's
+  repository becoming available instead of the socket reconnecting, and the same scenario's step 6
+  dropped its reopen work-around to prove the still-open-thread shape live.
+  [#778](https://github.com/pyrycode/pyrycode-mobile/issues/778) shipped
   the history-page retry and the reconnect/refused-cursor walk restart with
   deterministic coverage only (`ThreadHistoryDemandTest`, `ThreadViewModelTest`,
   `ThreadScreenHistoryTest`) and carried no `needs-real-claude`; #850 is that behaviour's
@@ -1420,9 +1438,11 @@ The remaining checks here are specific to a real relay or real Claude execution:
   skips; two earlier attempts on the same branch failed first because the cut raced the peer's
   `turn_end` instead of the phone's own settled reply, then because the post-reconnect assertion ran
   before a reopened thread's history page had arrived — the still-open thread's own reconnect re-ask
-  fires before its repository is back and dies outright, a production bug this ticket found and filed
+  fired before its repository was back and died outright, a production bug this ticket found and filed
   rather than fixed, as [#861](https://github.com/pyrycode/pyrycode-mobile/issues/861); the scenario's
-  work-around (reopening the thread after reconnect) is recorded in the plan's Revisions; API-retry status (attempt N/M) — **rung 2 shipped (#594)**, the
+  work-around at the time (reopening the thread after reconnect) is recorded in the plan's Revisions.
+  #861 later fixed the re-ask and the scenario's step 6 dropped the reopen — see the #861 entry in
+  [Verification status](#verification-status); API-retry status (attempt N/M) — **rung 2 shipped (#594)**, the
   `ScriptedApiRetryTest` scenarios driving `api_retry` edges through the real #593 repository projection
   into `ThreadViewModel.apiRetry` and `ApiRetryIndicator`, covering both edges (the rising edge, including
   a climbed counter that must re-render rather than dedup, and the clearing edge reverting to whatever the
