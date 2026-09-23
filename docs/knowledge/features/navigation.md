@@ -229,10 +229,10 @@ default or scratch, independently of any paired host's migrated legacy default.
 
 [ChannelListScreen](channel-list-screen.md)'s assembled conversation tree (#729/#730/#731, split from
 \#641) resolves each row's host from the row itself — `TreeRowTapped(HostConversationTarget)` maps straight to
-`vm.onHostRowTapped(target)`, with no `selectedServerId()` lookup. `TreeHostAddTapped(serverId)` /
-`TreeHostAddLongPressed(serverId)` (#738) carry the same discipline into creation: they map straight to
-`vm.createHostDiscussion(serverId)` / `vm.openHostWorkspacePicker(serverId)` against the add control's own
-row, never `selectedServerId()`. `ChannelListScreen` and its `ChannelListViewModel` therefore have **no**
+`vm.onHostRowTapped(target)`, with no `selectedServerId()` lookup. `TreeHostAddTapped(serverId)` (#738) /
+`TreeHostAddLongPressed(serverId)` (#738, retargeted to Add workspace by #904) carry the same discipline
+into creation: they map straight to `vm.createHostDiscussion(serverId)` / `vm.openAddWorkspace(serverId)`
+against the add control's own row, never `selectedServerId()`. `ChannelListScreen` and its `ChannelListViewModel` therefore have **no**
 remaining consumer of the compatibility adapter below — #738 retired the flat `ChannelListUiState`, its
 `onEvent` reducer and the `repository` constructor parameter that fed them, along with the last FAB path
 that read `selectedServerId()` for this screen. The still-unreachable `DiscussionListScreen`
@@ -246,14 +246,18 @@ host prompt into the flat `Loaded.pendingPromotion` display model; selection cha
 do not change the confirmation target. Legacy bare-id navigation flows remain on
 the ViewModels for compatibility but are not collected by the production graph.
 
-`HostWorkspaceRepository` wraps both the thread destination and the channel list with
-`LocalWorkspacePickerRepository`. The list side passes `hostState.workspacePickerServerId`
-directly — the exact host the host row's long-press opened the picker for (#738; previously
-the same field, but populated via the FAB's `selectedServerId()` capture rather than the row's
-own id) — so recent folders, folder creation and the final workspace/create action agree on
-ownership. Binding only the ViewModel leaves the picker's independent repository lookup
-exposed to selection changes. Settings and archive destination migration remains #637; see
-[WorkspacePicker](workspace-picker.md).
+`HostWorkspaceRepository` wraps the thread destination and, since #714, Settings with
+`LocalWorkspacePickerRepository` — both still reach `WorkspacePicker` through it, passing their own
+picker's captured owner (the thread's route host, `SettingsViewModel.workspacePickerServerId`) so
+recent folders, folder creation and the final workspace/create action agree on ownership. Binding
+only the ViewModel leaves the picker's independent repository lookup exposed to selection changes.
+**Since #904, the channel list is no longer one of these wrappers.** The host row's long-press now
+opens [`AddWorkspaceModal`](mobile-modal.md#callers) instead of `WorkspacePicker`, and
+`ChannelListViewModel` resolves `hostSource.repositoryFor(serverId)` itself, at the press, the same
+host-resolved-write shape `submitChatName` uses — so this screen's `Routes.CHANNEL_LIST` destination
+no longer wraps `ChannelListScreen` in `HostWorkspaceRepository` at all; nothing on it reads
+`LocalWorkspacePickerRepository` any more. See [WorkspacePicker § Consumers](workspace-picker.md#consumers)
+for the two callers that remain.
 
 ## Adding a route
 

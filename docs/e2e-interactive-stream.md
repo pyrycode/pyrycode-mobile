@@ -189,7 +189,9 @@ delimiter positioned between the two cross-session messages, driven through the 
 `awaitChannelList()` helper, which waits on the list's own app-authored arrival marker
 (`CHANNEL_LIST_TEST_TAG`, set once on the screen's root so both draws — the blank placeholder and the
 assembled tree — carry it) instead of waiting on a visible element. `createChat()` (tap) and
-`openWorkspacePicker()` (long-press) drive a shared `awaitHostAddControl()` helper that waits on and returns
+`openWorkspacePicker()` (long-press, kept its name across #904 even though it now opens
+[Add workspace](knowledge/features/mobile-modal.md#callers), not the sheet the name still describes — the
+tag-based handle it drives did not change) both drive a shared `awaitHostAddControl()` helper that waits on and returns
 the **paired host's own** add control — `treeHostAddTestTag(serverId)`, `serverId` read from the harness's
 own `ARG_SERVER_ID` instrumentation argument — since #738 moved chat creation off the floating button and
 onto each host row, and a per-host tag stays unambiguous once a second host is paired where the button's one
@@ -207,11 +209,11 @@ a **tool-use** scenario (#481 — a constrained prompt makes real claude run a s
 tool step renders, keyed tolerantly on the verbatim tool name `"Bash"` in the tool-row header); a
 **thinking-spinner** scenario (#482 — a pure-reasoning prompt makes real claude think a beat, asserting
 the spinner is displayed mid-turn, keyed tolerantly on the `cd_thread_thinking` content-description); a
-**create-workspace-folder** scenario (#566 —
+**create-workspace-folder** scenario (#566, driven through the modal shell since #904 —
 `interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace`: long-press the paired host's own add
-control on the channel list (#738) → Workspace Picker → create a folder → land in a fresh discussion whose workspace is the created folder → send the
-ping prompt into it → re-open the picker from the channel list and assert the folder shows in "Recent",
-proving the #564 create wire and #565 recents wire end to end against real claude); a **new-session**
+control on the channel list (#738) → [Add workspace](knowledge/features/mobile-modal.md#callers) → create a folder, which becomes the modal's selection → wait for OK to enable (folder selected, host connected) → OK → land in a fresh discussion whose workspace is the created folder → send the
+ping prompt into it → re-open Add workspace from the channel list and assert the folder shows in "Recent",
+proving the #564 create wire and #565 recents wire, and #904's modal move, end to end against real claude); a **new-session**
 scenario (#541 — `interactiveTurn_newSession_rendersSessionBoundaryDelimiter`: prove the session is live
 with the ping, then open the thread overflow menu → tap "Reset session" → the daemon wraps up and rotates, then
 broadcasts `session_transition`, and the thread renders the session-boundary delimiter, proving the #540
