@@ -1335,10 +1335,11 @@ class InteractiveStreamE2ETest {
         val pairControl =
             context.getString(R.string.cd_tree_section_pair_host, context.getString(R.string.channels_section_header))
         composeTestRule.onAllNodes(hasContentDescription(pairControl)).onFirst().performClick()
+        val pasteLink = hasText(PASTE_CODE_LINK, substring = true) and hasClickAction()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-            composeTestRule.onAllNodesWithText(PASTE_CODE_LINK, substring = true).fetchSemanticsNodes().isNotEmpty()
+            composeTestRule.onAllNodes(pasteLink).fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onAllNodesWithText(PASTE_CODE_LINK, substring = true).onFirst().performClick()
+        composeTestRule.onAllNodes(pasteLink).onFirst().performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodes(hasSetTextAction() and hasText(PAIR_CODE_FIELD)).fetchSemanticsNodes().isNotEmpty()
         }
@@ -1686,7 +1687,9 @@ class InteractiveStreamE2ETest {
         // Pairing-flow production strings (hardcoded in the composables, no resources). PASTE_CODE_LINK is
         // the common tail of all three scanner states' paste links — "Trouble scanning? Paste the pairing
         // code instead", "Paste the pairing code instead", "Paste code instead" — matched as a substring so
-        // the camera state the emulator lands in does not matter. PAIR_BUTTON is matched exactly and with a
+        // the camera state the emulator lands in does not matter, and only with a click action: the camera-error
+        // and denied states draw a plain message ending in the same words above their button, and tapping that
+        // message navigates nowhere. PAIR_BUTTON is matched exactly and with a
         // click action, apart from the "Pairing" title and the "Pairing code" label.
         const val PASTE_CODE_LINK = "code instead"
         const val HOST_NAME_FIELD = "Host name"
