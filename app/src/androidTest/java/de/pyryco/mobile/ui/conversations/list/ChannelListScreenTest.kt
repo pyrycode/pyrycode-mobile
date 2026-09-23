@@ -33,6 +33,7 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.data.repository.FakeConversationRepository
+import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.ui.components.EDIT_CHAT_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
@@ -264,6 +265,30 @@ class ChannelListScreenTest {
         composeTestRule.onNode(hasTestTag(TREE_CHANNEL_ROW_TEST_TAG) and hasText("alpha channel")).assertExists()
         composeTestRule.onAllNodes(hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText("alpha channel")).assertCountEquals(0)
         composeTestRule.onNode(hasTestTag(TREE_CHAT_ROW_TEST_TAG) and hasText("bravo chat")).assertExists()
+    }
+
+    @Test
+    fun conversationRows_drawTheirOwnAttentionStateFromTheHostEntry() {
+        setTree(
+            entry(
+                serverId = "pyrybox",
+                displayName = "Pyrybox",
+                channels =
+                    listOf(
+                        conversation("c1", "alpha channel", "/w/one", true),
+                        conversation("c2", "charlie channel", "/w/one", true),
+                    ),
+            ).copy(attention = mapOf("c1" to ConversationAttention.Running)),
+        )
+
+        val running = string(R.string.cd_conversation_attention_running)
+        val idle = string(R.string.cd_conversation_attention_idle)
+        composeTestRule
+            .onNode(hasText("alpha channel") and hasContentDescription(running))
+            .assertExists()
+        composeTestRule
+            .onNode(hasText("charlie channel") and hasContentDescription(idle))
+            .assertExists()
     }
 
     @Test
