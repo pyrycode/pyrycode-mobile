@@ -176,11 +176,13 @@
     <string name="rename_dialog_save">Save</string>
     <string name="rename_dialog_cancel">Cancel</string>
     <string name="save_as_channel_dialog_title">Save as channel</string>
-    <string name="save_as_channel_dialog_field_label">Name</string>
-    <string name="save_as_channel_dialog_workspace_dedicated">Move to dedicated channel folder</string>
-    <string name="save_as_channel_dialog_workspace_scratch">Keep in scratch</string>
-    <string name="save_as_channel_dialog_save">Save</string>
-    <string name="save_as_channel_dialog_cancel">Cancel</string>
+    <!-- Generic for the same reason edit_chat_save_failed is: the shell announces them aloud (#957). -->
+    <string name="save_as_channel_failed">Couldn\'t save the chat as a channel. Try again.</string>
+    <string name="save_as_channel_prompt_failed">The channel was saved, but its system prompt wasn\'t. Try again.</string>
+    <!-- The channel form (#957), in desktop's Save as channel copy; the Create channel modal reuses it. -->
+    <string name="channel_form_name_label">Channel name:</string>
+    <string name="channel_form_prompt_label">Channel system prompt:</string>
+    <string name="channel_form_prompt_too_long">This system prompt is too long.</string>
     <string name="literal_screen_title">Claude\'s screen</string>
     <string name="literal_screen_back">Back</string>
     <string name="literal_screen_refresh">Refresh</string>

@@ -21,6 +21,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -46,6 +47,7 @@ import de.pyryco.mobile.di.RelayConnectionRegistry
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_RELAY_URL
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLIC_KEY
+import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.RUNNING_MODEL_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
@@ -1102,8 +1104,8 @@ class InteractiveStreamE2ETest {
      * derives thread state from `observeConversations(ConversationFilter.All)`, so a single confirmed upsert of
      * the promote reply drives all three assertions: (1) the **thread top bar**
      * ([de.pyryco.mobile.ui.conversations.thread.ThreadScreen] `title = state.displayName`), reached
-     * **immediately after submit** — unlike delete/archive there is **no PopBack** (`SaveAsChannelSubmit`
-     * dismisses the dialog and the thread stays open), so the top bar re-labels in place; (2) the
+     * **as soon as the modal closes** — unlike delete/archive there is **no PopBack** (the modal closes once its
+     * writes are confirmed and the thread stays open), so the top bar re-labels in place; (2) the
      * **[de.pyryco.mobile.ui.conversations.components.WorkspaceChip] unmount** — the `isPromoted` tier flip,
      * in-thread and free, because the chip is gated `!isPromoted && !hasMessages` and this scenario **sends no
      * message**, so `hasMessages` stays false and the chip's disappearance is attributable **solely** to the
@@ -1123,35 +1125,30 @@ class InteractiveStreamE2ETest {
      * presence/absence matchers — and its positive half is stronger than the old absence-in-a-drilldown,
      * because it names the tier the row is actually in. This is the #551 tier-membership idiom, reused.
      *
-     * **The dialog-over-thread field disambiguation (identical to #537 — reused verbatim).**
-     * [de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog] opens **over** the thread, whose
-     * composer is also an editable field, so `hasSetTextAction()` alone is ambiguous — two nodes. The dialog
-     * auto-focuses its field (`focusRequester.requestFocus()`) and the composer never requests focus, so
-     * `hasSetTextAction() and isFocused()` selects the dialog's field (`and` is a `SemanticsMatcher` member —
-     * no import). The field is **pre-filled and fully selected** (`TextRange(0, initialName.length)`) → use
-     * `performTextReplacement`, not `performTextInput` (which could leave the pre-fill concatenated). Note the
-     * pre-fill is the **constant** `"New channel"`, not `state.displayName` (the one divergence from
-     * `RenameDialog`).
+     * **The modal-over-thread field disambiguation (#537's idiom, reused).**
+     * [de.pyryco.mobile.ui.conversations.components.SaveAsChannelDialog] (#957, the `MobileModal` shell) opens
+     * **over** the thread, whose composer is also an editable field, and the modal holds a second one (the system
+     * prompt), so `hasSetTextAction()` alone is ambiguous. The form focuses its name field on open and nothing
+     * else requests focus, so `hasSetTextAction() and isFocused()` selects the name field. It is **pre-filled
+     * and fully selected** with the chat's own name → `performTextReplacement`. The prompt field is reached by
+     * its [CHANNEL_PROMPT_FIELD_TAG].
      *
-     * **The workspace radio must be moved off its default (no #537 analogue).** The dialog opens on
-     * `WorkspaceChoice.DEDICATED`, which `ThreadViewModel.resolveWorkspace` maps to
-     * `"pyry-workspace/channels/<slug>"` — submitting untouched would create a **real directory** on the
-     * operator's machine on every gate run. `SCRATCH` maps to `null` (the conversation keeps its scratch
-     * `cwd`), so step 5 **taps "Keep in scratch"** before Save: the dedicated-folder branch is already covered
-     * by #566, and this scenario stays about the promote round-trip. The radio row is a merged
-     * `Modifier.selectable(role = RadioButton)`, so the text tap resolves to it (the `RadioButton` itself is
-     * `onClick = null` by design).
+     * **In place, with a prompt (#957).** There is no location choice any more: the chat is promoted in its own
+     * `cwd` (`promote(..., workspace = null)`), so the scenario creates no folder on the operator's machine. It
+     * types a short system prompt, so the modal's second write — `set_system_prompt`, sent only after the
+     * promote is confirmed — rides the same run. The prompt applies at the next session start and this scenario
+     * starts none, so it costs no claude turn.
      *
      * **One literal collision matched exactly, not by substring.** `save_as_channel_action` is
      * `"Save as channel…"` (U+2026) while `save_as_channel_dialog_title` is `"Save as channel"` (no ellipsis),
-     * so a substring search conflates them — [SAVE_AS_CHANNEL_ITEM] is matched **exactly**. The second
-     * collision this scenario used to dodge went with the drilldown: step 8 no longer navigates, so it needs no
-     * arrival marker, and nothing can pass before the screen it asserts on is the screen already on display.
+     * so a substring search conflates them — [SAVE_AS_CHANNEL_ITEM] and [SAVE_AS_CHANNEL_TITLE] are both matched
+     * **exactly**. The second collision this scenario used to dodge went with the drilldown: step 8 no longer
+     * navigates, so it needs no arrival marker.
      *
-     * **No top-bar false match.** `SaveAsChannelSubmit` clears `pendingSaveAsChannelDialog` **synchronously
-     * before** the suspend, so the dialog (whose field held the unique name) leaves composition the instant
-     * Save is tapped, while the top bar still shows the old auto-name until the round-trip lands. The two never
-     * hold the unique name simultaneously, so step 6's first match is the top bar.
+     * **No top-bar false match.** The modal now stays open, holding the unique name in its field, until both
+     * writes are confirmed — a failure would keep it open with an error. So step 6 first waits for the modal's
+     * exact title to leave, which is the proof both writes landed, and only then reads the unique name, which
+     * can by then be only the top bar's.
      *
      * **Always-on, not `@Ignore`d.** All three post-conditions are **durable** structural facts (the recorded
      * name and the recorded `isPromoted` flag) — no transient like #482's spinner — so the scenario belongs in
@@ -1178,8 +1175,8 @@ class InteractiveStreamE2ETest {
         }
 
         // 4. Absence guard + tier before-state (both deterministic — no claude turn). The runtime-unique
-        //    channel name is not on screen yet (the top bar shows the server auto-name and the dialog's
-        //    pre-fill is the constant "New channel"), so its later appearance is attributable to the promote
+        //    channel name is not on screen yet (the top bar shows the server auto-name, which the modal
+        //    pre-fills), so its later appearance is attributable to the promote
         //    round-trip. And the WorkspaceChip IS mounted — the discussion tier — the before-state of step 6's
         //    tier-flip inversion (it stays mounted because no message is sent: !isPromoted && !hasMessages).
         val uniqueName = PROMOTE_NAME_PREFIX + System.currentTimeMillis()
@@ -1189,15 +1186,12 @@ class InteractiveStreamE2ETest {
         }
         composeTestRule.onAllNodesWithText(WORKSPACE_CHIP_PREFIX, substring = true).onFirst().assertIsDisplayed()
 
-        // 5. Promote to the unique name, KEEPING THE CONVERSATION IN SCRATCH. Open the overflow, tap "Save as
-        //    channel…" (matched EXACTLY — the dialog title is the same literal minus the U+2026 ellipsis, so a
-        //    substring search would conflate them). The dialog opens OVER the thread, whose composer is also an
-        //    editable field, so hasSetTextAction() alone is ambiguous — target the dialog's field by its focus
-        //    (SaveAsChannelDialog auto-focuses on open; the composer never requested focus), waiting for focus
-        //    to land, and REPLACE the pre-filled+selected "New channel" (performTextReplacement, not
-        //    performTextInput). Then tap "Keep in scratch" — MANDATORY: the dialog defaults to DEDICATED, which
-        //    would create a real folder under the operator's ~/pyry-workspace on every gate run (that branch is
-        //    already covered by #566). Finally Save.
+        // 5. Promote to the unique name, with a system prompt. Open the overflow, tap "Save as channel…"
+        //    (matched EXACTLY — the modal title is the same literal minus the U+2026 ellipsis). The modal opens
+        //    OVER the thread, whose composer is also an editable field, and holds a second field of its own, so
+        //    target the name field by its focus (the form focuses it on open), waiting for focus to land, and
+        //    REPLACE the pre-filled+selected chat name. Type the prompt into its tagged field, then OK. There is
+        //    no location choice: the chat is promoted in its own cwd, so no folder is created.
         composeTestRule.onNode(hasContentDescription(CD_MORE_ACTIONS)).performClick()
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(SAVE_AS_CHANNEL_ITEM).fetchSemanticsNodes().isNotEmpty()
@@ -1207,17 +1201,18 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(hasSetTextAction() and isFocused()).fetchSemanticsNodes().isNotEmpty()
         }
         composeTestRule.onNode(hasSetTextAction() and isFocused()).performTextReplacement(uniqueName)
-        composeTestRule.onNodeWithText(KEEP_IN_SCRATCH_OPTION).performClick()
-        composeTestRule.onNodeWithText(SAVE_AS_CHANNEL_SAVE).performClick()
+        composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextInput(SAVE_AS_CHANNEL_PROMPT)
+        composeTestRule.onNodeWithText(SAVE_AS_CHANNEL_OK).performClick()
 
-        // 6. In-thread assertions (surfaces #1 + #2). The first wait spans the promote round-trip (reply → a
-        //    confirmed upsert → observeConversations(All) re-emits → state.displayName): there is NO PopBack, so
-        //    the thread stays open and the top bar re-labels in place. The dialog has already left composition
-        //    (SaveAsChannelSubmit clears it synchronously before the suspend), so the match is the top bar. The
-        //    second wait is the tier flip — the WorkspaceChip unmounts once state.isPromoted is true, the
-        //    in-thread read of the very flag the list's tier split is computed from. Two independent waits (not
-        //    one assertion after one wait): name and flag land in the same upsert, but waiting on each keeps a
-        //    failure attributable.
+        // 6. In-thread assertions (surfaces #1 + #2). The first wait spans both writes: the modal closes only
+        //    once the promote reply and then the set_system_prompt reply are confirmed (a failure keeps it open
+        //    with an error, so this wait is the proof both landed). Only then is the unique name read — the
+        //    modal's field held it until now, so after the close the match is the top bar, re-labelled in place
+        //    (there is NO PopBack). The next wait is the tier flip — the WorkspaceChip unmounts once
+        //    state.isPromoted is true. Independent waits keep a failure attributable.
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodesWithText(SAVE_AS_CHANNEL_TITLE).fetchSemanticsNodes().isEmpty()
+        }
         composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
             composeTestRule.onAllNodesWithText(uniqueName, substring = true).fetchSemanticsNodes().isNotEmpty()
         }
@@ -2106,24 +2101,22 @@ class InteractiveStreamE2ETest {
         // collide as a substring with top-bar / list chrome the assertion also matches.
         const val RENAME_NAME_PREFIX = "e2e537-"
 
-        // #581 save-as-channel (promote) scenario. Reuses the overflow opener (CD_MORE_ACTIONS) and the list /
-        // thread markers; adds these six. SAVE_AS_CHANNEL_ITEM is matched EXACTLY — the production menu item
-        // ends in a real U+2026 ellipsis and the dialog title is the same literal WITHOUT it, so substring
-        // matching would conflate them (the opposite choice from CHANGE_WORKSPACE_ITEM, whose literal has no
-        // such twin). KEEP_IN_SCRATCH_OPTION is MANDATORY, not optional polish: the dialog opens on
-        // WorkspaceChoice.DEDICATED, which resolves to a real "pyry-workspace/channels/<slug>" directory on the
-        // operator's machine — SCRATCH resolves to null, keeping the conversation's existing scratch cwd (the
-        // dedicated branch is already covered by #566). SAVE_AS_CHANNEL_SAVE is the same literal as RENAME_SAVE
-        // but a different dialog, declared separately (the shared companion forbids reusing it as a name).
-        // WORKSPACE_CHIP_PREFIX is the in-thread isPromoted tier signal: the WorkspaceChip's label is a
-        // hardcoded literal ("Workspace: <label> (change)"), not a string resource, so this prefix is the
-        // matchable token — mounted before the promote, unmounted after. The tier read needs no constant of its own: it
-        // matches the row test tags the assembling screen sets (#731). Keep in sync with res/values/strings.xml:
-        // save_as_channel_action = "Save as channel…",
-        // save_as_channel_dialog_workspace_scratch = "Keep in scratch", save_as_channel_dialog_save = "Save".
+        // #581 save-as-channel (promote) scenario, driven through the #957 modal. Reuses the overflow opener
+        // (CD_MORE_ACTIONS) and the list / thread markers. SAVE_AS_CHANNEL_ITEM and SAVE_AS_CHANNEL_TITLE are
+        // matched EXACTLY — the production menu item ends in a real U+2026 ellipsis and the modal title is the
+        // same literal WITHOUT it, so substring matching would conflate them. SAVE_AS_CHANNEL_OK is the
+        // MobileModal footer's submit label. SAVE_AS_CHANNEL_PROMPT is typed into the prompt field so the
+        // post-promote set_system_prompt write rides the run; it takes effect at the next session start, which
+        // this scenario never reaches. WORKSPACE_CHIP_PREFIX is the in-thread isPromoted tier signal: the
+        // WorkspaceChip's label is a hardcoded literal ("Workspace: <label> (change)"), not a string resource, so
+        // this prefix is the matchable token — mounted before the promote, unmounted after. The tier read needs no
+        // constant of its own: it matches the row test tags the assembling screen sets (#731). Keep in sync with
+        // res/values/strings.xml: save_as_channel_action = "Save as channel…",
+        // save_as_channel_dialog_title = "Save as channel".
         const val SAVE_AS_CHANNEL_ITEM = "Save as channel…"
-        const val KEEP_IN_SCRATCH_OPTION = "Keep in scratch"
-        const val SAVE_AS_CHANNEL_SAVE = "Save"
+        const val SAVE_AS_CHANNEL_TITLE = "Save as channel"
+        const val SAVE_AS_CHANNEL_OK = "OK"
+        const val SAVE_AS_CHANNEL_PROMPT = "e2e957: answer briefly."
         const val WORKSPACE_CHIP_PREFIX = "Workspace:"
 
         // Runtime-unique promote target: "e2e581-" + System.currentTimeMillis(). Distinct prefix (the shared
