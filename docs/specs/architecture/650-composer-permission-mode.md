@@ -123,3 +123,7 @@ Pending for the documentation stage: `docs/knowledge/features/thread-composer-fo
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-23
+
+## Revisions
+
+- **2026-09-23, Phase B.** Open question 1 is resolved as planned. The Remote emits every read result with no dedupe after `flatMapLatest`, and Stable's `switchToLive` adds none, so a same-value re-read reaches the ViewModel's `onEach` and advances the settle loop. `ThreadViewModelPermissionTest`'s scripted double relies on that. One design delta follows from deleting YOLO: `sendSessionSettings` loses its now-dead `yolo` parameter and serves model and effort only. The permission path is `sendPermissionMode`. No contract changed.
