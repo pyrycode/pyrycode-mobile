@@ -115,6 +115,7 @@ MobileGateModal(
     onCancel = onCancel,
 ) {
     Text(text = open.prompt, style = MaterialTheme.typography.bodyLarge)   // verbatim, plain Text
+    if (!open.context.isEmpty) PermissionContext(open.context)             // #817, only when the frame carried any
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         open.options.forEach { option ->          // wire array order = canonical display/selection order
             ModalOptionButton(option.label,
@@ -163,6 +164,38 @@ Both markers are **accessible + test-observable** (a screen reader announces the
 the armed / default option by the `stateDescription` value, **not** by fragile colour inspection). Only the
 local markers are added — the verbatim server `label` stays the sole server text, rendered through plain
 `Text`.
+
+### The decision context (#817)
+
+`open.context : ModalContext` ([Modal events](modal-events.md#the-four-decision-context-fields-817)) is
+claude's own optional decision context for a permission ask — `reason`, `reasonType`, `blockedPath`,
+`description`, each `null` when the frame carried none. `PermissionContext(context)` is a private
+composable, drawn between the prompt and the option `Column` **only when `!context.isEmpty`** — a
+context-free modal renders exactly as before #817, with no empty area or extra spacing left behind. It is a
+`Column` (12 dp spacing, the `533-2369` frame's content-row gap) of up to three `ModalContextRow(label,
+value)` rows in the desktop's order — reason, description, blocked path — each the frame's "Input large"
+stacked shape (label above value, 8 dp gap) rather than its single-line read-only row, because a reason or
+description is prose an ellipsis would hide. A row merges its semantics so a screen reader reads label and
+value as one node.
+
+The reason row is the only one with label logic, since `reasonType` is an open vocabulary the daemon can
+extend: `classifier` and `rule` map to a local sentence (`modal_context_reason_classifier` /
+`_reason_rule`), any other non-null value formats the local `modal_context_reason_type` string around the
+**raw** value (never dropped — an unrecognised category still renders as `Reason type: <raw>`), and `null`
+falls back to the bare `modal_context_reason` label. The row appears when either `reason` or `reasonType` is
+non-null, and renders the label alone when only the type arrived. The description and blocked-path rows are
+unconditional on their own field. Every value is plain `Text(String)` — no `MarkdownText`, no
+`AnnotatedString` link handling, no `SelectionContainer`, no `remember`/`rememberSaveable` — the same
+render-time obligations the rest of this surface owns (§ Security). Labels are local string resources; the
+only server text is the value and the raw `reason_type` inside the fallback label.
+
+**Accepted residual (named, not skipped):** a hostile `reason_type` can put arbitrary text after the local
+"Reason type:" prefix, and a hostile `reason`/`description` can read like an instruction ("Safe, tap
+Allow"). The prefix and labels are local and visually distinct from the value (`labelLarge` SemiBold vs
+`bodyMedium`), the context rows sit below the daemon's own `prompt` and never replace an option `label` or
+the fail-safe-deny highlight (still driven solely by `option.id == open.defaultOptionId`), and the
+second-confirm gate ([#451](modal-answer-flow.md)) still guards any allow — the same residual the `prompt`
+field already carries.
 
 ## The dismissal (`Dismissed`)
 
@@ -289,8 +322,14 @@ fallback, hidden) **extended by [#452](../codebase/452.md)** with the AC#4 inter
   the VM (whose rule is unit-tested in #451).
 - **send-error confidentiality** — a `Channel<Unit>` fed into `modalSendErrors` emits once: `modal_send_failed`
   is displayed and no payload substring (`rm -rf`) appears in the snackbar.
+- **decision context** (#817) — a populated `context` shows the reason label and
+  value, the description and the blocked path, each with its own label; the `classifier` / `rule` sentence
+  labels and the `Reason type: <raw>` fallback for an unrecognised `reasonType` all render; a type-only
+  reason (`reason == null`, `reasonType` set) shows the label alone; a non-string reason's stringified text
+  (`"false"`) still displays; a context-free `Open` shows none of the context labels.
 
-No unit test (pure UI; the fold logic is unit-tested in #445, the decision logic in #451).
+No unit test (pure UI; the fold logic is unit-tested in #445, the decision logic in #451, the decode in
+[Modal events](modal-events.md#the-four-decision-context-fields-817)).
 `connectedAndroidTest` was **not** run in the build environment (no device — the project norm); the test
 compiles under the green `assembleDebug` / `check` / `compileDebugAndroidTestKotlin` gates ([[androidtest-not-compiled-by-mandatory-gates]]).
 
@@ -343,7 +382,8 @@ and the snackbar-vs-inline dismiss affordance remains design-owed.
   decision methods the route host wires.
 - [Current-modal state](current-modal-state.md) ([#445](../codebase/445.md)) — the hoisted `currentModal`
   this renders; the projection/state half this consumes.
-- [Modal events](modal-events.md) ([#437](../codebase/437.md)) — the upstream decode seam.
+- [Modal events](modal-events.md) ([#437](../codebase/437.md)) — the upstream decode seam; since #817 it
+  also decodes the four `ModalContext` fields this overlay's `PermissionContext` renders.
 - [Thread screen](thread-screen.md) — the host; the overlay is the seventh `Scaffold` sibling, alongside
   `WorkspacePicker` / `RenameDialog` / `SaveAsChannelDialog` / `StatusSheet` / `ChannelInfoSheet` /
   `DeleteConfirmationDialog`.
