@@ -67,6 +67,16 @@ booted manually. Report the command, XML evidence and executed count. A missing,
 zero-count or failed run is not device evidence. Agents author the tests and
 triage the supplied failure; a local `connectedAndroidTest` run is optional.
 
+The `ui` gate skips itself, exiting 0 with `Android gate: ui skipped` on stderr and
+no XML, when every path the branch changes since it left `main` is under `docs/` or
+`scripts/`, is Markdown, or is one of the e2e-only sources listed in
+`E2E_ONLY_SOURCES`: the live and scripted stream tests and the second-client peer.
+The rest of the e2e package stays in: the instrumentation runner, the test
+application and the unrecognised-row sentinel serve every device test. A skip is
+expected on such a branch and is not missing evidence; the scripted scenarios and
+the live gate still run. `UI_GATE_FULL=1` forces the suite. A unit test fails if
+any other source starts using one of the listed classes.
+
 ## Compose evidence
 
 Compose tests should assert the contract independently of the implementation.
