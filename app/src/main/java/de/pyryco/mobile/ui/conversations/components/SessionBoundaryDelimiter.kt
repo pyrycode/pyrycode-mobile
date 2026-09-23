@@ -80,24 +80,7 @@ internal fun SessionBoundaryDelimiterContent(
                     bottom = MessageAreaRowSpacing,
                 ),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(RuleLabelSpacing),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            BoundaryRule(modifier = Modifier.weight(1f))
-            // Deliberately unweighted: Row measures a non-weighted child against the full available
-            // width before the weighted rules claim any, so a long `Workspace changed to …` label wraps
-            // (centred) and squeezes the rules toward zero instead of pushing anything past the viewport
-            // edge. That is the degradation the narrow preview below is here to show.
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-                textAlign = TextAlign.Center,
-            )
-            BoundaryRule(modifier = Modifier.weight(1f))
-        }
+        RuleLabelRow(label = label)
         Spacer(modifier = Modifier.height(ExplanationTopSpacing))
         // The design draws neither the explanation nor the Install affordance, and both stay: CLAUDE.md
         // requires them under every delimiter variant, and `ScriptedSessionBoundaryTest` asserts the
@@ -123,6 +106,57 @@ internal fun SessionBoundaryDelimiterContent(
     }
 }
 
+/**
+ * A finished compaction (#874), drawn as the design's `Session reset` rule / label / rule row with the
+ * compaction label in its place. Unlike [SessionBoundaryDelimiter] it carries no explanation line and no
+ * Install affordance: a compaction is not a session reset, and the row changes no above-the-line
+ * de-emphasis. Stateless and inert.
+ *
+ * The label is client-owned copy (desktop's `compactionBoundaryTitle`): only validated counts and the
+ * recognised `manual` trigger reach it, both narrowed at decode, so no claude-authored string is drawn.
+ */
+@Composable
+fun CompactionBoundaryDivider(
+    item: ThreadItem.CompactionBoundary,
+    modifier: Modifier = Modifier,
+) {
+    RuleLabelRow(
+        label = compactionBoundaryLabel(item),
+        modifier =
+            modifier.padding(
+                start = MessageContentGutter,
+                end = MessageContentGutter,
+                bottom = MessageAreaRowSpacing,
+            ),
+    )
+}
+
+/** The design's `Session reset` row (Figma `119:3843`): hairline rule, centred body-small label, rule. */
+@Composable
+private fun RuleLabelRow(
+    label: String,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(RuleLabelSpacing),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BoundaryRule(modifier = Modifier.weight(1f))
+        // Deliberately unweighted: Row measures a non-weighted child against the full available
+        // width before the weighted rules claim any, so a long `Workspace changed to …` label wraps
+        // (centred) and squeezes the rules toward zero instead of pushing anything past the viewport
+        // edge. That is the degradation the narrow preview below is here to show.
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary,
+            textAlign = TextAlign.Center,
+        )
+        BoundaryRule(modifier = Modifier.weight(1f))
+    }
+}
+
 /** One half of the design's `Session reset` rule pair (Figma nodes `119:3846` / `119:3841`). */
 @Composable
 private fun BoundaryRule(modifier: Modifier = Modifier) {
@@ -145,6 +179,32 @@ internal fun boundaryLabel(
         BoundaryReason.WorkspaceChange -> "Workspace changed to ${boundary.workspaceCwd!!} — $time"
         BoundaryReason.IdleEvict -> "Idle session ended — $time"
     }
+}
+
+/**
+ * Desktop's `compactionBoundaryTitle`, without its failed branch (mobile draws the divider from
+ * `compaction_boundary` only): "Conversation compacted", then the sizes only when both counts are known,
+ * then " by you" for a manual compaction. A null count claims no size — never "→ 0".
+ */
+internal fun compactionBoundaryLabel(item: ThreadItem.CompactionBoundary): String {
+    val pre = item.preTokens
+    val post = item.postTokens
+    val sizes = if (pre != null && post != null) ", ${compactionTokenCount(pre)} → ${compactionTokenCount(post)} tokens" else ""
+    val byYou = if (item.manual) " by you" else ""
+    return "Conversation compacted$sizes$byYou"
+}
+
+/**
+ * Desktop's `tokenCount` for a validated non-negative [value]: the plain number below 1000, otherwise
+ * thousands to one decimal, rounded half-up, with a `.0` dropped — `24000` → `24k`, `1250` → `1.3k`.
+ * Integer arithmetic, so the result never depends on the locale.
+ */
+internal fun compactionTokenCount(value: Long): String {
+    if (value < 1000) return value.toString()
+    val tenths = (value + 50) / 100
+    val whole = tenths / 10
+    val fraction = tenths % 10
+    return if (fraction == 0L) "${whole}k" else "$whole.${fraction}k"
 }
 
 internal fun formatShortTime(
@@ -198,6 +258,9 @@ private fun SessionBoundaryDelimiterPreviewMatrix() {
         SessionBoundaryDelimiter(boundary = previewClearBoundary())
         SessionBoundaryDelimiter(boundary = previewWorkspaceChangeBoundary())
         SessionBoundaryDelimiter(boundary = previewIdleEvictBoundary())
+        CompactionBoundaryDivider(item = ThreadItem.CompactionBoundary(24000, 3000, manual = true, occurredAt = PreviewInstant))
+        CompactionBoundaryDivider(item = ThreadItem.CompactionBoundary(182_450, 21_300, manual = false, occurredAt = PreviewInstant))
+        CompactionBoundaryDivider(item = ThreadItem.CompactionBoundary(24000, null, manual = false, occurredAt = PreviewInstant))
     }
 }
 

@@ -7820,6 +7820,162 @@ class RemoteConversationRepositoryTest {
             }
         }
 
+    // ---- #874: fold compaction_boundary into the thread as ThreadItem.CompactionBoundary ---------
+
+    // AC #1: one row carrying claude's counts and the manual trigger, identity from the envelope ts.
+    @Test
+    fun compactionBoundary_foldsRowStampedWithEnvelopeTs() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(compactionEnvelope("c1"))
+            runCurrent()
+
+            assertEquals(
+                listOf(ThreadItem.CompactionBoundary(24000L, 3000L, manual = true, occurredAt = Instant.parse(TS))),
+                compactionRowsOf(emissions.last()),
+            )
+        }
+
+    // AC #1: a null, missing or invalid count claims no size; only the exact `manual` token reads as manual.
+    @Test
+    fun compactionBoundary_nullMissingOrInvalidCount_claimsNoSize_onlyManualIsManual() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(compactionEnvelope("c1", trigger = "auto", post = "null", ts = "2026-05-31T00:00:01Z", id = 1L))
+            pump.push(compactionProbe(2L, """{"conversation_id":"c1","trigger":""}""", ts = "2026-05-31T00:00:02Z"))
+            pump.push(compactionEnvelope("c1", trigger = "Manual", pre = "-5", ts = "2026-05-31T00:00:03Z", id = 3L))
+            pump.push(compactionEnvelope("c1", pre = "9007199254740992", post = "0", ts = "2026-05-31T00:00:04Z", id = 4L))
+            runCurrent()
+
+            assertEquals(
+                listOf(
+                    "compaction:24000->null:false",
+                    "compaction:null->null:false",
+                    "compaction:null->3000:false",
+                    "compaction:null->0:true",
+                ),
+                threadShape(emissions.last()),
+            )
+        }
+
+    // AC #1: the row interleaves with messages in arrival order and routes by its conversation_id.
+    @Test
+    fun compactionBoundary_interleavesInArrivalOrderAndNeverCrossRoutes() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val c1 = collectMessages(repo, "c1")
+            val c2 = collectMessages(repo, "c2")
+            runCurrent()
+
+            pump.push(messageEnvelope("c1", "m1", "user", "first", "2026-05-31T10:00:00Z"))
+            pump.push(compactionEnvelope("c1", id = 2L))
+            pump.push(messageEnvelope("c1", "m2", "assistant", "second", "2026-05-31T10:01:00Z"))
+            runCurrent()
+
+            assertEquals(listOf("m1", "compaction:24000->3000:true", "m2"), threadShape(c1.last()))
+            assertEquals(emptyList<String>(), threadShape(c2.last()))
+        }
+
+    // AC #2: (type, ts) is the join key, so a repeat of one ts is one row and a new ts is another.
+    @Test
+    fun compactionBoundary_repeatOfOneTimestamp_foldsOnce_distinctTimestampsFoldTwice() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            pump.push(compactionEnvelope("c1", ts = TS))
+            pump.push(compactionEnvelope("c1", ts = TS, id = 2L))
+            pump.push(compactionEnvelope("c1", ts = "2026-05-31T00:00:01Z", id = 3L))
+            runCurrent()
+
+            assertEquals(2, compactionRowsOf(emissions.last()).size)
+        }
+
+    // AC #3: no live event, no stall cleared, no compacting indicator moved — with or without a prior edge.
+    @Test
+    fun compactionBoundary_changesNoTurnOrStatusState() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val events = collectLiveEvents(repo)
+            val stalls = collectStall(repo, "c1")
+            val apiRetry = collectApiRetry(repo, "c1")
+            val compacting = collectCompacting(repo, "c1")
+            val thread = collectMessages(repo, "c1")
+            runCurrent()
+
+            // No compacting edge before it.
+            pump.push(compactionEnvelope("c1", ts = "2026-05-31T00:00:01Z", id = 1L))
+            runCurrent()
+            pump.push(compactingEnvelope("c1", active = true, id = 2L))
+            pump.push(stallEnvelope("c1"))
+            runCurrent()
+            // One arriving while compacting is still active leaves it active.
+            pump.push(compactionEnvelope("c1", ts = "2026-05-31T00:00:02Z", id = 3L))
+            runCurrent()
+
+            assertEquals(listOf(false, true), stalls)
+            assertEquals(emptyList<LiveSessionEvent>(), events)
+            assertEquals(listOf(ApiRetryStatus.NotRetrying), apiRetry)
+            assertEquals(listOf(false, true), compacting)
+            assertEquals(2, compactionRowsOf(thread.last()).size)
+        }
+
+    // AC #3: a malformed payload or ts drops that one frame; the lone collector survives.
+    @Test
+    fun compactionBoundary_malformedDropped_collectorSurvives() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val emissions = collectMessages(repo, "c1")
+            runCurrent()
+
+            // Missing the required trigger.
+            pump.push(compactionProbe(1L, """{"conversation_id":"c1","pre_tokens":1,"post_tokens":1}"""))
+            // A count that is no integer.
+            pump.push(compactionEnvelope("c1", pre = "1.5", id = 2L))
+            // A count that is a string.
+            pump.push(compactionEnvelope("c1", post = "\"many\"", id = 3L))
+            // An object where conversation_id declares a String.
+            pump.push(compactionProbe(4L, """{"conversation_id":{"n":1},"trigger":"manual","pre_tokens":1,"post_tokens":1}"""))
+            // A ts that is no instant.
+            pump.push(compactionEnvelope("c1", ts = "yesterday", id = 5L))
+            runCurrent()
+            assertEquals(emptyList<String>(), threadShape(emissions.last()))
+
+            pump.push(compactionEnvelope("c1", id = 6L))
+            runCurrent()
+            assertEquals(listOf("compaction:24000->3000:true"), threadShape(emissions.last()))
+        }
+
+    // AC #3 (fail-closed): nothing is decoded without the negotiated `interactive` capability.
+    @Test
+    fun compactionBoundary_capabilityGateClosedOrUnrelated_foldsNothing() =
+        runTest {
+            for (capabilities in listOf(emptySet(), setOf("something_else"))) {
+                val pump = FakeSessionPump()
+                val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { capabilities })
+                val emissions = collectMessages(repo, "c1")
+                runCurrent()
+
+                pump.push(compactionEnvelope("c1"))
+                runCurrent()
+
+                assertEquals(emptyList<String>(), threadShape(emissions.last()))
+            }
+        }
+
     // ---- #412: replay-cursor recording on the inbound path --------------------------------------
 
     // AC #2: each interactive structured frame's event_id advances the high-water mark; an
@@ -9370,6 +9526,7 @@ class RemoteConversationRepositoryTest {
                 is ThreadItem.SessionBoundary -> "boundary:${it.reason}"
                 is ThreadItem.UnrecognizedMessage -> "unrecognized:${it.site}"
                 is ThreadItem.Banner -> "banner:${it.level}"
+                is ThreadItem.CompactionBoundary -> "compaction:${it.preTokens}->${it.postTokens}:${it.manual}"
             }
         }
 
@@ -9851,6 +10008,35 @@ class RemoteConversationRepositoryTest {
                     put("stops_turn", stopsTurn)
                 },
         )
+
+    /**
+     * A `compaction_boundary` envelope (#874). [pre] and [post] are raw JSON literals so a test can send
+     * `null`, a negative or a non-integer; the default is the observed manual shape.
+     */
+    private fun compactionEnvelope(
+        conversationId: String,
+        trigger: String = "manual",
+        pre: String = "24000",
+        post: String = "3000",
+        ts: String = TS,
+        id: Long = 1L,
+    ): Envelope =
+        compactionProbe(
+            id = id,
+            ts = ts,
+            payload = """{"conversation_id":"$conversationId","trigger":"$trigger","pre_tokens":$pre,"post_tokens":$post}""",
+        )
+
+    /** A raw `compaction_boundary` envelope carrying [payload] verbatim (#874). */
+    private fun compactionProbe(
+        id: Long,
+        payload: String,
+        ts: String = TS,
+    ): Envelope = Envelope(id = id, type = "compaction_boundary", ts = ts, payload = MobileJson.parseToJsonElement(payload))
+
+    /** Every [ThreadItem.CompactionBoundary] in [thread], in order (#874). */
+    private fun compactionRowsOf(thread: List<ThreadItem>): List<ThreadItem.CompactionBoundary> =
+        thread.filterIsInstance<ThreadItem.CompactionBoundary>()
 
     /** Every [ThreadItem.Banner] in [thread], in order (#873). */
     private fun bannerRowsOf(thread: List<ThreadItem>): List<ThreadItem.Banner> = thread.filterIsInstance<ThreadItem.Banner>()

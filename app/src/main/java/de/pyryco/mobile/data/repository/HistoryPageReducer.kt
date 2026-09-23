@@ -37,6 +37,7 @@ import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.model.ToolDenial
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.BannerPayloadDto
+import de.pyryco.mobile.data.network.CompactionBoundaryPayloadDto
 import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
@@ -54,6 +55,7 @@ import de.pyryco.mobile.data.network.toMessage
 import de.pyryco.mobile.data.network.toRow
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_ASSISTANT_DELTA
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_BANNER
+import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_COMPACTION_BOUNDARY
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_MESSAGE
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_SEND_MESSAGE
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_SESSION_TRANSITION
@@ -399,6 +401,17 @@ private fun List<ThreadItem>.withHistoryEntry(
                         .toRow(occurredAt = entry.timestamp)
                         .let { row -> if (holdsBanner(row)) this else this + row }
                 }
+            // Stamped with the entry's own ts, as the banner arm above, so a divider on both lanes joins on
+            // one identity (#874). Counts and trigger are narrowed by toRow exactly as on the live lane.
+            TYPE_COMPACTION_BOUNDARY ->
+                if (!interactive) {
+                    this
+                } else {
+                    MobileJson
+                        .decodeFromJsonElement<CompactionBoundaryPayloadDto>(entry.payload)
+                        .toRow(occurredAt = entry.timestamp)
+                        .let { row -> if (holdsCompactionBoundary(row)) this else this + row }
+                }
             // Every other stored type — the state frames, the modal pair, the control verbs, and any
             // type a future daemon invents. See this function's KDoc: no row, no failure.
             else -> this
@@ -453,6 +466,7 @@ private fun historyRowId(entryId: Long): String = "history-$entryId"
  *    — see [holdsBoundary] for why that is neither the pair alone nor structural equality.
  *  - a [ThreadItem.UnrecognizedMessage] joins on its [historyRowId]-derived id.
  *  - a [ThreadItem.Banner] joins on its `ts` — see [holdsBanner].
+ *  - a [ThreadItem.CompactionBoundary] joins on its `ts` — see [holdsCompactionBoundary].
  *
  * A duplicate is **skipped, not merged in place.** The only overlap a walk can produce is the narrow
  * ask-versus-answer race the protocol names, and in that window the live lane owns the newer state and
@@ -473,6 +487,7 @@ private fun List<ThreadItem>.alreadyHolds(row: ThreadItem): Boolean =
         is ThreadItem.SessionBoundary -> holdsBoundary(row)
         is ThreadItem.UnrecognizedMessage -> holdsUnrecognized(row.id)
         is ThreadItem.Banner -> holdsBanner(row)
+        is ThreadItem.CompactionBoundary -> holdsCompactionBoundary(row)
     }
 
 /**
@@ -514,3 +529,15 @@ private fun List<ThreadItem>.holdsUnrecognized(id: String): Boolean = any { it i
  */
 internal fun List<ThreadItem>.holdsBanner(banner: ThreadItem.Banner): Boolean =
     any { it is ThreadItem.Banner && it.occurredAt == banner.occurredAt }
+
+/**
+ * Whether this thread already holds a compaction boundary stamped [boundary]'s `ts` (#874) — the protocol's
+ * `(type, ts)` join key, with the type implied by [ThreadItem.CompactionBoundary].
+ *
+ * **One identity, three readers:** this history merge, the live lane's `appendCompactionBoundary`, and the
+ * list key `ThreadRow.listKey` gives the divider, so two dividers this predicate lets into one thread never
+ * share a key. Two *different* boundaries on one instant lose the second — the fail-safe direction, a missing
+ * divider rather than a crashed thread; the daemon stamps one `ts` per compaction.
+ */
+internal fun List<ThreadItem>.holdsCompactionBoundary(boundary: ThreadItem.CompactionBoundary): Boolean =
+    any { it is ThreadItem.CompactionBoundary && it.occurredAt == boundary.occurredAt }
