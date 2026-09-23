@@ -139,6 +139,9 @@ fun ThreadScreen(
     onEffortSelected: (String) -> Unit = {},
     // #650: a PermissionModeOption wire value from the footer's permission menu.
     onPermissionModeSelected: (String) -> Unit = {},
+    // #884: a command row of the footer's Actions menu, wired by MainActivity → vm::onComposerCommand.
+    // Reset session is not a command: it goes through onOverflowEvent(ThreadEvent.NewSession).
+    onComposerCommand: (ComposerAction) -> Unit = {},
     onWorkspaceChipTapped: () -> Unit = {},
     onWorkspacePicked: (String) -> Unit = {},
     onWorkspacePickerDismissed: () -> Unit = {},
@@ -226,7 +229,9 @@ fun ThreadScreen(
     val openMenu =
         openControl
             ?.takeIf { footerControlEnabled(it, state.runConfig) }
-            ?.let { control -> footerMenu(control, state.runConfig)?.let { control to it } }
+            ?.let { control ->
+                footerMenu(control, state.runConfig, state.mutationsSupported, state.absentActions)?.let { control to it }
+            }
     LaunchedEffect(openControl, openMenu == null) {
         if (openMenu == null) openControl = null
     }
@@ -497,10 +502,18 @@ fun ThreadScreen(
                             FooterControl.Model -> onModelSelected(value)
                             FooterControl.Effort -> onEffortSelected(value)
                             FooterControl.Permission -> onPermissionModeSelected(value)
+                            // #884: Reset session is the overflow menu's own path; a command row sends.
+                            FooterControl.Actions ->
+                                when (val action = ComposerAction.fromValue(value)) {
+                                    null -> Unit
+                                    ComposerAction.ResetSession -> onOverflowEvent(ThreadEvent.NewSession)
+                                    else -> onComposerCommand(action)
+                                }
                         }
                         openControl = null
                     },
                     onDismiss = { openControl = null },
+                    actions = menu.actions,
                 )
             }
         }

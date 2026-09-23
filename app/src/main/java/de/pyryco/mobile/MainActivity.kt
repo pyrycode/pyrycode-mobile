@@ -474,6 +474,7 @@ internal fun PyryNavHost(
                     onModelSelected = vm::onModelSelected,
                     onEffortSelected = vm::onEffortSelected,
                     onPermissionModeSelected = vm::onPermissionModeSelected,
+                    onComposerCommand = vm::onComposerCommand,
                     onWorkspaceChipTapped = vm::onWorkspaceChipTapped,
                     onWorkspacePicked = vm::onWorkspacePicked,
                     onWorkspacePickerDismissed = vm::onWorkspacePickerDismissed,
