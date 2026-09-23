@@ -64,13 +64,18 @@ Split out of [Remote conversation repository — the Phase 4 `ConversationReposi
   waiter on a malformed frame and completes it only after the apply — exactly as before the move.
 - **Diagnostic archive transfers** use the same `RelayRequests.nextRequestId` allocator and sole
   inbound collector, with a separate synchronized `DebugBundleTransfer` retained
-  for the connection lifetime. Admission reserves it before sending; chunk/done
+  for the connection lifetime — since #915 the admission logic and the retained transfer live on
+  `MessageCommands` (`data/repository/MessageCommands.kt`), beside the attachment-upload state; the
+  repository's `internal fun requestDebugBundle()` / `endDebugBundle()` are one-line hand-offs, kept
+  `internal` because `RelayRepositoryCoordinator` and `DebugBundleTransferTest` call them on the
+  repository. Admission reserves it before sending; chunk/done
   frames and bundle-correlated errors are offered to it before ordinary handlers.
   A settled attempt remains retained to absorb late frames and prevent unsafe
-  reuse. The collector's `finally` calls `endDebugBundle()` to disable admission
-  permanently and settle any incomplete transfer, then `RelayRequests.failAllPending()`
+  reuse. The collector's `finally` calls `endDebugBundle()` (the repository hand-off) to disable
+  admission permanently and settle any incomplete transfer, then `messageCommands.endAttachmentUploads()`,
+  then `RelayRequests.failAllPending()`
   — the collector's order (debug bundle, then attachment uploads, then the sweep) held unchanged across
-  the #914 move.
+  the #914 and #915 moves.
   Coordinator teardown also calls `endDebugBundle()` synchronously before
   cancellation. See [host API and retry lifetime](relay-debug-bundle-transfer.md).
 - **Dispatcher inherited from the injected scope** (DI uses `Dispatchers.Default`; this is pure CPU/JSON

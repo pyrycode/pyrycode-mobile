@@ -92,11 +92,14 @@ support is explicitly out of this ticket's scope. `CachingConversationRepository
 unchanged via `by delegate`. This keeps the ~20 existing test doubles that override only `sendMessage`
 unaffected.
 
-### `RemoteConversationRepository`
+### `MessageCommands`
 
 New state beside the debug-bundle fields, touched only through `@Synchronized` helpers (never across a
 suspension, mirroring the `DebugBundleTransfer` posture): `uploadLock: Mutex`,
-`activeUpload: AttachmentUploadTransfer?`, `uploadInboundEnded: Boolean`.
+`activeUpload: AttachmentUploadTransfer?`, `uploadInboundEnded: Boolean`. Since #915 this state — and
+`uploadAttachment` itself — lives on `MessageCommands` (`data/repository/MessageCommands.kt`), not
+`RemoteConversationRepository`; the repository declares none of it, and its `override suspend fun
+uploadAttachment` is a one-line hand-off.
 
 `uploadAttachment` checks the size bound first (no lock, no frame if it fails), then takes `uploadLock`
 for the whole call — **one upload per connection at a time**; a second upload's chunks only start after
@@ -105,11 +108,13 @@ the first has settled, so the socket's send queue never carries two uploads' chu
 `AttachmentChunkPlan`, and registers the transfer via `beginUpload` — which returns `false` (→
 `ReconnectRequired`) if the inbound collector has already ended, closing the race between a teardown and
 a start. For each chunk: stop if already settled; record the envelope id with `expectReplyTo` **before**
-sending; a `false` return or a thrown exception from `pump.send` fails the transfer
+sending; a `false` return or a thrown exception from the pump's `send` fails the transfer
 `ReconnectRequired` and stops the loop (no further chunks); `yield()` after each successful send lets the
-inbound collector settle a refusal between chunks and makes the loop cooperatively cancellable. `onInbound`
-routes `routeAttachmentUpload` right after `routeDebugBundle`, both ahead of the general demux `when`.
-The inbound collector's `finally` calls `endAttachmentUploads()`, which sets `uploadInboundEnded` and
+inbound collector settle a refusal between chunks and makes the loop cooperatively cancellable. The
+repository's `onInbound` routes `messageCommands.routeAttachmentUpload` right after
+`messageCommands.routeDebugBundle`, both ahead of the general demux `when`.
+The inbound collector's `finally` calls `messageCommands.endAttachmentUploads()`, which sets
+`uploadInboundEnded` and
 fails any still-active transfer `ReconnectRequired` — the daemon discards a partial upload with its
 connection, so a retry after reconnecting resends every chunk from scratch. No upload timeout: a daemon
 that never answers is ended by the connection's own liveness teardown, the same choice

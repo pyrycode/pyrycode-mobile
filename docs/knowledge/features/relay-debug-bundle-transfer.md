@@ -45,7 +45,10 @@ same-connection retry; a later call on that still-open connection returns
 request. Retry values describe availability, not automatic actions.
 
 The repository's sole inbound consumer routes bundle frames and errors whose
-`in_reply_to` matches the bundle request to the transfer. Unrelated errors and
+`in_reply_to` matches the bundle request to the transfer, via `MessageCommands` (#915,
+`data/repository/MessageCommands.kt`), which now owns the retained `DebugBundleTransfer` and its
+admission; the repository's `internal requestDebugBundle()` / `endDebugBundle()` stay as one-line
+hand-offs for this registry and for `DebugBundleTransferTest`. Unrelated errors and
 ordinary events retain their handlers, including after a malformed bundle frame.
 Send failure, correlated refusal, invalid input, disconnect, inbound termination
 or host removal settle a receiving transfer once and wipe/release partial chunks.
