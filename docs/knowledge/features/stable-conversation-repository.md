@@ -185,6 +185,22 @@ than an `IllegalStateException` a caller would need a second catch clause for. A
 reports `TooLarge`, not `ReconnectRequired`, even with nothing live — the local bound is checked before
 connection state, matching the live repository's own order. See [Attachment upload](attachment-upload.md).
 
+### Retrieval fetch — snapshot-or-value, no local bound to check (#899)
+
+`fetchAttachment` follows the same snapshot-or-result shape as `uploadAttachment`, one level simpler:
+there is no local bound to check against the disconnected case, since a retrieval's size claim only
+exists once a chunk has arrived.
+
+```kotlin
+override suspend fun fetchAttachment(conversationId: String, attachmentId: String): AttachmentFetchResult =
+    currentRepository.value?.fetchAttachment(conversationId, attachmentId) ?: AttachmentRetrievalResult.Unavailable
+```
+
+With no live repository this returns `Unavailable` — the same retryable `Failed` value a mid-stream
+drop produces, not an exception. `retrieveAttachment` itself has no override here: screens read through
+the host-bound `CachingConversationRepository`, not through this facade directly, so this facade only
+needs the connection-level member. See [Attachment retrieval](attachment-retrieval.md).
+
 ### Capability reads — answer `false`, never throw (`mutationsSupported`, #507)
 
 `mutationsSupported` is a third delegation posture, distinct from both the cold-read empty projection and
@@ -353,4 +369,9 @@ pass-through. The eight tests map to the ACs, the key one being
 - Delegated one-shot: `uploadAttachment` ([#829](https://github.com/pyrycode/pyrycode-mobile/issues/829)) —
   the sole one-shot with a **snapshot-or-result**, not snapshot-or-throw, no-connection case. See
   [Attachment upload](attachment-upload.md).
+- Delegated one-shot: `fetchAttachment` ([#899](https://github.com/pyrycode/pyrycode-mobile/issues/899)) —
+  the same snapshot-or-result shape as `uploadAttachment`, with no local bound to check; no-connection
+  case is `AttachmentRetrievalResult.Unavailable`. `retrieveAttachment` has no override on this facade —
+  screens read through the host-bound `CachingConversationRepository` instead. See [Attachment
+  retrieval](attachment-retrieval.md).
 - DI: [Dependency injection](dependency-injection.md).
