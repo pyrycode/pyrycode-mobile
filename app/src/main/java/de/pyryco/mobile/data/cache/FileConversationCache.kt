@@ -44,7 +44,8 @@ import java.security.MessageDigest
  * ### Layout
  *
  * `<root>/<sha256hex(serverId)>/conversations.json`, and one thread document per conversation at
- * `<root>/<sha256hex(serverId)>/threads/<sha256hex(conversationId)>.json` (#797). A server id and a
+ * `<root>/<sha256hex(serverId)>/threads/<sha256hex(conversationId)>.json` (#797), and the host's read
+ * positions at `<root>/<sha256hex(serverId)>/read-positions.json` (#877). A server id and a
  * conversation id are both daemon-supplied and opaque, so neither is pasted into a path: each path
  * component is the hex SHA-256 of the id's UTF-8 bytes, which means no `/`, no `..`, no NUL and no
  * reserved name can reach a path component, and no id enters the filesystem namespace at all. A
@@ -103,6 +104,16 @@ class FileConversationCache(
             writeAtomically(threadDocumentFor(serverId, conversationId), MobileJson.encodeToString(record))
         }
 
+    override suspend fun readReadPositions(serverId: String): Map<String, ReadPosition> =
+        withContext(ioDispatcher) {
+            mutex.withLock { readPositionsOrEmpty(serverId, "read_positions") }
+        }
+
+    override suspend fun writeReadPositions(
+        serverId: String,
+        positions: Map<String, ReadPosition>,
+    ): Result<Unit> = mutate("write_positions") { storePositions(serverId, positions) }
+
     override suspend fun removeHost(serverId: String): Result<Unit> =
         mutate("remove_host") {
             val directory = hostDirectory(serverId)
@@ -131,6 +142,10 @@ class FileConversationCache(
             val thread = threadDocumentFor(serverId, conversationId)
             if (!thread.delete() && thread.exists()) {
                 throw IOException("conversation cache thread not removed")
+            }
+            // #877: the same read-modify-write rule as the metadata document above.
+            if (positionsDocumentFor(serverId).isFile) {
+                storePositions(serverId, readPositionsOrEmpty(serverId, "remove_conversation") - conversationId)
             }
         }
 
@@ -189,6 +204,43 @@ class FileConversationCache(
         return rows
     }
 
+    private fun readPositionsOrEmpty(
+        serverId: String,
+        operation: String,
+    ): Map<String, ReadPosition> =
+        try {
+            decodePositions(positionsDocumentFor(serverId))
+        } catch (error: Exception) {
+            val code = failureCode(error) ?: throw error
+            RelayLog.d { "conversation_cache operation=$operation status=failed code=$code" }
+            emptyMap()
+        }
+
+    /** A repeated conversation id rejects the document, as [decode] does, rather than picking a winner. */
+    private fun decodePositions(document: File): Map<String, ReadPosition> {
+        if (!document.isFile) return emptyMap()
+        val stored = MobileJson.decodeFromString<CachedReadPositions>(document.readText())
+        require(stored.version == VERSION) { "unsupported conversation cache version" }
+        require(stored.positions.distinctBy { it.conversationId }.size == stored.positions.size) {
+            "duplicate read position identity"
+        }
+        return stored.positions.associate { it.conversationId to ReadPosition(it.completedTurnId, it.readTurnId) }
+    }
+
+    /** An array of entries, so a daemon-authored id is a JSON value on disk and never an object key. */
+    private fun storePositions(
+        serverId: String,
+        positions: Map<String, ReadPosition>,
+    ) = writeAtomically(
+        positionsDocumentFor(serverId),
+        MobileJson.encodeToString(
+            CachedReadPositions(
+                VERSION,
+                positions.map { (id, position) -> CachedReadPosition(id, position.completedTurnId, position.readTurnId) },
+            ),
+        ),
+    )
+
     /** Temp file plus atomic move: process death mid-write leaves the previous document or the new one. */
     private fun writeAtomically(
         document: File,
@@ -235,6 +287,8 @@ class FileConversationCache(
 
     private fun documentFor(serverId: String) = File(hostDirectory(serverId), DOCUMENT_NAME)
 
+    private fun positionsDocumentFor(serverId: String) = File(hostDirectory(serverId), POSITIONS_DOCUMENT_NAME)
+
     private fun hostDirectory(serverId: String) = File(root, sha256Hex(serverId))
 
     private fun threadDocumentFor(
@@ -251,9 +305,24 @@ class FileConversationCache(
     private companion object {
         const val DOCUMENT_NAME = "conversations.json"
         const val THREADS_DIRECTORY = "threads"
+        const val POSITIONS_DOCUMENT_NAME = "read-positions.json"
         const val VERSION = 1
     }
 }
+
+/** The read positions of one host (#877), versioned like [CachedConversations]. */
+@Serializable
+private data class CachedReadPositions(
+    val version: Int,
+    val positions: List<CachedReadPosition>,
+)
+
+@Serializable
+private data class CachedReadPosition(
+    val conversationId: String,
+    val completedTurnId: String,
+    val readTurnId: String? = null,
+)
 
 /** Versioned envelope, so a future shape change is rejected as unreadable rather than misread. */
 @Serializable

@@ -140,7 +140,7 @@ would hold even on a hypothetical direct `repo1→repo2` emission.
 The app binds this facade to the registry's selected-host projection. Its empty
 fallback is unsuitable as input to a retained host list cache: it conflates
 disconnect with an actual empty reply. The separate
-[host snapshot source](dependency-injection.md#snapshot-lifetime) observes each
+[host snapshot source](dependency-injection-host-conversation-source.md#snapshot-lifetime) observes each
 host's coordinator directly, retains rows through null repositories and reconnect
 silence, and replaces them only on an actual list emission. This facade's
 compatibility behavior remains unchanged.

@@ -161,7 +161,7 @@ distinction from the tree's own blank at all — see the next section.
   last loaded rather than an empty node beneath its row. The seed never writes `connectionStatus`, so
   `TreeHostRow` keeps rendering that host's real disconnected status — this screen needed no change and
   gained no second indicator; see
-  [dependency injection § Restore from the on-disk cache](dependency-injection.md#restore-from-the-on-disk-cache-796)
+  [dependency injection § Restore from the on-disk cache](dependency-injection-host-conversation-source.md#restore-from-the-on-disk-cache-796)
   for the write/seed/race mechanism.
 - **Fold state is never pruned against an incoming snapshot.** A host or workspace that momentarily
   disappears during a reconnect comes back exactly as folded as the operator left it — see

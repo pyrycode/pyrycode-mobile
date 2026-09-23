@@ -210,7 +210,7 @@ under the empty id's namespace.
 
 `hostConversationModule(useRelay, decorateRepository)` passes `cache = if (useRelay) get() else
 null` into `ThreadDestinationFactory`'s constructor — the same `useRelay` gate
-[`HostConversationSource.relay(get(), cache = get())`](dependency-injection.md#restore-from-the-on-disk-cache-796)
+[`HostConversationSource.relay(get(), cache = get())`](dependency-injection-host-conversation-source.md#restore-from-the-on-disk-cache-796)
 already follows for the host-list restore. No new Koin binding was added for this ticket; both
 consumers resolve the single `ConversationCache` #796 bound.
 

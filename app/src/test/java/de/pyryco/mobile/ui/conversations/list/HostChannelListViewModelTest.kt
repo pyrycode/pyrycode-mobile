@@ -14,6 +14,7 @@ import de.pyryco.mobile.data.crypto.PairedServerStoreException
 import de.pyryco.mobile.data.model.ConnectionStatus
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.DEFAULT_SCRATCH_CWD
+import de.pyryco.mobile.data.model.LiveSessionEvent
 import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
@@ -26,6 +27,7 @@ import de.pyryco.mobile.data.repository.ConversationRepository
 import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.data.repository.ThreadItem
+import de.pyryco.mobile.di.ConversationAttention
 import de.pyryco.mobile.di.HostConversationConnection
 import de.pyryco.mobile.di.HostConversationSource
 import de.pyryco.mobile.di.KoinHostSources
@@ -1532,6 +1534,42 @@ class HostChannelListViewModelTest {
      * previous read-only stub could not serve. Every other test here supplies a static flow and writes
      * nothing, so they read exactly what they did before.
      */
+    @Test
+    fun everyRowCarriesItsOwnHostsAttentionAndTappingClearsOnlyThatHost() =
+        runTest(dispatcher) {
+            val f = fixture()
+            backgroundScope.launch(dispatcher) { f.vm.hostState.collect {} }
+            f.a.repo.rows.value = listOf(row("chat"), row("other"))
+            f.b.repo.rows.value = listOf(row("chat"))
+            runCurrent()
+            val previews =
+                f.vm.hostState.value.hosts[0]
+                    .recentChats
+
+            f.a.events.emit(LiveSessionEvent.TurnEnd("chat", "turn-1", "end_turn"))
+            f.b.events.emit(LiveSessionEvent.TurnEnd("chat", "turn-1", "end_turn"))
+            runCurrent()
+            val (hostA, hostB) = f.vm.hostState.value.hosts
+            assertEquals(ConversationAttention.Unread, hostA.attentionFor("chat"))
+            assertEquals(ConversationAttention.Idle, hostA.attentionFor("other"))
+            assertEquals(ConversationAttention.Unread, hostB.attentionFor("chat"))
+            // An attention change is not a new snapshot, so the rows and their previews are untouched.
+            assertSame(previews, hostA.recentChats)
+
+            f.vm.onHostRowTapped(HostConversationTarget("Host", "chat"))
+            runCurrent()
+            assertEquals(
+                ConversationAttention.Idle,
+                f.vm.hostState.value.hosts[0]
+                    .attentionFor("chat"),
+            )
+            assertEquals(
+                ConversationAttention.Unread,
+                f.vm.hostState.value.hosts[1]
+                    .attentionFor("chat"),
+            )
+        }
+
     private fun preferences(values: Flow<Preferences>): AppPreferences {
         val written = MutableStateFlow<Preferences?>(null)
         return AppPreferences(
@@ -1603,7 +1641,8 @@ class HostChannelListViewModelTest {
         var available = true
         val live = MutableStateFlow<ConversationRepository?>(repo)
         val status = MutableStateFlow(ConnectionStatus(RelayLinkStatus.Connected, PyrycodeLinkStatus.Connected))
-        val entry = HostConversationConnection(id, "Local $id", live, status)
+        val events = MutableSharedFlow<LiveSessionEvent>(extraBufferCapacity = 16)
+        val entry = HostConversationConnection(id, "Local $id", live, status, events)
     }
 
     /** In-memory paired-server store: the two reads and the one write this screen makes, plus gates. */
