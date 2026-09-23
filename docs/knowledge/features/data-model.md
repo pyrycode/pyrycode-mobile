@@ -70,7 +70,7 @@ data class Message(
 
 enum class Role { User, Assistant, Tool }
 
-enum class ToolCallStatus { Running, Done, Failed }   // #387
+enum class ToolCallStatus { Running, Done, Failed, Denied }   // Denied: #811
 
 data class ToolCall(
     val toolName: String,
@@ -79,6 +79,8 @@ data class ToolCall(
     val status: ToolCallStatus = ToolCallStatus.Done,   // #387
     val inputFields: Map<String, String> = emptyMap(),  // #810
     val parentToolUseId: String = "",                   // #810
+    val denial: ToolDenial? = null,                     // #811
+    val elapsedSeconds: Int? = null,                    // #812
 )
 ```
 
@@ -89,6 +91,10 @@ data class ToolCall(
 `ToolCallStatus` (#387) is the live-call lifecycle: a `tool_use` event opens the row as `Running`, the correlated `tool_result` updates it in place to `Done` (or `Failed` on error). It is a **trailing defaulted** field on `ToolCall` (`status = ToolCallStatus.Done`) — the same cascade-avoidance lever as `toolCall` itself: `Done` is the pre-existing semantics (every prior `ToolCall(...)` construction is a *finished* call with output), so the model gains a state machine with zero fixture cascade and `ToolCall(a,b,c) == ToolCall(a,b,c, status=Done)` equalities stay green. The correlation that drives it (by `toolUseId`, tolerant of a misbehaving stream) lives in the repository, not the model — see [`live-tool-call.md`](live-tool-call.md) and `../codebase/387.md`. The static-payload renderer is [`ToolCallRow`](tool-call-row.md); the `status` affordance (running/done/failed visual) is the separate UI slice #388.
 
 `inputFields` and `parentToolUseId` (#810) are the tool call's own input fields and the id of the `Agent`/`Task` call that spawned it, both carried **verbatim** from the wire and both **trailing defaulted** (`emptyMap()` / `""`) for the same zero-fixture-cascade reason as `status`. `input` stays the server's one-line précis; `inputFields` is the input's own top-level string fields (e.g. an `Edit`'s `file_path`), so a future renderer can show what a call acts on without parsing the précis. `parentToolUseId` is `""` for a main-thread call; the parent join (matching it against another row's `toolUseId` within the same conversation) is a rendering concern, not modelled here — see [`live-tool-call.md`](live-tool-call.md#tool_use-input-fields-and-parent_tool_use_id-810).
+
+`denial` (#811) is non-null only on a `Denied` row, carrying claude's own account of the refusal (`ToolDenial`: `toolName`, `decisionReasonType`, `decisionReason`, `message`, `truncatedFields`, `droppedFields`), every field a verbatim copy of the `tool_denied` frame. It is not persisted to the disk cache — a `Denied` row restored from cache carries `denial = null`. See [`live-tool-call.md` § Denied](live-tool-call.md#denied-811).
+
+`elapsedSeconds` (#812) is claude's latest `tool_progress` reading, retained **verbatim** — zero, negative and non-monotonic values included, no clamping or subtraction. It is non-null only while `status == Running`: closing the row (`Done`, `Failed`, or `Denied`) clears it, and a `tool_progress` for a row that is not `Running` is ignored. `null` does not mean the call is stalled — a call can finish before claude's first heartbeat, and a later frame can be lost independently of the lifecycle frames — so absence is never timing evidence. Formatting and display are [#658](https://github.com/pyrycode/pyrycode-mobile/issues/658)'s; see [`live-tool-call.md` § Progress](live-tool-call.md#progress-812).
 
 ## Why `kotlinx.datetime.Instant`
 
@@ -111,7 +117,7 @@ CLAUDE.md's "Don't" section names Compose Multiplatform as a walk-back trigger. 
 ## Related
 
 - Ticket notes: `../codebase/2.md` (skeleton), `../codebase/191.md` (`Message.toolCall: ToolCall? = null` + new `ToolCall(toolName, input, output)` type), `../codebase/387.md` (`ToolCallStatus` + the `status` field — live tool-call correlation)
-- Feature: [`live-tool-call.md`](live-tool-call.md) (#387 — the correlation + status model)
+- Feature: [`live-tool-call.md`](live-tool-call.md) (#387 — the correlation + status model; #811 — `Denied` + `ToolDenial`; #812 — `elapsedSeconds`)
 - Spec: `docs/specs/architecture/2-conversation-session-message-data-classes.md`, `docs/specs/architecture/191-tool-message-structured-payload.md`, `docs/specs/architecture/720-retain-workspace-labels.md` (`workspaceLabel` retention)
 - Decision: `../decisions/0001-kotlinx-datetime-for-data-layer.md`
 - Downstream: `conversation-repository.md` (#3 contract — also propagates `toolCall` through `SeedMessage`/`seedMsg(...)` since #191), conversation list + thread UI (the eventual `ToolCallRow` consumer in #131).
