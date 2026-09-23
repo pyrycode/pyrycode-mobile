@@ -90,6 +90,18 @@ A new status event takes the same shape: a new `…Projection.kt` holding its st
 plus one field, one arm and one override in the repository. The split exists so that sibling tickets
 adding events in parallel stop editing the same lines of one very large file.
 
+**The thread store followed the same split (#912), as `ThreadProjection`.** It isn't a status event —
+it's the thread itself: the ordered per-conversation rows, the minted-id ledger (#781) and the
+pending-drops ledger (#859), plus every write that folds a thread row (`appendMessages`,
+`appendSessionBoundary`, `applyUnrecognizedMessage`, `applyBanner`, `applyCompactionBoundary`,
+`applyToolUse`/`applyToolResult`/`applyToolDenied`/`applyToolProgress`,
+`applyAssistantDelta`/`finalizeAssistantTurn`, `mergeHistoryPage` and `remove`). The repository still owns
+the `interactive` gate in each `onInbound` arm and still owns `sendMessage`, `dropQueuedMessage` and
+`requestHistory`, which now record into the projection instead of into a repository field;
+`observeMessages` fans out through `threadProjection.observe(conversationId)`. See
+[Remote conversation repository — reads and the thread store](remote-conversation-repository-reads-and-thread-store.md)
+for the store itself.
+
 ## The `SessionPump` consumed contract
 
 A minimal **consumer-defined** interface — the data layer's view of the Noise session pump:

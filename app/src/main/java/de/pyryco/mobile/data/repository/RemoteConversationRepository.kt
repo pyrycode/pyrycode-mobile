@@ -10,17 +10,14 @@ import de.pyryco.mobile.data.model.QuestionAnswer
 import de.pyryco.mobile.data.model.QuestionBatch
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.Session
-import de.pyryco.mobile.data.model.ToolCallStatus
 import de.pyryco.mobile.data.model.withDismissed
 import de.pyryco.mobile.data.model.withShown
 import de.pyryco.mobile.data.network.ArchiveConversationPayloadDto
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.AttachmentChunkPlan
 import de.pyryco.mobile.data.network.BackfillSincePayloadDto
-import de.pyryco.mobile.data.network.BannerPayloadDto
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.ChangeWorkspacePayloadDto
-import de.pyryco.mobile.data.network.CompactionBoundaryPayloadDto
 import de.pyryco.mobile.data.network.ConversationDeletedPayloadDto
 import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.ConversationsPayload
@@ -63,13 +60,10 @@ import de.pyryco.mobile.data.network.SendMessagePayloadDto
 import de.pyryco.mobile.data.network.SessionSettingsUpdatedPayloadDto
 import de.pyryco.mobile.data.network.SessionTransitionPayloadDto
 import de.pyryco.mobile.data.network.SetSessionSettingsPayloadDto
-import de.pyryco.mobile.data.network.ToolDeniedPayloadDto
-import de.pyryco.mobile.data.network.ToolProgressPayloadDto
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
 import de.pyryco.mobile.data.network.ToolUsePayloadDto
 import de.pyryco.mobile.data.network.TurnEndPayloadDto
 import de.pyryco.mobile.data.network.TurnStatePayloadDto
-import de.pyryco.mobile.data.network.UnrecognizedMessagePayloadDto
 import de.pyryco.mobile.data.network.WorkspaceFolderCreatedPayloadDto
 import de.pyryco.mobile.data.network.WorkspaceUpdatedPayloadDto
 import de.pyryco.mobile.data.network.setSystemPromptPayload
@@ -77,12 +71,10 @@ import de.pyryco.mobile.data.network.toBatch
 import de.pyryco.mobile.data.network.toBoundary
 import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.network.toConversations
-import de.pyryco.mobile.data.network.toDenial
 import de.pyryco.mobile.data.network.toEvent
 import de.pyryco.mobile.data.network.toHistoryPage
 import de.pyryco.mobile.data.network.toMenu
 import de.pyryco.mobile.data.network.toMessage
-import de.pyryco.mobile.data.network.toRow
 import de.pyryco.mobile.data.network.toSessionSettings
 import de.pyryco.mobile.data.network.toSystemPromptReading
 import kotlinx.coroutines.CancellationException
@@ -231,20 +223,6 @@ class RemoteConversationRepository(
     private val lastMessages = MutableStateFlow<Map<String, Message>>(emptyMap())
 
     /**
-     * `conversationId -> ordered thread rows` ([ThreadItem.MessageItem] + [ThreadItem.SessionBoundary])
-     * for the conversation — backfilled history (`message_chunk`) plus live `message`s and structured
-     * turns, deduped by `message_id`, interleaved in wire/arrival order with `session_transition`
-     * boundaries (#313, #336). Written by the single [init] inbound collector **and** by [sendMessage]'s
-     * confirmed insert (#346) — two writers, but every write goes through the atomic
-     * [appendMessages] / [appendSessionBoundary] / [MutableStateFlow.update] fold, so concurrent updates
-     * retry-merge correctly. [observeMessages] fans out from it. Message rows are order-preserving: first
-     * insertion fixes a message's position, a repeat `message_id` updates it in place (the dedup rule);
-     * boundaries append in arrival order, skipping one the thread already holds ([holdsBoundary]). The thread is
-     * complete-on-first-emission once backfill arrives and live rows append after.
-     */
-    private val threadByConversation = MutableStateFlow<Map<String, List<ThreadItem>>>(emptyMap())
-
-    /**
      * The per-conversation status readings, one small projection per wire event: stall (#395), queue
      * (#460), API retry (#593), compaction (#596), usage limit (#802), thinking progress (#801) and reset
      * phase (#871). Each
@@ -258,6 +236,13 @@ class RemoteConversationRepository(
     private val usageLimitProjection = UsageLimitProjection(now)
     private val thinkingProgressProjection = ThinkingProgressProjection()
     private val resettingProjection = ResettingProjection()
+
+    /**
+     * The thread of every conversation (#912): the thread store, the minted-id ledger and the pending drops,
+     * with every write that folds a thread row. [onInbound] hands it the thread frames behind the
+     * `interactive` gate, and [sendMessage], [dropQueuedMessage] and [requestHistory] record into it.
+     */
+    private val threadProjection = ThreadProjection()
 
     /**
      * `conversationId -> the model menu this connection heard for it` (#791) — the identifiers, labels,
@@ -316,42 +301,6 @@ class RemoteConversationRepository(
      * structurally, which this ticket must not re-open by correlating what it must not.
      */
     private val modelListAsks = ConcurrentHashMap<Long, String>()
-
-    /**
-     * `conversationId -> the message ids this device minted and echoed into the thread` (#781) — the
-     * ledger that makes a queued item's [QueuedMessage.messageId] safe to act on. Written by
-     * [sendMessage] after its ack (beside the confirmed insert) and consumed when a drop settles
-     * ([settleDrops], #859); both writes are atomic [MutableStateFlow.update]s, the two-writer posture
-     * [appendMessages] already relies on. Observed by nothing, so it publishes no flow.
-     *
-     * **This exists because the thread projection is not a valid correlation store.** `queue_state`
-     * fans out to every interactive connection, so items routinely carry ids another paired device
-     * minted; the thread meanwhile also holds rows folded from history pages (#623/#778), which can
-     * carry those same foreign ids. `message_id` is client-chosen with uniqueness enforced **nowhere**,
-     * so matching a queued item against the projection alone would let a colliding id delete a row this
-     * phone never sent — which `docs/protocol-mobile.md` § Queue (v2) forbids in as many words ("a
-     * client merges an item only against echoes it minted itself"). Membership here *is* that rule.
-     *
-     * An id is **removed when consumed**, which is also what makes the legal duplicate-`message_id`
-     * case behave: dropping a second item carrying an already-spent id finds nothing and removes
-     * nothing, instead of taking an unrelated row with it. Connection-scoped and in-memory like every
-     * sibling projection (#351) — it holds one minted id per successful send, minus every consumed
-     * drop, and dies with the connection.
-     */
-    private val mintedMessageIds = MutableStateFlow<Map<String, Set<String>>>(emptyMap())
-
-    /**
-     * `conversationId -> (queued_msg_id -> echo message id)` for every drop this device sent and the
-     * daemon has not yet confirmed (#859). The daemon never replies to `dequeue_message`; its only
-     * confirmation is the next `queue_state` for the conversation lacking the item, which [settleDrops]
-     * reads. Keyed on the `queued_msg_id` this device asked to drop, so an item that leaves the backlog
-     * without a request from here (a drain, another device's drop) has no entry and keeps its echo.
-     *
-     * Two writers — [dropQueuedMessage] and the inbound collector through [settleDrops] — both through
-     * atomic [MutableStateFlow.update]s. Connection-scoped and in-memory like [mintedMessageIds]: a drop
-     * whose confirmation never arrives before the connection closes leaves its echo, the safe side.
-     */
-    private val pendingDrops = MutableStateFlow<Map<String, Map<Long, String>>>(emptyMap())
 
     /**
      * `conversationId -> settings-read ordinal` (#590) — the **refresh trigger** for
@@ -434,30 +383,6 @@ class RemoteConversationRepository(
 
     @Synchronized
     private fun routeAttachmentUpload(envelope: Envelope): Boolean = activeUpload?.accept(envelope) == true
-
-    /**
-     * Source of the client-owned [ThreadItem.UnrecognizedMessage.id] (#609). The `unrecognized_message`
-     * wire frame carries neither a message id nor a `turn_id`, yet the thread's `LazyColumn` keys on
-     * `"unrecognized:<id>"` — so a duplicate crashes the thread, and the id cannot be derived from the
-     * payload or the arrival instant (two byte-identical frames stamped in the same instant would
-     * collide, which is exactly the repeat case the fold must keep distinguishable).
-     *
-     * A per-repository monotonic counter is sufficient *structurally*, not incidentally: ids are unique
-     * within this instance (hence within any one thread), the repository is connection-scoped (#351) so
-     * each connection gets a fresh instance, and [StableConversationRepository]'s `flatMapLatest` drops
-     * the previous connection's projection outright on reconnect — no reader ever observes rows from two
-     * instances merged, so a restarted counter cannot collide with a prior connection's ids.
-     *
-     * The value carries **no wire data** — no `conversation_id`, no payload hash — keeping [QueuedMessage.id]'s
-     * posture: a monotonic ordinal, not a secret, never compared against anything attacker-controlled
-     * ([AtomicLong], deliberately not `SecureRandom`). [AtomicLong] mirrors [requestId] for consistency
-     * rather than because concurrency demands it; the inbound demux is a single collector.
-     *
-     * **Ordinals may be skipped** — a frame that decodes structurally but is dropped by the unknown-`site`
-     * mapper still consumed its `incrementAndGet()`. That is intentional: the invariant is *uniqueness*,
-     * not density.
-     */
-    private val unrecognizedRowId = AtomicLong(0)
 
     /**
      * Request *envelope* id (`requestId.incrementAndGet()`, **not** the payload `message_id`) ->
@@ -597,7 +522,7 @@ class RemoteConversationRepository(
                 // arrival order, deduped by message_id. The thread is a distinct projection from
                 // the last-message preview.
                 recordLastMessage(conversationId, message)
-                appendMessages(listOf(conversationId to message))
+                threadProjection.appendMessages(listOf(conversationId to message))
             }
             TYPE_MESSAGE_CHUNK -> {
                 // The `backfill_since` response (#313): a batch of finished messages, each carrying
@@ -613,7 +538,7 @@ class RemoteConversationRepository(
                     } catch (e: IllegalArgumentException) {
                         return
                     }
-                appendMessages(rows)
+                threadProjection.appendMessages(rows)
             }
             TYPE_CONVERSATION_UPDATED -> {
                 // TWO kinds of producer, and the protocol requires a client to accept both (#721).
@@ -737,7 +662,7 @@ class RemoteConversationRepository(
                         // is a no-op, so clearing rides every live event harmlessly. Symmetric with the
                         // onset arm below — both are inside the same `interactive` gate.
                         stallProjection.clear(event.conversationId)
-                        // Fold the structured turn into the same `threadByConversation` the live
+                        // Fold the structured turn into the same thread store ([ThreadProjection]) the live
                         // `message` arm writes, so every row interleaves by arrival order (AC #4): a
                         // `tool_use`/`tool_result` pair into one evolving tool row (#387), and the
                         // `assistant_delta` stream into one streaming assistant row that `turn_end`
@@ -745,11 +670,11 @@ class RemoteConversationRepository(
                         // indicator reads it off the live-event stream below (#406) — and every event
                         // is surfaced on that stream regardless of whether it also folds a row.
                         when (event) {
-                            is LiveSessionEvent.AssistantDelta -> applyAssistantDelta(event)
-                            is LiveSessionEvent.ToolUse -> applyToolUse(event)
-                            is LiveSessionEvent.ToolResult -> applyToolResult(event)
+                            is LiveSessionEvent.AssistantDelta -> threadProjection.applyAssistantDelta(event)
+                            is LiveSessionEvent.ToolUse -> threadProjection.applyToolUse(event)
+                            is LiveSessionEvent.ToolResult -> threadProjection.applyToolResult(event)
                             is LiveSessionEvent.TurnEnd -> {
-                                finalizeAssistantTurn(event)
+                                threadProjection.finalizeAssistantTurn(event)
                                 // First of the two clears for #801's thinking-progress reading, which has
                                 // no falling edge of its own: the turn whose reasoning it described has
                                 // ended, so a retained reading would report the depth of a finished think.
@@ -768,17 +693,17 @@ class RemoteConversationRepository(
                 }
             }
             TYPE_TOOL_DENIED -> {
-                // A refused tool call (#811): see [applyToolDenied]. Same `interactive` gate as the
+                // A refused tool call (#811): see [ThreadProjection.applyToolDenied]. Same `interactive` gate as the
                 // structured-stream arm above, but no live event — it folds into the thread store only.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    applyToolDenied(envelope)
+                    threadProjection.applyToolDenied(envelope)
                 }
             }
             TYPE_TOOL_PROGRESS -> {
-                // claude's elapsed reading for an open call (#812): see [applyToolProgress]. The same gate and
+                // claude's elapsed reading for an open call (#812): see [ThreadProjection.applyToolProgress]. The same gate and
                 // thread-store-only shape as `tool_denied`; it clears no stall and emits no live event.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    applyToolProgress(envelope)
+                    threadProjection.applyToolProgress(envelope)
                 }
             }
             TYPE_STALL -> {
@@ -793,7 +718,7 @@ class RemoteConversationRepository(
                     queueProjection.apply(envelope)
                     // A snapshot is the daemon's only confirmation of a drop (#859). Settling a
                     // conversation whose backlog did not change is a no-op, so settle every one pending.
-                    pendingDrops.value.keys.forEach(::settleDrops)
+                    threadProjection.settleDrops(queueProjection)
                 }
             }
             TYPE_MODEL_LIST -> {
@@ -882,7 +807,7 @@ class RemoteConversationRepository(
                 // conversation_id / session ids / workspace_cwd are sensitive; nothing here logs the payload.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     decodeSessionTransition(envelope)?.let { (conversationId, boundary) ->
-                        appendSessionBoundary(conversationId, boundary)
+                        threadProjection.appendSessionBoundary(conversationId, boundary)
                         updateCurrentSessionId(conversationId, boundary.newSessionId)
                         // Third write since #590: the session this conversation's settings describe has
                         // been replaced, so every reading of it is stale. Bump the trigger rather than
@@ -928,9 +853,7 @@ class RemoteConversationRepository(
                 // payload field: `raw`/`message_type` are the most untrusted strings the thread holds, and a
                 // logged conversation_id is a cross-conversation correlation leak.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    decodeUnrecognizedMessage(envelope)?.let { (conversationId, row) ->
-                        appendUnrecognizedMessage(conversationId, row)
-                    }
+                    threadProjection.applyUnrecognizedMessage(envelope)
                 }
             }
             TYPE_BANNER -> {
@@ -943,7 +866,7 @@ class RemoteConversationRepository(
                 // report, and acting on it would hand claude a self-service turn abort. Nothing here logs
                 // any payload field: `text` is claude-authored prose.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    decodeBanner(envelope)?.let { (conversationId, row) -> appendBanner(conversationId, row) }
+                    threadProjection.applyBanner(envelope)
                 }
             }
             TYPE_COMPACTION_BOUNDARY -> {
@@ -954,7 +877,7 @@ class RemoteConversationRepository(
                 // neighbour: `compacting` alone drives the status indicator, so this arm clears no compacting
                 // state, emits no liveSessionEvents, and opens, closes or alters no turn. Nothing logged.
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
-                    decodeCompactionBoundary(envelope)?.let { (conversationId, row) -> appendCompactionBoundary(conversationId, row) }
+                    threadProjection.applyCompactionBoundary(envelope)
                 }
             }
             TYPE_MODAL_SHOWN, TYPE_MODAL_DISMISSED -> {
@@ -1101,67 +1024,6 @@ class RemoteConversationRepository(
         try {
             val dto = MobileJson.decodeFromJsonElement<SessionTransitionPayloadDto>(envelope.payload)
             dto.toBoundary()?.let { dto.conversationId to it }
-        } catch (e: IllegalArgumentException) {
-            null
-        }
-
-    /**
-     * Decode one v2 `unrecognized_message` envelope (#609) to its routing [conversationId] and the mapped
-     * [ThreadItem.UnrecognizedMessage], or **null** when it cannot be folded. Decodes the untrusted
-     * [Envelope.payload] through the single configured [MobileJson] and maps via `toRow()`. The whole body
-     * is one `try`/`catch (IllegalArgumentException)` ([kotlinx.serialization.SerializationException] ⊂
-     * [IllegalArgumentException]), so a malformed payload — a missing or wrong-typed required field —
-     * yields `null`, dropping the one envelope while the lone inbound collector survives (AC #4). A
-     * **`site` outside the closed set** is a distinct path: `toRow()` returns `null` (no throw), so the one
-     * envelope drops the same way. Mirrors [decodeSessionTransition]'s drop idiom.
-     *
-     * This is the sole boundary at which the untrusted payload becomes a typed value, and the DTO never
-     * escapes it — callers hold only the domain type. The two **client-owned** fields are stamped here,
-     * not in the mapper: the row id from [unrecognizedRowId] (see its KDoc for why a monotonic counter is
-     * structurally sufficient) and the arrival instant from [Clock.System.now], the established
-     * locally-assembled-row clock ([applyToolUse]) — the wire carries no timestamp. The `"unrecognized-"`
-     * prefix is for debuggability only; it is **not** load-bearing for collision-avoidance, since ids are
-     * compared only within their own [ThreadItem] type and `ThreadScreen` namespaces each type's key.
-     *
-     * **Nothing here logs any payload field** — `raw` and `message_type` are unbounded model-adjacent JSON
-     * (the most untrusted strings the thread holds) and a logged conversation_id is a cross-conversation
-     * correlation leak.
-     */
-    private fun decodeUnrecognizedMessage(envelope: Envelope): Pair<String, ThreadItem.UnrecognizedMessage>? =
-        try {
-            val dto = MobileJson.decodeFromJsonElement<UnrecognizedMessagePayloadDto>(envelope.payload)
-            dto
-                .toRow(id = "unrecognized-${unrecognizedRowId.incrementAndGet()}", occurredAt = Clock.System.now())
-                ?.let { dto.conversationId to it }
-        } catch (e: IllegalArgumentException) {
-            null
-        }
-
-    /**
-     * Decode one v2 `banner` envelope (#873) to its routing conversation id and the mapped
-     * [ThreadItem.Banner], or **null** when it cannot be folded. The row's identity is the envelope's
-     * `ts`, the protocol's join key against a history page, so a malformed `ts` drops the frame exactly as
-     * a malformed payload does: both throw inside the one `try`. Mirrors [decodeUnrecognizedMessage]'s drop
-     * idiom, and like it logs nothing.
-     */
-    private fun decodeBanner(envelope: Envelope): Pair<String, ThreadItem.Banner>? =
-        try {
-            val dto = MobileJson.decodeFromJsonElement<BannerPayloadDto>(envelope.payload)
-            dto.conversationId to dto.toRow(occurredAt = Instant.parse(envelope.ts))
-        } catch (e: IllegalArgumentException) {
-            null
-        }
-
-    /**
-     * Decode one v2 `compaction_boundary` envelope (#874) to its routing conversation id and the mapped
-     * [ThreadItem.CompactionBoundary], or **null** when it cannot be folded. The row's identity is the
-     * envelope's `ts`, so a malformed `ts` drops the frame exactly as a malformed payload does. Mirrors
-     * [decodeBanner], and like it logs nothing.
-     */
-    private fun decodeCompactionBoundary(envelope: Envelope): Pair<String, ThreadItem.CompactionBoundary>? =
-        try {
-            val dto = MobileJson.decodeFromJsonElement<CompactionBoundaryPayloadDto>(envelope.payload)
-            dto.conversationId to dto.toRow(occurredAt = Instant.parse(envelope.ts))
         } catch (e: IllegalArgumentException) {
             null
         }
@@ -1316,122 +1178,16 @@ class RemoteConversationRepository(
     }
 
     /**
-     * Append [rows] (`conversationId -> Message`) into [threadByConversation] as [ThreadItem.MessageItem]
-     * rows in one atomic [MutableStateFlow.update], preserving order and deduping by `message_id` — the
-     * per-row fold is [withMessage], which #645 lifted out of this class so the history reduction runs
-     * the **same** fold rather than a second copy of it (see `HistoryPageReducer`). Batching a whole
-     * chunk into one update avoids emitting an intermediate list per row. No-op on an empty batch so a
-     * malformed/empty chunk never re-emits.
-     */
-    private fun appendMessages(rows: List<Pair<String, Message>>) {
-        if (rows.isEmpty()) return
-        threadByConversation.update { current ->
-            val updated = current.toMutableMap()
-            for ((conversationId, message) in rows) {
-                updated[conversationId] = updated[conversationId].orEmpty().withMessage(message)
-            }
-            updated
-        }
-    }
-
-    /**
-     * Append [boundary] to [conversationId]'s thread in one atomic [MutableStateFlow.update] (#336): an
-     * end-append in arrival order that **skips a boundary the thread already holds** (#775). A
-     * `session_transition` carries no row id, so the identity is `(previousSessionId, newSessionId,
-     * occurredAt)` — the same [holdsBoundary] the history merge uses, and the fields the thread's list key
-     * reads, so a held duplicate cannot reach the `LazyColumn` as a second row with the first one's key.
-     * The pair alone would be wrong: a session idle-evicted twice sends `A->A` twice, and both are real.
-     * A skipped repeat returns the map unchanged, so nothing re-emits.
-     *
-     * The repository is connection-scoped (#351), so within a connection arrival order is correct (the
-     * same posture as [applyAssistantDelta]'s arrival-order concatenation; cross-reconnect replay is a
-     * #402 concern, deferred). Routes strictly into [conversationId]'s slice, so a boundary can only ever
-     * surface in `observeMessages(conversationId)` — never cross-routed (AC #1). The session ids /
-     * `workspaceCwd` are carried inside the typed [boundary] and never logged here (Security review).
-     */
-    private fun appendSessionBoundary(
-        conversationId: String,
-        boundary: ThreadItem.SessionBoundary,
-    ) {
-        threadByConversation.update { current ->
-            val thread = current[conversationId].orEmpty()
-            if (thread.holdsBoundary(boundary)) current else current + (conversationId to (thread + boundary))
-        }
-    }
-
-    /**
-     * Append [row] to [conversationId]'s thread in one atomic [MutableStateFlow.update] (#609): a pure
-     * end-append in arrival order into the same [threadByConversation] the live `message` and `tool_use`
-     * arms write, so the row interleaves with everything else in the thread (AC #1). Routes strictly into
-     * [conversationId]'s slice, so it can only ever surface in `observeMessages(conversationId)` — never
-     * cross-routed. The untrusted `raw` / `messageType` ride inside the typed [row] and are never logged
-     * here (Security review).
-     *
-     * **No dedup, and deliberately a separate function from [appendSessionBoundary] rather than a shared
-     * `appendThreadItem`.** The two differ in contract, and the difference is exactly the rationale:
-     * [appendSessionBoundary] skips a repeat because a boundary *has* an identity (its session pair and
-     * instant, #775) and a second row with it would collide on the list key, whereas this one does not
-     * dedup because **dedup would destroy the signal** — how often this frame fires is the number that
-     * tells someone to go fix something, so merging repeats hides it, and each row brings its own
-     * client-stamped id so repeats never collide. The refusal is the point, not an oversight; the daemon
-     * does no dedup on the wire either. A shared helper would have to carry both rationales in one KDoc,
-     * and a later change to one contract would silently change the other.
-     *
-     * This cuts against the two nearest folds — [appendMessages] dedups by `message_id` and [applyToolUse]
-     * is idempotent on a repeat id. A pure end-append is the one followed here.
-     */
-    private fun appendUnrecognizedMessage(
-        conversationId: String,
-        row: ThreadItem.UnrecognizedMessage,
-    ) {
-        threadByConversation.update { it + (conversationId to (it[conversationId].orEmpty() + row)) }
-    }
-
-    /**
-     * End-append a [ThreadItem.Banner] to [conversationId]'s thread (#873), **unless the thread already
-     * holds one with its `ts`** ([holdsBanner]). Unlike [appendUnrecognizedMessage] this dedups, because a
-     * banner *has* an identity: the daemon stamps one `ts` per event and hands it to both lanes, so a
-     * repeat is the same banner arriving twice — a replay, or a history page that raced the live lane —
-     * not a second report. The check runs inside the one atomic [MutableStateFlow.update], so a
-     * concurrent merge cannot slip a twin in between check and write.
-     */
-    private fun appendBanner(
-        conversationId: String,
-        row: ThreadItem.Banner,
-    ) {
-        threadByConversation.update { threads ->
-            val thread = threads[conversationId].orEmpty()
-            if (thread.holdsBanner(row)) threads else threads + (conversationId to (thread + row))
-        }
-    }
-
-    /**
-     * End-append a [ThreadItem.CompactionBoundary] to [conversationId]'s thread (#874), **unless the thread
-     * already holds one with its `ts`** ([holdsCompactionBoundary]) — the [appendBanner] shape, for the same
-     * reason: the daemon stamps one `ts` per compaction and hands it to both lanes, so a repeat is the same
-     * boundary arriving twice. The check runs inside the one atomic [MutableStateFlow.update].
-     */
-    private fun appendCompactionBoundary(
-        conversationId: String,
-        row: ThreadItem.CompactionBoundary,
-    ) {
-        threadByConversation.update { threads ->
-            val thread = threads[conversationId].orEmpty()
-            if (thread.holdsCompactionBoundary(row)) threads else threads + (conversationId to (thread + row))
-        }
-    }
-
-    /**
      * Fold a `session_transition`'s [newSessionId] into the list [projection] entry for [conversationId]
-     * (#578) — the sibling write to [appendSessionBoundary], resolving the live session identity the v2
+     * (#578) — the sibling write to [ThreadProjection.appendSessionBoundary], resolving the live session identity the v2
      * `conversations` summary omits (so a session-scoped frame like `set_session_settings` targets the
      * real session instead of the defaulted empty id). Field-updates an **existing** entry only: a
      * [List.map] over the current list, so an unknown [conversationId] yields an element-equal list
-     * ([StateFlow] conflation ⇒ no re-emit, **no phantom conversation** — unlike [appendSessionBoundary]
+     * ([StateFlow] conflation ⇒ no re-emit, **no phantom conversation** — unlike [ThreadProjection.appendSessionBoundary]
      * the list projection must not gain a phantom entry, so the `else it` identity branch *is* the
      * absent-conversation guard), and a `null` (pre-first-snapshot) projection stays `null`. Written
      * **verbatim for every reason** (`clear` carries the freshly-rotated-to id; `idle_evict` carries the
-     * evicted id unchanged ⇒ element-equal no-op in the common case), mirroring [appendSessionBoundary]'s
+     * evicted id unchanged ⇒ element-equal no-op in the common case), mirroring [ThreadProjection.appendSessionBoundary]'s
      * copy-through posture. The atomic [MutableStateFlow.update] CAS retry-merges against a concurrent
      * authoritative `conversations` snapshot rather than clobbering it, as [upsertConversation] does.
      * [newSessionId] is sensitive and is never logged (Security review).
@@ -1442,130 +1198,6 @@ class RemoteConversationRepository(
     ) {
         projection.update { current ->
             current?.map { if (it.id == conversationId) it.copy(currentSessionId = newSessionId) else it }
-        }
-    }
-
-    /**
-     * Open a live tool-call row for a `tool_use` (#387): append a `Running` [Role.Tool] [Message]
-     * carrying the tool name + input, keyed by [LiveSessionEvent.ToolUse.toolUseId] (the correlation
-     * handle and the row's [Message.id]). One atomic [MutableStateFlow.update] into the same
-     * [threadByConversation] the live `message` arm writes, so the row interleaves by **arrival
-     * order** with messages (AC #4). **Idempotent on a repeat id:** if a [Role.Tool] row with this id
-     * already exists (possibly already completed by an earlier `tool_result`), it is left untouched —
-     * a duplicate `tool_use` never adds a second row nor resets a finished one to `Running` (AC #3).
-     * The `&& role == Role.Tool` match namespaces tool rows so a `toolUseId` can never clobber a real
-     * `message_id` row. The fields the UI ignores ([Message.content] = the tool name, a non-empty
-     * fallback; [Message.timestamp] = [Clock.System.now], the established locally-assembled-row clock —
-     * thread order is arrival order, never a timestamp sort) mirror [sendMessage]'s posture. The tool
-     * name/input/output are carried **verbatim** — never trimmed, parsed, or logged (Security review).
-     *
-     * The row logic itself moved to [withToolUse] in #645, as did the three sibling folds below, so the
-     * history reduction runs these exact folds instead of a second copy — see `HistoryPageReducer`. Each
-     * method here is now just the projection write: read this conversation's slice, fold, put it back.
-     * The clock is the one thing the two lanes differ on, which is why it is a parameter there.
-     */
-    private fun applyToolUse(event: LiveSessionEvent.ToolUse) {
-        threadByConversation.update { current ->
-            current + (event.conversationId to current[event.conversationId].orEmpty().withToolUse(event, Clock.System.now()))
-        }
-    }
-
-    /**
-     * Complete a live tool-call row for a `tool_result` (#387): update the matching [Role.Tool] row in
-     * place — position and `timestamp` preserved — attaching the output and flipping the status to
-     * [ToolCallStatus.Failed] when [LiveSessionEvent.ToolResult.isError], else [ToolCallStatus.Done]
-     * (AC #2). One atomic [MutableStateFlow.update]. **If no matching row exists, no-op:** a
-     * `tool_result` with no prior `tool_use` — including a result arriving before its use
-     * (out-of-order) — is dropped, leaving no orphan half-row (AC #3). A duplicate `tool_result`
-     * re-applies the same in-place update (idempotent / last-write-wins, one row). The result summary
-     * is carried **verbatim** — never trimmed, parsed, or logged (Security review).
-     */
-    private fun applyToolResult(event: LiveSessionEvent.ToolResult) {
-        threadByConversation.update { current ->
-            current + (event.conversationId to current[event.conversationId].orEmpty().withToolResult(event))
-        }
-    }
-
-    /**
-     * Mark a live tool-call row denied for a `tool_denied` (#811) through [withToolDenied], writing only
-     * the frame's own conversation. A malformed payload drops this one envelope and the collector lives
-     * on; the caught exception is discarded because its message can quote claude's prose. A conversation
-     * with no retained rows is left without an entry rather than given an empty one, since a denial can
-     * never add a row. Nothing here logs.
-     */
-    private fun applyToolDenied(envelope: Envelope) {
-        val dto =
-            try {
-                MobileJson.decodeFromJsonElement<ToolDeniedPayloadDto>(envelope.payload)
-            } catch (e: IllegalArgumentException) {
-                return
-            }
-        threadByConversation.update { current ->
-            val rows = current[dto.conversationId] ?: return@update current
-            current + (dto.conversationId to rows.withToolDenied(dto.toolUseId, dto.toDenial()))
-        }
-    }
-
-    /**
-     * Retain claude's elapsed reading on a live tool row for a `tool_progress` (#812) through
-     * [withToolProgress], writing only the frame's own conversation. The drop and the no-slice rule are
-     * [applyToolDenied]'s: a malformed payload costs this one envelope, and a conversation with no retained
-     * rows gets no entry, since a heartbeat can never add a row. Nothing here logs.
-     */
-    private fun applyToolProgress(envelope: Envelope) {
-        val dto =
-            try {
-                MobileJson.decodeFromJsonElement<ToolProgressPayloadDto>(envelope.payload)
-            } catch (e: IllegalArgumentException) {
-                return
-            }
-        threadByConversation.update { current ->
-            val rows = current[dto.conversationId] ?: return@update current
-            current + (dto.conversationId to rows.withToolProgress(dto))
-        }
-    }
-
-    /**
-     * Fold one `assistant_delta` into the conversation's live streaming assistant row (#337). The
-     * first delta of a turn opens a [Role.Assistant] [Message] keyed by
-     * [LiveSessionEvent.AssistantDelta.turnId] with [Message.isStreaming] `= true`; each later delta
-     * for that turn **appends** its text in place, keeping the row's id and position. One atomic
-     * [MutableStateFlow.update] into the same [threadByConversation] the live `message` and tool
-     * arms write, so the assistant text interleaves by **arrival order** with messages and tool rows
-     * (AC #4). The `&& role == Role.Assistant` match namespaces this row so a `turnId` can never
-     * clobber a `message_id` or `toolUseId` row.
-     *
-     * **Arrival-order concatenation, by design.** The wire delivers a turn's deltas in
-     * [LiveSessionEvent.AssistantDelta.seq] order over the single ordered inbound stream, and a fresh
-     * repository is built per connection (#351), so within a connection arrival order *is* seq order
-     * and concatenation is correct. Cross-reconnect replay de-dup ([LiveSessionEvent.AssistantDelta.seq]
-     * as the idempotency key) is a #402 concern, deferred until the reconnect/replay path lands. The
-     * delta text is carried **verbatim** — never trimmed, parsed, or logged (it may be sensitive).
-     *
-     * An interactive phone receives **only** the structured stream, never a whole-turn `message` for
-     * the same turn (the server's fan-out is capability-exclusive: pyrycode `interactive_turn_v2` vs
-     * `assistant_turn_v2`), so this folded row is the canonical assistant reply — there is no `message`
-     * echo to de-dup against.
-     */
-    private fun applyAssistantDelta(event: LiveSessionEvent.AssistantDelta) {
-        threadByConversation.update { current ->
-            current + (event.conversationId to current[event.conversationId].orEmpty().withAssistantDelta(event, Clock.System.now()))
-        }
-    }
-
-    /**
-     * Finalize the live streaming assistant row on `turn_end` (#337): flip the matching
-     * [Role.Assistant] row (keyed by [LiveSessionEvent.TurnEnd.turnId]) to [Message.isStreaming]
-     * `= false` in place, so the thread renders the completed reply as static markdown rather than the
-     * streaming caret view. One atomic [MutableStateFlow.update]. **No-op when no streaming assistant
-     * row exists for the turn** — a tool-only or empty turn carries no assistant text (AC #3), and a
-     * duplicate `turn_end` re-applies the same flip (idempotent). `turn_end` carries no final text, so
-     * nothing is appended here; [LiveSessionEvent.TurnEnd.stopReason] is not consumed by this slice
-     * (turn-outcome mapping is a later consumer concern).
-     */
-    private fun finalizeAssistantTurn(event: LiveSessionEvent.TurnEnd) {
-        threadByConversation.update { current ->
-            current + (event.conversationId to current[event.conversationId].orEmpty().withFinalizedTurn(event))
         }
     }
 
@@ -1638,7 +1270,7 @@ class RemoteConversationRepository(
      */
     private fun removeConversation(conversationId: String) {
         projection.update { current -> current?.filterNot { it.id == conversationId } }
-        threadByConversation.update { it - conversationId }
+        threadProjection.remove(conversationId)
         lastMessages.update { it - conversationId }
     }
 
@@ -1714,7 +1346,7 @@ class RemoteConversationRepository(
     /**
      * One backward step of [conversationId]'s history walk over v2 `request_history` (#623, server
      * pyrycode#2113/#2116). The [rename] shape — encode → [sendAndAwaitReply] → typed-decode — and,
-     * since #645, **one** state fold: the decoded page goes through [mergeHistoryPage] into
+     * since #645, **one** state fold: the decoded page goes through [ThreadProjection.mergeHistoryPage] into
      * [conversationId]'s thread before it is returned. Still nothing is cached, and the page itself is
      * returned unchanged for the walking caller's `cursor` / `atStart`.
      *
@@ -1758,42 +1390,8 @@ class RemoteConversationRepository(
         // {entries,cursor,at_start} page; a malformed one throws here and mutates nothing.
         val reply = sendAndAwaitReply(request)
         val page = MobileJson.decodeFromJsonElement<HistoryPagePayloadDto>(reply).toHistoryPage()
-        mergeHistoryPage(conversationId, page)
+        threadProjection.mergeHistoryPage(conversationId, page, CAPABILITY_INTERACTIVE in negotiatedCapabilities())
         return page
-    }
-
-    /**
-     * Fold one decoded [page] into [conversationId]'s thread (#645) — the write #623's [requestHistory]
-     * KDoc promised this ticket would add, and the **only** projection this verb touches. The page is
-     * still returned to the caller unchanged: a walking caller needs `cursor` / `atStart` to decide
-     * whether to ask again, and #646 owns that decision.
-     *
-     * The reduction and the merge both run **inside** the [MutableStateFlow.update] lambda, and that is
-     * load-bearing rather than stylistic: reading the current thread, merging and assigning are one
-     * check-then-act, so hoisting them out would silently lose a concurrent live append every time the
-     * CAS retried. The cost of re-running a pure reduction on a retry is the right trade.
-     *
-     * Routes **strictly into [conversationId]'s slice** — the conversation the client asked about — and
-     * never reads an entry payload's own `conversation_id`, so a page structurally cannot write into
-     * another conversation's thread. [reduceHistoryPage] returns rows carrying no conversation identity
-     * at all, which is what makes that a property of the types rather than of a check.
-     *
-     * Gated on the negotiated `interactive` capability exactly as the live arms are, arm for arm: the six
-     * structured types reduce only when it was negotiated, `message` / `send_message` always do. The
-     * daemon's `request_history` handler has no such gate, so this is the client's fail-closed half.
-     *
-     * Emits no log on any branch, like the rest of this class.
-     */
-    private fun mergeHistoryPage(
-        conversationId: String,
-        page: HistoryPage,
-    ) {
-        if (page.entries.isEmpty()) return
-        val interactive = CAPABILITY_INTERACTIVE in negotiatedCapabilities()
-        threadByConversation.update { current ->
-            val existing = current[conversationId].orEmpty()
-            current + (conversationId to existing.mergeHistoryRows(reduceHistoryPage(page.entries, interactive)))
-        }
     }
 
     /**
@@ -1855,7 +1453,7 @@ class RemoteConversationRepository(
      * Send one `request_session_settings` and decode its correlated `session_settings` reply (#590) —
      * the [requestHistory] body minus the projection fold. The reply is routed **by the id this call
      * asked with**: it carries no `conversation_id` of its own, so a reading structurally cannot
-     * cross-route into another conversation, the property [mergeHistoryPage] relies on one level up.
+     * cross-route into another conversation, the property [ThreadProjection.mergeHistoryPage] relies on one level up.
      *
      * Throws rather than returning null — [sessionSettingsRead] owns the conversion — so every failure
      * mode stays distinguishable at this seam: [IllegalStateException] when the pump is not `Open` or
@@ -1927,19 +1525,8 @@ class RemoteConversationRepository(
     override fun observeMessages(conversationId: String): Flow<List<ThreadItem>> =
         flow {
             pump.send(backfillSinceRequest(conversationId))
-            emitAll(threadProjection(conversationId))
+            emitAll(threadProjection.observe(conversationId))
         }
-
-    /**
-     * Cold per-conversation thread view: the ordered [ThreadItem] list ([ThreadItem.MessageItem] rows
-     * deduped by `message_id` + interleaved [ThreadItem.SessionBoundary] rows) for [conversationId].
-     * The store already holds [ThreadItem]s, so this is a plain per-conversation slice — no row wrap.
-     * [distinctUntilChanged] means a change to **another** conversation's slot does not re-emit this
-     * flow (AC #3). A `StateFlow` always has a value, so a fresh collector receives the current thread
-     * (empty until backfill/live arrives) on subscription.
-     */
-    private fun threadProjection(conversationId: String): Flow<List<ThreadItem>> =
-        threadByConversation.map { it[conversationId].orEmpty() }.distinctUntilChanged()
 
     /**
      * Most-recent live [Message] for [conversationId] (#329), a pure cold projection of the shared
@@ -2241,10 +1828,10 @@ class RemoteConversationRepository(
                 isStreaming = false,
             )
         recordLastMessage(conversationId, message)
-        appendMessages(listOf(conversationId to message))
+        threadProjection.appendMessages(listOf(conversationId to message))
         // Record the echo as ours (#781) — only an id in this ledger may later be correlated with a
         // queued item and removed. Recorded after the ack, so a failed send leaves no phantom claim.
-        mintedMessageIds.update { it + (conversationId to (it[conversationId].orEmpty() + messageId)) }
+        threadProjection.recordMinted(conversationId, messageId)
         return message
     }
 
@@ -2351,7 +1938,7 @@ class RemoteConversationRepository(
      *
      * The backlog entry leaves only on the next `queue_state` (#467's non-optimistic ruling, which the
      * daemon owns), and that same snapshot is the drop's only confirmation. When it arrives without the
-     * dropped `queued_msg_id`, [settleDrops] also removes **this device's own undelivered echo** for the
+     * dropped `queued_msg_id`, [ThreadProjection.settleDrops] also removes **this device's own undelivered echo** for the
      * message (#781) — the thread row [sendMessage] posted after its ack, which the daemon never
      * authored and which otherwise stays behind reading as a message claude received. The correlation
      * key is the item's `message_id` (pyrycode#2092), resolved from this connection's own snapshot, so
@@ -2361,14 +1948,14 @@ class RemoteConversationRepository(
      *  - **Resolved before the send.** The confirming `queue_state` replaces the snapshot this reads
      *    from. Reading it early is safe because `queued_msg_id` is a per-conversation counter that is
      *    never recycled — item *N* in a stale snapshot is still the same item *N*.
-     *  - **Recorded before the send, withdrawn if it fails.** The request goes into [pendingDrops] first,
+     *  - **Recorded before the send, withdrawn if it fails.** The request goes into the pending drops first,
      *    so a confirming snapshot can never land before there is a request to settle. A not-connected
      *    send withdraws it and throws [IllegalStateException]: the daemon never heard the drop, the
      *    message will still run, and the echo is still true.
      *  - **Keyed on the requested `queued_msg_id`, never a backlog diff.** A backlog also shrinks when
      *    the daemon *drains* it, so a diff-driven removal would delete the echo of every message that
      *    ran normally. Only an item this device asked to drop settles.
-     *  - **Removed only against [mintedMessageIds].** An item carrying `""`, one whose id this device
+     *  - **Removed only against the minted-id ledger.** An item carrying `""`, one whose id this device
      *    never minted (another paired device's real queued message), or a `queuedMessageId` absent from
      *    the snapshot correlates with nothing: the send still goes and no thread row is touched. Text is
      *    never compared.
@@ -2403,53 +1990,11 @@ class RemoteConversationRepository(
                 ?.messageId
                 .orEmpty()
         if (echoId.isNotEmpty()) {
-            pendingDrops.update { it + (conversationId to (it[conversationId].orEmpty() + (queuedMessageId to echoId))) }
+            threadProjection.recordDrop(conversationId, queuedMessageId, echoId)
         }
         if (!pump.send(request)) {
-            pendingDrops.update { it + (conversationId to (it[conversationId].orEmpty() - queuedMessageId)) }
+            threadProjection.withdrawDrop(conversationId, queuedMessageId)
             throw IllegalStateException("$TYPE_DEQUEUE_MESSAGE not sent: session not connected")
-        }
-    }
-
-    /**
-     * Settle every drop pending in [conversationId] whose `queued_msg_id` the current snapshot no longer
-     * holds (#859): claim the entries in one atomic [MutableStateFlow.update], so each settles at most
-     * once, then remove each claimed entry's echo through [removeOwnEcho]. Entries still in the snapshot
-     * stay pending.
-     */
-    private fun settleDrops(conversationId: String) {
-        val live = queueProjection.current(conversationId).mapTo(HashSet()) { it.id }
-        var settled: Collection<String> = emptyList()
-        pendingDrops.update { all ->
-            val pending = all[conversationId] ?: return@update all
-            val (gone, waiting) = pending.entries.partition { it.key !in live }
-            settled = gone.map { it.value }
-            if (waiting.isEmpty()) all - conversationId else all + (conversationId to waiting.associate { it.key to it.value })
-        }
-        settled.forEach { removeOwnEcho(conversationId, it) }
-    }
-
-    /**
-     * Remove the one thread row **this device** minted under [messageId] from [conversationId]'s thread
-     * (#781), and spend the id so it can never match twice. A no-op unless [messageId] is non-empty and
-     * held in [mintedMessageIds] — the multi-device rule made mechanical: a queued item's id is
-     * client-chosen and unique nowhere, so only an id this connection minted may remove a row.
-     *
-     * The removal is a `filterNot` over the existing list inside one atomic [MutableStateFlow.update],
-     * so every other row keeps its position and a concurrent append retry-merges rather than being lost
-     * (the [appendMessages] posture). Matches on [ThreadItem.MessageItem] and the message's own id
-     * only — never on `text`, which is neither unique nor a key.
-     */
-    private fun removeOwnEcho(
-        conversationId: String,
-        messageId: String,
-    ) {
-        if (messageId.isEmpty()) return
-        if (messageId !in mintedMessageIds.value[conversationId].orEmpty()) return
-        mintedMessageIds.update { it + (conversationId to (it[conversationId].orEmpty() - messageId)) }
-        threadByConversation.update { current ->
-            val rows = current[conversationId] ?: return@update current
-            current + (conversationId to rows.filterNot { it is ThreadItem.MessageItem && it.message.id == messageId })
         }
     }
 
