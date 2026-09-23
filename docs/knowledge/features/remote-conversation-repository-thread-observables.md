@@ -387,6 +387,81 @@ logged `conversation_id` is the same cross-conversation correlation leak every s
 [Usage-limit state § Security](usage-limit-state.md#security) for the full review, including why
 `resets_at` may never become a scheduling input.
 
+## `observeResetting(conversationId)` — the thread-observable Reset-phase reading (#871)
+
+Which phase a conversation's daemon-driven **Reset** is in, and what became of its handoff note.
+[#871](https://github.com/pyrycode/pyrycode-mobile/issues/871) decodes the capability-gated v2
+`resetting` control envelope into a per-conversation `ResetStatus?` the thread layer observes (the
+render consumer is a not-yet-filed sibling ticket). The two-rising-edges-one-falling-edge model and
+the falling-edge-bypasses-the-mapper rule live in [Resetting state](resetting-state.md); this section
+records only how it attaches to the repository — it rides the **same single inbound collector** as
+everything else, with **no new class beyond the domain type and DTO, no second subscription**.
+
+- **The newest connection-scoped projection.** `ResettingProjection`'s `private val
+  resetByConversation = MutableStateFlow<Map<String, ResetStatus>>(emptyMap())` — a structural sibling
+  of `thinkingProgressByConversation`/`apiRetryByConversation`, not `stalledConversations`/`compactingConversations`:
+  `resetting` carries a phase and a handoff outcome, which membership cannot represent. Written from
+  **two** places on the one `init` inbound collector, so neither races: the `resetting` arm's rising
+  edge replaces an entry, its falling edge removes one, and the `session_transition` arm's
+  `resettingProjection.clear(conversationId)` also removes one. Empty per connection (#351) → a reading
+  never survives a reconnect.
+- **One demux hook, inside the existing `interactive` gate, with the edge decision owned by the
+  projection's `apply`, not the arm.** A **new** `TYPE_RESETTING` arm: `if (CAPABILITY_INTERACTIVE in
+  negotiatedCapabilities()) resettingProjection.apply(envelope)`. Unlike `compacting`'s `if (active)`
+  living in the demux arm, the branch lives inside `ResettingProjection.apply` — a falling edge removes
+  the map entry **before** any field is narrowed through the closed-set mapper, because the wire
+  contract calls `phase`/`handoff` meaningless once `active` is `false`; running the falling edge
+  through `toStatus()` first would let a non-empty-but-unrecognised string on a falling edge leave the
+  reading stuck. A **second** rising edge (`wrapping_up` → `restarting`) is not a second reset — the
+  arm's replace, `it + (conversationId to status)`, is exactly what makes one reset one changing
+  reading rather than two stacked ones. Like the `api_retry`/`compacting`/`thinking_progress` siblings
+  and unlike the live-session arm, this folds no thread row and touches `stalledConversations` in
+  **neither** direction: a reset is the daemon's own routine, not claude's forward progress or its
+  absence, so raising a stall here would be wrong and clearing one would hand a daemon a lever for
+  suppressing the indicator by emitting `resetting` frames.
+- **A second write, in the existing `TYPE_SESSION_TRANSITION` arm.** A fifth write since #871, beside
+  `thinkingProgressProjection.clear(conversationId)`: `resettingProjection.clear(conversationId)`. The
+  daemon emits `restarting` before it respawns claude, so no rising edge can follow the transition —
+  the clear only ever removes a reading, it never races one being written back in. Routed by the same
+  decoded conversation id, so a transition cannot clear another conversation's reading; removing an
+  absent key is a no-op.
+- **The method is a pure cold projection** (1:1 with `observeThinkingProgress`), issuing no request:
+
+  ```kotlin
+  override fun observeResetting(conversationId: String): Flow<ResetStatus?> =
+      resettingProjection.observe(conversationId)
+  // ResettingProjection.observe:
+  fun observe(conversationId: String): Flow<ResetStatus?> =
+      resetByConversation.map { it[conversationId] }.distinctUntilChanged()
+  ```
+
+  An absent key is `null` — "no reset running." `distinctUntilChanged()` suppresses only
+  value-*identical* re-emissions: a `resetting` for **another** conversation does not re-emit this
+  flow, while the `wrapping_up` → `restarting` phase change is a different `ResetStatus` value and does
+  reach the collector. A `StateFlow` always has a current value, so every collector (including a
+  `flatMapLatest` re-subscription through the facade) gets the current reading on subscription.
+- **`ResettingProjection.decodeResetting(envelope): Pair<String, ResetStatus?>?`** mirrors
+  `decodeCompacting`/`decodeThinkingProgress`: one `try { … } catch (IllegalArgumentException) { null }`
+  (`SerializationException ⊂` it), so a malformed payload drops the one envelope while the lone
+  collector survives. The **outer** `null` is "malformed or out-of-closed-set rising edge, drop, hold
+  what we have"; a non-null result carries the **inner** `null` for the falling edge, which `apply`
+  turns into a map removal — the `decodeRateLimited`/`UsageLimitProjection` two-level-nullability
+  precedent. `ResettingPayloadDto` (`{conversation_id, active, phase, handoff}`, all four fields
+  strict-required, no nullable latitude) and the rising-edge-only `toStatus()` mapper live in
+  `data/network/InteractivePayloads.kt`.
+- **On the interface with a default — like every sibling here, unlike `liveSessionEvents`.** The thread
+  needs the current-value reading through the
+  [`StableConversationRepository`](stable-conversation-repository.md) facade, so `observeResetting` is
+  a **defaulted** `ConversationRepository` method (`flowOf(null)`), with the facade and this repo
+  overriding it. The default absorbs the Fake/test-double cascade (no ≥5 split); no consumer cascade.
+  See [[post-352-connection-scoped-repo-behind-facade]].
+
+`security-sensitive`, but the repository stays plain orchestration: decode runs behind the
+already-authenticated Noise channel, both wire strings are narrowed to closed enums before storage,
+and the routing id stays a map key — no daemon-supplied text can structurally reach the UI through
+this arm — and **nothing in the new arm, the decode, or the drop branch logs the payload**, including
+the conversation id. See [Resetting state § Security](resetting-state.md#security).
+
 ## Live tool-call rows — `applyToolUse` / `applyToolResult` / `applyToolDenied` (#387, #811)
 
 Correlate the v2 `tool_use` (start) / `tool_result` (completion)
