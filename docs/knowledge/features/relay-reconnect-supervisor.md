@@ -141,7 +141,7 @@ enters the jittered-backoff wait.
 | `Connected` | transport `Up` (**socket-open** — see § Cross-sibling seams A) | `Connected` | hidden |
 | `Reconnecting(secondsRemaining)` | counting down a **sub-cap** backoff interval (per-second) | `Reconnecting(secondsRemaining)` | `"Reconnecting in Ns"` |
 | `DaemonAbsent` | a `4404` close: **relay reachable, no daemon registered** (steady, no countdown) | `Offline` | `"Offline — tap to retry"` (until #392's combined banner) |
-| `PairingRejected` | a `4401`/`4426` close: **host refused the credential** — redial halted (#841) | `Offline` | `"Offline — tap to retry"` (Settings line and host row carry the distinct label; see below) |
+| `PairingRejected` | a `4401`/`4426` close: **host refused the credential** — redial halted (#841) | `Offline` | `"Offline — tap to retry"` (Settings line, host row and — since #843 — the open thread's composer status area carry the distinct label/action; see below) |
 | `Offline` | backoff escalated to the **30 s cap** (sustained unavailability) | `Offline` | `"Offline — tap to retry"` |
 
 `Idle` derives to `Connected` **for the banner only** (idle is not an error, so it stays hidden) — but
@@ -446,7 +446,12 @@ reconnect (guards the boundary of the new comparison). A direct `toConnectionSta
   ([#196](../codebase/196.md)) `ConnectionStateSource`; swaps its `FakeConnectionStateSource` binding.
   Reads [`PairedServer`](paired-server-store.md) ([#294](../codebase/294.md)) — presence gates the dial.
 - Consumer (UI): [`ConnectionBanner`](connection-banner.md) (#200) via `ThreadViewModel` (#201) —
-  unchanged; only the bound `ConnectionStateSource` impl changed.
+  unchanged; only the bound `ConnectionStateSource` impl changed. Second consumer since
+  [#843](https://github.com/pyrycode/pyrycode-mobile/issues/843): the thread's Re-pair action reads
+  `RelayLinkStatus` directly off `HostConversationConnection.status` (via `RelayConnectionRegistry.hostConnections`,
+  not this class), the first UI surface to bypass the legacy derived `ConnectionState` and distinguish
+  `PairingRejected` from every other `Offline`-deriving case. See
+  [Thread screen § Sourced by `serverId` through the registry](thread-screen-how-it-works-overlays-and-app-bar.md#thinking-indicator-placement-post-407-moved-in-643).
 - Siblings: **#309** (Noise session pump — collects the same connection's `inbound` via `currentConnection`;
   no blocker), **[#351](../codebase/351.md)** ([`RelayRepositoryCoordinator`](relay-repository-coordinator.md),
   **landed** — the consumer of `currentConnection`: starts a #309 pump + builds a remote repository per

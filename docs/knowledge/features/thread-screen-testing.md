@@ -56,6 +56,20 @@ The `fixedRepo(conversations)` helper is an anonymous `object : ConversationRepo
 
 See the test file directly for the full list — it is not reproduced here. Two `onYoloToggled_*` tests (`_initialValueIsFalseRegardlessOfAppPreferencesDefault`, and the preferences half of `_flipsStateAndDoesNotMutatePreferences`) still construct an unused `AppPreferences` fixture and assert against it; `makeVm` no longer takes that parameter, so the assertion holds by construction rather than by exercising anything — a verifier NIT on #807's review, not fixed as of this writing.
 
+Sibling test files added in [#843](https://github.com/pyrycode/pyrycode-mobile/issues/843), the Re-pair
+action: `app/src/test/java/de/pyryco/mobile/di/PairingRejectedTest.kt` (own host rejected → `true`,
+another host rejected → `false`, missing host → `false`, a re-pair that replaces the registry entry with
+a connected status → `false`, own host moving rejected → connected → `false`) and
+`app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadViewModelRePairTest.kt` (default
+`rePairAvailable == false`; follows an injected `pairingRejected` flow true → false). The second file is
+**deliberately not folded into `ThreadViewModelTest.kt`** above — #816 was in flight against that same
+file when this ticket was built, and a new file sidesteps the merge entirely rather than relying on the
+two tickets' insertion points staying disjoint. The Compose coverage is a third new file,
+`app/src/androidTest/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreenRePairTest.kt`: with
+`showRePair` and `Offline`, the Re-pair button is displayed and the "Offline — tap to retry" banner text
+does not exist; tapping it invokes `onRePair`; without `showRePair`, the banner shows and the button does
+not exist.
+
 Sibling test file added in [#136](../codebase/136.md): `app/src/test/java/de/pyryco/mobile/ui/conversations/thread/ThreadScreenCutoffTest.kt` — six JUnit 4 tests against the `internal` top-level helper `mostRecentSessionBoundaryIndex(items: List<ThreadItem>): Int`: `emptyList → -1`, `messagesOnly → -1`, `singleBoundary → its index`, `multipleBoundaries → latest index`, `boundaryAtFirstPosition → 0`, `boundaryAtLastPosition → lastIndex`. No `runTest`, no `Dispatchers.setMain`, no coroutines — the helper is pure and synchronous. File-private `msg(id, sessionId, role, timestamp)` and `boundary(previousSessionId, newSessionId, occurredAt)` constructors keep the body terse; `BoundaryReason.Clear` is fine for every fixture (the helper doesn't discriminate on reason). The Compose-side correctness of the per-row `Box(Modifier.alpha(...))` wrap is verified visually by the two new `@Preview`s; no `ComposeTestRule` in this ticket because there's no interactive behaviour to assert.
 
 Sibling test files added in [#226](../codebase/226.md): `app/src/test/java/.../thread/ThreadScreenMapperTest.kt` — three JVM unit tests over the pure `internal fun ThreadUiState.toChannelInfoUiModel(now)` mapper (label/count derivation + pass-through with a seeded `items` list and injected `now`; empty-items → em-dash `createdLabel` + zero `messageCount`; null `lastUsedAt` → em-dash `lastActivityLabel`), and `app/src/androidTest/java/.../thread/ThreadScreenChannelInfoTest.kt` — an instrumented Compose test (six `@Test`s following the `ThreadScreenOverflowTest` idiom) asserting the sheet renders with `channelInfoOpen = true` and that each button records the right event sequence (Rename / Change workspace emit-then-dismiss; Archive / Delete / close dismiss-only). `ThreadViewModelTest` also gained three `@Test`s (open / dismiss / ingredient-population from a seeded `Conversation`), and the existing `onOverflowEvent_otherCases_doNotCallArchive` dropped `ChannelInfo` from its iteration list (moved to its own positive test). The instrumented file is written but **not run** (no device); see [`../codebase/226.md`](../codebase/226.md) for the full breakdown.

@@ -424,6 +424,7 @@ internal fun PyryNavHost(
                 val modalState by vm.currentModal.collectAsStateWithLifecycle()
                 val armedOptionId by vm.armedOptionId.collectAsStateWithLifecycle()
                 val draft by vm.draft.collectAsStateWithLifecycle()
+                val rePairAvailable by vm.rePairAvailable.collectAsStateWithLifecycle()
                 LaunchedEffect(vm) {
                     vm.navigationEvents.collect { event ->
                         when (event) {
@@ -468,6 +469,10 @@ internal fun PyryNavHost(
                     onRetryOlderHistory = vm::onRetryOlderHistory,
                     draft = draft,
                     onDraftChange = vm::onDraftChange,
+                    // #843: the tree row's re-pair route (#842), keyed by this destination's own host. The
+                    // thread stays on the back stack beneath it, so Cancel returns to the cached history.
+                    showRePair = rePairAvailable,
+                    onRePair = { navController.navigate(Routes.pairCode(target.serverId)) },
                 )
                 // #661: its own gate window, so it is drawn beside the screen rather than threaded through it.
                 val questionModal by vm.questionModal.collectAsStateWithLifecycle()
