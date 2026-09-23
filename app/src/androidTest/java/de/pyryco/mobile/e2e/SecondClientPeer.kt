@@ -98,16 +98,19 @@ class SecondClientPeer(
         timeoutMs,
     )
 
-    /** Drop [queuedMsgId] from [conversationId]'s backlog as this device (#849), and wait for the `ack`. */
-    internal suspend fun dequeueMessage(
+    /**
+     * Drop [queuedMsgId] from [conversationId]'s backlog as this device (#849). Fire-and-forget: the daemon
+     * never replies to `dequeue_message`, and the removal shows only in the next `queue_state` ([awaitQueue]).
+     */
+    internal fun dequeueMessage(
         conversationId: String,
         queuedMsgId: Long,
-        timeoutMs: Long,
-    ) = request(
-        "dequeue_message",
-        MobileJson.encodeToJsonElement(DequeueMessagePayloadDto(conversationId = conversationId, queuedMsgId = queuedMsgId)),
-        timeoutMs,
-    )
+    ) {
+        send(
+            "dequeue_message",
+            MobileJson.encodeToJsonElement(DequeueMessagePayloadDto(conversationId = conversationId, queuedMsgId = queuedMsgId)),
+        )
+    }
 
     /**
      * The backlog the **latest** recorded `queue_state` for [conversationId] reports, once it satisfies
@@ -156,15 +159,24 @@ class SecondClientPeer(
         payload: JsonElement,
         timeoutMs: Long,
     ) {
-        val id = requestId.incrementAndGet()
-        check(pump.send(Envelope(id = id, type = type, ts = Clock.System.now().toString(), payload = payload))) {
-            "peer session is not open"
-        }
+        val id = send(type, payload)
         val reply =
             withTimeout(timeoutMs) {
                 received.first { frames -> frames.any { it.inReplyTo == id } }.first { it.inReplyTo == id }
             }
         check(reply.type == "ack") { "peer $type refused: ${reply.payloadField("code") ?: reply.type}" }
+    }
+
+    /** Send a [type] frame carrying [payload] and return its envelope id. */
+    private fun send(
+        type: String,
+        payload: JsonElement,
+    ): Long {
+        val id = requestId.incrementAndGet()
+        check(pump.send(Envelope(id = id, type = type, ts = Clock.System.now().toString(), payload = payload))) {
+            "peer session is not open"
+        }
+        return id
     }
 
     private fun Envelope.isFor(
