@@ -282,8 +282,10 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   `mapError` verbatim with **no** `onInbound` branch and **no** projection mutation, adds the
   `register_push_token` request encoder + the last/defaulted `deviceName` ctor param), [#365](../codebase/365.md)
   (`registerPushToken`'s **first live caller**, **landed** — the coordinator's connect-time hook re-sends it
-  once per connection and threads the live `deviceName`, closing #359's `device_name: ""` defer; still
-  dormant until Firebase #361 stores a token), [#395](../codebase/395.md) (`observeStall`, **landed** —
+  once per connection and threads the live `deviceName`, closing #359's `device_name: ""` defer; live since
+  [#361](../codebase/361.md) added the token origin (`PyryMessagingService.onNewToken`) and turned the
+  hook into a rotation-aware collector — see [push messaging service](push-messaging-service.md)),
+  [#395](../codebase/395.md) (`observeStall`, **landed** —
   the fourth projection `stalledConversations`; a `TYPE_STALL` onset arm + a clearing hook folded into
   #385's live-session arm; **on the interface with a `flowOf(false)` default** so it reaches the thread
   through the facade, the deliberate inverse of #385's concrete-only `liveSessionEvents` — see

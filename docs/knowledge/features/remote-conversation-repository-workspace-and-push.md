@@ -308,9 +308,12 @@ suspend fun registerPushToken(token: String) {
 > `RelayRepositoryCoordinator` supplied from `NoiseClientInfo` in `AppModule`, passed through to this
 > constructor. So `""` is **no longer the production value** — a live caller wired *without* that threading
 > would have sent `device_name: ""`, polluting the server's `(platform, token, device_name)` dedup triple
-> (pyrycode #319 acks with no registry touch only on a matching triple). The capability now stays dormant
-> only until Firebase #361 *stores* a token for the hook to read.
+> (pyrycode #319 acks with no registry touch only on a matching triple). [#361](../codebase/361.md) then
+> gave the capability its token origin ([`PyryMessagingService.onNewToken`](push-messaging-service.md) →
+> `AppPreferences.setPushToken`), so `registerPushToken` now has a live caller and a live token in
+> production once a phone has ever received one.
 >
-> _(The #359 `deviceName` param KDoc at `RemoteConversationRepository.kt:72-76` still describes this as
-> the Firebase sibling's pending handoff — a known-stale comment #365's code review flagged as an optional
-> NIT and deferred, since the file is outside that PR's surface.)_
+> _(The #359 `deviceName` param KDoc at `RemoteConversationRepository.kt:72-76` still describes `deviceName`
+> as defaulted for a not-yet-live caller — stale since #365 landed the live caller and stale a second time
+> now that #361 landed the token; a known-stale comment #365's code review already flagged as an optional
+> NIT and deferred, since the file was outside that PR's surface.)_

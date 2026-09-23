@@ -36,6 +36,7 @@ import de.pyryco.mobile.data.repository.FakeConversationRepository
 import de.pyryco.mobile.data.repository.RelayRepositoryCoordinator
 import de.pyryco.mobile.data.repository.StableConversationRepository
 import de.pyryco.mobile.lifecycle.LifecycleConnectionDriver
+import de.pyryco.mobile.push.PushTokenSink
 import de.pyryco.mobile.ui.conversations.list.ChannelListViewModel
 import de.pyryco.mobile.ui.conversations.list.DiscussionListViewModel
 import de.pyryco.mobile.ui.conversations.thread.ComposerDraftStore
@@ -52,7 +53,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -100,7 +100,8 @@ val appModule =
                 get(),
                 get(),
                 get(),
-                pushToken = { get<AppPreferences>().pushToken.first() },
+                // #361: every host observes the stored token, so a rotation re-registers on open hosts.
+                pushTokens = get<AppPreferences>().pushToken,
             )
         }
         single(createdAtStart = true) {
@@ -123,14 +124,16 @@ val appModule =
         // (#350), which selects the StableConversationRepository facade by default or this demo Fake.
         single { FakeConversationRepository() }
         // #302: process-lifecycle driver. Eagerly created at startKoin (Application.onCreate, main
-        // thread) so it registers as a ProcessLifecycleOwner observer immediately; resolvable so a
-        // future FCM service can get() it for onPushWake(). The registry owns all saved hosts.
+        // thread) so it registers as a ProcessLifecycleOwner observer immediately; resolvable so the
+        // FCM service (#361) can get() it for onPushWake(). The registry owns all saved hosts.
         single(createdAtStart = true) {
             LifecycleConnectionDriver(
                 controller = get<RelayConnectionController>(),
                 lifecycle = ProcessLifecycleOwner.get().lifecycle,
             ).also { it.start() }
-        }
+        } onClose { it?.dispose() }
+        // #361: the FCM service's token writes outlive the service instance that received them.
+        single { PushTokenSink(get()) } onClose { it?.dispose() }
         // The stable facade follows the registry's selection and that host's connection churn.
         // Registered as its own resolvable type only; conversationRepositoryModule (#350) flag-selects
         // whether this facade or the Fake wins the ConversationRepository binding.

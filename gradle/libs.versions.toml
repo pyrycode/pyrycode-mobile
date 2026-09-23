@@ -5,6 +5,7 @@ coreSplashscreen = "1.0.1"
 junit = "4.13.2"
 junitVersion = "1.1.5"
 espressoCore = "3.5.1"
+firebaseBom = "34.19.0"
 googleServices = "4.5.0"
 testRunner = "1.5.2"
 lifecycleRuntimeKtx = "2.6.1"
@@ -66,6 +67,8 @@ okhttp-mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver",
 jetbrains-markdown = { group = "org.jetbrains", name = "markdown", version.ref = "jetbrainsMarkdown" }
 koin-bom = { group = "io.insert-koin", name = "koin-bom", version.ref = "koinBom" }
 koin-androidx-compose = { group = "io.insert-koin", name = "koin-androidx-compose" }
+firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebaseBom" }
+firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 robolectric-annotations = { group = "org.robolectric", name = "annotations", version.ref = "robolectric" }
 snipme-highlights = { group = "dev.snipme", name = "highlights", version.ref = "snipmeHighlights" }
