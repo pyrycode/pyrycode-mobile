@@ -150,3 +150,7 @@ Pending for the documentation stage: fold the remembered-effort key into `docs/k
 ### 2026-09-24: no log when nothing is remembered
 
 In debug unit tests `RelayLog` is enabled and its default sink calls `android.util.Log`, which throws on a plain JVM. The plan logged every decision, `none` included. That put a log inside the `state` collector of every thread opening, so each existing `ThreadViewModel` test that uses the inert `RememberedEffortStore.None` would have crashed its state flow. So `EffortRecall` stays silent when no level is remembered, both at the decision and on a cancelling tap. The fresh-install case and every demo or test opening are those silent paths. The other outcome codes (`saved_choice`, `no_session`, `unpublished`, `started`, `cancelled_by_tap`, `read_failed`) are logged as planned. The two test classes that exercise real logging install a capturing `RelayLog.sink` and assert the level never appears in a log line.
+
+### 2026-09-24: naming
+
+The plan's `startRecall` is named `startEffortRecall` in `ThreadViewModel`, so it reads beside `onEffortSelected`. The behaviour is as planned.
