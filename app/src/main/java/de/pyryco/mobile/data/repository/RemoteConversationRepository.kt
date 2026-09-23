@@ -177,6 +177,12 @@ class RemoteConversationRepository(
         )
 
     /**
+     * The slash-command menu of every conversation (#882). [onInbound] hands it `slash_command_list` behind
+     * the `interactive` gate; [observeSlashCommandMenu] reads it. It sends nothing: the frame has no verb.
+     */
+    private val slashCommandMenuProjection = SlashCommandMenuProjection()
+
+    /**
      * The request↔reply plumbing of this connection (#914): the one envelope-id counter every request takes
      * its id from, the reply waiters, the correlated await and the teardown sweep. [onInbound] completes or
      * fails waiters through it, and the [init] collector's `finally` sweeps it last.
@@ -564,6 +570,13 @@ class RemoteConversationRepository(
                 // ask: see [ModelMenuProjection.apply].
                 if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
                     modelMenuProjection.apply(envelope)
+                }
+            }
+            TYPE_SLASH_COMMAND_LIST -> {
+                // The per-conversation slash-command menu (#882), behind the same `interactive` gate as
+                // `model_list`: see [SlashCommandMenuProjection.apply].
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    slashCommandMenuProjection.apply(envelope)
                 }
             }
             TYPE_API_RETRY -> {
@@ -1014,6 +1027,9 @@ class RemoteConversationRepository(
 
     override fun observeModelMenu(conversationId: String): Flow<ModelMenu?> = modelMenuProjection.observe(conversationId)
 
+    override fun observeSlashCommandMenu(conversationId: String): Flow<SlashCommandMenu?> =
+        slashCommandMenuProjection.observe(conversationId)
+
     /** Create an unpromoted discussion (#347); see [ConversationCommands.createDiscussion]. */
     override suspend fun createDiscussion(workspace: String?): Conversation = conversationCommands.createDiscussion(workspace)
 
@@ -1359,6 +1375,14 @@ class RemoteConversationRepository(
          * unchanged**, carrying an `in_reply_to` and, like the reconcile burst's, no `event_id`.
          */
         const val TYPE_MODEL_LIST = "model_list"
+
+        /**
+         * Capability-gated inventory (#882): the slash commands claude will accept for one conversation, a
+         * full snapshot that replaces that conversation's menu. Arrives on the live interactive lane (with an
+         * `event_id`) and as a per-conversation snapshot on every (re)connect (with none). Declares no
+         * inbound verb.
+         */
+        const val TYPE_SLASH_COMMAND_LIST = "slash_command_list"
 
         /**
          * Request: one conversation's model menu, on demand (#792, daemon pyrycode#2125). The third and
