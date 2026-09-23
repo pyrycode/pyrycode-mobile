@@ -284,8 +284,9 @@ class FakeConversationRepository(
         model: String?,
         effort: String?,
         yolo: Boolean?,
+        permissionMode: String?,
     ) {
-        recordedSessionSettings += SetSessionSettingsPayloadDto(sessionId, model, effort, yolo)
+        recordedSessionSettings += SetSessionSettingsPayloadDto(sessionId, model, effort, yolo, permissionMode)
     }
 
     /**

@@ -164,7 +164,8 @@ fun ThreadScreen(
     // #807: a published ModelMenuRow.value / effort level, forwarded verbatim — never a device enum.
     onModelSelected: (String) -> Unit = {},
     onEffortSelected: (String) -> Unit = {},
-    onYoloToggled: (Boolean) -> Unit = {},
+    // #650: a PermissionModeOption wire value from the footer's permission menu.
+    onPermissionModeSelected: (String) -> Unit = {},
     onWorkspaceChipTapped: () -> Unit = {},
     onWorkspacePicked: (String) -> Unit = {},
     onWorkspacePickerDismissed: () -> Unit = {},
@@ -230,7 +231,7 @@ fun ThreadScreen(
     LaunchedEffect(changeWorkspaceErrors, snackbarHostState) {
         changeWorkspaceErrors.collect { snackbarHostState.showSnackbar(changeWorkspaceFailedMessage) }
     }
-    // #544: surface a failed run-configuration change (model / effort / YOLO) as a transient snackbar. Same
+    // #544: surface a failed run-configuration change (model / effort / permission mode) as a transient snackbar. Same
     // payload-free (Unit) one-shot idiom; the fixed local string keeps the server-supplied
     // RelayErrorException.message out of the un-secured Activity window the snackbar draws in. The control
     // reverts in the ViewModel, so the sheet never settles on a value the daemon did not confirm.
@@ -508,6 +509,7 @@ fun ThreadScreen(
                         when (control) {
                             FooterControl.Model -> onModelSelected(value)
                             FooterControl.Effort -> onEffortSelected(value)
+                            FooterControl.Permission -> onPermissionModeSelected(value)
                         }
                         openControl = null
                     },
@@ -560,8 +562,6 @@ fun ThreadScreen(
             pending = state.runConfig.pending,
             // An empty session id means the daemon has no session to address, so the controls read only.
             enabled = state.runConfig.writable,
-            yoloEnabled = state.yoloEnabled,
-            onYoloToggled = onYoloToggled,
             onDismiss = { sheetVisible = false },
         )
     }
