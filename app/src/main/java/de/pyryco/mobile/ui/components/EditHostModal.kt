@@ -295,7 +295,10 @@ private fun UnpairAction(onClick: () -> Unit) {
  * still measures the whole string — so the clamp, not the overflow, is what keeps an oversized
  * value a truncation rather than an ANR.
  */
-private fun boundedText(raw: String): String = raw.take(MAX_WORKSPACE_LABEL_CHARS)
+private fun boundedText(raw: String): String =
+    // A cut between the halves of a surrogate pair would leave a lone high surrogate, and OK would
+    // send it back as part of the name: drop it.
+    raw.take(MAX_WORKSPACE_LABEL_CHARS).let { if (it.lastOrNull()?.isHighSurrogate() == true) it.dropLast(1) else it }
 
 /** Content-free and debug-gated, in the shell's shape: the event name and nothing it was given. */
 private fun logEditHostEvent(event: String) {

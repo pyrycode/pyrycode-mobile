@@ -86,6 +86,10 @@ is a KDoc obligation on the caller rather than a compiler-checked one (flagged a
 - `submitName(name)` trims and clamps to `MAX_WORKSPACE_LABEL_CHARS` itself (never trusted from the
   caller), maps a blank result to `null`, and writes through `setDisplayName`. A thrown
   `PairedServerStoreException` republishes `saving = false, failed = true`; success closes the editor.
+  This clamp is a plain `take` and can still split a UTF-16 surrogate pair in an operator-*typed*
+  name at the 128-char boundary — #851 fixed the daemon-written seed/round-trip clamps in
+  `EditHostModal` and `workspaceDisplayName` but left this one out of scope; see
+  [mobile modal § Callers](mobile-modal.md#callers) for the fuller account.
 - `requestUnpair()` / `declineUnpair()` arm and disarm the confirmation without writing. Both — and
   `confirmUnpair()` itself — carry the same `if (target.saving) return` guard `submitName` uses: the
   shell disables its OK while loading but leaves Cancel and the content live, so a decline or a second

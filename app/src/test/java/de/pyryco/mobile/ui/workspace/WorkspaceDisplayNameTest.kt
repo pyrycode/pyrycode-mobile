@@ -61,4 +61,11 @@ class WorkspaceDisplayNameTest {
         assertEquals(MAX_WORKSPACE_LABEL_CHARS, rendered.length)
         assertTrue(hostile.startsWith(rendered))
     }
+
+    @Test
+    fun overlongLabel_clampNeverSplitsASurrogatePair() {
+        // take() alone would end on the lone high half of the emoji, which renders as a replacement glyph.
+        val kept = "n".repeat(MAX_WORKSPACE_LABEL_CHARS - 1)
+        assertEquals(kept, workspaceDisplayName(cwd = "/work/A", label = kept + "😀" + "tail"))
+    }
 }

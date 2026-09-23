@@ -26,6 +26,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
@@ -57,7 +58,7 @@ class EditHostModalTest {
     // The frame's own sample values, so a reader can line the suite up against the design.
     private val identity = "345345-345345345-gw3vw-w4wv34-vw34t"
     private val relay = "https://asdf.afwevawef.fwef/asdffe"
-    private val hostName = "Pyrybox"
+    private var hostName = "Pyrybox"
 
     // Well past MAX_WORKSPACE_LABEL_CHARS, and different characters per field so the two clamped
     // values can never satisfy one another's assertion.
@@ -272,6 +273,19 @@ class EditHostModalTest {
             assertWithin(bounds.right, "clamped value")
             assertSingleLine(bounds.height, "clamped value")
         }
+    }
+
+    @Test
+    fun theClampNeverSplitsASurrogatePair() {
+        val kept = "n".repeat(MAX_WORKSPACE_LABEL_CHARS - 1)
+        hostName = kept + "😀" + "tail"
+        show()
+
+        rule
+            .onNodeWithTag(EDIT_HOST_NAME_FIELD_TAG)
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString(kept)))
+        rule.onNodeWithText("OK").performClick()
+        rule.runOnIdle { assertEquals(listOf(kept), submitted) }
     }
 
     @Test
