@@ -69,6 +69,9 @@ import kotlinx.datetime.Instant
  */
 private const val HISTORY_INVALID_CURSOR = "history.invalid_cursor"
 
+/** The permission options that allow (#818): the only answers that may carry the session grant. */
+private val ALWAYS_ALLOW_OPTION_IDS = setOf("allow_once", "allow_always")
+
 sealed interface ThreadEvent {
     data object NewSession : ThreadEvent
 
@@ -365,7 +368,8 @@ class ThreadViewModel(
     // repo (RelayRepositoryCoordinator.answerModal / cancelModal). Defaulted no-ops so the fake-backed Koin
     // graph + existing ThreadViewModel tests stay inert. The VM holds only these two suspend lambdas, never
     // the facade-bypassing concrete repo or the coordinator (the outbound analog of the modalEvents flow).
-    private val answerModal: suspend (modalId: String, optionId: String) -> Unit = { _, _ -> },
+    // #818: alwaysAllow grants the modal's offered rules for the session; see onModalOption for when it is set.
+    private val answerModal: suspend (modalId: String, optionId: String, alwaysAllow: Boolean) -> Unit = { _, _, _ -> },
     private val cancelModal: suspend (modalId: String) -> Unit = { _ -> },
     // #458: the outbound `interrupt` send path → the coordinator's passthrough (RelayRepositoryCoordinator
     // .interrupt). Defaulted no-op so the fake-backed Koin graph + existing tests stay inert. The VM holds
@@ -828,6 +832,24 @@ class ThreadViewModel(
         combine(currentModal, armedModalOption) { modal, arm ->
             if (modal is ModalUiState.Open && arm?.modalId == modal.modalId) arm.optionId else null
         }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /**
+     * The "don't ask again this session" offer the user accepted (#818), keyed on the prompt that showed it:
+     * its [AcceptedAlwaysAllow.modalId] and the exact rules it offered. Like [armedModalOption] it is
+     * transient and never persisted, and a stale key is simply invisible (see [alwaysAllowAccepted]).
+     */
+    private val acceptedAlwaysAllow = MutableStateFlow<AcceptedAlwaysAllow?>(null)
+
+    /**
+     * Whether the *currently-open* prompt's offer is accepted (#818): `true` only while the scoped modal is
+     * [ModalUiState.Open], [offers][ModalUiState.Open.offersAlwaysAllow] the grant, and matches the accepted
+     * key. A new, replaced, re-offered-with-other-rules or resolved prompt therefore reads as unaccepted by
+     * construction. A sibling of [armedOptionId], started eagerly for the same reason.
+     */
+    val alwaysAllowAccepted: StateFlow<Boolean> =
+        combine(currentModal, acceptedAlwaysAllow) { modal, accepted ->
+            modal is ModalUiState.Open && modal.offersAlwaysAllow && accepted == modal.alwaysAllowKey()
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     private val modalSendErrorChannel = Channel<Unit>(capacity = Channel.BUFFERED)
 
@@ -1292,20 +1314,50 @@ class ThreadViewModel(
     fun onModalOption(optionId: String) {
         val open = scopedModal() as? ModalUiState.Open ?: return
         when {
-            optionId == open.defaultOptionId -> sendAnswer(open.modalId, optionId)
+            optionId == open.defaultOptionId -> sendAnswer(open.modalId, optionId, grantsAlwaysAllow(open, optionId))
             armedModalOption.value == ArmedModalOption(open.modalId, optionId) ->
-                sendAnswer(open.modalId, optionId)
+                sendAnswer(open.modalId, optionId, grantsAlwaysAllow(open, optionId))
             else -> armedModalOption.value = ArmedModalOption(open.modalId, optionId)
         }
     }
 
     /** Cancel the currently-open modal (#451): clear any arm and send `modal_cancel`. No-op if no modal is
-     *  open. */
+     *  open. A cancel never carries the session grant, and it drops any acceptance (#818). */
     fun onModalCancel() {
         val open = scopedModal() as? ModalUiState.Open ?: return
         armedModalOption.value = null
+        acceptedAlwaysAllow.value = null
         sendCancel(open.modalId)
     }
+
+    /**
+     * Accept or withdraw the open prompt's "don't ask again this session" offer (#818). [modalId] is the
+     * prompt the checkbox was drawn for, used only as a guard: a tap on a stale frame of a prompt that has
+     * since been replaced is ignored rather than accepting the replacement. No-op unless this thread's
+     * modal is open and offers the grant. It never sends and never arms, so accepting the offer is not the
+     * second-tap confirmation of a non-default option.
+     */
+    fun onAlwaysAllowChanged(
+        modalId: String,
+        accepted: Boolean,
+    ) {
+        val open = scopedModal() as? ModalUiState.Open ?: return
+        if (open.modalId != modalId || !open.offersAlwaysAllow) return
+        acceptedAlwaysAllow.value = if (accepted) open.alwaysAllowKey() else null
+    }
+
+    /**
+     * Whether answering [open] with [optionId] carries the session grant (#818): the prompt offers it, the
+     * user accepted this exact offer, and the answer is an allow. A deny never carries it, matching the
+     * desktop; the daemon would ignore it there anyway.
+     */
+    private fun grantsAlwaysAllow(
+        open: ModalUiState.Open,
+        optionId: String,
+    ): Boolean =
+        optionId in ALWAYS_ALLOW_OPTION_IDS &&
+            open.offersAlwaysAllow &&
+            acceptedAlwaysAllow.value == open.alwaysAllowKey()
 
     /**
      * The input guard's read of this thread's modal (#816). It reads the host flow synchronously instead of
@@ -1325,11 +1377,12 @@ class ThreadViewModel(
     private fun sendAnswer(
         modalId: String,
         optionId: String,
+        alwaysAllow: Boolean,
     ) {
         armedModalOption.value = null
         viewModelScope.launch {
             try {
-                answerModal(modalId, optionId)
+                answerModal(modalId, optionId, alwaysAllow)
             } catch (e: CancellationException) {
                 throw e // MUST precede the typed catches: j.u.c.CancellationException extends ISE on the JVM
             } catch (e: RelayErrorException) {
@@ -1778,6 +1831,14 @@ class ThreadViewModel(
         val modalId: String,
         val optionId: String,
     )
+
+    /** An accepted always-allow offer (#818), keyed on the prompt and the exact rules it offered. */
+    private data class AcceptedAlwaysAllow(
+        val modalId: String,
+        val rules: List<String>,
+    )
+
+    private fun ModalUiState.Open.alwaysAllowKey() = AcceptedAlwaysAllow(modalId, alwaysAllowRules)
 
     /** The outstanding permission write (#650): the session it addressed, and the job that sends and
      *  settles it. */

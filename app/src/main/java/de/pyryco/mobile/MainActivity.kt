@@ -423,6 +423,7 @@ internal fun PyryNavHost(
                 val isBusy by vm.isBusy.collectAsStateWithLifecycle()
                 val modalState by vm.currentModal.collectAsStateWithLifecycle()
                 val armedOptionId by vm.armedOptionId.collectAsStateWithLifecycle()
+                val alwaysAllowAccepted by vm.alwaysAllowAccepted.collectAsStateWithLifecycle()
                 val draft by vm.draft.collectAsStateWithLifecycle()
                 val rePairAvailable by vm.rePairAvailable.collectAsStateWithLifecycle()
                 LaunchedEffect(vm) {
@@ -456,6 +457,8 @@ internal fun PyryNavHost(
                     sessionSettingsErrors = vm.sessionSettingsErrors,
                     onModalOption = vm::onModalOption,
                     onModalCancel = vm::onModalCancel,
+                    alwaysAllowAccepted = alwaysAllowAccepted,
+                    onAlwaysAllowChanged = vm::onAlwaysAllowChanged,
                     onDropQueued = vm::onDropQueued,
                     onOverflowEvent = vm::onOverflowEvent,
                     onShowLiteralScreen = { navController.navigate(Routes.literal(target)) },

@@ -746,6 +746,237 @@ class ThreadViewModelTest {
             assertNull(vm.armedOptionId.value)
         }
 
+    // ---- #818: the don't-ask-again offer is scoped to the prompt that showed it --------------------
+
+    private fun offeringModal(
+        modalId: String,
+        rules: List<String> = listOf("Bash(npm test)", "Read"),
+        defaultOptionId: String = "reject_once",
+    ): ModalUiState.Open = openModal(modalId = modalId, options = fourOptions, defaultOptionId = defaultOptionId, alwaysAllowRules = rules)
+
+    @Test
+    fun acceptedOffer_ridesTheArmedAllowAnswer() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(offeringModal("m1"))
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modal, recorder)
+            advanceUntilIdle()
+
+            vm.onAlwaysAllowChanged("m1", true)
+            advanceUntilIdle()
+            assertTrue(vm.alwaysAllowAccepted.value)
+            // Accepting the offer neither sends nor arms: it is not the second-tap confirmation.
+            assertTrue(recorder.answers.isEmpty())
+            assertNull(vm.armedOptionId.value)
+
+            vm.onModalOption("allow_always") // arm
+            vm.onModalOption("allow_always") // confirm
+            advanceUntilIdle()
+
+            assertEquals(listOf("m1" to "allow_always"), recorder.answers)
+            assertEquals(listOf(true), recorder.grants)
+        }
+
+    @Test
+    fun acceptedOffer_ridesAnAllowDefaultAnsweredOnOneTap() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(offeringModal("m1", defaultOptionId = "allow_once"))
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modal, recorder)
+            advanceUntilIdle()
+
+            vm.onAlwaysAllowChanged("m1", true)
+            vm.onModalOption("allow_once")
+            advanceUntilIdle()
+
+            assertEquals(listOf(true), recorder.grants)
+        }
+
+    @Test
+    fun allowWithoutAcceptingTheOffer_sendsTheFlagUnset() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(offeringModal("m1"))
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modal, recorder)
+            advanceUntilIdle()
+
+            vm.onAlwaysAllowChanged("m1", true)
+            vm.onAlwaysAllowChanged("m1", false) // un-accepted before answering
+            advanceUntilIdle()
+            assertFalse(vm.alwaysAllowAccepted.value)
+            vm.onModalOption("allow_once")
+            vm.onModalOption("allow_once")
+            advanceUntilIdle()
+
+            assertEquals(listOf("m1" to "allow_once"), recorder.answers)
+            assertEquals(listOf(false), recorder.grants)
+        }
+
+    // A deny never carries the grant, matching the desktop: the daemon would ignore it anyway.
+    @Test
+    fun acceptedOffer_doesNotRideADeny() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(offeringModal("m1"))
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modal, recorder)
+            advanceUntilIdle()
+
+            vm.onAlwaysAllowChanged("m1", true)
+            vm.onModalOption("reject_once") // the default: one tap
+            advanceUntilIdle()
+
+            assertEquals(listOf("m1" to "reject_once"), recorder.answers)
+            assertEquals(listOf(false), recorder.grants)
+        }
+
+    @Test
+    fun promptWithoutAnOffer_cannotBeAccepted() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(openModal(modalId = "m1", options = fourOptions))
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modal, recorder)
+            advanceUntilIdle()
+
+            vm.onAlwaysAllowChanged("m1", true)
+            advanceUntilIdle()
+            assertFalse(vm.alwaysAllowAccepted.value)
+
+            vm.onModalOption("allow_once")
+            vm.onModalOption("allow_once")
+            advanceUntilIdle()
+            assertEquals(listOf(false), recorder.grants)
+        }
+
+    // Rules offered on a non-permission modal are no offer: nothing to accept, nothing sent.
+    @Test
+    fun nonPermissionModalWithRules_cannotBeAccepted() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(offeringModal("m1").copy(modalClass = "trust"))
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modal, recorder)
+            advanceUntilIdle()
+
+            vm.onAlwaysAllowChanged("m1", true)
+            vm.onModalOption("allow_once")
+            vm.onModalOption("allow_once")
+            advanceUntilIdle()
+
+            assertFalse(vm.alwaysAllowAccepted.value)
+            assertEquals(listOf(false), recorder.grants)
+        }
+
+    @Test
+    fun replacedPrompt_startsUnaccepted_andItsAllowSendsTheFlagUnset() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(offeringModal("m1"))
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modal, recorder)
+            advanceUntilIdle()
+
+            vm.onAlwaysAllowChanged("m1", true)
+            advanceUntilIdle()
+            assertTrue(vm.alwaysAllowAccepted.value)
+
+            // Same rules, new prompt: the m1 acceptance does not carry over.
+            modal.value = offeringModal("m2")
+            advanceUntilIdle()
+            assertFalse(vm.alwaysAllowAccepted.value)
+
+            vm.onModalOption("allow_once")
+            vm.onModalOption("allow_once")
+            advanceUntilIdle()
+            assertEquals(listOf("m2" to "allow_once"), recorder.answers)
+            assertEquals(listOf(false), recorder.grants)
+        }
+
+    @Test
+    fun samePromptReofferedWithDifferentRules_readsUnaccepted() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(offeringModal("m1", rules = listOf("Read")))
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modal, recorder)
+            advanceUntilIdle()
+
+            vm.onAlwaysAllowChanged("m1", true)
+            modal.value = offeringModal("m1", rules = listOf("Read", "Bash(rm -rf /)"))
+            advanceUntilIdle()
+            assertFalse(vm.alwaysAllowAccepted.value)
+
+            vm.onModalOption("allow_once")
+            vm.onModalOption("allow_once")
+            advanceUntilIdle()
+            assertEquals(listOf(false), recorder.grants)
+        }
+
+    // A toggle rendered for a prompt that has since been replaced must not accept its replacement.
+    @Test
+    fun toggleCarryingAStaleModalId_isIgnored() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(offeringModal("m2"))
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modal, recorder)
+            advanceUntilIdle()
+
+            vm.onAlwaysAllowChanged("m1", true)
+            advanceUntilIdle()
+
+            assertFalse(vm.alwaysAllowAccepted.value)
+        }
+
+    @Test
+    fun resolvedPrompt_leavesNothingAccepted() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(offeringModal("m1"))
+            val vm = vmWithModal(modal)
+            advanceUntilIdle()
+
+            vm.onAlwaysAllowChanged("m1", true)
+            advanceUntilIdle()
+            assertTrue(vm.alwaysAllowAccepted.value)
+
+            modal.value = ModalUiState.Dismissed("m1", "allow_once", "remote", ACTIVE_CONV)
+            advanceUntilIdle()
+            assertFalse(vm.alwaysAllowAccepted.value)
+        }
+
+    @Test
+    fun cancel_neverCarriesTheGrant_andClearsTheAcceptance() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(offeringModal("m1"))
+            val recorder = ModalSendRecorder()
+            val vm = vmWithModalSendPath(modal, recorder)
+            advanceUntilIdle()
+
+            vm.onAlwaysAllowChanged("m1", true)
+            vm.onModalCancel()
+            advanceUntilIdle()
+
+            assertEquals(listOf("m1"), recorder.cancels)
+            assertTrue(recorder.answers.isEmpty())
+            assertFalse(vm.alwaysAllowAccepted.value)
+        }
+
+    // A failed send leaves the prompt open with the user's choice intact, so a retry sends the same intent.
+    @Test
+    fun failedSend_keepsTheAcceptanceForTheRetry() =
+        runTest {
+            val modal = MutableStateFlow<ModalUiState>(offeringModal("m1", defaultOptionId = "allow_once"))
+            val recorder = ModalSendRecorder(failWith = IllegalStateException("not connected"))
+            val vm = vmWithModalSendPath(modal, recorder)
+            val errorCollector = launch { vm.modalSendErrors.collect { } }
+            advanceUntilIdle()
+
+            vm.onAlwaysAllowChanged("m1", true)
+            vm.onModalOption("allow_once")
+            advanceUntilIdle()
+            assertTrue(vm.alwaysAllowAccepted.value)
+
+            vm.onModalOption("allow_once")
+            advanceUntilIdle()
+            assertEquals(listOf(true, true), recorder.grants)
+            errorCollector.cancel()
+        }
+
     // ---- #816: the host's modal is scoped to the conversation that raised it ---------------------
 
     @Test
@@ -840,7 +1071,7 @@ class ThreadViewModelTest {
                     SavedStateHandle(initialState = mapOf("conversationId" to ACTIVE_CONV)),
                     FakeConversationRepository(),
                     currentModal = modal,
-                    answerModal = { _, _ -> gate.await() },
+                    answerModal = { _, _, _ -> gate.await() },
                 )
             // Host the VM in a store so store.clear() cancels its viewModelScope — the real teardown path.
             val store = ViewModelStore().apply { put("vm", vm) }
@@ -4022,7 +4253,7 @@ class ThreadViewModelTest {
         draftStore: ComposerDraftStore = ComposerDraftStore(),
         liveSessionEvents: Flow<LiveSessionEvent> = emptyFlow(),
         currentModal: StateFlow<ModalUiState> = MutableStateFlow(ModalUiState.Hidden),
-        answerModal: suspend (String, String) -> Unit = { _, _ -> },
+        answerModal: suspend (String, String, Boolean) -> Unit = { _, _, _ -> },
         cancelModal: suspend (String) -> Unit = { _ -> },
         interrupt: suspend (String) -> Unit = { },
         // #861: whether the host's live repository is published. Available from the start by default, as
@@ -4093,8 +4324,12 @@ class ThreadViewModelTest {
         val answers = mutableListOf<Pair<String, String>>()
         val cancels = mutableListOf<String>()
 
-        val answer: suspend (String, String) -> Unit = { modalId, optionId ->
+        /** #818: the always-allow flag of each answer, index-aligned with [answers]. */
+        val grants = mutableListOf<Boolean>()
+
+        val answer: suspend (String, String, Boolean) -> Unit = { modalId, optionId, alwaysAllow ->
             answers += modalId to optionId
+            grants += alwaysAllow
             failWith?.let { throw it }
         }
         val cancel: suspend (String) -> Unit = { modalId ->
@@ -4125,7 +4360,18 @@ class ThreadViewModelTest {
         defaultOptionId: String = "reject_once",
         // #816: owned by the thread under test unless a case says otherwise.
         conversationId: String = ACTIVE_CONV,
-    ): ModalUiState.Open = ModalUiState.Open(modalId, modalClass, title, prompt, options, defaultOptionId, conversationId)
+        alwaysAllowRules: List<String> = emptyList(),
+    ): ModalUiState.Open =
+        ModalUiState.Open(
+            modalId,
+            modalClass,
+            title,
+            prompt,
+            options,
+            defaultOptionId,
+            conversationId,
+            alwaysAllowRules = alwaysAllowRules,
+        )
 
     private fun turnState(
         conversationId: String,

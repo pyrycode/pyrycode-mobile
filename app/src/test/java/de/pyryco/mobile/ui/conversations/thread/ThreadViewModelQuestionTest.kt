@@ -58,7 +58,7 @@ class ThreadViewModelQuestionTest {
             FakeConversationRepository(),
             FakeConnectionStateSource(),
             ComposerDraftStore(),
-            answerModal = { _, option -> modalAnswers += option },
+            answerModal = { _, option, _ -> modalAnswers += option },
             questionBatch = { id -> if (id == CONV) batches else MutableStateFlow(null) },
             answerQuestionBatch = { id, values ->
                 gate?.await()
