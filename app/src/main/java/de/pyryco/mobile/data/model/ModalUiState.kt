@@ -26,6 +26,7 @@ sealed interface ModalUiState {
      * A modal is currently surfaced and awaiting an answer. Mirrors [ModalEvent.Shown] field-for-field;
      * [options] preserves the wire array order (the canonical display/selection order), and
      * [defaultOptionId] is the producer's fail-safe-deny default (carried verbatim, never auto-applied).
+     * [context] is the permission ask's decision context (#817), display-only like every other field.
      */
     data class Open(
         val modalId: String,
@@ -35,6 +36,7 @@ sealed interface ModalUiState {
         val options: List<ModalOption>,
         val defaultOptionId: String,
         val conversationId: String = "",
+        val context: ModalContext = ModalContext.None,
     ) : ModalUiState
 
     /**
@@ -77,6 +79,7 @@ internal fun ModalUiState.reduce(event: ModalEvent): ModalUiState =
                 options = event.options,
                 defaultOptionId = event.defaultOptionId,
                 conversationId = event.conversationId,
+                context = event.context,
             )
         is ModalEvent.Dismissed ->
             if (this is ModalUiState.Open && modalId == event.modalId) {

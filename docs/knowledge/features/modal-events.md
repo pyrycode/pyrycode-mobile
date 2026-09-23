@@ -36,7 +36,7 @@ envelopes this seam decodes:
 
 | Wire `type` | Payload fields | Meaning |
 |---|---|---|
-| `modal_shown` | `modal_id`, `class`, `title`, `prompt`, `options` (ordered `[{id, label}]`), `default_option_id` (all required, no `omitempty`); `conversation_id` (daemon #1065, outbound-only scoping stamp — see below) | a surfaced permission/choice modal |
+| `modal_shown` | `modal_id`, `class`, `title`, `prompt`, `options` (ordered `[{id, label}]`), `default_option_id` (all required, no `omitempty`); `conversation_id` (daemon #1065, outbound-only scoping stamp — see below); `reason`, `reason_type`, `blocked_path`, `description` (daemon #2346, optional decision context, omitted at their zero values — see below) | a surfaced permission/choice modal |
 | `modal_dismissed` | `modal_id`, `outcome`, `source` (all required, no `omitempty`) | its resolution |
 
 Pinned by the wire SSOT (pyrycode#701 `internal/protocol/messaging.go` + `docs/protocol-mobile.md`
@@ -106,6 +106,41 @@ for the key still fails the decode, exactly as for every other field — the con
 string, and the default only covers a key that is absent. `ModalDismissedPayloadDto` gains no field; the
 wire dismiss carries no conversation (see the table above).
 
+#### The four decision-context fields (#817)
+
+`ModalShownPayloadDto` also gains `reason`, `reason_type`, `blocked_path`, `description` (daemon #2346),
+copied by the daemon from claude's own `can_use_tool` permission ask. These are the one deliberate exception
+to the strict fail-closed posture above: each is optional, display-only, and decoded as a `JsonElement`
+rather than a `String?`, so a wrong-typed value never fails the structural decode and drops the whole
+prompt — a missing permission ask would otherwise leave the user nothing to answer until the daemon's
+deny-on-timeout.
+
+- **`reason` is non-null**, defaulting to `JsonPrimitive("")`, not `JsonElement? = null` like its three
+  siblings. A `@Serializable(with = …)` custom serializer on a **nullable** `JsonElement?` property does not
+  see the JSON `null` token — kotlinx short-circuits it to Kotlin `null` (absent) before the serializer
+  runs — so a literal `"reason": null` (which the daemon does send; `permbridge` carries
+  `decision_reason` as a Go `json.RawMessage`, which keeps `null` through `omitempty`) would otherwise be
+  indistinguishable from an absent key. The non-null default sidesteps the short-circuit entirely: an
+  explicit `null` decodes as `JsonNull` (present, later stringified to `"null"`), an absent key takes the
+  empty string, and the wire already treats empty and absent as equivalent.
+- **`toModalContext()`** (in `InteractivePayloads.kt`) maps `reason` to its string content when it is a
+  JSON string primitive, or to its compact JSON text (`JsonElement.toString()`) otherwise — the desktop's
+  `JSON.stringify` posture, which keeps `false`, `0` and `null` visible as the meaningful display text they
+  are rather than dropping them. The three sibling fields keep only a JSON string primitive's content; any
+  other JSON type (object, array, number, boolean, explicit null) decodes as absent, since they have no
+  display-text precedent to fall back on.
+- **Empty means absent for every field**, mirroring `conversation_id` above: a value is folded to `null`
+  after extraction, so consumers ([`ModalContext`](../features/permission-modal-overlay.md#the-decision-context-817),
+  data/model/ModalEvent.kt) never see `""`.
+- **Length-clamped, not otherwise sanitised.** The protocol states no bound for these fields, so each value
+  is clamped after extraction — 128 chars for `reason_type` (a category token), 2048 for the other three
+  (prose) — surrogate-safe (never cutting on a lone high surrogate). The clamp bounds decoded state and the
+  overlay's layout independent of the daemon; the relay frame already bounds the envelope. Nothing is
+  trimmed or parsed beyond the string/JSON-text extraction above.
+- **`default_to_no`, the fifth field #2346 added, is not decoded here.** It is a client-selection hint
+  toward the deny choice; the mobile prompt already highlights the producer's `default_option_id`, which is
+  always the deny option, so carrying the hint would change nothing a user can see.
+
 ### 2. Event family — `data/model/ModalEvent.kt` (new, public, portable)
 
 One `sealed interface ModalEvent` with a common `val modalId: String` and two `data class` subtypes named
@@ -123,6 +158,7 @@ sealed interface ModalEvent {
         val options: List<ModalOption>,    // array order = canonical display order (AC #1/#5)
         val defaultOptionId: String,       // ∈ options[].id by producer invariant; carried, NOT enforced
         val conversationId: String = "",   // #816: outbound-only display-scoping stamp; "" = unscoped
+        val context: ModalContext = ModalContext.None,   // #817: claude's optional decision context, display-only
     ) : ModalEvent
 
     data class Dismissed(
@@ -311,6 +347,12 @@ findings.
   hand-off `LiveSessionEvent` documents for `assistant_delta.text`/tool summaries.
   `modalClass`/`source`/`outcome` are likewise verbatim — #446 must not `eval`/reflect on them, only
   compare. Neither this slice nor #445 renders anything.
+- **The four decision-context fields (#817) inherit the same hand-off**, with the same lenient-type
+  posture applied one layer earlier: `reason`/`reasonType`/`blockedPath`/`description` are claude-authored,
+  untrusted, display-only text — never decision authority, never a path this seam or any consumer opens,
+  never logged — carried through `ModalContext` to the render slice
+  ([permission-modal-overlay.md § The decision context](permission-modal-overlay.md#the-decision-context-817)),
+  which renders every value as inert `Text`, matching the `title`/`prompt`/option `label` posture above.
 - **DoS posture.** The `SharedFlow` buffer is **bounded** (`DROP_OLDEST`, capacity 64) and `tryEmit`
   never blocks — a hostile/buggy daemon flooding modal envelopes can neither grow unbounded memory at the
   seam nor stall the shared inbound collector. `options` is an inbound unbounded `List`, but it is
@@ -334,6 +376,8 @@ options[].id` invariant (producer-owned; a #446 default-to-first render fallback
 ## Related
 
 - [#437 implementation notes](../codebase/437.md) — files, line refs, lessons.
+- [Permission-modal overlay](permission-modal-overlay.md#the-decision-context-817) (#817) — decodes and
+  renders the four `ModalContext` fields this seam adds; `PermissionContext` is the render consumer.
 - [Live-session events](live-session-events.md) ([#385](../codebase/385.md)) — the **sibling decode seam**
   this mirrors (three layers, single-collector demux arm, fail-closed drop) and contrasts with (verbatim
   strings vs nullable enum mapper; separate family vs the `conversationId`-bearing family).

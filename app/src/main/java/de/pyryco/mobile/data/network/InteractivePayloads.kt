@@ -1,6 +1,7 @@
 package de.pyryco.mobile.data.network
 
 import de.pyryco.mobile.data.model.LiveSessionEvent
+import de.pyryco.mobile.data.model.ModalContext
 import de.pyryco.mobile.data.model.ModalEvent
 import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ToolDenial
@@ -528,6 +529,10 @@ internal fun TurnEndPayloadDto.toEvent(): LiveSessionEvent =
  * `default_option_id` MUST equal one of `options[].id` by the producer's invariant; this seam carries it
  * verbatim and does **not** enforce it (a decode asserting it would couple decode to producer correctness
  * and could drop a forward-compat modal).
+ *
+ * The four permission-context fields (#817, daemon #2346) are the exception to the strict posture: they
+ * are optional, omitted at their zero values, and display-only, so each decodes as a defaulted
+ * [JsonElement] and a wrong-typed one never drops the prompt it decorates. See [toModalContext].
  */
 @Serializable
 internal data class ModalOptionDto(
@@ -544,6 +549,12 @@ internal data class ModalShownPayloadDto(
     val options: List<ModalOptionDto>,
     @SerialName("default_option_id") val defaultOptionId: String,
     @SerialName("conversation_id") val conversationId: String = "",
+    // Non-null so an explicit JSON `null` decodes as JsonNull (display text) rather than as absent; an absent
+    // key takes the empty string, which the wire already defines as absent.
+    val reason: JsonElement = JsonPrimitive(""),
+    @SerialName("reason_type") val reasonType: JsonElement? = null,
+    @SerialName("blocked_path") val blockedPath: JsonElement? = null,
+    val description: JsonElement? = null,
 )
 
 @Serializable
@@ -563,7 +574,35 @@ internal fun ModalShownPayloadDto.toEvent(): ModalEvent =
         options = options.map { ModalOption(it.id, it.label) },
         defaultOptionId = defaultOptionId,
         conversationId = conversationId,
+        context = toModalContext(),
     )
+
+/**
+ * The four optional context fields as display text (#817). `reason` has no guaranteed JSON shape: a string
+ * is its content and any other value is its compact JSON text, so `false`, `0` and `null` stay visible (the
+ * desktop's `JSON.stringify`). The three string fields keep only a JSON string. Empty means absent, per the
+ * wire. Each value is then clamped, since the contract states no bound: [MAX_MODAL_REASON_TYPE_CHARS] for
+ * the category token, [MAX_MODAL_CONTEXT_CHARS] for the prose. Nothing else is trimmed or parsed.
+ */
+private fun ModalShownPayloadDto.toModalContext(): ModalContext =
+    ModalContext(
+        reason = reason.let { if (it is JsonPrimitive && it.isString) it.content else it.toString() }.clamped(MAX_MODAL_CONTEXT_CHARS),
+        reasonType = reasonType.stringContent().clamped(MAX_MODAL_REASON_TYPE_CHARS),
+        blockedPath = blockedPath.stringContent().clamped(MAX_MODAL_CONTEXT_CHARS),
+        description = description.stringContent().clamped(MAX_MODAL_CONTEXT_CHARS),
+    )
+
+private fun JsonElement?.stringContent(): String? = (this as? JsonPrimitive)?.takeIf { it.isString }?.content
+
+/** Empty → `null`; otherwise at most [max] chars, never ending on a lone high surrogate. */
+private fun String?.clamped(max: Int): String? {
+    if (isNullOrEmpty()) return null
+    val cut = take(max)
+    return if (cut.length < length && cut.last().isHighSurrogate()) cut.dropLast(1) else cut
+}
+
+private const val MAX_MODAL_CONTEXT_CHARS = 2048
+private const val MAX_MODAL_REASON_TYPE_CHARS = 128
 
 /** Total field copy: [outcome] and [source] pass through verbatim (consumers map the wire values). */
 internal fun ModalDismissedPayloadDto.toEvent(): ModalEvent = ModalEvent.Dismissed(modalId, outcome, source)

@@ -18,6 +18,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import de.pyryco.mobile.R
 import de.pyryco.mobile.data.model.ConnectionState
+import de.pyryco.mobile.data.model.ModalContext
 import de.pyryco.mobile.data.model.ModalOption
 import de.pyryco.mobile.data.model.ModalUiState
 import de.pyryco.mobile.ui.theme.PyrycodeMobileTheme
@@ -167,6 +168,84 @@ class ThreadScreenModalTest {
         setContent(ModalUiState.Dismissed(modalId = "m1", outcome = "", source = "some_future_value"))
 
         composeTestRule.onNodeWithText(string(R.string.modal_dismissed_resolved)).assertIsDisplayed()
+    }
+
+    // ---- #817: the permission ask's decision context ---------------------------------------------
+
+    private fun top(text: String): Float =
+        composeTestRule
+            .onNodeWithText(text)
+            .fetchSemanticsNode()
+            .boundsInRoot.top
+
+    @Test
+    fun context_rows_render_between_the_prompt_and_the_options_in_desktop_order() {
+        val modal =
+            openModal().copy(
+                context =
+                    ModalContext(
+                        reason = "Bash(rm:*) is on the ask list",
+                        reasonType = "rule",
+                        blockedPath = "/tmp/scratch",
+                        description = "Remove the scratch directory",
+                    ),
+            )
+        setContent(modal)
+
+        val ruleLabel = string(R.string.modal_context_reason_rule)
+        val descriptionLabel = string(R.string.modal_context_description)
+        val blockedPathLabel = string(R.string.modal_context_blocked_path)
+        listOf(ruleLabel, "Bash(rm:*) is on the ask list", descriptionLabel, "Remove the scratch directory")
+            .plus(listOf(blockedPathLabel, "/tmp/scratch"))
+            .forEach { composeTestRule.onNodeWithText(it).assertIsDisplayed() }
+
+        // prompt → reason → description → blocked path → options, top to bottom.
+        val tops = listOf(modal.prompt, ruleLabel, descriptionLabel, blockedPathLabel, "Allow once").map(::top)
+        assertTrue("context rows must sit in desktop order under the prompt", tops.zipWithNext().all { (a, b) -> a < b })
+    }
+
+    // An unknown category renders as its raw value, and a non-string reason's JSON text stays visible.
+    @Test
+    fun unknown_reason_type_renders_its_raw_category_beside_a_non_string_reason() {
+        setContent(openModal().copy(context = ModalContext(reason = "false", reasonType = "futureCategory_v9")))
+
+        val label =
+            InstrumentationRegistry.getInstrumentation().targetContext.getString(
+                R.string.modal_context_reason_type,
+                "futureCategory_v9",
+            )
+        composeTestRule.onNodeWithText(label).assertIsDisplayed()
+        composeTestRule.onNodeWithText("false").assertIsDisplayed()
+    }
+
+    @Test
+    fun classifier_type_without_a_reason_renders_its_sentence_alone() {
+        setContent(openModal().copy(context = ModalContext(reasonType = "classifier")))
+
+        composeTestRule.onNodeWithText(string(R.string.modal_context_reason_classifier)).assertIsDisplayed()
+        composeTestRule.onNodeWithText(string(R.string.modal_context_reason)).assertDoesNotExist()
+    }
+
+    @Test
+    fun reason_without_a_type_uses_the_generic_label() {
+        setContent(openModal().copy(context = ModalContext(reason = "Needs approval")))
+
+        composeTestRule.onNodeWithText(string(R.string.modal_context_reason)).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Needs approval").assertIsDisplayed()
+    }
+
+    @Test
+    fun modal_without_context_renders_no_context_rows() {
+        setContent(openModal())
+
+        composeTestRule.onNodeWithText(openModal().prompt).assertIsDisplayed()
+        listOf(
+            R.string.modal_context_reason,
+            R.string.modal_context_reason_rule,
+            R.string.modal_context_reason_classifier,
+            R.string.modal_context_description,
+            R.string.modal_context_blocked_path,
+        ).forEach { composeTestRule.onNodeWithText(string(it)).assertDoesNotExist() }
     }
 
     @Test
