@@ -151,8 +151,20 @@ SEED_CHANNEL_NAME="${SEED_CHANNEL_NAME:-e2e-seed}"  # MUST equal DeterministicIn
 
 RELAY_PID=""
 DAEMON_PID=""
+DAEMON_B_PID=""
 WATCHER_PID=""
 ISO_HOME=""
+
+# Two-host scenario (#847), rung 3 / LIVE only: a second isolated test daemon beside the first, each
+# hosting one conversation under the SAME run-unique id with a different name. Instance names derive
+# from PYRY_NAME / PAIR_NAME (the gate's e2e-auto-… identity), so both live under the real HOME's
+# test instances and never under a production one — the guard in the preflight enforces that.
+PYRY_NAME_B="${PYRY_NAME}-b"
+PAIR_NAME_B="${PAIR_NAME}-b"
+DAEMON_B_LOG="${WORK_DIR}/daemon-b.log"
+PAIR_B_OUT="${WORK_DIR}/pair-b.out"
+SERVER_ID_B=""
+PAIR_CODE_B=""
 
 log() { printf '\033[1;34m[e2e]\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m[e2e] ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -231,11 +243,97 @@ report_interactive_runner() {
   log "interactive runner: ${runner}  (${reason})"
 }
 
+# two_host_name_ok <pyry-name> (#847)
+#   Succeeds only for a test instance name: an `e2e-` prefix and the daemon's own sanitised charset
+#   (pyrycode cmd/pyry/main.go sanitizeName), so the name is one literal path element under
+#   <HOME>/.pyry/ — no separator, never a production instance. The two-host seed writes under the
+#   REAL HOME, and this is the deterministic check that keeps it inside a test instance.
+two_host_name_ok() {
+  [[ "$1" =~ ^e2e-[A-Za-z0-9_.-]+$ ]]
+}
+
+# seed_collision_conversation <instance-dir> <conversation-id> <name> <cwd> (#847)
+#   Merges ONE promoted, unbound conversation into <instance-dir>/conversations.json before the daemon
+#   loads it (the daemon reads the registry once at startup). Merge, never overwrite: e2e-live and
+#   e2e-emulator are reused across manual runs, so their other rows and top-level keys survive. A row
+#   with the same id is replaced. No current_session_id — upstream's `omitempty` unbound state, which a
+#   rename and a thread open both serve without spawning claude. Written 0600 via a temp file and
+#   os.replace in a 0700 directory. An unreadable registry aborts WITHOUT echoing its content.
+seed_collision_conversation() {
+  python3 - "$@" <<'PY'
+import datetime, json, os, sys, tempfile
+
+instance, conv_id, name, cwd = sys.argv[1:5]
+os.makedirs(instance, mode=0o700, exist_ok=True)
+path = os.path.join(instance, "conversations.json")
+try:
+    with open(path) as f:
+        doc = json.load(f)
+except FileNotFoundError:
+    doc = {}
+except (OSError, ValueError):
+    sys.exit("existing conversations.json could not be read as JSON; left untouched")
+rows = (doc.get("conversations") or []) if isinstance(doc, dict) else None
+if not isinstance(rows, list):
+    sys.exit("existing conversations.json has an unexpected shape; left untouched")
+rows = [row for row in rows if not (isinstance(row, dict) and row.get("id") == conv_id)]
+# Now, so the seeded row sorts among the most recent in its workspace group and is drawn on screen.
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+rows.append({"id": conv_id, "name": name, "cwd": cwd, "is_promoted": True, "last_used_at": now})
+doc["conversations"] = rows
+fd, tmp = tempfile.mkstemp(dir=instance, prefix=".conversations.", suffix=".tmp")  # created 0600
+try:
+    with os.fdopen(fd, "w") as f:
+        json.dump(doc, f)
+    os.replace(tmp, path)
+except BaseException:
+    if os.path.exists(tmp):
+        os.unlink(tmp)
+    raise
+PY
+}
+
+# phone_pair_code <pair-out> <phone-relay-url> (#847)
+#   The second host is paired through the app's own paste-a-code flow, so the phone needs the WHOLE
+#   pairing code, not four fields. Finds the payload line the first host's parse accepts, replaces only
+#   `relay` with the URL the phone can dial (the daemon's own is /v1/server-baked, and on the local-relay
+#   rung a loopback address), and re-encodes it base64url without padding, as `pyry pair` prints it.
+#   Prints exactly two shell assignments and nothing else: the code carries the pairing token.
+phone_pair_code() {
+  python3 - "$@" <<'PY'
+import base64, json, shlex, sys
+
+def b64url(s):
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+payload = None
+with open(sys.argv[1]) as f:
+    for line in f:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(b64url(line))
+        except Exception:
+            continue
+        if isinstance(obj, dict) and {"server", "token", "server_static_pubkey"} <= obj.keys():
+            payload = obj
+            break
+if payload is None:
+    sys.exit("could not find the base64url pairing payload line in the second `pyry pair` output")
+payload["relay"] = sys.argv[2]
+code = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
+print("SERVER_ID_B=" + shlex.quote(payload["server"]))
+print("PAIR_CODE_B=" + shlex.quote(code))
+PY
+}
+
 cleanup() {
   local code=$?
   log "tearing down…"
   [ -n "${WATCHER_PID}" ] && kill "${WATCHER_PID}" 2>/dev/null || true
   [ -n "${DAEMON_PID}" ] && kill "${DAEMON_PID}" 2>/dev/null || true
+  [ -n "${DAEMON_B_PID:-}" ] && kill "${DAEMON_B_PID}" 2>/dev/null || true
   [ -n "${RELAY_PID}" ] && kill "${RELAY_PID}" 2>/dev/null || true
   wait 2>/dev/null || true
   if [ "${code}" -ne 0 ]; then
@@ -287,6 +385,14 @@ not namespace it), so honouring the request here would edit your production ~/.p
 to pin it, or unset INTERACTIVE_RUNNER — either way the harness reports which runner the daemon will use.
 Nothing was spawned and nothing was written."
   fi
+fi
+
+# The two-host seed (#847) writes conversations.json under the REAL HOME on these paths, so both instance
+# names must be test instances. Checked before anything is spawned or written.
+if [ -z "${DETERMINISTIC}" ]; then
+  two_host_name_ok "${PYRY_NAME}" && two_host_name_ok "${PYRY_NAME_B}" \
+    || die "PYRY_NAME=\"${PYRY_NAME}\" is not a test instance name (expected e2e-<[A-Za-z0-9_.-]>): the two-host scenario seeds
+conversations under <HOME>/.pyry/<PYRY_NAME>/ and <PYRY_NAME>-b/ on this path. Nothing was spawned and nothing was written."
 fi
 
 # LIVE spawns no local relay (it dials the production relay), so the relay binary is not required there.
@@ -449,6 +555,22 @@ EOF
   fi
 fi
 
+# ---- 2c. seed the colliding conversation on both test instances (rung 3 / LIVE only, #847) -----
+# Daemon-minted ids never collide by chance, so the collision is seeded: ONE run-unique id, a different
+# name on each host. Per-INSTANCE path (<HOME>/.pyry/<name>/conversations.json), the same one the
+# DETERMINISTIC seed above uses — never the per-user config.json one level up. Must precede both daemons.
+if [ -z "${DETERMINISTIC}" ]; then
+  COLLISION_ID="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+  COLLISION_STAMP="$(date +%s)"
+  COLLISION_NAME_A="e2e847-a-${COLLISION_STAMP}"
+  COLLISION_NAME_B="e2e847-b-${COLLISION_STAMP}"
+  for seed in "${PYRY_NAME}:${COLLISION_NAME_A}" "${PYRY_NAME_B}:${COLLISION_NAME_B}"; do
+    seed_collision_conversation "${HOME}/.pyry/${seed%%:*}" "${COLLISION_ID}" "${seed#*:}" "${HOME}" \
+      || die "failed to seed ${HOME}/.pyry/${seed%%:*}/conversations.json"
+  done
+  log "seeded conversation ${COLLISION_ID} as '${COLLISION_NAME_A}' on ${PYRY_NAME} and '${COLLISION_NAME_B}' on ${PYRY_NAME_B}"
+fi
+
 # ---- 3. daemon (Mobile Protocol v2, pointed at the relay) -------------------------------------
 # Name the interactive runner this daemon will use BEFORE it spawns (#614) — one call site, all three
 # modes, so a gate's result stays a property of the test rather than of whatever ~/.pyry/config.json
@@ -493,8 +615,21 @@ else
     >"${DAEMON_LOG}" 2>&1 &
   DAEMON_PID=$!
 fi
+# The second test daemon (#847): same relay, same flags as this mode's first one, its own instance.
+if [ -z "${DETERMINISTIC}" ]; then
+  log "starting second pyry daemon (${PYRY_NAME_B}) → ${DAEMON_RELAY_URL}…"
+  if [ -n "${LIVE}" ]; then
+    PYRY_MOBILE_V2=1 PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" -pyry-name="${PYRY_NAME_B}" -pyry-workdir="${HOME}" \
+      >"${DAEMON_B_LOG}" 2>&1 &
+  else
+    PYRY_ALLOW_INSECURE_RELAY=1 PYRY_MOBILE_V2=1 PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" -pyry-name="${PYRY_NAME_B}" -pyry-workdir="${HOME}" \
+      >"${DAEMON_B_LOG}" 2>&1 &
+  fi
+  DAEMON_B_PID=$!
+fi
 sleep 3
 kill -0 "${DAEMON_PID}" 2>/dev/null || die "daemon exited early; see private log ${DAEMON_LOG}"
+[ -z "${DAEMON_B_PID}" ] || kill -0 "${DAEMON_B_PID}" 2>/dev/null || die "second daemon exited early; see private log ${DAEMON_B_LOG}"
 log "daemon up (the test waits for the relay session to open before sending)."
 
 # ---- pair against the running test daemon ---------------
@@ -543,6 +678,19 @@ eval "${PARSED}"
 [ -n "${SERVER_ID:-}" ] && [ -n "${TOKEN:-}" ] && [ -n "${SERVER_STATIC_PUBKEY:-}" ] || die "empty pairing fields"
 log "paired: serverId=${SERVER_ID}"
 
+# The second host (#847) is paired by the test itself, through the app's paste-a-code flow, so here we
+# only mint its code. Never log PAIR_CODE_B: it carries the pairing token.
+if [ -z "${DETERMINISTIC}" ]; then
+  log "minting second pairing token (name='${PAIR_NAME_B}', pyry-name='${PYRY_NAME_B}')…"
+  PYRY_RELAY_URL="${DAEMON_RELAY_URL}" "${PYRY_BIN}" pair -pyry-name="${PYRY_NAME_B}" --name="${PAIR_NAME_B}" \
+    >"${PAIR_B_OUT}" 2>&1 || die "second pyry pair failed; see private log ${PAIR_B_OUT}"
+  PARSED_B="$(phone_pair_code "${PAIR_B_OUT}" "${PHONE_RELAY_URL}")" \
+    || die "failed to parse the second pairing payload; see private log ${PAIR_B_OUT}"
+  eval "${PARSED_B}"
+  [ -n "${SERVER_ID_B}" ] && [ -n "${PAIR_CODE_B}" ] || die "empty second pairing fields"
+  log "second host minted: serverId=${SERVER_ID_B} (the test pairs it by code)"
+fi
+
 # ---- 4b. release a held stream fragment after an explicit test action ---------
 # First-fragment replay belongs to fakeclaude's user-envelope handler. Only the
 # second fragment needs a host signal: enqueue #2, or a phone disconnect while
@@ -565,21 +713,22 @@ fi
 
 # ---- 4. run the managed-device instrumented test ----------------------------------------------
 # Deterministic mode runs exactly the scenario's one method (class#method); default rung 3 runs the whole
-# class; LIVE curates a nonet of real-claude methods (ping + create-workspace-folder + new-session +
-# delete + archive-restore + change-workspace + rename + save-as-channel + list-archive-entry = 9 methods,
-# still 3 turns — delete/rename/archive/unarchive/change-workspace/promote are daemon round-trips and the
-# list-archive-entry arrival is pure navigation, not claude turns) via a comma-separated class list — the full class' #481 tool-use test would spend an extra turn, so it stays
+# class; LIVE curates ten real-claude methods (ping + create-workspace-folder + new-session +
+# delete + archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host,
+# still 3 turns — delete/rename/archive/unarchive/change-workspace/promote are daemon round-trips, the
+# list-archive-entry arrival is pure navigation, and the two-host scenario (#847) is pairing, navigation,
+# rename and link cycling, none of them claude turns) via a comma-separated class list — the full class' #481 tool-use test would spend an extra turn, so it stays
 # excluded.
 if [ -n "${DETERMINISTIC}" ]; then
   TEST_TARGET="${TEST_CLASS}#${TEST_METHOD}"
 elif [ -n "${LIVE}" ]; then
   # LIVE curates its real-claude turns: ping + create-workspace-folder + new-session + delete +
-  # archive-restore + change-workspace + rename + save-as-channel + list-archive-entry (9 methods, still 3
-  # turns — delete, archive-restore, change-workspace, rename, save-as-channel and list-archive-entry spend
-  # none), passed as a comma-separated
+  # archive-restore + change-workspace + rename + save-as-channel + list-archive-entry + two-host (10
+  # methods, still 3 turns — delete, archive-restore, change-workspace, rename, save-as-channel,
+  # list-archive-entry and two-host spend none), passed as a comma-separated
   # class#method list. The class' #481 tool-use test stays excluded from LIVE for cost (it runs only in the
   # default whole-class rung-3 run).
-  TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_archiveRestore_roundTripsListMembership,${TEST_CLASS}#interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived"
+  TEST_TARGET="${TEST_CLASS}#interactiveTurn_pingPrompt_streamsPingReplyIntoThread,${TEST_CLASS}#interactiveTurn_createWorkspaceFolder_usableAsLiveSessionWorkspace,${TEST_CLASS}#interactiveTurn_newSession_rendersSessionBoundaryDelimiter,${TEST_CLASS}#interactiveTurn_deleteConversation_removesFromListAndClosesThread,${TEST_CLASS}#interactiveTurn_archiveRestore_roundTripsListMembership,${TEST_CLASS}#interactiveTurn_changeWorkspace_relabelsChipToNewWorkspace,${TEST_CLASS}#interactiveTurn_renameConversation_relabelsTopBarAndListRow,${TEST_CLASS}#interactiveTurn_saveAsChannel_promotesToChannelTier,${TEST_CLASS}#interactiveTurn_listArchiveEntry_opensArchived,${TEST_CLASS}#interactiveTurn_twoHostsCollidingConversationId_stayPerHost"
 else
   TEST_TARGET="${TEST_CLASS}"
 fi
@@ -587,6 +736,16 @@ log "running ${DEVICE}DebugAndroidTest (headless emulator: boot → install → 
 log "  phone relayUrl = ${PHONE_RELAY_URL}"
 GRADLE_TEST_ARGS=(-PuseRelayRepository=true)
 if [ "${PYRY_FORCE_TEST_RUN:-}" = "1" ]; then GRADLE_TEST_ARGS+=(--rerun); fi
+# The second host and the seeded collision (#847), only on the paths that started a second daemon.
+if [ -n "${SERVER_ID_B:-}" ]; then
+  GRADLE_TEST_ARGS+=(
+    -Pandroid.testInstrumentationRunnerArguments.serverIdB="${SERVER_ID_B}"
+    -Pandroid.testInstrumentationRunnerArguments.pairCodeB="${PAIR_CODE_B}"
+    -Pandroid.testInstrumentationRunnerArguments.collisionConversationId="${COLLISION_ID}"
+    -Pandroid.testInstrumentationRunnerArguments.collisionNameA="${COLLISION_NAME_A}"
+    -Pandroid.testInstrumentationRunnerArguments.collisionNameB="${COLLISION_NAME_B}"
+  )
+fi
 "${GRADLEW}" -p "${REPO_ROOT}" "${DEVICE}DebugAndroidTest" \
   "${GRADLE_TEST_ARGS[@]}" \
   -Pandroid.testInstrumentationRunnerArguments.class="${TEST_TARGET}" \
@@ -599,7 +758,7 @@ if [ "${PYRY_FORCE_TEST_RUN:-}" = "1" ]; then GRADLE_TEST_ARGS+=(--rerun); fi
 if [ -n "${DETERMINISTIC}" ]; then
   log "PASS — scenario '${SCENARIO}' green: the emulator connected, sent the prompt, and the scripted reply rendered."
 elif [ -n "${LIVE}" ]; then
-  log "PASS — the headless emulator connected over the LIVE relay, sent the prompts, and the ping reply, the created-workspace flow, the new-session delimiter, the delete-conversation flow, the archive/restore round-trip, the change-workspace chip re-label, the rename top-bar/list re-label, the save-as-channel promote (top-bar re-label + channel tier), and the list's archive entry reaching Archived all rendered."
+  log "PASS — the headless emulator connected over the LIVE relay, sent the prompts, and the ping reply, the created-workspace flow, the new-session delimiter, the delete-conversation flow, the archive/restore round-trip, the change-workspace chip re-label, the rename top-bar/list re-label, the save-as-channel promote (top-bar re-label + channel tier), the list's archive entry reaching Archived, and two hosts sharing one conversation id staying separate all rendered."
 else
   log "PASS — the headless emulator connected, sent the prompt, and 'ping' rendered in the thread."
 fi
