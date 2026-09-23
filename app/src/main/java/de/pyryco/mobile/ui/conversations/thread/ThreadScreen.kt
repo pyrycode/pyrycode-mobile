@@ -17,9 +17,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -103,6 +105,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
+import androidx.compose.ui.semantics.Role as SemanticsRole
 
 private const val ABOVE_DELIMITER_ALPHA = 0.55f
 
@@ -179,6 +182,10 @@ fun ThreadScreen(
     sessionSettingsErrors: Flow<Unit> = emptyFlow(), // #544: payload-free one-shot run-config failure signal
     onModalOption: (String) -> Unit = {}, // #452: wired by MainActivity → vm::onModalOption (passes ModalOption.id)
     onModalCancel: () -> Unit = {}, // #452: wired by MainActivity → vm::onModalCancel
+    // #818: whether the open prompt's "don't ask again this session" offer is accepted (VM-scoped to that
+    // prompt), and its toggle, wired by MainActivity → vm::onAlwaysAllowChanged with the rendered modalId.
+    alwaysAllowAccepted: Boolean = false,
+    onAlwaysAllowChanged: (modalId: String, accepted: Boolean) -> Unit = { _, _ -> },
     // #467: wired by MainActivity → vm::onDropQueued (passes QueuedMessage.id). Since #782 it is bound
     // per row by the fold rather than handed to a foot-of-list section.
     onDropQueued: (Long) -> Unit = {},
@@ -601,6 +608,8 @@ fun ThreadScreen(
                 armedOptionId = armedOptionId,
                 onOption = onModalOption,
                 onCancel = onModalCancel,
+                alwaysAllowAccepted = alwaysAllowAccepted,
+                onAlwaysAllowChanged = onAlwaysAllowChanged,
             )
         is ModalUiState.Dismissed -> {
             val reason = dismissReasonText(modalState.source)
@@ -847,6 +856,10 @@ private fun HistoryTailSurface(content: @Composable () -> Unit) {
  * second-confirm affordance on that one option. [onCancel] is reached only via the explicit Cancel button;
  * the gate ignores back-press and outside taps and draws no close glyph (#446), so a permission gate never
  * reads a stray gesture as an implicit answer.
+ *
+ * #818: when the prompt [offers][ModalUiState.Open.offersAlwaysAllow] a session grant, [AlwaysAllowOffer]
+ * sits between the context and the options, as on the desktop. Its toggle reports this prompt's `modalId`
+ * so the VM can ignore a tap that lands after the prompt was replaced.
  */
 @Composable
 private fun PermissionModalOverlay(
@@ -854,6 +867,8 @@ private fun PermissionModalOverlay(
     armedOptionId: String?,
     onOption: (String) -> Unit,
     onCancel: () -> Unit,
+    alwaysAllowAccepted: Boolean = false,
+    onAlwaysAllowChanged: (modalId: String, accepted: Boolean) -> Unit = { _, _ -> },
 ) {
     MobileGateModal(
         title = open.title,
@@ -862,6 +877,13 @@ private fun PermissionModalOverlay(
     ) {
         Text(text = open.prompt, style = MaterialTheme.typography.bodyLarge)
         if (!open.context.isEmpty) PermissionContext(open.context)
+        if (open.offersAlwaysAllow) {
+            AlwaysAllowOffer(
+                rules = open.alwaysAllowRules,
+                accepted = alwaysAllowAccepted,
+                onChanged = { onAlwaysAllowChanged(open.modalId, it) },
+            )
+        }
         Column(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -907,6 +929,43 @@ private fun PermissionContext(context: ModalContext) {
         }
         context.description?.let { ModalContextRow(stringResource(R.string.modal_context_description), it) }
         context.blockedPath?.let { ModalContextRow(stringResource(R.string.modal_context_blocked_path), it) }
+    }
+}
+
+/**
+ * The "don't ask again this session" offer (#818): a checkbox row with a local label, then the offered rules.
+ * The Figma container (`533-2369`) has no frame for it, so it takes the context rows' "Input large" stacking:
+ * the label style over body-medium values, 8 dp apart. The whole row toggles, so the target is the row and
+ * not only the box. The rules are claude-authored and render through plain [Text] only, one per line in wire
+ * order (no markdown, no link handling, no `SelectionContainer`, no saved state, never logged).
+ */
+@Composable
+private fun AlwaysAllowOffer(
+    rules: List<String>,
+    accepted: Boolean,
+    onChanged: (Boolean) -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .toggleable(value = accepted, role = SemanticsRole.Checkbox, onValueChange = onChanged),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Checkbox(checked = accepted, onCheckedChange = null)
+            Text(
+                text = stringResource(R.string.modal_always_allow_label),
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        rules.forEach { rule -> Text(text = rule, style = MaterialTheme.typography.bodyMedium) }
     }
 }
 
@@ -1160,10 +1219,12 @@ private fun PermissionModalOverlayPreview() {
                             blockedPath = "/home/pyry/project",
                             description = "List the project directory",
                         ),
+                    alwaysAllowRules = listOf("Bash(ls:*)", "Read(/home/pyry/project/**)"),
                 ),
             armedOptionId = "allow_once",
             onOption = {},
             onCancel = {},
+            alwaysAllowAccepted = true,
         )
     }
 }

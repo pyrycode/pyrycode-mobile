@@ -14,6 +14,7 @@ import de.pyryco.mobile.data.repository.UsageLimitReading
 import kotlinx.datetime.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -555,6 +556,9 @@ internal data class ModalShownPayloadDto(
     @SerialName("reason_type") val reasonType: JsonElement? = null,
     @SerialName("blocked_path") val blockedPath: JsonElement? = null,
     val description: JsonElement? = null,
+    // #818: always present on the wire, but tolerant here like the context fields — a missing or malformed
+    // offer is no offer, never a dropped prompt. See [toAlwaysAllowRules].
+    @SerialName("always_allow") val alwaysAllow: JsonElement? = null,
 )
 
 @Serializable
@@ -575,7 +579,31 @@ internal fun ModalShownPayloadDto.toEvent(): ModalEvent =
         defaultOptionId = defaultOptionId,
         conversationId = conversationId,
         context = toModalContext(),
+        alwaysAllowRules = alwaysAllow.toAlwaysAllowRules(),
     )
+
+/**
+ * The `always_allow` offer's rules (#818, daemon #2364), or the empty list when no offer is available. The
+ * rules are kept only when `offered` is the JSON boolean `true` and `rules` is an array of 1 to
+ * [MAX_ALWAYS_ALLOW_RULES] non-empty JSON strings of at most [MAX_ALWAYS_ALLOW_RULE_BYTES] UTF-8 bytes each,
+ * the daemon's own bounds. Any violation rejects the whole list: like the daemon, the phone never keeps a
+ * prefix of a rejected batch. The rules are claude-authored display text, carried verbatim.
+ */
+private fun JsonElement?.toAlwaysAllowRules(): List<String> {
+    val offer = this as? JsonObject ?: return emptyList()
+    val offered = offer["offered"] as? JsonPrimitive
+    if (offered == null || offered.isString || offered.content != "true") return emptyList()
+    val rules = offer["rules"] as? JsonArray ?: return emptyList()
+    if (rules.size !in 1..MAX_ALWAYS_ALLOW_RULES) return emptyList()
+    return rules.map { rule ->
+        val text = (rule as? JsonPrimitive)?.takeIf { it.isString }?.content
+        if (text.isNullOrEmpty() || text.encodeToByteArray().size > MAX_ALWAYS_ALLOW_RULE_BYTES) return emptyList()
+        text
+    }
+}
+
+private const val MAX_ALWAYS_ALLOW_RULES = 16
+private const val MAX_ALWAYS_ALLOW_RULE_BYTES = 1024
 
 /**
  * The four optional context fields as display text (#817). `reason` has no guaranteed JSON shape: a string

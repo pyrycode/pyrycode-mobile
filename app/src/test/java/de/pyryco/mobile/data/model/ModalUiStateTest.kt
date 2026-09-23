@@ -78,6 +78,29 @@ class ModalUiStateTest {
         assertEquals(ModalContext.None, (replaced as ModalUiState.Open).context)
     }
 
+    // #818: the always-allow rules ride the fold, and a later Shown without an offer replaces them.
+    @Test
+    fun shownCarriesItsAlwaysAllowRules_andALaterShownReplacesThem() {
+        val shown =
+            ModalEvent.Shown("m1", "permission", "t", "p", emptyList(), "d", "c1", alwaysAllowRules = listOf("Read", "Bash(ls)"))
+
+        val opened = ModalUiState.Hidden.reduce(shown)
+        assertEquals(listOf("Read", "Bash(ls)"), (opened as ModalUiState.Open).alwaysAllowRules)
+
+        val replaced = opened.reduce(shown.copy(modalId = "m2", alwaysAllowRules = emptyList()))
+        assertEquals(emptyList<String>(), (replaced as ModalUiState.Open).alwaysAllowRules)
+    }
+
+    // #818: only a permission ask with an available offer shows it.
+    @Test
+    fun offersAlwaysAllow_onlyForAPermissionAskWithRules() {
+        val withRules = open(modalId = "m1").copy(alwaysAllowRules = listOf("Read"))
+        assertEquals(true, withRules.offersAlwaysAllow)
+        assertEquals(false, withRules.copy(modalClass = "trust").offersAlwaysAllow)
+        assertEquals(false, withRules.copy(modalClass = "future_class").offersAlwaysAllow)
+        assertEquals(false, open(modalId = "m1").offersAlwaysAllow)
+    }
+
     @Test
     fun nonMatchingDismiss_leavesOpenUnchanged() {
         val open = open(modalId = "m1")

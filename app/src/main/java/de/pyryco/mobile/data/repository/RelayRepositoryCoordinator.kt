@@ -410,14 +410,16 @@ class RelayRepositoryCoordinator(
      * concrete `answerModal` → `sendAndAwaitReply` → `pump.send` returns false → [IllegalStateException]
      * (the #438 precedent) — so this needs **only** the null-guard, not a redundant `Open` gate. A server
      * `error` propagates as [de.pyryco.mobile.data.network.RelayErrorException] unchanged. Adds **no log**:
-     * the `modalId`/`optionId` may name a sensitive command/path (never-log contract).
+     * the `modalId`/`optionId` may name a sensitive command/path (never-log contract). [alwaysAllow] (#818)
+     * passes through unchanged.
      */
     suspend fun answerModal(
         modalId: String,
         optionId: String,
+        alwaysAllow: Boolean = false,
     ) {
         val repo = activeConnection.value?.repo ?: throw IllegalStateException("no active connection")
-        repo.answerModal(modalId, optionId)
+        repo.answerModal(modalId, optionId, alwaysAllow)
     }
 
     /**

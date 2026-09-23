@@ -285,7 +285,7 @@ internal class ThreadDestinationFactory(
             draftStore,
             liveSessionEvents = bundle?.coordinator?.liveSessionEvents ?: emptyFlow(),
             hostModal = bundle?.coordinator?.currentModal ?: MutableStateFlow(ModalUiState.Hidden),
-            answerModal = { modal, option -> checkNotNull(bundle).coordinator.answerModal(modal, option) },
+            answerModal = { modal, option, grant -> checkNotNull(bundle).coordinator.answerModal(modal, option, grant) },
             cancelModal = { modal -> checkNotNull(bundle).coordinator.cancelModal(modal) },
             interrupt = { id -> checkNotNull(bundle).coordinator.interrupt(id) },
             questionBatch = { id -> bundle?.coordinator?.observeQuestionBatch(id) ?: flowOf(null) },

@@ -27,6 +27,12 @@ import kotlinx.serialization.Serializable
  *    is **not** authorization (that is [modalId] validity plus the per-device answer gate
  *    pyrycode#702); a guessed/predictable token grants nothing.
  *
+ *  - [alwaysAllow] (#818, daemon #2364) is the optional session grant: `true` asks the daemon to allow the
+ *    rules it retained for this permission modal for the rest of the session. It is `true` or `null`,
+ *    never `false`: [MobileJson] omits a `null`, and the contract treats `false` and absent alike, so an
+ *    ordinary answer's bytes are unchanged. It carries no rule bytes and no destination; the daemon ignores
+ *    it on a deny or on a modal with no offer.
+ *
  * Never log the payload or these fields — the modal they answer may name a sensitive command/path
  * (e.g. "Allow `rm -rf build/`"), mirroring [RegisterPushTokenPayloadDto]'s never-log posture.
  */
@@ -35,6 +41,7 @@ internal data class ModalAnswerPayloadDto(
     @SerialName("modal_id") val modalId: String,
     @SerialName("option_id") val optionId: String,
     @SerialName("answer_token") val answerToken: String,
+    @SerialName("always_allow") val alwaysAllow: Boolean? = null,
 )
 
 /**
