@@ -1,8 +1,12 @@
 package de.pyryco.mobile.data.repository
 
+import de.pyryco.mobile.data.model.Message
+import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.network.AttachmentChunkPayloadDto
 import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.MessageAttachmentIds
 import de.pyryco.mobile.data.network.MobileJson
+import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RelayLog
 import de.pyryco.mobile.data.network.base64StdDecode
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -13,7 +17,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -266,7 +274,114 @@ class RemoteConversationRepositoryAttachmentTest {
             assertEquals(178, pump.sent.size)
         }
 
+    // ---- naming uploaded attachments on a sent message (#830) -----------------------------------
+
+    @Test
+    fun sendWithIds_namesEachOnceInCallerOrder_andTheAckAddsTheMessageLikeATextOnlySend() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = repo(pump)
+            val thread = collectThread(repo)
+            runCurrent()
+
+            val send = startSend(repo, listOf(ID_B, ID_A, ID_B))
+            runCurrent()
+
+            val sent = pump.sends().single()
+            val payload = sent.payload.jsonObject
+            assertEquals("conv-1", payload.getValue("conversation_id").jsonPrimitive.content)
+            assertEquals(listOf(ID_B, ID_A), payload.getValue("attachment_ids").jsonArray.map { it.jsonPrimitive.content })
+            assertNull("nothing is added before the ack", send())
+            assertEquals(emptyList<ThreadItem>(), thread.last())
+
+            pump.push(ack(sent.id))
+            runCurrent()
+
+            val message = requireNotNull(send()).getOrThrow()
+            assertEquals(Role.User, message.role)
+            assertEquals("hi", message.content)
+            assertEquals(payload.getValue("message_id").jsonPrimitive.content, message.id)
+            assertEquals(listOf(ThreadItem.MessageItem(message)), thread.last())
+            assertEquals(listOf("event=send_message attachments=2"), logs)
+        }
+
+    @Test
+    fun sendWithoutIds_carriesNoAttachmentIdsKey() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = repo(pump)
+
+            startSend(repo, emptyList())
+            backgroundScope.launch { runCatching { repo.sendMessage("conv-1", "hi") } }
+            runCurrent()
+
+            assertEquals(2, pump.sends().size)
+            pump.sends().forEach { sent ->
+                assertEquals(setOf("conversation_id", "message_id", "text"), sent.payload.jsonObject.keys)
+            }
+            assertTrue(logs.isEmpty())
+        }
+
+    @Test
+    fun sendNamingMoreThanTheBound_isRefusedBeforeAnythingGoesOut() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = repo(pump)
+            val thread = collectThread(repo)
+            runCurrent()
+
+            val ids = (0..MessageAttachmentIds.MAX).map { uuid(it) }
+            val send = startSend(repo, ids + ids.first())
+            runCurrent()
+
+            assertTrue(requireNotNull(send()).exceptionOrNull() is IllegalArgumentException)
+            assertTrue(pump.sends().isEmpty())
+            assertEquals(listOf(emptyList<ThreadItem>()), thread)
+            assertEquals(listOf("event=send_message outcome=too_many_attachments count=33"), logs)
+        }
+
+    @Test
+    fun sendRefusedWithAttachmentNotFound_surfacesTheCodeAndAddsNothing() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = repo(pump)
+            val thread = collectThread(repo)
+            runCurrent()
+
+            val send = startSend(repo, listOf(ID_A))
+            runCurrent()
+            pump.push(error(pump.sends().single().id, code = "attachment.not_found", retryable = false))
+            runCurrent()
+
+            val failure = requireNotNull(send()).exceptionOrNull()
+            assertTrue("expected RelayErrorException, got $failure", failure is RelayErrorException)
+            assertEquals("attachment.not_found", (failure as RelayErrorException).code)
+            assertEquals(listOf(emptyList<ThreadItem>()), thread)
+        }
+
     private fun TestScope.repo(pump: FakeSessionPump) = RemoteConversationRepository(pump, backgroundScope)
+
+    private fun TestScope.startSend(
+        repo: RemoteConversationRepository,
+        attachmentIds: List<String>,
+    ): () -> Result<Message>? {
+        var outcome: Result<Message>? = null
+        backgroundScope.launch { outcome = runCatching { repo.sendMessage("conv-1", "hi", attachmentIds) } }
+        return { outcome }
+    }
+
+    private fun TestScope.collectThread(repo: RemoteConversationRepository): List<List<ThreadItem>> {
+        val emissions = mutableListOf<List<ThreadItem>>()
+        backgroundScope.launch { repo.observeMessages("conv-1").collect { emissions += it } }
+        return emissions
+    }
+
+    /** The `send_message` frames only — collecting the thread sends its own catch-up request. */
+    private fun FakeSessionPump.sends(): List<Envelope> = sent.filter { it.type == "send_message" }
+
+    private fun ack(inReplyTo: Long) = Envelope(id = 97L, type = "ack", ts = TS, payload = JsonObject(emptyMap()), inReplyTo = inReplyTo)
+
+    private fun uuid(n: Int) = "00000000-0000-4000-8000-%012d".format(n)
 
     private fun TestScope.startUpload(
         repo: RemoteConversationRepository,
@@ -338,6 +453,8 @@ class RemoteConversationRepositoryAttachmentTest {
 
     private companion object {
         const val TS = "2026-09-23T00:00:00Z"
+        const val ID_A = "0f4c8a52-3d1e-4b7a-9c6d-2e5f8a1b3c4d"
+        const val ID_B = "7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
         val UUID_V4 = Regex("[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
     }
 }

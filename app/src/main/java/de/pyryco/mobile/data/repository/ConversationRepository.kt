@@ -259,6 +259,22 @@ interface ConversationRepository {
     ): Message
 
     /**
+     * [sendMessage] naming the uploaded attachments the message references (#830), each id once in the
+     * caller's order, over the same connection and to the same conversation as the message. An empty
+     * [attachmentIds] sends exactly what the two-argument form sends. More than
+     * [de.pyryco.mobile.data.network.MessageAttachmentIds.MAX] distinct ids throws
+     * [IllegalArgumentException] before anything is sent. A daemon refusal such as `attachment.not_found`
+     * fails as the two-argument send fails, and an `ack` adds the message to the thread as it does.
+     *
+     * Default throws, like [setSessionSettings], so the inline test doubles need no override.
+     */
+    suspend fun sendMessage(
+        conversationId: String,
+        text: String,
+        attachmentIds: List<String>,
+    ): Message = error("sendMessage with attachments is not implemented for this ConversationRepository")
+
+    /**
      * Workspace folders previously bound to any conversation, deduped and ordered
      * most-recent-first by the latest cwd-affecting write across all conversations.
      *
