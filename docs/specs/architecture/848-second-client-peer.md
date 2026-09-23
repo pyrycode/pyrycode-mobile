@@ -91,3 +91,26 @@ Peer failures throw `AssertionError`/`IllegalStateException` with category-only 
 ## Open questions
 
 - Whether the phone folds a turn it did not start without duplicating the reply on reopen is exactly what the scenario measures; a red live run on AC2/AC3 is a product finding to file, not a harness fix (Scope Discipline).
+
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] No findings — no production code changes. Daemon frames reach the peer only as decrypted `Envelope`s from `NoiseSessionPump`; the peer reads one field (`conversation_id`) off the payload `JsonObject` to filter and renders nothing. The reply and message the phone draws go through the existing, unchanged thread path, which is what the scenario asserts on. `pair_token` in the script extracts one field from `pyry pair` output with the same payload-line detection as the existing first-host parse.
+- [Tokens] SHOULD FIX — the peer's token must never be printed. Script: `pair_token` prints only the shell assignment, which is `eval`'d and never passed to `log`; the log line names the pairing label only. Kotlin: `PairedServer.toString` is already redacted; the peer logs nothing and its failure messages carry category or error `code` only, never the token or `ErrorPayload.message`. The token travels as a Gradle `-P` instrumentation argument, the same exposure the existing `token` argument has; `pair-peer.out` sits in the private `mktemp -d` `WORK_DIR`, kept only on failure, like `pair.out`.
+- [Tokens] No findings on revocation scope — the peer pairs against `$PYRY_NAME`, which the preflight's `two_host_name_ok` guard already restricts to an `e2e-` test instance, so its device record lands in a test instance's `devices.json` and never a production one.
+- [File / storage] SHOULD FIX — the peer must never write the app's credential stores. Its `PairedServerStore` and `DeviceStaticKeyStore` are file-private in-memory test doubles; saving the peer's record to `KeystorePairedServerStore` would add a host and a registry selection to the phone under test. The throwaway private key is never persisted.
+- [Crypto] SHOULD FIX — `NoiseSessionFactory.create` zeroes the private key array it receives. The in-memory key store must return a fresh copy on each `loadOrCreate`, or a second read (re-key's `reloadDeviceStaticKey`) would hand Noise an all-zero scalar. Key generation uses noise-java's `Noise.createDH("25519").generateKeyPair()`, which draws from `SecureRandom`; the handshake is the vendored `NoiseIkSession`, not hand-rolled.
+- [Network & I/O] No findings — the peer uses `OkHttpRelayTransport.defaultClient()` (connect/write timeouts, 20 s ping, `MODERN_TLS` plus cleartext for the loopback rung, exactly the phone's own client) and dials the same relay URL the phone does: `wss://` on LIVE. Every peer wait runs under `withTimeout`.
+- [Logs] No findings beyond the token item above — Compose assertion failures print semantic trees containing the constrained ping prompt and reply, which are fixed non-secret test strings.
+- [Concurrency] No findings — the peer's collector runs on a peer-owned `SupervisorJob` scope cancelled in `close()`; the scenario closes the peer in `finally`; the recorded-frame list is mutated only via `MutableStateFlow.update`; outbound sends are serialised by the pump's own lock.
+- [Threat model] OUT OF SCOPE — a hostile relay or daemon against the peer is irrelevant (test-only code on a test instance). The multi-device trust domain is the protocol's stated model (§ `queue_state` multi-device rule); this ticket measures it, it does not change it.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-09-23
+
+## Revisions
+
+- 2026-09-23 — The security review above was appended in a second commit, after the plan's first commit and before any implementation code; the `security-sensitive` label was missed on the first read of the ticket. The design did not change.
