@@ -148,6 +148,16 @@ class FileConversationCacheThreadTest {
         }
 
     @Test
+    fun `compaction rows are never stored`() =
+        runTest {
+            val settled = message("m1")
+            val compaction = ThreadItem.CompactionBoundary(24000, 3000, manual = true, occurredAt = Instant.parse("2026-09-05T10:00:00Z"))
+            cache().writeThread("server-a", "conv-1", listOf(settled, compaction)).getOrThrow()
+
+            assertEquals(listOf(settled), cache().readThread("server-a", "conv-1"))
+        }
+
+    @Test
     fun `only the newest rows are kept`() =
         runTest {
             val rows = (1..MAX_CACHED_THREAD_ROWS + 5).map { message("m$it") }

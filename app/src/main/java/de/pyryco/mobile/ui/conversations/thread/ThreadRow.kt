@@ -155,6 +155,8 @@ private fun ThreadItem.listKey(): String =
         is ThreadItem.UnrecognizedMessage -> "unrecognized:$id"
         // The daemon's per-event ts, which both thread writers dedup a banner on (`holdsBanner`, #873).
         is ThreadItem.Banner -> "banner:$occurredAt"
+        // The daemon's per-compaction ts, which both thread writers dedup on (`holdsCompactionBoundary`, #874).
+        is ThreadItem.CompactionBoundary -> "compaction:$occurredAt"
     }
 
 /**

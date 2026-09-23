@@ -862,6 +862,46 @@ internal fun BannerPayloadDto.toRow(occurredAt: Instant): ThreadItem.Banner =
         occurredAt = occurredAt,
     )
 
+/**
+ * The `compaction_boundary` thread event (#874, pyrycode#2237): a finished compaction
+ * `{conversation_id, trigger, pre_tokens, post_tokens}`, folded into the conversation thread as a
+ * [ThreadItem.CompactionBoundary]. Decode-only — the phone never sends one. Always decode through [MobileJson].
+ *
+ * Wire SSOT: pyrycode `internal/protocol/interactive.go` (`CompactionBoundaryPayload`) +
+ * `docs/protocol-mobile.md` § `compaction_boundary`. [conversationId] and [trigger] are strict-required.
+ * The two counts default to null, so a missing key reads as "no count stated" and the divider still draws
+ * without a size. A count that is not a JSON integer fitting a [Long] fails the decode and drops the one
+ * frame — the daemon's own posture for a count it cannot read as an integer is no frame at all.
+ */
+@Serializable
+internal data class CompactionBoundaryPayloadDto(
+    @SerialName("conversation_id") val conversationId: String,
+    val trigger: String,
+    @SerialName("pre_tokens") val preTokens: Long? = null,
+    @SerialName("post_tokens") val postTokens: Long? = null,
+)
+
+/**
+ * Map a decoded [CompactionBoundaryPayloadDto] to a [ThreadItem.CompactionBoundary]. **Total** — an
+ * unrecognised `trigger` is not a drop but "not manual", and an invalid count is not a drop but no count.
+ * Only validated numbers and the recognised `manual` token cross into the domain, so no claude-authored
+ * string can reach the label. [occurredAt] is the caller's: the envelope `ts` live, the entry timestamp on
+ * replay, which is what lets the two lanes join on one identity.
+ */
+internal fun CompactionBoundaryPayloadDto.toRow(occurredAt: Instant): ThreadItem.CompactionBoundary =
+    ThreadItem.CompactionBoundary(
+        preTokens = validTokenCount(preTokens),
+        postTokens = validTokenCount(postTokens),
+        manual = trigger == "manual",
+        occurredAt = occurredAt,
+    )
+
+// Desktop's `validCount`: a non-negative integer no larger than JavaScript's MAX_SAFE_INTEGER, so both
+// clients claim a size for exactly the same counts. claude's numbers are neither clamped nor ordered.
+private const val MAX_SAFE_TOKEN_COUNT = 9_007_199_254_740_991L
+
+private fun validTokenCount(value: Long?): Long? = value?.takeIf { it in 0..MAX_SAFE_TOKEN_COUNT }
+
 private fun String.toUnrecognizedSite(): UnrecognizedSite? =
     when (this) {
         "line_type" -> UnrecognizedSite.LineType

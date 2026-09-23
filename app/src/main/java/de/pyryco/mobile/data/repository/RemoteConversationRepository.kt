@@ -20,6 +20,7 @@ import de.pyryco.mobile.data.network.BackfillSincePayloadDto
 import de.pyryco.mobile.data.network.BannerPayloadDto
 import de.pyryco.mobile.data.network.CAPABILITY_INTERACTIVE
 import de.pyryco.mobile.data.network.ChangeWorkspacePayloadDto
+import de.pyryco.mobile.data.network.CompactionBoundaryPayloadDto
 import de.pyryco.mobile.data.network.ConversationDeletedPayloadDto
 import de.pyryco.mobile.data.network.ConversationResponseDto
 import de.pyryco.mobile.data.network.ConversationsPayload
@@ -945,6 +946,17 @@ class RemoteConversationRepository(
                     decodeBanner(envelope)?.let { (conversationId, row) -> appendBanner(conversationId, row) }
                 }
             }
+            TYPE_COMPACTION_BOUNDARY -> {
+                // A finished compaction (#874, pyrycode#2237). Same `interactive` gate as its thread-row
+                // siblings (fail-closed). Decode-or-drop: a malformed payload or ts yields null → drop one
+                // envelope, the lone collector survives. Routes strictly by the payload's conversation_id.
+                // Exactly ONE write — appendCompactionBoundary folds the divider — and inert toward every
+                // neighbour: `compacting` alone drives the status indicator, so this arm clears no compacting
+                // state, emits no liveSessionEvents, and opens, closes or alters no turn. Nothing logged.
+                if (CAPABILITY_INTERACTIVE in negotiatedCapabilities()) {
+                    decodeCompactionBoundary(envelope)?.let { (conversationId, row) -> appendCompactionBoundary(conversationId, row) }
+                }
+            }
             TYPE_MODAL_SHOWN, TYPE_MODAL_DISMISSED -> {
                 // A v2 modal lifecycle envelope (#437). Same `interactive` gate as the structured-stream,
                 // `stall`, and `resync` siblings — a non-interactive phone never decodes a spurious modal
@@ -1135,6 +1147,20 @@ class RemoteConversationRepository(
     private fun decodeBanner(envelope: Envelope): Pair<String, ThreadItem.Banner>? =
         try {
             val dto = MobileJson.decodeFromJsonElement<BannerPayloadDto>(envelope.payload)
+            dto.conversationId to dto.toRow(occurredAt = Instant.parse(envelope.ts))
+        } catch (e: IllegalArgumentException) {
+            null
+        }
+
+    /**
+     * Decode one v2 `compaction_boundary` envelope (#874) to its routing conversation id and the mapped
+     * [ThreadItem.CompactionBoundary], or **null** when it cannot be folded. The row's identity is the
+     * envelope's `ts`, so a malformed `ts` drops the frame exactly as a malformed payload does. Mirrors
+     * [decodeBanner], and like it logs nothing.
+     */
+    private fun decodeCompactionBoundary(envelope: Envelope): Pair<String, ThreadItem.CompactionBoundary>? =
+        try {
+            val dto = MobileJson.decodeFromJsonElement<CompactionBoundaryPayloadDto>(envelope.payload)
             dto.conversationId to dto.toRow(occurredAt = Instant.parse(envelope.ts))
         } catch (e: IllegalArgumentException) {
             null
@@ -1376,6 +1402,22 @@ class RemoteConversationRepository(
         threadByConversation.update { threads ->
             val thread = threads[conversationId].orEmpty()
             if (thread.holdsBanner(row)) threads else threads + (conversationId to (thread + row))
+        }
+    }
+
+    /**
+     * End-append a [ThreadItem.CompactionBoundary] to [conversationId]'s thread (#874), **unless the thread
+     * already holds one with its `ts`** ([holdsCompactionBoundary]) — the [appendBanner] shape, for the same
+     * reason: the daemon stamps one `ts` per compaction and hands it to both lanes, so a repeat is the same
+     * boundary arriving twice. The check runs inside the one atomic [MutableStateFlow.update].
+     */
+    private fun appendCompactionBoundary(
+        conversationId: String,
+        row: ThreadItem.CompactionBoundary,
+    ) {
+        threadByConversation.update { threads ->
+            val thread = threads[conversationId].orEmpty()
+            if (thread.holdsCompactionBoundary(row)) threads else threads + (conversationId to (thread + row))
         }
     }
 
@@ -3377,6 +3419,15 @@ class RemoteConversationRepository(
          * 4 KiB daemon-side and not sanitized; `stops_turn` is a report nothing here acts on.
          */
         const val TYPE_BANNER = "banner"
+
+        /**
+         * Capability-gated thread event: a finished compaction `{conversation_id, trigger, pre_tokens,
+         * post_tokens}` (#874, pyrycode#2237) — folds a [ThreadItem.CompactionBoundary] divider into the
+         * conversation thread in arrival order. Conversation-scoped with no `turn_id`, may arrive with no
+         * [TYPE_COMPACTING] edge before it, and drives no status indicator; `trigger` is an open set and each
+         * count is an integer or `null`, neither clamped nor ordered.
+         */
+        const val TYPE_COMPACTION_BOUNDARY = "compaction_boundary"
 
         /**
          * Outbound queue control: the phone's request to drop a not-yet-drained message
