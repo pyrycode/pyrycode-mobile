@@ -3604,13 +3604,15 @@ class RemoteConversationRepositoryTest {
             assertEquals(before, messages)
         }
 
-    // ---- dropQueuedMessage (#466): dequeue_message request → ack/error correlation ----------------
+    // ---- dropQueuedMessage (#466, #859): a fire-and-forget dequeue_message, settled by queue_state ----
+    // The daemon never replies to dequeue_message (protocol-mobile.md § Queue (v2)), so no test here
+    // pushes an ack or error for it: the only confirmation is a later queue_state lacking the item.
 
-    // AC #1, #5: the sent dequeue_message payload matches the two-key wire contract
+    // #466 AC #1, #5: the sent dequeue_message payload matches the two-key wire contract
     // {conversation_id, queued_msg_id}; queued_msg_id is a JSON NUMBER (the uint64), not a quoted
-    // string, and no extra keys are present.
+    // string, and no extra keys are present. #859 AC #1: the call returns once the frame is sent.
     @Test
-    fun dropQueuedMessage_sendsDequeueMessageMatchingWireContract() =
+    fun dropQueuedMessage_sendsDequeueMessageAndReturnsWithoutReply() =
         runTest {
             val pump = FakeSessionPump()
             val repo = RemoteConversationRepository(pump, backgroundScope)
@@ -3623,91 +3625,7 @@ class RemoteConversationRepositoryTest {
                 MobileJson.parseToJsonElement("""{"conversation_id":"c-1","queued_msg_id":42}"""),
                 sent.payload,
             )
-
-            // Resolve so the awaiting coroutine completes cleanly.
-            pump.push(ackEnvelope(sent.id))
-            runCurrent()
             assertTrue(drop().isSuccess)
-        }
-
-    // AC #2: an empty ack completes the drop successfully and writes NO local projection — the backlog
-    // is owned by observeQueue (#460) and updated only by a later queue_state, never by this send. Since
-    // #781 the ack can also remove one thread row — the echo this device minted for the dropped item —
-    // but only when a snapshot correlates one, and here no snapshot has landed at all: nothing to match.
-    @Test
-    fun dropQueuedMessage_onAck_succeedsWithoutMutatingProjection() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-
-            val queue = collectQueue(repo, "c-1")
-            val messages = collectMessages(repo, "c-1")
-            val lastMessage = collectLastMessage(repo, "c-1")
-            runCurrent()
-
-            val drop = startDropQueuedMessage(repo, "c-1", 42L)
-            runCurrent()
-            val sent = pump.sent.single { it.type == "dequeue_message" }
-            pump.push(ackEnvelope(sent.id))
-            runCurrent()
-
-            assertTrue(drop().isSuccess)
-            // No projection write: each stream shows only its initial empty/null emission.
-            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
-            assertEquals(listOf(emptyList<ThreadItem>()), messages)
-            assertEquals(listOf<Message?>(null), lastMessage)
-        }
-
-    // AC #3: a correlated server error surfaces as RelayErrorException exposing code + retryable (a
-    // stale / already-drained id surfaces generically here — no bespoke queue-error mapping).
-    @Test
-    fun dropQueuedMessage_onServerError_throwsRelayErrorExposingCode() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-
-            val drop = startDropQueuedMessage(repo, "c-1", 42L)
-            runCurrent()
-            val sent = pump.sent.single { it.type == "dequeue_message" }
-            pump.push(errorEnvelope(sent.id, code = "queue.stale_id", retryable = false))
-            runCurrent()
-
-            val ex = drop().exceptionOrNull()
-            assertTrue("expected RelayErrorException, got $ex", ex is RelayErrorException)
-            assertEquals("queue.stale_id", (ex as RelayErrorException).code)
-            assertFalse(ex.retryable)
-        }
-
-    // AC #3: an unknown conversation (server conversation.not_found) throws IllegalArgumentException,
-    // consistent with sendMessage / requestScreenSnapshot.
-    @Test
-    fun dropQueuedMessage_onConversationNotFound_throwsIllegalArgument() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-
-            val drop = startDropQueuedMessage(repo, "ghost", 42L)
-            runCurrent()
-            val sent = pump.sent.single { it.type == "dequeue_message" }
-            pump.push(errorEnvelope(sent.id, code = "conversation.not_found", message = "no such conversation"))
-            runCurrent()
-
-            assertTrue(drop().exceptionOrNull() is IllegalArgumentException)
-        }
-
-    // AC #4: a not-Open session (pump.send returns false) fails fast with IllegalStateException; no
-    // reply ever arrives, yet the call has already completed exceptionally (it does not hang).
-    @Test
-    fun dropQueuedMessage_whenSendReturnsFalse_throwsIllegalStateAndDoesNotHang() =
-        runTest {
-            val pump = FakeSessionPump()
-            pump.sendResult = false
-            val repo = RemoteConversationRepository(pump, backgroundScope)
-
-            val drop = startDropQueuedMessage(repo, "c-1", 42L)
-            runCurrent()
-
-            assertTrue(drop().exceptionOrNull() is IllegalStateException)
         }
 
     // #720 width guard: a queued_msg_id near Long.MAX_VALUE encodes as a bare JSON number (a uint64),
@@ -3726,69 +3644,35 @@ class RemoteConversationRepositoryTest {
                 MobileJson.parseToJsonElement("""{"conversation_id":"c-1","queued_msg_id":9223372036854775807}"""),
                 sent.payload,
             )
-
-            pump.push(ackEnvelope(sent.id))
-            runCurrent()
             assertTrue(drop().isSuccess)
         }
 
-    // ---- #781: a confirmed drop also removes the undelivered echo this device minted ---------------
-
-    // AC #2: the acked drop removes the queued entry's own echo and NOTHING else — every other thread
-    // row keeps its place, in order. The echo is the phone's only record of its own send (interactive
-    // streams no user-message event back), so leaving it reads as a message claude received.
+    // #466 AC #2: the send writes NO local projection — the backlog is owned by observeQueue (#460)
+    // and updated only by a later queue_state, never by this send.
     @Test
-    fun dropQueuedMessage_onAck_removesOwnEchoAndKeepsEveryOtherRow() =
+    fun dropQueuedMessage_withoutSnapshot_mutatesNoProjection() =
         runTest {
             val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c-1")
-            runCurrent()
+            val repo = RemoteConversationRepository(pump, backgroundScope)
 
-            val first = sendAndAck(repo, pump, "c-1", "one")
-            val queued = sendAndAck(repo, pump, "c-1", "two")
-            val third = sendAndAck(repo, pump, "c-1", "three")
-            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = queued))))
-            runCurrent()
-            assertEquals(listOf(first, queued, third), messageIds(thread.last()))
-
-            val drop = startDropQueuedMessage(repo, "c-1", 42L)
-            runCurrent()
-            pump.push(ackEnvelope(pump.sent.single { it.type == "dequeue_message" }.id))
-            runCurrent()
-
-            assertTrue(drop().isSuccess)
-            assertEquals(listOf(first, third), messageIds(thread.last()))
-        }
-
-    // AC #3: a failed drop leaves BOTH the entry and its echo in place — the daemon still holds the
-    // message, so it will still run and the echo is still true. Removal is gated on the ack, not the send.
-    @Test
-    fun dropQueuedMessage_onServerError_leavesEchoAndEntryInPlace() =
-        runTest {
-            val pump = FakeSessionPump()
-            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
-            val thread = collectMessages(repo, "c-1")
             val queue = collectQueue(repo, "c-1")
-            runCurrent()
-
-            val queued = sendAndAck(repo, pump, "c-1", "two")
-            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = queued))))
+            val messages = collectMessages(repo, "c-1")
+            val lastMessage = collectLastMessage(repo, "c-1")
             runCurrent()
 
             val drop = startDropQueuedMessage(repo, "c-1", 42L)
             runCurrent()
-            pump.push(errorEnvelope(pump.sent.single { it.type == "dequeue_message" }.id, code = "queue.stale_id"))
-            runCurrent()
 
-            assertTrue(drop().exceptionOrNull() is RelayErrorException)
-            assertEquals(listOf(queued), messageIds(thread.last()))
-            assertEquals(listOf(42L), queue.last().map { it.id })
+            assertTrue(drop().isSuccess)
+            assertEquals(listOf(emptyList<QueuedMessage>()), queue)
+            assertEquals(listOf(emptyList<ThreadItem>()), messages)
+            assertEquals(listOf<Message?>(null), lastMessage)
         }
 
-    // AC #3, the other failure shape: a not-connected send never reaches the daemon, so the echo stays.
+    // #859 AC #2: a not-Open session (pump.send returns false) fails fast with IllegalStateException,
+    // and because the drop was never sent, a later snapshot without the item removes nothing.
     @Test
-    fun dropQueuedMessage_whenNotConnected_leavesEchoInPlace() =
+    fun dropQueuedMessage_whenNotConnected_throwsAndLeavesEchoInPlace() =
         runTest {
             val pump = FakeSessionPump()
             val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
@@ -3802,13 +3686,126 @@ class RemoteConversationRepositoryTest {
             pump.sendResult = false
             val drop = startDropQueuedMessage(repo, "c-1", 42L)
             runCurrent()
+            pump.push(queueStateEnvelope("c-1", emptyList()))
+            runCurrent()
 
             assertTrue(drop().exceptionOrNull() is IllegalStateException)
             assertEquals(listOf(queued), messageIds(thread.last()))
         }
 
-    // AC #4: an item carrying `""` correlates with NOTHING. The drop still goes — the row must leave the
-    // backlog even against a daemon that mints no id — and no echo is guessed at.
+    // ---- #781 / #859: a confirmed drop also removes the undelivered echo this device minted --------
+
+    // #859 AC #1: the drop settles when a queue_state for the conversation arrives without the dropped
+    // queued_msg_id — and not before. It removes the entry's own echo and NOTHING else: every other
+    // thread row keeps its place, in order.
+    @Test
+    fun dropQueuedMessage_settlesOnQueueStateWithoutItem_removesOwnEchoOnly() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = collectMessages(repo, "c-1")
+            runCurrent()
+
+            val first = sendAndAck(repo, pump, "c-1", "one")
+            val queued = sendAndAck(repo, pump, "c-1", "two")
+            val third = sendAndAck(repo, pump, "c-1", "three")
+            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = queued))))
+            runCurrent()
+
+            val drop = startDropQueuedMessage(repo, "c-1", 42L)
+            runCurrent()
+            assertTrue(drop().isSuccess)
+            assertEquals(listOf(first, queued, third), messageIds(thread.last()))
+
+            pump.push(queueStateEnvelope("c-1", emptyList()))
+            runCurrent()
+
+            assertEquals(listOf(first, third), messageIds(thread.last()))
+        }
+
+    // #859 AC #1: a snapshot that still carries the dropped id (the backlog changed for another reason,
+    // e.g. an enqueue landed before the dequeue) does not settle the drop; the next one without it does.
+    @Test
+    fun dropQueuedMessage_snapshotStillCarryingItem_keepsEchoUntilItLeaves() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = collectMessages(repo, "c-1")
+            runCurrent()
+
+            val queued = sendAndAck(repo, pump, "c-1", "two")
+            val later = sendAndAck(repo, pump, "c-1", "three")
+            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = queued))))
+            runCurrent()
+
+            startDropQueuedMessage(repo, "c-1", 42L)
+            runCurrent()
+            pump.push(
+                queueStateEnvelope(
+                    "c-1",
+                    listOf(QueuedFixture(42L, "two", TS, messageId = queued), QueuedFixture(43L, "three", TS, messageId = later)),
+                ),
+            )
+            runCurrent()
+            assertEquals(listOf(queued, later), messageIds(thread.last()))
+
+            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(43L, "three", TS, messageId = later))))
+            runCurrent()
+            assertEquals(listOf(later), messageIds(thread.last()))
+        }
+
+    // #859 AC #2: an item that leaves the snapshot without a drop request from this device keeps its
+    // echo — a drain shrinks the backlog exactly as a drop does, so removal is keyed on the dropped id.
+    @Test
+    fun dropQueuedMessage_drainedItemWithoutDropRequest_keepsItsEcho() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = collectMessages(repo, "c-1")
+            runCurrent()
+
+            val drained = sendAndAck(repo, pump, "c-1", "one")
+            val dropped = sendAndAck(repo, pump, "c-1", "two")
+            pump.push(
+                queueStateEnvelope(
+                    "c-1",
+                    listOf(QueuedFixture(41L, "one", TS, messageId = drained), QueuedFixture(42L, "two", TS, messageId = dropped)),
+                ),
+            )
+            runCurrent()
+
+            startDropQueuedMessage(repo, "c-1", 42L)
+            runCurrent()
+            // One snapshot carries both the head's drain and the drop.
+            pump.push(queueStateEnvelope("c-1", emptyList()))
+            runCurrent()
+
+            assertEquals(listOf(drained), messageIds(thread.last()))
+        }
+
+    // #859 AC #1: a queue_state for ANOTHER conversation settles nothing here.
+    @Test
+    fun dropQueuedMessage_queueStateForOtherConversation_settlesNothing() =
+        runTest {
+            val pump = FakeSessionPump()
+            val repo = RemoteConversationRepository(pump, backgroundScope, negotiatedCapabilities = { setOf("interactive") })
+            val thread = collectMessages(repo, "c-1")
+            runCurrent()
+
+            val queued = sendAndAck(repo, pump, "c-1", "two")
+            pump.push(queueStateEnvelope("c-1", listOf(QueuedFixture(42L, "two", TS, messageId = queued))))
+            runCurrent()
+
+            startDropQueuedMessage(repo, "c-1", 42L)
+            runCurrent()
+            pump.push(queueStateEnvelope("c-2", emptyList()))
+            runCurrent()
+
+            assertEquals(listOf(queued), messageIds(thread.last()))
+        }
+
+    // #781 AC #4: an item carrying `""` correlates with NOTHING. The drop still goes — the row must leave
+    // the backlog even against a daemon that mints no id — and no echo is guessed at.
     @Test
     fun dropQueuedMessage_emptyMessageId_removesNoThreadRow() =
         runTest {
@@ -3823,20 +3820,18 @@ class RemoteConversationRepositoryTest {
 
             val drop = startDropQueuedMessage(repo, "c-1", 42L)
             runCurrent()
-            val sent = pump.sent.single { it.type == "dequeue_message" }
-            pump.push(ackEnvelope(sent.id))
+            pump.push(queueStateEnvelope("c-1", emptyList()))
             runCurrent()
 
             assertTrue(drop().isSuccess)
+            assertEquals(1, pump.sent.count { it.type == "dequeue_message" })
             assertEquals(listOf(queued), messageIds(thread.last()))
         }
 
-    // AC #4 and the multi-device rule (protocol-mobile.md § Queue (v2)): `queue_state` fans out to EVERY
-    // interactive connection, so items routinely carry ids this device never minted. Such an item is
-    // another device's real queued message: it correlates with nothing here even when a thread row
-    // carries that very id and the texts are identical. `message_id` is client-chosen and unique
-    // nowhere, so a colliding id must never let this phone claim a row it did not send — and text is
-    // never used to match.
+    // #781 AC #4 and the multi-device rule (protocol-mobile.md § Queue (v2)): `queue_state` fans out to
+    // EVERY interactive connection, so items routinely carry ids this device never minted. Such an item
+    // is another device's real queued message: it correlates with nothing here even when a thread row
+    // carries that very id and the texts are identical. Text is never used to match.
     @Test
     fun dropQueuedMessage_foreignMessageId_removesNoThreadRow() =
         runTest {
@@ -3853,7 +3848,7 @@ class RemoteConversationRepositoryTest {
 
             val drop = startDropQueuedMessage(repo, "c-1", 42L)
             runCurrent()
-            pump.push(ackEnvelope(pump.sent.single { it.type == "dequeue_message" }.id))
+            pump.push(queueStateEnvelope("c-1", emptyList()))
             runCurrent()
 
             assertTrue(drop().isSuccess)
@@ -3861,7 +3856,8 @@ class RemoteConversationRepositoryTest {
         }
 
     // The drained-between-render-and-tap race: the id is no longer in this connection's snapshot, so
-    // nothing correlates. The send still goes (the daemon stale-id rejects or no-ops) and no row moves.
+    // nothing correlates. The send still goes (the daemon silently ignores it) and no row moves, even
+    // when the item's own echo later drains out of a following snapshot.
     @Test
     fun dropQueuedMessage_queuedIdAbsentFromSnapshot_removesNoThreadRow() =
         runTest {
@@ -3876,11 +3872,11 @@ class RemoteConversationRepositoryTest {
 
             val drop = startDropQueuedMessage(repo, "c-1", 7L)
             runCurrent()
-            val sent = pump.sent.single { it.type == "dequeue_message" }
-            pump.push(ackEnvelope(sent.id))
+            pump.push(queueStateEnvelope("c-1", emptyList()))
             runCurrent()
 
             assertTrue(drop().isSuccess)
+            assertEquals(1, pump.sent.count { it.type == "dequeue_message" })
             assertEquals(listOf(queued), messageIds(thread.last()))
         }
 
@@ -8383,8 +8379,8 @@ class RemoteConversationRepositoryTest {
 
     /**
      * Launch [RemoteConversationRepository.dropQueuedMessage] on [backgroundScope] and return a getter
-     * for its eventual [Result], mirroring [startCancelModal]. The not-Open path completes
-     * synchronously, before any reply.
+     * for its eventual [Result], mirroring [startCancelModal]. The daemon never replies to the dequeue
+     * (#859), so the call completes once the frame is sent; the getter throws if it is still suspended.
      */
     private fun TestScope.startDropQueuedMessage(
         repo: RemoteConversationRepository,

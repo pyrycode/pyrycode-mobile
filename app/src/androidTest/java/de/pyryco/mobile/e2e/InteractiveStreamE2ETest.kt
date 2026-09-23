@@ -1376,7 +1376,7 @@ class InteractiveStreamE2ETest {
      * ([WAIT_PROMPT]) that needs permission. No device answers until the queue steps are done, so the
      * pending prompt holds the turn open for them, with no timing involved:
      *  * the phone's [PING_PROMPT] queues — a queued row on the phone and an item in the peer's snapshot;
-     *  * the phone queues and drops [DROP_PROMPT] — gone from both backlogs (its echo bubble stays, #859);
+     *  * the phone queues and drops [DROP_PROMPT] — gone from both backlogs and from the phone's thread;
      *  * the peer queues and drops [PEER_QUEUED_PROMPT] — a plain queued row on the phone until then.
      * The peer, paired with `--allow-remote-permissions`, then allows the command once. The turn ends and
      * the ping drains: claude's reply renders once on the phone, the prompt draws once,
@@ -1431,19 +1431,15 @@ class InteractiveStreamE2ETest {
             awaitQueuedRow(PING_PROMPT)
             runBlocking { peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.any { it.text == PING_PROMPT } } }
 
-            // 4. AC-3: a message the phone queues and drops leaves both backlogs; the ping stays queued. The
-            //    phone's own echo of it stays drawn as a bubble until #859 is fixed (the phone waits for a
-            //    dequeue ack the daemon never sends), so only its queued row is checked here. Once #859 lands,
-            //    check awaitGoneFromThread(DROP_PROMPT) here and a zero inThreadList(DROP_PROMPT) count in step 7.
+            // 4. AC-3: a message the phone queues and drops leaves both backlogs and the phone's thread; the
+            //    ping stays queued.
             sendFromPhone(DROP_PROMPT)
             awaitQueuedRow(DROP_PROMPT)
             runBlocking { peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue -> queue.any { it.text == DROP_PROMPT } } }
             val dropControl = hasContentDescription(queuedDropDescription) and hasAnyAncestor(queuedRow(DROP_PROMPT))
             scrollListTo(dropControl)
             composeTestRule.onNode(dropControl).performClick()
-            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
-                composeTestRule.onAllNodes(queuedRow(DROP_PROMPT)).fetchSemanticsNodes().isEmpty()
-            }
+            awaitGoneFromThread(DROP_PROMPT)
             runBlocking {
                 peer.awaitQueue(conversationId, THREAD_TIMEOUT_MS) { queue ->
                     queue.none { it.text == DROP_PROMPT } && queue.any { it.text == PING_PROMPT }
@@ -1480,7 +1476,7 @@ class InteractiveStreamE2ETest {
             composeTestRule.onAllNodes(queuedRow(PING_PROMPT)).assertCountEquals(0)
 
             // 7. AC-3: with the backlog empty nothing dropped can run, and no dropped reply was ever drawn.
-            composeTestRule.onAllNodes(queuedRow(DROP_PROMPT)).assertCountEquals(0)
+            composeTestRule.onAllNodes(inThreadList(DROP_PROMPT), useUnmergedTree = true).assertCountEquals(0)
             composeTestRule.onAllNodes(inThreadList(PEER_QUEUED_PROMPT), useUnmergedTree = true).assertCountEquals(0)
             composeTestRule.onAllNodes(hasText(DROP_REPLY), useUnmergedTree = true).assertCountEquals(0)
             composeTestRule.onAllNodes(hasText(PEER_QUEUED_REPLY), useUnmergedTree = true).assertCountEquals(0)

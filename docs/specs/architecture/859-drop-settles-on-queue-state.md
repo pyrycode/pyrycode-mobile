@@ -78,3 +78,7 @@ None named by the ticket. Pending for the documentation stage: the feature overv
 ## Open questions
 
 - None blocking. `settleDrops` iterating every pending conversation per `queue_state` vs. threading the conversation id out of `QueueProjection.apply` — chose iteration to keep `QueueProjection` untouched.
+
+## Revisions
+
+**2026-09-23, during implementation — the request is recorded before the send, not after it.** The plan recorded the pending drop after a successful send and then settled immediately, to catch a confirming `queue_state` landing between the two. That window cannot be exercised by a deterministic unit test (the fake pump's inbound collector never interleaves with a non-suspending call), and recording first closes it structurally instead: `dropQueuedMessage` records `queuedMessageId -> echoId`, then sends, and on a not-connected send withdraws the entry and throws `IllegalStateException`. No immediate settle is needed; the inbound `queue_state` arm is the only settler. The corresponding "settles immediately" test case is dropped from the testing strategy. The e2e restore replaces step 4's queued-row wait with `awaitGoneFromThread(DROP_PROMPT)` and step 7's queued-row count with `inThreadList(DROP_PROMPT)`, because #848's list matcher counts a queued row and a bubble alike, so each check covers both.
