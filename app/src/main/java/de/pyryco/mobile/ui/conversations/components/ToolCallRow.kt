@@ -152,7 +152,8 @@ private fun ToolCallStatusIcon(toolCall: ToolCall) {
                 modifier = Modifier.size(ToolCallIconSize),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-        ToolCallStatus.Failed ->
+        // A denied call (#811) reuses the failed presentation until #658 designs its own.
+        ToolCallStatus.Failed, ToolCallStatus.Denied ->
             Icon(
                 imageVector = Icons.Outlined.ErrorOutline,
                 contentDescription = stringResource(R.string.cd_tool_failed),

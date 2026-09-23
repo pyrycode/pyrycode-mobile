@@ -387,14 +387,16 @@ logged `conversation_id` is the same cross-conversation correlation leak every s
 [Usage-limit state § Security](usage-limit-state.md#security) for the full review, including why
 `resets_at` may never become a scheduling input.
 
-## Live tool-call rows — `applyToolUse` / `applyToolResult` (#387)
+## Live tool-call rows — `applyToolUse` / `applyToolResult` / `applyToolDenied` (#387, #811)
 
 Correlate the v2 `tool_use` (start) / `tool_result` (completion)
-[`LiveSessionEvent`](live-session-events.md)s into **one evolving thread row** carrying a status
-(`Running → Done`/`Failed`). [#387](../codebase/387.md) adds the correlation + status state machine;
-the onset/correlation model lives in [Live tool-call](live-tool-call.md), this section records only how
-it attaches to the repository. Unlike #395 (a *separate* `Set<String>` projection), a tool row **is** a
-thread row, so it folds into the **existing** `threadByConversation` — see [Live tool-call § Chronological
+[`LiveSessionEvent`](live-session-events.md)s, plus the separate `tool_denied` frame
+([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811)), into **one evolving thread row**
+carrying a status (`Running → Done`/`Failed`/`Denied`). [#387](../codebase/387.md) adds the
+correlation + status state machine; the onset/correlation model lives in [Live
+tool-call](live-tool-call.md), this section records only how it attaches to the repository. Unlike
+\#395 (a *separate* `Set<String>` projection), a tool row **is** a thread row, so it folds into the
+**existing** `threadByConversation` — see [Live tool-call § Chronological
 interleave](live-tool-call.md#chronological-interleave-ac-4--why-its-free).
 
 - **Two demux hooks, dispatched inside the existing `interactive` gated live-session arm.** The
@@ -417,13 +419,30 @@ interleave](live-tool-call.md#chronological-interleave-ac-4--why-its-free).
   non-empty fallback the UI ignores), `timestamp = Clock.System.now()`, and
   `ToolCall(name, inputSummary, output = "", status = Running)`. The `&& role == Role.Tool` namespaces
   the match so a `toolUseId` can never clobber a real `message_id` row.
-- **`applyToolResult` (`:510`) — update the matching row in place, or drop.** One atomic
-  `threadByConversation.update {}`: find the row with `id == toolUseId && role == Role.Tool`; if
-  absent, **no-op** (a `tool_result` with no prior `tool_use`, including a result-before-use, is dropped
-  — no orphan half-row); if present, replace it (position + `timestamp` preserved) with its `toolCall`
-  copied as `output = resultSummary`, `status = if (isError) Failed else Done`. A duplicate
-  `tool_result` re-applies the same update (idempotent / last-write-wins). `row.toolCall?.copy(...)`
-  handles the theoretical null gracefully — no `!!`.
+- **`applyToolResult` (`:1305`) — update the matching row in place, or drop.** One atomic
+  `threadByConversation.update {}` delegating to the shared `withToolResult` fold: find the row with
+  `id == toolUseId && role == Role.Tool`; if absent, **no-op** (a `tool_result` with no prior
+  `tool_use`, including a result-before-use, is dropped — no orphan half-row); if present, replace it
+  (position + `timestamp` preserved) with its `toolCall` copied as `output = resultSummary`,
+  `status = if (isError) Failed else Done` — **unless the row is already `Denied`
+  ([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811)), which the result keeps** (still
+  attaching `output`). A duplicate `tool_result` re-applies the same update (idempotent /
+  last-write-wins). `row.toolCall?.copy(...)` handles the theoretical null gracefully — no `!!`.
+- **`applyToolDenied` (`:1318`) — mark the matching row `Denied`, or drop
+  ([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811)).** Dispatched from its own
+  `TYPE_TOOL_DENIED` arm (`:704`, beside `TYPE_TOOL_RESULT`) rather than the `when (event)` above,
+  because `tool_denied` is not a `LiveSessionEvent` — the DTO is decoded and mapped to `ToolDenial`
+  directly inside the fold. One atomic `threadByConversation.update {}` through the shared
+  `withToolDenied` fold: find the row with `id == toolUseId && role == Role.Tool`; if absent, **no-op**
+  (a denial never adds a row); if present, set `status = Denied` and attach `denial`, **overriding
+  whatever status the row held** — including a result that already arrived, since the daemon's
+  result-line recovery can report a denial after the `tool_result` shipped. Unlike `applyToolResult`,
+  which mints an empty `conversation_id` slice via `current[id].orEmpty()`, `applyToolDenied` returns
+  the map **unchanged** when the conversation holds no rows at all, so a denial can never grow the map
+  for a `conversation_id` mobile has never seen. A malformed frame is dropped at `applyToolDenied`'s
+  own `catch (IllegalArgumentException)` — the envelope is dropped, the collector survives. See
+  [Live tool-call § Denied](live-tool-call.md#denied-811) for the full state-machine and security
+  treatment.
 - **Why fold into `threadByConversation`, not a separate flow.** The two folds write the **same**
   `StateFlow` [`observeMessages`](remote-conversation-repository-reads-and-thread-store.md#observemessagesconversationid--the-live-thread-read-313) reads, whose
   `threadProjection` preserves **arrival order with no re-sort** — so a tool row interleaves

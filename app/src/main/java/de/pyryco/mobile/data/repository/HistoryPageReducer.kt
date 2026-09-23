@@ -7,7 +7,8 @@
  * front of the rows a conversation's thread already holds.
  *
  * **One fold surface, reached two ways.** The `List<ThreadItem>` extensions below *are* the live lane's
- * folds: the repository's `appendMessages` / `applyToolUse` / `applyToolResult` / `applyAssistantDelta` /
+ * folds: the repository's `appendMessages` / `applyToolUse` / `applyToolResult` / `applyToolDenied` /
+ * `applyAssistantDelta` /
  * `finalizeAssistantTurn` are thin wrappers that call them inside a `MutableStateFlow.update`. A replayed
  * page therefore cannot drift from the live stream's shape, which is the property the ticket asks for
  * ("the same timeline mapping the live lane already runs"). The one deliberate difference is the clock:
@@ -33,16 +34,19 @@ import de.pyryco.mobile.data.model.Message
 import de.pyryco.mobile.data.model.Role
 import de.pyryco.mobile.data.model.ToolCall
 import de.pyryco.mobile.data.model.ToolCallStatus
+import de.pyryco.mobile.data.model.ToolDenial
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
 import de.pyryco.mobile.data.network.MessagePayloadDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.SendMessagePayloadDto
 import de.pyryco.mobile.data.network.SessionTransitionPayloadDto
+import de.pyryco.mobile.data.network.ToolDeniedPayloadDto
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
 import de.pyryco.mobile.data.network.ToolUsePayloadDto
 import de.pyryco.mobile.data.network.TurnEndPayloadDto
 import de.pyryco.mobile.data.network.UnrecognizedMessagePayloadDto
 import de.pyryco.mobile.data.network.toBoundary
+import de.pyryco.mobile.data.network.toDenial
 import de.pyryco.mobile.data.network.toEvent
 import de.pyryco.mobile.data.network.toMessage
 import de.pyryco.mobile.data.network.toRow
@@ -50,6 +54,7 @@ import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.T
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_MESSAGE
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_SEND_MESSAGE
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_SESSION_TRANSITION
+import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_TOOL_DENIED
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_TOOL_RESULT
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_TOOL_USE
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_TURN_END
@@ -136,6 +141,9 @@ internal fun List<ThreadItem>.withToolUse(
  * The result's `parent_tool_use_id` (#810) replaces the row's when non-empty and leaves the use's in
  * place when empty. A conforming daemon sends the same value on both frames; this only matters across a
  * mid-stream daemon change where one frame lacks the key, and then it never un-nests a row.
+ *
+ * A row already [ToolCallStatus.Denied] (#811) keeps that status and its denial: claude writes a
+ * `tool_result` after refusing a call, and that result must not turn a blocked call into a failed one.
  */
 internal fun List<ThreadItem>.withToolResult(event: LiveSessionEvent.ToolResult): List<ThreadItem> {
     val index = indexOfMessage(event.toolUseId, Role.Tool)
@@ -147,11 +155,34 @@ internal fun List<ThreadItem>.withToolResult(event: LiveSessionEvent.ToolResult)
                 row.toolCall?.let { call ->
                     call.copy(
                         output = event.resultSummary,
-                        status = if (event.isError) ToolCallStatus.Failed else ToolCallStatus.Done,
+                        status =
+                            when {
+                                call.status == ToolCallStatus.Denied -> ToolCallStatus.Denied
+                                event.isError -> ToolCallStatus.Failed
+                                else -> ToolCallStatus.Done
+                            },
                         parentToolUseId = event.parentToolUseId.ifEmpty { call.parentToolUseId },
                     )
                 },
         )
+    return toMutableList().apply { this[index] = ThreadItem.MessageItem(updated) }
+}
+
+/**
+ * Mark the [Role.Tool] row [toolUseId] names as [ToolCallStatus.Denied] for a `tool_denied` (#811), in
+ * place, attaching [denial]. The denial wins over any prior status, because the daemon's result-line
+ * recovery can report a denial after the call's `tool_result` shipped. Output, input, parent and position
+ * are untouched, and a repeat denial is last-write-wins. **No matching row, no-op:** a denial never adds
+ * a row.
+ */
+internal fun List<ThreadItem>.withToolDenied(
+    toolUseId: String,
+    denial: ToolDenial,
+): List<ThreadItem> {
+    val index = indexOfMessage(toolUseId, Role.Tool)
+    if (index < 0) return this
+    val row = (this[index] as ThreadItem.MessageItem).message
+    val updated = row.copy(toolCall = row.toolCall?.copy(status = ToolCallStatus.Denied, denial = denial))
     return toMutableList().apply { this[index] = ThreadItem.MessageItem(updated) }
 }
 
@@ -293,6 +324,15 @@ private fun List<ThreadItem>.withHistoryEntry(
                         is LiveSessionEvent.AssistantDelta -> withAssistantDelta(event, entry.timestamp)
                         is LiveSessionEvent.TurnEnd -> withFinalizedTurn(event)
                         else -> this
+                    }
+                }
+            // Not a live event (#811), so it has its own arm rather than a `decodeLiveEvent` case.
+            TYPE_TOOL_DENIED ->
+                if (!interactive) {
+                    this
+                } else {
+                    MobileJson.decodeFromJsonElement<ToolDeniedPayloadDto>(entry.payload).let { dto ->
+                        withToolDenied(dto.toolUseId, dto.toDenial())
                     }
                 }
             TYPE_SESSION_TRANSITION ->

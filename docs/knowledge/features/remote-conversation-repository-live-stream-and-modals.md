@@ -16,8 +16,12 @@ section records only how it attaches to the repository.
   arm gates on the negotiated `interactive` capability, then calls the private
   `decodeLiveSessionEvent(envelope): LiveSessionEvent?` helper (`:296`) and `tryEmit`s the result.
   Five `TYPE_*` constants join the companion (`:770`+). The same `.let { event -> … }` block also hosts
-  the #395 stall-clear and the [#387 tool-call dispatch](remote-conversation-repository-thread-observables.md#live-tool-call-rows--applytooluse--applytoolresult-387)
-  — three folds on one decoded event, one gate, one collector.
+  the #395 stall-clear and the [#387 tool-call dispatch](remote-conversation-repository-thread-observables.md#live-tool-call-rows--applytooluse--applytoolresult--applytooldenied-387-811)
+  — three folds on one decoded event, one gate, one collector. `tool_denied`
+  ([#811](https://github.com/pyrycode/pyrycode-mobile/issues/811)) is **not** one of the five: it is
+  not a `LiveSessionEvent`, so it gets its own sibling `TYPE_TOOL_DENIED` arm in the same `onInbound`
+  `when`, under the same `interactive` gate, calling `applyToolDenied` directly — no `tryEmit`, no
+  stall-clear, because a denial is a report rather than forward progress.
 - **`SharedFlow`, not `StateFlow`** (`replay = 0`, `extraBufferCapacity = 64`, `DROP_OLDEST`): these
   are *events*, not current-value state. The bounded buffer + `DROP_OLDEST` make `tryEmit`
   **infallible and non-blocking** — load-bearing, so a slow live-event consumer never back-pressures
