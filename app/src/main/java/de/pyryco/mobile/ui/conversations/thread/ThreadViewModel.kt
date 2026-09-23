@@ -354,6 +354,11 @@ class ThreadViewModel(
     questionBatch: (conversationId: String) -> Flow<QuestionBatch?> = { flowOf(null) },
     private val answerQuestionBatch: suspend (questionBatchId: String, answers: List<QuestionAnswer>) -> Unit = { _, _ -> },
     private val refuseQuestionBatch: suspend (questionBatchId: String) -> Unit = {},
+    // #861: whether this thread's host has a live repository published — for a relay host, the
+    // coordinator's `currentRepository` being non-null, which happens only after the Noise handshake,
+    // later than the socket-level `Connected` [connectionStateSource] reports. Keys the #778 walk
+    // restart. Defaulted to always-available, as the demo path's fake repository is.
+    private val repositoryAvailable: Flow<Boolean> = flowOf(true),
 ) : ViewModel() {
     private val conversationId: String =
         savedStateHandle.get<String>("conversationId").orEmpty()
@@ -941,22 +946,21 @@ class ThreadViewModel(
         // connection-scoped, so a cursor minted on one connection is not valid on the next — the walk
         // restarts rather than resumes.
         //
-        // Two deliberate choices here. It collects the SOURCE rather than the [connectionState] StateFlow:
-        // that flow is WhileSubscribed and seeds Connected, so its first value is synthetic and its
-        // upstream depends on the screen being subscribed. And `drop(1)` after `distinctUntilChanged`
-        // drops exactly the connection the thread opened on — the source hands every collector its current
-        // value on subscription, so restarting on it would restart the walk this init has just started,
-        // spending a page of budget and a round trip on every open. Only a RETURN to connected counts.
-        // A first value of Offline correctly makes the following connect a restart: the opening ask on
-        // that connection already failed.
+        // #861: keyed on the repository becoming available, not on the socket. A relay host's supervisor
+        // reports Connected at socket-open, before the Noise handshake publishes the repository, so a
+        // restart keyed there asked a null repository and settled as a permanent dead end.
+        //
+        // `drop(1)` after `distinctUntilChanged` drops exactly the availability the thread opened on — the
+        // flow hands every collector its current value on subscription, so restarting on it would restart
+        // the walk this init has just started, spending a page of budget and a round trip on every open.
+        // Only a RETURN to available counts. A first value of unavailable correctly makes the repository's
+        // arrival a restart: the opening ask on the absent repository already failed.
         viewModelScope.launch {
-            connectionStateSource
-                .observe()
-                .map { it == ConnectionState.Connected }
+            repositoryAvailable
                 .distinctUntilChanged()
                 .drop(1)
-                .collect { connected ->
-                    if (connected) {
+                .collect { available ->
+                    if (available) {
                         RelayLog.d { "event=history_walk_restart reason=reconnect" }
                         restartHistoryWalk(fromWalk = historyDemand.value.walk)
                     }
