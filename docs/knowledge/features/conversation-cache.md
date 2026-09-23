@@ -59,15 +59,16 @@ cache (enforced on write) and [`CachingConversationRepository`](caching-conversa
 (compared against on every emission), so the two can never disagree about what "settled" means:
 
 - **`settledThreadRows(rows)`** drops only the in-flight rows — a `Message` with `isStreaming` or
-  whose `toolCall?.status == ToolCallStatus.Running` — leaving `UnrecognizedMessage` rows and the
-  row count untouched. This is what a thread may keep **drawing** once its connection is gone, not
-  what the cache may **hold**: it is also the caching repository's merge-base rebase on a
-  disconnect (see that doc), where the bound would otherwise shrink a long thread on screen the
-  moment it goes offline.
+  whose `toolCall?.status == ToolCallStatus.Running` — leaving `UnrecognizedMessage` and
+  [`Banner`](banner-notice-row.md) rows and the row count untouched. This is what a thread may keep
+  **drawing** once its connection is gone, not what the cache may **hold**: it is also the caching
+  repository's merge-base rebase on a disconnect (see that doc), where the bound would otherwise
+  shrink a long thread on screen the moment it goes offline.
 - **`cacheableThreadRows(rows)`** is `settledThreadRows(rows)` with `UnrecognizedMessage` rows
-  additionally dropped (unbounded, model-adjacent JSON; its KDoc forbids persisting it) and the
-  result bounded to the newest `MAX_CACHED_THREAD_ROWS` (200) via `takeLast` — the thread is in
-  arrival order, so "newest" is the tail. This is what may reach disk.
+  (unbounded, model-adjacent JSON; its KDoc forbids persisting it) and
+  [`Banner`](banner-notice-row.md) rows (claude-authored prose; restored by history replay instead,
+  #873) additionally dropped, and the result bounded to the newest `MAX_CACHED_THREAD_ROWS` (200) via
+  `takeLast` — the thread is in arrival order, so "newest" is the tail. This is what may reach disk.
 
 **Identity is exact, case-sensitive string equality** on `serverId` and on `Conversation.id` —
 the same rule [`PairedServerCollectionStore`](paired-server-store.md#the-contract) states for
@@ -115,8 +116,9 @@ the round-trip is exact to the nanosecond rather than truncated to millisecond p
 The thread document is the same shape, file-private to `FileConversationCache.kt`:
 `CachedThread(version: Int, rows: List<CachedThreadRow>)`, `CachedThreadRow(message:
 CachedMessage? = null, boundary: CachedBoundary? = null)` — exactly one of the two is set, mapping
-`ThreadItem.MessageItem` / `ThreadItem.SessionBoundary` (never `UnrecognizedMessage`, which
-`cacheableThreadRows` drops before a `CachedThreadRow` is ever built).
+`ThreadItem.MessageItem` / `ThreadItem.SessionBoundary` (never `UnrecognizedMessage` or
+[`Banner`](banner-notice-row.md), which `cacheableThreadRows` drops before a `CachedThreadRow` is
+ever built; `ThreadItem.toRecord()` throws if either ever reaches it).
 `CachedMessage(id, sessionId, role, content, timestamp, tool: CachedToolCall? = null)` carries no
 `isStreaming` field — a restored row is always settled, so the field would have nothing to encode.
 `CachedToolCall(toolName, input, output, status)` and `CachedBoundary(previousSessionId,

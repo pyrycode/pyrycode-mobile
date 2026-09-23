@@ -619,7 +619,41 @@ sealed interface ThreadItem {
         val truncated: Boolean,
         val occurredAt: Instant,
     ) : ThreadItem
+
+    /**
+     * Text claude printed **about** the session rather than as part of an answer (#873) — a hook's reason
+     * for blocking a prompt, a local command's output, a loop notification. Carried by the `banner` frame,
+     * which is conversation-scoped and has no `turn_id`, so the row drives no turn and no status indicator.
+     * The frame's `stops_turn` is a report nothing on mobile acts on, so it is not carried here at all.
+     *
+     * **[text] is claude-authored and unsanitized** — bounded daemon-side at 4 KiB, never cleaned. It is
+     * held verbatim; the render boundary owes the control-character and escape stripping (see
+     * `BannerNoticeRow`). Consumers must render it inert and attributed to claude, must not persist it, and
+     * must not log it.
+     *
+     * Identity: [occurredAt], the envelope's (or stored entry's) `ts` — the protocol's `(type, ts)` join
+     * key with the type implied by this variant. Invariant: unique among a thread's banners. The thread's
+     * `LazyColumn` keys a banner on it, so a duplicate crashes the list; uniqueness is a producer
+     * obligation — both thread writers skip a banner the thread already holds (`holdsBanner`) —
+     * documented here and asserted in tests, not enforced at construction (as [SessionBoundary]).
+     *
+     * @param level Closed client-side: claude's open `level` set narrows to [BannerLevel], so the wire
+     *   string itself never reaches the UI.
+     * @param truncated Whether the daemon cut [text] to fit its bound — the daemon's answer, never re-derived.
+     */
+    data class Banner(
+        val level: BannerLevel,
+        val text: String,
+        val truncated: Boolean,
+        val occurredAt: Instant,
+    ) : ThreadItem
 }
+
+/**
+ * How a [ThreadItem.Banner] reads (#873). claude's `level` is an open set; `warning` reads as a warning and
+ * every other value — `info`, `notice`, `suggestion`, empty, or one claude ships later — as a muted notice.
+ */
+enum class BannerLevel { Warning, Notice }
 
 enum class BoundaryReason { Clear, IdleEvict, WorkspaceChange }
 

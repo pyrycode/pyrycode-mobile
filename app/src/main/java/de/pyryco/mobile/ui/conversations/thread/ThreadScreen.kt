@@ -77,6 +77,7 @@ import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.components.MobileGateModal
 import de.pyryco.mobile.ui.conversations.components.ApiRetryIndicator
+import de.pyryco.mobile.ui.conversations.components.BannerNoticeRow
 import de.pyryco.mobile.ui.conversations.components.ChannelInfoSheet
 import de.pyryco.mobile.ui.conversations.components.ChannelInfoUiModel
 import de.pyryco.mobile.ui.conversations.components.CompactingIndicator
@@ -475,6 +476,7 @@ fun ThreadScreen(
                                                 SessionBoundaryDelimiter(boundary = item)
                                             is ThreadItem.UnrecognizedMessage ->
                                                 UnrecognizedMessageRow(item = item)
+                                            is ThreadItem.Banner -> BannerNoticeRow(item = item)
                                         }
                                     // One render path for both kinds of queued row — the one the echo
                                     // correlated to and the one this device minted no echo for — so the
@@ -1080,6 +1082,7 @@ private fun ThreadItem.timestamp(): Instant =
         is ThreadItem.MessageItem -> message.timestamp
         is ThreadItem.SessionBoundary -> occurredAt
         is ThreadItem.UnrecognizedMessage -> occurredAt
+        is ThreadItem.Banner -> occurredAt
     }
 
 internal fun ThreadUiState.toChannelInfoUiModel(now: Instant = Clock.System.now()): ChannelInfoUiModel =

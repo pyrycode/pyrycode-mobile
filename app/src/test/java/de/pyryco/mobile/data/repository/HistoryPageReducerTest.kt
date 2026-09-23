@@ -429,6 +429,84 @@ class HistoryPageReducerTest {
         assertEquals(listOf("live-1"), existing.mergeHistoryRows(emptyList()).messageIds())
     }
 
+    // ---- #873: a stored banner replays as the row the live lane drew ------------------------------
+
+    @Test
+    fun reduce_storedBanner_becomesARowStampedWithTheEntryTimestamp() {
+        val rows = reduceHistoryPage(listOf(entry(5, "banner", bannerPayload("warning", "Blocked by hook", truncated = true))), true)
+
+        val row = rows.single() as ThreadItem.Banner
+        assertEquals(BannerLevel.Warning, row.level)
+        assertEquals("Blocked by hook", row.text)
+        assertTrue(row.truncated)
+        assertEquals(TS_INSTANT, row.occurredAt)
+    }
+
+    @Test
+    fun reduce_storedBannerOfAnyOtherLevel_readsAsANotice() {
+        val levels = listOf("info", "notice", "suggestion", "", "brand-new")
+        val entries = levels.mapIndexed { i, level -> entry(i + 1L, "banner", bannerPayload(level), ts = "2026-09-05T10:0$i:00Z") }
+
+        val rows = reduceHistoryPage(entries, true)
+
+        assertEquals(List(levels.size) { BannerLevel.Notice }, rows.map { (it as ThreadItem.Banner).level })
+    }
+
+    @Test
+    fun reduce_storedBannerWithoutInteractive_yieldsNothing() {
+        assertEquals(emptyList<ThreadItem>(), reduceHistoryPage(listOf(entry(1, "banner", bannerPayload("warning"))), false))
+    }
+
+    @Test
+    fun reduce_malformedBanner_costsOnlyThatEntry() {
+        val rows =
+            reduceHistoryPage(
+                listOf(
+                    entry(3, "message", messagePayload("m1", "user", "after")),
+                    // Missing the required stops_turn.
+                    entry(
+                        2,
+                        "banner",
+                        """{"conversation_id":"$CONVERSATION","level":"warning","text":"x","truncated":false}""",
+                        ts = "2026-09-05T10:02:00Z",
+                    ),
+                    entry(1, "banner", bannerPayload("warning"), ts = "2026-09-05T10:01:00Z"),
+                ),
+                true,
+            )
+
+        assertEquals(2, rows.size)
+        assertEquals(Instant.parse("2026-09-05T10:01:00Z"), (rows.first() as ThreadItem.Banner).occurredAt)
+    }
+
+    @Test
+    fun reduce_bannersRepeatingOneTimestamp_yieldOneRow() {
+        val rows =
+            reduceHistoryPage(
+                listOf(entry(2, "banner", bannerPayload("notice", "second")), entry(1, "banner", bannerPayload("warning", "first"))),
+                true,
+            )
+
+        assertEquals(listOf("first"), rows.map { (it as ThreadItem.Banner).text })
+    }
+
+    @Test
+    fun merge_aPageWhoseBannerIsAlreadyLive_addsNoSecondRow() {
+        // The live lane stamps the row with the envelope ts, which the daemon also hands the log entry.
+        val live: List<ThreadItem> = listOf(ThreadItem.Banner(BannerLevel.Warning, "Blocked by hook", false, TS_INSTANT))
+        val page = reduceHistoryPage(listOf(entry(1, "banner", bannerPayload("warning", "Blocked by hook"))), true)
+
+        assertEquals(live, live.mergeHistoryRows(page))
+    }
+
+    @Test
+    fun merge_bannerAtADifferentTimestamp_isAdmitted() {
+        val live: List<ThreadItem> = listOf(ThreadItem.Banner(BannerLevel.Warning, "Blocked by hook", false, TS_INSTANT))
+        val page = reduceHistoryPage(listOf(entry(1, "banner", bannerPayload("warning", "Blocked by hook"), ts = OCCURRED_AT)), true)
+
+        assertEquals(page + live, live.mergeHistoryRows(page))
+    }
+
     // ---- #811: a refused call replays as denied, never as failed -----------------------------------
 
     @Test
@@ -830,6 +908,12 @@ class HistoryPageReducerTest {
 
     private fun unrecognizedPayload(site: String): String =
         """{"conversation_id":"$CONVERSATION","site":"$site","message_type":"weird","raw":"{}","truncated":false}"""
+
+    private fun bannerPayload(
+        level: String,
+        text: String = "Blocked by hook",
+        truncated: Boolean = false,
+    ): String = """{"conversation_id":"$CONVERSATION","level":"$level","text":"$text","truncated":$truncated,"stops_turn":true}"""
 
     private fun messageItem(
         id: String,

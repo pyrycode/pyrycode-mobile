@@ -153,6 +153,8 @@ private fun ThreadItem.listKey(): String =
         // synthetic-message append/drop, and a payload key would collide on two identical frames
         // stamped in the same instant.
         is ThreadItem.UnrecognizedMessage -> "unrecognized:$id"
+        // The daemon's per-event ts, which both thread writers dedup a banner on (`holdsBanner`, #873).
+        is ThreadItem.Banner -> "banner:$occurredAt"
     }
 
 /**
