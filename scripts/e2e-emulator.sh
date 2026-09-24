@@ -1057,6 +1057,11 @@ elif [ -n "${LIVE}" ]; then
   # daemon, so the list holds 24 methods and 24 turns.
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_permissionAnswer_reachesOnlyTheAskingConversation"
   TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_questionAnswer_reachesTheAskingConversation"
+  # #967: the reconnect footer method (two turns), the reconnect slash-command and compaction method (two)
+  # and the background-task method (one) join, so the list holds 27 methods and 29 turns.
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_reconnect_footerReadingsAndModelChangeSurvive"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_reconnect_slashCommandsAndCompactStillWork"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_backgroundTask_countsInActionsMenuAndPanel"
 else
   TEST_TARGET="${TEST_CLASS}"
 fi
