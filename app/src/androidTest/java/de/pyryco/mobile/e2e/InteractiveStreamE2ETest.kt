@@ -1,7 +1,16 @@
 package de.pyryco.mobile.e2e
 
 import android.Manifest
+import android.app.Activity
+import android.app.Instrumentation
+import android.content.ClipData
+import android.content.ContentResolver
+import android.content.ContentValues
+import android.content.Intent
+import android.graphics.Bitmap
+import android.net.Uri
 import android.os.SystemClock
+import android.provider.MediaStore
 import android.util.Log
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
@@ -49,10 +58,13 @@ import de.pyryco.mobile.data.crypto.PairedServerCollectionStore
 import de.pyryco.mobile.data.model.ConnectionState
 import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.Role
+import de.pyryco.mobile.data.network.ATTACHMENT_CHUNK_BYTES
 import de.pyryco.mobile.data.network.AssistantDeltaPayloadDto
+import de.pyryco.mobile.data.network.AttachmentOfferedPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskStartedPayloadDto
 import de.pyryco.mobile.data.network.BackgroundTaskUpdatedPayloadDto
 import de.pyryco.mobile.data.network.Envelope
+import de.pyryco.mobile.data.network.HistoryEntryDto
 import de.pyryco.mobile.data.network.MobileJson
 import de.pyryco.mobile.data.network.ModalShownPayloadDto
 import de.pyryco.mobile.data.network.ToolResultPayloadDto
@@ -73,6 +85,7 @@ import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_ID
 import de.pyryco.mobile.e2e.E2eTestApplication.Companion.ARG_SERVER_STATIC_PUBLIC_KEY
 import de.pyryco.mobile.grantNotificationPermission
 import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
+import de.pyryco.mobile.ui.conversations.components.MESSAGE_ATTACHMENT_FILE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.MESSAGE_BUBBLE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.RUNNING_MODEL_TEST_TAG
 import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
@@ -112,6 +125,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.koin.core.context.GlobalContext
+import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
 import androidx.compose.ui.semantics.Role as SemanticsRole
 
 /**
@@ -214,6 +229,14 @@ class InteractiveStreamE2ETest {
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_footer_change_permission)
     private val modalCancel: String =
         InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.modal_cancel)
+
+    // #1016: the composer's attach action and the save notices, from resources.
+    private val attachFilesLabel: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.cd_attach_files)
+    private val savedNotice: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_attachment_saved)
+    private val saveFailedNotice: String =
+        InstrumentationRegistry.getInstrumentation().targetContext.getString(R.string.thread_attachment_save_failed)
 
     @Test
     fun interactiveTurn_pingPrompt_streamsPingReplyIntoThread() {
@@ -2670,6 +2693,439 @@ class InteractiveStreamE2ETest {
     }
 
     /**
+     * Files the phone attaches reach another client with their exact bytes (#1016, rung 3). In chat X the
+     * phone picks a small PNG and a ~100 KB document through the composer's **Attach files** action — the
+     * system picker answered by an [ActivityIntentStub] with `MediaStore` URIs, since the app refuses any
+     * authority of its own, the test APK's included — and sends one message. Then the [SecondClientPeer], the
+     * desktop stand-in, sees exactly what the desktop would:
+     *  * X's history holds exactly one user message;
+     *  * `request_attachment` for each of the two ids the phone named returns bytes whose SHA-256 digests are
+     *    the two fixtures' digests. The host's history drops the ids (#1020), so they are read from the
+     *    phone's own sent row;
+     *  * chat Y on the same host gains no message.
+     * The document spans three 45000-byte chunks, so the phone's chunking and the daemon's reassembly both run.
+     * The turn may Read the named files; the peer allows each prompt until the turn ends.
+     *
+     * The name places it last in JUnit's default order, which sorts by name hash. Peers opened on the first
+     * daemon after it stopped carrying frames in two live runs, so it runs after every other scenario on that
+     * daemon until that is explained.
+     *
+     * **One real-claude turn**: the phone's message.
+     */
+    @Test
+    fun interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer = runningToolPeer()
+        val stub = ActivityIntentStub()
+        val inserted = mutableListOf<Uri>()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.addMonitor(stub)
+        try {
+            val stamp = System.currentTimeMillis()
+            val png = pngFixture()
+            val document = documentFixture("phone-$stamp")
+            val pngName = ATTACH_FILE_PREFIX + "phone-$stamp.png"
+            val documentName = ATTACH_FILE_PREFIX + "phone-$stamp.txt"
+            val picked =
+                listOf(insertDownload(pngName, "image/png", png, inserted), insertDownload(documentName, TEXT_MIME, document, inserted))
+            stub.answer(Intent.ACTION_OPEN_DOCUMENT) {
+                val clip = ClipData.newRawUri(null, picked.first()).apply { picked.drop(1).forEach { addItem(ClipData.Item(it)) } }
+                Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().apply { clipData = clip })
+            }
+
+            // 1. The peer records from here on; X and Y are fresh named chats, and the phone opens X.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val (chatX, nameX) = answerChat(serverId, ATTACH_CHAT_NAME_PREFIX)
+            val (chatY, _) = answerChat(serverId, ATTACH_OTHER_NAME_PREFIX)
+            assertPeerAnswers(peer, chatX)
+            openChatRow(nameX)
+
+            // 2. Pick both fixtures through the composer's attach action, and send them with one message.
+            composeTestRule.onNode(hasContentDescription(attachFilesLabel)).performClick()
+            composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+                listOf(pngName, documentName).all {
+                    composeTestRule.onAllNodes(hasContentDescription(it)).fetchSemanticsNodes().isNotEmpty()
+                }
+            }
+            sendFromPhone(PING_PROMPT)
+
+            // 3. The message reaches claude, and its turn ends: the host logs the user turn on delivery.
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the attachment turn in X did not end") { it.type == "turn_end" }
+
+            // 4. AC-1: one user message in X, its two ids each fetching its fixture's exact bytes; Y gained
+            // nothing. The host's history keeps the text but not the ids (#1020), so the ids are the ones the
+            // phone minted and named, read from its own sent row.
+            assertEquals("user messages in the peer's view of X", 1, userMessages(runBlocking { peer.history(chatX, THREAD_TIMEOUT_MS) }))
+            val ids = awaitCachedSentAttachmentIds(serverId, chatX)
+            assertEquals("attachment ids named by the phone's message", 2, ids.distinct().size)
+            val digests = ids.map { id -> sha256(runBlocking { peer.retrieveAttachment(chatX, id, REPLY_TIMEOUT_MS) }.bytes) }
+            assertEquals("digests of the files the peer fetched", setOf(sha256(png), sha256(document)), digests.toSet())
+            assertEquals("user messages in the other conversation", 0, userMessages(runBlocking { peer.history(chatY, THREAD_TIMEOUT_MS) }))
+        } finally {
+            instrumentation.removeMonitor(stub)
+            deleteFixtures(inserted)
+            peer.close()
+        }
+    }
+
+    /**
+     * Another client's file opens and saves on the phone after a history reload (#1016, rung 3). The
+     * [SecondClientPeer] uploads a ~100 KB document into chat X — three chunks, so the phone's reassembly
+     * runs — and names it on a message, as the desktop does. The phone never opens X before a restart
+     * ([E2eTestApplication.rebuildGraph]) with X's thread cache cleared, so X's rows can only come from
+     * history replay, whose `send_message` entry keeps the id but no name. Then:
+     *  * the row shows the uploaded filename, which only retrieval supplies, exactly once;
+     *  * a tap hands `ACTION_VIEW` a content URI whose bytes have the fixture's digest;
+     *  * a long-press writes the same bytes to the `ACTION_CREATE_DOCUMENT` target.
+     * Both system activities are answered by an [ActivityIntentStub]; the save target is a `MediaStore` entry.
+     *
+     * **One real-claude turn**: the peer's message.
+     *
+     * Ignored and out of the LIVE list until #1020: the host logs the peer's message as a `message` entry
+     * with no `attachment_ids`, so history replay never names the file and no row can appear.
+     */
+    @Ignore("blocked on #1020 — history replay drops a user message's attachment ids")
+    @Test
+    fun interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer = runningToolPeer()
+        val stub = ActivityIntentStub()
+        val inserted = mutableListOf<Uri>()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.addMonitor(stub)
+        var relaunched: ActivityScenario<MainActivity>? = null
+        try {
+            val stamp = System.currentTimeMillis()
+            val document = documentFixture("peer-$stamp")
+            val documentName = ATTACH_FILE_PREFIX + "peer-$stamp.txt"
+
+            // 1. X is a fresh named chat the phone does not open; the peer uploads into it and names the file.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val (chatX, nameX) = answerChat(serverId, ATTACH_CHAT_NAME_PREFIX)
+            runBlocking {
+                val id = peer.uploadAttachment(chatX, documentName, TEXT_MIME, document, REPLY_TIMEOUT_MS)
+                peer.sendMessage(chatX, PING_PROMPT, THREAD_TIMEOUT_MS, attachmentIds = listOf(id))
+            }
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the peer's attachment turn in X did not end") { it.type == "turn_end" }
+
+            // 2. Restart with X's thread cache cleared, so the row can only come from history replay.
+            relaunched =
+                restartApp {
+                    val cache = GlobalContext.get().get<ConversationCache>()
+                    runBlocking {
+                        cache.writeThread(serverId, chatX, emptyList()).getOrThrow()
+                        assertTrue("X's thread cache was not cleared", cache.readThread(serverId, chatX).isEmpty())
+                    }
+                }
+            awaitChannelList()
+            awaitConnected()
+            openChatRow(nameX)
+
+            // 3. AC-2: the retrieved name shows once, and open and save both carry the fixture's bytes.
+            awaitReadyAttachmentRow(documentName, REPLY_TIMEOUT_MS)
+            composeTestRule.onAllNodes(readyAttachmentRow(documentName)).assertCountEquals(1)
+            assertOpensAndSaves(stub, documentName, sha256(document), inserted)
+        } finally {
+            instrumentation.removeMonitor(stub)
+            deleteFixtures(inserted)
+            peer.close()
+            relaunched?.close()
+        }
+    }
+
+    /**
+     * A file claude offers stays on the phone across a restart (#1016, rung 3). With the phone in chat X, the
+     * phone's message has claude write a file of known content with a shell command and hand it over with
+     * the daemon's `send_file` tool (the `pyry_files` MCP server), which only takes a path inside the
+     * conversation's workspace. The [SecondClientPeer] allows each permission prompt until the turn ends.
+     *  * the peer's `attachment_offered` for X announces the file's name;
+     *  * the phone draws an attachment row with that name, and its thread cache holds it as an assistant row;
+     *  * after [E2eTestApplication.rebuildGraph] the row is still there once, and open and save both yield
+     *    the content's digest.
+     * The offer is live-only, with no replay: after the restart the row comes from the phone's own thread
+     * cache. A fresh device, or a cleared cache, would not show it, by design, and that is not asserted.
+     *
+     * The name places it before the background-task scenario in JUnit's default order, which sorts by name
+     * hash. In two live runs every peer opened before that point carried frames.
+     *
+     * **One real-claude turn**: the phone's message.
+     */
+    @Test
+    fun interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart() {
+        val serverId = twoHostArg(ARG_SERVER_ID)
+        val peer = runningToolPeer()
+        val stub = ActivityIntentStub()
+        val inserted = mutableListOf<Uri>()
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.addMonitor(stub)
+        var relaunched: ActivityScenario<MainActivity>? = null
+        try {
+            val stamp = System.currentTimeMillis()
+            val content = OFFER_CONTENT_PREFIX + stamp
+            val fileName = ATTACH_FILE_PREFIX + "offer-$stamp.txt"
+
+            // 1. The phone is attached to X when claude calls the tool: the offer is never replayed.
+            runBlocking { peer.open(CONNECT_TIMEOUT_MS) }
+            awaitChannelList()
+            awaitConnected()
+            val (chatX, nameX) = answerChat(serverId, ATTACH_CHAT_NAME_PREFIX)
+            assertPeerAnswers(peer, chatX)
+            openChatRow(nameX)
+            sendFromPhone(offerPrompt(content, fileName))
+            allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the send_file turn in X did not end") { it.type == "turn_end" }
+
+            // 2. AC-3: the offer names the file, and the phone draws it as an assistant-side row it caches.
+            val offer =
+                peer.recorded(chatX).firstOrNull { it.type == "attachment_offered" }?.let {
+                    MobileJson.decodeFromJsonElement(AttachmentOfferedPayloadDto.serializer(), it.payload)
+                }
+            checkNotNull(offer) { "claude's turn in X offered no file" }
+            assertTrue("the offer announced another file name", offer.filename == fileName)
+            awaitReadyAttachmentRow(fileName, REPLY_TIMEOUT_MS)
+            awaitCachedOffer(serverId, chatX, offer.attachmentId)
+
+            // 3. AC-3: after a restart the cached row is still there once, and open and save carry the content.
+            leaveThread()
+            relaunched = restartApp()
+            awaitChannelList()
+            awaitConnected()
+            openChatRow(nameX)
+            awaitReadyAttachmentRow(fileName, REPLY_TIMEOUT_MS)
+            composeTestRule.onAllNodes(readyAttachmentRow(fileName)).assertCountEquals(1)
+            assertOpensAndSaves(stub, fileName, sha256(content.toByteArray()), inserted)
+        } finally {
+            instrumentation.removeMonitor(stub)
+            deleteFixtures(inserted)
+            peer.close()
+            relaunched?.close()
+        }
+    }
+
+    /**
+     * The #1016 offer prompt: write [content] to [fileName] in the workspace with one shell command, then hand
+     * it over with `send_file`. The file must be in the workspace, since `send_file` refuses any other path,
+     * and `printf` with a quoted literal and no newline keeps its bytes exactly [content].
+     */
+    private fun offerPrompt(
+        content: String,
+        fileName: String,
+    ): String =
+        "Run this exact shell command with your tools: `printf '$content' > $fileName`. " +
+            "Then hand that file to the operator by calling the send_file tool from the pyry_files MCP server, " +
+            "passing path $fileName. Do not use Write or Edit, and do not change the file. " +
+            "After the tool returns, reply with a single short word."
+
+    /** A 4 × 4 PNG in one flat colour: generated, a few dozen bytes. */
+    private fun pngFixture(): ByteArray {
+        val bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888)
+        bitmap.eraseColor(FIXTURE_COLOR)
+        return ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+    }
+
+    /** A generated text document of [DOCUMENT_BYTES] or a little more, so it spans more than one chunk. */
+    private fun documentFixture(label: String): ByteArray {
+        val text = StringBuilder()
+        var line = 0
+        while (text.length < DOCUMENT_BYTES) {
+            text
+                .append("e2e1016 ")
+                .append(label)
+                .append(" line ")
+                .append(line++)
+                .append('\n')
+        }
+        return text.toString().toByteArray().also { check(it.size > ATTACHMENT_CHUNK_BYTES) { "the document fixture fits one chunk" } }
+    }
+
+    /**
+     * A `MediaStore` download named [name] holding [bytes], or empty when [bytes] is null, recorded in
+     * [inserted] for [deleteFixtures]. This app owns it, so it reads and writes it without a permission, and
+     * its `media` authority is another app's, which is what the picker and the upload read accept.
+     */
+    private fun insertDownload(
+        name: String,
+        mimeType: String,
+        bytes: ByteArray?,
+        inserted: MutableList<Uri>,
+    ): Uri {
+        val resolver = InstrumentationRegistry.getInstrumentation().targetContext.contentResolver
+        val values =
+            ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, name)
+                put(MediaStore.Downloads.MIME_TYPE, mimeType)
+            }
+        val uri = checkNotNull(resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)) { "MediaStore refused a fixture" }
+        inserted += uri
+        if (bytes != null) checkNotNull(resolver.openOutputStream(uri, "wt")) { "a fixture is not writable" }.use { it.write(bytes) }
+        return uri
+    }
+
+    /** Delete the `MediaStore` entries [insertDownload] made; one already gone is ignored. */
+    private fun deleteFixtures(inserted: List<Uri>) {
+        val resolver = InstrumentationRegistry.getInstrumentation().targetContext.contentResolver
+        inserted.forEach { runCatching { resolver.delete(it, null, null) } }
+    }
+
+    /** All the bytes behind [uri], read through this app's own resolver. */
+    private fun readUri(uri: Uri): ByteArray =
+        checkNotNull(
+            InstrumentationRegistry
+                .getInstrumentation()
+                .targetContext.contentResolver
+                .openInputStream(uri),
+        ) {
+            "a content URI opened no stream"
+        }.use { it.readBytes() }
+
+    /** Lowercase hex SHA-256 of [bytes]. */
+    private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+
+    /**
+     * The user messages in a history. The host logs the operator's turn as a `message` entry with role `user`
+     * when it is delivered; a stored `send_message` counts too, the shape the phone's reducer also reads.
+     */
+    private fun userMessages(history: List<HistoryEntryDto>): Int =
+        history.count { entry ->
+            entry.type == "send_message" ||
+                (entry.type == "message" && (entry.payload as? JsonObject)?.get("role")?.jsonPrimitive?.content == "user")
+        }
+
+    /**
+     * Fail fast, and say so, when [peer]'s open session carries no frames: one `request_history` for
+     * [conversationId] must be answered. Two live runs had peers whose handshake the daemon accepted and which
+     * then saw nothing, so a permission prompt went unanswered until the turn timed out as a feature failure.
+     */
+    private fun assertPeerAnswers(
+        peer: SecondClientPeer,
+        conversationId: String,
+    ) {
+        try {
+            runBlocking { peer.history(conversationId, THREAD_TIMEOUT_MS) }
+        } catch (e: TimeoutCancellationException) {
+            throw AssertionError("the peer's open session answered no request within $THREAD_TIMEOUT_MS ms: a relay or daemon fault", e)
+        }
+    }
+
+    /** The attachment ids on the phone's own sent message in [conversationId], read from its thread cache. */
+    private fun awaitCachedSentAttachmentIds(
+        serverId: String,
+        conversationId: String,
+    ): List<String> {
+        val cache = GlobalContext.get().get<ConversationCache>()
+        return try {
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    var ids: List<String>? = null
+                    while (ids == null) {
+                        ids =
+                            cache
+                                .readThread(serverId, conversationId)
+                                .filterIsInstance<ThreadItem.MessageItem>()
+                                .firstOrNull { it.message.role == Role.User && it.message.attachments.isNotEmpty() }
+                                ?.message
+                                ?.attachments
+                                ?.map { it.attachmentId }
+                        if (ids == null) delay(CACHE_POLL_MS)
+                    }
+                    checkNotNull(ids)
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            throw AssertionError("the phone's thread cache holds no sent row with attachments", e)
+        }
+    }
+
+    /** A message attachment's file row named [name] that is ready to act: tap opens, long-press saves. */
+    private fun readyAttachmentRow(name: String): SemanticsMatcher =
+        hasTestTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG) and hasText(name) and hasClickAction()
+
+    /** Scroll the thread until [readyAttachmentRow] for [name] is on screen. The name is a fixture's. */
+    private fun awaitReadyAttachmentRow(
+        name: String,
+        timeoutMs: Long,
+    ) {
+        try {
+            composeTestRule.waitUntil(timeoutMs) { runCatching { scrollListTo(readyAttachmentRow(name)) }.isSuccess }
+        } catch (e: ComposeTimeoutException) {
+            throw AssertionError("no ready attachment row named $name within $timeoutMs ms", e)
+        }
+    }
+
+    /**
+     * Tap the ready row named [name] and read what `ACTION_VIEW` was handed; then long-press it and read what
+     * was written to the `ACTION_CREATE_DOCUMENT` target. Both must have [digest]. [stub] answers both.
+     */
+    private fun assertOpensAndSaves(
+        stub: ActivityIntentStub,
+        name: String,
+        digest: String,
+        inserted: MutableList<Uri>,
+    ) {
+        stub.answer(Intent.ACTION_VIEW) { Instrumentation.ActivityResult(Activity.RESULT_CANCELED, null) }
+        val views = stub.answered.count { it.action == Intent.ACTION_VIEW }
+        composeTestRule.onNode(readyAttachmentRow(name)).performClick()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) { stub.answered.count { it.action == Intent.ACTION_VIEW } > views }
+        val view = stub.answered.last { it.action == Intent.ACTION_VIEW }
+        val opened = checkNotNull(view.data) { "ACTION_VIEW carried no URI" }
+        assertEquals("the scheme of the URI handed to the viewer", ContentResolver.SCHEME_CONTENT, opened.scheme)
+        assertTrue("the viewer got no read grant", (view.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0)
+        assertEquals("digest of the opened file", digest, sha256(readUri(opened)))
+
+        val target = insertDownload(ATTACH_FILE_PREFIX + "saved-${System.nanoTime()}.bin", "application/octet-stream", null, inserted)
+        stub.answer(Intent.ACTION_CREATE_DOCUMENT) { Instrumentation.ActivityResult(Activity.RESULT_OK, Intent().setData(target)) }
+        composeTestRule.onNode(readyAttachmentRow(name)).performTouchInput { longClick() }
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            listOf(savedNotice, saveFailedNotice).any { composeTestRule.onAllNodesWithText(it).fetchSemanticsNodes().isNotEmpty() }
+        }
+        composeTestRule.onAllNodesWithText(saveFailedNotice).assertCountEquals(0)
+        assertEquals("digest of the saved file", digest, sha256(readUri(target)))
+    }
+
+    /**
+     * Restart the app as [E2eTestApplication.rebuildGraph] can (#1016, after #847): the rule's activity goes
+     * first, since no activity may outlive the graph it resolved; [beforeLaunch] runs on the new graph before
+     * the relaunch. Close the returned scenario in the test's `finally`.
+     */
+    private fun restartApp(beforeLaunch: () -> Unit = {}): ActivityScenario<MainActivity> {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        composeTestRule.activityRule.scenario.moveToState(Lifecycle.State.DESTROYED)
+        instrumentation.runOnMainSync {
+            (instrumentation.targetContext.applicationContext as E2eTestApplication).rebuildGraph()
+        }
+        beforeLaunch()
+        return ActivityScenario.launch(MainActivity::class.java)
+    }
+
+    /** Wait until the phone's thread cache for [conversationId] holds an assistant row carrying [attachmentId]. */
+    private fun awaitCachedOffer(
+        serverId: String,
+        conversationId: String,
+        attachmentId: String,
+    ) {
+        val cache = GlobalContext.get().get<ConversationCache>()
+        try {
+            runBlocking {
+                withTimeout(THREAD_TIMEOUT_MS) {
+                    while (cache.readThread(serverId, conversationId).none { item ->
+                            item is ThreadItem.MessageItem &&
+                                item.message.role == Role.Assistant &&
+                                item.message.attachments.any { it.attachmentId == attachmentId }
+                        }
+                    ) {
+                        delay(CACHE_POLL_MS)
+                    }
+                }
+            }
+        } catch (e: TimeoutCancellationException) {
+            throw AssertionError("the phone's thread cache holds no assistant row with the offered file", e)
+        }
+    }
+
+    /**
      * Wait until the footer's `Cxt:` segment shows text that passes [shows]. The failure names [what] was
      * expected and what the segment showed; the text is the app's own, never claude's.
      */
@@ -4051,6 +4507,16 @@ class InteractiveStreamE2ETest {
         // The answer host's display name and its chats' run-unique prefix: neither contains "ping".
         const val ANSWER_HOST_NAME = "Answer e2e host"
         const val ANSWER_CHAT_NAME_PREFIX = "e2e966-"
+
+        // #1016: the attachment exchange. Fixture names are plain ASCII, which the daemon stores unchanged, and
+        // run-unique, so MediaStore never renames one. The document is about 100 KB: three 45000-byte chunks.
+        const val ATTACH_CHAT_NAME_PREFIX = "e2e1016-"
+        const val ATTACH_OTHER_NAME_PREFIX = "e2e1016-other-"
+        const val ATTACH_FILE_PREFIX = "e2e1016-"
+        const val OFFER_CONTENT_PREFIX = "pyrycode-mobile-offer-"
+        const val TEXT_MIME = "text/plain"
+        const val DOCUMENT_BYTES = 100_000
+        const val FIXTURE_COLOR = 0xFF2A6FDB.toInt()
 
         // A `python3` command, so it needs permission (see WAIT_PROMPT). The token is its output, which no
         // prompt contains; claude could still compute it, so the tests prove the run by a successful Bash

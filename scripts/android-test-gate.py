@@ -30,6 +30,21 @@ LIVE_MINIMUM = 22
 LIVE_MINIMUM += 2
 # #967 adds the two reconnect methods and the background-task method.
 LIVE_MINIMUM += 3
+# #1016 adds two attachment-exchange methods; its third joins once #1020 lets history replay name a file.
+LIVE_MINIMUM += 2
+
+LIVE_CLASS = E2E_PACKAGE + ".InteractiveStreamE2ETest"
+
+
+def parse_live_tests(value):
+    """The --tests list as Class#method names, or None when any entry is not a live-class method."""
+    names = [name for name in (part.strip() for part in value.split(",")) if name]
+    prefix = LIVE_CLASS + "#"
+    for name in names:
+        method = name[len(prefix):]
+        if not name.startswith(prefix) or not method.isidentifier():
+            return None
+    return list(dict.fromkeys(names)) or None
 
 
 def claude_authenticated(env):
@@ -275,9 +290,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("ui", "scripted", "scripted-all", "live"))
     parser.add_argument("scenario", nargs="?", choices=SCENARIOS)
+    parser.add_argument("--tests", help="live only: a comma-separated Class#method list to run instead of the "
+                        "curated list. The dispatcher's flake re-run and main comparison pass the failed tests here.")
     args = parser.parse_args()
     if (args.mode == "scripted") != (args.scenario is not None):
         parser.error("scripted requires one scenario; ui and live take no scenario")
+    live_tests = None
+    if args.tests is not None:
+        if args.mode != "live":
+            parser.error("--tests applies to live only")
+        live_tests = parse_live_tests(args.tests)
+        if live_tests is None:
+            parser.error(f"--tests must be a comma-separated list of {LIVE_CLASS}#method names")
     device = os.environ.get("DEVICE", "pixel2Api33Atd")
     if not device.isalnum():
         parser.error("DEVICE must be an alphanumeric Gradle device name")
@@ -315,6 +339,7 @@ def main():
             command.insert(3, "-Pandroid.testInstrumentationRunnerArguments.class=" + ",".join(classes))
     else:
         env.pop("LIVE", None)
+        env.pop("LIVE_TESTS", None)
         env.pop("DETERMINISTIC", None)
         command = ["bash", str(ROOT / "scripts" / "e2e-emulator.sh")]
         if args.mode == "scripted":
@@ -323,7 +348,12 @@ def main():
         elif args.mode == "live":
             env["LIVE"] = "1"
             minimum = LIVE_MINIMUM
-            expected_class = E2E_PACKAGE + ".InteractiveStreamE2ETest"
+            expected_class = LIVE_CLASS
+            if live_tests:
+                # A chosen subset: the dispatcher judges each named test itself, and on main a test the
+                # branch added does not exist, so the curated floor does not apply.
+                env["LIVE_TESTS"] = ",".join(live_tests)
+                minimum = 1
     if args.mode == "live":
         # Missing login is an environment failure, not a suite of product regressions.
         if not claude_authenticated(env):
