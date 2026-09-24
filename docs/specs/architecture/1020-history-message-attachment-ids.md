@@ -66,3 +66,7 @@ Pending for the documentation stage: in `docs/e2e-interactive-stream.md`, record
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-24
+
+## Revisions
+
+**2026-09-25 — merge of `main` (#955).** Main's two push methods joined the LIVE list, so with this ticket's peer-attachment method it holds thirty-two methods and thirty-four turns, not thirty and thirty-two. `LIVE_MINIMUM` keeps both increments. The Documentation handoff count follows: in `docs/e2e-interactive-stream.md` the curated list is thirty-two methods, thirty-four turns.
