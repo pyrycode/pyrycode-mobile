@@ -463,6 +463,7 @@ internal fun PyryNavHost(
                 val draft by vm.draft.collectAsStateWithLifecycle()
                 val pendingAttachments by vm.pendingAttachments.collectAsStateWithLifecycle()
                 val attachmentsSending by vm.attachmentsSending.collectAsStateWithLifecycle()
+                val attachmentStates by vm.attachmentStates.collectAsStateWithLifecycle()
                 val rePairAvailable by vm.rePairAvailable.collectAsStateWithLifecycle()
                 LaunchedEffect(vm) {
                     vm.navigationEvents.collect { event ->
@@ -516,6 +517,10 @@ internal fun PyryNavHost(
                     onAttachmentsPicked = vm::addPickedAttachments,
                     onRemoveAttachment = vm::removeAttachment,
                     attachmentRefusals = vm.attachmentRefusals,
+                    // #984: the thread's message attachments, loaded as their rows come on screen.
+                    attachmentStates = attachmentStates,
+                    onAttachmentShown = vm::onAttachmentShown,
+                    onRetryAttachment = vm::onRetryAttachment,
                     // #843: the tree row's re-pair route (#842), keyed by this destination's own host. The
                     // thread stays on the back stack beneath it, so Cancel returns to the cached history.
                     showRePair = rePairAvailable,

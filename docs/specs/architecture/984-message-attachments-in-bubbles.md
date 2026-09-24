@@ -148,3 +148,13 @@ The ticket names none. Pending for the documentation stage: `docs/knowledge/feat
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-24
+
+## Revisions
+
+### 2026-09-24: Phase B departures
+
+- **The image slot is square at up to 160dp; it is no longer a fixed 160 × 160.** The Robolectric screen is 320dp wide. There, the bubble's content width is 140dp, and `Modifier.size(160.dp)` gave a 140 × 160 slot. The slot is now `sizeIn(maxWidth = 160.dp, maxHeight = 160.dp).aspectRatio(1f)`: 160 × 160 at the 412dp reference width, and square at the bubble's width on a narrower screen. It never uses `fillMaxWidth`, which would pin the bubble to its lane (message-bubble.md § "Fill vs. hug"). The size is still fixed from loading to loaded, so a late thumbnail moves nothing, which is the point. `MessageAttachmentsTest` asserts `min(160dp, content width)`, square, and unchanged across the load.
+- **`canRead` is bounded by a `CancellationSignal`, not by `withTimeoutOrNull`.** A provider call blocked in Binder never sees coroutine cancellation, so a plain timeout around `withContext(io)` would have waited for the call anyway. `ContentResolverAttachmentReader.canRead` passes a signal to `openAssetFileDescriptor(uri, "r", signal)`, which is the same open `openInputStream` performs. A deadline job cancels the signal after 5 s, or at once when the caller is cancelled. The security review's SHOULD FIX stands, implemented this way.
+- **`META_CONTENT_ALPHA` is private to `MessageMetaRow.kt`**, so `MessageAttachments.kt` keeps its own `ATTACHMENT_CONTENT_ALPHA = 0.80f` with the same reasoning comment. `MarkdownText` already does the same, and this avoids an eighth production file.
+- **`MessageContainer`'s `attachments` slot is defaulted to `{}`**, so the markdown preview that calls the container directly is unchanged.
+- **Open question resolved:** `TextOverflow.MiddleEllipsis` exists in this BOM and renders one line under Robolectric native graphics. `MessageAttachmentsTest` therefore runs with `@GraphicsMode(NATIVE)`, which is also what lets its fake thumbnail be a real bitmap.

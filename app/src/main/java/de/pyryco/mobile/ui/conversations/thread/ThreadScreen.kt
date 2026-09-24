@@ -62,6 +62,7 @@ import de.pyryco.mobile.data.repository.ThinkingProgress
 import de.pyryco.mobile.data.repository.ThreadItem
 import de.pyryco.mobile.data.repository.UsageLimitReading
 import de.pyryco.mobile.ui.conversations.components.ApiRetryIndicator
+import de.pyryco.mobile.ui.conversations.components.AttachmentViewState
 import de.pyryco.mobile.ui.conversations.components.BannerNoticeRow
 import de.pyryco.mobile.ui.conversations.components.ChannelInfoSheet
 import de.pyryco.mobile.ui.conversations.components.ChannelInfoUiModel
@@ -193,6 +194,12 @@ fun ThreadScreen(
     onAttachmentsPicked: (List<PickedAttachment>) -> Unit = {},
     onRemoveAttachment: (Long) -> Unit = {},
     attachmentRefusals: Flow<AttachmentRefusal> = emptyFlow(),
+    // #984: each message attachment's state by id (ThreadViewModel.attachmentStates), the report that one's
+    // row is on screen, and a failed one's retry. Bound by MainActivity; defaulted so other screens and tests
+    // draw attachments as loading and start nothing.
+    attachmentStates: Map<String, AttachmentViewState> = emptyMap(),
+    onAttachmentShown: (String) -> Unit = {},
+    onRetryAttachment: (String) -> Unit = {},
 ) {
     var sheetVisible by rememberSaveable { mutableStateOf(false) }
     var overflowExpanded by rememberSaveable { mutableStateOf(false) }
@@ -534,6 +541,9 @@ fun ThreadScreen(
                                                 MessageBubble(
                                                     message = item.message,
                                                     toolNestingDepth = toolDepths[item.message.id] ?: 0,
+                                                    attachmentStates = attachmentStates,
+                                                    onAttachmentShown = onAttachmentShown,
+                                                    onRetryAttachment = onRetryAttachment,
                                                 )
                                             is ThreadItem.SessionBoundary ->
                                                 SessionBoundaryDelimiter(boundary = item)
