@@ -183,6 +183,20 @@ class StableConversationRepositoryTest {
             assertTrue(runCatching { facade.setSystemPrompt("c1", "x") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.renameWorkspace("/w", "x") }.exceptionOrNull() is IllegalStateException)
             assertTrue(runCatching { facade.archiveWorkspace("/w") }.exceptionOrNull() is IllegalStateException)
+            assertTrue(runCatching { facade.setMuted("c1", true) }.exceptionOrNull() is IllegalStateException)
+        }
+
+    // #1000: set and clear reach the live repo untouched — false is a write of its own, not an omission.
+    @Test
+    fun setMuted_whenLive_delegatesVerbatim() =
+        runTest {
+            val repoA = RecordingConversationRepository()
+            val facade = StableConversationRepository(MutableStateFlow<ConversationRepository?>(repoA))
+
+            facade.setMuted("c3", true)
+            facade.setMuted("c3", false)
+
+            assertEquals(listOf("c3" to true, "c3" to false), repoA.setMutedCalls)
         }
 
     // #663: the workspace verbs reach this host's live repo with the path and label untouched — the
@@ -940,6 +954,7 @@ class StableConversationRepositoryTest {
         val setSystemPromptCalls = mutableListOf<Pair<String, String?>>()
         val renameWorkspaceCalls = mutableListOf<Pair<String, String?>>()
         val archiveWorkspaceCalls = mutableListOf<String>()
+        val setMutedCalls = mutableListOf<Pair<String, Boolean>>()
 
         fun pushConversations(value: List<Conversation>) {
             conversations.value = value
@@ -1140,6 +1155,13 @@ class StableConversationRepositoryTest {
 
         override suspend fun archiveWorkspace(path: String) {
             archiveWorkspaceCalls += path
+        }
+
+        override suspend fun setMuted(
+            conversationId: String,
+            muted: Boolean,
+        ) {
+            setMutedCalls += conversationId to muted
         }
 
         override suspend fun requestScreenSnapshot(conversationId: String): String {

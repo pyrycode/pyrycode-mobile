@@ -61,6 +61,8 @@ interface ConversationRepository {
         error("requestSystemPrompt is not implemented for this ConversationRepository")
     suspend fun setSystemPrompt(conversationId: String, systemPrompt: String?): Unit =  // #823 — null clears, "" stores an explicit empty prompt, any other text verbatim
         error("setSystemPrompt is not implemented for this ConversationRepository")
+    suspend fun setMuted(conversationId: String, muted: Boolean): Unit =  // #1000 — one set_conversation_muted frame; muted is always on the wire, true and false alike
+        error("setMuted is not implemented for this ConversationRepository")
     suspend fun uploadAttachment(conversationId: String, bytes: ByteArray, filename: String, mimeType: String): AttachmentUploadResult =  // #829 — attachment_chunk frames on this repository's own host, settled once
         error("uploadAttachment is not implemented for this ConversationRepository")
     suspend fun fetchAttachment(conversationId: String, attachmentId: String): AttachmentFetchResult =  // #899 — connection-level, host-blind: one request_attachment, verified bytes in memory

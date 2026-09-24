@@ -15,6 +15,7 @@ import de.pyryco.mobile.data.network.PromoteConversationPayloadDto
 import de.pyryco.mobile.data.network.RegisterPushTokenPayloadDto
 import de.pyryco.mobile.data.network.RelayErrorException
 import de.pyryco.mobile.data.network.RenameConversationPayloadDto
+import de.pyryco.mobile.data.network.SetConversationMutedPayloadDto
 import de.pyryco.mobile.data.network.toConversation
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.PLATFORM_FCM
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_ARCHIVE_CONVERSATION
@@ -27,6 +28,7 @@ import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.T
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_PROMOTE_CONVERSATION
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_REGISTER_PUSH_TOKEN
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_RENAME_CONVERSATION
+import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_SET_CONVERSATION_MUTED
 import de.pyryco.mobile.data.repository.RemoteConversationRepository.Companion.TYPE_UNARCHIVE_CONVERSATION
 import kotlinx.datetime.Clock
 import kotlinx.serialization.json.JsonObject
@@ -335,6 +337,33 @@ internal class ConversationCommands(
             )
         // Throws on a server `error` / not-Open session; the decode + confirmed upsert below are
         // unreachable on any failure path. The reply is the bare conversation object (#318 decodes it).
+        val reply = requests.sendAndAwaitReply(request)
+        val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
+        conversationList.upsertConversation(conversation)
+    }
+
+    /**
+     * Set or clear [conversationId]'s mute flag over v2 `set_conversation_muted` (#1000, server
+     * pyrycode#2572) — [sendArchiveToggle]'s round trip with a [SetConversationMutedPayloadDto]: await the
+     * correlated `conversation_updated`, decode it, and only then fold it into [ConversationListProjection].
+     * The daemon also pushes the same record uncorrelated to the requester; that push takes the ordinary
+     * uncorrelated fold, and both are upserts by id, so the list keeps one row. Same failure contract as
+     * [sendArchiveToggle]: nothing is folded on an `error`, a disconnected session or a malformed reply.
+     */
+    suspend fun setMuted(
+        conversationId: String,
+        muted: Boolean,
+    ) {
+        val request =
+            Envelope(
+                id = requests.nextRequestId(),
+                type = TYPE_SET_CONVERSATION_MUTED,
+                ts = Clock.System.now().toString(),
+                payload =
+                    MobileJson.encodeToJsonElement(
+                        SetConversationMutedPayloadDto(conversationId = conversationId, muted = muted),
+                    ),
+            )
         val reply = requests.sendAndAwaitReply(request)
         val conversation = MobileJson.decodeFromJsonElement<ConversationResponseDto>(reply).toConversation()
         conversationList.upsertConversation(conversation)

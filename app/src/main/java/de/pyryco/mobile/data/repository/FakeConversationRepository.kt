@@ -210,6 +210,16 @@ class FakeConversationRepository(
         }
     }
 
+    override suspend fun setMuted(
+        conversationId: String,
+        muted: Boolean,
+    ) {
+        state.update { records ->
+            val record = records[conversationId] ?: throw unknown(conversationId)
+            records + (conversationId to record.copy(conversation = record.conversation.copy(muted = muted)))
+        }
+    }
+
     /**
      * Applies [shouldArchive] across the whole store at [referenceTime], flipping
      * `archived = true` on every unpromoted, not-already-archived match so that
