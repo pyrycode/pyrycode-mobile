@@ -398,6 +398,10 @@ internal fun PyryNavHost(
                         ChannelListEvent.WorkspaceArchiveRequested -> vm.requestWorkspaceArchive()
                         ChannelListEvent.WorkspaceArchiveConfirmed -> vm.confirmWorkspaceArchive()
                         ChannelListEvent.WorkspaceArchiveDeclined -> vm.declineWorkspaceArchive()
+                        // And for creating a channel (#958): the plus's own host and exact cwd.
+                        is ChannelListEvent.TreeWorkspaceAddTapped -> vm.openCreateChannel(event.serverId, event.cwd)
+                        is ChannelListEvent.CreateChannelSubmitted -> vm.submitCreateChannel(event.name, event.systemPrompt)
+                        ChannelListEvent.CreateChannelDismissed -> vm.dismissCreateChannel()
                     }
                 },
             )

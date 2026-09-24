@@ -38,6 +38,7 @@ import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.di.HostConversationSnapshot
 import de.pyryco.mobile.ui.components.AddWorkspaceModal
+import de.pyryco.mobile.ui.components.CreateChannelModal
 import de.pyryco.mobile.ui.components.EditChatModal
 import de.pyryco.mobile.ui.components.EditWorkspaceModal
 import de.pyryco.mobile.ui.conversations.components.TreeConversationRow
@@ -282,6 +283,30 @@ sealed interface ChannelListEvent {
      * distinct from [WorkspaceEditDismissed] because it returns to the editor instead of closing.
      */
     data object WorkspaceArchiveDeclined : ChannelListEvent
+
+    /**
+     * A Channels-section workspace row's plus: open Create channel on **that** row's own host and exact `cwd`
+     * (#958). Never the shown name, which two workspaces can share.
+     */
+    data class TreeWorkspaceAddTapped(
+        val serverId: String,
+        val cwd: String,
+    ) : ChannelListEvent
+
+    /**
+     * The Create channel modal's OK: the name already trimmed by the component, the prompt verbatim. No ids,
+     * for the reason [HostEditNameSubmitted] carries none: the target is the open modal's.
+     */
+    data class CreateChannelSubmitted(
+        val name: String,
+        val systemPrompt: String,
+    ) : ChannelListEvent {
+        // The prompt may hold a pasted credential; a logged or crash-traced event must not carry it.
+        override fun toString(): String = "CreateChannelSubmitted(name=$name, systemPrompt=<redacted>)"
+    }
+
+    /** The Create channel modal's Cancel, Close and Back. */
+    data object CreateChannelDismissed : ChannelListEvent
 }
 
 /**
@@ -327,6 +352,37 @@ fun ChannelListScreen(
     )
     ChatEditorModal(hostState = hostState, onEvent = onEvent)
     WorkspaceEditorModal(hostState = hostState, onEvent = onEvent)
+    CreateChannelModalBinding(hostState = hostState, onEvent = onEvent)
+}
+
+/**
+ * [CreateChannelModal] bound to the open [CreateChannelState] (#958), present exactly while there is one.
+ *
+ * OK follows the modal's **own** host's connection, read on every draw as the other bindings do. The name
+ * locks once the create is confirmed, since a retry then writes only the prompt. Both failure strings are
+ * static: the shell announces them aloud, and the daemon's message never reaches this screen.
+ */
+@Composable
+private fun CreateChannelModalBinding(
+    hostState: HostChannelListState,
+    onEvent: (ChannelListEvent) -> Unit,
+) {
+    val state = hostState.createChannel ?: return
+    CreateChannelModal(
+        serverId = state.serverId,
+        cwd = state.cwd,
+        onSubmit = { name, systemPrompt -> onEvent(ChannelListEvent.CreateChannelSubmitted(name, systemPrompt)) },
+        onDismissRequest = { onEvent(ChannelListEvent.CreateChannelDismissed) },
+        hostAvailable = hostState.isHostConnected(state.serverId),
+        nameEditable = state.createdConversationId == null,
+        loading = state.saving,
+        error =
+            when {
+                state.createFailed -> stringResource(R.string.create_channel_failed)
+                state.promptFailed -> stringResource(R.string.create_channel_prompt_failed)
+                else -> null
+            },
+    )
 }
 
 /**
@@ -577,6 +633,14 @@ private fun LazyListScope.treeSection(
                     onToggleExpanded = { onEvent(ChannelListEvent.TreeFoldToggled(workspaceKey)) },
                     // The group's own host and exact cwd, in both sections, never its shown name.
                     onEditTapped = { onEvent(ChannelListEvent.TreeWorkspaceEditTapped(group.serverId, group.cwd)) },
+                    // Channels only (#958): the plus creates a channel at the group's own host and cwd.
+                    onAddTapped =
+                        when (section) {
+                            ConversationTreeSection.Channels -> {
+                                { onEvent(ChannelListEvent.TreeWorkspaceAddTapped(group.serverId, group.cwd)) }
+                            }
+                            ConversationTreeSection.Chats -> null
+                        },
                 )
             }
             if (workspaceKey in hostState.collapsed) return@forEach

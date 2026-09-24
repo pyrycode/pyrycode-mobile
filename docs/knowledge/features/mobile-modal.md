@@ -21,7 +21,10 @@ every workspace row's own pencil in both tree sections. Since #957
 [`SaveAsChannelDialog`](save-as-channel-dialog.md) draws this shell directly as its sixth caller —
 a channel name field plus an optional system prompt field, replacing the dialog's earlier
 `AlertDialog`-with-workspace-radios shape, driven by the thread overflow's **Save as channel…** item.
-Existing dialogs
+Since #958 [`CreateChannelModal`](#callers) draws this shell directly as its seventh caller — the same
+name-plus-system-prompt form reused by construction (both share `ChannelFormFields`), driven by a plus on
+every Channels-section workspace row instead of the thread overflow, and creating a new promoted channel
+rather than promoting an existing chat. Existing dialogs
 such as [CreateFolderDialog](create-folder-dialog.md) remain separate; consumer tickets own
 their migration and operation-specific acceptance — `CreateFolderDialog` itself is now reused
 unchanged as a second window stacked over `AddWorkspaceModal`, described below.
@@ -396,8 +399,8 @@ value with supporting text.
 field seeded from the conversation's own name (or "New channel"), clamped to `MAX_WORKSPACE_LABEL_CHARS`
 the same way `EditChatModal`'s field is, and an optional multi-line "Channel system prompt:" field that
 always opens empty. Both fields are pulled into a standalone, reusable `ChannelFormFields` composable
-(`ui/components/ChannelFormFields.kt`) rather than kept private to this caller, since the future Create
-channel modal reuses the same form. OK promotes the conversation in place
+(`ui/components/ChannelFormFields.kt`) rather than kept private to this caller, since
+[`CreateChannelModal`](#callers) (#958) reuses the same form. OK promotes the conversation in place
 (`ConversationRepository.promote(id, name, workspace = null)` — no dedicated-folder choice any more,
 following desktop's pyrycode-desktop#1436) and, once that is confirmed, writes a non-blank prompt
 verbatim with `setSystemPrompt`; a blank prompt writes nothing. `nameEditable = false` locks the name
@@ -406,6 +409,20 @@ promote. See [Save as channel](save-as-channel-dialog.md) for the full two-write
 `compareAndSet` terminal transitions, and why `SaveAsChannelSubmit`'s `toString` redacts the prompt.
 [ThreadOverflowMenu](thread-overflow-menu.md)'s discussion-only **Save as channel…** item is its only
 caller.
+
+[`CreateChannelModal`](../../../app/src/main/java/de/pyryco/mobile/ui/components/CreateChannelModal.kt)
+(`ui/components/CreateChannelModal.kt`, #958) is the shell's seventh direct caller — like
+`SaveAsChannelDialog`, it draws `MobileModal` itself around `ChannelFormFields`, and desktop's
+`CreateChannelDialog` is its analogue. Both fields open empty (there is no existing conversation to seed
+from), and `nameEditable = false` locks the name once the create leg is confirmed — the identical
+retry-never-repeats-the-first-write shape `SaveAsChannelDialog` uses, with `createChannel` in the first
+leg's place instead of `promote`. `serverId` and `cwd` key both buffers (`remember`, not
+`rememberSaveable` — the prompt may hold a pasted secret) and are never rendered: the title is the static
+string "Create channel," never the target path. [ChannelListScreen § Workspace row create-channel
+control](channel-list-screen-tree-and-controls.md#workspace-row-create-channel-control-958) is its only
+caller: every Channels-section workspace row's own plus opens it on that row's own host and exact `cwd`
+— see that section and [ChannelListViewModel](channel-list-viewmodel.md#wiring) for the two-write state
+machine and why a second host sharing the same `cwd` is never addressed.
 
 **`PermissionModalOverlay`** (`ui/conversations/thread/ThreadPermissionModal.kt`, #815) is the first of
 [`MobileGateModal`](#the-hardened-gate-mobilegatemodal)'s two callers, and the only one using it rather than

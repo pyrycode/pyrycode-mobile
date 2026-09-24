@@ -27,6 +27,7 @@
     <string name="cd_tree_chat_edit">Edit chat %1$s</string>
     <!-- A workspace row's pencil (#905), in both sections; %1$s is the workspace's (clamped) shown name. -->
     <string name="cd_tree_workspace_edit">Edit workspace %1$s</string>
+    <string name="cd_tree_workspace_new_channel">New channel in %1$s</string>
     <string name="untitled_discussion">Untitled discussion</string>
     <string name="channels_section_header">Channels</string>
     <string name="chats_section_header">Chats</string>
@@ -201,6 +202,10 @@
     <string name="channel_form_name_label">Channel name:</string>
     <string name="channel_form_prompt_label">Channel system prompt:</string>
     <string name="channel_form_prompt_too_long">This system prompt is too long.</string>
+    <string name="create_channel_title">Create channel</string>
+    <!-- Generic for the same reason save_as_channel_failed is: the shell announces them aloud (#958). -->
+    <string name="create_channel_failed">Couldn\'t create the channel. Try again.</string>
+    <string name="create_channel_prompt_failed">The channel was created, but its system prompt wasn\'t. Try again.</string>
     <string name="literal_screen_title">Claude\'s screen</string>
     <string name="literal_screen_back">Back</string>
     <string name="literal_screen_refresh">Refresh</string>

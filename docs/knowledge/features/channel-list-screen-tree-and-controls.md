@@ -140,11 +140,13 @@ deliberately, recorded in a KDoc comment on `TreeRowControl` in `ConversationTre
 header's own band grows from the design's bare 20dp text line to 48dp for the same reason — it carries a
 control now, not just a label.
 
-**Still no add control (#905 added the pencil, not a plus).** `TreeWorkspaceRow` draws no add control of
-its own — adding a workspace is the host row's plus, a tier above, replaced by
-[`AddWorkspaceModal`](mobile-modal.md#callers) in #904. #663 (the same phase) added `renameWorkspace` /
-`archiveWorkspace` to the host-owned repository with no UI caller; #905 is that caller — see
-[Workspace row edit and archive control (#905)](#workspace-row-edit-and-archive-control-905) below.
+**#905 added the pencil; #958 added a plus, but only on Channels rows.** #663 (the same phase as #905) added
+`renameWorkspace` / `archiveWorkspace` to the host-owned repository with no UI caller; #905 is that caller —
+see [Workspace row edit and archive control (#905)](#workspace-row-edit-and-archive-control-905) below. The
+host row's own plus (a tier above, opening [`AddWorkspaceModal`](mobile-modal.md#callers) in #904) still
+creates an unpromoted chat in a picked or new folder; the workspace row's plus, added later, creates a
+**promoted channel** directly at that row's own folder — see
+[Workspace row create-channel control (#958)](#workspace-row-create-channel-control-958) below.
 
 ## Host row edit control (#744)
 
@@ -275,3 +277,29 @@ confirming calls `archiveWorkspace` for that host and `cwd` only, and a partial 
 confirmation open so a retry archives only the rows still active — see the operation's own contract in
 `ConversationRepository.kt`. See [Mobile modal § Callers](mobile-modal.md#callers) for the modal's own
 field, its label-rule edge case and a Compose semantics trap in its test.
+
+## Workspace row create-channel control (#958)
+
+`TreeWorkspaceRow` gained a fifth parameter, `onAddTapped: (() -> Unit)? = null`, drawn as a second,
+trailing `TreeRowControl(Icons.Filled.Add, …)` **after** the #905 pencil — the row now carries dots-free
+pencil-then-plus, the same left-to-right order the host row's edit-then-add pair established in #744. Both
+controls keep their own merging-semantics node inside `FoldableTreeRow`'s `clickable`, so tapping either
+neither folds the row nor triggers the other.
+
+`treeSection` passes `onAddTapped` only for `ConversationTreeSection.Channels` rows, bound to
+`{ onEvent(TreeWorkspaceAddTapped(group.serverId, group.cwd)) }` — `HostWorkspaceGroup`'s own `serverId`
+and `cwd`, the same targeting discipline the #905 pencil uses. Chats-section rows pass `null` and draw no
+plus: a chat's workspace is not yet a channel, so there is nothing to promote it *from* at that tier (Save
+as channel, on the chat itself, is the promotion path there — see
+[Save as channel dialog](save-as-channel-dialog.md)). The content description
+(`R.string.cd_tree_workspace_new_channel`, "New channel in %1$s") reuses the row's already-`boundedRowText`-
+clamped name, the same one-clamp-two-uses shape the pencil's description uses.
+
+Opening [`CreateChannelModal`](mobile-modal.md#callers) from that target, resolving the repository at the
+press and running the two-write create-then-prompt sequence are `ChannelListViewModel`'s job — see
+[ChannelListViewModel](channel-list-viewmodel.md#wiring). `openCreateChannel(serverId, cwd)` opens only when
+that host's snapshot holds an active **channel** at exactly `cwd` — the same source a Channels-section row's
+existence already implies, so the plus's own visibility and the open guard agree by construction. OK sends
+one `createChannel(name, cwd)`; a non-blank system prompt is then written with `setSystemPrompt` to the
+**created** conversation, never read back. See [System prompt editor § intro](system-prompt-editor.md) for
+why this write bypasses that editor entirely.

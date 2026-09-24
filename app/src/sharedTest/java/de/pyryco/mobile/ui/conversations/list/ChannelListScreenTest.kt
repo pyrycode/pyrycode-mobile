@@ -37,6 +37,8 @@ import de.pyryco.mobile.data.model.Conversation
 import de.pyryco.mobile.data.model.PyrycodeLinkStatus
 import de.pyryco.mobile.data.model.RelayLinkStatus
 import de.pyryco.mobile.di.HostConversationSnapshot
+import de.pyryco.mobile.ui.components.CHANNEL_NAME_FIELD_TAG
+import de.pyryco.mobile.ui.components.CHANNEL_PROMPT_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_CHAT_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_HOST_NAME_FIELD_TAG
 import de.pyryco.mobile.ui.components.EDIT_WORKSPACE_NAME_FIELD_TAG
@@ -808,6 +810,89 @@ class ChannelListScreenTest {
             ),
             events,
         )
+    }
+
+    @Test
+    fun workspaceRowPlus_onChannelsRowsOnly_namesItsWorkspace_andOpensItsOwnHostAndCwdWithoutFolding() {
+        setTree(
+            entry(
+                serverId = "pyrybox",
+                displayName = "Pyrybox",
+                channels = listOf(conversation("c1", "alpha channel", "/w/one", true)),
+                chats = listOf(conversation("d1", "bravo chat", "/w/chats", false)),
+            ),
+            entry(
+                serverId = "macbook",
+                displayName = "Macbook",
+                channels = listOf(conversation("c2", "charlie channel", "/w/one", true)),
+            ),
+        )
+
+        // Two hosts show a Channels workspace called "one"; the Chats workspace has no plus.
+        val one = hasContentDescription(string(R.string.cd_tree_workspace_new_channel, "one"))
+        composeTestRule.onAllNodes(one).assertCountEquals(2)
+        composeTestRule.onAllNodes(hasContentDescription(string(R.string.cd_tree_workspace_new_channel, "chats"))).assertCountEquals(0)
+        composeTestRule
+            .onAllNodes(one)[0]
+            .assertWidthIsAtLeast(48.dp)
+            .assertHeightIsAtLeast(48.dp)
+            .performClick()
+        // The plus's own node took the tap: the workspace's channel is still drawn, nothing folded.
+        composeTestRule.onNode(hasText("alpha channel")).assertExists()
+        composeTestRule.onNode(hasScrollAction()).performScrollToNode(hasText("charlie channel"))
+        composeTestRule.onAllNodes(one)[1].performClick()
+        composeTestRule.onNode(hasText("charlie channel")).assertExists()
+
+        assertEquals(
+            listOf(
+                ChannelListEvent.TreeWorkspaceAddTapped("pyrybox", "/w/one"),
+                ChannelListEvent.TreeWorkspaceAddTapped("macbook", "/w/one"),
+            ),
+            events,
+        )
+    }
+
+    private fun channelHost(pyrycode: PyrycodeLinkStatus = PyrycodeLinkStatus.Connected) =
+        entry(serverId = "pyrybox", displayName = "Pyrybox", channels = listOf(conversation("c1", "alpha channel", "/w/one", true)))
+            .let { it.copy(host = it.host.copy(connectionStatus = ConnectionStatus(RelayLinkStatus.Connected, pyrycode))) }
+
+    @Test
+    fun createChannelModal_reportsTheTypedValues_failuresAreStatic_andOkFollowsItsOwnHost() {
+        val state =
+            mutableStateOf(HostChannelListState(listOf(channelHost()), createChannel = CreateChannelState("pyrybox", "/w/one")))
+        composeTestRule.setContent {
+            PyrycodeMobileTheme { ChannelListScreen(hostState = state.value, onEvent = { events += it }) }
+        }
+
+        composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).performTextInput("  Ops  ")
+        composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).performTextInput("Be brief.")
+        composeTestRule.onNode(hasText("OK")).performClick()
+
+        state.value = state.value.copy(createChannel = CreateChannelState("pyrybox", "/w/one", createFailed = true))
+        composeTestRule.onNode(hasText(string(R.string.create_channel_failed))).performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).assertTextContains("  Ops  ")
+
+        state.value =
+            state.value.copy(
+                createChannel = CreateChannelState("pyrybox", "/w/one", createdConversationId = "c9", promptFailed = true),
+            )
+        composeTestRule.onNode(hasText(string(R.string.create_channel_prompt_failed))).performScrollTo().assertIsDisplayed()
+        composeTestRule.onAllNodes(hasText(string(R.string.create_channel_failed))).assertCountEquals(0)
+        composeTestRule.onNodeWithTag(CHANNEL_NAME_FIELD_TAG).assertIsNotEnabled()
+        composeTestRule.onNodeWithTag(CHANNEL_PROMPT_FIELD_TAG).assertTextContains("Be brief.")
+
+        state.value = state.value.copy(hosts = listOf(channelHost(PyrycodeLinkStatus.Down)))
+        composeTestRule.onNode(hasText("OK")).assertIsNotEnabled()
+        composeTestRule.onNode(hasText("Cancel")).performClick()
+
+        assertEquals(
+            listOf(
+                ChannelListEvent.CreateChannelSubmitted("Ops", "Be brief."),
+                ChannelListEvent.CreateChannelDismissed,
+            ),
+            events,
+        )
+        assertFalse(events.first().toString().contains("Be brief."))
     }
 
     private fun openWorkspace(
