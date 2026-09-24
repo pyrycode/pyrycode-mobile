@@ -25,6 +25,8 @@
     <string name="cd_tree_host_reconnect">Reconnect %1$s</string>
     <!-- A Chats row's pencil (#827); %1$s is the chat's (clamped) name or the untitled fallback. -->
     <string name="cd_tree_chat_edit">Edit chat %1$s</string>
+    <!-- A Channels row's pencil (#667); %1$s is the channel's (clamped) name or the untitled fallback. -->
+    <string name="cd_tree_channel_edit">Edit channel %1$s</string>
     <!-- A workspace row's pencil (#905), in both sections; %1$s is the workspace's (clamped) shown name. -->
     <string name="cd_tree_workspace_edit">Edit workspace %1$s</string>
     <string name="cd_tree_workspace_new_channel">New channel in %1$s</string>
@@ -273,6 +275,16 @@
     <string name="edit_chat_archive">Archive chat</string>
     <!-- Generic for the same reason edit_host_save_failed is: the shell announces it aloud (#827). -->
     <string name="edit_chat_save_failed">Couldn\'t rename the chat. Try again.</string>
+    <!--
+      The Edit channel modal (#667), in desktop's EditChannelDialog copy. The three prompt notes are
+      static lines under the prompt field; the failure is static because the shell announces it aloud.
+    -->
+    <string name="edit_channel_title">Edit channel</string>
+    <string name="edit_channel_archive">Archive channel</string>
+    <string name="edit_channel_save_failed">Couldn\'t save the channel. Try again.</string>
+    <string name="edit_channel_prompt_reading">Reading the stored system prompt…</string>
+    <string name="edit_channel_prompt_unavailable">Couldn\'t read the stored system prompt.</string>
+    <string name="edit_channel_prompt_next_session">The stored prompt applies from this channel\'s next session.</string>
     <!--
       The host row's Add workspace modal (#904). "Recent" and the create entry keep the bottom
       sheet's wording, which the device suites match. Both failures are static for the reason
