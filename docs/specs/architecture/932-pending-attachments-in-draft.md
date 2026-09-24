@@ -163,3 +163,13 @@ New contract: `ThreadDestinationFactory` takes `attachmentReader: Lazy<Attachmen
 ### 2026-09-24 — test containers that build a thread bind an inert reader
 
 Driver: verifier triage on PR #938. The lazy `inject()` keeps a container without `androidContext()` safe only while it never builds a thread. `NotificationTapNavigationTest` and `LiteralScreenNavigationTest` do build one, so `attachmentReader.value` resolved `ContentResolverAttachmentReader` and threw `MissingAndroidContextException`. Both containers now bind `AttachmentReader { AttachmentRead.Unreadable }` beside `InertAttachmentStore`, as `RelayConnectionFactoryTest` already did. No production change; the other `KoinApplication.init()` containers never reach a thread destination.
+
+### 2026-09-24 — own-provider guard compares the authority after its user-id prefix
+
+Driver: verifier judgment on PR #938, MUST FIX. This also revises the `## Security review` above.
+
+The `[Trust boundaries / IPC]` finding missed the user-id form of an authority. `Uri.getAuthority()` keeps a `userId@` prefix, so `content://0@de.pyryco.mobile.fileprovider/…` passed `isForeignContentUri` as foreign. The resolver drops everything up to the last `@` before it picks a provider (`ContentProvider.getAuthorityWithoutUserId`), and the provider accepts a prefix that names the caller's own user. So `openInputStream` would still open our own provider with our identity. Impact today: none. The merged manifest has no provider that serves files. But the guard fails open as soon as one lands.
+
+New contract: `isForeignContentUri` compares `authority.substringAfterLast('@')` against `ownPackage`. It refuses our package, any dotted sub-authority of it and an empty remainder. It still accepts another app's authority behind a user-id prefix, the form a pick from another profile carries. Refusing every `@` would break those picks. `AttachmentReaderTest` gains the prefixed own-provider cases, including a double prefix and a bare `@`, and a prefixed foreign case.
+
+Revised Security review finding [Trust boundaries / IPC]: MUST FIX, resolved. The guard refuses everything but a `content` URI whose provider authority, after any `userId@` prefix, is not ours. It runs before the resolver is touched. Verdict stays PASS.

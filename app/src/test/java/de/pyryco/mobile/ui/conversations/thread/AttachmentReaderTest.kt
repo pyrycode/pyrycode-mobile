@@ -79,6 +79,22 @@ class AttachmentReaderTest {
     }
 
     @Test
+    fun ourOwnProviders_behindAUserIdPrefix_areRefused() {
+        // The resolver drops everything up to the last '@' before it picks a provider.
+        assertFalse(isForeignContentUri("content", "0@$OWN", OWN))
+        assertFalse(isForeignContentUri("content", "10@$OWN.fileprovider", OWN))
+        assertFalse(isForeignContentUri("content", "1@2@$OWN.fileprovider", OWN))
+        assertFalse(isForeignContentUri("content", "0@", OWN))
+        assertFalse(isForeignContentUri("content", "@", OWN))
+    }
+
+    @Test
+    fun foreignProvider_behindAUserIdPrefix_isAccepted() {
+        // A pick from another profile carries the user id; the provider is still someone else's.
+        assertTrue(isForeignContentUri("content", "10@com.android.providers.media.documents", OWN))
+    }
+
+    @Test
     fun bytesResult_toStringRedactsTheContent() {
         val read = AttachmentRead.Bytes("secret".toByteArray())
         assertFalse(read.toString().contains("115")) // 's'

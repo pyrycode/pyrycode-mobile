@@ -66,16 +66,19 @@ internal fun readBounded(
  * this check a hostile provider could name one of our private files and have it uploaded. Our own
  * authorities are [ownPackage] itself or start with `"$ownPackage."`; a name that merely shares the
  * prefix without the dot is someone else's.
+ *
+ * The comparison is on the provider part of the authority: the resolver drops a `userId@` prefix,
+ * up to the last `@`, before it picks a provider, so `0@$ownPackage.fileprovider` still names ours.
  */
 internal fun isForeignContentUri(
     scheme: String?,
     authority: String?,
     ownPackage: String,
-): Boolean =
-    scheme == ContentResolver.SCHEME_CONTENT &&
-        !authority.isNullOrEmpty() &&
-        authority != ownPackage &&
-        !authority.startsWith("$ownPackage.")
+): Boolean {
+    if (scheme != ContentResolver.SCHEME_CONTENT || authority == null) return false
+    val provider = authority.substringAfterLast('@')
+    return provider.isNotEmpty() && provider != ownPackage && !provider.startsWith("$ownPackage.")
+}
 
 /**
  * [AttachmentReader] over the app's [ContentResolver] (#932), on [io] because the stream read blocks.
