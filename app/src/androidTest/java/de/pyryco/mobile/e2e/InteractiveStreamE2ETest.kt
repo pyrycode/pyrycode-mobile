@@ -2706,10 +2706,14 @@ class InteractiveStreamE2ETest {
      * The document spans three 45000-byte chunks, so the phone's chunking and the daemon's reassembly both run.
      * The turn may Read the named files; the peer allows each prompt until the turn ends.
      *
+     * The name places it last in JUnit's default order, which sorts by name hash. Peers opened on the first
+     * daemon after it stopped carrying frames in two live runs, so it runs after every other scenario on that
+     * daemon until that is explained.
+     *
      * **One real-claude turn**: the phone's message.
      */
     @Test
-    fun interactiveTurn_attachmentsFromPhone_reachPeerWithTheirBytes() {
+    fun interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes() {
         val serverId = twoHostArg(ARG_SERVER_ID)
         val peer = runningToolPeer()
         val stub = ActivityIntentStub()
@@ -2735,6 +2739,7 @@ class InteractiveStreamE2ETest {
             awaitConnected()
             val (chatX, nameX) = answerChat(serverId, ATTACH_CHAT_NAME_PREFIX)
             val (chatY, _) = answerChat(serverId, ATTACH_OTHER_NAME_PREFIX)
+            assertPeerAnswers(peer, chatX)
             openChatRow(nameX)
 
             // 2. Pick both fixtures through the composer's attach action, and send them with one message.
@@ -2844,10 +2849,13 @@ class InteractiveStreamE2ETest {
      * The offer is live-only, with no replay: after the restart the row comes from the phone's own thread
      * cache. A fresh device, or a cleared cache, would not show it, by design, and that is not asserted.
      *
+     * The name places it before the background-task scenario in JUnit's default order, which sorts by name
+     * hash. In two live runs every peer opened before that point carried frames.
+     *
      * **One real-claude turn**: the phone's message.
      */
     @Test
-    fun interactiveTurn_offeredAttachment_opensAndSavesAfterRestart() {
+    fun interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart() {
         val serverId = twoHostArg(ARG_SERVER_ID)
         val peer = runningToolPeer()
         val stub = ActivityIntentStub()
@@ -2865,6 +2873,7 @@ class InteractiveStreamE2ETest {
             awaitChannelList()
             awaitConnected()
             val (chatX, nameX) = answerChat(serverId, ATTACH_CHAT_NAME_PREFIX)
+            assertPeerAnswers(peer, chatX)
             openChatRow(nameX)
             sendFromPhone(offerPrompt(content, fileName))
             allowPromptsUntil(peer, chatX, WAIT_TURN_TIMEOUT_MS, "the send_file turn in X did not end") { it.type == "turn_end" }
@@ -2984,6 +2993,22 @@ class InteractiveStreamE2ETest {
             entry.type == "send_message" ||
                 (entry.type == "message" && (entry.payload as? JsonObject)?.get("role")?.jsonPrimitive?.content == "user")
         }
+
+    /**
+     * Fail fast, and say so, when [peer]'s open session carries no frames: one `request_history` for
+     * [conversationId] must be answered. Two live runs had peers whose handshake the daemon accepted and which
+     * then saw nothing, so a permission prompt went unanswered until the turn timed out as a feature failure.
+     */
+    private fun assertPeerAnswers(
+        peer: SecondClientPeer,
+        conversationId: String,
+    ) {
+        try {
+            runBlocking { peer.history(conversationId, THREAD_TIMEOUT_MS) }
+        } catch (e: TimeoutCancellationException) {
+            throw AssertionError("the peer's open session answered no request within $THREAD_TIMEOUT_MS ms: a relay or daemon fault", e)
+        }
+    }
 
     /** The attachment ids on the phone's own sent message in [conversationId], read from its thread cache. */
     private fun awaitCachedSentAttachmentIds(

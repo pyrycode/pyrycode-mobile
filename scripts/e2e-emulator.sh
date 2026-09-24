@@ -1114,8 +1114,10 @@ elif [ -n "${LIVE}" ]; then
   # #1016: the attachment exchange joins, one turn per method: phone to peer, and claude's offered file after a
   # restart. The list holds 29 methods and 31 turns. The peer's file after a history reload,
   # interactiveTurn_peerAttachment_opensAndSavesAfterHistoryReload, stays out and @Ignore'd until #1020.
-  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_attachmentsFromPhone_reachPeerWithTheirBytes"
-  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_offeredAttachment_opensAndSavesAfterRestart"
+  # This list filters; it does not order. JUnit runs methods by name hash, and the two names place the
+  # phone-to-peer method last and the offered-file method before the background-task one (see their KDoc).
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_attachmentsFromPhone_arriveAtPeerWithTheirBytes"
+  TEST_TARGET="${TEST_TARGET},${TEST_CLASS}#interactiveTurn_claudeOfferedFile_opensAndSavesAfterRestart"
 else
   TEST_TARGET="${TEST_CLASS}"
 fi
