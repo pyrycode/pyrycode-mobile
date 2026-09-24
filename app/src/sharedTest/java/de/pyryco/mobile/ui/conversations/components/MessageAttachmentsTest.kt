@@ -7,9 +7,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHasClickAction
+import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -17,6 +20,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.width
@@ -66,6 +70,8 @@ class MessageAttachmentsTest {
         decoder: AttachmentThumbnailDecoder = decodes,
         onShown: (String) -> Unit = {},
         onRetry: (String) -> Unit = {},
+        onOpen: (AttachmentTarget) -> Unit = {},
+        onSave: (AttachmentTarget) -> Unit = {},
         states: () -> Map<String, AttachmentViewState>,
     ) {
         composeTestRule.setContent {
@@ -77,6 +83,8 @@ class MessageAttachmentsTest {
                             attachmentStates = states(),
                             onAttachmentShown = onShown,
                             onRetryAttachment = onRetry,
+                            onOpenAttachment = onOpen,
+                            onSaveAttachment = onSave,
                         )
                     }
                 }
@@ -151,7 +159,7 @@ class MessageAttachmentsTest {
         assertTrue("bubble ${bubble.width} wider than its lane $lane", bubble.width <= lane + 0.5.dp)
         assertTrue(bubble.right <= root.right - MessageContentGutter - MessageRoleInset + 0.5.dp)
         // The semantics keep the whole name; what is drawn stays on one line inside the bubble.
-        val label = composeTestRule.onNodeWithText(name).getUnclippedBoundsInRoot()
+        val label = composeTestRule.onNodeWithText(name, useUnmergedTree = true).getUnclippedBoundsInRoot()
         assertTrue(label.right <= bubble.right)
         assertTrue("name wraps: ${label.height}", label.height < 20.dp)
     }
@@ -235,8 +243,73 @@ class MessageAttachmentsTest {
         assertEquals(listOf(A1, A2), shown)
     }
 
+    @Test
+    fun readyFile_tapOpensIt_andLongPressSavesIt_withItsNameAndType() {
+        val opened = mutableListOf<AttachmentTarget>()
+        val saved = mutableListOf<AttachmentTarget>()
+        render(
+            message(MessageAttachment(A1, "report.pdf", null)),
+            states = { mapOf(A1 to ready("fetched.pdf", "application/pdf")) },
+            onOpen = { opened += it },
+            onSave = { saved += it },
+        )
+
+        val row = composeTestRule.onNodeWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG)
+        row.assertHasClickAction()
+        row.performClick()
+        row.performTouchInput { longClick() }
+
+        // The reference's own name wins; retrieval fills the MIME type it left unknown.
+        val expected = AttachmentTarget(A1, "report.pdf", "application/pdf")
+        assertEquals(listOf(expected), opened)
+        assertEquals(listOf(expected), saved)
+    }
+
+    @Test
+    fun readyImage_tapOpensIt() {
+        val opened = mutableListOf<AttachmentTarget>()
+        render(
+            message(MessageAttachment(A1, "photo.png", "image/png")),
+            states = { mapOf(A1 to ready("photo.png", "image/png")) },
+            onOpen = { opened += it },
+        )
+
+        composeTestRule.onNodeWithTag(MESSAGE_ATTACHMENT_IMAGE_TEST_TAG).performClick()
+
+        assertEquals(listOf(AttachmentTarget(A1, "photo.png", "image/png")), opened)
+    }
+
+    @Test
+    fun loadingFailedAndNotFound_offerNeitherOpenNorSave() {
+        val acted = mutableListOf<AttachmentTarget>()
+        render(
+            message(
+                MessageAttachment(A1, "photo.png", "image/png"),
+                MessageAttachment(A2, "notes.txt", "text/plain"),
+                MessageAttachment(A3, "gone.zip", "application/zip"),
+                MessageAttachment(A4, "later.txt", "text/plain"),
+            ),
+            states = { mapOf(A2 to AttachmentViewState.Failed, A3 to AttachmentViewState.NotFound) },
+            onOpen = { acted += it },
+            onSave = { acted += it },
+        )
+
+        composeTestRule.onNodeWithTag(MESSAGE_ATTACHMENT_IMAGE_TEST_TAG).assertHasNoClickAction()
+        val rows = composeTestRule.onAllNodesWithTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG)
+        rows.assertCountEquals(3)
+        for (i in 0 until 3) {
+            rows[i].assertHasNoClickAction()
+            rows[i].performTouchInput { longClick() }
+        }
+        composeTestRule.onNodeWithTag(MESSAGE_ATTACHMENT_IMAGE_TEST_TAG).performClick()
+
+        assertEquals(emptyList<AttachmentTarget>(), acted)
+    }
+
     private companion object {
         const val A1 = "0f8fad5b-d9cb-469f-a165-70867728950e"
         const val A2 = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+        const val A3 = "16fd2706-8baf-433b-82eb-8c7fada847da"
+        const val A4 = "886313e1-3b8a-5372-9b90-0c9aee199e5d"
     }
 }

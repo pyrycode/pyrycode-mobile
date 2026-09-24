@@ -46,8 +46,8 @@ calls `recordSentOriginals` once every upload in the snapshot has succeeded and 
 `repository.sendMessage` — the confirmed row can render while that call is still suspended, so the
 originals must already be there when it does; an id recorded for a send that then fails is harmless,
 since a retry reuses the same ids. Not a `StateFlow`: nothing renders this map, and the thread reads one
-entry at most once per attachment it shows (see [MessageBubble § Load
-lifecycle](message-bubble.md#load-lifecycle-since-984)). Same rules as the other two maps — in memory
+entry at most once per attachment it shows (see [MessageBubble — attachment slot § Load
+lifecycle](message-bubble-attachment-slot.md#load-lifecycle-since-984)). Same rules as the other two maps — in memory
 only, never logged, `clearHost` / `clearConversation` drop it with the text and the pending attachments.
 A picker grant does not outlive the process, so neither does this entry; "sent in this app session," not
 "sent, ever," is the guarantee — reopening the app after a background/foreground cycle keeps it (the

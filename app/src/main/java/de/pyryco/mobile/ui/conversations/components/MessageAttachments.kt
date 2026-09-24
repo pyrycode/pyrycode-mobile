@@ -3,8 +3,10 @@ package de.pyryco.mobile.ui.conversations.components
 import android.content.ContentResolver
 import android.content.res.Configuration
 import android.graphics.ImageDecoder
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -140,6 +142,19 @@ sealed interface AttachmentViewState {
 }
 
 /**
+ * One attachment as its open and save actions see it (#985): the id, and the name and MIME type the item
+ * shows — the reference's own, filled in from retrieval. Both are sanitised hints: the name is only ever the
+ * save picker's suggestion, and the type only picks among the user's viewers. [toString] prints the id only.
+ */
+data class AttachmentTarget(
+    val attachmentId: String,
+    val displayName: String?,
+    val mimeType: String?,
+) {
+    override fun toString(): String = "AttachmentTarget(id=$attachmentId)"
+}
+
+/**
  * Decodes a thumbnail no larger than a slot of [sizePx] needs, or `null` when it cannot (#984). A seam so a
  * screen test or preview can stand in for the platform decoder.
  */
@@ -176,6 +191,8 @@ internal fun thumbnailTargetSize(
 /**
  * A message's attachments in its bubble (#984), in reference order. Each reports itself shown when it is
  * composed — in the thread's lazy list, only when it is on screen — and that is what starts its retrieval.
+ * A [AttachmentViewState.Ready] one opens on a tap ([onOpen]) and saves on a long-press ([onSave], #985);
+ * one in any other state offers neither.
  */
 @Composable
 internal fun MessageAttachments(
@@ -184,6 +201,8 @@ internal fun MessageAttachments(
     onShown: (String) -> Unit,
     onRetry: (String) -> Unit,
     modifier: Modifier = Modifier,
+    onOpen: (AttachmentTarget) -> Unit = {},
+    onSave: (AttachmentTarget) -> Unit = {},
 ) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(BubbleContentSpacing)) {
         for (attachment in attachments) {
@@ -193,6 +212,8 @@ internal fun MessageAttachments(
                     state = states[attachment.attachmentId] ?: AttachmentViewState.Loading,
                     onShown = onShown,
                     onRetry = onRetry,
+                    onOpen = onOpen,
+                    onSave = onSave,
                 )
             }
         }
@@ -205,6 +226,8 @@ private fun MessageAttachmentItem(
     state: AttachmentViewState,
     onShown: (String) -> Unit,
     onRetry: (String) -> Unit,
+    onOpen: (AttachmentTarget) -> Unit,
+    onSave: (AttachmentTarget) -> Unit,
 ) {
     val id = attachment.attachmentId
     val currentOnShown by rememberUpdatedState(onShown)
@@ -215,15 +238,40 @@ private fun MessageAttachmentItem(
     val name = attachment.displayName.nonBlank() ?: ready?.displayName.nonBlank()
     val mimeType = attachment.mimeType.nonBlank() ?: ready?.mimeType.nonBlank()
     val isImage = mimeType?.startsWith("image/", ignoreCase = true) == true
-    val fileRow = @Composable { AttachmentFileRow(name = name, state = state, onRetry = { onRetry(id) }) }
+    // #985: only a file that is here acts. Loading, not found and failed offer neither open nor save.
+    val actions =
+        if (ready != null) {
+            val target = AttachmentTarget(id, name, mimeType)
+            Modifier.attachmentActions(onOpen = { onOpen(target) }, onSave = { onSave(target) })
+        } else {
+            Modifier
+        }
+    val fileRow = @Composable { AttachmentFileRow(name = name, state = state, onRetry = { onRetry(id) }, modifier = actions) }
     if (isImage && (state is AttachmentViewState.Loading || ready != null)) {
-        ImageAttachment(name = name, source = ready?.source, fallback = fileRow)
+        ImageAttachment(name = name, source = ready?.source, fallback = fileRow, modifier = actions)
     } else {
         fileRow()
     }
 }
 
 private fun String?.nonBlank(): String? = this?.takeIf { it.isNotBlank() }
+
+/**
+ * Tap opens, long-press saves (#985). The frame draws no save control, so the long-press carries its own
+ * label, which TalkBack offers as a named action.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun Modifier.attachmentActions(
+    onOpen: () -> Unit,
+    onSave: () -> Unit,
+): Modifier =
+    combinedClickable(
+        onClickLabel = stringResource(R.string.thread_attachment_open),
+        onLongClickLabel = stringResource(R.string.thread_attachment_save),
+        onLongClick = onSave,
+        onClick = onOpen,
+    )
 
 private sealed interface Thumbnail {
     data object Pending : Thumbnail
@@ -244,6 +292,7 @@ private fun ImageAttachment(
     name: String?,
     source: AttachmentSource?,
     fallback: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val decoder = LocalAttachmentThumbnailDecoder.current ?: rememberPlatformThumbnailDecoder()
     val sizePx = with(LocalDensity.current) { ImageSlotSize.roundToPx() }
@@ -264,6 +313,7 @@ private fun ImageAttachment(
                 .aspectRatio(1f)
                 .clip(BubbleShape)
                 .background(LocalContentColor.current.copy(alpha = IMAGE_PLACEHOLDER_ALPHA))
+                .then(modifier)
                 .semantics {
                     contentDescription = label
                     if (current !is Thumbnail.Decoded) stateDescription = loading
@@ -297,10 +347,11 @@ private fun AttachmentFileRow(
     name: String?,
     state: AttachmentViewState,
     onRetry: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val tint = LocalContentColor.current.copy(alpha = ATTACHMENT_CONTENT_ALPHA)
     Row(
-        modifier = Modifier.testTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG),
+        modifier = Modifier.testTag(MESSAGE_ATTACHMENT_FILE_TEST_TAG).then(modifier),
         horizontalArrangement = Arrangement.spacedBy(FileFieldSpacing),
         verticalAlignment = Alignment.CenterVertically,
     ) {
