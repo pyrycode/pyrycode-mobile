@@ -156,7 +156,7 @@ both counts equal**, so a caller can't be refused for repeats it didn't intend a
 idiom — the two-argument member is untouched, so none of the seventeen existing test doubles change):
 
 ```kotlin
-suspend fun sendMessage(conversationId: String, text: String, attachmentIds: List<String>): Message =
+suspend fun sendMessage(conversationId: String, text: String, attachments: List<MessageAttachment>): Message =
     error("sendMessage with attachments is not implemented for this ConversationRepository")
 ```
 
@@ -164,10 +164,24 @@ suspend fun sendMessage(conversationId: String, text: String, attachmentIds: Lis
 `emptyList()`. The override calls `MessageAttachmentIds.forSend` **before** minting `message_id` or
 building the envelope, so a too-many-ids refusal throws before any request id is taken or frame sent —
 otherwise it's the unchanged #346 flow (same `RelayRequests.sendAndAwaitReply`, same confirmed-insert only after the
-`ack`), with `attachmentIds` set on the DTO. The returned `Message` carries no attachment reference of its
-own (#672). A daemon refusal (`attachment.not_found`, `protocol.malformed`) arrives as a correlated
-`error` and throws `RelayErrorException` through the same path as any other `sendMessage` failure — the
-confirmed insert is unreachable, so a refused send leaves the thread unchanged.
+`ack`), with `attachmentIds = attachments.map { it.attachmentId }` set on the DTO. Only ids reach the
+wire; the parameter's own type changed from `attachmentIds: List<String>` to `attachments:
+List<MessageAttachment>` for the caller (#983, see below) — no second overload, since JVM erasure forbids
+two `List<...>` overloads that only differ by element type. A daemon refusal (`attachment.not_found`,
+`protocol.malformed`) arrives as a correlated `error` and throws `RelayErrorException` through the same
+path as any other `sendMessage` failure — the confirmed insert is unreachable, so a refused send leaves
+the thread unchanged.
+
+**The confirmed row now carries the references (#983), reversing the note above.** `MessageCommands.sendMessage`
+builds the row's `attachments` from the parameter, not from the wire reply (`send_message`'s reply stays
+an empty `ack`): `attachments.distinctBy { it.attachmentId }.map { ... }` in caller order, with each
+non-null `displayName` and `mimeType` passed through `attachmentDisplayName` — **the same
+code-point-level name cleaner** [`AttachmentOfferProjection` uses for a daemon-offered name](remote-conversation-repository.md#status-projections-one-file-per-status-event)
+also cleans the MIME hint here, since a local file's name and its declared MIME type are both authored by
+whichever app supplied the document through the system picker and neither is more trustworthy than the
+other. `ThreadViewModel.sendWithAttachments` builds one `MessageAttachment(id, entry.displayName,
+entry.mimeType)` per pending entry, in order, before calling this three-argument `sendMessage` — nothing
+else in the ViewModel changed.
 
 `StableConversationRepository` overrides the three-argument member as
 `live.sendMessage(conversationId, text, attachmentIds)` — the repository live at call entry, the same

@@ -149,12 +149,21 @@ CachedMessage? = null, boundary: CachedBoundary? = null)` — exactly one of the
 [`ModelRefusal`](model-refusal-row.md), which
 `cacheableThreadRows` drops before a `CachedThreadRow` is ever built; `ThreadItem.toRecord()` throws
 if any of the four ever reaches it).
-`CachedMessage(id, sessionId, role, content, timestamp, tool: CachedToolCall? = null)` carries no
-`isStreaming` field — a restored row is always settled, so the field would have nothing to encode.
-`CachedToolCall(toolName, input, output, status)` and `CachedBoundary(previousSessionId,
-newSessionId, reason, occurredAt, workspaceCwd: String? = null)` round out the two row kinds.
-Enums serialize by name; `Instant` fields (`timestamp`, `occurredAt`) follow `lastUsedAt`'s
-ISO-text convention, not epoch millis.
+`CachedMessage(id, sessionId, role, content, timestamp, tool: CachedToolCall? = null, attachments:
+List<CachedAttachment> = emptyList())` carries no `isStreaming` field — a restored row is always
+settled, so the field would have nothing to encode. `CachedToolCall(toolName, input, output,
+status)` and `CachedBoundary(previousSessionId, newSessionId, reason, occurredAt, workspaceCwd:
+String? = null)` round out the two row kinds. Enums serialize by name; `Instant` fields
+(`timestamp`, `occurredAt`) follow `lastUsedAt`'s ISO-text convention, not epoch millis.
+
+`CachedAttachment(attachmentId, displayName: String? = null, mimeType: String? = null)` (#983) maps
+`Message.attachments` 1:1; `explicitNulls = false` omits a `null` hint on encode rather than writing
+`"displayName":null`, and a document written before this field existed decodes with `attachments =
+emptyList()` through the same `ignoreUnknownKeys`/default-field mechanism every prior additive cache
+field has used. Like `MessageAttachment`, its generated `toString` is overridden to print only
+`attachmentId` — the name and MIME hint are untrusted display text (see [data model §
+`Message`](data-model.md#message)) and this file-private class is exactly the kind of type a stray
+log call could otherwise reach.
 
 ### Read positions (#877)
 

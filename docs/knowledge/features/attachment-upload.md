@@ -126,12 +126,15 @@ that never answers is ended by the connection's own liveness teardown, the same 
 
 ### Composer draft — the production caller (#932)
 
-`ThreadViewModel.sendMessage` is the first production caller of both `uploadAttachment` and the
+`ThreadViewModel.sendWithAttachments` is the first production caller of both `uploadAttachment` and the
 three-argument `sendMessage`. It reads `ComposerDraftStore`'s per-pair pending-attachment list, uploads
-whichever entries have no acknowledged id yet in send order, and names only those ids — see
-[Thread screen § Composer pending attachments](thread-screen.md#composer-pending-attachments) for the
-store shape, the retry-keeps-earlier-ids behavior and the content-URI trust boundary
-(`ContentResolverAttachmentReader.isForeignContentUri`). [#933](https://github.com/pyrycode/pyrycode-mobile/issues/933)
+whichever entries have no acknowledged id yet in send order, and names each id along with the pending
+entry's own `displayName`/`mimeType` as a `MessageAttachment` (#983) — see [Thread screen § Composer
+pending attachments](thread-screen.md#composer-pending-attachments) for the store shape, the
+retry-keeps-earlier-ids behavior and the content-URI trust boundary
+(`ContentResolverAttachmentReader.isForeignContentUri`), and [data model §
+`Message`](data-model.md#message) for what the confirmed row does with those references.
+[#933](https://github.com/pyrycode/pyrycode-mobile/issues/933)
 landed the picker and the strip that fill this path from the UI; [#674](https://github.com/pyrycode/pyrycode-mobile/issues/674)
 still owns the live proof.
 

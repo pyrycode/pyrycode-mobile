@@ -99,6 +99,24 @@ a repeated attachment id. See [Conversation repository → `AttachmentOffer`](co
 for the domain type, the id-shape validation and the code-point-level display-name cleaning, and its
 SECURITY note.
 
+**A first-seen offer is also a thread row (#983).** `AttachmentOfferProjection` takes the repository's
+`threadProjection` as a constructor parameter — the one dependency between two status-family
+projections — and, only on the first sighting of an attachment id (decided inside the same
+`MutableStateFlow.update` that records the offer, not after it), calls
+`threadProjection.appendMessages` with an assistant-side row built by `attachmentOfferRow`: id
+`"attachment-offer-<attachmentId>"`, empty text, one `MessageAttachment` carrying the offer's cleaned
+name and no MIME hint (the wire sends none). That id is derived from the validated attachment id, not a
+per-process counter, so the same offer arriving again on another connection, or the row the disk cache
+restores, joins on `message_id` through `ThreadProjection.appendMessages` / `mergeCachedRows` rather than
+duplicating; the `attachment-offer-` prefix keeps it out of the wire's UUID `message_id`/`turn_id`/
+`tool_use_id` namespace. A repeat offer on the same connection adds no row. Because the constructor now
+depends on `threadProjection`, `attachmentOfferProjection`'s field declaration in
+`RemoteConversationRepository` had to move below `threadProjection`'s — Kotlin initializes properties in
+declaration order, so the dependency's declaration position is load-bearing, not stylistic. See [Caching
+conversation repository § How the restore merges with live
+rows](caching-conversation-repository.md#how-the-restore-merges-with-live-rows) for why a cache-only row
+like this one needs its own merge to keep its place across a reconnect or a cold restore.
+
 The repository keeps three things. Its `onInbound` arm checks the negotiated `interactive` capability
 and calls the projection's `apply(envelope)`. Its `observe…` override returns the projection's
 `observe(conversationId)`. And a clear that one event causes in another stays in the arm that causes
@@ -364,8 +382,9 @@ built from the same object-wrapped-array fixture shape as `ConversationsPayloadT
   `AttachmentOfferProjection`, decoding `attachment_offered` into `AttachmentOffer`; the one arm in the
   family that ignores the `interactive` capability check, matching `attachment_stored`'s delivery
   posture above rather than its status-projection siblings'; standard `switchToLive(emptyList()) { … }`
-  facade delegation. Fetching the offered bytes and rendering the offer in the thread are the sibling
-  and follow-up tickets `#671`/`#672`.
+  facade delegation. Fetching the offered bytes is the sibling ticket `#671`. Turning a first-seen offer
+  into a thread row landed in `#983` (see § Status projections above); rendering that row is the
+  follow-up ticket `#984`.
 - Connection wiring: [`RelayRepositoryCoordinator`](relay-repository-coordinator.md)
   ([#351](../codebase/351.md), **landed**) — constructs this repository per live connection against the
   pump + a child scope, made `NoiseSessionPump : ManagedSessionPump : SessionPump`, and publishes the
