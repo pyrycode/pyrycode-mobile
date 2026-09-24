@@ -130,6 +130,18 @@ class ConversationResponseDtoTest {
     }
 
     @Test
+    fun isMuted_presentValueMapsToMutedAndAbsentKeyReadsAsNotMuted() {
+        // A conversation_updated record always carries is_muted; a record without the key (an older
+        // daemon, or conversation_created) decodes to false and keeps the conversation notifying.
+        fun mutedOf(fixture: String) =
+            MobileJson.decodeFromJsonElement<ConversationResponseDto>(MobileJson.parseToJsonElement(fixture)).toConversation().muted
+        val base = """{"id":"c1","is_promoted":true,"name":"n","cwd":"/p","last_used_at":"2026-05-08T10:34:30Z""""
+        assertTrue(mutedOf("""$base,"is_muted":true}"""))
+        assertFalse(mutedOf("""$base,"is_muted":false}"""))
+        assertFalse(mutedOf("""$base}"""))
+    }
+
+    @Test
     fun fieldIncompletePayload_throwsTypedDecodeFailure() {
         // Omits the required non-nullable `cwd`. Dropping `name` would NOT fail (decodes to
         // null), so a required field must be dropped for the test to be meaningful.
