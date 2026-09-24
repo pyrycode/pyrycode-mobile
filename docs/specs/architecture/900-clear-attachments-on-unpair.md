@@ -47,6 +47,55 @@ Unit tests, JVM only:
 
 None.
 
+## Security review
+
+**Verdict:** PASS
+
+**Findings:**
+
+- [Trust boundaries] No findings — the only input is the server id the unpair controller already holds.
+  `AttachmentStore.removeHost` never uses it as a path component: it is hashed by `sha256Hex` into 64
+  lowercase hex characters, which cannot spell `..`, a separator or an empty name, so the delete target is
+  always a direct child of `root` and never `root` itself or anything outside it. No conversation id,
+  attachment id or remote file name takes part in the removal.
+- [Tokens] No findings — `forgetRemovedHost` receives only the `serverId`, never the `PairedServer`
+  record; the token and static key never reach the attachment store or a log.
+- [File / storage] No findings on symlinks, by the store's write discipline: Kotlin's `deleteRecursively`
+  descends through `File.isDirectory`, which follows a link to a directory, but nothing creates a link
+  under the host directory. `keep` writes only regular files, named by `isAttachmentIdShape`-checked ids
+  plus fixed suffixes, through `outputStream` and `Files.move`. An attacker able to plant a link there
+  already writes app-private storage as the app's uid, and the delete runs as that same uid, so it can
+  reach nothing the attacker could not already delete. No `NOFOLLOW` walk is added for an unobserved
+  failure.
+- [File / storage] No findings on scope — the files stay under `noBackupFilesDir` (#899, unchanged); the
+  point of this ticket is that they leave it on unpair. Failure is decided by the directory's existence
+  after the delete, the `FileConversationCache.removeHost` rule, so a partial delete is reported rather
+  than claimed as success.
+- [File / storage] OUT OF SCOPE — residual window: the revision bump in `ObservablePairedServerStore.remove`
+  closes the host's connection asynchronously, so a `retrieve` whose verified fetch completed just before
+  that close could `keep` its file after `removeHost` returned. Not observed. The file is unreachable
+  unless the same server id is re-paired, and it holds bytes the daemon itself sent and whose digest was
+  verified. A deterministic fix needs a per-host tombstone or generation in the store contract; file a bug
+  if it is observed.
+- [Inter-process] No findings — no manifest, intent, provider or pending-intent change.
+- [Crypto] No findings — `MessageDigest` SHA-256 for the directory name is #899's existing primitive, used
+  for addressing, not secrecy; nothing else touched.
+- [Network & I/O] No findings — no frame, URL or socket change.
+- [Logs] No findings — one new line, the static `event=host_attachments_remove_failed`, with no id and no
+  path. The failure's `IOException` message is a static string naming neither, and the hook never logs
+  it. The unpair tests assert that no id reaches a log line.
+- [Concurrency] No findings — no new scope. The removal runs inside the hook's existing
+  `withContext(NonCancellable)`, after the credential removal and the revision bump, so a view model
+  cleared mid-cleanup cannot strand the forgotten host's files. The work is a bounded local delete with no
+  network wait, so `NonCancellable` cannot hang the unpair. The attachment step runs whether or not the
+  cache step failed.
+- [Threat model] OUT OF SCOPE — forensic recovery of deleted file blocks on a rooted device; the files are
+  unencrypted app-private storage by #899's design, and removal is `File.delete`, not secure erase.
+
+**Reviewer:** builder (self-review per `builder/security-review.md`)
+**Date:** 2026-09-24
+
 ## Revisions
 
 - **2026-09-24, during implementation.** The unpair test fixture also holds a second `AttachmentStore` over the same root on the test's unconfined dispatcher, used only to seed and read back files. Seeding through the queued store resumed the test body inside that dispatcher's task, where the view model's unconfined launches never started, so the editor never opened. Production design unchanged.
+- **2026-09-24, rework.** Added the `## Security review` section, which the verifier's review of PR #964 found missing on this `security-sensitive` ticket. Verdict PASS; it changes no design, and the shipped code already matches its conclusions.
