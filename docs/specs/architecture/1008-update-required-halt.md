@@ -138,3 +138,7 @@ None named by the ticket. Pending for the documentation stage: the relay-connect
 
 **Reviewer:** builder (self-review per `builder/security-review.md`)
 **Date:** 2026-09-24
+
+## Revisions
+
+- 2026-09-24 (implementation): the bundle wiring is proven directly rather than "by composition". `RelayConnectionFactoryTest` gained `appTooOldRejectionHaltsOnlyItsOwnHostAndCarriesTheSealedMinimum`, which drives a real Noise session through two bundles: host A's sealed error then `4412` → `UpdateRequired("1.4.0")`, host B's status unchanged, no redial of A; an explicit retry dials once and a bare `4412` halts with no minimum. The fake transport's `reportAbsent` became `closeWith(code)`. The pair-code failure copy keeps the existing "Pairing saved." prefix: "Pairing saved. This app is too old for this host. Update the app, then retry." Open question on the rejection `noise_resp` stays as written: the design tolerates both answers.
