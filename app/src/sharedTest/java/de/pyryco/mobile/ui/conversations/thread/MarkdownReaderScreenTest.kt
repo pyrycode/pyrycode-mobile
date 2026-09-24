@@ -94,4 +94,33 @@ class MarkdownReaderScreenTest {
         // The text file went the view-intent way: a kept file outside the store has no content URI.
         assertEquals(listOf(AttachmentNotice.OPEN_FAILED), notices)
     }
+
+    @Test
+    fun aLinkedNote_opensInTheSameReader_andItsBackArrowGoesBack() {
+        var backs = 0
+        composeRule.setContent {
+            PyrycodeMobileTheme {
+                LinkedMarkdownReaderDestination(document = MarkdownDocument("Plan.md", "# Live note"), onBack = { backs++ })
+            }
+        }
+
+        composeRule.onNodeWithText("Plan.md").assertIsDisplayed()
+        composeRule.onNodeWithText("Live note").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription(back).performClick()
+        assertEquals(1, backs)
+    }
+
+    @Test
+    fun noLinkedNote_goesBackOnce_andDrawsNoReader() {
+        var backs = 0
+        composeRule.setContent {
+            PyrycodeMobileTheme {
+                LinkedMarkdownReaderDestination(document = null, onBack = { backs++ })
+            }
+        }
+        composeRule.waitForIdle()
+
+        assertEquals(1, backs)
+        composeRule.onNodeWithContentDescription(back).assertDoesNotExist()
+    }
 }
