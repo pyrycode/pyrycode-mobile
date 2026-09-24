@@ -98,8 +98,7 @@ class StableConversationRepository(
 
     /**
      * The context-usage reading for [conversationId] (#945), cleared across connections as [observeAnnouncedModel]
-     * is. The switch is also the reconnect ask: [flatMapLatest] ends the old repository's subscription and starts
-     * one on the new repository, and that subscription is what sends the new connection's `request_context_usage`.
+     * is. After a reconnect it stays absent until the conversation's next turn ends on the new connection.
      */
     override fun observeContextUsage(conversationId: String): Flow<ContextUsage?> =
         switchToLive<ContextUsage?>(null) { it.observeContextUsage(conversationId) }

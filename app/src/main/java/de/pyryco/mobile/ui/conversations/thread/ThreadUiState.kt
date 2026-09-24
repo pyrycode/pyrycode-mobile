@@ -175,6 +175,9 @@ data class ThreadEffortChoice(
  *   outranks [savedEffort] on screen and is never sent back.
  * @param running What claude says it runs (#891), for the Status sheet only. Independent of the selection:
  *   it is never derived from [savedModel] or [pendingModel], and nothing falls back to them.
+ * @param contextPercent How full the context window is, as Claude last reported it (#946), verbatim. `null` is
+ *   the unavailable state: no reading yet, a refused ask, a reconnect or a session transition. The footer and
+ *   the Status sheet both read it, and it is never derived from token totals or the settings' figures.
  */
 data class ThreadRunConfig(
     val choices: List<ThreadModelChoice> = emptyList(),
@@ -191,6 +194,7 @@ data class ThreadRunConfig(
     val pendingPermission: String? = null,
     val appliedEffort: EffectiveEffort = EffectiveEffort.Unavailable,
     val running: ThreadRunningModel = ThreadRunningModel(),
+    val contextPercent: Int? = null,
 ) {
     /** What the surfaces show: a pending tap while one is outstanding, the confirmed reading otherwise. */
     val selectedModel: String get() = pendingModel ?: savedModel

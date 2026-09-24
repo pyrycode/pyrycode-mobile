@@ -43,7 +43,8 @@ internal fun ContextUsagePayloadDto.toReading(): ContextUsage? =
  * `request_context_usage` (#945, pyrycode#2431): ask for a fresh reading of one conversation now rather than at
  * the next turn end. The answer is a `context_usage` correlated by `in_reply_to`, or an `error` carrying
  * `conversation.not_found` or `context_usage.unavailable`. v2-only and `interactive`-gated. Wire SSOT: pyrycode
- * `docs/protocol-mobile.md` § "Asking for a context usage reading on demand".
+ * `docs/protocol-mobile.md` § "Asking for a context usage reading on demand". The phone does not send it until
+ * pyrycode#2563 stops a mid-turn ask from holding up the connection's later frames (#946).
  */
 @Serializable
 internal data class RequestContextUsagePayloadDto(

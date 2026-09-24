@@ -55,6 +55,7 @@ import de.pyryco.mobile.ui.conversations.components.treeHostAddTestTag
 import de.pyryco.mobile.ui.conversations.list.CHANNEL_LIST_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHANNEL_ROW_TEST_TAG
 import de.pyryco.mobile.ui.conversations.list.TREE_CHAT_ROW_TEST_TAG
+import de.pyryco.mobile.ui.conversations.thread.CONTEXT_USAGE_TEST_TAG
 import de.pyryco.mobile.ui.conversations.thread.PING_PROMPT
 import de.pyryco.mobile.ui.conversations.thread.SESSION_BOUNDARY_EXPLANATION
 import de.pyryco.mobile.ui.conversations.thread.awaitDisplayedPingReply
@@ -198,6 +199,31 @@ class InteractiveStreamE2ETest {
                 .joinToString("") { it.text }
         assertTrue("running-model row is empty", shown.isNotBlank())
         assertNotEquals(runningModelUnavailable, shown)
+    }
+
+    /**
+     * #946: after one real turn, the composer footer's `Cxt:` segment shows the percentage Claude reported
+     * (`context_usage`, published after every completed turn and answered on the screen's own ask). Asserts
+     * only the `Cxt: N%` shape — the figure depends on the operator's claude and is never hard-coded.
+     */
+    @Test
+    fun interactiveTurn_pingPrompt_footerShowsContextUsage() {
+        awaitChannelList()
+        awaitConnected()
+        createChat()
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasContentDescription(CD_SEND_MESSAGE)).fetchSemanticsNodes().isNotEmpty()
+        }
+        composeTestRule.onNode(hasSetTextAction()).performTextInput(PING_PROMPT)
+        composeTestRule.onNode(hasContentDescription(CD_SEND_MESSAGE)).performClick()
+        composeTestRule.awaitDisplayedPingReply(REPLY_TIMEOUT_MS)
+
+        val reported = Regex("Cxt: \\d+%")
+        composeTestRule.waitUntil(THREAD_TIMEOUT_MS) {
+            composeTestRule.onAllNodes(hasTestTag(CONTEXT_USAGE_TEST_TAG)).fetchSemanticsNodes().any { node ->
+                reported.matches(node.config[SemanticsProperties.Text].joinToString("") { it.text })
+            }
+        }
     }
 
     /**

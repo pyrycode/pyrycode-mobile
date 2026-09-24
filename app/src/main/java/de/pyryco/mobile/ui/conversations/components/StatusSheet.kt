@@ -74,6 +74,7 @@ fun StatusSheet(
     modifier: Modifier = Modifier,
     effortNote: String? = null,
     running: ThreadRunningModel = ThreadRunningModel(),
+    contextPercent: Int? = null,
     sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
 ) {
     ModalBottomSheet(
@@ -95,6 +96,7 @@ fun StatusSheet(
             onDismiss = onDismiss,
             effortNote = effortNote,
             running = running,
+            contextPercent = contextPercent,
         )
     }
 }
@@ -114,6 +116,7 @@ internal fun StatusSheetContent(
     onDismiss: () -> Unit,
     effortNote: String? = null,
     running: ThreadRunningModel = ThreadRunningModel(),
+    contextPercent: Int? = null,
 ) {
     // The menu length is the daemon's, and its producer cap is not a wire constant — so the body scrolls
     // rather than clipping the Context-window section below a long Model section. #650 moved the
@@ -148,7 +151,7 @@ internal fun StatusSheetContent(
         // #889: why the selection is not Claude's applied effort — client-owned text, never daemon text.
         effortNote?.let { Caption(text = it) }
         SectionHeader(text = "Context window")
-        ContextWindowSection()
+        ContextWindowSection(contextPercent = contextPercent)
         Spacer(modifier = Modifier.height(24.dp))
     }
 }
@@ -398,11 +401,11 @@ private fun Caption(text: AnnotatedString) {
     )
 }
 
-// Deliberate divergence from Figma node 20:151, which draws a populated figure and a
-// severity-coloured bar. The daemon does not serve mobile a real context figure yet (#591), so a
-// number here would always be a stub. Wording matches desktop; layout and typography are unchanged.
+// Figma node 20:151 reads "73% used (146K of 200K tokens)" over a severity-coloured bar. #946 shows only
+// Claude's reported percentage, verbatim, and no bar: the token figures and severity colours are a
+// deliberate divergence. With no reading the section says so, in desktop's wording, and never shows 0%.
 @Composable
-private fun ContextWindowSection() {
+private fun ContextWindowSection(contextPercent: Int?) {
     Column(
         modifier =
             Modifier
@@ -411,7 +414,12 @@ private fun ContextWindowSection() {
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = "Context usage unavailable",
+            text =
+                if (contextPercent != null) {
+                    stringResource(R.string.status_sheet_context_used, contextPercent)
+                } else {
+                    stringResource(R.string.status_sheet_context_unavailable)
+                },
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurface,
         )
@@ -464,6 +472,7 @@ private fun PreviewSheet(
     pending: Boolean = false,
     enabled: Boolean = true,
     running: ThreadRunningModel = PreviewRunning,
+    contextPercent: Int? = null,
     darkTheme: Boolean = false,
 ) {
     val selected = choices.firstOrNull { it.value == selectedModel }
@@ -486,6 +495,7 @@ private fun PreviewSheet(
                     enabled = enabled,
                     onDismiss = {},
                     running = running,
+                    contextPercent = contextPercent,
                 )
             }
         }
@@ -519,6 +529,10 @@ private fun StatusSheetPendingPreview() = PreviewSheet(pending = true)
 @Preview(name = "StatusSheet — read-only session", showBackground = true, widthDp = 412)
 @Composable
 private fun StatusSheetReadOnlyPreview() = PreviewSheet(enabled = false, selectedModel = "")
+
+@Preview(name = "StatusSheet — context usage reported", showBackground = true, widthDp = 412)
+@Composable
+private fun StatusSheetContextUsagePreview() = PreviewSheet(contextPercent = 84)
 
 @Preview(name = "StatusSheet — running model not announced", showBackground = true, widthDp = 412)
 @Composable

@@ -23,7 +23,7 @@ E2E_PACKAGE = "de.pyryco.mobile.e2e"
 SCENARIOS = ("ping", "stream", "spinner", "tool", "tool-failed", "reconnect", "replay-order")
 # The live gate's executed-test floor: the size of scripts/e2e-emulator.sh's LIVE curated list (#848),
 # so a method silently dropped from that list reddens the gate. Raise it with the list.
-LIVE_MINIMUM = 14
+LIVE_MINIMUM = 15
 
 
 def claude_authenticated(env):
